@@ -129,30 +129,137 @@ impl TryFrom<String> for ChannelName {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Role {
     Owner,
     Moderator,
     Member,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Permission {
+    ManageRoles,
+    ManageChannelOverrides,
     DeleteMessage,
     BanMember,
     CreateMessage,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PermissionSet(u64);
+
+impl PermissionSet {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    #[must_use]
+    pub const fn from_bits(bits: u64) -> Self {
+        Self(bits)
+    }
+
+    #[must_use]
+    pub const fn bits(self) -> u64 {
+        self.0
+    }
+
+    #[must_use]
+    pub fn contains(self, permission: Permission) -> bool {
+        self.0 & permission_mask(permission) != 0
+    }
+
+    pub fn insert(&mut self, permission: Permission) {
+        self.0 |= permission_mask(permission);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChannelPermissionOverwrite {
+    pub allow: PermissionSet,
+    pub deny: PermissionSet,
+}
+
+#[must_use]
+pub fn role_rank(role: Role) -> u8 {
+    match role {
+        Role::Owner => 3,
+        Role::Moderator => 2,
+        Role::Member => 1,
+    }
+}
+
+#[must_use]
+pub fn can_assign_role(actor: Role, current_target: Role, new_target: Role) -> bool {
+    if matches!(current_target, Role::Owner) || matches!(new_target, Role::Owner) {
+        return false;
+    }
+    if !has_permission(actor, Permission::ManageRoles) {
+        return false;
+    }
+    role_rank(actor) > role_rank(current_target) && role_rank(actor) > role_rank(new_target)
+}
+
+#[must_use]
+pub fn can_moderate_member(actor: Role, target: Role) -> bool {
+    if !has_permission(actor, Permission::BanMember) {
+        return false;
+    }
+    !matches!(target, Role::Owner) && role_rank(actor) > role_rank(target)
+}
+
+#[must_use]
+pub fn base_permissions(role: Role) -> PermissionSet {
+    let mut set = PermissionSet::empty();
+    match role {
+        Role::Owner => {
+            set.insert(Permission::ManageRoles);
+            set.insert(Permission::ManageChannelOverrides);
+            set.insert(Permission::DeleteMessage);
+            set.insert(Permission::BanMember);
+            set.insert(Permission::CreateMessage);
+        }
+        Role::Moderator => {
+            set.insert(Permission::DeleteMessage);
+            set.insert(Permission::BanMember);
+            set.insert(Permission::CreateMessage);
+        }
+        Role::Member => {
+            set.insert(Permission::CreateMessage);
+        }
+    }
+    set
+}
+
+#[must_use]
+pub fn apply_channel_overwrite(
+    base: PermissionSet,
+    overwrite: Option<ChannelPermissionOverwrite>,
+) -> PermissionSet {
+    let Some(overwrite) = overwrite else {
+        return base;
+    };
+    let mut bits = base.bits();
+    bits |= overwrite.allow.bits();
+    bits &= !overwrite.deny.bits();
+    PermissionSet::from_bits(bits)
+}
+
+fn permission_mask(permission: Permission) -> u64 {
+    match permission {
+        Permission::ManageRoles => 1 << 0,
+        Permission::ManageChannelOverrides => 1 << 1,
+        Permission::DeleteMessage => 1 << 2,
+        Permission::BanMember => 1 << 3,
+        Permission::CreateMessage => 1 << 4,
+    }
+}
+
 #[must_use]
 pub fn has_permission(role: Role, permission: Permission) -> bool {
-    match role {
-        Role::Owner => true,
-        Role::Moderator => matches!(
-            permission,
-            Permission::DeleteMessage | Permission::BanMember | Permission::CreateMessage
-        ),
-        Role::Member => matches!(permission, Permission::CreateMessage),
-    }
+    base_permissions(role).contains(permission)
 }
 
 #[must_use]
@@ -258,8 +365,10 @@ fn validate_name(value: &str, min: usize, max: usize) -> Result<(), DomainError>
 #[cfg(test)]
 mod tests {
     use super::{
-        has_permission, project_name, tokenize_markdown, ChannelName, DomainError, GuildName,
-        MarkdownToken, Permission, Role, UserId, Username,
+        apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
+        has_permission, project_name, role_rank, tokenize_markdown, ChannelName,
+        ChannelPermissionOverwrite, DomainError, GuildName, MarkdownToken, Permission,
+        PermissionSet, Role, UserId, Username,
     };
 
     #[test]
@@ -292,9 +401,45 @@ mod tests {
     #[test]
     fn permission_checks_match_role_expectations() {
         assert!(has_permission(Role::Owner, Permission::BanMember));
+        assert!(has_permission(Role::Owner, Permission::ManageRoles));
         assert!(has_permission(Role::Moderator, Permission::DeleteMessage));
+        assert!(!has_permission(Role::Moderator, Permission::ManageRoles));
         assert!(!has_permission(Role::Member, Permission::DeleteMessage));
         assert!(has_permission(Role::Member, Permission::CreateMessage));
+    }
+
+    #[test]
+    fn role_hierarchy_and_assignment_rules_are_enforced() {
+        assert!(role_rank(Role::Owner) > role_rank(Role::Moderator));
+        assert!(role_rank(Role::Moderator) > role_rank(Role::Member));
+        assert!(can_assign_role(Role::Owner, Role::Member, Role::Moderator));
+        assert!(can_assign_role(Role::Owner, Role::Moderator, Role::Member));
+        assert!(!can_assign_role(
+            Role::Moderator,
+            Role::Member,
+            Role::Moderator
+        ));
+        assert!(!can_assign_role(Role::Owner, Role::Owner, Role::Member));
+        assert!(!can_assign_role(Role::Owner, Role::Member, Role::Owner));
+        assert!(can_moderate_member(Role::Owner, Role::Moderator));
+        assert!(can_moderate_member(Role::Moderator, Role::Member));
+        assert!(!can_moderate_member(Role::Moderator, Role::Moderator));
+        assert!(!can_moderate_member(Role::Moderator, Role::Owner));
+    }
+
+    #[test]
+    fn channel_overrides_apply_allow_and_deny_masks() {
+        let base = base_permissions(Role::Member);
+        assert!(base.contains(Permission::CreateMessage));
+        assert!(!base.contains(Permission::DeleteMessage));
+
+        let overwrite = ChannelPermissionOverwrite {
+            allow: PermissionSet::from_bits(1 << 2),
+            deny: PermissionSet::from_bits(1 << 4),
+        };
+        let effective = apply_channel_overwrite(base, Some(overwrite));
+        assert!(effective.contains(Permission::DeleteMessage));
+        assert!(!effective.contains(Permission::CreateMessage));
     }
 
     #[test]

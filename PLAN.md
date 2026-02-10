@@ -412,15 +412,25 @@ Every phase has:
 - Audit log table populated for sensitive actions
 
 ### Status
-- NOT STARTED
+- DONE
 
 ### Notes
 - Permission checks must be centralized in `filament-core`.
 - Presence should not leak private guild membership cross-guild.
+- 2026-02-10: Expanded `filament-core` permission engine with explicit permission bits (`PermissionSet`), channel overwrite application (`ChannelPermissionOverwrite`), and centralized role hierarchy/moderation checks (`can_assign_role`, `can_moderate_member`) with focused unit coverage.
+- 2026-02-10: Added Phase 4 server routes in `filament-server`:
+  - membership/role management: `POST /guilds/{guild_id}/members/{user_id}`, `PATCH /guilds/{guild_id}/members/{user_id}`
+  - channel role overrides: `POST /guilds/{guild_id}/channels/{channel_id}/overrides/{role}`
+  - reactions: `POST|DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}`
+- 2026-02-10: Added DB schema for `channel_role_overrides` and `message_reactions`, plus in-memory parity for hermetic tests.
+- 2026-02-10: Gateway presence implementation landed with per-connection guild presence tracking, `presence_sync` on subscribe, and guild-scoped `presence_update` online/offline events; broadcasts are guild-bounded to prevent cross-guild leakage.
+- 2026-02-10: Existing gateway network integration test updated for Phase 4 event stream (`presence_sync` before/around `subscribed`), preserving handshake/message-flow coverage.
+- 2026-02-10: Local quality/security gates passed for this increment: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
 
 ### TODOs
 - Add “permission snapshot” caching w/ invalidation.
 - Add mod tooling endpoints.
+- Phase 5 start gate: begin LiveKit room/token policy integration with short-TTL scoped issuance and issuance-rate auditing.
 
 ### Exit Criteria
 - Permission engine has exhaustive unit tests for role hierarchy and channel overrides.

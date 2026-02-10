@@ -142,6 +142,21 @@ async fn next_text_event(
     serde_json::from_str(&text).expect("event should be valid json")
 }
 
+async fn next_event_of_type(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    event_type: &str,
+) -> Value {
+    for _ in 0..8 {
+        let event = next_text_event(socket).await;
+        if event["t"] == event_type {
+            return event;
+        }
+    }
+    panic!("expected event type {event_type}");
+}
+
 #[tokio::test]
 async fn websocket_handshake_and_message_flow_work_over_network() {
     let app = test_app();
@@ -196,7 +211,7 @@ async fn websocket_handshake_and_message_flow_work_over_network() {
         .await
         .expect("subscribe event should send");
 
-    let subscribed_json = next_text_event(&mut socket).await;
+    let subscribed_json = next_event_of_type(&mut socket, "subscribed").await;
     assert_eq!(subscribed_json["t"], "subscribed");
 
     let message_create = json!({

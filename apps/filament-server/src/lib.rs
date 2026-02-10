@@ -27,8 +27,9 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use filament_core::{
-    has_permission, tokenize_markdown, ChannelName, GuildName, MarkdownToken, Permission, Role,
-    UserId, Username,
+    apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
+    has_permission, tokenize_markdown, ChannelName, ChannelPermissionOverwrite, GuildName,
+    MarkdownToken, Permission, PermissionSet, Role, UserId, Username,
 };
 use filament_protocol::{parse_envelope, Envelope, EventType, PROTOCOL_VERSION};
 use futures_util::{SinkExt, StreamExt};
@@ -95,6 +96,7 @@ const MAX_SEARCH_WILDCARDS: usize = 4;
 const MAX_SEARCH_FUZZY: usize = 2;
 const SEARCH_INDEX_QUEUE_CAPACITY: usize = 1024;
 const MAX_SEARCH_RECONCILE_DOCS: usize = 10_000;
+const MAX_REACTION_EMOJI_CHARS: usize = 32;
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -217,6 +219,7 @@ pub struct AppState {
     guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
     subscriptions: Arc<RwLock<Subscriptions>>,
     connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
+    connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
     attachment_store: Arc<LocalFileSystem>,
     attachments: Arc<RwLock<HashMap<String, AttachmentRecord>>>,
     audit_logs: Arc<RwLock<Vec<serde_json::Value>>>,
@@ -262,6 +265,7 @@ impl AppState {
             guilds: Arc::new(RwLock::new(HashMap::new())),
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
             connection_controls: Arc::new(RwLock::new(HashMap::new())),
+            connection_presence: Arc::new(RwLock::new(HashMap::new())),
             attachment_store: Arc::new(attachment_store),
             attachments: Arc::new(RwLock::new(HashMap::new())),
             audit_logs: Arc::new(RwLock::new(Vec::new())),
@@ -310,6 +314,7 @@ struct GuildRecord {
 #[derive(Debug, Clone)]
 struct ChannelRecord {
     messages: Vec<MessageRecord>,
+    role_overrides: HashMap<Role, ChannelPermissionOverwrite>,
 }
 
 #[derive(Debug, Clone)]
@@ -319,6 +324,7 @@ struct MessageRecord {
     content: String,
     markdown_tokens: Vec<MarkdownToken>,
     created_at_unix: i64,
+    reactions: HashMap<String, HashSet<UserId>>,
 }
 
 #[derive(Debug, Clone)]
@@ -341,6 +347,12 @@ struct AuthContext {
 enum ConnectionControl {
     Open,
     Close,
+}
+
+#[derive(Debug, Clone)]
+struct ConnectionPresence {
+    user_id: UserId,
+    guild_ids: HashSet<String>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -431,6 +443,33 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
             .await?;
 
             sqlx::query(
+                "CREATE TABLE IF NOT EXISTS channel_role_overrides (
+                    guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+                    channel_id TEXT NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
+                    role SMALLINT NOT NULL,
+                    allow_mask BIGINT NOT NULL,
+                    deny_mask BIGINT NOT NULL,
+                    PRIMARY KEY(guild_id, channel_id, role)
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS message_reactions (
+                    guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+                    channel_id TEXT NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
+                    message_id TEXT NOT NULL REFERENCES messages(message_id) ON DELETE CASCADE,
+                    emoji TEXT NOT NULL,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    created_at_unix BIGINT NOT NULL,
+                    PRIMARY KEY(guild_id, channel_id, message_id, emoji, user_id)
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
                 "CREATE TABLE IF NOT EXISTS attachments (
                     attachment_id TEXT PRIMARY KEY,
                     guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
@@ -515,6 +554,23 @@ fn role_from_i16(value: i16) -> Option<Role> {
     }
 }
 
+fn permission_set_to_i64(value: PermissionSet) -> Result<i64, AuthFailure> {
+    i64::try_from(value.bits()).map_err(|_| AuthFailure::Internal)
+}
+
+fn permission_set_from_i64(value: i64) -> Result<PermissionSet, AuthFailure> {
+    let bits = u64::try_from(value).map_err(|_| AuthFailure::Internal)?;
+    Ok(PermissionSet::from_bits(bits))
+}
+
+fn permission_set_from_list(values: &[Permission]) -> PermissionSet {
+    let mut set = PermissionSet::empty();
+    for permission in values {
+        set.insert(*permission);
+    }
+    set
+}
+
 /// Build the axum router with global security middleware.
 ///
 /// # Errors
@@ -551,12 +607,20 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route("/guilds", post(create_guild))
         .route("/guilds/{guild_id}/channels", post(create_channel))
         .route(
+            "/guilds/{guild_id}/channels/{channel_id}/overrides/{role}",
+            post(set_channel_role_override),
+        )
+        .route(
             "/guilds/{guild_id}/channels/{channel_id}/messages",
             post(create_message).get(get_messages),
         )
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}",
             patch(edit_message).delete(delete_message),
+        )
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}",
+            post(add_reaction).delete(remove_reaction),
         )
         .route("/guilds/{guild_id}/search", get(search_messages))
         .route(
@@ -570,6 +634,10 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}",
             get(download_attachment).delete(delete_attachment),
+        )
+        .route(
+            "/guilds/{guild_id}/members/{user_id}",
+            post(add_member).patch(update_member_role),
         )
         .route(
             "/guilds/{guild_id}/members/{user_id}/kick",
@@ -716,6 +784,19 @@ struct EditMessageRequest {
     content: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateMemberRoleRequest {
+    role: Role,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateChannelRoleOverrideRequest {
+    allow: Vec<Permission>,
+    deny: Vec<Permission>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 struct MessageResponse {
     message_id: String,
@@ -725,6 +806,12 @@ struct MessageResponse {
     content: String,
     markdown_tokens: Vec<MarkdownToken>,
     created_at_unix: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct ReactionResponse {
+    emoji: String,
+    count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -787,6 +874,21 @@ struct AttachmentPath {
 struct MemberPath {
     guild_id: String,
     user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelRolePath {
+    guild_id: String,
+    channel_id: String,
+    role: Role,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReactionPath {
+    guild_id: String,
+    channel_id: String,
+    message_id: String,
+    emoji: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1434,6 +1536,7 @@ async fn create_channel(
         channel_id.clone(),
         ChannelRecord {
             messages: Vec::new(),
+            role_overrides: HashMap::new(),
         },
     );
 
@@ -1474,24 +1577,13 @@ async fn get_messages(
     if limit == 0 || limit > MAX_HISTORY_LIMIT {
         return Err(AuthFailure::InvalidRequest);
     }
+    let (_, permissions) =
+        channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
+    if !permissions.contains(Permission::CreateMessage) {
+        return Err(AuthFailure::Forbidden);
+    }
 
     if let Some(pool) = &state.db_pool {
-        let role_row =
-            sqlx::query("SELECT role FROM guild_members WHERE guild_id = $1 AND user_id = $2")
-                .bind(&path.guild_id)
-                .bind(auth.user_id.to_string())
-                .fetch_optional(pool)
-                .await
-                .map_err(|_| AuthFailure::Internal)?;
-        let role_row = role_row.ok_or(AuthFailure::Forbidden)?;
-        let role_value: i16 = role_row
-            .try_get("role")
-            .map_err(|_| AuthFailure::Internal)?;
-        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
-        if !has_permission(role, Permission::CreateMessage) {
-            return Err(AuthFailure::Forbidden);
-        }
-
         let limit_i64 = i64::try_from(limit).map_err(|_| AuthFailure::InvalidRequest)?;
         let rows = sqlx::query(
             "SELECT message_id, author_id, content, created_at_unix
@@ -1539,14 +1631,6 @@ async fn get_messages(
 
     let guilds = state.guilds.read().await;
     let guild = guilds.get(&path.guild_id).ok_or(AuthFailure::NotFound)?;
-    let role = guild
-        .members
-        .get(&auth.user_id)
-        .copied()
-        .ok_or(AuthFailure::Forbidden)?;
-    if !has_permission(role, Permission::CreateMessage) {
-        return Err(AuthFailure::Forbidden);
-    }
     let channel = guild
         .channels
         .get(&path.channel_id)
@@ -1682,15 +1766,15 @@ async fn edit_message(
     let auth = authenticate(&state, &headers).await?;
     validate_message_content(&payload.content)?;
     let markdown_tokens = tokenize_markdown(&payload.content);
+    let (_, permissions) =
+        channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
 
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query(
-            "SELECT m.author_id, gm.role
+            "SELECT m.author_id
              FROM messages m
-             JOIN guild_members gm ON gm.guild_id = m.guild_id AND gm.user_id = $1
-             WHERE m.guild_id = $2 AND m.channel_id = $3 AND m.message_id = $4",
+             WHERE m.guild_id = $1 AND m.channel_id = $2 AND m.message_id = $3",
         )
-        .bind(auth.user_id.to_string())
         .bind(&path.guild_id)
         .bind(&path.channel_id)
         .bind(&path.message_id)
@@ -1701,9 +1785,7 @@ async fn edit_message(
         let author_id: String = row
             .try_get("author_id")
             .map_err(|_| AuthFailure::Internal)?;
-        let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
-        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
-        if author_id != auth.user_id.to_string() && !has_permission(role, Permission::DeleteMessage)
+        if author_id != auth.user_id.to_string() && !permissions.contains(Permission::DeleteMessage)
         {
             return Err(AuthFailure::Forbidden);
         }
@@ -1753,11 +1835,6 @@ async fn edit_message(
     let guild = guilds
         .get_mut(&path.guild_id)
         .ok_or(AuthFailure::NotFound)?;
-    let role = guild
-        .members
-        .get(&auth.user_id)
-        .copied()
-        .ok_or(AuthFailure::Forbidden)?;
     let channel = guild
         .channels
         .get_mut(&path.channel_id)
@@ -1767,7 +1844,7 @@ async fn edit_message(
         .iter_mut()
         .find(|message| message.id == path.message_id)
         .ok_or(AuthFailure::NotFound)?;
-    if message.author_id != auth.user_id && !has_permission(role, Permission::DeleteMessage) {
+    if message.author_id != auth.user_id && !permissions.contains(Permission::DeleteMessage) {
         return Err(AuthFailure::Forbidden);
     }
     message.content.clone_from(&payload.content);
@@ -1798,15 +1875,15 @@ async fn delete_message(
 ) -> Result<StatusCode, AuthFailure> {
     ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
+    let (_, permissions) =
+        channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
 
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query(
-            "SELECT m.author_id, gm.role
+            "SELECT m.author_id
              FROM messages m
-             JOIN guild_members gm ON gm.guild_id = m.guild_id AND gm.user_id = $1
-             WHERE m.guild_id = $2 AND m.channel_id = $3 AND m.message_id = $4",
+             WHERE m.guild_id = $1 AND m.channel_id = $2 AND m.message_id = $3",
         )
-        .bind(auth.user_id.to_string())
         .bind(&path.guild_id)
         .bind(&path.channel_id)
         .bind(&path.message_id)
@@ -1817,9 +1894,7 @@ async fn delete_message(
         let author_id: String = row
             .try_get("author_id")
             .map_err(|_| AuthFailure::Internal)?;
-        let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
-        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
-        if author_id != auth.user_id.to_string() && !has_permission(role, Permission::DeleteMessage)
+        if author_id != auth.user_id.to_string() && !permissions.contains(Permission::DeleteMessage)
         {
             return Err(AuthFailure::Forbidden);
         }
@@ -1861,11 +1936,6 @@ async fn delete_message(
     let guild = guilds
         .get_mut(&path.guild_id)
         .ok_or(AuthFailure::NotFound)?;
-    let role = guild
-        .members
-        .get(&auth.user_id)
-        .copied()
-        .ok_or(AuthFailure::Forbidden)?;
     let channel = guild
         .channels
         .get_mut(&path.channel_id)
@@ -1878,7 +1948,7 @@ async fn delete_message(
         return Err(AuthFailure::NotFound);
     };
     let author_id = channel.messages[index].author_id;
-    if author_id != auth.user_id && !has_permission(role, Permission::DeleteMessage) {
+    if author_id != auth.user_id && !permissions.contains(Permission::DeleteMessage) {
         return Err(AuthFailure::Forbidden);
     }
     channel.messages.remove(index);
@@ -2111,6 +2181,339 @@ async fn delete_attachment(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn add_member(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<MemberPath>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    if !has_permission(actor_role, Permission::ManageRoles) {
+        return Err(AuthFailure::Forbidden);
+    }
+    let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+
+    if let Some(pool) = &state.db_pool {
+        let banned = sqlx::query("SELECT 1 FROM guild_bans WHERE guild_id = $1 AND user_id = $2")
+            .bind(&path.guild_id)
+            .bind(target_user_id.to_string())
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        if banned.is_some() {
+            return Err(AuthFailure::Forbidden);
+        }
+
+        sqlx::query(
+            "INSERT INTO guild_members (guild_id, user_id, role)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (guild_id, user_id) DO NOTHING",
+        )
+        .bind(&path.guild_id)
+        .bind(target_user_id.to_string())
+        .bind(role_to_i16(Role::Member))
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            if matches!(e, sqlx::Error::Database(_)) {
+                AuthFailure::NotFound
+            } else {
+                AuthFailure::Internal
+            }
+        })?;
+    } else {
+        let mut guilds = state.guilds.write().await;
+        let guild = guilds
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        if guild.banned_members.contains(&target_user_id) {
+            return Err(AuthFailure::Forbidden);
+        }
+        guild.members.entry(target_user_id).or_insert(Role::Member);
+    }
+
+    Ok(Json(ModerationResponse { accepted: true }))
+}
+
+async fn update_member_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<MemberPath>,
+    Json(payload): Json<UpdateMemberRoleRequest>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let target_role = member_role_in_guild(&state, target_user_id, &path.guild_id).await?;
+
+    if !can_assign_role(actor_role, target_role, payload.role) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let result =
+            sqlx::query("UPDATE guild_members SET role = $3 WHERE guild_id = $1 AND user_id = $2")
+                .bind(&path.guild_id)
+                .bind(target_user_id.to_string())
+                .bind(role_to_i16(payload.role))
+                .execute(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        if result.rows_affected() == 0 {
+            return Err(AuthFailure::NotFound);
+        }
+    } else {
+        let mut guilds = state.guilds.write().await;
+        let guild = guilds
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        let Some(role) = guild.members.get_mut(&target_user_id) else {
+            return Err(AuthFailure::NotFound);
+        };
+        *role = payload.role;
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        Some(target_user_id),
+        "member.role.update",
+        serde_json::json!({"role": payload.role}),
+    )
+    .await?;
+    Ok(Json(ModerationResponse { accepted: true }))
+}
+
+async fn set_channel_role_override(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<ChannelRolePath>,
+    Json(payload): Json<UpdateChannelRoleOverrideRequest>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    if !has_permission(actor_role, Permission::ManageChannelOverrides) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let allow = permission_set_from_list(&payload.allow);
+    let deny = permission_set_from_list(&payload.deny);
+    if allow.bits() & deny.bits() != 0 {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let result = sqlx::query(
+            "INSERT INTO channel_role_overrides (guild_id, channel_id, role, allow_mask, deny_mask)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (guild_id, channel_id, role)
+             DO UPDATE SET allow_mask = EXCLUDED.allow_mask, deny_mask = EXCLUDED.deny_mask",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(role_to_i16(path.role))
+        .bind(permission_set_to_i64(allow)?)
+        .bind(permission_set_to_i64(deny)?)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            if matches!(e, sqlx::Error::Database(_)) {
+                AuthFailure::NotFound
+            } else {
+                AuthFailure::Internal
+            }
+        })?;
+        if result.rows_affected() == 0 {
+            return Err(AuthFailure::NotFound);
+        }
+    } else {
+        let mut guilds = state.guilds.write().await;
+        let guild = guilds
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        let channel = guild
+            .channels
+            .get_mut(&path.channel_id)
+            .ok_or(AuthFailure::NotFound)?;
+        channel
+            .role_overrides
+            .insert(path.role, ChannelPermissionOverwrite { allow, deny });
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        None,
+        "channel.override.update",
+        serde_json::json!({
+            "channel_id": path.channel_id,
+            "role": path.role,
+            "allow_bits": allow.bits(),
+            "deny_bits": deny.bits(),
+        }),
+    )
+    .await?;
+    Ok(Json(ModerationResponse { accepted: true }))
+}
+
+async fn add_reaction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<ReactionPath>,
+) -> Result<Json<ReactionResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    validate_reaction_emoji(&path.emoji)?;
+    if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        sqlx::query(
+            "INSERT INTO message_reactions (guild_id, channel_id, message_id, emoji, user_id, created_at_unix)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (guild_id, channel_id, message_id, emoji, user_id) DO NOTHING",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(&path.message_id)
+        .bind(&path.emoji)
+        .bind(auth.user_id.to_string())
+        .bind(now_unix())
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            if matches!(e, sqlx::Error::Database(_)) {
+                AuthFailure::NotFound
+            } else {
+                AuthFailure::Internal
+            }
+        })?;
+
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS count
+             FROM message_reactions
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = $3 AND emoji = $4",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(&path.message_id)
+        .bind(&path.emoji)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let count: i64 = row.try_get("count").map_err(|_| AuthFailure::Internal)?;
+        let count = usize::try_from(count).map_err(|_| AuthFailure::Internal)?;
+        return Ok(Json(ReactionResponse {
+            emoji: path.emoji,
+            count,
+        }));
+    }
+
+    let mut guilds = state.guilds.write().await;
+    let guild = guilds
+        .get_mut(&path.guild_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let channel = guild
+        .channels
+        .get_mut(&path.channel_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let message = channel
+        .messages
+        .iter_mut()
+        .find(|message| message.id == path.message_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let users = message.reactions.entry(path.emoji.clone()).or_default();
+    users.insert(auth.user_id);
+
+    Ok(Json(ReactionResponse {
+        emoji: path.emoji,
+        count: users.len(),
+    }))
+}
+
+async fn remove_reaction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<ReactionPath>,
+) -> Result<Json<ReactionResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    validate_reaction_emoji(&path.emoji)?;
+    if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        sqlx::query(
+            "DELETE FROM message_reactions
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = $3 AND emoji = $4 AND user_id = $5",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(&path.message_id)
+        .bind(&path.emoji)
+        .bind(auth.user_id.to_string())
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS count
+             FROM message_reactions
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = $3 AND emoji = $4",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(&path.message_id)
+        .bind(&path.emoji)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let count: i64 = row.try_get("count").map_err(|_| AuthFailure::Internal)?;
+        let count = usize::try_from(count).map_err(|_| AuthFailure::Internal)?;
+        return Ok(Json(ReactionResponse {
+            emoji: path.emoji,
+            count,
+        }));
+    }
+
+    let mut guilds = state.guilds.write().await;
+    let guild = guilds
+        .get_mut(&path.guild_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let channel = guild
+        .channels
+        .get_mut(&path.channel_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let message = channel
+        .messages
+        .iter_mut()
+        .find(|message| message.id == path.message_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let count = if let Some(users) = message.reactions.get_mut(&path.emoji) {
+        users.remove(&auth.user_id);
+        if users.is_empty() {
+            message.reactions.remove(&path.emoji);
+            0
+        } else {
+            users.len()
+        }
+    } else {
+        0
+    };
+
+    Ok(Json(ReactionResponse {
+        emoji: path.emoji,
+        count,
+    }))
+}
+
 async fn kick_member(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2123,6 +2526,10 @@ async fn kick_member(
         return Err(AuthFailure::Forbidden);
     }
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let target_role = member_role_in_guild(&state, target_user_id, &path.guild_id).await?;
+    if !can_moderate_member(actor_role, target_role) {
+        return Err(AuthFailure::Forbidden);
+    }
 
     if let Some(pool) = &state.db_pool {
         let deleted = sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
@@ -2168,6 +2575,11 @@ async fn ban_member(
         return Err(AuthFailure::Forbidden);
     }
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    if let Ok(target_role) = member_role_in_guild(&state, target_user_id, &path.guild_id).await {
+        if !can_moderate_member(actor_role, target_role) {
+            return Err(AuthFailure::Forbidden);
+        }
+    }
 
     if let Some(pool) = &state.db_pool {
         let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
@@ -2241,6 +2653,13 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
         .write()
         .await
         .insert(connection_id, control_tx);
+    state.connection_presence.write().await.insert(
+        connection_id,
+        ConnectionPresence {
+            user_id: auth.user_id,
+            guild_ids: HashSet::new(),
+        },
+    );
 
     let ready_payload = outbound_event(
         "ready",
@@ -2334,6 +2753,14 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
                     outbound_tx.clone(),
                 )
                 .await;
+                handle_presence_subscribe(
+                    &state,
+                    connection_id,
+                    auth.user_id,
+                    &subscribe.guild_id,
+                    &outbound_tx,
+                )
+                .await;
 
                 let subscribed = outbound_event(
                     "subscribed",
@@ -2381,30 +2808,14 @@ async fn create_message_internal(
 ) -> Result<MessageResponse, AuthFailure> {
     validate_message_content(&content)?;
     let markdown_tokens = tokenize_markdown(&content);
+    let (_, permissions) =
+        channel_permission_snapshot(state, auth.user_id, guild_id, channel_id).await?;
+    if !permissions.contains(Permission::CreateMessage) {
+        return Err(AuthFailure::Forbidden);
+    }
 
     if let Some(pool) = &state.db_pool {
         ensure_db_schema(state).await?;
-        let role_row = sqlx::query(
-            "SELECT gm.role
-             FROM guild_members gm
-             JOIN channels c ON c.guild_id = gm.guild_id
-             WHERE gm.guild_id = $1 AND gm.user_id = $2 AND c.channel_id = $3",
-        )
-        .bind(guild_id)
-        .bind(auth.user_id.to_string())
-        .bind(channel_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-        let role_row = role_row.ok_or(AuthFailure::Forbidden)?;
-        let role_value: i16 = role_row
-            .try_get("role")
-            .map_err(|_| AuthFailure::Internal)?;
-        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
-        if !has_permission(role, Permission::CreateMessage) {
-            return Err(AuthFailure::Forbidden);
-        }
-
         let message_id = Ulid::new().to_string();
         let created_at_unix = now_unix();
         sqlx::query(
@@ -2462,14 +2873,6 @@ async fn create_message_internal(
 
     let mut guilds = state.guilds.write().await;
     let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
-    let role = guild
-        .members
-        .get(&auth.user_id)
-        .copied()
-        .ok_or(AuthFailure::Forbidden)?;
-    if !has_permission(role, Permission::CreateMessage) {
-        return Err(AuthFailure::Forbidden);
-    }
     let channel = guild
         .channels
         .get_mut(channel_id)
@@ -2482,6 +2885,7 @@ async fn create_message_internal(
         content,
         markdown_tokens: markdown_tokens.clone(),
         created_at_unix: now_unix(),
+        reactions: HashMap::new(),
     };
     channel.messages.push(record.clone());
     drop(guilds);
@@ -3164,6 +3568,91 @@ async fn broadcast_channel_event(state: &AppState, key: &str, payload: String) {
     }
 }
 
+async fn broadcast_guild_event(state: &AppState, guild_id: &str, payload: String) {
+    let mut slow_connections = Vec::new();
+    let mut seen_connections = HashSet::new();
+    let mut subscriptions = state.subscriptions.write().await;
+    for (key, listeners) in subscriptions.iter_mut() {
+        if !key.starts_with(guild_id) || !key[guild_id.len()..].starts_with(':') {
+            continue;
+        }
+        listeners.retain(|connection_id, sender| {
+            if !seen_connections.insert(*connection_id) {
+                return true;
+            }
+            match sender.try_send(payload.clone()) {
+                Ok(()) => true,
+                Err(mpsc::error::TrySendError::Closed(_)) => false,
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    slow_connections.push(*connection_id);
+                    false
+                }
+            }
+        });
+    }
+    subscriptions.retain(|_, listeners| !listeners.is_empty());
+    drop(subscriptions);
+
+    if !slow_connections.is_empty() {
+        let controls = state.connection_controls.read().await;
+        for connection_id in slow_connections {
+            if let Some(control) = controls.get(&connection_id) {
+                let _ = control.send(ConnectionControl::Close);
+            }
+        }
+    }
+}
+
+async fn handle_presence_subscribe(
+    state: &AppState,
+    connection_id: Uuid,
+    user_id: UserId,
+    guild_id: &str,
+    outbound_tx: &mpsc::Sender<String>,
+) {
+    let (snapshot_user_ids, became_online) = {
+        let mut presence = state.connection_presence.write().await;
+        let guild = guild_id.to_owned();
+        let Some(existing) = presence.get(&connection_id) else {
+            return;
+        };
+        let already_subscribed = existing.guild_ids.contains(&guild);
+        let was_online = presence
+            .values()
+            .any(|entry| entry.user_id == user_id && entry.guild_ids.contains(&guild));
+        if let Some(connection) = presence.get_mut(&connection_id) {
+            connection.guild_ids.insert(guild.clone());
+        }
+        let snapshot = presence
+            .values()
+            .filter(|entry| entry.guild_ids.contains(&guild))
+            .map(|entry| entry.user_id.to_string())
+            .collect::<HashSet<_>>();
+        (snapshot, !was_online && !already_subscribed)
+    };
+
+    let snapshot_event = outbound_event(
+        "presence_sync",
+        serde_json::json!({
+            "guild_id": guild_id,
+            "user_ids": snapshot_user_ids,
+        }),
+    );
+    let _ = outbound_tx.try_send(snapshot_event);
+
+    if became_online {
+        let update = outbound_event(
+            "presence_update",
+            serde_json::json!({
+                "guild_id": guild_id,
+                "user_id": user_id.to_string(),
+                "status": "online",
+            }),
+        );
+        broadcast_guild_event(state, guild_id, update).await;
+    }
+}
+
 async fn add_subscription(
     state: &AppState,
     connection_id: Uuid,
@@ -3178,6 +3667,11 @@ async fn add_subscription(
 }
 
 async fn remove_connection(state: &AppState, connection_id: Uuid) {
+    let removed_presence = state
+        .connection_presence
+        .write()
+        .await
+        .remove(&connection_id);
     state
         .connection_controls
         .write()
@@ -3189,6 +3683,33 @@ async fn remove_connection(state: &AppState, connection_id: Uuid) {
         listeners.remove(&connection_id);
         !listeners.is_empty()
     });
+
+    let Some(removed_presence) = removed_presence else {
+        return;
+    };
+    let remaining = state.connection_presence.read().await;
+    let mut offline_guilds = Vec::new();
+    for guild_id in &removed_presence.guild_ids {
+        let still_online = remaining.values().any(|entry| {
+            entry.user_id == removed_presence.user_id && entry.guild_ids.contains(guild_id)
+        });
+        if !still_online {
+            offline_guilds.push(guild_id.clone());
+        }
+    }
+    drop(remaining);
+
+    for guild_id in offline_guilds {
+        let update = outbound_event(
+            "presence_update",
+            serde_json::json!({
+                "guild_id": guild_id,
+                "user_id": removed_presence.user_id.to_string(),
+                "status": "offline",
+            }),
+        );
+        broadcast_guild_event(state, &guild_id, update).await;
+    }
 }
 
 fn allow_gateway_ingress(ingress: &mut VecDeque<Instant>, limit: u32, window: Duration) -> bool {
@@ -3214,25 +3735,40 @@ async fn user_can_write_channel(
     guild_id: &str,
     channel_id: &str,
 ) -> bool {
+    channel_permission_snapshot(state, user_id, guild_id, channel_id)
+        .await
+        .ok()
+        .is_some_and(|(_, permissions)| permissions.contains(Permission::CreateMessage))
+}
+
+async fn channel_permission_snapshot(
+    state: &AppState,
+    user_id: UserId,
+    guild_id: &str,
+    channel_id: &str,
+) -> Result<(Role, PermissionSet), AuthFailure> {
     if let Some(pool) = &state.db_pool {
         if ensure_db_schema(state).await.is_err() {
-            return false;
+            return Err(AuthFailure::Internal);
         }
         let banned = sqlx::query("SELECT 1 FROM guild_bans WHERE guild_id = $1 AND user_id = $2")
             .bind(guild_id)
             .bind(user_id.to_string())
             .fetch_optional(pool)
             .await
-            .ok()
-            .flatten()
+            .map_err(|_| AuthFailure::Internal)?
             .is_some();
         if banned {
-            return false;
+            return Err(AuthFailure::Forbidden);
         }
         let row = sqlx::query(
-            "SELECT gm.role
+            "SELECT gm.role, co.allow_mask, co.deny_mask
              FROM guild_members gm
-             JOIN channels c ON c.guild_id = gm.guild_id
+             JOIN channels c ON c.guild_id = gm.guild_id AND c.channel_id = $3
+             LEFT JOIN channel_role_overrides co
+               ON co.guild_id = gm.guild_id
+              AND co.channel_id = c.channel_id
+              AND co.role = gm.role
              WHERE gm.guild_id = $1 AND gm.user_id = $2 AND c.channel_id = $3",
         )
         .bind(guild_id)
@@ -3240,29 +3776,47 @@ async fn user_can_write_channel(
         .bind(channel_id)
         .fetch_optional(pool)
         .await
-        .ok()
-        .flatten();
+        .map_err(|_| AuthFailure::Internal)?;
         let Some(row) = row else {
-            return false;
+            return Err(AuthFailure::Forbidden);
         };
-        let role = row.try_get::<i16, _>("role").ok().and_then(role_from_i16);
-        return role.is_some_and(|value| has_permission(value, Permission::CreateMessage));
+        let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
+        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
+        let allow_mask = row.try_get::<Option<i64>, _>("allow_mask").ok().flatten();
+        let deny_mask = row.try_get::<Option<i64>, _>("deny_mask").ok().flatten();
+        let overwrite = if let (Some(allow), Some(deny)) = (allow_mask, deny_mask) {
+            Some(ChannelPermissionOverwrite {
+                allow: permission_set_from_i64(allow)?,
+                deny: permission_set_from_i64(deny)?,
+            })
+        } else {
+            None
+        };
+        return Ok((
+            role,
+            apply_channel_overwrite(base_permissions(role), overwrite),
+        ));
     }
 
     let guilds = state.guilds.read().await;
     let Some(guild) = guilds.get(guild_id) else {
-        return false;
+        return Err(AuthFailure::NotFound);
     };
     let Some(role) = guild.members.get(&user_id).copied() else {
-        return false;
+        return Err(AuthFailure::Forbidden);
     };
     if guild.banned_members.contains(&user_id) {
-        return false;
+        return Err(AuthFailure::Forbidden);
     }
-    if !guild.channels.contains_key(channel_id) {
-        return false;
-    }
-    has_permission(role, Permission::CreateMessage)
+    let channel = guild
+        .channels
+        .get(channel_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let overwrite = channel.role_overrides.get(&role).copied();
+    Ok((
+        role,
+        apply_channel_overwrite(base_permissions(role), overwrite),
+    ))
 }
 
 async fn user_role_in_guild(
@@ -3303,6 +3857,33 @@ async fn user_role_in_guild(
         .get(&user_id)
         .copied()
         .ok_or(AuthFailure::Forbidden)
+}
+
+async fn member_role_in_guild(
+    state: &AppState,
+    user_id: UserId,
+    guild_id: &str,
+) -> Result<Role, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let row =
+            sqlx::query("SELECT role FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+                .bind(guild_id)
+                .bind(user_id.to_string())
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        let row = row.ok_or(AuthFailure::NotFound)?;
+        let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
+        return role_from_i16(role_value).ok_or(AuthFailure::Forbidden);
+    }
+
+    let guilds = state.guilds.read().await;
+    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+    guild
+        .members
+        .get(&user_id)
+        .copied()
+        .ok_or(AuthFailure::NotFound)
 }
 
 async fn attachment_usage_for_user(state: &AppState, user_id: UserId) -> Result<u64, AuthFailure> {
@@ -3383,6 +3964,16 @@ fn validate_attachment_filename(value: String) -> Result<String, AuthFailure> {
         return Err(AuthFailure::InvalidRequest);
     }
     Ok(value)
+}
+
+fn validate_reaction_emoji(value: &str) -> Result<(), AuthFailure> {
+    if value.is_empty() || value.chars().count() > MAX_REACTION_EMOJI_CHARS {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if value.chars().any(char::is_whitespace) {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(())
 }
 
 async fn write_audit_log(
@@ -4023,6 +4614,7 @@ mod tests {
             channel_id.clone(),
             super::ChannelRecord {
                 messages: Vec::new(),
+                role_overrides: HashMap::new(),
             },
         );
         state.guilds.write().await.insert(guild_id.clone(), guild);
