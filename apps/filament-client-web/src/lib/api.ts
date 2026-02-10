@@ -138,6 +138,7 @@ async function sendRequest(input: {
   accessToken?: AccessToken;
   headers?: Record<string, string>;
   body?: BodyInit;
+  timeoutMs?: number;
 }): Promise<Response> {
   const config = apiConfig();
   const headers: Record<string, string> = { ...(input.headers ?? {}) };
@@ -154,7 +155,7 @@ async function sendRequest(input: {
         body: input.body,
         credentials: "omit",
       },
-      REQUEST_TIMEOUT_MS,
+      input.timeoutMs ?? REQUEST_TIMEOUT_MS,
     );
   } catch {
     throw new ApiError(0, "network_error", "Unable to reach Filament API.");
@@ -232,18 +233,21 @@ async function requestJsonWithBody(request: BodyRequest): Promise<unknown> {
 async function requestBinary(input: {
   path: string;
   accessToken: AccessToken;
+  timeoutMs?: number;
+  maxBytes?: number;
 }): Promise<{ bytes: Uint8Array; mimeType: string | null }> {
   const response = await sendRequest({
     method: "GET",
     path: input.path,
     accessToken: input.accessToken,
+    timeoutMs: input.timeoutMs,
   });
   if (!response.ok) {
     const data = await readBoundedJson(response);
     throw new ApiError(response.status, readApiError(data), readApiError(data));
   }
   const arrayBuffer = await response.arrayBuffer();
-  if (arrayBuffer.byteLength > MAX_ATTACHMENT_DOWNLOAD_BYTES) {
+  if (arrayBuffer.byteLength > (input.maxBytes ?? MAX_ATTACHMENT_DOWNLOAD_BYTES)) {
     throw new ApiError(response.status, "oversized_response", "Attachment response too large.");
   }
   return {
@@ -571,15 +575,34 @@ export async function createChannelMessage(
   session: AuthSession,
   guildId: GuildId,
   channelId: ChannelId,
-  input: { content: MessageContent },
+  input: { content: MessageContent; attachmentIds?: AttachmentId[] },
 ): Promise<MessageRecord> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/channels/${channelId}/messages`,
-    accessToken: session.accessToken,
-    body: { content: input.content },
-  });
-  return messageFromResponse(dto);
+  try {
+    const dto = await requestJson({
+      method: "POST",
+      path: `/guilds/${guildId}/channels/${channelId}/messages`,
+      accessToken: session.accessToken,
+      body: {
+        content: input.content,
+        attachment_ids: input.attachmentIds,
+      },
+    });
+    return messageFromResponse(dto);
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      error.code === "invalid_json" &&
+      input.attachmentIds &&
+      input.attachmentIds.length > 0
+    ) {
+      throw new ApiError(
+        400,
+        "protocol_mismatch",
+        "Server does not support attachment_ids on message create.",
+      );
+    }
+    throw error;
+  }
 }
 
 export async function editChannelMessage(
@@ -720,6 +743,20 @@ export async function downloadChannelAttachment(
   return requestBinary({
     path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
     accessToken: session.accessToken,
+  });
+}
+
+export async function downloadChannelAttachmentPreview(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  attachmentId: AttachmentId,
+): Promise<{ bytes: Uint8Array; mimeType: string | null }> {
+  return requestBinary({
+    path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
+    accessToken: session.accessToken,
+    timeoutMs: 2_500,
+    maxBytes: 12 * 1024 * 1024,
   });
 }
 

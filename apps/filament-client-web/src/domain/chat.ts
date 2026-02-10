@@ -157,8 +157,8 @@ export function channelNameFromInput(input: string): ChannelName {
 }
 
 export function messageContentFromInput(input: string): MessageContent {
-  if (input.length < 1 || input.length > 2000) {
-    throw new DomainValidationError("Message content must be 1-2000 characters.");
+  if (input.length > 2000) {
+    throw new DomainValidationError("Message content must be 0-2000 characters.");
   }
   return input as MessageContent;
 }
@@ -290,6 +290,7 @@ export interface MessageRecord {
   authorId: UserId;
   content: MessageContent;
   markdownTokens: MarkdownToken[];
+  attachments: AttachmentRecord[];
   createdAtUnix: number;
 }
 
@@ -403,6 +404,18 @@ export function userLookupListFromResponse(dto: unknown): UserLookupRecord[] {
 
 export function messageFromResponse(dto: unknown): MessageRecord {
   const data = requireObject(dto, "message");
+  const attachmentsDto = data.attachments;
+  const attachments =
+    typeof attachmentsDto === "undefined"
+      ? []
+      : Array.isArray(attachmentsDto)
+        ? attachmentsDto.map((entry) => attachmentFromResponse(entry))
+        : (() => {
+            throw new DomainValidationError("attachments must be an array.");
+          })();
+  if (attachments.length > 5) {
+    throw new DomainValidationError("attachments exceeds per-message cap.");
+  }
   return {
     messageId: messageIdFromInput(requireString(data.message_id, "message_id")),
     guildId: guildIdFromInput(requireString(data.guild_id, "guild_id")),
@@ -410,6 +423,7 @@ export function messageFromResponse(dto: unknown): MessageRecord {
     authorId: userIdFromInput(requireString(data.author_id, "author_id")),
     content: messageContentFromInput(requireString(data.content, "content")),
     markdownTokens: markdownTokensFromResponse(data.markdown_tokens),
+    attachments,
     createdAtUnix: requirePositiveInteger(data.created_at_unix, "created_at_unix"),
   };
 }

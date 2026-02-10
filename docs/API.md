@@ -187,9 +187,12 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
 ### Messages
 - `POST /guilds/{guild_id}/channels/{channel_id}/messages`
   - Auth required, `create_message` permission
-  - Request: `{ "content": "..." }`
+  - Request: `{ "content": "...", "attachment_ids": ["<attachment_id>", ...] }`
+  - `content` may be empty only when `attachment_ids` is non-empty
+  - `attachment_ids` optional, max `5`, deduped server-side
+  - each attachment must belong to requester, match guild/channel, and be unclaimed
   - Response `200`:
-    - `{ "message_id", "guild_id", "channel_id", "author_id", "content", "markdown_tokens", "created_at_unix" }`
+    - `{ "message_id", "guild_id", "channel_id", "author_id", "content", "markdown_tokens", "attachments", "created_at_unix" }`
 - `GET /guilds/{guild_id}/channels/{channel_id}/messages?limit=<n>&before=<message_id>`
   - Auth required, `create_message` permission
   - `limit` default `20`, max `100`
@@ -216,6 +219,8 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
 - `text { text }`
 - `code { code }`
 - `soft_break`, `hard_break`
+
+`attachments` contains zero or more attachment records linked to this message.
 
 ### Reactions
 - `POST /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}`

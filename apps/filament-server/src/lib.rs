@@ -23,7 +23,8 @@ use axum::{
         DefaultBodyLimit, Json, Path, Query, State,
     },
     http::{
-        header::AUTHORIZATION, header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, StatusCode,
+        header::AUTHORIZATION, header::CONTENT_LENGTH, header::CONTENT_TYPE, HeaderMap, HeaderName,
+        HeaderValue, StatusCode,
     },
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
@@ -114,6 +115,7 @@ const SEARCH_INDEX_QUEUE_CAPACITY: usize = 1024;
 const MAX_SEARCH_RECONCILE_DOCS: usize = 10_000;
 const MAX_REACTION_EMOJI_CHARS: usize = 32;
 const MAX_USER_LOOKUP_IDS: usize = 64;
+const MAX_ATTACHMENTS_PER_MESSAGE: usize = 5;
 const METRICS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
 static METRICS_STATE: OnceLock<MetricsState> = OnceLock::new();
@@ -425,18 +427,23 @@ struct MessageRecord {
     author_id: UserId,
     content: String,
     markdown_tokens: Vec<MarkdownToken>,
+    attachment_ids: Vec<String>,
     created_at_unix: i64,
     reactions: HashMap<String, HashSet<UserId>>,
 }
 
 #[derive(Debug, Clone)]
 struct AttachmentRecord {
+    attachment_id: String,
     guild_id: String,
     channel_id: String,
     owner_id: UserId,
+    filename: String,
     mime_type: String,
     size_bytes: u64,
+    sha256_hex: String,
     object_key: String,
+    message_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -668,6 +675,19 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
             sqlx::query(
                 "CREATE INDEX IF NOT EXISTS idx_attachments_owner
                     ON attachments(owner_id)",
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            sqlx::query(
+                "ALTER TABLE attachments
+                 ADD COLUMN IF NOT EXISTS message_id TEXT NULL REFERENCES messages(message_id) ON DELETE SET NULL",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_attachments_message
+                    ON attachments(message_id)",
             )
             .execute(&mut *tx)
             .await?;
@@ -1246,6 +1266,7 @@ struct ChannelPermissionsResponse {
 #[serde(deny_unknown_fields)]
 struct CreateMessageRequest {
     content: String,
+    attachment_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1275,6 +1296,7 @@ struct MessageResponse {
     author_id: String,
     content: String,
     markdown_tokens: Vec<MarkdownToken>,
+    attachments: Vec<AttachmentResponse>,
     created_at_unix: i64,
 }
 
@@ -1284,7 +1306,7 @@ struct ReactionResponse {
     count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct AttachmentResponse {
     attachment_id: String,
     guild_id: String,
@@ -1465,6 +1487,7 @@ struct GatewayMessageCreate {
     guild_id: String,
     channel_id: String,
     content: String,
+    attachment_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2990,6 +3013,7 @@ async fn create_message(
         &path.guild_id,
         &path.channel_id,
         payload.content,
+        payload.attachment_ids.unwrap_or_default(),
     )
     .await?;
     Ok(Json(response))
@@ -3068,9 +3092,22 @@ async fn get_messages(
                 author_id,
                 content: content.clone(),
                 markdown_tokens: tokenize_markdown(&content),
+                attachments: Vec::new(),
                 created_at_unix,
             });
         }
+        let message_ids: Vec<String> = messages
+            .iter()
+            .map(|message| message.message_id.clone())
+            .collect();
+        let attachment_map = attachment_map_for_messages_db(
+            pool,
+            &path.guild_id,
+            Some(&path.channel_id),
+            &message_ids,
+        )
+        .await?;
+        attach_message_media(&mut messages, &attachment_map);
         let next_before = messages.last().map(|message| message.message_id.clone());
         return Ok(Json(MessageHistoryResponse {
             messages,
@@ -3107,9 +3144,23 @@ async fn get_messages(
             author_id: message.author_id.to_string(),
             content: message.content.clone(),
             markdown_tokens: message.markdown_tokens.clone(),
+            attachments: Vec::new(),
             created_at_unix: message.created_at_unix,
         });
     }
+
+    let message_ids: Vec<String> = messages
+        .iter()
+        .map(|message| message.message_id.clone())
+        .collect();
+    let attachment_map = attachment_map_for_messages_in_memory(
+        &state,
+        &path.guild_id,
+        Some(&path.channel_id),
+        &message_ids,
+    )
+    .await;
+    attach_message_media(&mut messages, &attachment_map);
 
     let next_before = messages.last().map(|message| message.message_id.clone());
 
@@ -3251,6 +3302,13 @@ async fn edit_message(
         .await
         .map_err(|_| AuthFailure::Internal)?;
 
+        let attachment_map = attachment_map_for_messages_db(
+            pool,
+            &path.guild_id,
+            Some(&path.channel_id),
+            std::slice::from_ref(&path.message_id),
+        )
+        .await?;
         let response = MessageResponse {
             message_id: path.message_id.clone(),
             guild_id: path.guild_id.clone(),
@@ -3258,6 +3316,10 @@ async fn edit_message(
             author_id: author_id.clone(),
             content: payload.content,
             markdown_tokens,
+            attachments: attachment_map
+                .get(&path.message_id)
+                .cloned()
+                .unwrap_or_default(),
             created_at_unix: now_unix(),
         };
         if author_id != auth.user_id.to_string() {
@@ -3306,6 +3368,7 @@ async fn edit_message(
         author_id: message.author_id.to_string(),
         content: message.content.clone(),
         markdown_tokens,
+        attachments: attachments_for_message_in_memory(&state, &message.attachment_ids).await?,
         created_at_unix: message.created_at_unix,
     };
     enqueue_search_operation(
@@ -3317,6 +3380,7 @@ async fn edit_message(
     Ok(Json(response))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn delete_message(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -3348,6 +3412,18 @@ async fn delete_message(
             return Err(AuthFailure::Forbidden);
         }
 
+        let linked_attachment_rows = sqlx::query(
+            "SELECT attachment_id, object_key
+             FROM attachments
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = $3",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(&path.message_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
         sqlx::query(
             "DELETE FROM messages
              WHERE guild_id = $1 AND channel_id = $2 AND message_id = $3",
@@ -3358,6 +3434,25 @@ async fn delete_message(
         .execute(pool)
         .await
         .map_err(|_| AuthFailure::Internal)?;
+        if !linked_attachment_rows.is_empty() {
+            sqlx::query(
+                "DELETE FROM attachments
+                 WHERE guild_id = $1 AND channel_id = $2 AND message_id = $3",
+            )
+            .bind(&path.guild_id)
+            .bind(&path.channel_id)
+            .bind(&path.message_id)
+            .execute(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        }
+        for row in linked_attachment_rows {
+            let object_key: String = row
+                .try_get("object_key")
+                .map_err(|_| AuthFailure::Internal)?;
+            let object_path = ObjectPath::from(object_key);
+            let _ = state.attachment_store.delete(&object_path).await;
+        }
 
         if author_id != auth.user_id.to_string() {
             write_audit_log(
@@ -3400,7 +3495,21 @@ async fn delete_message(
     if author_id != auth.user_id && !permissions.contains(Permission::DeleteMessage) {
         return Err(AuthFailure::Forbidden);
     }
-    channel.messages.remove(index);
+    let removed = channel.messages.remove(index);
+    if !removed.attachment_ids.is_empty() {
+        let mut attachments = state.attachments.write().await;
+        let mut object_keys = Vec::new();
+        for attachment_id in removed.attachment_ids {
+            if let Some(record) = attachments.remove(&attachment_id) {
+                object_keys.push(record.object_key);
+            }
+        }
+        drop(attachments);
+        for object_key in object_keys {
+            let object_path = ObjectPath::from(object_key);
+            let _ = state.attachment_store.delete(&object_path).await;
+        }
+    }
     enqueue_search_operation(
         &state,
         SearchOperation::Delete {
@@ -3553,12 +3662,16 @@ async fn upload_attachment(
         state.attachments.write().await.insert(
             attachment_id.clone(),
             AttachmentRecord {
+                attachment_id: attachment_id.clone(),
                 guild_id: path.guild_id.clone(),
                 channel_id: path.channel_id.clone(),
                 owner_id: auth.user_id,
+                filename: filename.clone(),
                 mime_type: String::from(sniffed_mime),
                 size_bytes: total_size,
+                sha256_hex: sha256_hex.clone(),
                 object_key: object_key.clone(),
+                message_id: None,
             },
         );
     }
@@ -3602,6 +3715,17 @@ async fn download_attachment(
     let content_type =
         HeaderValue::from_str(&record.mime_type).map_err(|_| AuthFailure::Internal)?;
     response.headers_mut().insert(CONTENT_TYPE, content_type);
+    let content_len =
+        HeaderValue::from_str(&record.size_bytes.to_string()).map_err(|_| AuthFailure::Internal)?;
+    response.headers_mut().insert(CONTENT_LENGTH, content_len);
+    response.headers_mut().insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("private, no-store"),
+    );
     Ok(response)
 }
 
@@ -4377,6 +4501,7 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
                     &request.guild_id,
                     &request.channel_id,
                     request.content,
+                    request.attachment_ids.unwrap_or_default(),
                 )
                 .await
                 .is_err()
@@ -4406,9 +4531,21 @@ async fn create_message_internal(
     guild_id: &str,
     channel_id: &str,
     content: String,
+    attachment_ids: Vec<String>,
 ) -> Result<MessageResponse, AuthFailure> {
-    validate_message_content(&content)?;
-    let markdown_tokens = tokenize_markdown(&content);
+    let attachment_ids = parse_attachment_ids(attachment_ids)?;
+    if content.is_empty() {
+        if attachment_ids.is_empty() {
+            return Err(AuthFailure::InvalidRequest);
+        }
+    } else {
+        validate_message_content(&content)?;
+    }
+    let markdown_tokens = if content.is_empty() {
+        Vec::new()
+    } else {
+        tokenize_markdown(&content)
+    };
     let (_, permissions) =
         channel_permission_snapshot(state, auth.user_id, guild_id, channel_id).await?;
     if !permissions.contains(Permission::CreateMessage) {
@@ -4419,6 +4556,7 @@ async fn create_message_internal(
         ensure_db_schema(state).await?;
         let message_id = Ulid::new().to_string();
         let created_at_unix = now_unix();
+        let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
         sqlx::query(
             "INSERT INTO messages (message_id, guild_id, channel_id, author_id, content, created_at_unix)
              VALUES ($1, $2, $3, $4, $5, $6)",
@@ -4429,7 +4567,7 @@ async fn create_message_internal(
         .bind(auth.user_id.to_string())
         .bind(&content)
         .bind(created_at_unix)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             if matches!(e, sqlx::Error::Database(_)) {
@@ -4439,6 +4577,19 @@ async fn create_message_internal(
             }
         })?;
 
+        bind_message_attachments_db(
+            &mut tx,
+            &attachment_ids,
+            &message_id,
+            guild_id,
+            channel_id,
+            auth.user_id,
+        )
+        .await?;
+        let attachments =
+            fetch_attachments_for_message_db(&mut tx, guild_id, channel_id, &message_id).await?;
+        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+
         let response = MessageResponse {
             message_id,
             guild_id: guild_id.to_owned(),
@@ -4446,6 +4597,7 @@ async fn create_message_internal(
             author_id: auth.user_id.to_string(),
             content,
             markdown_tokens,
+            attachments,
             created_at_unix,
         };
 
@@ -4458,6 +4610,7 @@ async fn create_message_internal(
                 "author_id": response.author_id,
                 "content": response.content,
                 "markdown_tokens": response.markdown_tokens,
+                "attachments": response.attachments,
                 "created_at_unix": response.created_at_unix,
             }),
         );
@@ -4485,12 +4638,30 @@ async fn create_message_internal(
         author_id: auth.user_id,
         content,
         markdown_tokens: markdown_tokens.clone(),
+        attachment_ids: attachment_ids.clone(),
         created_at_unix: now_unix(),
         reactions: HashMap::new(),
     };
+    if !attachment_ids.is_empty() {
+        let mut attachments = state.attachments.write().await;
+        for attachment_id in &attachment_ids {
+            let Some(attachment) = attachments.get_mut(attachment_id) else {
+                return Err(AuthFailure::InvalidRequest);
+            };
+            if attachment.guild_id != guild_id
+                || attachment.channel_id != channel_id
+                || attachment.owner_id != auth.user_id
+                || attachment.message_id.is_some()
+            {
+                return Err(AuthFailure::InvalidRequest);
+            }
+            attachment.message_id = Some(message_id.clone());
+        }
+    }
     channel.messages.push(record.clone());
     drop(guilds);
 
+    let attachments = attachments_for_message_in_memory(state, &record.attachment_ids).await?;
     let response = MessageResponse {
         message_id,
         guild_id: guild_id.to_owned(),
@@ -4498,6 +4669,7 @@ async fn create_message_internal(
         author_id: auth.user_id.to_string(),
         content: record.content,
         markdown_tokens: record.markdown_tokens,
+        attachments,
         created_at_unix: record.created_at_unix,
     };
 
@@ -4510,6 +4682,7 @@ async fn create_message_internal(
             "author_id": response.author_id,
             "content": response.content,
             "markdown_tokens": response.markdown_tokens,
+            "attachments": response.attachments,
             "created_at_unix": response.created_at_unix,
         }),
     );
@@ -5073,9 +5246,18 @@ async fn hydrate_messages_by_id(
                     author_id,
                     markdown_tokens: tokenize_markdown(&content),
                     content,
+                    attachments: Vec::new(),
                     created_at_unix,
                 },
             );
+        }
+
+        let message_ids_ordered: Vec<String> = message_ids.to_vec();
+        let attachment_map =
+            attachment_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered)
+                .await?;
+        for (id, message) in &mut by_id {
+            message.attachments = attachment_map.get(id).cloned().unwrap_or_default();
         }
 
         let mut hydrated = Vec::with_capacity(message_ids.len());
@@ -5105,6 +5287,7 @@ async fn hydrate_messages_by_id(
                     author_id: message.author_id.to_string(),
                     content: message.content.clone(),
                     markdown_tokens: message.markdown_tokens.clone(),
+                    attachments: Vec::new(),
                     created_at_unix: message.created_at_unix,
                 },
             );
@@ -5121,11 +5304,18 @@ async fn hydrate_messages_by_id(
                         author_id: message.author_id.to_string(),
                         content: message.content.clone(),
                         markdown_tokens: message.markdown_tokens.clone(),
+                        attachments: Vec::new(),
                         created_at_unix: message.created_at_unix,
                     },
                 );
             }
         }
+    }
+
+    let attachment_map =
+        attachment_map_for_messages_in_memory(state, guild_id, channel_id, message_ids).await;
+    for (id, message) in &mut by_id {
+        message.attachments = attachment_map.get(id).cloned().unwrap_or_default();
     }
 
     let mut hydrated = Vec::with_capacity(message_ids.len());
@@ -5517,7 +5707,7 @@ async fn find_attachment(
 ) -> Result<AttachmentRecord, AuthFailure> {
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query(
-            "SELECT guild_id, channel_id, owner_id, mime_type, size_bytes, object_key
+            "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, object_key, message_id
              FROM attachments
              WHERE attachment_id = $1 AND guild_id = $2 AND channel_id = $3",
         )
@@ -5533,17 +5723,27 @@ async fn find_attachment(
             .try_get("size_bytes")
             .map_err(|_| AuthFailure::Internal)?;
         return Ok(AttachmentRecord {
+            attachment_id: row
+                .try_get("attachment_id")
+                .map_err(|_| AuthFailure::Internal)?,
             guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
             channel_id: row
                 .try_get("channel_id")
                 .map_err(|_| AuthFailure::Internal)?,
             owner_id: UserId::try_from(owner_id).map_err(|_| AuthFailure::Internal)?,
+            filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
             mime_type: row
                 .try_get("mime_type")
                 .map_err(|_| AuthFailure::Internal)?,
             size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
+            sha256_hex: row
+                .try_get("sha256_hex")
+                .map_err(|_| AuthFailure::Internal)?,
             object_key: row
                 .try_get("object_key")
+                .map_err(|_| AuthFailure::Internal)?,
+            message_id: row
+                .try_get("message_id")
                 .map_err(|_| AuthFailure::Internal)?,
         });
     }
@@ -5555,6 +5755,269 @@ async fn find_attachment(
         .filter(|record| record.guild_id == path.guild_id && record.channel_id == path.channel_id)
         .cloned()
         .ok_or(AuthFailure::NotFound)
+}
+
+fn parse_attachment_ids(value: Vec<String>) -> Result<Vec<String>, AuthFailure> {
+    if value.len() > MAX_ATTACHMENTS_PER_MESSAGE {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    let mut deduped = Vec::with_capacity(value.len());
+    let mut seen = HashSet::with_capacity(value.len());
+    for attachment_id in value {
+        if Ulid::from_string(&attachment_id).is_err() {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        if seen.insert(attachment_id.clone()) {
+            deduped.push(attachment_id);
+        }
+    }
+    Ok(deduped)
+}
+
+async fn bind_message_attachments_db(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    attachment_ids: &[String],
+    message_id: &str,
+    guild_id: &str,
+    channel_id: &str,
+    owner_id: UserId,
+) -> Result<(), AuthFailure> {
+    if attachment_ids.is_empty() {
+        return Ok(());
+    }
+
+    let update_result = sqlx::query(
+        "UPDATE attachments
+         SET message_id = $1
+         WHERE attachment_id = ANY($2::text[])
+           AND guild_id = $3
+           AND channel_id = $4
+           AND owner_id = $5
+           AND message_id IS NULL",
+    )
+    .bind(message_id)
+    .bind(attachment_ids)
+    .bind(guild_id)
+    .bind(channel_id)
+    .bind(owner_id.to_string())
+    .execute(&mut **tx)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+
+    let updated =
+        usize::try_from(update_result.rows_affected()).map_err(|_| AuthFailure::Internal)?;
+    if updated != attachment_ids.len() {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(())
+}
+
+async fn fetch_attachments_for_message_db(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    guild_id: &str,
+    channel_id: &str,
+    message_id: &str,
+) -> Result<Vec<AttachmentResponse>, AuthFailure> {
+    let rows = sqlx::query(
+        "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex
+         FROM attachments
+         WHERE guild_id = $1 AND channel_id = $2 AND message_id = $3
+         ORDER BY created_at_unix ASC, attachment_id ASC",
+    )
+    .bind(guild_id)
+    .bind(channel_id)
+    .bind(message_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    rows_to_attachment_responses(rows)
+}
+
+async fn attachments_for_message_in_memory(
+    state: &AppState,
+    attachment_ids: &[String],
+) -> Result<Vec<AttachmentResponse>, AuthFailure> {
+    if attachment_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let attachments = state.attachments.read().await;
+    let mut out = Vec::with_capacity(attachment_ids.len());
+    for attachment_id in attachment_ids {
+        let Some(record) = attachments.get(attachment_id) else {
+            return Err(AuthFailure::InvalidRequest);
+        };
+        out.push(AttachmentResponse {
+            attachment_id: record.attachment_id.clone(),
+            guild_id: record.guild_id.clone(),
+            channel_id: record.channel_id.clone(),
+            owner_id: record.owner_id.to_string(),
+            filename: record.filename.clone(),
+            mime_type: record.mime_type.clone(),
+            size_bytes: record.size_bytes,
+            sha256_hex: record.sha256_hex.clone(),
+        });
+    }
+    Ok(out)
+}
+
+fn rows_to_attachment_responses(
+    rows: Vec<sqlx::postgres::PgRow>,
+) -> Result<Vec<AttachmentResponse>, AuthFailure> {
+    let mut attachments = Vec::with_capacity(rows.len());
+    for row in rows {
+        let size_bytes: i64 = row
+            .try_get("size_bytes")
+            .map_err(|_| AuthFailure::Internal)?;
+        attachments.push(AttachmentResponse {
+            attachment_id: row
+                .try_get("attachment_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+            channel_id: row
+                .try_get("channel_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
+            filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
+            mime_type: row
+                .try_get("mime_type")
+                .map_err(|_| AuthFailure::Internal)?,
+            size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
+            sha256_hex: row
+                .try_get("sha256_hex")
+                .map_err(|_| AuthFailure::Internal)?,
+        });
+    }
+    Ok(attachments)
+}
+
+async fn attachment_map_for_messages_db(
+    pool: &PgPool,
+    guild_id: &str,
+    channel_id: Option<&str>,
+    message_ids: &[String],
+) -> Result<HashMap<String, Vec<AttachmentResponse>>, AuthFailure> {
+    if message_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = if let Some(channel_id) = channel_id {
+        sqlx::query(
+            "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, message_id
+             FROM attachments
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = ANY($3::text[])
+             ORDER BY created_at_unix ASC, attachment_id ASC",
+        )
+        .bind(guild_id)
+        .bind(channel_id)
+        .bind(message_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    } else {
+        sqlx::query(
+            "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, message_id
+             FROM attachments
+             WHERE guild_id = $1 AND message_id = ANY($2::text[])
+             ORDER BY created_at_unix ASC, attachment_id ASC",
+        )
+        .bind(guild_id)
+        .bind(message_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    };
+
+    let mut by_message: HashMap<String, Vec<AttachmentResponse>> = HashMap::new();
+    for row in rows {
+        let message_id: Option<String> = row
+            .try_get("message_id")
+            .map_err(|_| AuthFailure::Internal)?;
+        let Some(message_id) = message_id else {
+            continue;
+        };
+        let size_bytes: i64 = row
+            .try_get("size_bytes")
+            .map_err(|_| AuthFailure::Internal)?;
+        by_message
+            .entry(message_id)
+            .or_default()
+            .push(AttachmentResponse {
+                attachment_id: row
+                    .try_get("attachment_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+                channel_id: row
+                    .try_get("channel_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
+                filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
+                mime_type: row
+                    .try_get("mime_type")
+                    .map_err(|_| AuthFailure::Internal)?,
+                size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
+                sha256_hex: row
+                    .try_get("sha256_hex")
+                    .map_err(|_| AuthFailure::Internal)?,
+            });
+    }
+    Ok(by_message)
+}
+
+async fn attachment_map_for_messages_in_memory(
+    state: &AppState,
+    guild_id: &str,
+    channel_id: Option<&str>,
+    message_ids: &[String],
+) -> HashMap<String, Vec<AttachmentResponse>> {
+    if message_ids.is_empty() {
+        return HashMap::new();
+    }
+    let wanted: HashSet<&str> = message_ids.iter().map(String::as_str).collect();
+    let attachments = state.attachments.read().await;
+    let mut by_message: HashMap<String, Vec<AttachmentResponse>> = HashMap::new();
+    for record in attachments.values() {
+        let Some(message_id) = record.message_id.as_deref() else {
+            continue;
+        };
+        if record.guild_id != guild_id {
+            continue;
+        }
+        if channel_id.is_some_and(|cid| cid != record.channel_id) {
+            continue;
+        }
+        if !wanted.contains(message_id) {
+            continue;
+        }
+        by_message
+            .entry(message_id.to_owned())
+            .or_default()
+            .push(AttachmentResponse {
+                attachment_id: record.attachment_id.clone(),
+                guild_id: record.guild_id.clone(),
+                channel_id: record.channel_id.clone(),
+                owner_id: record.owner_id.to_string(),
+                filename: record.filename.clone(),
+                mime_type: record.mime_type.clone(),
+                size_bytes: record.size_bytes,
+                sha256_hex: record.sha256_hex.clone(),
+            });
+    }
+    for values in by_message.values_mut() {
+        values.sort_by(|a, b| a.attachment_id.cmp(&b.attachment_id));
+    }
+    by_message
+}
+
+fn attach_message_media(
+    messages: &mut [MessageResponse],
+    attachment_map: &HashMap<String, Vec<AttachmentResponse>>,
+) {
+    for message in messages {
+        message.attachments = attachment_map
+            .get(&message.message_id)
+            .cloned()
+            .unwrap_or_default();
+    }
 }
 
 fn validate_attachment_filename(value: String) -> Result<String, AuthFailure> {
@@ -7207,6 +7670,7 @@ mod tests {
             &guild_id,
             &channel_id,
             String::from("hello"),
+            Vec::new(),
         )
         .await
         .unwrap();

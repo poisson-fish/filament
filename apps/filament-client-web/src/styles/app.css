@@ -451,6 +451,67 @@ select {
   padding: 0.25rem 0.55rem;
 }
 
+.message-attachments {
+  margin-top: 0.52rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.message-attachment-card {
+  border: 1px solid rgba(53, 88, 146, 0.78);
+  border-radius: 0.62rem;
+  background: rgba(11, 23, 44, 0.82);
+  padding: 0.45rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.message-attachment-image,
+.message-attachment-video {
+  width: 100%;
+  max-width: min(100%, 33rem);
+  max-height: 22rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(72, 118, 186, 0.58);
+  background: rgba(6, 13, 25, 0.72);
+  object-fit: contain;
+}
+
+.message-attachment-download {
+  justify-self: start;
+  border: 1px solid rgba(98, 167, 255, 0.5);
+  border-radius: 0.56rem;
+  background: rgba(98, 167, 255, 0.14);
+  color: #d2e8ff;
+  padding: 0.36rem 0.6rem;
+}
+
+.message-attachment-meta {
+  color: var(--ink-2);
+  font-size: 0.78rem;
+}
+
+.message-attachment-loading {
+  color: #c7deff;
+  font-size: 0.82rem;
+}
+
+.message-attachment-failed {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #f4c0c0;
+  font-size: 0.8rem;
+}
+
+.message-attachment-retry {
+  border: 1px solid rgba(98, 167, 255, 0.45);
+  border-radius: 0.5rem;
+  background: rgba(98, 167, 255, 0.14);
+  color: #d2e8ff;
+  padding: 0.2rem 0.5rem;
+}
+
 .message-edit input {
   width: 100%;
 }

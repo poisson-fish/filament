@@ -253,6 +253,102 @@ async fn attachment_upload_rejects_payloads_over_configured_limit() {
 }
 
 #[tokio::test]
+async fn message_creation_binds_attachments_and_deletes_media_on_message_delete() {
+    let app = test_app();
+    let auth = register_and_login(&app, "phase2_media_bind", "203.0.113.75").await;
+    let channel = create_channel_context(&app, &auth, "203.0.113.75").await;
+
+    let upload = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/attachments?filename=evidence.gif",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "image/gif")
+        .header("x-forwarded-for", "203.0.113.75")
+        .body(Body::from(GIF_1X1.to_vec()))
+        .expect("upload request should build");
+    let upload_response = app.clone().oneshot(upload).await.unwrap();
+    assert_eq!(upload_response.status(), StatusCode::OK);
+    let uploaded_json: Value = parse_json_body(upload_response).await;
+    let attachment_id = uploaded_json["attachment_id"].as_str().unwrap().to_owned();
+
+    let create_message = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.75")
+        .body(Body::from(
+            json!({
+                "content": "",
+                "attachment_ids": [attachment_id]
+            })
+            .to_string(),
+        ))
+        .expect("message request should build");
+    let create_message_response = app.clone().oneshot(create_message).await.unwrap();
+    assert_eq!(create_message_response.status(), StatusCode::OK);
+    let message_json: Value = parse_json_body(create_message_response).await;
+    let message_id = message_json["message_id"].as_str().unwrap().to_owned();
+    assert_eq!(message_json["content"], "");
+    assert_eq!(message_json["attachments"].as_array().unwrap().len(), 1);
+
+    let create_second = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.75")
+        .body(Body::from(
+            json!({
+                "content": "reuse denied",
+                "attachment_ids": [attachment_id]
+            })
+            .to_string(),
+        ))
+        .expect("second message request should build");
+    let create_second_response = app.clone().oneshot(create_second).await.unwrap();
+    assert_eq!(create_second_response.status(), StatusCode::BAD_REQUEST);
+
+    let delete_message = Request::builder()
+        .method("DELETE")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages/{}",
+            channel.guild_id, channel.channel_id, message_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", "203.0.113.75")
+        .body(Body::empty())
+        .expect("delete message request should build");
+    let delete_message_response = app.clone().oneshot(delete_message).await.unwrap();
+    assert_eq!(delete_message_response.status(), StatusCode::NO_CONTENT);
+
+    let download_after_delete = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/guilds/{}/channels/{}/attachments/{}",
+            channel.guild_id, channel.channel_id, attachment_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", "203.0.113.75")
+        .body(Body::empty())
+        .expect("download request should build");
+    let download_after_delete_response = app.clone().oneshot(download_after_delete).await.unwrap();
+    assert_eq!(
+        download_after_delete_response.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
 async fn message_edit_and_delete_preserve_safe_markdown_tokens() {
     let app = test_app();
     let auth = register_and_login(&app, "phase2_editor", "203.0.113.71").await;

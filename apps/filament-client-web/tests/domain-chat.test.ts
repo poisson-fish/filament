@@ -34,6 +34,7 @@ describe("chat domain invariants", () => {
   });
 
   it("rejects oversized message content", () => {
+    expect(messageContentFromInput("")).toBe("");
     expect(() => messageContentFromInput("A".repeat(2001))).toThrow();
   });
 
@@ -53,6 +54,7 @@ describe("chat domain invariants", () => {
     });
 
     expect(message.content).toBe("hello");
+    expect(message.attachments).toEqual([]);
   });
 
   it("enforces search query policy", () => {

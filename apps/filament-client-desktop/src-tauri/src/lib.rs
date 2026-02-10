@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
-pub const DESKTOP_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;";
-pub const WEB_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local wss://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;";
+pub const DESKTOP_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;";
+pub const WEB_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local wss://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SecurityError {

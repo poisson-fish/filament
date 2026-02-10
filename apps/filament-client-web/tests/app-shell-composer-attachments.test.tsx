@@ -13,6 +13,8 @@ const CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const ATTACHMENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 const MESSAGE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
+const ORIGINAL_CREATE_OBJECT_URL = URL.createObjectURL;
+const ORIGINAL_REVOKE_OBJECT_URL = URL.revokeObjectURL;
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -91,16 +93,41 @@ describe("app shell composer attachments", () => {
       value: storage,
       configurable: true,
     });
+    Object.defineProperty(URL, "createObjectURL", {
+      value: vi.fn(() => "blob:preview"),
+      configurable: true,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      value: vi.fn(),
+      configurable: true,
+    });
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (ORIGINAL_CREATE_OBJECT_URL) {
+      Object.defineProperty(URL, "createObjectURL", {
+        value: ORIGINAL_CREATE_OBJECT_URL,
+        configurable: true,
+      });
+    } else {
+      Reflect.deleteProperty(URL, "createObjectURL");
+    }
+    if (ORIGINAL_REVOKE_OBJECT_URL) {
+      Object.defineProperty(URL, "revokeObjectURL", {
+        value: ORIGINAL_REVOKE_OBJECT_URL,
+        configurable: true,
+      });
+    } else {
+      Reflect.deleteProperty(URL, "revokeObjectURL");
+    }
   });
 
   it("uploads staged files from the + button before posting the message", async () => {
     seedAuthenticatedWorkspace();
 
     let postedContent = "";
+    let postedAttachmentIds: string[] = [];
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(input);
@@ -149,6 +176,7 @@ describe("app shell composer attachments", () => {
       if (method === "POST" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages`)) {
         const body = typeof init?.body === "string" ? JSON.parse(init.body) : { content: "" };
         postedContent = body.content as string;
+        postedAttachmentIds = Array.isArray(body.attachment_ids) ? body.attachment_ids : [];
         return jsonResponse({
           message_id: MESSAGE_ID,
           guild_id: GUILD_ID,
@@ -156,7 +184,28 @@ describe("app shell composer attachments", () => {
           author_id: USER_ID,
           content: postedContent,
           markdown_tokens: [{ type: "paragraph_start" }, { type: "paragraph_end" }],
+          attachments: [
+            {
+              attachment_id: ATTACHMENT_ID,
+              guild_id: GUILD_ID,
+              channel_id: CHANNEL_ID,
+              owner_id: USER_ID,
+              filename: "one.gif",
+              mime_type: "image/gif",
+              size_bytes: 43,
+              sha256_hex: "a".repeat(64),
+            },
+          ],
           created_at_unix: 1,
+        });
+      }
+      if (
+        method === "GET" &&
+        url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/attachments/${ATTACHMENT_ID}`)
+      ) {
+        return new Response(new Uint8Array([71, 73, 70, 56, 57, 97]), {
+          status: 200,
+          headers: { "content-type": "image/gif" },
         });
       }
 
@@ -183,7 +232,96 @@ describe("app shell composer attachments", () => {
     expect(composerForm).not.toBeNull();
     await fireEvent.submit(composerForm!);
 
-    await waitFor(() => expect(postedContent.length).toBeGreaterThan(0));
-    expect(postedContent).toContain(`[attachment:one.gif] id:${ATTACHMENT_ID}`);
+    await waitFor(() => expect(postedAttachmentIds).toEqual([ATTACHMENT_ID]));
+    expect(postedAttachmentIds).toEqual([ATTACHMENT_ID]);
+    expect(postedContent).toBe("");
+    await waitFor(() => {
+      const hasImage = Boolean(screen.queryByAltText("one.gif"));
+      const hasLoading = Boolean(screen.queryByText("Loading preview..."));
+      const hasDownload = Boolean(screen.queryByText("Download one.gif"));
+      expect(hasImage || hasLoading || hasDownload).toBe(true);
+    });
+  });
+
+  it("renders an image preview when attachment mime is generic after reload", async () => {
+    seedAuthenticatedWorkspace();
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(init);
+
+      if (method === "GET" && url.includes("/auth/me")) {
+        return jsonResponse({ user_id: USER_ID, username: "alice" });
+      }
+      if (method === "GET" && url.endsWith("/guilds")) {
+        return jsonResponse({
+          guilds: [{ guild_id: GUILD_ID, name: "Security Ops", visibility: "private" }],
+        });
+      }
+      if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [{ channel_id: CHANNEL_ID, name: "incident-room" }],
+        });
+      }
+      if (
+        method === "GET" &&
+        url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)
+      ) {
+        return jsonResponse({ role: "member", permissions: ["create_message"] });
+      }
+      if (method === "GET" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages`)) {
+        return jsonResponse({
+          messages: [
+            {
+              message_id: MESSAGE_ID,
+              guild_id: GUILD_ID,
+              channel_id: CHANNEL_ID,
+              author_id: USER_ID,
+              content: "",
+              markdown_tokens: [{ type: "paragraph_start" }, { type: "paragraph_end" }],
+              attachments: [
+                {
+                  attachment_id: ATTACHMENT_ID,
+                  guild_id: GUILD_ID,
+                  channel_id: CHANNEL_ID,
+                  owner_id: USER_ID,
+                  filename: "camera-roll.jpg",
+                  mime_type: "application/octet-stream",
+                  size_bytes: 43,
+                  sha256_hex: "a".repeat(64),
+                },
+              ],
+              created_at_unix: 1,
+            },
+          ],
+          next_before: null,
+        });
+      }
+      if (method === "GET" && url.includes("/guilds/public")) {
+        return jsonResponse({ guilds: [] });
+      }
+      if (
+        method === "GET" &&
+        url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/attachments/${ATTACHMENT_ID}`)
+      ) {
+        return new Response(new Uint8Array([255, 216, 255, 224]), {
+          status: 200,
+          headers: { "content-type": "application/octet-stream" },
+        });
+      }
+
+      return jsonResponse({ error: "not_found" }, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Workspace Tools" });
+    await screen.findByPlaceholderText("Message #incident-room");
+    await screen.findByAltText("camera-roll.jpg");
+    await waitFor(() => expect(screen.queryByText("Loading preview...")).toBeNull());
   });
 });

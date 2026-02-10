@@ -53,6 +53,7 @@ import {
   deleteFriendRequest,
   deleteChannelAttachment,
   deleteChannelMessage,
+  downloadChannelAttachmentPreview,
   downloadChannelAttachment,
   editChannelMessage,
   echoMessage,
@@ -89,10 +90,21 @@ import {
 
 const THUMBS_UP = reactionEmojiFromInput("👍");
 const MAX_COMPOSER_ATTACHMENTS = 5;
+const MAX_EMBED_PREVIEW_BYTES = 25 * 1024 * 1024;
+const MAX_MEDIA_PREVIEW_RETRIES = 2;
+const INITIAL_MEDIA_PREVIEW_DELAY_MS = 75;
 
 interface ReactionView {
   count: number;
   reacted: boolean;
+}
+
+type MediaKind = "image" | "video" | "file";
+
+interface MessageMediaPreview {
+  url: string;
+  kind: MediaKind;
+  mimeType: string;
 }
 
 function reactionKey(messageId: MessageId, emoji: string): string {
@@ -114,11 +126,99 @@ function formatBytes(value: number): string {
   return `${(kib / 1024).toFixed(2)} MiB`;
 }
 
+function classifyAttachmentMediaType(mimeType: string): MediaKind {
+  const lower = mimeType.toLowerCase();
+  if (lower.startsWith("image/") && lower !== "image/svg+xml") {
+    return "image";
+  }
+  if (lower.startsWith("video/")) {
+    return "video";
+  }
+  return "file";
+}
+
+function createObjectUrl(blob: Blob): string | null {
+  if (typeof URL.createObjectURL !== "function") {
+    return null;
+  }
+  return URL.createObjectURL(blob);
+}
+
+function revokeObjectUrl(url: string): void {
+  if (typeof URL.revokeObjectURL !== "function") {
+    return;
+  }
+  URL.revokeObjectURL(url);
+}
+
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  avif: "image/avif",
+  bmp: "image/bmp",
+  gif: "image/gif",
+  heic: "image/heic",
+  heif: "image/heif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+};
+
+const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
+  mov: "video/quicktime",
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  webm: "video/webm",
+};
+
+function extensionFromFilename(filename: string): string | null {
+  const dot = filename.lastIndexOf(".");
+  if (dot <= 0 || dot === filename.length - 1) {
+    return null;
+  }
+  return filename.slice(dot + 1).toLowerCase();
+}
+
+function inferMimeTypeFromFilename(filename: string): string | null {
+  const extension = extensionFromFilename(filename);
+  if (!extension) {
+    return null;
+  }
+  return IMAGE_MIME_BY_EXTENSION[extension] ?? VIDEO_MIME_BY_EXTENSION[extension] ?? null;
+}
+
+function normalizeMimeType(raw: string | null | undefined): string {
+  if (!raw) {
+    return "";
+  }
+  return raw.split(";")[0].trim().toLowerCase();
+}
+
+function resolveAttachmentPreviewType(
+  payloadMimeType: string | null,
+  attachmentMimeType: string,
+  filename: string,
+): { kind: MediaKind; mimeType: string } {
+  const normalizedPayloadMime = normalizeMimeType(payloadMimeType);
+  const normalizedAttachmentMime = normalizeMimeType(attachmentMimeType);
+  const inferredFromFilename = inferMimeTypeFromFilename(filename);
+  const fallbackMime =
+    (inferredFromFilename ?? normalizedAttachmentMime) || "application/octet-stream";
+  const resolvedMimeType = normalizedPayloadMime || fallbackMime;
+  let kind = classifyAttachmentMediaType(resolvedMimeType);
+  if (kind === "file" && inferredFromFilename) {
+    kind = classifyAttachmentMediaType(inferredFromFilename);
+  }
+  return {
+    kind,
+    mimeType: kind === "file" ? resolvedMimeType : inferredFromFilename ?? resolvedMimeType,
+  };
+}
+
 function mapError(error: unknown, fallback: string): string {
   if (error instanceof DomainValidationError) {
     return error.message;
   }
-  if (error instanceof ApiError) {
+    if (error instanceof ApiError) {
     if (error.code === "rate_limited") {
       return "Rate limited. Please wait and retry.";
     }
@@ -145,6 +245,9 @@ function mapError(error: unknown, fallback: string): string {
     }
     if (error.code === "invalid_request") {
       return "Request payload did not pass API validation.";
+    }
+    if (error.code === "protocol_mismatch") {
+      return "Server/client protocol mismatch for attachments. Rebuild and restart filament-server.";
     }
     return `Request failed (${error.code}).`;
   }
@@ -272,6 +375,9 @@ type OverlayPanel =
 export function AppShellPage() {
   const auth = useAuth();
   let composerAttachmentInputRef: HTMLInputElement | undefined;
+  const inflightMessageMediaLoads = new Set<string>();
+  const previewRetryAttempts = new Map<string, number>();
+  let previewSessionRefreshPromise: Promise<void> | null = null;
 
   const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>([]);
   const [activeGuildId, setActiveGuildId] = createSignal<GuildId | null>(null);
@@ -285,6 +391,14 @@ export function AppShellPage() {
   const [isLoadingOlder, setLoadingOlder] = createSignal(false);
   const [isSendingMessage, setSendingMessage] = createSignal(false);
   const [messages, setMessages] = createSignal<MessageRecord[]>([]);
+  const [messageMediaByAttachmentId, setMessageMediaByAttachmentId] = createSignal<
+    Record<string, MessageMediaPreview>
+  >({});
+  const [loadingMediaPreviewIds, setLoadingMediaPreviewIds] = createSignal<Record<string, true>>(
+    {},
+  );
+  const [failedMediaPreviewIds, setFailedMediaPreviewIds] = createSignal<Record<string, true>>({});
+  const [mediaPreviewRetryTick, setMediaPreviewRetryTick] = createSignal(0);
   const [nextBefore, setNextBefore] = createSignal<MessageId | null>(null);
   const [reactionState, setReactionState] = createSignal<Record<string, ReactionView>>({});
   const [editingMessageId, setEditingMessageId] = createSignal<MessageId | null>(null);
@@ -861,6 +975,242 @@ export function AppShellPage() {
   });
 
   createEffect(() => {
+    void mediaPreviewRetryTick();
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    const messageList = messages();
+    if (!session || !guildId || !channelId) {
+      setMessageMediaByAttachmentId((existing) => {
+        for (const preview of Object.values(existing)) {
+          revokeObjectUrl(preview.url);
+        }
+        return {};
+      });
+      setLoadingMediaPreviewIds({});
+      setFailedMediaPreviewIds({});
+      previewRetryAttempts.clear();
+      return;
+    }
+
+    const previewTargets = new Map<AttachmentId, AttachmentRecord>();
+    for (const message of messageList) {
+      for (const attachment of message.attachments) {
+        const { kind } = resolveAttachmentPreviewType(null, attachment.mimeType, attachment.filename);
+        if (kind === "file" || attachment.sizeBytes > MAX_EMBED_PREVIEW_BYTES) {
+          continue;
+        }
+        previewTargets.set(attachment.attachmentId, attachment);
+      }
+    }
+
+    const existingPreviews = untrack(() => messageMediaByAttachmentId());
+    const targetIds = new Set<string>([...previewTargets.keys()]);
+    setMessageMediaByAttachmentId((existing) => {
+      const next: Record<string, MessageMediaPreview> = {};
+      for (const [attachmentId, preview] of Object.entries(existing)) {
+        if (targetIds.has(attachmentId)) {
+          next[attachmentId] = preview;
+        } else {
+          revokeObjectUrl(preview.url);
+          previewRetryAttempts.delete(attachmentId);
+        }
+      }
+      return next;
+    });
+    setLoadingMediaPreviewIds((existing) =>
+      Object.fromEntries(
+        Object.entries(existing).filter(([attachmentId]) => targetIds.has(attachmentId)),
+      ) as Record<string, true>,
+    );
+    setFailedMediaPreviewIds((existing) =>
+      Object.fromEntries(
+        Object.entries(existing).filter(([attachmentId]) => targetIds.has(attachmentId)),
+      ) as Record<string, true>,
+    );
+
+    let cancelled = false;
+    const refreshSessionForPreview = async (): Promise<void> => {
+      if (previewSessionRefreshPromise) {
+        return previewSessionRefreshPromise;
+      }
+      const current = auth.session();
+      if (!current) {
+        throw new Error("missing_session");
+      }
+      previewSessionRefreshPromise = (async () => {
+        const next = await refreshAuthSession(current.refreshToken);
+        auth.setAuthenticatedSession(next);
+      })();
+      try {
+        await previewSessionRefreshPromise;
+      } finally {
+        previewSessionRefreshPromise = null;
+      }
+    };
+
+    for (const [attachmentId, attachment] of previewTargets) {
+      if (existingPreviews[attachmentId] || inflightMessageMediaLoads.has(attachmentId)) {
+        continue;
+      }
+      inflightMessageMediaLoads.add(attachmentId);
+      setLoadingMediaPreviewIds((existing) => ({
+        ...existing,
+        [attachmentId]: true,
+      }));
+      setFailedMediaPreviewIds((existing) => {
+        if (!existing[attachmentId]) {
+          return existing;
+        }
+        const next = { ...existing };
+        delete next[attachmentId];
+        return next;
+      });
+      const attempt = previewRetryAttempts.get(attachmentId) ?? 0;
+      const runFetch = async () => {
+        let activeSession = auth.session() ?? session;
+        try {
+          return await downloadChannelAttachmentPreview(
+            activeSession,
+            guildId,
+            channelId,
+            attachmentId,
+          );
+        } catch (error) {
+          if (
+            error instanceof ApiError &&
+            error.code === "invalid_credentials" &&
+            attempt === 0
+          ) {
+            await refreshSessionForPreview();
+            activeSession = auth.session() ?? activeSession;
+            return downloadChannelAttachmentPreview(
+              activeSession,
+              guildId,
+              channelId,
+              attachmentId,
+            );
+          }
+          throw error;
+        }
+      };
+      const processFetch = () =>
+        runFetch()
+        .then((payload) => {
+          if (cancelled) {
+            return;
+          }
+          const { mimeType, kind } = resolveAttachmentPreviewType(
+            payload.mimeType,
+            attachment.mimeType,
+            attachment.filename,
+          );
+          if (kind === "file") {
+            setLoadingMediaPreviewIds((existing) => {
+              const next = { ...existing };
+              delete next[attachmentId];
+              return next;
+            });
+            return;
+          }
+          const blob = new Blob([payload.bytes], { type: mimeType });
+          const url = createObjectUrl(blob);
+          if (!url) {
+            setLoadingMediaPreviewIds((existing) => {
+              const next = { ...existing };
+              delete next[attachmentId];
+              return next;
+            });
+            setFailedMediaPreviewIds((existing) => ({
+              ...existing,
+              [attachmentId]: true,
+            }));
+            return;
+          }
+          setMessageMediaByAttachmentId((existing) => {
+            const previous = existing[attachmentId];
+            if (previous) {
+              revokeObjectUrl(previous.url);
+            }
+            return {
+              ...existing,
+              [attachmentId]: {
+                url,
+                kind,
+                mimeType,
+              },
+            };
+          });
+          previewRetryAttempts.delete(attachmentId);
+          setLoadingMediaPreviewIds((existing) => {
+            const next = { ...existing };
+            delete next[attachmentId];
+            return next;
+          });
+        })
+        .catch(() => {
+          if (cancelled) {
+            return;
+          }
+          const nextAttempt = (previewRetryAttempts.get(attachmentId) ?? 0) + 1;
+          previewRetryAttempts.set(attachmentId, nextAttempt);
+          if (nextAttempt <= MAX_MEDIA_PREVIEW_RETRIES) {
+            window.setTimeout(() => {
+              setMediaPreviewRetryTick((value) => value + 1);
+            }, 600 * nextAttempt);
+            return;
+          }
+          setLoadingMediaPreviewIds((existing) => {
+            const next = { ...existing };
+            delete next[attachmentId];
+            return next;
+          });
+          setFailedMediaPreviewIds((existing) => ({
+            ...existing,
+            [attachmentId]: true,
+          }));
+        })
+        .finally(() => {
+          inflightMessageMediaLoads.delete(attachmentId);
+        });
+      if (attempt === 0) {
+        window.setTimeout(() => {
+          if (cancelled) {
+            inflightMessageMediaLoads.delete(attachmentId);
+            return;
+          }
+          void processFetch();
+        }, INITIAL_MEDIA_PREVIEW_DELAY_MS);
+      } else {
+        void processFetch();
+      }
+    }
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  onCleanup(() => {
+    for (const preview of Object.values(messageMediaByAttachmentId())) {
+      revokeObjectUrl(preview.url);
+    }
+    setMessageMediaByAttachmentId({});
+    setLoadingMediaPreviewIds({});
+    setFailedMediaPreviewIds({});
+  });
+
+  const retryMediaPreview = (attachmentId: AttachmentId) => {
+    previewRetryAttempts.delete(attachmentId);
+    setFailedMediaPreviewIds((existing) => {
+      const next = { ...existing };
+      delete next[attachmentId];
+      return next;
+    });
+    setMediaPreviewRetryTick((value) => value + 1);
+  };
+
+  createEffect(() => {
     const panel = activeOverlayPanel();
     if (!panel) {
       return;
@@ -1040,22 +1390,24 @@ export function AppShellPage() {
     setSendingMessage(true);
     let uploadedForMessage: AttachmentRecord[] = [];
     try {
+      const draft = composer().trim();
       const selectedFiles = composerAttachments();
+      if (draft.length === 0 && selectedFiles.length === 0) {
+        setMessageError("Message must include text or at least one attachment.");
+        return;
+      }
       for (const file of selectedFiles) {
         const filename = attachmentFilenameFromInput(file.name);
         const uploaded = await uploadChannelAttachment(session, guildId, channelId, file, filename);
         uploadedForMessage.push(uploaded);
       }
 
-      const attachmentLines = uploadedForMessage.map(
-        (record) => `[attachment:${record.filename}] id:${record.attachmentId}`,
-      );
-      const composedContent =
-        attachmentLines.length === 0
-          ? composer()
-          : [composer().trim(), ...attachmentLines].filter((value) => value.length > 0).join("\n");
       const created = await createChannelMessage(session, guildId, channelId, {
-        content: messageContentFromInput(composedContent),
+        content: messageContentFromInput(draft),
+        attachmentIds:
+          uploadedForMessage.length > 0
+            ? uploadedForMessage.map((record) => record.attachmentId)
+            : undefined,
       });
       setMessages((existing) => mergeMessage(existing, created));
       setComposer("");
@@ -1454,13 +1806,16 @@ export function AppShellPage() {
       const blob = new Blob([bytes], {
         type: payload.mimeType ?? record.mimeType,
       });
-      const objectUrl = URL.createObjectURL(blob);
+      const objectUrl = createObjectUrl(blob);
+      if (!objectUrl) {
+        throw new Error("missing_object_url");
+      }
       const anchor = document.createElement("a");
       anchor.href = objectUrl;
       anchor.download = record.filename;
       anchor.rel = "noopener";
       anchor.click();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      window.setTimeout(() => revokeObjectUrl(objectUrl), 0);
     } catch (error) {
       setAttachmentError(mapError(error, "Unable to download attachment."));
     } finally {
@@ -1874,7 +2229,13 @@ export function AppShellPage() {
                           </p>
                           <Show
                             when={isEditing()}
-                            fallback={<p class="message-tokenized">{tokenizeToDisplayText(message.markdownTokens) || message.content}</p>}
+                            fallback={
+                              <Show when={tokenizeToDisplayText(message.markdownTokens) || message.content}>
+                                <p class="message-tokenized">
+                                  {tokenizeToDisplayText(message.markdownTokens) || message.content}
+                                </p>
+                              </Show>
+                            }
                           >
                             <form
                               class="inline-form message-edit"
@@ -1897,6 +2258,82 @@ export function AppShellPage() {
                                 </button>
                               </div>
                             </form>
+                          </Show>
+                          <Show when={message.attachments.length > 0}>
+                            <div class="message-attachments">
+                              <For each={message.attachments}>
+                                {(record) => {
+                                  const preview = () => messageMediaByAttachmentId()[record.attachmentId];
+                                  return (
+                                    <div class="message-attachment-card">
+                                      <Show
+                                        when={preview() && preview()!.kind === "image"}
+                                        fallback={
+                                          <Show
+                                            when={preview() && preview()!.kind === "video"}
+                                            fallback={
+                                              <Show
+                                                when={loadingMediaPreviewIds()[record.attachmentId]}
+                                                fallback={
+                                                  <Show
+                                                    when={failedMediaPreviewIds()[record.attachmentId]}
+                                                    fallback={
+                                                      <button
+                                                        type="button"
+                                                        class="message-attachment-download"
+                                                        onClick={() => void downloadAttachment(record)}
+                                                        disabled={downloadingAttachmentId() === record.attachmentId}
+                                                      >
+                                                        {downloadingAttachmentId() === record.attachmentId
+                                                          ? "Fetching..."
+                                                          : `Download ${record.filename}`}
+                                                      </button>
+                                                    }
+                                                  >
+                                                    <div class="message-attachment-failed">
+                                                      <span>Preview unavailable.</span>
+                                                      <button
+                                                        type="button"
+                                                        class="message-attachment-retry"
+                                                        onClick={() => retryMediaPreview(record.attachmentId)}
+                                                      >
+                                                        Retry preview
+                                                      </button>
+                                                    </div>
+                                                  </Show>
+                                                }
+                                              >
+                                                <p class="message-attachment-loading">Loading preview...</p>
+                                              </Show>
+                                            }
+                                          >
+                                            <video
+                                              class="message-attachment-video"
+                                              src={preview()!.url}
+                                              controls
+                                              preload="metadata"
+                                              playsInline
+                                            />
+                                          </Show>
+                                        }
+                                      >
+                                        <img
+                                          class="message-attachment-image"
+                                          src={preview()!.url}
+                                          alt={record.filename}
+                                          loading="lazy"
+                                          decoding="async"
+                                          referrerPolicy="no-referrer"
+                                        />
+                                      </Show>
+                                      <p class="message-attachment-meta">
+                                        {record.filename} ({formatBytes(record.sizeBytes)})
+                                      </p>
+                                    </div>
+                                  );
+                                }}
+                              </For>
+                            </div>
                           </Show>
                           <Show when={canEditOrDelete()}>
                             <div class="message-actions compact">
