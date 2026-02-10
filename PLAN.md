@@ -270,29 +270,34 @@ Every phase has:
 - Postgres persistence + history pagination
 
 ### Status
-- NOT STARTED
+- IN PROGRESS
 
 ### Notes
 - Prefer **newtypes + TryFrom** for usernames/channel names to ensure invariants.
 - WS: enforce max frame size, per-connection quotas, and backpressure (bounded channels).
 - Prevent fanout amplification: cap channel subscriber count or apply slow-consumer handling.
+- 2026-02-10: Added domain newtypes + invariants in `filament-core` (`Username`, `GuildName`, `ChannelName`, `UserId`) and centralized baseline permission checks (`Role`/`Permission`).
+- 2026-02-10: Implemented auth/session HTTP flows in `filament-server` (`/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`) with Argon2id password hashing, PASETO v4 local access tokens, refresh-token hashing, refresh rotation, and refresh replay detection.
+- 2026-02-10: Added account-enumeration resistance controls (consistent login failure responses + dummy hash verification path) and lockout/backoff guardrails for repeated failed login attempts.
+- 2026-02-10: Security/tooling checks run locally for this increment: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
 
 ### TODOs
-- Add `tower-governor` per route + WS event rate limiting.
-- Add `DefaultBodyLimit` and custom error mapping.
-- Add schema validation at boundaries (serde -> domain types).
-- Add refresh token hashing + rotation + replay detection tests.
-- Add account lockout/backoff controls and consistent auth error responses.
+- Add Postgres-backed session/user persistence (replace in-memory auth/session stores) with hashed refresh tokens and session-family revocation.
+- Add gateway WS connect/auth/subscribe/send/receive with max frame/message caps, ingress rate limits, bounded outbound queues, and slow-consumer disconnect handling.
+- Add guild/channel CRUD + permission-checked message send/history pagination backed by Postgres.
+- Add per-route auth-specific rate limits and explicit audit logging for auth events (login success/fail, refresh, logout, lockout).
+- Add integration tests for WS handshake/message flow, REST pagination, and route-specific rate-limit behavior.
 
 ### Exit Criteria
-- Unit tests cover newtype invariants, token mint/verify, and permission checks.
-- Integration tests cover auth flows, WS handshake, message send/receive, pagination, and rate-limit enforcement.
-- Security tests verify account-enumeration resistance and slow-consumer handling.
+- Unit tests cover newtype invariants, token mint/verify paths, and permission checks.
+- Integration tests cover auth register/login/refresh/logout/me flow including refresh rotation + replay detection and account-enumeration response consistency.
+- Remaining to exit Phase 1: WS handshake/message-flow tests, pagination tests against persisted history, and slow-consumer handling validation.
 
 ### Security Outlook
 - Argon2id parameters set for server-class machines.
 - Lock down account enumeration responses.
 - Audit logging for auth events (login, refresh, password change).
+- Refresh tokens are stored hashed server-side and rotated on refresh with replay detection.
 
 ---
 
