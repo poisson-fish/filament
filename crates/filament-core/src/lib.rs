@@ -187,6 +187,9 @@ pub enum Permission {
     DeleteMessage,
     BanMember,
     CreateMessage,
+    PublishVideo,
+    PublishScreenShare,
+    SubscribeStreams,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -262,14 +265,21 @@ pub fn base_permissions(role: Role) -> PermissionSet {
             set.insert(Permission::DeleteMessage);
             set.insert(Permission::BanMember);
             set.insert(Permission::CreateMessage);
+            set.insert(Permission::PublishVideo);
+            set.insert(Permission::PublishScreenShare);
+            set.insert(Permission::SubscribeStreams);
         }
         Role::Moderator => {
             set.insert(Permission::DeleteMessage);
             set.insert(Permission::BanMember);
             set.insert(Permission::CreateMessage);
+            set.insert(Permission::PublishVideo);
+            set.insert(Permission::PublishScreenShare);
+            set.insert(Permission::SubscribeStreams);
         }
         Role::Member => {
             set.insert(Permission::CreateMessage);
+            set.insert(Permission::SubscribeStreams);
         }
     }
     set
@@ -296,6 +306,9 @@ fn permission_mask(permission: Permission) -> u64 {
         Permission::DeleteMessage => 1 << 2,
         Permission::BanMember => 1 << 3,
         Permission::CreateMessage => 1 << 4,
+        Permission::PublishVideo => 1 << 5,
+        Permission::PublishScreenShare => 1 << 6,
+        Permission::SubscribeStreams => 1 << 7,
     }
 }
 
@@ -475,10 +488,28 @@ mod tests {
     fn permission_checks_match_role_expectations() {
         assert!(has_permission(Role::Owner, Permission::BanMember));
         assert!(has_permission(Role::Owner, Permission::ManageRoles));
+        assert!(has_permission(Role::Owner, Permission::PublishVideo));
+        assert!(has_permission(Role::Owner, Permission::PublishScreenShare));
+        assert!(has_permission(Role::Owner, Permission::SubscribeStreams));
         assert!(has_permission(Role::Moderator, Permission::DeleteMessage));
+        assert!(has_permission(Role::Moderator, Permission::PublishVideo));
+        assert!(has_permission(
+            Role::Moderator,
+            Permission::PublishScreenShare
+        ));
+        assert!(has_permission(
+            Role::Moderator,
+            Permission::SubscribeStreams
+        ));
         assert!(!has_permission(Role::Moderator, Permission::ManageRoles));
         assert!(!has_permission(Role::Member, Permission::DeleteMessage));
+        assert!(!has_permission(Role::Member, Permission::PublishVideo));
+        assert!(!has_permission(
+            Role::Member,
+            Permission::PublishScreenShare
+        ));
         assert!(has_permission(Role::Member, Permission::CreateMessage));
+        assert!(has_permission(Role::Member, Permission::SubscribeStreams));
     }
 
     #[test]
@@ -513,6 +544,14 @@ mod tests {
         let effective = apply_channel_overwrite(base, Some(overwrite));
         assert!(effective.contains(Permission::DeleteMessage));
         assert!(!effective.contains(Permission::CreateMessage));
+
+        let overwrite = ChannelPermissionOverwrite {
+            allow: PermissionSet::from_bits(1 << 5),
+            deny: PermissionSet::from_bits(1 << 7),
+        };
+        let effective = apply_channel_overwrite(base, Some(overwrite));
+        assert!(effective.contains(Permission::PublishVideo));
+        assert!(!effective.contains(Permission::SubscribeStreams));
     }
 
     #[test]

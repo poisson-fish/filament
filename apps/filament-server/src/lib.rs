@@ -90,7 +90,9 @@ pub const DEFAULT_SEARCH_RESULT_LIMIT: usize = 20;
 pub const DEFAULT_SEARCH_RESULT_LIMIT_MAX: usize = 50;
 pub const DEFAULT_SEARCH_QUERY_TIMEOUT_MILLIS: u64 = 200;
 pub const DEFAULT_MEDIA_TOKEN_REQUESTS_PER_MINUTE: u32 = 20;
+pub const DEFAULT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE: u32 = 6;
 pub const DEFAULT_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
+pub const DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL: usize = 3;
 pub const MAX_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
 const LOGIN_LOCK_THRESHOLD: u8 = 5;
 const LOGIN_LOCK_SECS: i64 = 30;
@@ -119,6 +121,8 @@ pub struct AppConfig {
     pub search_result_limit_max: usize,
     pub search_query_timeout: Duration,
     pub media_token_requests_per_minute: u32,
+    pub media_publish_requests_per_minute: u32,
+    pub media_subscribe_token_cap_per_channel: usize,
     pub livekit_token_ttl: Duration,
     pub livekit_url: String,
     pub livekit_api_key: Option<String>,
@@ -144,6 +148,8 @@ impl Default for AppConfig {
             search_result_limit_max: DEFAULT_SEARCH_RESULT_LIMIT_MAX,
             search_query_timeout: Duration::from_millis(DEFAULT_SEARCH_QUERY_TIMEOUT_MILLIS),
             media_token_requests_per_minute: DEFAULT_MEDIA_TOKEN_REQUESTS_PER_MINUTE,
+            media_publish_requests_per_minute: DEFAULT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE,
+            media_subscribe_token_cap_per_channel: DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL,
             livekit_token_ttl: Duration::from_secs(DEFAULT_LIVEKIT_TOKEN_TTL_SECS),
             livekit_url: String::from("ws://127.0.0.1:7880"),
             livekit_api_key: None,
@@ -167,6 +173,8 @@ struct RuntimeSecurityConfig {
     search_result_limit_max: usize,
     search_query_timeout: Duration,
     media_token_requests_per_minute: u32,
+    media_publish_requests_per_minute: u32,
+    media_subscribe_token_cap_per_channel: usize,
     livekit_token_ttl: Duration,
 }
 
@@ -241,6 +249,8 @@ pub struct AppState {
     dummy_password_hash: Arc<String>,
     auth_route_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     media_token_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
     subscriptions: Arc<RwLock<Subscriptions>>,
     connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
@@ -290,6 +300,8 @@ impl AppState {
             dummy_password_hash: Arc::new(dummy_password_hash),
             auth_route_hits: Arc::new(RwLock::new(HashMap::new())),
             media_token_hits: Arc::new(RwLock::new(HashMap::new())),
+            media_publish_hits: Arc::new(RwLock::new(HashMap::new())),
+            media_subscribe_leases: Arc::new(RwLock::new(HashMap::new())),
             guilds: Arc::new(RwLock::new(HashMap::new())),
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
             connection_controls: Arc::new(RwLock::new(HashMap::new())),
@@ -311,6 +323,8 @@ impl AppState {
                 search_result_limit_max: config.search_result_limit_max,
                 search_query_timeout: config.search_query_timeout,
                 media_token_requests_per_minute: config.media_token_requests_per_minute,
+                media_publish_requests_per_minute: config.media_publish_requests_per_minute,
+                media_subscribe_token_cap_per_channel: config.media_subscribe_token_cap_per_channel,
                 livekit_token_ttl: config.livekit_token_ttl,
             }),
             livekit: livekit.map(Arc::new),
@@ -606,11 +620,22 @@ fn permission_set_from_list(values: &[Permission]) -> PermissionSet {
 ///
 /// # Errors
 /// Returns an error if configured security limits are invalid.
+#[allow(clippy::too_many_lines)]
 pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
     if config.max_gateway_event_bytes > filament_protocol::MAX_EVENT_BYTES {
         return Err(anyhow!(
             "gateway event limit cannot exceed protocol max of {} bytes",
             filament_protocol::MAX_EVENT_BYTES
+        ));
+    }
+    if config.media_publish_requests_per_minute == 0 {
+        return Err(anyhow!(
+            "media publish rate limit must be at least 1 request per minute"
+        ));
+    }
+    if config.media_subscribe_token_cap_per_channel == 0 {
+        return Err(anyhow!(
+            "media subscribe token cap must be at least 1 active token"
         ));
     }
     if config.livekit_token_ttl.is_zero()
@@ -963,6 +988,7 @@ struct SearchReconcileResponse {
 struct VoiceTokenRequest {
     can_publish: Option<bool>,
     can_subscribe: Option<bool>,
+    publish_sources: Option<Vec<MediaPublishSource>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -973,7 +999,26 @@ struct VoiceTokenResponse {
     identity: String,
     can_publish: bool,
     can_subscribe: bool,
+    publish_sources: Vec<String>,
     expires_in_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+enum MediaPublishSource {
+    Microphone,
+    Camera,
+    ScreenShare,
+}
+
+impl MediaPublishSource {
+    fn as_livekit_source(self) -> &'static str {
+        match self {
+            Self::Microphone => "microphone",
+            Self::Camera => "camera",
+            Self::ScreenShare => "screen_share",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -2683,6 +2728,7 @@ async fn ban_member(
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn issue_voice_token(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2697,7 +2743,6 @@ async fn issue_voice_token(
     if !permissions.contains(Permission::CreateMessage) {
         return Err(AuthFailure::Forbidden);
     }
-    let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     let livekit = state.livekit.clone().ok_or(AuthFailure::Internal)?;
 
     let room = LiveKitRoomName::try_from(format!(
@@ -2713,20 +2758,52 @@ async fn issue_voice_token(
         room: room.as_str().to_owned(),
         ..VideoGrants::default()
     };
-    let role_can_publish = has_permission(role, Permission::CreateMessage);
     let requested_publish = payload.can_publish.unwrap_or(true);
-    let requested_subscribe = payload.can_subscribe.unwrap_or(true);
-    grants.can_publish = role_can_publish && requested_publish;
-    grants.can_subscribe = requested_subscribe;
-    grants.can_publish_data = grants.can_publish;
-    grants.can_publish_sources = if grants.can_publish {
-        vec![String::from("microphone")]
+    let requested_subscribe = payload.can_subscribe.unwrap_or(false);
+    let requested_sources = payload.publish_sources.as_deref().map_or_else(
+        || vec![MediaPublishSource::Microphone],
+        dedup_publish_sources,
+    );
+    let allowed_sources = allowed_publish_sources(permissions);
+    let mut effective_sources = if requested_publish {
+        requested_sources
+            .into_iter()
+            .filter(|source| allowed_sources.contains(source))
+            .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
+    effective_sources.sort_by_key(|source| match source {
+        MediaPublishSource::Microphone => 0_u8,
+        MediaPublishSource::Camera => 1_u8,
+        MediaPublishSource::ScreenShare => 2_u8,
+    });
+    effective_sources.dedup();
+
+    if effective_sources.iter().any(|source| {
+        matches!(
+            source,
+            MediaPublishSource::Camera | MediaPublishSource::ScreenShare
+        )
+    }) {
+        enforce_media_publish_rate_limit(&state, &headers, auth.user_id, &path).await?;
+    }
+
+    grants.can_publish = !effective_sources.is_empty();
+    grants.can_subscribe =
+        requested_subscribe && permissions.contains(Permission::SubscribeStreams);
+    grants.can_publish_data = grants.can_publish;
+    grants.can_publish_sources = effective_sources
+        .iter()
+        .map(|source| String::from(source.as_livekit_source()))
+        .collect();
 
     if !grants.can_publish && !grants.can_subscribe {
         return Err(AuthFailure::InvalidRequest);
+    }
+
+    if grants.can_subscribe {
+        enforce_media_subscribe_cap(&state, auth.user_id, &path).await?;
     }
 
     let token = LiveKitAccessToken::with_api_key(&livekit.api_key, &livekit.api_secret)
@@ -2746,6 +2823,13 @@ async fn issue_voice_token(
         serde_json::json!({
             "channel_id": path.channel_id,
             "room": room.as_str(),
+            "requested_publish_sources": payload.publish_sources.as_ref().map(|sources| {
+                sources
+                    .iter()
+                    .map(|source| source.as_livekit_source())
+                    .collect::<Vec<_>>()
+            }),
+            "effective_publish_sources": grants.can_publish_sources.clone(),
             "can_publish": grants.can_publish,
             "can_subscribe": grants.can_subscribe,
             "ttl_secs": state.runtime.livekit_token_ttl.as_secs(),
@@ -2761,6 +2845,7 @@ async fn issue_voice_token(
         identity: identity.as_str().to_owned(),
         can_publish: grants.can_publish,
         can_subscribe: grants.can_subscribe,
+        publish_sources: grants.can_publish_sources.clone(),
         expires_in_secs: state.runtime.livekit_token_ttl.as_secs(),
     }))
 }
@@ -4393,6 +4478,83 @@ async fn enforce_media_token_rate_limit(
     }
     route_hits.push(now);
     Ok(())
+}
+
+async fn enforce_media_publish_rate_limit(
+    state: &AppState,
+    headers: &HeaderMap,
+    user_id: UserId,
+    path: &ChannelPath,
+) -> Result<(), AuthFailure> {
+    let ip = extract_client_ip(headers);
+    let key = format!("{ip}:{}", media_channel_user_key(user_id, path));
+    let now = now_unix();
+
+    let mut hits = state.media_publish_hits.write().await;
+    let route_hits = hits.entry(key).or_default();
+    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < 60);
+    let max_hits =
+        usize::try_from(state.runtime.media_publish_requests_per_minute).unwrap_or(usize::MAX);
+    if route_hits.len() >= max_hits {
+        tracing::warn!(event = "media.publish.rate_limit", ip = %ip, user_id = %user_id, guild_id = %path.guild_id, channel_id = %path.channel_id);
+        return Err(AuthFailure::RateLimited);
+    }
+    route_hits.push(now);
+    Ok(())
+}
+
+async fn enforce_media_subscribe_cap(
+    state: &AppState,
+    user_id: UserId,
+    path: &ChannelPath,
+) -> Result<(), AuthFailure> {
+    let key = media_channel_user_key(user_id, path);
+    let now = now_unix();
+    let expires_at = now
+        .checked_add(i64::try_from(state.runtime.livekit_token_ttl.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(i64::MAX);
+    let mut leases = state.media_subscribe_leases.write().await;
+    let channel_leases = leases.entry(key).or_default();
+    channel_leases.retain(|timestamp| *timestamp > now);
+    if channel_leases.len() >= state.runtime.media_subscribe_token_cap_per_channel {
+        tracing::warn!(
+            event = "media.subscribe.cap_reached",
+            user_id = %user_id,
+            guild_id = %path.guild_id,
+            channel_id = %path.channel_id
+        );
+        return Err(AuthFailure::RateLimited);
+    }
+    channel_leases.push(expires_at);
+    Ok(())
+}
+
+fn media_channel_user_key(user_id: UserId, path: &ChannelPath) -> String {
+    format!("{}:{}:{}", user_id, path.guild_id, path.channel_id)
+}
+
+fn dedup_publish_sources(sources: &[MediaPublishSource]) -> Vec<MediaPublishSource> {
+    let mut deduped = Vec::new();
+    for source in sources {
+        if !deduped.contains(source) {
+            deduped.push(*source);
+        }
+    }
+    deduped
+}
+
+fn allowed_publish_sources(permissions: PermissionSet) -> Vec<MediaPublishSource> {
+    let mut sources = Vec::with_capacity(3);
+    if permissions.contains(Permission::CreateMessage) {
+        sources.push(MediaPublishSource::Microphone);
+    }
+    if permissions.contains(Permission::PublishVideo) {
+        sources.push(MediaPublishSource::Camera);
+    }
+    if permissions.contains(Permission::PublishScreenShare) {
+        sources.push(MediaPublishSource::ScreenShare);
+    }
+    sources
 }
 
 fn extract_client_ip(headers: &HeaderMap) -> String {

@@ -492,15 +492,24 @@ Every phase has:
 - Opt-in stream subscription UI and server-side policy enforcement
 
 ### Status
-- NOT STARTED
+- DONE
 
 ### Notes
 - Opt-in should be enforced in **policy**, not just UI.
 - Cap max subscribed streams by default to prevent client DoS.
+- 2026-02-10: Extended `filament-core` permission model with media-specific bits (`publish_video`, `publish_screen_share`, `subscribe_streams`) and updated role/channel-override unit coverage.
+- 2026-02-10: Upgraded LiveKit token issuance policy in `filament-server` (`POST /guilds/{guild_id}/channels/{channel_id}/voice/token`) to accept requested publish sources and enforce server-side filtering by effective channel permissions.
+- 2026-02-10: Added opt-in subscribe enforcement (`can_subscribe` now explicit at request-time and gated by `subscribe_streams` permission), preserving authoritative server policy independent of client UI state.
+- 2026-02-10: Added dedicated abuse controls for stream operations: separate publish-token churn limiter (video/screen source requests) and bounded concurrent subscribe-capable token leases per user/channel.
+- 2026-02-10: Added integration coverage in `apps/filament-server/tests/phase6_video_streams.rs` for unauthorized publish/subscribe policy paths and stream-limit enforcement (subscribe-cap saturation + publish churn throttling).
+- 2026-02-10: Updated `docs/SECURITY.md` with Phase 6 media policy controls and rate/cap guardrails.
+- 2026-02-10: Local quality/security gates run for this increment: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
 
 ### TODOs
 - Add “stream roles” (who can broadcast).
 - Add bandwidth presets and max resolution defaults.
+- Evaluate LiveKit webhook feedback loop for stricter real-time enforcement of active subscription counts beyond issuance-time token caps.
+- Phase 7 start gate: begin desktop/web client hardening (CSP/navigation lock-down and minimal privileged command surface).
 
 ### Exit Criteria
 - Integration tests verify unauthorized publish/subscribe attempts are rejected.

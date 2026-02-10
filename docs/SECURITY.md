@@ -48,3 +48,9 @@
 - Voice tokens are room-scoped, permission-scoped, and capped to a maximum `5 minute` TTL.
 - Token minting is rate-limited per user/IP/channel and issuance is written to audit logs.
 - LiveKit API key and secret are required runtime secrets (`FILAMENT_LIVEKIT_API_KEY`, `FILAMENT_LIVEKIT_API_SECRET`).
+
+## LiveKit Video/Screen Policy
+- Publish source permissions are enforced server-side (`microphone`, `camera`, `screen_share`) and filtered from requested sources when issuing tokens.
+- Subscribe access is opt-in per token request and enforced server-side by `subscribe_streams` permission checks.
+- Video/screen publish churn is rate-limited separately from baseline media token issuance.
+- Concurrent subscribe-capable tokens are bounded per user/channel to reduce stream fanout abuse and client DoS risk.
