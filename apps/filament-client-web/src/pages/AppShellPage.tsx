@@ -296,6 +296,7 @@ export function AppShellPage() {
   const [createChannelName, setCreateChannelName] = createSignal("incident-room");
   const [isCreatingWorkspace, setCreatingWorkspace] = createSignal(false);
   const [workspaceError, setWorkspaceError] = createSignal("");
+  const [showWorkspaceCreateForm, setShowWorkspaceCreateForm] = createSignal(false);
   const [publicGuildSearchQuery, setPublicGuildSearchQuery] = createSignal("");
   const [isSearchingPublicGuilds, setSearchingPublicGuilds] = createSignal(false);
   const [publicGuildSearchError, setPublicGuildSearchError] = createSignal("");
@@ -382,6 +383,7 @@ export function AppShellPage() {
   const hasModerationAccess = createMemo(
     () => canManageRoles() || canBanMembers() || canManageChannelOverrides(),
   );
+  const canDismissWorkspaceCreateForm = createMemo(() => workspaces().length > 0);
 
   const activeChannelKey = createMemo(() => {
     const guildId = activeGuildId();
@@ -511,6 +513,15 @@ export function AppShellPage() {
       return;
     }
     saveWorkspaceCache(workspaces());
+  });
+
+  createEffect(() => {
+    if (!workspaceBootstrapDone()) {
+      return;
+    }
+    if (workspaces().length === 0) {
+      setShowWorkspaceCreateForm(true);
+    }
   });
 
   createEffect(() => {
@@ -688,7 +699,7 @@ export function AppShellPage() {
     onCleanup(() => gateway.close());
   });
 
-  const createFirstWorkspace = async (event: SubmitEvent) => {
+  const createWorkspace = async (event: SubmitEvent) => {
     event.preventDefault();
     const session = auth.session();
     if (!session) {
@@ -702,6 +713,7 @@ export function AppShellPage() {
     setWorkspaceError("");
     setCreatingWorkspace(true);
     try {
+      const hadWorkspace = workspaces().length > 0;
       const guild = await createGuild(session, {
         name: guildNameFromInput(createGuildName()),
         visibility: guildVisibilityFromInput(createGuildVisibility()),
@@ -719,6 +731,7 @@ export function AppShellPage() {
       setActiveGuildId(createdWorkspace.guildId);
       setActiveChannelId(channel.channelId);
       setMessageStatus("Workspace created.");
+      setShowWorkspaceCreateForm(!hadWorkspace);
     } catch (error) {
       setWorkspaceError(mapError(error, "Unable to create workspace."));
     } finally {
@@ -1386,6 +1399,16 @@ export function AppShellPage() {
             <button type="button" onClick={() => void refreshMessages()}>
               Refresh
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setWorkspaceError("");
+                setShowWorkspaceCreateForm((visible) => !visible);
+              }}
+              disabled={isCreatingWorkspace()}
+            >
+              {showWorkspaceCreateForm() ? "Close workspace form" : "New workspace"}
+            </button>
             <button type="button" onClick={() => void refreshSession()} disabled={isRefreshingSession()}>
               {isRefreshingSession() ? "Refreshing..." : "Refresh session"}
             </button>
@@ -1394,6 +1417,61 @@ export function AppShellPage() {
             </button>
           </div>
         </header>
+
+        <Show when={showWorkspaceCreateForm()}>
+          <section class="workspace-create-panel">
+            <h4>Create workspace</h4>
+            <form class="inline-form" onSubmit={createWorkspace}>
+              <label>
+                Workspace name
+                <input
+                  value={createGuildName()}
+                  onInput={(event) => setCreateGuildName(event.currentTarget.value)}
+                  maxlength="64"
+                />
+              </label>
+              <label>
+                Visibility
+                <select
+                  value={createGuildVisibility()}
+                  onChange={(event) =>
+                    setCreateGuildVisibility(guildVisibilityFromInput(event.currentTarget.value))
+                  }
+                >
+                  <option value="private">private</option>
+                  <option value="public">public</option>
+                </select>
+              </label>
+              <label>
+                First channel
+                <input
+                  value={createChannelName()}
+                  onInput={(event) => setCreateChannelName(event.currentTarget.value)}
+                  maxlength="64"
+                />
+              </label>
+              <div class="button-row">
+                <button type="submit" disabled={isCreatingWorkspace()}>
+                  {isCreatingWorkspace() ? "Creating..." : "Create workspace"}
+                </button>
+                <Show when={canDismissWorkspaceCreateForm()}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkspaceError("");
+                      setShowWorkspaceCreateForm(false);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </Show>
+              </div>
+            </form>
+            <Show when={workspaceError()}>
+              <p class="status error">{workspaceError()}</p>
+            </Show>
+          </section>
+        </Show>
 
         <Show
           when={workspaceBootstrapDone() && workspaces().length === 0}
@@ -1518,45 +1596,7 @@ export function AppShellPage() {
         >
           <section class="empty-workspace">
             <h3>Create your first workspace</h3>
-            <p class="muted">
-              The API currently exposes create routes, so this client provisions your first guild/channel here.
-            </p>
-            <form class="inline-form" onSubmit={createFirstWorkspace}>
-              <label>
-                Workspace name
-                <input
-                  value={createGuildName()}
-                  onInput={(event) => setCreateGuildName(event.currentTarget.value)}
-                  maxlength="64"
-                />
-              </label>
-              <label>
-                Visibility
-                <select
-                  value={createGuildVisibility()}
-                  onChange={(event) =>
-                    setCreateGuildVisibility(guildVisibilityFromInput(event.currentTarget.value))
-                  }
-                >
-                  <option value="private">private</option>
-                  <option value="public">public</option>
-                </select>
-              </label>
-              <label>
-                First channel
-                <input
-                  value={createChannelName()}
-                  onInput={(event) => setCreateChannelName(event.currentTarget.value)}
-                  maxlength="64"
-                />
-              </label>
-              <button type="submit" disabled={isCreatingWorkspace()}>
-                {isCreatingWorkspace() ? "Creating..." : "Create workspace"}
-              </button>
-            </form>
-            <Show when={workspaceError()}>
-              <p class="status error">{workspaceError()}</p>
-            </Show>
+            <p class="muted">Use the workspace panel above to create your first guild and channel.</p>
           </section>
         </Show>
 

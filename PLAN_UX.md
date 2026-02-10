@@ -18,6 +18,7 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - 2026-02-10: Added guild visibility model (`private|public`) across server/client, `GET /guilds/public` authenticated discovery endpoint with bounded query/limit, and public workspace directory UX in the web shell with tests.
 - 2026-02-10: Added server-configured per-user guild creation caps (`FILAMENT_MAX_CREATED_GUILDS_PER_USER`) with strict API enforcement, explicit creator tracking, and web-shell error handling/tests for limit exhaustion.
 - 2026-02-10: Added channel self-permission snapshot endpoint (`GET /guilds/{guild_id}/channels/{channel_id}/permissions/self`) and applied least-visibility UI gating so privileged/operator controls are hidden unless explicitly allowed for the active channel role/permissions.
+- 2026-02-10: Added authenticated "new workspace" UX flow in the web shell so users can create additional guilds/channels at any time (including mobile header access), with limit-error handling and regression coverage.
 
 ## Completed
 - [x] Login flow reliably navigates to app shell.
@@ -42,12 +43,12 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - [x] Add public guild discovery model: support guild visibility state (private/public) and a server-level searchable public guild list UI.
 - [x] Enforce least-visibility defaults across API + client: if a user lacks default permission for a resource, the resource must not be discoverable or rendered in UI (including preventing ops console exposure for non-members).
 - [x] Add configurable per-user guild creation limits: allow self-serve guild creation for all users, constrained by a server-configured max created guild count per user.
+- [x] Add UX flow for any authenticated user to create their own guild (subject to server-configured limits).
 
 ## In Progress
 - [ ] None.
 
 ## Next
-- [ ] Add UX flow for any authenticated user to create their own guild (subject to server-configured limits).
 - [ ] Add captcha verification to account creation UX + backend registration flow to reduce automated signup abuse.
 - [ ] Add friendship system UX + backend support (requests, acceptance, list management, and permission-safe exposure).
 - [ ] Add robust username query/lookup system with client-side caching and smart invalidation so name resolution is dynamic without naive repeated re-fetching.
