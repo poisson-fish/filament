@@ -17,6 +17,7 @@ import {
   reactionFromResponse,
   roleFromInput,
   searchQueryFromInput,
+  userLookupListFromResponse,
   voiceTokenFromResponse,
   workspaceFromStorage,
 } from "../src/domain/chat";
@@ -202,5 +203,17 @@ describe("chat domain invariants", () => {
       created_at_unix: 3,
     });
     expect(create.createdAtUnix).toBe(3);
+  });
+
+  it("validates user lookup payloads", () => {
+    const users = userLookupListFromResponse({
+      users: [
+        {
+          user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          username: "alice",
+        },
+      ],
+    });
+    expect(users[0]?.username).toBe("alice");
   });
 });

@@ -113,6 +113,7 @@ const MAX_SEARCH_FUZZY: usize = 2;
 const SEARCH_INDEX_QUEUE_CAPACITY: usize = 1024;
 const MAX_SEARCH_RECONCILE_DOCS: usize = 10_000;
 const MAX_REACTION_EMOJI_CHARS: usize = 32;
+const MAX_USER_LOOKUP_IDS: usize = 64;
 const METRICS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
 static METRICS_STATE: OnceLock<MetricsState> = OnceLock::new();
@@ -915,6 +916,7 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route("/auth/refresh", post(refresh))
         .route("/auth/logout", post(logout))
         .route("/auth/me", get(me))
+        .route("/users/lookup", post(lookup_users))
         .route("/friends", get(list_friends))
         .route("/friends/{friend_user_id}", delete(remove_friend))
         .route(
@@ -1089,6 +1091,23 @@ struct AuthError {
 struct MeResponse {
     user_id: String,
     username: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserLookupRequest {
+    user_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct UserLookupItem {
+    user_id: String,
+    username: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UserLookupResponse {
+    users: Vec<UserLookupItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1943,6 +1962,73 @@ async fn me(
         user_id: auth.user_id.to_string(),
         username: auth.username,
     }))
+}
+
+async fn lookup_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<UserLookupRequest>,
+) -> Result<Json<UserLookupResponse>, AuthFailure> {
+    let _auth = authenticate(&state, &headers).await?;
+    if payload.user_ids.is_empty() || payload.user_ids.len() > MAX_USER_LOOKUP_IDS {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    let mut deduped = Vec::with_capacity(payload.user_ids.len());
+    let mut seen = HashSet::with_capacity(payload.user_ids.len());
+    for raw_user_id in payload.user_ids {
+        let user_id = UserId::try_from(raw_user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+        if seen.insert(user_id) {
+            deduped.push(user_id);
+        }
+    }
+    if deduped.is_empty() {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let user_ids: Vec<String> = deduped.iter().map(ToString::to_string).collect();
+        let rows = sqlx::query("SELECT user_id, username FROM users WHERE user_id = ANY($1)")
+            .bind(&user_ids)
+            .fetch_all(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+
+        let mut usernames_by_id = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let user_id: String = row.try_get("user_id").map_err(|_| AuthFailure::Internal)?;
+            let username: String = row.try_get("username").map_err(|_| AuthFailure::Internal)?;
+            usernames_by_id.insert(user_id, username);
+        }
+
+        let users = user_ids
+            .iter()
+            .filter_map(|user_id| {
+                usernames_by_id.get(user_id).map(|username| UserLookupItem {
+                    user_id: user_id.clone(),
+                    username: username.clone(),
+                })
+            })
+            .collect();
+        return Ok(Json(UserLookupResponse { users }));
+    }
+
+    let user_ids_map = state.user_ids.read().await;
+    let users = deduped
+        .into_iter()
+        .filter_map(|user_id| {
+            let user_id_text = user_id.to_string();
+            user_ids_map
+                .get(&user_id_text)
+                .cloned()
+                .map(|username| UserLookupItem {
+                    user_id: user_id_text,
+                    username,
+                })
+        })
+        .collect();
+
+    Ok(Json(UserLookupResponse { users }))
 }
 
 fn canonical_friend_pair(user_a: UserId, user_b: UserId) -> (String, String) {

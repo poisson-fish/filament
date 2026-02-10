@@ -111,6 +111,13 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
 - `GET /auth/me`
   - Auth required
   - Response `200`: `{ "user_id": "...", "username": "..." }`
+- `POST /users/lookup`
+  - Auth required
+  - Request: `{ "user_ids": ["..."] }`
+  - `user_ids`: deduplicated server-side, `1..=64` ULID values
+  - Response `200`:
+    - `{ "users": [{ "user_id": "...", "username": "..." }] }`
+  - Missing users are omitted from `users`
 
 ### Friendships
 - `GET /friends`

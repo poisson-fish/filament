@@ -258,6 +258,23 @@ async fn create_channel_context(
     }
 }
 
+async fn fetch_me_profile(app: &axum::Router, auth: &AuthResponse, ip: &str) -> Value {
+    let me = Request::builder()
+        .method("GET")
+        .uri("/auth/me")
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", ip)
+        .body(Body::empty())
+        .expect("me request should build");
+    let me_response = app
+        .clone()
+        .oneshot(me)
+        .await
+        .expect("me request should execute");
+    assert_eq!(me_response.status(), StatusCode::OK);
+    parse_json_body(me_response).await
+}
+
 async fn assert_message_pagination(
     app: &axum::Router,
     auth: &AuthResponse,
@@ -363,4 +380,92 @@ async fn postgres_backed_phase1_auth_and_realtime_text_flow() {
     let guild_name = format!("PG Guild {suffix}");
     let channel_ref = create_channel_context(&app, &auth, client_ip, &guild_name).await;
     assert_message_pagination(&app, &auth, client_ip, &channel_ref).await;
+}
+
+#[tokio::test]
+async fn postgres_backed_user_lookup_batch_endpoint_returns_valid_users() {
+    let Some(database_url) = postgres_url() else {
+        eprintln!("skipping postgres-backed test: FILAMENT_TEST_DATABASE_URL is unset");
+        return;
+    };
+
+    let app = test_app(database_url);
+    let suffix = Ulid::new().to_string().to_lowercase();
+    let alice_username = format!("alice_{}", &suffix[..20]);
+    let bob_username = format!("bob_{}", &suffix[..20]);
+    let password = "super-secure-password";
+    let alice_ip = "203.0.113.71";
+    let bob_ip = "203.0.113.72";
+
+    assert_eq!(
+        register_user(&app, alice_ip, &alice_username, password).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        register_user(&app, bob_ip, &bob_username, password).await,
+        StatusCode::OK
+    );
+
+    let alice_login = login_user(&app, alice_ip, &alice_username, password).await;
+    assert_eq!(alice_login.status(), StatusCode::OK);
+    let alice_auth: AuthResponse = parse_json_body(alice_login).await;
+
+    let bob_login = login_user(&app, bob_ip, &bob_username, password).await;
+    assert_eq!(bob_login.status(), StatusCode::OK);
+    let bob_auth: AuthResponse = parse_json_body(bob_login).await;
+
+    let alice_profile = fetch_me_profile(&app, &alice_auth, alice_ip).await;
+    let bob_profile = fetch_me_profile(&app, &bob_auth, bob_ip).await;
+    let missing_user_id = Ulid::new().to_string();
+
+    let lookup_request = Request::builder()
+        .method("POST")
+        .uri("/users/lookup")
+        .header(
+            "authorization",
+            format!("Bearer {}", alice_auth.access_token),
+        )
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", alice_ip)
+        .body(Body::from(
+            json!({
+                "user_ids": [
+                    alice_profile["user_id"].as_str().expect("alice user id should exist"),
+                    bob_profile["user_id"].as_str().expect("bob user id should exist"),
+                    bob_profile["user_id"].as_str().expect("bob user id should exist"),
+                    missing_user_id
+                ]
+            })
+            .to_string(),
+        ))
+        .expect("lookup request should build");
+    let lookup_response = app
+        .clone()
+        .oneshot(lookup_request)
+        .await
+        .expect("lookup request should execute");
+    assert_eq!(lookup_response.status(), StatusCode::OK);
+    let lookup_json: Value = parse_json_body(lookup_response).await;
+    let users = lookup_json["users"]
+        .as_array()
+        .expect("users should be an array");
+    assert_eq!(users.len(), 2);
+    assert_eq!(users[0]["username"], alice_username);
+    assert_eq!(users[1]["username"], bob_username);
+
+    let unauthorized_request = Request::builder()
+        .method("POST")
+        .uri("/users/lookup")
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", alice_ip)
+        .body(Body::from(
+            json!({"user_ids":[alice_profile["user_id"].clone()]}).to_string(),
+        ))
+        .expect("unauthorized lookup request should build");
+    let unauthorized_response = app
+        .clone()
+        .oneshot(unauthorized_request)
+        .await
+        .expect("unauthorized lookup should execute");
+    assert_eq!(unauthorized_response.status(), StatusCode::UNAUTHORIZED);
 }

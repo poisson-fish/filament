@@ -1,4 +1,4 @@
-import { DomainValidationError } from "./auth";
+import { DomainValidationError, usernameFromInput } from "./auth";
 
 export type GuildId = string & { readonly __brand: "guild_id" };
 export type ChannelId = string & { readonly __brand: "channel_id" };
@@ -375,6 +375,30 @@ export function publicGuildDirectoryFromResponse(dto: unknown): PublicGuildDirec
   return {
     guilds: data.guilds.map((entry) => guildFromResponse(entry)),
   };
+}
+
+export interface UserLookupRecord {
+  userId: UserId;
+  username: string;
+}
+
+export function userLookupRecordFromResponse(dto: unknown): UserLookupRecord {
+  const data = requireObject(dto, "user lookup record");
+  return {
+    userId: userIdFromInput(requireString(data.user_id, "user_id")),
+    username: usernameFromInput(requireString(data.username, "username", 64)),
+  };
+}
+
+export function userLookupListFromResponse(dto: unknown): UserLookupRecord[] {
+  const data = requireObject(dto, "user lookup response");
+  if (!Array.isArray(data.users)) {
+    throw new DomainValidationError("User lookup response must include users array.");
+  }
+  if (data.users.length > 64) {
+    throw new DomainValidationError("User lookup response exceeds maximum user records.");
+  }
+  return data.users.map((entry) => userLookupRecordFromResponse(entry));
 }
 
 export function messageFromResponse(dto: unknown): MessageRecord {

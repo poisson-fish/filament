@@ -34,6 +34,7 @@ import {
   type SearchQuery,
   type SearchReconcileResult,
   type SearchResults,
+  type UserLookupRecord,
   type UserId,
   type VoiceTokenRecord,
   attachmentFromResponse,
@@ -50,6 +51,7 @@ import {
   reactionFromResponse,
   searchReconcileFromResponse,
   searchResultsFromResponse,
+  userLookupListFromResponse,
   userIdFromInput,
   voiceTokenFromResponse,
 } from "../domain/chat";
@@ -340,6 +342,22 @@ export async function fetchMe(session: AuthSession): Promise<{ userId: UserId; u
     userId: userIdFromInput(userId),
     username,
   };
+}
+
+export async function lookupUsersByIds(
+  session: AuthSession,
+  userIds: UserId[],
+): Promise<UserLookupRecord[]> {
+  if (userIds.length < 1 || userIds.length > 64) {
+    throw new ApiError(400, "invalid_request", "user_ids must contain 1-64 values.");
+  }
+  const dto = await requestJson({
+    method: "POST",
+    path: "/users/lookup",
+    accessToken: session.accessToken,
+    body: { user_ids: userIds },
+  });
+  return userLookupListFromResponse(dto);
 }
 
 export async function fetchFriends(session: AuthSession): Promise<FriendRecord[]> {

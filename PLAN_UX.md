@@ -48,11 +48,11 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - [x] Add UX flow for any authenticated user to create their own guild (subject to server-configured limits).
 - [x] Add captcha verification to account creation UX + backend registration flow to reduce automated signup abuse.
 - [x] Add friendship system UX + backend support (requests, acceptance, list management, and permission-safe exposure).
+- [x] Add robust username query/lookup system with client-side caching and smart invalidation so name resolution is dynamic without naive repeated re-fetching.
 
 ## In Progress
 - [ ] None.
 
 ## Next
-- [ ] Add robust username query/lookup system with client-side caching and smart invalidation so name resolution is dynamic without naive repeated re-fetching.
 - [ ] Improve ops console UX by moving guild/admin settings into layered overlay panels (open/close) instead of a single dense rail.
 - [ ] If backend adds list endpoints for guilds/channels, replace local workspace cache bootstrap with server-driven discovery.

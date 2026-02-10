@@ -80,6 +80,11 @@ import {
 import { useAuth } from "../lib/auth-context";
 import { connectGateway } from "../lib/gateway";
 import { clearWorkspaceCache, loadWorkspaceCache, saveWorkspaceCache } from "../lib/workspace-cache";
+import {
+  clearUsernameLookupCache,
+  primeUsernameCache,
+  resolveUsernames,
+} from "../lib/username-cache";
 
 const THUMBS_UP = reactionEmojiFromInput("👍");
 
@@ -333,6 +338,7 @@ export function AppShellPage() {
 
   const [gatewayOnline, setGatewayOnline] = createSignal(false);
   const [onlineMembers, setOnlineMembers] = createSignal<string[]>([]);
+  const [resolvedUsernames, setResolvedUsernames] = createSignal<Record<string, string>>({});
 
   const [attachmentByChannel, setAttachmentByChannel] = createSignal<Record<string, AttachmentRecord[]>>({});
   const [selectedAttachment, setSelectedAttachment] = createSignal<File | null>(null);
@@ -415,6 +421,8 @@ export function AppShellPage() {
     }
     return attachmentByChannel()[key] ?? [];
   });
+
+  const displayUserLabel = (userId: string): string => resolvedUsernames()[userId] ?? shortActor(userId);
 
   const loadPublicGuildDirectory = async (query?: string) => {
     const session = auth.session();
@@ -538,6 +546,8 @@ export function AppShellPage() {
   createEffect(() => {
     const session = auth.session();
     if (!session) {
+      clearUsernameLookupCache();
+      setResolvedUsernames({});
       setPublicGuildDirectory([]);
       setPublicGuildSearchError("");
       return;
@@ -548,6 +558,8 @@ export function AppShellPage() {
   createEffect(() => {
     const session = auth.session();
     if (!session) {
+      clearUsernameLookupCache();
+      setResolvedUsernames({});
       setFriends([]);
       setFriendRequests({ incoming: [], outgoing: [] });
       setFriendStatus("");
@@ -555,6 +567,92 @@ export function AppShellPage() {
       return;
     }
     void untrack(() => refreshFriendDirectory());
+  });
+
+  createEffect(() => {
+    const value = profile();
+    if (!value) {
+      return;
+    }
+    primeUsernameCache([{ userId: value.userId, username: value.username }]);
+    setResolvedUsernames((existing) => ({
+      ...existing,
+      [value.userId]: value.username,
+    }));
+  });
+
+  createEffect(() => {
+    const known = [
+      ...friends().map((friend) => ({
+        userId: friend.userId,
+        username: friend.username,
+      })),
+      ...friendRequests().incoming.map((request) => ({
+        userId: request.senderUserId,
+        username: request.senderUsername,
+      })),
+      ...friendRequests().outgoing.map((request) => ({
+        userId: request.recipientUserId,
+        username: request.recipientUsername,
+      })),
+    ];
+    if (known.length === 0) {
+      return;
+    }
+    primeUsernameCache(known);
+    setResolvedUsernames((existing) => ({
+      ...existing,
+      ...Object.fromEntries(known.map((entry) => [entry.userId, entry.username])),
+    }));
+  });
+
+  createEffect(() => {
+    const session = auth.session();
+    if (!session) {
+      return;
+    }
+
+    const lookupIds = new Set<UserId>();
+    for (const message of messages()) {
+      lookupIds.add(message.authorId);
+    }
+    for (const memberId of onlineMembers()) {
+      try {
+        lookupIds.add(userIdFromInput(memberId));
+      } catch {
+        continue;
+      }
+    }
+    const result = searchResults();
+    if (result) {
+      for (const message of result.messages) {
+        lookupIds.add(message.authorId);
+      }
+    }
+    if (lookupIds.size === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    const resolveVisibleUsernames = async () => {
+      try {
+        const resolved = await resolveUsernames(session, [...lookupIds]);
+        if (cancelled || Object.keys(resolved).length === 0) {
+          return;
+        }
+        setResolvedUsernames((existing) => ({
+          ...existing,
+          ...resolved,
+        }));
+      } catch {
+        // Keep user-id fallback rendering if lookup fails.
+      }
+    };
+    void resolveVisibleUsernames();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
   });
 
   createEffect(() => {
@@ -1749,7 +1847,7 @@ export function AppShellPage() {
                       return (
                         <article class="message-row">
                           <p>
-                            <strong>{shortActor(message.authorId)}</strong>
+                            <strong>{displayUserLabel(message.authorId)}</strong>
                             <span>{formatMessageTime(message.createdAtUnix)}</span>
                           </p>
                           <Show
@@ -1872,7 +1970,7 @@ export function AppShellPage() {
               {(memberId) => (
                 <li>
                   <span class="presence online" />
-                  {shortActor(memberId)}
+                  {displayUserLabel(memberId)}
                 </li>
               )}
             </For>
@@ -1926,7 +2024,7 @@ export function AppShellPage() {
                   {(message) => (
                     <li>
                       <span class="presence online" />
-                      {shortActor(message.authorId)}: {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
+                      {displayUserLabel(message.authorId)}: {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
                     </li>
                   )}
                 </For>
