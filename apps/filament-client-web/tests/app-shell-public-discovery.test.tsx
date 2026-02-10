@@ -98,9 +98,15 @@ describe("app shell public discovery", () => {
         return jsonResponse({ user_id: USER_ID, username: USERNAME });
       }
       if (
-        url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages?limit=1`) ||
+        url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`) ||
         url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages?limit=50`)
       ) {
+        if (url.includes("/permissions/self")) {
+          return jsonResponse({
+            role: "member",
+            permissions: ["create_message", "subscribe_streams"],
+          });
+        }
         return jsonResponse({ messages: [], next_before: null });
       }
       if (url.includes("/guilds/public?q=lobby")) {

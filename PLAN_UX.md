@@ -17,6 +17,7 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - 2026-02-10: Fixed client guild visibility bootstrap by pruning cached workspaces/channels that fail authenticated access checks; added `apps/filament-client-web/tests/app-shell-workspace-visibility.test.tsx` coverage to prevent non-member/private guild leakage in UI/cache.
 - 2026-02-10: Added guild visibility model (`private|public`) across server/client, `GET /guilds/public` authenticated discovery endpoint with bounded query/limit, and public workspace directory UX in the web shell with tests.
 - 2026-02-10: Added server-configured per-user guild creation caps (`FILAMENT_MAX_CREATED_GUILDS_PER_USER`) with strict API enforcement, explicit creator tracking, and web-shell error handling/tests for limit exhaustion.
+- 2026-02-10: Added channel self-permission snapshot endpoint (`GET /guilds/{guild_id}/channels/{channel_id}/permissions/self`) and applied least-visibility UI gating so privileged/operator controls are hidden unless explicitly allowed for the active channel role/permissions.
 
 ## Completed
 - [x] Login flow reliably navigates to app shell.
@@ -39,14 +40,15 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - [x] Validate expanded operator UI against backend role/permission fixtures with dedicated integration-like frontend tests.
 - [x] Fix guild visibility bug: only show guilds the authenticated user is a member of; private guilds must require invite/membership before appearing.
 - [x] Add public guild discovery model: support guild visibility state (private/public) and a server-level searchable public guild list UI.
+- [x] Enforce least-visibility defaults across API + client: if a user lacks default permission for a resource, the resource must not be discoverable or rendered in UI (including preventing ops console exposure for non-members).
+- [x] Add configurable per-user guild creation limits: allow self-serve guild creation for all users, constrained by a server-configured max created guild count per user.
 
 ## In Progress
 - [ ] None.
 
 ## Next
-- [x] Add configurable per-user guild creation limits: allow self-serve guild creation for all users, constrained by a server-configured max created guild count per user.
-- [ ] Enforce least-visibility defaults across API + client: if a user lacks default permission for a resource, the resource must not be discoverable or rendered in UI (including preventing ops console exposure for non-members).
 - [ ] Add UX flow for any authenticated user to create their own guild (subject to server-configured limits).
+- [ ] Add captcha verification to account creation UX + backend registration flow to reduce automated signup abuse.
 - [ ] Add friendship system UX + backend support (requests, acceptance, list management, and permission-safe exposure).
 - [ ] Add robust username query/lookup system with client-side caching and smart invalidation so name resolution is dynamic without naive repeated re-fetching.
 - [ ] Improve ops console UX by moving guild/admin settings into layered overlay panels (open/close) instead of a single dense rail.

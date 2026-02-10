@@ -1,6 +1,7 @@
 import {
   attachmentFilenameFromInput,
   attachmentFromResponse,
+  channelPermissionSnapshotFromResponse,
   channelIdFromInput,
   guildVisibilityFromInput,
   guildIdFromInput,
@@ -130,6 +131,21 @@ describe("chat domain invariants", () => {
     expect(roleFromInput("member")).toBe("member");
     expect(permissionFromInput("create_message")).toBe("create_message");
     expect(() => permissionFromInput("bad_perm")).toThrow();
+  });
+
+  it("validates channel permission snapshot payloads", () => {
+    const snapshot = channelPermissionSnapshotFromResponse({
+      role: "moderator",
+      permissions: ["delete_message", "create_message", "subscribe_streams"],
+    });
+    expect(snapshot.role).toBe("moderator");
+    expect(snapshot.permissions).toContain("create_message");
+    expect(() =>
+      channelPermissionSnapshotFromResponse({
+        role: "owner",
+        permissions: ["unknown"],
+      }),
+    ).toThrow();
   });
 
   it("validates guild visibility and public directory payloads", () => {

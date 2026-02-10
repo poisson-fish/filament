@@ -102,6 +102,30 @@ function createOperatorFixtureFetch(role: FixtureRole) {
 
     if (
       method === "GET" &&
+      url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)
+    ) {
+      return role === "owner"
+        ? jsonResponse({
+            role: "owner",
+            permissions: [
+              "manage_roles",
+              "manage_channel_overrides",
+              "delete_message",
+              "ban_member",
+              "create_message",
+              "publish_video",
+              "publish_screen_share",
+              "subscribe_streams",
+            ],
+          })
+        : jsonResponse({
+            role: "member",
+            permissions: ["create_message", "subscribe_streams"],
+          });
+    }
+
+    if (
+      method === "GET" &&
       url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages`)
     ) {
       return jsonResponse({
@@ -201,7 +225,7 @@ describe("operator console permission fixtures", () => {
     expect(screen.getByRole("button", { name: "Apply channel override" })).toBeEnabled();
   });
 
-  it("surfaces permission-denied UX for restricted member fixtures", async () => {
+  it("hides privileged operator controls for restricted member fixtures", async () => {
     seedAuthenticatedWorkspace();
     vi.stubGlobal("fetch", createOperatorFixtureFetch("member"));
     vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
@@ -214,7 +238,9 @@ describe("operator console permission fixtures", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Issue token" })).toBeEnabled(),
     );
-    expect(screen.getByRole("button", { name: "Rebuild Index" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Apply channel override" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Rebuild Index" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply channel override" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ban" })).not.toBeInTheDocument();
   });
 });

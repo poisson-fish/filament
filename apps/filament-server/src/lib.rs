@@ -688,6 +688,24 @@ fn permission_set_from_list(values: &[Permission]) -> PermissionSet {
     set
 }
 
+fn permission_list_from_set(value: PermissionSet) -> Vec<Permission> {
+    const ORDERED_PERMISSIONS: [Permission; 8] = [
+        Permission::ManageRoles,
+        Permission::ManageChannelOverrides,
+        Permission::DeleteMessage,
+        Permission::BanMember,
+        Permission::CreateMessage,
+        Permission::PublishVideo,
+        Permission::PublishScreenShare,
+        Permission::SubscribeStreams,
+    ];
+
+    ORDERED_PERMISSIONS
+        .into_iter()
+        .filter(|permission| value.contains(*permission))
+        .collect()
+}
+
 fn metrics_state() -> &'static MetricsState {
     METRICS_STATE.get_or_init(MetricsState::default)
 }
@@ -829,6 +847,10 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route("/guilds", post(create_guild))
         .route("/guilds/public", get(list_public_guilds))
         .route("/guilds/{guild_id}/channels", post(create_channel))
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/permissions/self",
+            get(get_channel_permissions),
+        )
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/overrides/{role}",
             post(set_channel_role_override),
@@ -1007,6 +1029,12 @@ struct CreateChannelRequest {
 struct ChannelResponse {
     channel_id: String,
     name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ChannelPermissionsResponse {
+    role: Role,
+    permissions: Vec<Permission>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1996,6 +2024,24 @@ async fn create_message(
     )
     .await?;
     Ok(Json(response))
+}
+
+async fn get_channel_permissions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<ChannelPath>,
+) -> Result<Json<ChannelPermissionsResponse>, AuthFailure> {
+    let auth = authenticate(&state, &headers).await?;
+    let (role, permissions) =
+        channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
+    if !permissions.contains(Permission::CreateMessage) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    Ok(Json(ChannelPermissionsResponse {
+        role,
+        permissions: permission_list_from_set(permissions),
+    }))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -5034,14 +5080,14 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    async fn register_and_login(app: &axum::Router, ip: &str) -> AuthResponse {
+    async fn register_and_login_as(app: &axum::Router, username: &str, ip: &str) -> AuthResponse {
         let register = Request::builder()
             .method("POST")
             .uri("/auth/register")
             .header("content-type", "application/json")
             .header("x-forwarded-for", ip)
             .body(Body::from(
-                json!({"username":"alice_1","password":"super-secure-password"}).to_string(),
+                json!({"username":username,"password":"super-secure-password"}).to_string(),
             ))
             .unwrap();
         let register_response = app.clone().oneshot(register).await.unwrap();
@@ -5053,7 +5099,7 @@ mod tests {
             .header("content-type", "application/json")
             .header("x-forwarded-for", ip)
             .body(Body::from(
-                json!({"username":"alice_1","password":"super-secure-password"}).to_string(),
+                json!({"username":username,"password":"super-secure-password"}).to_string(),
             ))
             .unwrap();
         let login_response = app.clone().oneshot(login).await.unwrap();
@@ -5062,6 +5108,159 @@ mod tests {
             .await
             .unwrap();
         serde_json::from_slice(&login_bytes).unwrap()
+    }
+
+    async fn register_and_login(app: &axum::Router, ip: &str) -> AuthResponse {
+        register_and_login_as(app, "alice_1", ip).await
+    }
+
+    async fn authed_json_request(
+        app: &axum::Router,
+        method: &str,
+        uri: String,
+        access_token: &str,
+        ip: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Option<Value>) {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {access_token}"))
+            .header("x-forwarded-for", ip);
+        if body.is_some() {
+            builder = builder.header("content-type", "application/json");
+        }
+        let request = builder
+            .body(match body {
+                Some(payload) => Body::from(payload.to_string()),
+                None => Body::empty(),
+            })
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        if status == StatusCode::NO_CONTENT {
+            return (status, None);
+        }
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: Value = serde_json::from_slice(&bytes).unwrap();
+        (status, Some(payload))
+    }
+
+    async fn user_id_from_me(app: &axum::Router, auth: &AuthResponse, ip: &str) -> String {
+        let (status, payload) = authed_json_request(
+            app,
+            "GET",
+            String::from("/auth/me"),
+            &auth.access_token,
+            ip,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        payload
+            .as_ref()
+            .and_then(|value| value["user_id"].as_str())
+            .unwrap()
+            .to_owned()
+    }
+
+    async fn create_guild_for_test(app: &axum::Router, auth: &AuthResponse, ip: &str) -> String {
+        let (status, payload) = authed_json_request(
+            app,
+            "POST",
+            String::from("/guilds"),
+            &auth.access_token,
+            ip,
+            Some(json!({"name":"Visibility Test"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        payload
+            .as_ref()
+            .and_then(|value| value["guild_id"].as_str())
+            .unwrap()
+            .to_owned()
+    }
+
+    async fn create_channel_for_test(
+        app: &axum::Router,
+        auth: &AuthResponse,
+        ip: &str,
+        guild_id: &str,
+    ) -> String {
+        let (status, payload) = authed_json_request(
+            app,
+            "POST",
+            format!("/guilds/{guild_id}/channels"),
+            &auth.access_token,
+            ip,
+            Some(json!({"name":"general"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        payload
+            .as_ref()
+            .and_then(|value| value["channel_id"].as_str())
+            .unwrap()
+            .to_owned()
+    }
+
+    async fn add_member_for_test(
+        app: &axum::Router,
+        auth: &AuthResponse,
+        ip: &str,
+        guild_id: &str,
+        user_id: &str,
+    ) {
+        let (status, _) = authed_json_request(
+            app,
+            "POST",
+            format!("/guilds/{guild_id}/members/{user_id}"),
+            &auth.access_token,
+            ip,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    async fn fetch_self_permissions_for_test(
+        app: &axum::Router,
+        auth: &AuthResponse,
+        ip: &str,
+        guild_id: &str,
+        channel_id: &str,
+    ) -> (StatusCode, Option<Value>) {
+        authed_json_request(
+            app,
+            "GET",
+            format!("/guilds/{guild_id}/channels/{channel_id}/permissions/self"),
+            &auth.access_token,
+            ip,
+            None,
+        )
+        .await
+    }
+
+    async fn deny_member_create_message_for_test(
+        app: &axum::Router,
+        auth: &AuthResponse,
+        ip: &str,
+        guild_id: &str,
+        channel_id: &str,
+    ) {
+        let (status, _) = authed_json_request(
+            app,
+            "POST",
+            format!("/guilds/{guild_id}/channels/{channel_id}/overrides/member"),
+            &auth.access_token,
+            ip,
+            Some(json!({"allow":[],"deny":["create_message"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
     }
 
     #[tokio::test]
@@ -5356,6 +5555,99 @@ mod tests {
             .unwrap();
         let page_two_json: Value = serde_json::from_slice(&page_two_body).unwrap();
         assert_eq!(page_two_json["messages"][0]["content"], "one");
+    }
+
+    #[tokio::test]
+    async fn channel_permissions_endpoint_enforces_least_visibility() {
+        let app = build_router(&AppConfig::default()).unwrap();
+        let owner_auth = register_and_login_as(&app, "owner_ux", "203.0.113.74").await;
+        let member_auth = register_and_login_as(&app, "member_ux", "203.0.113.75").await;
+        let stranger_auth = register_and_login_as(&app, "stranger_ux", "203.0.113.76").await;
+        let guild_id = create_guild_for_test(&app, &owner_auth, "203.0.113.74").await;
+        let channel_id =
+            create_channel_for_test(&app, &owner_auth, "203.0.113.74", &guild_id).await;
+        let member_user_id = user_id_from_me(&app, &member_auth, "203.0.113.75").await;
+        add_member_for_test(
+            &app,
+            &owner_auth,
+            "203.0.113.74",
+            &guild_id,
+            &member_user_id,
+        )
+        .await;
+
+        let (owner_status, owner_payload) = fetch_self_permissions_for_test(
+            &app,
+            &owner_auth,
+            "203.0.113.74",
+            &guild_id,
+            &channel_id,
+        )
+        .await;
+        assert_eq!(owner_status, StatusCode::OK);
+        let owner_permissions_json = owner_payload.unwrap();
+        assert_eq!(owner_permissions_json["role"], "owner");
+        assert!(owner_permissions_json["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|permission| permission == "manage_roles"));
+        assert!(owner_permissions_json["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|permission| permission == "create_message"));
+
+        let (member_status, member_payload) = fetch_self_permissions_for_test(
+            &app,
+            &member_auth,
+            "203.0.113.75",
+            &guild_id,
+            &channel_id,
+        )
+        .await;
+        assert_eq!(member_status, StatusCode::OK);
+        let member_permissions_json = member_payload.unwrap();
+        assert_eq!(member_permissions_json["role"], "member");
+        assert!(member_permissions_json["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|permission| permission == "create_message"));
+        assert!(!member_permissions_json["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|permission| permission == "manage_roles"));
+
+        deny_member_create_message_for_test(
+            &app,
+            &owner_auth,
+            "203.0.113.74",
+            &guild_id,
+            &channel_id,
+        )
+        .await;
+
+        let (member_denied_status, _) = fetch_self_permissions_for_test(
+            &app,
+            &member_auth,
+            "203.0.113.75",
+            &guild_id,
+            &channel_id,
+        )
+        .await;
+        assert_eq!(member_denied_status, StatusCode::FORBIDDEN);
+
+        let (stranger_status, _) = fetch_self_permissions_for_test(
+            &app,
+            &stranger_auth,
+            "203.0.113.76",
+            &guild_id,
+            &channel_id,
+        )
+        .await;
+        assert_eq!(stranger_status, StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

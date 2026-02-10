@@ -262,6 +262,20 @@ export interface ChannelRecord {
   name: ChannelName;
 }
 
+export interface ChannelPermissionSnapshot {
+  role: RoleName;
+  permissions: PermissionName[];
+}
+
+export function channelPermissionSnapshotFromResponse(dto: unknown): ChannelPermissionSnapshot {
+  const data = requireObject(dto, "channel permissions");
+  const permissions = requireStringArray(data.permissions, "permissions", 64);
+  return {
+    role: roleFromInput(requireString(data.role, "role", 16)),
+    permissions: permissions.map((entry) => permissionFromInput(entry)),
+  };
+}
+
 export interface MessageRecord {
   messageId: MessageId;
   guildId: GuildId;

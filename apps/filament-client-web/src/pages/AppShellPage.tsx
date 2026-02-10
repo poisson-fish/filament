@@ -26,6 +26,7 @@ import {
   type AttachmentId,
   type AttachmentRecord,
   type ChannelId,
+  type ChannelPermissionSnapshot,
   type GuildVisibility,
   type GuildId,
   type MarkdownToken,
@@ -52,6 +53,7 @@ import {
   editChannelMessage,
   echoMessage,
   fetchChannelMessages,
+  fetchChannelPermissionSnapshot,
   fetchHealth,
   fetchMe,
   fetchPublicGuildDirectory,
@@ -244,8 +246,8 @@ async function canAccessChannel(
   channelId: ChannelId,
 ): Promise<boolean> {
   try {
-    await fetchChannelMessages(session, guildId, channelId, { limit: 1 });
-    return true;
+    const snapshot = await fetchChannelPermissionSnapshot(session, guildId, channelId);
+    return snapshot.permissions.includes("create_message");
   } catch (error) {
     if (error instanceof ApiError) {
       if (
@@ -259,6 +261,12 @@ async function canAccessChannel(
     }
     return false;
   }
+}
+
+function canDiscoverWorkspaceOperation(
+  role: RoleName | undefined,
+): boolean {
+  return role === "owner" || role === "moderator";
 }
 
 export function AppShellPage() {
@@ -340,6 +348,7 @@ export function AppShellPage() {
   const [isRefreshingSession, setRefreshingSession] = createSignal(false);
   const [sessionStatus, setSessionStatus] = createSignal("");
   const [sessionError, setSessionError] = createSignal("");
+  const [channelPermissions, setChannelPermissions] = createSignal<ChannelPermissionSnapshot | null>(null);
 
   const [healthStatus, setHealthStatus] = createSignal("");
   const [echoInput, setEchoInput] = createSignal("hello filament");
@@ -355,6 +364,23 @@ export function AppShellPage() {
     () =>
       activeWorkspace()?.channels.find((channel) => channel.channelId === activeChannelId()) ??
       null,
+  );
+
+  const hasPermission = (permission: PermissionName): boolean =>
+    channelPermissions()?.permissions.includes(permission) ?? false;
+
+  const canAccessActiveChannel = createMemo(() => hasPermission("create_message"));
+  const canManageWorkspaceChannels = createMemo(() => {
+    const role = channelPermissions()?.role;
+    return canDiscoverWorkspaceOperation(role);
+  });
+  const canManageSearchMaintenance = createMemo(() => canManageWorkspaceChannels());
+  const canManageRoles = createMemo(() => hasPermission("manage_roles"));
+  const canManageChannelOverrides = createMemo(() => hasPermission("manage_channel_overrides"));
+  const canBanMembers = createMemo(() => hasPermission("ban_member"));
+  const canDeleteMessages = createMemo(() => hasPermission("delete_message"));
+  const hasModerationAccess = createMemo(
+    () => canManageRoles() || canBanMembers() || canManageChannelOverrides(),
   );
 
   const activeChannelKey = createMemo(() => {
@@ -408,6 +434,7 @@ export function AppShellPage() {
     const session = auth.session();
     if (!session) {
       setWorkspaces([]);
+      setChannelPermissions(null);
       setWorkspaceBootstrapDone(true);
       return;
     }
@@ -503,6 +530,50 @@ export function AppShellPage() {
     }
   });
 
+  createEffect(() => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId) {
+      setChannelPermissions(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadPermissions = async () => {
+      try {
+        const snapshot = await fetchChannelPermissionSnapshot(session, guildId, channelId);
+        if (!cancelled) {
+          setChannelPermissions(snapshot);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setChannelPermissions(null);
+          if (error instanceof ApiError && (error.code === "forbidden" || error.code === "not_found")) {
+            setWorkspaces((existing) =>
+              existing
+                .map((workspace) => {
+                  if (workspace.guildId !== guildId) {
+                    return workspace;
+                  }
+                  return {
+                    ...workspace,
+                    channels: workspace.channels.filter((channel) => channel.channelId !== channelId),
+                  };
+                })
+                .filter((workspace) => workspace.channels.length > 0),
+            );
+          }
+        }
+      }
+    };
+    void loadPermissions();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
   const refreshMessages = async () => {
     const session = auth.session();
     const guildId = activeGuildId();
@@ -559,6 +630,7 @@ export function AppShellPage() {
   createEffect(() => {
     void activeGuildId();
     void activeChannelId();
+    const canRead = canAccessActiveChannel();
     setReactionState({});
     setSearchResults(null);
     setSearchError("");
@@ -568,14 +640,19 @@ export function AppShellPage() {
     setVoiceTokenStatus("");
     setVoiceTokenError("");
     setVoiceTokenPreview(null);
-    void refreshMessages();
+    if (canRead) {
+      void refreshMessages();
+    } else {
+      setMessages([]);
+      setNextBefore(null);
+    }
   });
 
   createEffect(() => {
     const session = auth.session();
     const guildId = activeGuildId();
     const channelId = activeChannelId();
-    if (!session || !guildId || !channelId) {
+    if (!session || !guildId || !channelId || !canAccessActiveChannel()) {
       setGatewayOnline(false);
       setOnlineMembers([]);
       return;
@@ -1227,11 +1304,13 @@ export function AppShellPage() {
                 )}
               </For>
 
-              <button class="create-channel-toggle" onClick={() => setShowNewChannelForm((v) => !v)}>
-                {showNewChannelForm() ? "Cancel" : "New channel"}
-              </button>
+              <Show when={canManageWorkspaceChannels()}>
+                <button class="create-channel-toggle" onClick={() => setShowNewChannelForm((v) => !v)}>
+                  {showNewChannelForm() ? "Cancel" : "New channel"}
+                </button>
+              </Show>
 
-              <Show when={showNewChannelForm()}>
+              <Show when={showNewChannelForm() && canManageWorkspaceChannels()}>
                 <form class="inline-form" onSubmit={createNewChannel}>
                   <label>
                     Channel name
@@ -1336,6 +1415,11 @@ export function AppShellPage() {
                 <Show when={sessionError()}>
                   <p class="status error panel-note">{sessionError()}</p>
                 </Show>
+                <Show when={activeChannel() && !canAccessActiveChannel()}>
+                  <p class="status error panel-note">
+                    Channel is not visible with your current default permissions.
+                  </p>
+                </Show>
 
                 <section class="message-list" aria-live="polite">
                   <Show when={nextBefore()}>
@@ -1349,6 +1433,8 @@ export function AppShellPage() {
                       const state =
                         () => reactionState()[reactionKey(message.messageId, THUMBS_UP)] ?? { count: 0, reacted: false };
                       const isEditing = () => editingMessageId() === message.messageId;
+                      const canEditOrDelete =
+                        () => profile()?.userId === message.authorId || canDeleteMessages();
                       return (
                         <article class="message-row">
                           <p>
@@ -1381,18 +1467,20 @@ export function AppShellPage() {
                               </div>
                             </form>
                           </Show>
-                          <div class="message-actions compact">
-                            <button type="button" onClick={() => beginEditMessage(message)}>
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void removeMessage(message.messageId)}
-                              disabled={deletingMessageId() === message.messageId}
-                            >
-                              {deletingMessageId() === message.messageId ? "Deleting..." : "Delete"}
-                            </button>
-                          </div>
+                          <Show when={canEditOrDelete()}>
+                            <div class="message-actions compact">
+                              <button type="button" onClick={() => beginEditMessage(message)}>
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void removeMessage(message.messageId)}
+                                disabled={deletingMessageId() === message.messageId}
+                              >
+                                {deletingMessageId() === message.messageId ? "Deleting..." : "Delete"}
+                              </button>
+                            </div>
+                          </Show>
                           <div class="reaction-row">
                             <button
                               type="button"
@@ -1418,9 +1506,9 @@ export function AppShellPage() {
                     onInput={(event) => setComposer(event.currentTarget.value)}
                     maxlength="2000"
                     placeholder={activeChannel() ? `Message #${activeChannel()!.name}` : "Select channel"}
-                    disabled={!activeChannel() || isSendingMessage()}
+                    disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
                   />
-                  <button type="submit" disabled={!activeChannel() || isSendingMessage()}>
+                  <button type="submit" disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}>
                     {isSendingMessage() ? "Sending..." : "Send"}
                   </button>
                 </form>
@@ -1499,7 +1587,12 @@ export function AppShellPage() {
           )}
         </Show>
 
-        <section class="member-group">
+        <Show when={activeWorkspace() && activeChannel() && !canAccessActiveChannel()}>
+          <p class="muted">No authorized workspace/channel selected for operator actions.</p>
+        </Show>
+
+        <Show when={canAccessActiveChannel()}>
+          <section class="member-group">
           <p class="group-label">ONLINE ({onlineMembers().length})</p>
           <ul>
             <For each={onlineMembers()}>
@@ -1517,9 +1610,11 @@ export function AppShellPage() {
               </li>
             </Show>
           </ul>
-        </section>
+          </section>
+        </Show>
 
-        <section class="member-group">
+        <Show when={canAccessActiveChannel()}>
+          <section class="member-group">
           <p class="group-label">SEARCH</p>
           <form class="inline-form" onSubmit={runSearch}>
             <label>
@@ -1535,14 +1630,16 @@ export function AppShellPage() {
               {isSearching() ? "Searching..." : "Search"}
             </button>
           </form>
-          <div class="button-row">
-            <button type="button" onClick={() => void rebuildSearch()} disabled={isRunningSearchOps() || !activeWorkspace()}>
-              Rebuild Index
-            </button>
-            <button type="button" onClick={() => void reconcileSearch()} disabled={isRunningSearchOps() || !activeWorkspace()}>
-              Reconcile Index
-            </button>
-          </div>
+          <Show when={canManageSearchMaintenance()}>
+            <div class="button-row">
+              <button type="button" onClick={() => void rebuildSearch()} disabled={isRunningSearchOps() || !activeWorkspace()}>
+                Rebuild Index
+              </button>
+              <button type="button" onClick={() => void reconcileSearch()} disabled={isRunningSearchOps() || !activeWorkspace()}>
+                Reconcile Index
+              </button>
+            </div>
+          </Show>
           <Show when={searchOpsStatus()}>
             <p class="status ok">{searchOpsStatus()}</p>
           </Show>
@@ -1563,9 +1660,11 @@ export function AppShellPage() {
               </ul>
             )}
           </Show>
-        </section>
+          </section>
+        </Show>
 
-        <section class="member-group">
+        <Show when={canAccessActiveChannel()}>
+          <section class="member-group">
           <p class="group-label">ATTACHMENTS</p>
           <form class="inline-form" onSubmit={uploadAttachment}>
             <label>
@@ -1631,9 +1730,11 @@ export function AppShellPage() {
               </li>
             </Show>
           </ul>
-        </section>
+          </section>
+        </Show>
 
-        <section class="member-group">
+        <Show when={canAccessActiveChannel()}>
+          <section class="member-group">
           <p class="group-label">VOICE TOKEN</p>
           <form class="inline-form" onSubmit={requestVoiceToken}>
             <label class="checkbox-row">
@@ -1689,9 +1790,11 @@ export function AppShellPage() {
           <Show when={voiceTokenError()}>
             <p class="status error">{voiceTokenError()}</p>
           </Show>
-        </section>
+          </section>
+        </Show>
 
-        <section class="member-group">
+        <Show when={hasModerationAccess()}>
+          <section class="member-group">
           <p class="group-label">MODERATION</p>
           <form class="inline-form">
             <label>
@@ -1715,63 +1818,70 @@ export function AppShellPage() {
               </select>
             </label>
             <div class="button-row">
-              <button
-                type="button"
-                disabled={isModerating() || !activeWorkspace()}
-                onClick={() => void runMemberAction("add")}
-              >
-                Add
-              </button>
-              <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("role")}>
-                Set Role
-              </button>
-              <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("kick")}>
-                Kick
-              </button>
-              <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("ban")}>
-                Ban
-              </button>
+              <Show when={canManageRoles()}>
+                <button
+                  type="button"
+                  disabled={isModerating() || !activeWorkspace()}
+                  onClick={() => void runMemberAction("add")}
+                >
+                  Add
+                </button>
+                <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("role")}>
+                  Set Role
+                </button>
+              </Show>
+              <Show when={canBanMembers()}>
+                <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("kick")}>
+                  Kick
+                </button>
+                <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("ban")}>
+                  Ban
+                </button>
+              </Show>
             </div>
           </form>
-          <form class="inline-form" onSubmit={applyOverride}>
-            <label>
-              Override role
-              <select
-                value={overrideRoleInput()}
-                onChange={(event) => setOverrideRoleInput(roleFromInput(event.currentTarget.value))}
-              >
-                <option value="member">member</option>
-                <option value="moderator">moderator</option>
-                <option value="owner">owner</option>
-              </select>
-            </label>
-            <label>
-              Allow permissions (csv)
-              <input
-                value={overrideAllowCsv()}
-                onInput={(event) => setOverrideAllowCsv(event.currentTarget.value)}
-                placeholder="create_message,subscribe_streams"
-              />
-            </label>
-            <label>
-              Deny permissions (csv)
-              <input
-                value={overrideDenyCsv()}
-                onInput={(event) => setOverrideDenyCsv(event.currentTarget.value)}
-                placeholder="delete_message"
-              />
-            </label>
-            <button type="submit" disabled={isModerating() || !activeChannel()}>
-              Apply channel override
-            </button>
-          </form>
+          <Show when={canManageChannelOverrides()}>
+            <form class="inline-form" onSubmit={applyOverride}>
+              <label>
+                Override role
+                <select
+                  value={overrideRoleInput()}
+                  onChange={(event) => setOverrideRoleInput(roleFromInput(event.currentTarget.value))}
+                >
+                  <option value="member">member</option>
+                  <option value="moderator">moderator</option>
+                  <option value="owner">owner</option>
+                </select>
+              </label>
+              <label>
+                Allow permissions (csv)
+                <input
+                  value={overrideAllowCsv()}
+                  onInput={(event) => setOverrideAllowCsv(event.currentTarget.value)}
+                  placeholder="create_message,subscribe_streams"
+                />
+              </label>
+              <label>
+                Deny permissions (csv)
+                <input
+                  value={overrideDenyCsv()}
+                  onInput={(event) => setOverrideDenyCsv(event.currentTarget.value)}
+                  placeholder="delete_message"
+                />
+              </label>
+              <button type="submit" disabled={isModerating() || !activeChannel()}>
+                Apply channel override
+              </button>
+            </form>
+          </Show>
           <Show when={moderationStatus()}>
             <p class="status ok">{moderationStatus()}</p>
           </Show>
           <Show when={moderationError()}>
             <p class="status error">{moderationError()}</p>
           </Show>
-        </section>
+          </section>
+        </Show>
 
         <section class="member-group">
           <p class="group-label">UTILITY</p>

@@ -11,6 +11,7 @@ import {
   type AttachmentId,
   type AttachmentRecord,
   type ChannelId,
+  type ChannelPermissionSnapshot,
   type ChannelName,
   type GuildId,
   type GuildName,
@@ -33,6 +34,7 @@ import {
   type VoiceTokenRecord,
   attachmentFromResponse,
   channelFromResponse,
+  channelPermissionSnapshotFromResponse,
   guildFromResponse,
   messageFromResponse,
   messageHistoryFromResponse,
@@ -404,6 +406,19 @@ export async function createChannel(
     body: { name: input.name },
   });
   return channelFromResponse(dto);
+}
+
+export async function fetchChannelPermissionSnapshot(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+): Promise<ChannelPermissionSnapshot> {
+  const dto = await requestJson({
+    method: "GET",
+    path: `/guilds/${guildId}/channels/${channelId}/permissions/self`,
+    accessToken: session.accessToken,
+  });
+  return channelPermissionSnapshotFromResponse(dto);
 }
 
 export async function fetchChannelMessages(

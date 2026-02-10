@@ -126,6 +126,11 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
   - Auth required; role must be `owner` or `moderator`
   - Request: `{ "name": "..." }` (1..64 visible chars/spaces)
   - Response `200`: `{ "channel_id": "...", "name": "..." }`
+- `GET /guilds/{guild_id}/channels/{channel_id}/permissions/self`
+  - Auth required
+  - Least-visibility gate: requires effective `create_message` permission in the channel
+  - Response `200`:
+    - `{ "role": "owner|moderator|member", "permissions": [Permission...] }`
 
 ### Messages
 - `POST /guilds/{guild_id}/channels/{channel_id}/messages`

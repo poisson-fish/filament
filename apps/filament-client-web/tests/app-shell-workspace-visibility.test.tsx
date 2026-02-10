@@ -113,16 +113,19 @@ describe("app shell workspace visibility", () => {
       }
 
       if (
-        url.includes(`/guilds/${MEMBER_GUILD_ID}/channels/${MEMBER_CHANNEL_ID}/messages?limit=1`) ||
+        url.includes(`/guilds/${MEMBER_GUILD_ID}/channels/${MEMBER_CHANNEL_ID}/permissions/self`) ||
         url.includes(`/guilds/${MEMBER_GUILD_ID}/channels/${MEMBER_CHANNEL_ID}/messages?limit=50`)
       ) {
-        return jsonResponse({
-          messages: [],
-          next_before: null,
-        });
+        if (url.includes("/permissions/self")) {
+          return jsonResponse({
+            role: "member",
+            permissions: ["create_message", "subscribe_streams"],
+          });
+        }
+        return jsonResponse({ messages: [], next_before: null });
       }
 
-      if (url.includes(`/guilds/${PRIVATE_GUILD_ID}/channels/${PRIVATE_CHANNEL_ID}/messages?limit=1`)) {
+      if (url.includes(`/guilds/${PRIVATE_GUILD_ID}/channels/${PRIVATE_CHANNEL_ID}/permissions/self`)) {
         return jsonResponse({ error: "forbidden" }, 403);
       }
       if (url.includes("/guilds/public")) {
