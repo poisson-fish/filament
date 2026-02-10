@@ -34,6 +34,9 @@ services:
     restart: unless-stopped
     environment:
       RUST_LOG: info
+      FILAMENT_ATTACHMENT_ROOT: /var/lib/filament/attachments
+    volumes:
+      - filament-attachments:/var/lib/filament/attachments
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,3 +47,4 @@ services:
 
 volumes:
   pg-data:
+  filament-attachments:

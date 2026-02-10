@@ -295,7 +295,7 @@ Every phase has:
 - 2026-02-10: Cutover policy finalized and implemented: runtime `filament-server` now requires `FILAMENT_DATABASE_URL`; in-memory persistence is test-only and documented in `docs/SECURITY.md`.
 
 ### TODOs
-- Phase 2 start gate: begin attachments + markdown tokenization implementation with upload caps, MIME sniffing, and quota enforcement.
+- Phase 3 start gate: complete remaining Phase 2 hardening tasks (streaming attachment writes and compose-backed attachment root persistence), then begin Tantivy indexing/query integration.
 
 ### Exit Criteria
 - Unit tests cover newtype invariants, token mint/verify paths, and permission checks.
@@ -325,21 +325,25 @@ Every phase has:
 - Attachment delete flow for users to reclaim quota
 
 ### Status
-- NOT STARTED
+- IN PROGRESS
 
 ### Notes
 - Never trust client `Content-Type`; always sniff.
 - Implement per-user total storage quota across all user attachments (configurable).
 - Local attachment root path is runtime-configured (env), and compose mounts persistent storage at that path.
 - Markdown: implement allowlist of features; links sanitized.
+- 2026-02-10: Added safe markdown tokenization in `filament-core` using `pulldown-cmark` to a strict UI token model (`MarkdownToken`) with explicit link-scheme filtering (`http`, `https`, `mailto`) and HTML event stripping.
+- 2026-02-10: Added Phase 2 message mutation + moderation endpoints in `filament-server`: message edit/delete (`PATCH|DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}`) and moderation routes (`POST /guilds/{guild_id}/members/{user_id}/kick|ban`) with centralized permission checks and audit log writes.
+- 2026-02-10: Added attachment storage flow in `filament-server` backed by `object_store` local filesystem root with runtime configuration (`FILAMENT_ATTACHMENT_ROOT`), MIME sniffing (`infer`) with `Content-Type` mismatch rejection, SHA-256 hashing, per-user quota enforcement, auth-gated download, and deterministic quota reclamation on delete.
+- 2026-02-10: Added Postgres schema additions for Phase 2 (`attachments`, `guild_bans`, `audit_logs`) with in-memory test fallback parity.
+- 2026-02-10: Updated `infra/docker-compose.yml` with `FILAMENT_ATTACHMENT_ROOT` and a persistent `filament-attachments` volume mount for local attachment durability.
+- 2026-02-10: Added integration coverage in `apps/filament-server/tests/phase2_attachments_and_markdown.rs` for MIME mismatch rejection, auth-gated download, quota enforcement + quota reclamation after delete, message edit/delete markdown token safety, and moderation route behavior.
+- 2026-02-10: Re-ran local quality/security gates for this increment: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
 
 ### TODOs
 - Virus scanning optional hook (clamd integration as optional service).
-- Add attachment download auth checks (signed URLs or auth-gated endpoints).
-- Add markdown tokenization tests to ensure no HTML rendering path exists.
-- Add per-user attachment quota enforcement tests (upload denied on quota breach).
-- Add attachment deletion endpoint/service flow and quota-reclamation tests.
-- Add storage-root path configuration wiring (`FILAMENT_ATTACHMENT_ROOT`) in compose/deploy docs.
+- Replace buffered upload body handling with streaming attachment writes to satisfy upload DoS hardening baseline.
+- Document attachment-root persistence and backup guidance in deploy docs (`DEPLOY.md`).
 
 ### Exit Criteria
 - Integration tests cover upload caps, MIME sniffing mismatch rejection, and auth-gated download.

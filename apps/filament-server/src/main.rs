@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use filament_server::{build_router, init_tracing, AppConfig};
 use tokio::net::TcpListener;
@@ -12,6 +13,8 @@ async fn main() -> anyhow::Result<()> {
     let database_url = std::env::var("FILAMENT_DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("FILAMENT_DATABASE_URL is required for runtime"))?;
     let app_config = AppConfig {
+        attachment_root: std::env::var("FILAMENT_ATTACHMENT_ROOT")
+            .map_or_else(|_| PathBuf::from("./data/attachments"), PathBuf::from),
         database_url: Some(database_url),
         ..AppConfig::default()
     };

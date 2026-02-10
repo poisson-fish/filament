@@ -34,6 +34,7 @@ fn test_app(database_url: String) -> axum::Router {
         gateway_outbound_queue: 256,
         max_gateway_event_bytes: filament_server::DEFAULT_MAX_GATEWAY_EVENT_BYTES,
         database_url: Some(database_url),
+        ..AppConfig::default()
     })
     .expect("router should build")
 }

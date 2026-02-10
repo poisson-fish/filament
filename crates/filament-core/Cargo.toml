@@ -8,5 +8,7 @@ license = "MIT OR Apache-2.0"
 workspace = true
 
 [dependencies]
+pulldown-cmark = { version = "0.13", default-features = false }
+serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 ulid = "1"

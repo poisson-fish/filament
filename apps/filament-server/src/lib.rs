@@ -1,7 +1,8 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -12,19 +13,26 @@ use argon2::{
     Argon2,
 };
 use axum::{
+    body::Bytes,
     extract::{
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
         DefaultBodyLimit, Json, Path, Query, State,
     },
-    http::{header::AUTHORIZATION, HeaderMap, HeaderName, StatusCode},
-    response::IntoResponse,
-    routing::{get, post},
+    http::{
+        header::AUTHORIZATION, header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, StatusCode,
+    },
+    response::{IntoResponse, Response},
+    routing::{get, patch, post},
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use filament_core::{has_permission, ChannelName, GuildName, Permission, Role, UserId, Username};
+use filament_core::{
+    has_permission, tokenize_markdown, ChannelName, GuildName, MarkdownToken, Permission, Role,
+    UserId, Username,
+};
 use filament_protocol::{parse_envelope, Envelope, EventType, PROTOCOL_VERSION};
 use futures_util::{SinkExt, StreamExt};
+use object_store::{local::LocalFileSystem, path::Path as ObjectPath, ObjectStore};
 use pasetors::{
     claims::{Claims, ClaimsValidationRules},
     keys::SymmetricKey,
@@ -63,6 +71,8 @@ pub const DEFAULT_GATEWAY_INGRESS_EVENTS_PER_WINDOW: u32 = 20;
 pub const DEFAULT_GATEWAY_INGRESS_WINDOW_SECS: u64 = 10;
 pub const DEFAULT_GATEWAY_OUTBOUND_QUEUE: usize = 256;
 pub const DEFAULT_MAX_GATEWAY_EVENT_BYTES: usize = filament_protocol::MAX_EVENT_BYTES;
+pub const DEFAULT_MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
+pub const DEFAULT_USER_ATTACHMENT_QUOTA_BYTES: u64 = 250 * 1024 * 1024;
 const LOGIN_LOCK_THRESHOLD: u8 = 5;
 const LOGIN_LOCK_SECS: i64 = 30;
 const MAX_HISTORY_LIMIT: usize = 100;
@@ -77,6 +87,9 @@ pub struct AppConfig {
     pub gateway_ingress_window: Duration,
     pub gateway_outbound_queue: usize,
     pub max_gateway_event_bytes: usize,
+    pub max_attachment_bytes: usize,
+    pub user_attachment_quota_bytes: u64,
+    pub attachment_root: PathBuf,
     pub database_url: Option<String>,
 }
 
@@ -91,6 +104,9 @@ impl Default for AppConfig {
             gateway_ingress_window: Duration::from_secs(DEFAULT_GATEWAY_INGRESS_WINDOW_SECS),
             gateway_outbound_queue: DEFAULT_GATEWAY_OUTBOUND_QUEUE,
             max_gateway_event_bytes: DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+            max_attachment_bytes: DEFAULT_MAX_ATTACHMENT_BYTES,
+            user_attachment_quota_bytes: DEFAULT_USER_ATTACHMENT_QUOTA_BYTES,
+            attachment_root: PathBuf::from("./data/attachments"),
             database_url: None,
         }
     }
@@ -103,6 +119,8 @@ struct RuntimeSecurityConfig {
     gateway_ingress_window: Duration,
     gateway_outbound_queue: usize,
     max_gateway_event_bytes: usize,
+    max_attachment_bytes: usize,
+    user_attachment_quota_bytes: u64,
 }
 
 #[derive(Clone)]
@@ -119,6 +137,9 @@ pub struct AppState {
     guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
     subscriptions: Arc<RwLock<Subscriptions>>,
     connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
+    attachment_store: Arc<LocalFileSystem>,
+    attachments: Arc<RwLock<HashMap<String, AttachmentRecord>>>,
+    audit_logs: Arc<RwLock<Vec<serde_json::Value>>>,
     runtime: Arc<RuntimeSecurityConfig>,
 }
 
@@ -140,6 +161,11 @@ impl AppState {
             None
         };
 
+        std::fs::create_dir_all(&config.attachment_root)
+            .map_err(|e| anyhow!("attachment root init failed: {e}"))?;
+        let attachment_store = LocalFileSystem::new_with_prefix(&config.attachment_root)
+            .map_err(|e| anyhow!("attachment store init failed: {e}"))?;
+
         Ok(Self {
             db_pool,
             db_init: Arc::new(OnceCell::new()),
@@ -153,12 +179,17 @@ impl AppState {
             guilds: Arc::new(RwLock::new(HashMap::new())),
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
             connection_controls: Arc::new(RwLock::new(HashMap::new())),
+            attachment_store: Arc::new(attachment_store),
+            attachments: Arc::new(RwLock::new(HashMap::new())),
+            audit_logs: Arc::new(RwLock::new(Vec::new())),
             runtime: Arc::new(RuntimeSecurityConfig {
                 auth_route_requests_per_minute: config.auth_route_requests_per_minute,
                 gateway_ingress_events_per_window: config.gateway_ingress_events_per_window,
                 gateway_ingress_window: config.gateway_ingress_window,
                 gateway_outbound_queue: config.gateway_outbound_queue,
                 max_gateway_event_bytes: config.max_gateway_event_bytes,
+                max_attachment_bytes: config.max_attachment_bytes,
+                user_attachment_quota_bytes: config.user_attachment_quota_bytes,
             }),
         })
     }
@@ -184,6 +215,7 @@ struct SessionRecord {
 #[derive(Debug, Clone)]
 struct GuildRecord {
     members: HashMap<UserId, Role>,
+    banned_members: HashSet<UserId>,
     channels: HashMap<String, ChannelRecord>,
 }
 
@@ -197,7 +229,18 @@ struct MessageRecord {
     id: String,
     author_id: UserId,
     content: String,
+    markdown_tokens: Vec<MarkdownToken>,
     created_at_unix: i64,
+}
+
+#[derive(Debug, Clone)]
+struct AttachmentRecord {
+    guild_id: String,
+    channel_id: String,
+    owner_id: UserId,
+    mime_type: String,
+    size_bytes: u64,
+    object_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -212,6 +255,7 @@ enum ConnectionControl {
     Close,
 }
 
+#[allow(clippy::too_many_lines)]
 async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
     let Some(pool) = &state.db_pool else {
         return Ok(());
@@ -299,6 +343,56 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
             .await?;
 
             sqlx::query(
+                "CREATE TABLE IF NOT EXISTS attachments (
+                    attachment_id TEXT PRIMARY KEY,
+                    guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+                    channel_id TEXT NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    filename TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    size_bytes BIGINT NOT NULL,
+                    sha256_hex TEXT NOT NULL,
+                    object_key TEXT NOT NULL UNIQUE,
+                    created_at_unix BIGINT NOT NULL
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_attachments_owner
+                    ON attachments(owner_id)",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS guild_bans (
+                    guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    banned_by_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    created_at_unix BIGINT NOT NULL,
+                    PRIMARY KEY(guild_id, user_id)
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS audit_logs (
+                    audit_id TEXT PRIMARY KEY,
+                    guild_id TEXT NULL,
+                    actor_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    target_user_id TEXT NULL,
+                    action TEXT NOT NULL,
+                    details_json TEXT NOT NULL,
+                    created_at_unix BIGINT NOT NULL
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
                 "CREATE INDEX IF NOT EXISTS idx_messages_channel_message_id
                     ON messages(channel_id, message_id DESC)",
             )
@@ -372,6 +466,23 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             "/guilds/{guild_id}/channels/{channel_id}/messages",
             post(create_message).get(get_messages),
         )
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}",
+            patch(edit_message).delete(delete_message),
+        )
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/attachments",
+            post(upload_attachment),
+        )
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}",
+            get(download_attachment).delete(delete_attachment),
+        )
+        .route(
+            "/guilds/{guild_id}/members/{user_id}/kick",
+            post(kick_member),
+        )
+        .route("/guilds/{guild_id}/members/{user_id}/ban", post(ban_member))
         .route("/gateway/ws", get(gateway_ws))
         .with_state(app_state)
         .layer(DefaultBodyLimit::max(config.max_body_bytes))
@@ -496,6 +607,12 @@ struct CreateMessageRequest {
     content: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditMessageRequest {
+    content: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 struct MessageResponse {
     message_id: String,
@@ -503,7 +620,31 @@ struct MessageResponse {
     channel_id: String,
     author_id: String,
     content: String,
+    markdown_tokens: Vec<MarkdownToken>,
     created_at_unix: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct AttachmentResponse {
+    attachment_id: String,
+    guild_id: String,
+    channel_id: String,
+    owner_id: String,
+    filename: String,
+    mime_type: String,
+    size_bytes: u64,
+    sha256_hex: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UploadAttachmentQuery {
+    filename: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ModerationResponse {
+    accepted: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -521,6 +662,28 @@ struct GuildPath {
 struct ChannelPath {
     guild_id: String,
     channel_id: String,
+}
+
+#[allow(clippy::struct_field_names)]
+#[derive(Debug, Deserialize)]
+struct MessagePath {
+    guild_id: String,
+    channel_id: String,
+    message_id: String,
+}
+
+#[allow(clippy::struct_field_names)]
+#[derive(Debug, Deserialize)]
+struct AttachmentPath {
+    guild_id: String,
+    channel_id: String,
+    attachment_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemberPath {
+    guild_id: String,
+    user_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1069,6 +1232,7 @@ async fn create_guild(
         guild_id.clone(),
         GuildRecord {
             members,
+            banned_members: HashSet::new(),
             channels: HashMap::new(),
         },
     );
@@ -1239,7 +1403,8 @@ async fn get_messages(
                 guild_id: path.guild_id.clone(),
                 channel_id: path.channel_id.clone(),
                 author_id,
-                content,
+                content: content.clone(),
+                markdown_tokens: tokenize_markdown(&content),
                 created_at_unix,
             });
         }
@@ -1286,6 +1451,7 @@ async fn get_messages(
             channel_id: path.channel_id.clone(),
             author_id: message.author_id.to_string(),
             content: message.content.clone(),
+            markdown_tokens: message.markdown_tokens.clone(),
             created_at_unix: message.created_at_unix,
         });
     }
@@ -1296,6 +1462,465 @@ async fn get_messages(
         messages,
         next_before,
     }))
+}
+
+async fn edit_message(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<MessagePath>,
+    Json(payload): Json<EditMessageRequest>,
+) -> Result<Json<MessageResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    validate_message_content(&payload.content)?;
+    let markdown_tokens = tokenize_markdown(&payload.content);
+
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "SELECT m.author_id, gm.role
+             FROM messages m
+             JOIN guild_members gm ON gm.guild_id = m.guild_id AND gm.user_id = $1
+             WHERE m.guild_id = $2 AND m.channel_id = $3 AND m.message_id = $4",
+        )
+        .bind(auth.user_id.to_string())
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(&path.message_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let row = row.ok_or(AuthFailure::NotFound)?;
+        let author_id: String = row
+            .try_get("author_id")
+            .map_err(|_| AuthFailure::Internal)?;
+        let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
+        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
+        if author_id != auth.user_id.to_string() && !has_permission(role, Permission::DeleteMessage)
+        {
+            return Err(AuthFailure::Forbidden);
+        }
+
+        sqlx::query(
+            "UPDATE messages SET content = $4
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = $3",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(&path.message_id)
+        .bind(&payload.content)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        let response = MessageResponse {
+            message_id: path.message_id.clone(),
+            guild_id: path.guild_id.clone(),
+            channel_id: path.channel_id.clone(),
+            author_id: author_id.clone(),
+            content: payload.content,
+            markdown_tokens,
+            created_at_unix: now_unix(),
+        };
+        if author_id != auth.user_id.to_string() {
+            write_audit_log(
+                &state,
+                Some(path.guild_id.clone()),
+                auth.user_id,
+                Some(UserId::try_from(author_id).map_err(|_| AuthFailure::Internal)?),
+                "message.edit.moderation",
+                serde_json::json!({"message_id": path.message_id, "channel_id": path.channel_id}),
+            )
+            .await?;
+        }
+        return Ok(Json(response));
+    }
+
+    let mut guilds = state.guilds.write().await;
+    let guild = guilds
+        .get_mut(&path.guild_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let role = guild
+        .members
+        .get(&auth.user_id)
+        .copied()
+        .ok_or(AuthFailure::Forbidden)?;
+    let channel = guild
+        .channels
+        .get_mut(&path.channel_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let message = channel
+        .messages
+        .iter_mut()
+        .find(|message| message.id == path.message_id)
+        .ok_or(AuthFailure::NotFound)?;
+    if message.author_id != auth.user_id && !has_permission(role, Permission::DeleteMessage) {
+        return Err(AuthFailure::Forbidden);
+    }
+    message.content.clone_from(&payload.content);
+    message.markdown_tokens.clone_from(&markdown_tokens);
+
+    Ok(Json(MessageResponse {
+        message_id: message.id.clone(),
+        guild_id: path.guild_id,
+        channel_id: path.channel_id,
+        author_id: message.author_id.to_string(),
+        content: message.content.clone(),
+        markdown_tokens,
+        created_at_unix: message.created_at_unix,
+    }))
+}
+
+async fn delete_message(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<MessagePath>,
+) -> Result<StatusCode, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "SELECT m.author_id, gm.role
+             FROM messages m
+             JOIN guild_members gm ON gm.guild_id = m.guild_id AND gm.user_id = $1
+             WHERE m.guild_id = $2 AND m.channel_id = $3 AND m.message_id = $4",
+        )
+        .bind(auth.user_id.to_string())
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(&path.message_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let row = row.ok_or(AuthFailure::NotFound)?;
+        let author_id: String = row
+            .try_get("author_id")
+            .map_err(|_| AuthFailure::Internal)?;
+        let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
+        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
+        if author_id != auth.user_id.to_string() && !has_permission(role, Permission::DeleteMessage)
+        {
+            return Err(AuthFailure::Forbidden);
+        }
+
+        sqlx::query(
+            "DELETE FROM messages
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = $3",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(&path.message_id)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        if author_id != auth.user_id.to_string() {
+            write_audit_log(
+                &state,
+                Some(path.guild_id.clone()),
+                auth.user_id,
+                Some(UserId::try_from(author_id).map_err(|_| AuthFailure::Internal)?),
+                "message.delete.moderation",
+                serde_json::json!({"message_id": path.message_id, "channel_id": path.channel_id}),
+            )
+            .await?;
+        }
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    let mut guilds = state.guilds.write().await;
+    let guild = guilds
+        .get_mut(&path.guild_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let role = guild
+        .members
+        .get(&auth.user_id)
+        .copied()
+        .ok_or(AuthFailure::Forbidden)?;
+    let channel = guild
+        .channels
+        .get_mut(&path.channel_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let Some(index) = channel
+        .messages
+        .iter()
+        .position(|message| message.id == path.message_id)
+    else {
+        return Err(AuthFailure::NotFound);
+    };
+    let author_id = channel.messages[index].author_id;
+    if author_id != auth.user_id && !has_permission(role, Permission::DeleteMessage) {
+        return Err(AuthFailure::Forbidden);
+    }
+    channel.messages.remove(index);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[allow(clippy::too_many_lines)]
+async fn upload_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<ChannelPath>,
+    Query(query): Query<UploadAttachmentQuery>,
+    body: Bytes,
+) -> Result<Json<AttachmentResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    if body.is_empty() {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if body.len() > state.runtime.max_attachment_bytes {
+        return Err(AuthFailure::PayloadTooLarge);
+    }
+    if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let sniffed = infer::get(&body).ok_or(AuthFailure::InvalidRequest)?;
+    let sniffed_mime = sniffed.mime_type();
+    if let Some(content_type) = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+    {
+        let declared = content_type
+            .parse::<mime::Mime>()
+            .map_err(|_| AuthFailure::InvalidRequest)?;
+        if declared.essence_str() != sniffed_mime {
+            return Err(AuthFailure::InvalidRequest);
+        }
+    }
+
+    let filename =
+        validate_attachment_filename(query.filename.unwrap_or_else(|| String::from("upload.bin")))?;
+    let body_len = u64::try_from(body.len()).map_err(|_| AuthFailure::InvalidRequest)?;
+    let usage = attachment_usage_for_user(&state, auth.user_id).await?;
+    if usage.saturating_add(body_len) > state.runtime.user_attachment_quota_bytes {
+        return Err(AuthFailure::QuotaExceeded);
+    }
+
+    let attachment_id = Ulid::new().to_string();
+    let object_key = format!("attachments/{attachment_id}");
+    let object_path = ObjectPath::from(object_key.clone());
+    state
+        .attachment_store
+        .put(&object_path, body.clone().into())
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    let sha256_hex = {
+        let digest = Sha256::digest(&body);
+        let mut out = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            let _ = std::fmt::Write::write_fmt(&mut out, format_args!("{byte:02x}"));
+        }
+        out
+    };
+
+    if let Some(pool) = &state.db_pool {
+        sqlx::query(
+            "INSERT INTO attachments (attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, object_key, created_at_unix)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        )
+        .bind(&attachment_id)
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(auth.user_id.to_string())
+        .bind(&filename)
+        .bind(sniffed_mime)
+        .bind(i64::try_from(body_len).map_err(|_| AuthFailure::InvalidRequest)?)
+        .bind(&sha256_hex)
+        .bind(&object_key)
+        .bind(now_unix())
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    } else {
+        state.attachments.write().await.insert(
+            attachment_id.clone(),
+            AttachmentRecord {
+                guild_id: path.guild_id.clone(),
+                channel_id: path.channel_id.clone(),
+                owner_id: auth.user_id,
+                mime_type: String::from(sniffed_mime),
+                size_bytes: body_len,
+                object_key: object_key.clone(),
+            },
+        );
+    }
+
+    Ok(Json(AttachmentResponse {
+        attachment_id,
+        guild_id: path.guild_id,
+        channel_id: path.channel_id,
+        owner_id: auth.user_id.to_string(),
+        filename,
+        mime_type: String::from(sniffed_mime),
+        size_bytes: body_len,
+        sha256_hex,
+    }))
+}
+
+async fn download_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<AttachmentPath>,
+) -> Result<Response, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let record = find_attachment(&state, &path).await?;
+    let object_path = ObjectPath::from(record.object_key.clone());
+    let get_result = state
+        .attachment_store
+        .get(&object_path)
+        .await
+        .map_err(|_| AuthFailure::NotFound)?;
+    let payload = get_result
+        .bytes()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    let mut response = Response::new(payload.into());
+    let content_type =
+        HeaderValue::from_str(&record.mime_type).map_err(|_| AuthFailure::Internal)?;
+    response.headers_mut().insert(CONTENT_TYPE, content_type);
+    Ok(response)
+}
+
+async fn delete_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<AttachmentPath>,
+) -> Result<StatusCode, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    let record = find_attachment(&state, &path).await?;
+    if record.owner_id != auth.user_id && !has_permission(role, Permission::DeleteMessage) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        sqlx::query(
+            "DELETE FROM attachments
+             WHERE attachment_id = $1 AND guild_id = $2 AND channel_id = $3",
+        )
+        .bind(&path.attachment_id)
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    } else {
+        state.attachments.write().await.remove(&path.attachment_id);
+    }
+
+    let object_path = ObjectPath::from(record.object_key);
+    let _ = state.attachment_store.delete(&object_path).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn kick_member(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<MemberPath>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    if !has_permission(actor_role, Permission::BanMember) {
+        return Err(AuthFailure::Forbidden);
+    }
+    let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+
+    if let Some(pool) = &state.db_pool {
+        let deleted = sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+            .bind(&path.guild_id)
+            .bind(target_user_id.to_string())
+            .execute(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        if deleted.rows_affected() == 0 {
+            return Err(AuthFailure::NotFound);
+        }
+    } else {
+        let mut guilds = state.guilds.write().await;
+        let guild = guilds
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        if guild.members.remove(&target_user_id).is_none() {
+            return Err(AuthFailure::NotFound);
+        }
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        Some(target_user_id),
+        "member.kick",
+        serde_json::json!({}),
+    )
+    .await?;
+    Ok(Json(ModerationResponse { accepted: true }))
+}
+
+async fn ban_member(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<MemberPath>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    if !has_permission(actor_role, Permission::BanMember) {
+        return Err(AuthFailure::Forbidden);
+    }
+    let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+
+    if let Some(pool) = &state.db_pool {
+        let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+        sqlx::query(
+            "INSERT INTO guild_bans (guild_id, user_id, banned_by_user_id, created_at_unix)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (guild_id, user_id) DO UPDATE SET banned_by_user_id = EXCLUDED.banned_by_user_id, created_at_unix = EXCLUDED.created_at_unix",
+        )
+        .bind(&path.guild_id)
+        .bind(target_user_id.to_string())
+        .bind(auth.user_id.to_string())
+        .bind(now_unix())
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+            .bind(&path.guild_id)
+            .bind(target_user_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+    } else {
+        let mut guilds = state.guilds.write().await;
+        let guild = guilds
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        guild.members.remove(&target_user_id);
+        guild.banned_members.insert(target_user_id);
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        Some(target_user_id),
+        "member.ban",
+        serde_json::json!({}),
+    )
+    .await?;
+    Ok(Json(ModerationResponse { accepted: true }))
 }
 
 async fn gateway_ws(
@@ -1467,6 +2092,7 @@ async fn create_message_internal(
     content: String,
 ) -> Result<MessageResponse, AuthFailure> {
     validate_message_content(&content)?;
+    let markdown_tokens = tokenize_markdown(&content);
 
     if let Some(pool) = &state.db_pool {
         ensure_db_schema(state).await?;
@@ -1519,6 +2145,7 @@ async fn create_message_internal(
             channel_id: channel_id.to_owned(),
             author_id: auth.user_id.to_string(),
             content,
+            markdown_tokens,
             created_at_unix,
         };
 
@@ -1530,6 +2157,7 @@ async fn create_message_internal(
                 "channel_id": response.channel_id,
                 "author_id": response.author_id,
                 "content": response.content,
+                "markdown_tokens": response.markdown_tokens,
                 "created_at_unix": response.created_at_unix,
             }),
         );
@@ -1558,6 +2186,7 @@ async fn create_message_internal(
         id: message_id.clone(),
         author_id: auth.user_id,
         content,
+        markdown_tokens: markdown_tokens.clone(),
         created_at_unix: now_unix(),
     };
     channel.messages.push(record.clone());
@@ -1569,6 +2198,7 @@ async fn create_message_internal(
         channel_id: channel_id.to_owned(),
         author_id: auth.user_id.to_string(),
         content: record.content,
+        markdown_tokens: record.markdown_tokens,
         created_at_unix: record.created_at_unix,
     };
 
@@ -1580,6 +2210,7 @@ async fn create_message_internal(
             "channel_id": response.channel_id,
             "author_id": response.author_id,
             "content": response.content,
+            "markdown_tokens": response.markdown_tokens,
             "created_at_unix": response.created_at_unix,
         }),
     );
@@ -1675,6 +2306,17 @@ async fn user_can_write_channel(
         if ensure_db_schema(state).await.is_err() {
             return false;
         }
+        let banned = sqlx::query("SELECT 1 FROM guild_bans WHERE guild_id = $1 AND user_id = $2")
+            .bind(guild_id)
+            .bind(user_id.to_string())
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+        if banned {
+            return false;
+        }
         let row = sqlx::query(
             "SELECT gm.role
              FROM guild_members gm
@@ -1702,10 +2344,170 @@ async fn user_can_write_channel(
     let Some(role) = guild.members.get(&user_id).copied() else {
         return false;
     };
+    if guild.banned_members.contains(&user_id) {
+        return false;
+    }
     if !guild.channels.contains_key(channel_id) {
         return false;
     }
     has_permission(role, Permission::CreateMessage)
+}
+
+async fn user_role_in_guild(
+    state: &AppState,
+    user_id: UserId,
+    guild_id: &str,
+) -> Result<Role, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let banned = sqlx::query("SELECT 1 FROM guild_bans WHERE guild_id = $1 AND user_id = $2")
+            .bind(guild_id)
+            .bind(user_id.to_string())
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        if banned.is_some() {
+            return Err(AuthFailure::Forbidden);
+        }
+
+        let row =
+            sqlx::query("SELECT role FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+                .bind(guild_id)
+                .bind(user_id.to_string())
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        let row = row.ok_or(AuthFailure::Forbidden)?;
+        let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
+        return role_from_i16(role_value).ok_or(AuthFailure::Forbidden);
+    }
+
+    let guilds = state.guilds.read().await;
+    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+    if guild.banned_members.contains(&user_id) {
+        return Err(AuthFailure::Forbidden);
+    }
+    guild
+        .members
+        .get(&user_id)
+        .copied()
+        .ok_or(AuthFailure::Forbidden)
+}
+
+async fn attachment_usage_for_user(state: &AppState, user_id: UserId) -> Result<u64, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "SELECT COALESCE(SUM(size_bytes), 0) AS total FROM attachments WHERE owner_id = $1",
+        )
+        .bind(user_id.to_string())
+        .fetch_one(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let total: i64 = row.try_get("total").map_err(|_| AuthFailure::Internal)?;
+        return u64::try_from(total).map_err(|_| AuthFailure::Internal);
+    }
+
+    let usage = state
+        .attachments
+        .read()
+        .await
+        .values()
+        .filter(|record| record.owner_id == user_id)
+        .map(|record| record.size_bytes)
+        .sum();
+    Ok(usage)
+}
+
+async fn find_attachment(
+    state: &AppState,
+    path: &AttachmentPath,
+) -> Result<AttachmentRecord, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "SELECT guild_id, channel_id, owner_id, mime_type, size_bytes, object_key
+             FROM attachments
+             WHERE attachment_id = $1 AND guild_id = $2 AND channel_id = $3",
+        )
+        .bind(&path.attachment_id)
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let row = row.ok_or(AuthFailure::NotFound)?;
+        let owner_id: String = row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?;
+        let size_bytes: i64 = row
+            .try_get("size_bytes")
+            .map_err(|_| AuthFailure::Internal)?;
+        return Ok(AttachmentRecord {
+            guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+            channel_id: row
+                .try_get("channel_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            owner_id: UserId::try_from(owner_id).map_err(|_| AuthFailure::Internal)?,
+            mime_type: row
+                .try_get("mime_type")
+                .map_err(|_| AuthFailure::Internal)?,
+            size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
+            object_key: row
+                .try_get("object_key")
+                .map_err(|_| AuthFailure::Internal)?,
+        });
+    }
+    state
+        .attachments
+        .read()
+        .await
+        .get(&path.attachment_id)
+        .filter(|record| record.guild_id == path.guild_id && record.channel_id == path.channel_id)
+        .cloned()
+        .ok_or(AuthFailure::NotFound)
+}
+
+fn validate_attachment_filename(value: String) -> Result<String, AuthFailure> {
+    if value.is_empty() || value.len() > 128 {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if value.contains('/') || value.contains('\\') || value.contains('\0') {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(value)
+}
+
+async fn write_audit_log(
+    state: &AppState,
+    guild_id: Option<String>,
+    actor_user_id: UserId,
+    target_user_id: Option<UserId>,
+    action: &str,
+    details_json: serde_json::Value,
+) -> Result<(), AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        sqlx::query(
+            "INSERT INTO audit_logs (audit_id, guild_id, actor_user_id, target_user_id, action, details_json, created_at_unix)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(Ulid::new().to_string())
+        .bind(guild_id)
+        .bind(actor_user_id.to_string())
+        .bind(target_user_id.map(|value| value.to_string()))
+        .bind(action)
+        .bind(details_json.to_string())
+        .bind(now_unix())
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        return Ok(());
+    }
+
+    state.audit_logs.write().await.push(serde_json::json!({
+        "guild_id": guild_id,
+        "actor_user_id": actor_user_id.to_string(),
+        "target_user_id": target_user_id.map(|value| value.to_string()),
+        "action": action,
+        "details": details_json,
+        "created_at_unix": now_unix(),
+    }));
+    Ok(())
 }
 
 fn validate_password(value: &str) -> Result<(), AuthFailure> {
@@ -1909,6 +2711,8 @@ enum AuthFailure {
     Forbidden,
     NotFound,
     RateLimited,
+    PayloadTooLarge,
+    QuotaExceeded,
     Internal,
 }
 
@@ -1943,6 +2747,20 @@ impl IntoResponse for AuthFailure {
                 StatusCode::TOO_MANY_REQUESTS,
                 Json(AuthError {
                     error: "rate_limited",
+                }),
+            )
+                .into_response(),
+            Self::PayloadTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(AuthError {
+                    error: "payload_too_large",
+                }),
+            )
+                .into_response(),
+            Self::QuotaExceeded => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "quota_exceeded",
                 }),
             )
                 .into_response(),
@@ -2023,7 +2841,7 @@ mod tests {
             gateway_ingress_window: Duration::from_secs(10),
             gateway_outbound_queue: 256,
             max_gateway_event_bytes: DEFAULT_MAX_GATEWAY_EVENT_BYTES,
-            database_url: None,
+            ..AppConfig::default()
         })
         .unwrap();
 
@@ -2109,7 +2927,7 @@ mod tests {
             gateway_ingress_window: Duration::from_secs(10),
             gateway_outbound_queue: 256,
             max_gateway_event_bytes: DEFAULT_MAX_GATEWAY_EVENT_BYTES,
-            database_url: None,
+            ..AppConfig::default()
         })
         .unwrap();
 
@@ -2285,6 +3103,7 @@ mod tests {
         let channel_id = String::from("c");
         let mut guild = super::GuildRecord {
             members: HashMap::new(),
+            banned_members: std::collections::HashSet::new(),
             channels: HashMap::new(),
         };
         guild.members.insert(user_id, super::Role::Owner);
