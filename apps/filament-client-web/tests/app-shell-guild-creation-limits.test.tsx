@@ -178,7 +178,7 @@ describe("app shell guild creation limits", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    const openCreateForm = await screen.findByRole("button", { name: "New workspace" });
+    const openCreateForm = await screen.findByRole("button", { name: "Open workspace create panel" });
     await fireEvent.click(openCreateForm);
     const createButton = await screen.findByRole("button", { name: /^Create workspace$/ });
     await fireEvent.click(createButton);

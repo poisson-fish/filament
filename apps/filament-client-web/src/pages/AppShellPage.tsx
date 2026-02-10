@@ -257,7 +257,16 @@ function canDiscoverWorkspaceOperation(
   return role === "owner" || role === "moderator";
 }
 
-type OpsOverlayPanel = "search" | "attachments" | "voice" | "moderation" | "utility";
+type OverlayPanel =
+  | "workspace-create"
+  | "channel-create"
+  | "public-directory"
+  | "friendships"
+  | "search"
+  | "attachments"
+  | "voice"
+  | "moderation"
+  | "utility";
 
 export function AppShellPage() {
   const auth = useAuth();
@@ -286,7 +295,6 @@ export function AppShellPage() {
   const [createChannelName, setCreateChannelName] = createSignal("incident-room");
   const [isCreatingWorkspace, setCreatingWorkspace] = createSignal(false);
   const [workspaceError, setWorkspaceError] = createSignal("");
-  const [showWorkspaceCreateForm, setShowWorkspaceCreateForm] = createSignal(false);
   const [publicGuildSearchQuery, setPublicGuildSearchQuery] = createSignal("");
   const [isSearchingPublicGuilds, setSearchingPublicGuilds] = createSignal(false);
   const [publicGuildSearchError, setPublicGuildSearchError] = createSignal("");
@@ -304,7 +312,6 @@ export function AppShellPage() {
   const [newChannelName, setNewChannelName] = createSignal("backend");
   const [isCreatingChannel, setCreatingChannel] = createSignal(false);
   const [channelCreateError, setChannelCreateError] = createSignal("");
-  const [showNewChannelForm, setShowNewChannelForm] = createSignal(false);
 
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchError, setSearchError] = createSignal("");
@@ -356,7 +363,9 @@ export function AppShellPage() {
   const [diagError, setDiagError] = createSignal("");
   const [isCheckingHealth, setCheckingHealth] = createSignal(false);
   const [isEchoing, setEchoing] = createSignal(false);
-  const [activeOpsPanel, setActiveOpsPanel] = createSignal<OpsOverlayPanel | null>(null);
+  const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<OverlayPanel | null>(null);
+  const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
+  const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(false);
 
   const activeWorkspace = createMemo(
     () => workspaces().find((workspace) => workspace.guildId === activeGuildId()) ?? null,
@@ -399,6 +408,63 @@ export function AppShellPage() {
     }
     return attachmentByChannel()[key] ?? [];
   });
+
+  const canCloseActivePanel = createMemo(() => {
+    if (activeOverlayPanel() !== "workspace-create") {
+      return true;
+    }
+    return canDismissWorkspaceCreateForm();
+  });
+
+  const openOverlayPanel = (panel: OverlayPanel) => {
+    if (panel === "workspace-create") {
+      setWorkspaceError("");
+    }
+    if (panel === "channel-create") {
+      setChannelCreateError("");
+    }
+    setActiveOverlayPanel(panel);
+  };
+
+  const closeOverlayPanel = () => {
+    if (!canCloseActivePanel()) {
+      return;
+    }
+    setActiveOverlayPanel(null);
+  };
+
+  const overlayPanelTitle = (panel: OverlayPanel): string => {
+    switch (panel) {
+      case "workspace-create":
+        return "Create workspace";
+      case "channel-create":
+        return "Create channel";
+      case "public-directory":
+        return "Public workspace directory";
+      case "friendships":
+        return "Friendships";
+      case "search":
+        return "Search";
+      case "attachments":
+        return "Attachments";
+      case "voice":
+        return "Voice token";
+      case "moderation":
+        return "Moderation";
+      case "utility":
+        return "Utility";
+    }
+  };
+
+  const overlayPanelClassName = (panel: OverlayPanel): string => {
+    if (panel === "workspace-create" || panel === "channel-create") {
+      return "panel-window panel-window-compact";
+    }
+    if (panel === "public-directory" || panel === "friendships") {
+      return "panel-window panel-window-medium";
+    }
+    return "panel-window";
+  };
 
   const displayUserLabel = (userId: string): string => resolvedUsernames()[userId] ?? shortActor(userId);
 
@@ -652,7 +718,7 @@ export function AppShellPage() {
       return;
     }
     if (workspaces().length === 0) {
-      setShowWorkspaceCreateForm(true);
+      setActiveOverlayPanel("workspace-create");
     }
   });
 
@@ -792,17 +858,45 @@ export function AppShellPage() {
   });
 
   createEffect(() => {
-    const panel = activeOpsPanel();
+    const panel = activeOverlayPanel();
     if (!panel) {
       return;
     }
-    if (!canAccessActiveChannel() && panel !== "utility") {
-      setActiveOpsPanel(null);
+
+    const needsChannelAccess =
+      panel === "channel-create" ||
+      panel === "search" ||
+      panel === "attachments" ||
+      panel === "voice" ||
+      panel === "moderation";
+    if (needsChannelAccess && !canAccessActiveChannel()) {
+      setActiveOverlayPanel(null);
       return;
     }
-    if (panel === "moderation" && !hasModerationAccess()) {
-      setActiveOpsPanel(null);
+
+    if (panel === "channel-create" && !canManageWorkspaceChannels()) {
+      setActiveOverlayPanel(null);
+      return;
     }
+
+    if (panel === "moderation" && !hasModerationAccess()) {
+      setActiveOverlayPanel(null);
+    }
+  });
+
+  createEffect(() => {
+    if (!activeOverlayPanel()) {
+      return;
+    }
+
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeOverlayPanel();
+      }
+    };
+
+    window.addEventListener("keydown", onKeydown);
+    onCleanup(() => window.removeEventListener("keydown", onKeydown));
   });
 
   createEffect(() => {
@@ -859,7 +953,6 @@ export function AppShellPage() {
     setWorkspaceError("");
     setCreatingWorkspace(true);
     try {
-      const hadWorkspace = workspaces().length > 0;
       const guild = await createGuild(session, {
         name: guildNameFromInput(createGuildName()),
         visibility: guildVisibilityFromInput(createGuildVisibility()),
@@ -877,7 +970,7 @@ export function AppShellPage() {
       setActiveGuildId(createdWorkspace.guildId);
       setActiveChannelId(channel.channelId);
       setMessageStatus("Workspace created.");
-      setShowWorkspaceCreateForm(!hadWorkspace);
+      setActiveOverlayPanel(null);
     } catch (error) {
       setWorkspaceError(mapError(error, "Unable to create workspace."));
     } finally {
@@ -915,7 +1008,7 @@ export function AppShellPage() {
         }),
       );
       setActiveChannelId(created.channelId);
-      setShowNewChannelForm(false);
+      setActiveOverlayPanel(null);
       setNewChannelName("backend");
       setMessageStatus("Channel created.");
     } catch (error) {
@@ -1497,226 +1590,107 @@ export function AppShellPage() {
   };
 
   return (
-    <div class="app-shell">
-      <aside class="server-rail" aria-label="servers">
-        <header class="rail-label">WS</header>
-        <For each={workspaces()}>
-          {(workspace) => (
-            <button
-              title={`${workspace.guildName} (${workspace.visibility})`}
-              classList={{ active: activeGuildId() === workspace.guildId }}
-              onClick={() => {
-                setActiveGuildId(workspace.guildId);
-                setActiveChannelId(workspace.channels[0]?.channelId ?? null);
-              }}
-            >
-              {workspace.guildName.slice(0, 1).toUpperCase()}
-            </button>
-          )}
-        </For>
-      </aside>
-
-      <aside class="channel-rail">
-        <header>
-          <h2>{activeWorkspace()?.guildName ?? "No Workspace"}</h2>
-          <span>
-            {activeWorkspace() ? `${activeWorkspace()!.visibility} workspace` : "Hardened workspace"}
-          </span>
-        </header>
-
-        <Switch>
-          <Match when={!activeWorkspace()}>
-            <p class="muted">Create a workspace to begin.</p>
-          </Match>
-          <Match when={activeWorkspace()}>
-            <nav aria-label="channels">
-              <p class="group-label">TEXT CHANNELS</p>
-              <For each={activeWorkspace()?.channels ?? []}>
-                {(channel) => (
-                  <button
-                    classList={{ active: activeChannelId() === channel.channelId }}
-                    onClick={() => setActiveChannelId(channel.channelId)}
-                  >
-                    <span>#{channel.name}</span>
-                  </button>
-                )}
-              </For>
-
-              <Show when={canManageWorkspaceChannels()}>
-                <button class="create-channel-toggle" onClick={() => setShowNewChannelForm((v) => !v)}>
-                  {showNewChannelForm() ? "Cancel" : "New channel"}
+    <div class="app-shell-scaffold">
+      <div
+        classList={{
+          "app-shell": true,
+          "channel-rail-collapsed": isChannelRailCollapsed(),
+          "member-rail-collapsed": isMemberRailCollapsed(),
+        }}
+      >
+        <aside class="server-rail" aria-label="servers">
+          <header class="rail-label">WS</header>
+          <div class="server-list">
+            <For each={workspaces()}>
+              {(workspace) => (
+                <button
+                  title={`${workspace.guildName} (${workspace.visibility})`}
+                  classList={{ active: activeGuildId() === workspace.guildId }}
+                  onClick={() => {
+                    setActiveGuildId(workspace.guildId);
+                    setActiveChannelId(workspace.channels[0]?.channelId ?? null);
+                  }}
+                >
+                  {workspace.guildName.slice(0, 1).toUpperCase()}
                 </button>
-              </Show>
-
-              <Show when={showNewChannelForm() && canManageWorkspaceChannels()}>
-                <form class="inline-form" onSubmit={createNewChannel}>
-                  <label>
-                    Channel name
-                    <input
-                      value={newChannelName()}
-                      onInput={(event) => setNewChannelName(event.currentTarget.value)}
-                      maxlength="64"
-                    />
-                  </label>
-                  <button type="submit" disabled={isCreatingChannel()}>
-                    {isCreatingChannel() ? "Creating..." : "Create"}
-                  </button>
-                </form>
-                <Show when={channelCreateError()}>
-                  <p class="status error">{channelCreateError()}</p>
-                </Show>
-              </Show>
-            </nav>
-          </Match>
-        </Switch>
-
-        <section class="public-directory" aria-label="public-workspace-directory">
-          <p class="group-label">PUBLIC WORKSPACES</p>
-          <form class="inline-form" onSubmit={runPublicGuildSearch}>
-            <label>
-              Search
-              <input
-                value={publicGuildSearchQuery()}
-                onInput={(event) => setPublicGuildSearchQuery(event.currentTarget.value)}
-                maxlength="64"
-                placeholder="workspace name"
-              />
-            </label>
-            <button type="submit" disabled={isSearchingPublicGuilds()}>
-              {isSearchingPublicGuilds() ? "Searching..." : "Find public"}
-            </button>
-          </form>
-          <Show when={publicGuildSearchError()}>
-            <p class="status error">{publicGuildSearchError()}</p>
-          </Show>
-          <ul>
-            <For each={publicGuildDirectory()}>
-              {(guild) => (
-                <li>
-                  <span class="presence online" />
-                  <div class="stacked-meta">
-                    <span>{guild.name}</span>
-                    <span class="muted mono">{guild.visibility}</span>
-                  </div>
-                </li>
               )}
             </For>
-            <Show when={!isSearchingPublicGuilds() && publicGuildDirectory().length === 0}>
-              <li>
-                <span class="presence idle" />
-                no-public-workspaces
-              </li>
-            </Show>
-          </ul>
-        </section>
-
-        <section class="public-directory" aria-label="friendships">
-          <p class="group-label">FRIENDS</p>
-          <form class="inline-form" onSubmit={submitFriendRequest}>
-            <label>
-              User ID
-              <input
-                value={friendRecipientUserIdInput()}
-                onInput={(event) => setFriendRecipientUserIdInput(event.currentTarget.value)}
-                maxlength="26"
-                placeholder="01ARZ3NDEKTSV4RRFFQ69G5FAV"
-              />
-            </label>
-            <button type="submit" disabled={isRunningFriendAction()}>
-              {isRunningFriendAction() ? "Submitting..." : "Send request"}
+          </div>
+          <div class="server-rail-footer">
+            <button
+              type="button"
+              class="server-action"
+              aria-label="Open workspace create panel"
+              title="Create workspace"
+              onClick={() => openOverlayPanel("workspace-create")}
+              disabled={isCreatingWorkspace()}
+            >
+              +
             </button>
-          </form>
-          <Show when={friendStatus()}>
-            <p class="status ok">{friendStatus()}</p>
-          </Show>
-          <Show when={friendError()}>
-            <p class="status error">{friendError()}</p>
-          </Show>
+            <button
+              type="button"
+              class="server-action"
+              aria-label="Open public workspace directory panel"
+              title="Public workspace directory"
+              onClick={() => openOverlayPanel("public-directory")}
+            >
+              D
+            </button>
+            <button
+              type="button"
+              class="server-action"
+              aria-label="Open friendships panel"
+              title="Friendships"
+              onClick={() => openOverlayPanel("friendships")}
+            >
+              F
+            </button>
+          </div>
+        </aside>
 
-          <p class="group-label">INCOMING</p>
-          <ul>
-            <For each={friendRequests().incoming}>
-              {(request) => (
-                <li>
-                  <div class="stacked-meta">
-                    <span>{request.senderUsername}</span>
-                    <span class="muted mono">{request.senderUserId}</span>
-                  </div>
-                  <div class="button-row">
+        <Show when={!isChannelRailCollapsed()}>
+          <aside class="channel-rail">
+            <header>
+              <h2>{activeWorkspace()?.guildName ?? "No Workspace"}</h2>
+              <span>
+                {activeWorkspace() ? `${activeWorkspace()!.visibility} workspace` : "Hardened workspace"}
+              </span>
+            </header>
+
+            <Switch>
+              <Match when={!activeWorkspace()}>
+                <p class="muted">Create a workspace to begin.</p>
+              </Match>
+              <Match when={activeWorkspace()}>
+                <nav aria-label="channels">
+                  <p class="group-label">TEXT CHANNELS</p>
+                  <For each={activeWorkspace()?.channels ?? []}>
+                    {(channel) => (
+                      <button
+                        classList={{ active: activeChannelId() === channel.channelId }}
+                        onClick={() => setActiveChannelId(channel.channelId)}
+                      >
+                        <span>#{channel.name}</span>
+                      </button>
+                    )}
+                  </For>
+
+                  <Show when={canManageWorkspaceChannels()}>
                     <button
                       type="button"
-                      onClick={() => void acceptIncomingFriendRequest(request.requestId)}
-                      disabled={isRunningFriendAction()}
+                      class="create-channel-toggle"
+                      onClick={() => openOverlayPanel("channel-create")}
                     >
-                      Accept
+                      New channel
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void dismissFriendRequest(request.requestId)}
-                      disabled={isRunningFriendAction()}
-                    >
-                      Ignore
-                    </button>
-                  </div>
-                </li>
-              )}
-            </For>
-            <Show when={friendRequests().incoming.length === 0}>
-              <li class="muted">no-incoming-requests</li>
-            </Show>
-          </ul>
+                  </Show>
+                </nav>
+              </Match>
+            </Switch>
+          </aside>
+        </Show>
 
-          <p class="group-label">OUTGOING</p>
-          <ul>
-            <For each={friendRequests().outgoing}>
-              {(request) => (
-                <li>
-                  <div class="stacked-meta">
-                    <span>{request.recipientUsername}</span>
-                    <span class="muted mono">{request.recipientUserId}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void dismissFriendRequest(request.requestId)}
-                    disabled={isRunningFriendAction()}
-                  >
-                    Cancel
-                  </button>
-                </li>
-              )}
-            </For>
-            <Show when={friendRequests().outgoing.length === 0}>
-              <li class="muted">no-outgoing-requests</li>
-            </Show>
-          </ul>
-
-          <p class="group-label">FRIEND LIST</p>
-          <ul>
-            <For each={friends()}>
-              {(friend) => (
-                <li>
-                  <div class="stacked-meta">
-                    <span>{friend.username}</span>
-                    <span class="muted mono">{friend.userId}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void removeFriendship(friend.userId)}
-                    disabled={isRunningFriendAction()}
-                  >
-                    Remove
-                  </button>
-                </li>
-              )}
-            </For>
-            <Show when={friends().length === 0}>
-              <li class="muted">no-friends</li>
-            </Show>
-          </ul>
-        </section>
-      </aside>
-
-      <main class="chat-panel">
+        <main class="chat-panel">
         <header class="chat-header">
           <div>
             <h3>{activeChannel() ? `#${activeChannel()!.name}` : "#no-channel"}</h3>
@@ -1726,18 +1700,20 @@ export function AppShellPage() {
             <span classList={{ "gateway-badge": true, online: gatewayOnline() }}>
               {gatewayOnline() ? "Live" : "Offline"}
             </span>
+            <button type="button" onClick={() => setChannelRailCollapsed((value) => !value)}>
+              {isChannelRailCollapsed() ? "Show channels" : "Hide channels"}
+            </button>
+            <button type="button" onClick={() => setMemberRailCollapsed((value) => !value)}>
+              {isMemberRailCollapsed() ? "Show members" : "Hide members"}
+            </button>
+            <button type="button" onClick={() => openOverlayPanel("public-directory")}>
+              Directory
+            </button>
+            <button type="button" onClick={() => openOverlayPanel("friendships")}>
+              Friends
+            </button>
             <button type="button" onClick={() => void refreshMessages()}>
               Refresh
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setWorkspaceError("");
-                setShowWorkspaceCreateForm((visible) => !visible);
-              }}
-              disabled={isCreatingWorkspace()}
-            >
-              {showWorkspaceCreateForm() ? "Close workspace form" : "New workspace"}
             </button>
             <button type="button" onClick={() => void refreshSession()} disabled={isRefreshingSession()}>
               {isRefreshingSession() ? "Refreshing..." : "Refresh session"}
@@ -1747,61 +1723,6 @@ export function AppShellPage() {
             </button>
           </div>
         </header>
-
-        <Show when={showWorkspaceCreateForm()}>
-          <section class="workspace-create-panel">
-            <h4>Create workspace</h4>
-            <form class="inline-form" onSubmit={createWorkspace}>
-              <label>
-                Workspace name
-                <input
-                  value={createGuildName()}
-                  onInput={(event) => setCreateGuildName(event.currentTarget.value)}
-                  maxlength="64"
-                />
-              </label>
-              <label>
-                Visibility
-                <select
-                  value={createGuildVisibility()}
-                  onChange={(event) =>
-                    setCreateGuildVisibility(guildVisibilityFromInput(event.currentTarget.value))
-                  }
-                >
-                  <option value="private">private</option>
-                  <option value="public">public</option>
-                </select>
-              </label>
-              <label>
-                First channel
-                <input
-                  value={createChannelName()}
-                  onInput={(event) => setCreateChannelName(event.currentTarget.value)}
-                  maxlength="64"
-                />
-              </label>
-              <div class="button-row">
-                <button type="submit" disabled={isCreatingWorkspace()}>
-                  {isCreatingWorkspace() ? "Creating..." : "Create workspace"}
-                </button>
-                <Show when={canDismissWorkspaceCreateForm()}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWorkspaceError("");
-                      setShowWorkspaceCreateForm(false);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </Show>
-              </div>
-            </form>
-            <Show when={workspaceError()}>
-              <p class="status error">{workspaceError()}</p>
-            </Show>
-          </section>
-        </Show>
 
         <Show
           when={workspaceBootstrapDone() && workspaces().length === 0}
@@ -1926,7 +1847,7 @@ export function AppShellPage() {
         >
           <section class="empty-workspace">
             <h3>Create your first workspace</h3>
-            <p class="muted">Use the workspace panel above to create your first guild and channel.</p>
+            <p class="muted">Use the + button in the workspace rail to create your first guild and channel.</p>
           </section>
         </Show>
 
@@ -1935,417 +1856,658 @@ export function AppShellPage() {
         </Show>
       </main>
 
-      <aside class="member-rail">
-        <header>
-          <h4>Ops Console</h4>
-        </header>
+        <Show when={!isMemberRailCollapsed()}>
+          <aside class="member-rail">
+            <header>
+              <h4>Workspace Tools</h4>
+            </header>
 
-        <Show when={profile.loading}>
-          <p class="muted">Loading profile...</p>
-        </Show>
-        <Show when={profile.error}>
-          <p class="status error">{profileErrorMessage(profile.error)}</p>
-        </Show>
-        <Show when={profile()}>
-          {(value) => (
-            <div class="profile-card">
-              <p class="label">Username</p>
-              <p>{value().username}</p>
-              <p class="label">User ID</p>
-              <p class="mono">{value().userId}</p>
-            </div>
-          )}
-        </Show>
+            <Show when={profile.loading}>
+              <p class="muted">Loading profile...</p>
+            </Show>
+            <Show when={profile.error}>
+              <p class="status error">{profileErrorMessage(profile.error)}</p>
+            </Show>
+            <Show when={profile()}>
+              {(value) => (
+                <div class="profile-card">
+                  <p class="label">Username</p>
+                  <p>{value().username}</p>
+                  <p class="label">User ID</p>
+                  <p class="mono">{value().userId}</p>
+                </div>
+              )}
+            </Show>
 
-        <Show when={activeWorkspace() && activeChannel() && !canAccessActiveChannel()}>
-          <p class="muted">No authorized workspace/channel selected for operator actions.</p>
-        </Show>
+            <Show when={activeWorkspace() && activeChannel() && !canAccessActiveChannel()}>
+              <p class="muted">No authorized workspace/channel selected for operator actions.</p>
+            </Show>
 
-        <Show when={canAccessActiveChannel()}>
-          <section class="member-group">
-            <p class="group-label">ONLINE ({onlineMembers().length})</p>
-            <ul>
-              <For each={onlineMembers()}>
-                {(memberId) => (
-                  <li>
-                    <span class="presence online" />
-                    {displayUserLabel(memberId)}
-                  </li>
-                )}
-              </For>
-              <Show when={onlineMembers().length === 0}>
-                <li>
-                  <span class="presence idle" />
-                  no-presence-yet
-                </li>
-              </Show>
-            </ul>
-          </section>
-        </Show>
-
-        <section class="member-group">
-          <p class="group-label">GUILD SETTINGS</p>
-          <div class="ops-launch-grid">
             <Show when={canAccessActiveChannel()}>
-              <button type="button" onClick={() => setActiveOpsPanel("search")}>
-                Open search panel
-              </button>
-              <button type="button" onClick={() => setActiveOpsPanel("attachments")}>
-                Open attachments panel
-              </button>
-              <button type="button" onClick={() => setActiveOpsPanel("voice")}>
-                Open voice panel
-              </button>
+              <section class="member-group">
+                <p class="group-label">ONLINE ({onlineMembers().length})</p>
+                <ul>
+                  <For each={onlineMembers()}>
+                    {(memberId) => (
+                      <li>
+                        <span class="presence online" />
+                        {displayUserLabel(memberId)}
+                      </li>
+                    )}
+                  </For>
+                  <Show when={onlineMembers().length === 0}>
+                    <li>
+                      <span class="presence idle" />
+                      no-presence-yet
+                    </li>
+                  </Show>
+                </ul>
+              </section>
             </Show>
-            <Show when={hasModerationAccess()}>
-              <button type="button" onClick={() => setActiveOpsPanel("moderation")}>
-                Open moderation panel
-              </button>
-            </Show>
-            <button type="button" onClick={() => setActiveOpsPanel("utility")}>
-              Open utility panel
-            </button>
-          </div>
-        </section>
 
-        <Show when={activeOpsPanel()}>
-          {(panel) => (
-            <section class="ops-overlay" role="dialog" aria-label={`${panel()} panel`}>
-              <header class="ops-overlay-header">
-                <button type="button" onClick={() => setActiveOpsPanel(null)}>
-                  Back
+            <section class="member-group">
+              <p class="group-label">PANELS</p>
+              <div class="ops-launch-grid">
+                <button type="button" onClick={() => openOverlayPanel("public-directory")}>
+                  Open directory panel
                 </button>
-                <p class="group-label">{panel().toUpperCase()}</p>
+                <button type="button" onClick={() => openOverlayPanel("friendships")}>
+                  Open friendships panel
+                </button>
+                <Show when={canAccessActiveChannel()}>
+                  <button type="button" onClick={() => openOverlayPanel("search")}>
+                    Open search panel
+                  </button>
+                  <button type="button" onClick={() => openOverlayPanel("attachments")}>
+                    Open attachments panel
+                  </button>
+                  <button type="button" onClick={() => openOverlayPanel("voice")}>
+                    Open voice panel
+                  </button>
+                </Show>
+                <Show when={hasModerationAccess()}>
+                  <button type="button" onClick={() => openOverlayPanel("moderation")}>
+                    Open moderation panel
+                  </button>
+                </Show>
+                <button type="button" onClick={() => openOverlayPanel("utility")}>
+                  Open utility panel
+                </button>
+              </div>
+            </section>
+          </aside>
+        </Show>
+      </div>
+
+      <Show when={activeOverlayPanel()}>
+        {(panel) => (
+          <div
+            class="panel-backdrop"
+            role="presentation"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                closeOverlayPanel();
+              }
+            }}
+          >
+            <section
+              class={overlayPanelClassName(panel())}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${overlayPanelTitle(panel())} panel`}
+            >
+              <header class="panel-window-header">
+                <h4>{overlayPanelTitle(panel())}</h4>
+                <button type="button" onClick={closeOverlayPanel} disabled={!canCloseActivePanel()}>
+                  Close
+                </button>
               </header>
-
-              <Switch>
-                <Match when={panel() === "search" && canAccessActiveChannel()}>
-                  <section class="member-group">
-                    <p class="group-label">SEARCH</p>
-                    <form class="inline-form" onSubmit={runSearch}>
-                      <label>
-                        Query
-                        <input
-                          value={searchQuery()}
-                          onInput={(event) => setSearchQuery(event.currentTarget.value)}
-                          maxlength="256"
-                          placeholder="needle"
-                        />
-                      </label>
-                      <button type="submit" disabled={isSearching() || !activeWorkspace()}>
-                        {isSearching() ? "Searching..." : "Search"}
-                      </button>
-                    </form>
-                    <Show when={canManageSearchMaintenance()}>
-                      <div class="button-row">
-                        <button
-                          type="button"
-                          onClick={() => void rebuildSearch()}
-                          disabled={isRunningSearchOps() || !activeWorkspace()}
-                        >
-                          Rebuild Index
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void reconcileSearch()}
-                          disabled={isRunningSearchOps() || !activeWorkspace()}
-                        >
-                          Reconcile Index
-                        </button>
-                      </div>
-                    </Show>
-                    <Show when={searchOpsStatus()}>
-                      <p class="status ok">{searchOpsStatus()}</p>
-                    </Show>
-                    <Show when={searchError()}>
-                      <p class="status error">{searchError()}</p>
-                    </Show>
-                    <Show when={searchResults()}>
-                      {(results) => (
-                        <ul>
-                          <For each={results().messages}>
-                            {(message) => (
-                              <li>
-                                <span class="presence online" />
-                                {displayUserLabel(message.authorId)}:{" "}
-                                {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
-                              </li>
-                            )}
-                          </For>
-                        </ul>
-                      )}
-                    </Show>
-                  </section>
-                </Match>
-
-                <Match when={panel() === "attachments" && canAccessActiveChannel()}>
-                  <section class="member-group">
-                    <p class="group-label">ATTACHMENTS</p>
-                    <form class="inline-form" onSubmit={uploadAttachment}>
-                      <label>
-                        File
-                        <input
-                          type="file"
-                          onInput={(event) => {
-                            const file = event.currentTarget.files?.[0] ?? null;
-                            setSelectedAttachment(file);
-                            setAttachmentFilename(file?.name ?? "");
-                          }}
-                        />
-                      </label>
-                      <label>
-                        Filename
-                        <input
-                          value={attachmentFilename()}
-                          onInput={(event) => setAttachmentFilename(event.currentTarget.value)}
-                          maxlength="128"
-                          placeholder="upload.bin"
-                        />
-                      </label>
-                      <button type="submit" disabled={isUploadingAttachment() || !activeChannel()}>
-                        {isUploadingAttachment() ? "Uploading..." : "Upload"}
-                      </button>
-                    </form>
-                    <Show when={attachmentStatus()}>
-                      <p class="status ok">{attachmentStatus()}</p>
-                    </Show>
-                    <Show when={attachmentError()}>
-                      <p class="status error">{attachmentError()}</p>
-                    </Show>
-                    <ul>
-                      <For each={activeAttachments()}>
-                        {(record) => (
-                          <li>
-                            <span class="presence online" />
-                            <div class="stacked-meta">
-                              <span>{record.filename}</span>
-                              <span class="muted mono">
-                                {record.mimeType} · {formatBytes(record.sizeBytes)}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => void downloadAttachment(record)}
-                              disabled={downloadingAttachmentId() === record.attachmentId}
-                            >
-                              {downloadingAttachmentId() === record.attachmentId ? "..." : "Get"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void removeAttachment(record)}
-                              disabled={deletingAttachmentId() === record.attachmentId}
-                            >
-                              {deletingAttachmentId() === record.attachmentId ? "..." : "Del"}
-                            </button>
-                          </li>
-                        )}
-                      </For>
-                      <Show when={activeAttachments().length === 0}>
-                        <li>
-                          <span class="presence idle" />
-                          no-local-attachments
-                        </li>
-                      </Show>
-                    </ul>
-                  </section>
-                </Match>
-
-                <Match when={panel() === "voice" && canAccessActiveChannel()}>
-                  <section class="member-group">
-                    <p class="group-label">VOICE TOKEN</p>
-                    <form class="inline-form" onSubmit={requestVoiceToken}>
-                      <label class="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={voiceCanPublish()}
-                          onChange={(event) => setVoiceCanPublish(event.currentTarget.checked)}
-                        />
-                        can_publish
-                      </label>
-                      <label class="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={voiceCanSubscribe()}
-                          onChange={(event) => setVoiceCanSubscribe(event.currentTarget.checked)}
-                        />
-                        can_subscribe
-                      </label>
-                      <label class="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={voiceMicrophone()}
-                          onChange={(event) => setVoiceMicrophone(event.currentTarget.checked)}
-                        />
-                        microphone
-                      </label>
-                      <label class="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={voiceCamera()}
-                          onChange={(event) => setVoiceCamera(event.currentTarget.checked)}
-                        />
-                        camera
-                      </label>
-                      <label class="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={voiceScreenShare()}
-                          onChange={(event) => setVoiceScreenShare(event.currentTarget.checked)}
-                        />
-                        screen_share
-                      </label>
-                      <button type="submit" disabled={isIssuingVoiceToken() || !activeChannel()}>
-                        {isIssuingVoiceToken() ? "Issuing..." : "Issue token"}
-                      </button>
-                    </form>
-                    <Show when={voiceTokenPreview()}>
-                      {(prefix) => <p class="mono">token_prefix: {prefix()}...</p>}
-                    </Show>
-                    <Show when={voiceTokenStatus()}>
-                      <p class="status ok">{voiceTokenStatus()}</p>
-                    </Show>
-                    <Show when={voiceTokenError()}>
-                      <p class="status error">{voiceTokenError()}</p>
-                    </Show>
-                  </section>
-                </Match>
-
-                <Match when={panel() === "moderation" && hasModerationAccess()}>
-                  <section class="member-group">
-                    <p class="group-label">MODERATION</p>
-                    <form class="inline-form">
-                      <label>
-                        Target user ULID
-                        <input
-                          value={moderationUserIdInput()}
-                          onInput={(event) => setModerationUserIdInput(event.currentTarget.value)}
-                          maxlength="26"
-                          placeholder="01ARZ..."
-                        />
-                      </label>
-                      <label>
-                        Role
-                        <select
-                          value={moderationRoleInput()}
-                          onChange={(event) => setModerationRoleInput(roleFromInput(event.currentTarget.value))}
-                        >
-                          <option value="member">member</option>
-                          <option value="moderator">moderator</option>
-                          <option value="owner">owner</option>
-                        </select>
-                      </label>
-                      <div class="button-row">
-                        <Show when={canManageRoles()}>
-                          <button
-                            type="button"
-                            disabled={isModerating() || !activeWorkspace()}
-                            onClick={() => void runMemberAction("add")}
-                          >
-                            Add
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isModerating() || !activeWorkspace()}
-                            onClick={() => void runMemberAction("role")}
-                          >
-                            Set Role
-                          </button>
-                        </Show>
-                        <Show when={canBanMembers()}>
-                          <button
-                            type="button"
-                            disabled={isModerating() || !activeWorkspace()}
-                            onClick={() => void runMemberAction("kick")}
-                          >
-                            Kick
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isModerating() || !activeWorkspace()}
-                            onClick={() => void runMemberAction("ban")}
-                          >
-                            Ban
-                          </button>
-                        </Show>
-                      </div>
-                    </form>
-                    <Show when={canManageChannelOverrides()}>
-                      <form class="inline-form" onSubmit={applyOverride}>
+              <div class="panel-window-body">
+                <Switch>
+                  <Match when={panel() === "workspace-create"}>
+                    <section class="member-group">
+                      <form class="inline-form" onSubmit={createWorkspace}>
                         <label>
-                          Override role
+                          Workspace name
+                          <input
+                            value={createGuildName()}
+                            onInput={(event) => setCreateGuildName(event.currentTarget.value)}
+                            maxlength="64"
+                          />
+                        </label>
+                        <label>
+                          Visibility
                           <select
-                            value={overrideRoleInput()}
-                            onChange={(event) => setOverrideRoleInput(roleFromInput(event.currentTarget.value))}
+                            value={createGuildVisibility()}
+                            onChange={(event) =>
+                              setCreateGuildVisibility(guildVisibilityFromInput(event.currentTarget.value))
+                            }
+                          >
+                            <option value="private">private</option>
+                            <option value="public">public</option>
+                          </select>
+                        </label>
+                        <label>
+                          First channel
+                          <input
+                            value={createChannelName()}
+                            onInput={(event) => setCreateChannelName(event.currentTarget.value)}
+                            maxlength="64"
+                          />
+                        </label>
+                        <div class="button-row">
+                          <button type="submit" disabled={isCreatingWorkspace()}>
+                            {isCreatingWorkspace() ? "Creating..." : "Create workspace"}
+                          </button>
+                          <Show when={canDismissWorkspaceCreateForm()}>
+                            <button type="button" onClick={closeOverlayPanel}>
+                              Cancel
+                            </button>
+                          </Show>
+                        </div>
+                      </form>
+                      <Show when={workspaceError()}>
+                        <p class="status error">{workspaceError()}</p>
+                      </Show>
+                    </section>
+                  </Match>
+
+                  <Match when={panel() === "channel-create" && canManageWorkspaceChannels()}>
+                    <section class="member-group">
+                      <form class="inline-form" onSubmit={createNewChannel}>
+                        <label>
+                          Channel name
+                          <input
+                            value={newChannelName()}
+                            onInput={(event) => setNewChannelName(event.currentTarget.value)}
+                            maxlength="64"
+                          />
+                        </label>
+                        <div class="button-row">
+                          <button type="submit" disabled={isCreatingChannel()}>
+                            {isCreatingChannel() ? "Creating..." : "Create channel"}
+                          </button>
+                          <button type="button" onClick={closeOverlayPanel}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                      <Show when={channelCreateError()}>
+                        <p class="status error">{channelCreateError()}</p>
+                      </Show>
+                    </section>
+                  </Match>
+
+                  <Match when={panel() === "public-directory"}>
+                    <section class="public-directory" aria-label="public-workspace-directory">
+                      <form class="inline-form" onSubmit={runPublicGuildSearch}>
+                        <label>
+                          Search
+                          <input
+                            value={publicGuildSearchQuery()}
+                            onInput={(event) => setPublicGuildSearchQuery(event.currentTarget.value)}
+                            maxlength="64"
+                            placeholder="workspace name"
+                          />
+                        </label>
+                        <button type="submit" disabled={isSearchingPublicGuilds()}>
+                          {isSearchingPublicGuilds() ? "Searching..." : "Find public"}
+                        </button>
+                      </form>
+                      <Show when={publicGuildSearchError()}>
+                        <p class="status error">{publicGuildSearchError()}</p>
+                      </Show>
+                      <ul>
+                        <For each={publicGuildDirectory()}>
+                          {(guild) => (
+                            <li>
+                              <span class="presence online" />
+                              <div class="stacked-meta">
+                                <span>{guild.name}</span>
+                                <span class="muted mono">{guild.visibility}</span>
+                              </div>
+                            </li>
+                          )}
+                        </For>
+                        <Show when={!isSearchingPublicGuilds() && publicGuildDirectory().length === 0}>
+                          <li>
+                            <span class="presence idle" />
+                            no-public-workspaces
+                          </li>
+                        </Show>
+                      </ul>
+                    </section>
+                  </Match>
+
+                  <Match when={panel() === "friendships"}>
+                    <section class="public-directory" aria-label="friendships">
+                      <form class="inline-form" onSubmit={submitFriendRequest}>
+                        <label>
+                          User ID
+                          <input
+                            value={friendRecipientUserIdInput()}
+                            onInput={(event) => setFriendRecipientUserIdInput(event.currentTarget.value)}
+                            maxlength="26"
+                            placeholder="01ARZ3NDEKTSV4RRFFQ69G5FAV"
+                          />
+                        </label>
+                        <button type="submit" disabled={isRunningFriendAction()}>
+                          {isRunningFriendAction() ? "Submitting..." : "Send request"}
+                        </button>
+                      </form>
+                      <Show when={friendStatus()}>
+                        <p class="status ok">{friendStatus()}</p>
+                      </Show>
+                      <Show when={friendError()}>
+                        <p class="status error">{friendError()}</p>
+                      </Show>
+
+                      <p class="group-label">INCOMING</p>
+                      <ul>
+                        <For each={friendRequests().incoming}>
+                          {(request) => (
+                            <li>
+                              <div class="stacked-meta">
+                                <span>{request.senderUsername}</span>
+                                <span class="muted mono">{request.senderUserId}</span>
+                              </div>
+                              <div class="button-row">
+                                <button
+                                  type="button"
+                                  onClick={() => void acceptIncomingFriendRequest(request.requestId)}
+                                  disabled={isRunningFriendAction()}
+                                >
+                                  Accept
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void dismissFriendRequest(request.requestId)}
+                                  disabled={isRunningFriendAction()}
+                                >
+                                  Ignore
+                                </button>
+                              </div>
+                            </li>
+                          )}
+                        </For>
+                        <Show when={friendRequests().incoming.length === 0}>
+                          <li class="muted">no-incoming-requests</li>
+                        </Show>
+                      </ul>
+
+                      <p class="group-label">OUTGOING</p>
+                      <ul>
+                        <For each={friendRequests().outgoing}>
+                          {(request) => (
+                            <li>
+                              <div class="stacked-meta">
+                                <span>{request.recipientUsername}</span>
+                                <span class="muted mono">{request.recipientUserId}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void dismissFriendRequest(request.requestId)}
+                                disabled={isRunningFriendAction()}
+                              >
+                                Cancel
+                              </button>
+                            </li>
+                          )}
+                        </For>
+                        <Show when={friendRequests().outgoing.length === 0}>
+                          <li class="muted">no-outgoing-requests</li>
+                        </Show>
+                      </ul>
+
+                      <p class="group-label">FRIEND LIST</p>
+                      <ul>
+                        <For each={friends()}>
+                          {(friend) => (
+                            <li>
+                              <div class="stacked-meta">
+                                <span>{friend.username}</span>
+                                <span class="muted mono">{friend.userId}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void removeFriendship(friend.userId)}
+                                disabled={isRunningFriendAction()}
+                              >
+                                Remove
+                              </button>
+                            </li>
+                          )}
+                        </For>
+                        <Show when={friends().length === 0}>
+                          <li class="muted">no-friends</li>
+                        </Show>
+                      </ul>
+                    </section>
+                  </Match>
+
+                  <Match when={panel() === "search" && canAccessActiveChannel()}>
+                    <section class="member-group">
+                      <form class="inline-form" onSubmit={runSearch}>
+                        <label>
+                          Query
+                          <input
+                            value={searchQuery()}
+                            onInput={(event) => setSearchQuery(event.currentTarget.value)}
+                            maxlength="256"
+                            placeholder="needle"
+                          />
+                        </label>
+                        <button type="submit" disabled={isSearching() || !activeWorkspace()}>
+                          {isSearching() ? "Searching..." : "Search"}
+                        </button>
+                      </form>
+                      <Show when={canManageSearchMaintenance()}>
+                        <div class="button-row">
+                          <button
+                            type="button"
+                            onClick={() => void rebuildSearch()}
+                            disabled={isRunningSearchOps() || !activeWorkspace()}
+                          >
+                            Rebuild Index
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void reconcileSearch()}
+                            disabled={isRunningSearchOps() || !activeWorkspace()}
+                          >
+                            Reconcile Index
+                          </button>
+                        </div>
+                      </Show>
+                      <Show when={searchOpsStatus()}>
+                        <p class="status ok">{searchOpsStatus()}</p>
+                      </Show>
+                      <Show when={searchError()}>
+                        <p class="status error">{searchError()}</p>
+                      </Show>
+                      <Show when={searchResults()}>
+                        {(results) => (
+                          <ul>
+                            <For each={results().messages}>
+                              {(message) => (
+                                <li>
+                                  <span class="presence online" />
+                                  {displayUserLabel(message.authorId)}:{" "}
+                                  {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
+                                </li>
+                              )}
+                            </For>
+                          </ul>
+                        )}
+                      </Show>
+                    </section>
+                  </Match>
+
+                  <Match when={panel() === "attachments" && canAccessActiveChannel()}>
+                    <section class="member-group">
+                      <form class="inline-form" onSubmit={uploadAttachment}>
+                        <label>
+                          File
+                          <input
+                            type="file"
+                            onInput={(event) => {
+                              const file = event.currentTarget.files?.[0] ?? null;
+                              setSelectedAttachment(file);
+                              setAttachmentFilename(file?.name ?? "");
+                            }}
+                          />
+                        </label>
+                        <label>
+                          Filename
+                          <input
+                            value={attachmentFilename()}
+                            onInput={(event) => setAttachmentFilename(event.currentTarget.value)}
+                            maxlength="128"
+                            placeholder="upload.bin"
+                          />
+                        </label>
+                        <button type="submit" disabled={isUploadingAttachment() || !activeChannel()}>
+                          {isUploadingAttachment() ? "Uploading..." : "Upload"}
+                        </button>
+                      </form>
+                      <Show when={attachmentStatus()}>
+                        <p class="status ok">{attachmentStatus()}</p>
+                      </Show>
+                      <Show when={attachmentError()}>
+                        <p class="status error">{attachmentError()}</p>
+                      </Show>
+                      <ul>
+                        <For each={activeAttachments()}>
+                          {(record) => (
+                            <li>
+                              <span class="presence online" />
+                              <div class="stacked-meta">
+                                <span>{record.filename}</span>
+                                <span class="muted mono">
+                                  {record.mimeType} · {formatBytes(record.sizeBytes)}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void downloadAttachment(record)}
+                                disabled={downloadingAttachmentId() === record.attachmentId}
+                              >
+                                {downloadingAttachmentId() === record.attachmentId ? "..." : "Get"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void removeAttachment(record)}
+                                disabled={deletingAttachmentId() === record.attachmentId}
+                              >
+                                {deletingAttachmentId() === record.attachmentId ? "..." : "Del"}
+                              </button>
+                            </li>
+                          )}
+                        </For>
+                        <Show when={activeAttachments().length === 0}>
+                          <li>
+                            <span class="presence idle" />
+                            no-local-attachments
+                          </li>
+                        </Show>
+                      </ul>
+                    </section>
+                  </Match>
+
+                  <Match when={panel() === "voice" && canAccessActiveChannel()}>
+                    <section class="member-group">
+                      <form class="inline-form" onSubmit={requestVoiceToken}>
+                        <label class="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={voiceCanPublish()}
+                            onChange={(event) => setVoiceCanPublish(event.currentTarget.checked)}
+                          />
+                          can_publish
+                        </label>
+                        <label class="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={voiceCanSubscribe()}
+                            onChange={(event) => setVoiceCanSubscribe(event.currentTarget.checked)}
+                          />
+                          can_subscribe
+                        </label>
+                        <label class="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={voiceMicrophone()}
+                            onChange={(event) => setVoiceMicrophone(event.currentTarget.checked)}
+                          />
+                          microphone
+                        </label>
+                        <label class="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={voiceCamera()}
+                            onChange={(event) => setVoiceCamera(event.currentTarget.checked)}
+                          />
+                          camera
+                        </label>
+                        <label class="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={voiceScreenShare()}
+                            onChange={(event) => setVoiceScreenShare(event.currentTarget.checked)}
+                          />
+                          screen_share
+                        </label>
+                        <button type="submit" disabled={isIssuingVoiceToken() || !activeChannel()}>
+                          {isIssuingVoiceToken() ? "Issuing..." : "Issue token"}
+                        </button>
+                      </form>
+                      <Show when={voiceTokenPreview()}>
+                        {(prefix) => <p class="mono">token_prefix: {prefix()}...</p>}
+                      </Show>
+                      <Show when={voiceTokenStatus()}>
+                        <p class="status ok">{voiceTokenStatus()}</p>
+                      </Show>
+                      <Show when={voiceTokenError()}>
+                        <p class="status error">{voiceTokenError()}</p>
+                      </Show>
+                    </section>
+                  </Match>
+
+                  <Match when={panel() === "moderation" && hasModerationAccess()}>
+                    <section class="member-group">
+                      <form class="inline-form">
+                        <label>
+                          Target user ULID
+                          <input
+                            value={moderationUserIdInput()}
+                            onInput={(event) => setModerationUserIdInput(event.currentTarget.value)}
+                            maxlength="26"
+                            placeholder="01ARZ..."
+                          />
+                        </label>
+                        <label>
+                          Role
+                          <select
+                            value={moderationRoleInput()}
+                            onChange={(event) => setModerationRoleInput(roleFromInput(event.currentTarget.value))}
                           >
                             <option value="member">member</option>
                             <option value="moderator">moderator</option>
                             <option value="owner">owner</option>
                           </select>
                         </label>
+                        <div class="button-row">
+                          <Show when={canManageRoles()}>
+                            <button
+                              type="button"
+                              disabled={isModerating() || !activeWorkspace()}
+                              onClick={() => void runMemberAction("add")}
+                            >
+                              Add
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isModerating() || !activeWorkspace()}
+                              onClick={() => void runMemberAction("role")}
+                            >
+                              Set Role
+                            </button>
+                          </Show>
+                          <Show when={canBanMembers()}>
+                            <button
+                              type="button"
+                              disabled={isModerating() || !activeWorkspace()}
+                              onClick={() => void runMemberAction("kick")}
+                            >
+                              Kick
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isModerating() || !activeWorkspace()}
+                              onClick={() => void runMemberAction("ban")}
+                            >
+                              Ban
+                            </button>
+                          </Show>
+                        </div>
+                      </form>
+                      <Show when={canManageChannelOverrides()}>
+                        <form class="inline-form" onSubmit={applyOverride}>
+                          <label>
+                            Override role
+                            <select
+                              value={overrideRoleInput()}
+                              onChange={(event) => setOverrideRoleInput(roleFromInput(event.currentTarget.value))}
+                            >
+                              <option value="member">member</option>
+                              <option value="moderator">moderator</option>
+                              <option value="owner">owner</option>
+                            </select>
+                          </label>
+                          <label>
+                            Allow permissions (csv)
+                            <input
+                              value={overrideAllowCsv()}
+                              onInput={(event) => setOverrideAllowCsv(event.currentTarget.value)}
+                              placeholder="create_message,subscribe_streams"
+                            />
+                          </label>
+                          <label>
+                            Deny permissions (csv)
+                            <input
+                              value={overrideDenyCsv()}
+                              onInput={(event) => setOverrideDenyCsv(event.currentTarget.value)}
+                              placeholder="delete_message"
+                            />
+                          </label>
+                          <button type="submit" disabled={isModerating() || !activeChannel()}>
+                            Apply channel override
+                          </button>
+                        </form>
+                      </Show>
+                      <Show when={moderationStatus()}>
+                        <p class="status ok">{moderationStatus()}</p>
+                      </Show>
+                      <Show when={moderationError()}>
+                        <p class="status error">{moderationError()}</p>
+                      </Show>
+                    </section>
+                  </Match>
+
+                  <Match when={panel() === "utility"}>
+                    <section class="member-group">
+                      <div class="button-row">
+                        <button type="button" onClick={() => void runHealthCheck()} disabled={isCheckingHealth()}>
+                          {isCheckingHealth() ? "Checking..." : "Health"}
+                        </button>
+                      </div>
+                      <form class="inline-form" onSubmit={runEcho}>
                         <label>
-                          Allow permissions (csv)
+                          Echo
                           <input
-                            value={overrideAllowCsv()}
-                            onInput={(event) => setOverrideAllowCsv(event.currentTarget.value)}
-                            placeholder="create_message,subscribe_streams"
+                            value={echoInput()}
+                            onInput={(event) => setEchoInput(event.currentTarget.value)}
+                            maxlength="128"
                           />
                         </label>
-                        <label>
-                          Deny permissions (csv)
-                          <input
-                            value={overrideDenyCsv()}
-                            onInput={(event) => setOverrideDenyCsv(event.currentTarget.value)}
-                            placeholder="delete_message"
-                          />
-                        </label>
-                        <button type="submit" disabled={isModerating() || !activeChannel()}>
-                          Apply channel override
+                        <button type="submit" disabled={isEchoing()}>
+                          {isEchoing() ? "Sending..." : "Echo"}
                         </button>
                       </form>
-                    </Show>
-                    <Show when={moderationStatus()}>
-                      <p class="status ok">{moderationStatus()}</p>
-                    </Show>
-                    <Show when={moderationError()}>
-                      <p class="status error">{moderationError()}</p>
-                    </Show>
-                  </section>
-                </Match>
-
-                <Match when={panel() === "utility"}>
-                  <section class="member-group">
-                    <p class="group-label">UTILITY</p>
-                    <div class="button-row">
-                      <button type="button" onClick={() => void runHealthCheck()} disabled={isCheckingHealth()}>
-                        {isCheckingHealth() ? "Checking..." : "Health"}
-                      </button>
-                    </div>
-                    <form class="inline-form" onSubmit={runEcho}>
-                      <label>
-                        Echo
-                        <input
-                          value={echoInput()}
-                          onInput={(event) => setEchoInput(event.currentTarget.value)}
-                          maxlength="128"
-                        />
-                      </label>
-                      <button type="submit" disabled={isEchoing()}>
-                        {isEchoing() ? "Sending..." : "Echo"}
-                      </button>
-                    </form>
-                    <Show when={healthStatus()}>
-                      <p class="status ok">{healthStatus()}</p>
-                    </Show>
-                    <Show when={diagError()}>
-                      <p class="status error">{diagError()}</p>
-                    </Show>
-                  </section>
-                </Match>
-              </Switch>
+                      <Show when={healthStatus()}>
+                        <p class="status ok">{healthStatus()}</p>
+                      </Show>
+                      <Show when={diagError()}>
+                        <p class="status error">{diagError()}</p>
+                      </Show>
+                    </section>
+                  </Match>
+                </Switch>
+              </div>
             </section>
-          )}
-        </Show>
-      </aside>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }

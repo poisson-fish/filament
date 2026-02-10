@@ -4,6 +4,7 @@
 Implement as much of `docs/API.md` as possible in the web client while preserving security constraints and strict client-side validation.
 
 ## Progress Log
+- 2026-02-10: Reworked app shell information architecture toward a Discord-style layout: moved workspace creation to a `+` action in the left workspace rail, added collapsible channel/member rails, and converted workspace/channel/directory/friendship/operator tools into focus modal windows with explicit close actions; updated app-shell regression tests for modal entry points and close behavior.
 - 2026-02-10: Added typed chat domain models and invariant constructors in `apps/filament-client-web/src/domain/chat.ts`.
 - 2026-02-10: Expanded API client coverage for guild/channel/message/search endpoints in `apps/filament-client-web/src/lib/api.ts`.
 - 2026-02-10: Replaced demo-only shell interactions with API-backed flows in `apps/filament-client-web/src/pages/AppShellPage.tsx`.

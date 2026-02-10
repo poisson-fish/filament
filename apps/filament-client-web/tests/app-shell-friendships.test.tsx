@@ -165,6 +165,7 @@ describe("app shell friendship flows", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Friends" }));
     expect(await screen.findByText("bob")).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "Accept" }));

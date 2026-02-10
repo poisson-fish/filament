@@ -149,6 +149,9 @@ describe("app shell public discovery", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Open public workspace directory panel" }),
+    );
     expect(await screen.findByText("Town Hall")).toBeInTheDocument();
 
     await fireEvent.input(screen.getByLabelText("Search"), { target: { value: "lobby" } });

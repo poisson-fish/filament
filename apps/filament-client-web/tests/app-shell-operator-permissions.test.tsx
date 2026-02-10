@@ -228,7 +228,7 @@ describe("operator console permission fixtures", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    expect(await screen.findByRole("heading", { name: "Ops Console" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Workspace Tools" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Open search panel" }));
     await waitFor(() =>
@@ -236,15 +236,15 @@ describe("operator console permission fixtures", () => {
     );
     expect(screen.getByRole("button", { name: "Reconcile Index" })).toBeEnabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Open voice panel" }));
     expect(screen.getByRole("button", { name: "Issue token" })).toBeEnabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Open moderation panel" }));
     expect(screen.getByRole("button", { name: "Apply channel override" })).toBeEnabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("button", { name: "Issue token" })).not.toBeInTheDocument();
   });
 
@@ -256,17 +256,17 @@ describe("operator console permission fixtures", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    expect(await screen.findByRole("heading", { name: "Ops Console" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Workspace Tools" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Open voice panel" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Issue token" })).toBeEnabled(),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open search panel" }));
     expect(screen.queryByRole("button", { name: "Rebuild Index" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     expect(screen.queryByRole("button", { name: "Apply channel override" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
