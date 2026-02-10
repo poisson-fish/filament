@@ -574,17 +574,25 @@ Every phase has:
 - Metrics: Prometheus endpoint + dashboard templates
 
 ### Status
-- NOT STARTED
+- DONE
 
 ### Notes
 - Encourage reverse proxy TLS termination initially (Caddy/Traefik), but keep rustls option.
 - Treat Tantivy index as ephemeral; never backup as primary.
+- 2026-02-10: Hardened compose topology in `infra/docker-compose.yml` to include `reverse-proxy` (Caddy) plus internal/edge network separation, with container hardening defaults (`no-new-privileges`, capability drop, read-only rootfs where practical, explicit writable mounts only).
+- 2026-02-10: Added edge proxy baseline config `infra/Caddyfile` and moved `filament-server` to internal-only exposure; added runtime bind-address control via `FILAMENT_BIND_ADDR` (default `0.0.0.0:3000`) in `apps/filament-server/src/main.rs`.
+- 2026-02-10: Added Prometheus metrics surface in `filament-server` (`GET /metrics`) with counters for auth failures, rate-limit hits, and websocket disconnect reasons; added coverage in `apps/filament-server/src/lib.rs` tests.
+- 2026-02-10: Added operations artifacts for backup/restore and observability:
+  - `infra/scripts/backup.sh`
+  - `infra/scripts/restore.sh`
+  - `infra/observability/prometheus-alerts.yml`
+  - `infra/observability/grafana-filament-security-dashboard.json`
+- 2026-02-10: Expanded `docs/DEPLOY.md` with compose ports/networking, TLS and TURN guidance, backup/restore script usage, scheduled restore-drill checklist, and observability/alert wiring.
 
 ### TODOs
-- Add `DEPLOY.md` w/ ports, TLS, TURN guidance.
-- Add backup/restore scripts.
-- Add scheduled restore drill procedure and verification checklist.
-- Document attachment storage volume mount + `FILAMENT_ATTACHMENT_ROOT` environment configuration.
+- Add S3/object-storage backup variant for non-local attachment backends.
+- Add automated staging restore drill CI job using ephemeral sample fixtures.
+- Phase 9 start gate: decide mobile framework/runtime and publish a push-notification threat model before client implementation.
 
 ### Security Outlook
 - Secure defaults: non-root containers, read-only FS where possible, drop caps.

@@ -2,8 +2,12 @@
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    fmt::Write as _,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -104,6 +108,16 @@ const MAX_SEARCH_FUZZY: usize = 2;
 const SEARCH_INDEX_QUEUE_CAPACITY: usize = 1024;
 const MAX_SEARCH_RECONCILE_DOCS: usize = 10_000;
 const MAX_REACTION_EMOJI_CHARS: usize = 32;
+const METRICS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
+
+static METRICS_STATE: OnceLock<MetricsState> = OnceLock::new();
+
+#[derive(Default)]
+struct MetricsState {
+    auth_failures: Mutex<HashMap<&'static str, u64>>,
+    rate_limit_hits: Mutex<HashMap<(&'static str, &'static str), u64>>,
+    ws_disconnects: Mutex<HashMap<&'static str, u64>>,
+}
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -616,6 +630,87 @@ fn permission_set_from_list(values: &[Permission]) -> PermissionSet {
     set
 }
 
+fn metrics_state() -> &'static MetricsState {
+    METRICS_STATE.get_or_init(MetricsState::default)
+}
+
+fn render_metrics() -> String {
+    let auth_failures = metrics_state()
+        .auth_failures
+        .lock()
+        .map_or_else(|_| HashMap::new(), |guard| guard.clone());
+    let rate_limit_hits = metrics_state()
+        .rate_limit_hits
+        .lock()
+        .map_or_else(|_| HashMap::new(), |guard| guard.clone());
+    let ws_disconnects = metrics_state()
+        .ws_disconnects
+        .lock()
+        .map_or_else(|_| HashMap::new(), |guard| guard.clone());
+
+    let mut output = String::new();
+    output
+        .push_str("# HELP filament_auth_failures_total Count of auth-related failures by reason\n");
+    output.push_str("# TYPE filament_auth_failures_total counter\n");
+    let mut auth_entries: Vec<_> = auth_failures.into_iter().collect();
+    auth_entries.sort_by_key(|(reason, _)| *reason);
+    for (reason, value) in auth_entries {
+        let _ = writeln!(
+            output,
+            "filament_auth_failures_total{{reason=\"{reason}\"}} {value}"
+        );
+    }
+
+    output.push_str(
+        "# HELP filament_rate_limit_hits_total Count of rate-limit rejections by surface\n",
+    );
+    output.push_str("# TYPE filament_rate_limit_hits_total counter\n");
+    let mut rate_entries: Vec<_> = rate_limit_hits.into_iter().collect();
+    rate_entries.sort_by_key(|((surface, reason), _)| (*surface, *reason));
+    for ((surface, reason), value) in rate_entries {
+        let _ = writeln!(
+            output,
+            "filament_rate_limit_hits_total{{surface=\"{surface}\",reason=\"{reason}\"}} {value}"
+        );
+    }
+
+    output.push_str(
+        "# HELP filament_ws_disconnects_total Count of websocket disconnect events by reason\n",
+    );
+    output.push_str("# TYPE filament_ws_disconnects_total counter\n");
+    let mut ws_entries: Vec<_> = ws_disconnects.into_iter().collect();
+    ws_entries.sort_by_key(|(reason, _)| *reason);
+    for (reason, value) in ws_entries {
+        let _ = writeln!(
+            output,
+            "filament_ws_disconnects_total{{reason=\"{reason}\"}} {value}"
+        );
+    }
+
+    output
+}
+
+fn record_auth_failure(reason: &'static str) {
+    if let Ok(mut counters) = metrics_state().auth_failures.lock() {
+        let entry = counters.entry(reason).or_insert(0);
+        *entry += 1;
+    }
+}
+
+fn record_rate_limit_hit(surface: &'static str, reason: &'static str) {
+    if let Ok(mut counters) = metrics_state().rate_limit_hits.lock() {
+        let entry = counters.entry((surface, reason)).or_insert(0);
+        *entry += 1;
+    }
+}
+
+fn record_ws_disconnect(reason: &'static str) {
+    if let Ok(mut counters) = metrics_state().ws_disconnects.lock() {
+        let entry = counters.entry(reason).or_insert(0);
+        *entry += 1;
+    }
+}
+
 /// Build the axum router with global security middleware.
 ///
 /// # Errors
@@ -660,6 +755,7 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
 
     let routes = Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(metrics))
         .route("/echo", post(echo))
         .route("/slow", get(slow))
         .route("/auth/register", post(register))
@@ -744,6 +840,14 @@ struct HealthResponse {
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+async fn metrics() -> Response {
+    (
+        [(CONTENT_TYPE, METRICS_TEXT_CONTENT_TYPE)],
+        render_metrics(),
+    )
+        .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -2871,6 +2975,7 @@ async fn gateway_ws(
 async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: AuthContext) {
     let connection_id = Uuid::new_v4();
     let (mut sink, mut stream) = socket.split();
+    let slow_consumer_disconnect = Arc::new(AtomicBool::new(false));
 
     let (outbound_tx, mut outbound_rx) =
         mpsc::channel::<String>(state.runtime.gateway_outbound_queue);
@@ -2894,11 +2999,14 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
     );
     let _ = outbound_tx.send(ready_payload).await;
 
+    let slow_consumer_disconnect_send = Arc::clone(&slow_consumer_disconnect);
     let send_task = tokio::spawn(async move {
         loop {
             tokio::select! {
                 control_change = control_rx.changed() => {
                     if control_change.is_ok() && *control_rx.borrow() == ConnectionControl::Close {
+                        slow_consumer_disconnect_send.store(true, Ordering::Relaxed);
+                        record_ws_disconnect("slow_consumer");
                         let _ = sink
                             .send(Message::Close(Some(CloseFrame {
                                 code: 1008,
@@ -2923,25 +3031,32 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
     });
 
     let mut ingress = VecDeque::new();
+    let mut disconnect_reason = "connection_closed";
     while let Some(incoming) = stream.next().await {
         let Ok(message) = incoming else {
+            disconnect_reason = "socket_error";
             break;
         };
 
         let payload: Vec<u8> = match message {
             Message::Text(text) => {
                 if text.len() > state.runtime.max_gateway_event_bytes {
+                    disconnect_reason = "event_too_large";
                     break;
                 }
                 text.as_bytes().to_vec()
             }
             Message::Binary(bytes) => {
                 if bytes.len() > state.runtime.max_gateway_event_bytes {
+                    disconnect_reason = "event_too_large";
                     break;
                 }
                 bytes.to_vec()
             }
-            Message::Close(_) => break,
+            Message::Close(_) => {
+                disconnect_reason = "client_close";
+                break;
+            }
             Message::Ping(_) | Message::Pong(_) => continue,
         };
 
@@ -2950,10 +3065,12 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
             state.runtime.gateway_ingress_events_per_window,
             state.runtime.gateway_ingress_window,
         ) {
+            disconnect_reason = "ingress_rate_limited";
             break;
         }
 
         let Ok(envelope) = parse_envelope(&payload) else {
+            disconnect_reason = "invalid_envelope";
             break;
         };
 
@@ -2970,6 +3087,7 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
                 )
                 .await
                 {
+                    disconnect_reason = "forbidden_channel";
                     break;
                 }
 
@@ -2997,6 +3115,7 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
                     }),
                 );
                 if outbound_tx.try_send(subscribed).is_err() {
+                    disconnect_reason = "outbound_queue_full";
                     break;
                 }
             }
@@ -3014,13 +3133,20 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
                 .await
                 .is_err()
                 {
+                    disconnect_reason = "message_rejected";
                     break;
                 }
             }
-            _ => break,
+            _ => {
+                disconnect_reason = "unknown_event";
+                break;
+            }
         }
     }
 
+    if !slow_consumer_disconnect.load(Ordering::Relaxed) {
+        record_ws_disconnect(disconnect_reason);
+    }
     remove_connection(&state, connection_id).await;
     send_task.abort();
 }
@@ -4582,6 +4708,17 @@ enum AuthFailure {
 impl IntoResponse for AuthFailure {
     fn into_response(self) -> axum::response::Response {
         match self {
+            Self::Unauthorized => record_auth_failure("unauthorized"),
+            Self::Forbidden => record_auth_failure("forbidden"),
+            Self::RateLimited => record_rate_limit_hit("http", "auth_failure"),
+            Self::InvalidRequest
+            | Self::NotFound
+            | Self::PayloadTooLarge
+            | Self::QuotaExceeded
+            | Self::Internal => {}
+        }
+
+        match self {
             Self::InvalidRequest => (
                 StatusCode::BAD_REQUEST,
                 Json(AuthError {
@@ -4852,6 +4989,52 @@ mod tests {
             let response = app.clone().oneshot(login).await.unwrap();
             assert_eq!(response.status(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_exposes_auth_and_rate_limit_counters() {
+        let app = build_router(&AppConfig {
+            auth_route_requests_per_minute: 1,
+            ..AppConfig::default()
+        })
+        .unwrap();
+
+        let me_request = Request::builder()
+            .method("GET")
+            .uri("/auth/me")
+            .header("x-forwarded-for", "198.51.100.44")
+            .body(Body::empty())
+            .unwrap();
+        let me_response = app.clone().oneshot(me_request).await.unwrap();
+        assert_eq!(me_response.status(), StatusCode::UNAUTHORIZED);
+
+        for _ in 0..2 {
+            let login = Request::builder()
+                .method("POST")
+                .uri("/auth/login")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "198.51.100.45")
+                .body(Body::from(
+                    json!({"username":"ghost_user","password":"super-secure-password"}).to_string(),
+                ))
+                .unwrap();
+            let _ = app.clone().oneshot(login).await.unwrap();
+        }
+
+        let metrics_request = Request::builder()
+            .method("GET")
+            .uri("/metrics")
+            .header("x-forwarded-for", "198.51.100.46")
+            .body(Body::empty())
+            .unwrap();
+        let metrics_response = app.oneshot(metrics_request).await.unwrap();
+        assert_eq!(metrics_response.status(), StatusCode::OK);
+        let metrics_body = axum::body::to_bytes(metrics_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let metrics_text = String::from_utf8(metrics_body.to_vec()).unwrap();
+        assert!(metrics_text.contains("filament_auth_failures_total"));
+        assert!(metrics_text.contains("filament_rate_limit_hits_total"));
     }
 
     #[tokio::test]

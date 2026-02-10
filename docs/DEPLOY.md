@@ -1,26 +1,48 @@
 # Deployment Guide (v0)
 
-This document covers baseline deployment and storage durability requirements for Filament.
+This document covers deployment, backup/restore, and observability for Filament.
 
-## Services
+## Compose Topology
 
 `infra/docker-compose.yml` includes:
 - `postgres`: source-of-truth database
 - `livekit`: SFU for voice/video/screen share
-- `filament-server`: API + gateway + attachment metadata
+- `filament-server`: API + gateway + search + attachment metadata
+- `reverse-proxy`: edge ingress (Caddy) forwarding to `filament-server`
+
+Network model:
+- `filament-internal`: internal-only network for service-to-service traffic
+- `filament-edge`: edge network for externally exposed ports
+
+Port map (default compose):
+- `reverse-proxy`: `8080/tcp` (HTTP ingress to Filament API/gateway)
+- `livekit`: `7880/tcp` (signaling), `7881/tcp` (RTC over TCP), `7882/udp` (RTC over UDP)
+
+## Security Defaults in Compose
+
+The compose baseline applies hardening controls where practical:
+- non-root runtime for `filament-server` image
+- `no-new-privileges` enabled across services
+- `cap_drop: [ALL]` on edge/server/media containers
+- read-only root filesystem for `filament-server` and `livekit`
+- explicit writable mounts only for required data paths (`pg-data`, `filament-attachments`, Caddy state)
+
+Do not remove these defaults without documenting threat impact.
 
 ## Required Runtime Environment
 
 Set these variables for `filament-server`:
 - `FILAMENT_DATABASE_URL`: required in runtime; points to Postgres
-- `FILAMENT_ATTACHMENT_ROOT`: required for attachment object storage root
-- `FILAMENT_LIVEKIT_API_KEY`: required in runtime; LiveKit API key for server-minted tokens
-- `FILAMENT_LIVEKIT_API_SECRET`: required in runtime; paired secret for token signing
-- `FILAMENT_LIVEKIT_URL`: required for clients; `ws://` or `wss://` LiveKit signaling URL
+- `FILAMENT_ATTACHMENT_ROOT`: required attachment object storage root
+- `FILAMENT_LIVEKIT_API_KEY`: required LiveKit API key for token minting
+- `FILAMENT_LIVEKIT_API_SECRET`: required paired LiveKit secret
+- `FILAMENT_LIVEKIT_URL`: required signaling URL exposed to clients (`ws://` or `wss://`)
+- `FILAMENT_BIND_ADDR`: bind socket for server process (default `0.0.0.0:3000`)
 
-Default compose value:
+Default compose values:
 - `FILAMENT_ATTACHMENT_ROOT=/var/lib/filament/attachments`
 - `FILAMENT_LIVEKIT_URL=ws://livekit:7880`
+- `FILAMENT_BIND_ADDR=0.0.0.0:3000`
 
 ## Attachment Storage Persistence
 
@@ -34,51 +56,93 @@ Operational requirements:
 - Ensure the mount has enough capacity for configured quotas and growth.
 - Do not share the same path between unrelated environments (dev/stage/prod).
 
-## Backup and Restore
+## TLS and Reverse Proxy
 
-Back up both:
-- Postgres data (system of record for metadata and auth/session state)
-- Attachment volume (`FILAMENT_ATTACHMENT_ROOT`)
+Use TLS at the edge proxy in production.
 
-Tantivy index is rebuildable cache and should not be treated as primary backup data.
+Baseline requirements:
+- redirect HTTP to HTTPS
+- HSTS on public hosts
+- upstream proxy to `filament-server:3000`
+- pass websocket upgrades for `/gateway/ws`
+- restrict direct public exposure of `filament-server`
 
-### Backup cadence (baseline)
+`infra/Caddyfile` is a baseline ingress config. For production, replace `auto_https off` with certificate-backed HTTPS settings.
 
-- Postgres: daily full backup + frequent WAL/archive policy
-- Attachments: daily snapshot or rsync-style incremental copy
+## LiveKit and TURN Guidance
 
-### Restore validation checklist
+For internet-facing voice/video quality and NAT traversal:
+- keep UDP `7882` reachable where possible
+- configure TURN servers for restrictive NATs/firewalls
+- prefer TLS (`wss://`) signaling for client connections
 
-1. Restore Postgres to a clean environment.
-2. Restore attachment volume to the configured `FILAMENT_ATTACHMENT_ROOT`.
-3. Start compose stack and verify `/health`.
-4. Verify auth login and attachment download for a known record.
-5. Rebuild and reconcile search index for each guild:
-   - `POST /guilds/{guild_id}/search/rebuild`
-   - `POST /guilds/{guild_id}/search/reconcile`
-6. Verify new upload and deletion both succeed (quota accounting remains correct).
-
-## Network/TLS Notes
-
-- Prefer reverse-proxy TLS termination with modern ciphers and HTTP->HTTPS redirect.
-- Keep `filament-server` and `livekit` bound to private network interfaces when possible.
-- Expose only required ports at the edge.
-
-## LiveKit Token Policy
-
-- Voice token issuance is channel-scoped and signed by `filament-server`.
-- Token TTL is capped at `5 minutes` (`MAX_LIVEKIT_TOKEN_TTL_SECS`).
-- Minting is rate-limited per user/IP/channel and every issuance is audit logged (`media.token.issue`).
+LiveKit token policy:
+- voice/media token issuance is channel-scoped and permission-scoped
+- token TTL is capped at `5 minutes`
+- minting is rate-limited and audit logged (`media.token.issue`)
 
 ### LiveKit key rotation baseline
 
-1. Generate a new API key/secret in LiveKit and deploy it to `filament-server` secrets.
-2. Restart `filament-server` with new `FILAMENT_LIVEKIT_API_KEY` + `FILAMENT_LIVEKIT_API_SECRET`.
-3. Revoke old keys in LiveKit once new issuance has been validated.
-4. During incident response, rotate immediately and invalidate old keys before service restore.
+1. Generate a new API key/secret in LiveKit.
+2. Deploy new `FILAMENT_LIVEKIT_API_KEY` + `FILAMENT_LIVEKIT_API_SECRET` to `filament-server`.
+3. Restart `filament-server` and verify token issuance.
+4. Revoke old keys in LiveKit.
 
-## Security Defaults
+## Backup and Restore
 
-- Do not run containers as root when image/runtime constraints allow non-root.
-- Minimize writable filesystem surfaces beyond data mounts.
-- Keep secrets in environment/secret mounts; never commit secrets to the repo.
+Back up both:
+- Postgres data (`postgres.dump`)
+- attachment volume (`attachments.tar.gz`)
+
+Tantivy index is a rebuildable cache and is not backup-primary.
+
+### Scripts
+
+Scripts are provided under `infra/scripts/`:
+- `backup.sh [backup_root]`
+- `restore.sh <backup_dir>`
+
+Defaults:
+- compose file: `infra/docker-compose.yml`
+- compose project: `filament`
+- artifacts are checksummed with `SHA256SUMS`
+
+Example:
+
+```bash
+infra/scripts/backup.sh
+infra/scripts/restore.sh backups/20260210T120000Z
+```
+
+### Scheduled Restore Drill (required)
+
+Run at least monthly in a staging environment:
+
+1. Take a fresh backup with `infra/scripts/backup.sh`.
+2. Restore using `infra/scripts/restore.sh` into isolated staging.
+3. Verify `GET /health` returns `200`.
+4. Verify auth login and one known attachment download.
+5. Rebuild and reconcile search index for each guild:
+   - `POST /guilds/{guild_id}/search/rebuild`
+   - `POST /guilds/{guild_id}/search/reconcile`
+6. Verify new message create/search/edit/delete behavior after rebuild.
+7. Record drill outcome and remediation items.
+
+## Observability
+
+Prometheus scrape target:
+- `GET /metrics` from `filament-server` (via reverse proxy or internal network)
+
+Key security counters:
+- `filament_auth_failures_total{reason=...}`
+- `filament_rate_limit_hits_total{surface=...,reason=...}`
+- `filament_ws_disconnects_total{reason=...}`
+
+Templates:
+- alert rules: `infra/observability/prometheus-alerts.yml`
+- dashboard: `infra/observability/grafana-filament-security-dashboard.json`
+
+Alerting minimums:
+- auth failure spike
+- rate-limit spike
+- websocket disconnect spike

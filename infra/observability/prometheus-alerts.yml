@@ -1,0 +1,30 @@
+groups:
+  - name: filament-security
+    interval: 30s
+    rules:
+      - alert: FilamentAuthFailuresHigh
+        expr: sum(increase(filament_auth_failures_total[5m])) > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Filament auth failures are elevated"
+          description: "More than 25 auth failures in 5 minutes. Check for credential stuffing or auth outages."
+
+      - alert: FilamentRateLimitSpike
+        expr: sum(increase(filament_rate_limit_hits_total[5m])) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Filament rate-limit hits are elevated"
+          description: "More than 50 requests were rate-limited in 5 minutes. Check abuse controls and traffic profile."
+
+      - alert: FilamentWsDisconnectSpike
+        expr: sum(increase(filament_ws_disconnects_total[5m])) > 40
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Filament websocket disconnects are elevated"
+          description: "More than 40 websocket disconnects in 5 minutes. Inspect disconnect reasons and gateway health."

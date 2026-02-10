@@ -27,7 +27,10 @@ async fn main() -> anyhow::Result<()> {
         ..AppConfig::default()
     };
     let app = build_router(&app_config)?;
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = std::env::var("FILAMENT_BIND_ADDR")
+        .unwrap_or_else(|_| String::from("0.0.0.0:3000"))
+        .parse::<SocketAddr>()
+        .map_err(|e| anyhow::anyhow!("invalid FILAMENT_BIND_ADDR: {e}"))?;
     let listener = TcpListener::bind(addr).await?;
     tracing::info!(%addr, "filament-server listening");
 
