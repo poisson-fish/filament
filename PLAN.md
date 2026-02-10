@@ -233,21 +233,19 @@ Every phase has:
 - Dev compose: Postgres + filament-server + LiveKit
 
 ### Status
-- IN PROGRESS
+- DONE
 
 ### Notes
 - Decide ID type globally: default **ULID**.
 - Decide session strategy early: opaque refresh tokens in DB + short-lived PASETO access token.
 - Enforce body limits globally in axum; don’t rely on per-handler.
 - 2026-02-10: CI/security baseline implemented (`fmt`, `clippy`, `test`, `cargo audit`, `cargo deny`, dependency review, SBOM workflow).
+- 2026-02-10: `filament-server` baseline added with global `DefaultBodyLimit`, request timeout layer, per-IP baseline rate limiting (`tower-governor`), JSON tracing, and request ID propagation.
+- 2026-02-10: Added protocol + threat model docs and strict protocol envelope parsing (`{ v, t, d }`) in `filament-protocol`, including version and size checks.
+- 2026-02-10: Added dev compose baseline (`infra/docker-compose.yml`) for Postgres + LiveKit + filament-server.
 
 ### TODOs
-- Add `cargo-deny.toml` with license allowlist (MIT/Apache/BSD/ISC), ban unknown sources.
-- Add `clippy` config: deny warnings in CI, allow in local.
-- Add `tracing` JSON logs + request IDs.
-- Define protocol envelope and compatibility rules in `PROTOCOL.md`: gateway events are `{ v, t, d }`, reject unknown/oversized payloads.
-- Lock core identity choice now (`ULID`) and remove UUID fallback from implementation docs.
-- Define key management policy: key IDs (`kid`), rotation cadence, emergency revocation runbook.
+- Phase 1 start gate: implement auth/session persistence with PASETO + refresh rotation and account-enumeration protections.
 
 ### Exit Criteria
 - CI enforces `fmt`, `clippy`, `test`, `cargo audit`, `cargo deny`, dependency review, SBOM.

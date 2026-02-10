@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: filament
+      POSTGRES_PASSWORD: filament
+      POSTGRES_DB: filament
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U filament -d filament"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  livekit:
+    image: livekit/livekit-server:v1.8.3
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+
+  filament-server:
+    build:
+      context: ..
+      dockerfile: apps/filament-server/Dockerfile
+    restart: unless-stopped
+    environment:
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    ports:
+      - "3000:3000"
+
+volumes:
+  pg-data:

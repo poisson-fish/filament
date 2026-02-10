@@ -1,6 +1,8 @@
 [workspace]
 members = [
   "crates/filament-core",
+  "crates/filament-protocol",
+  "apps/filament-server",
 ]
 resolver = "2"
 
