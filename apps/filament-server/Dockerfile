@@ -13,6 +13,8 @@ WORKDIR /app
 
 COPY --from=builder /build/target/release/filament-server /usr/local/bin/filament-server
 
+RUN mkdir -p /var/lib/filament/attachments && chown -R filament:filament /var/lib/filament
+
 USER filament
 EXPOSE 3000
 CMD ["/usr/local/bin/filament-server"]

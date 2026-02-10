@@ -5490,7 +5490,7 @@ async fn member_role_in_guild(
 async fn attachment_usage_for_user(state: &AppState, user_id: UserId) -> Result<u64, AuthFailure> {
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query(
-            "SELECT COALESCE(SUM(size_bytes), 0) AS total FROM attachments WHERE owner_id = $1",
+            "SELECT COALESCE(SUM(size_bytes)::BIGINT, 0) AS total FROM attachments WHERE owner_id = $1",
         )
         .bind(user_id.to_string())
         .fetch_one(pool)
@@ -6001,6 +6001,12 @@ enum AuthFailure {
     PayloadTooLarge,
     QuotaExceeded,
     Internal,
+}
+
+impl std::fmt::Display for AuthFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 
 impl IntoResponse for AuthFailure {
