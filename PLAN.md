@@ -295,7 +295,7 @@ Every phase has:
 - 2026-02-10: Cutover policy finalized and implemented: runtime `filament-server` now requires `FILAMENT_DATABASE_URL`; in-memory persistence is test-only and documented in `docs/SECURITY.md`.
 
 ### TODOs
-- Phase 3 start gate: complete remaining Phase 2 hardening tasks (streaming attachment writes and compose-backed attachment root persistence), then begin Tantivy indexing/query integration.
+- Phase 3 start gate satisfied on 2026-02-10 after Phase 2 upload-streaming and deploy-doc hardening landed; begin Tantivy indexing/query integration.
 
 ### Exit Criteria
 - Unit tests cover newtype invariants, token mint/verify paths, and permission checks.
@@ -325,7 +325,7 @@ Every phase has:
 - Attachment delete flow for users to reclaim quota
 
 ### Status
-- IN PROGRESS
+- DONE
 
 ### Notes
 - Never trust client `Content-Type`; always sniff.
@@ -339,11 +339,14 @@ Every phase has:
 - 2026-02-10: Updated `infra/docker-compose.yml` with `FILAMENT_ATTACHMENT_ROOT` and a persistent `filament-attachments` volume mount for local attachment durability.
 - 2026-02-10: Added integration coverage in `apps/filament-server/tests/phase2_attachments_and_markdown.rs` for MIME mismatch rejection, auth-gated download, quota enforcement + quota reclamation after delete, message edit/delete markdown token safety, and moderation route behavior.
 - 2026-02-10: Re-ran local quality/security gates for this increment: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
+- 2026-02-10: Replaced buffered attachment upload handling with chunked request-body streaming in `filament-server` using `object_store` multipart writes (`put_multipart`), incremental SHA-256 hashing, bounded MIME sniffing, and explicit abort-on-failure semantics for size/quota/content-type validation failures.
+- 2026-02-10: Attachment upload route now bypasses global JSON body limit via route-local `DefaultBodyLimit::disable()` while preserving strict server-side attachment size/quota caps.
+- 2026-02-10: Added `docs/DEPLOY.md` with attachment persistence and backup/restore guidance, including `FILAMENT_ATTACHMENT_ROOT` volume requirements.
+- 2026-02-10: Added integration coverage for oversized upload rejection (`PAYLOAD_TOO_LARGE`) under the streaming upload path.
+- 2026-02-10: Re-ran local quality/security gates after streaming-upload and deploy-doc updates: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
 
 ### TODOs
 - Virus scanning optional hook (clamd integration as optional service).
-- Replace buffered upload body handling with streaming attachment writes to satisfy upload DoS hardening baseline.
-- Document attachment-root persistence and backup guidance in deploy docs (`DEPLOY.md`).
 
 ### Exit Criteria
 - Integration tests cover upload caps, MIME sniffing mismatch rejection, and auth-gated download.

@@ -13,7 +13,7 @@ use argon2::{
     Argon2,
 };
 use axum::{
-    body::Bytes,
+    body::Body,
     extract::{
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
         DefaultBodyLimit, Json, Path, Query, State,
@@ -76,6 +76,7 @@ pub const DEFAULT_USER_ATTACHMENT_QUOTA_BYTES: u64 = 250 * 1024 * 1024;
 const LOGIN_LOCK_THRESHOLD: u8 = 5;
 const LOGIN_LOCK_SECS: i64 = 30;
 const MAX_HISTORY_LIMIT: usize = 100;
+const MAX_MIME_SNIFF_BYTES: usize = 8192;
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -451,7 +452,7 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
     let request_id_header = HeaderName::from_static("x-request-id");
     let governor_layer = GovernorLayer::new(governor_config);
 
-    Ok(Router::new()
+    let routes = Router::new()
         .route("/health", get(health))
         .route("/echo", post(echo))
         .route("/slow", get(slow))
@@ -471,10 +472,6 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             patch(edit_message).delete(delete_message),
         )
         .route(
-            "/guilds/{guild_id}/channels/{channel_id}/attachments",
-            post(upload_attachment),
-        )
-        .route(
             "/guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}",
             get(download_attachment).delete(delete_attachment),
         )
@@ -483,7 +480,17 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             post(kick_member),
         )
         .route("/guilds/{guild_id}/members/{user_id}/ban", post(ban_member))
-        .route("/gateway/ws", get(gateway_ws))
+        .route("/gateway/ws", get(gateway_ws));
+
+    let upload_route = Router::new()
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/attachments",
+            post(upload_attachment),
+        )
+        .layer(DefaultBodyLimit::disable());
+
+    Ok(routes
+        .merge(upload_route)
         .with_state(app_state)
         .layer(DefaultBodyLimit::max(config.max_body_bytes))
         .layer(
@@ -1662,53 +1669,101 @@ async fn upload_attachment(
     headers: HeaderMap,
     Path(path): Path<ChannelPath>,
     Query(query): Query<UploadAttachmentQuery>,
-    body: Bytes,
+    body: Body,
 ) -> Result<Json<AttachmentResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
-    if body.is_empty() {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    if body.len() > state.runtime.max_attachment_bytes {
-        return Err(AuthFailure::PayloadTooLarge);
-    }
     if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
         return Err(AuthFailure::Forbidden);
     }
 
-    let sniffed = infer::get(&body).ok_or(AuthFailure::InvalidRequest)?;
-    let sniffed_mime = sniffed.mime_type();
-    if let Some(content_type) = headers
+    let declared_content_type = if let Some(content_type) = headers
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
     {
-        let declared = content_type
-            .parse::<mime::Mime>()
-            .map_err(|_| AuthFailure::InvalidRequest)?;
-        if declared.essence_str() != sniffed_mime {
-            return Err(AuthFailure::InvalidRequest);
-        }
-    }
+        Some(
+            content_type
+                .parse::<mime::Mime>()
+                .map_err(|_| AuthFailure::InvalidRequest)?,
+        )
+    } else {
+        None
+    };
 
     let filename =
         validate_attachment_filename(query.filename.unwrap_or_else(|| String::from("upload.bin")))?;
-    let body_len = u64::try_from(body.len()).map_err(|_| AuthFailure::InvalidRequest)?;
     let usage = attachment_usage_for_user(&state, auth.user_id).await?;
-    if usage.saturating_add(body_len) > state.runtime.user_attachment_quota_bytes {
+    let remaining_quota = state
+        .runtime
+        .user_attachment_quota_bytes
+        .saturating_sub(usage);
+    if remaining_quota == 0 {
         return Err(AuthFailure::QuotaExceeded);
     }
 
     let attachment_id = Ulid::new().to_string();
     let object_key = format!("attachments/{attachment_id}");
     let object_path = ObjectPath::from(object_key.clone());
-    state
+    let mut upload = state
         .attachment_store
-        .put(&object_path, body.clone().into())
+        .put_multipart(&object_path)
         .await
         .map_err(|_| AuthFailure::Internal)?;
+    let mut stream = body.into_data_stream();
+    let mut sniff_buffer = Vec::new();
+    let mut hasher = Sha256::new();
+    let mut total_size: u64 = 0;
+    let max_attachment_bytes =
+        u64::try_from(state.runtime.max_attachment_bytes).map_err(|_| AuthFailure::Internal)?;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| AuthFailure::InvalidRequest)?;
+        if chunk.is_empty() {
+            continue;
+        }
+        let chunk_len = u64::try_from(chunk.len()).map_err(|_| AuthFailure::InvalidRequest)?;
+        total_size = total_size
+            .checked_add(chunk_len)
+            .ok_or(AuthFailure::PayloadTooLarge)?;
+        if total_size > max_attachment_bytes {
+            let _ = upload.abort().await;
+            return Err(AuthFailure::PayloadTooLarge);
+        }
+        if total_size > remaining_quota {
+            let _ = upload.abort().await;
+            return Err(AuthFailure::QuotaExceeded);
+        }
+
+        if sniff_buffer.len() < MAX_MIME_SNIFF_BYTES {
+            let remaining = MAX_MIME_SNIFF_BYTES - sniff_buffer.len();
+            let copy_len = remaining.min(chunk.len());
+            sniff_buffer.extend_from_slice(&chunk[..copy_len]);
+        }
+        hasher.update(chunk.as_ref());
+        if upload.put_part(chunk.into()).await.is_err() {
+            let _ = upload.abort().await;
+            return Err(AuthFailure::Internal);
+        }
+    }
+
+    if total_size == 0 {
+        let _ = upload.abort().await;
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let Some(sniffed) = infer::get(&sniff_buffer) else {
+        let _ = upload.abort().await;
+        return Err(AuthFailure::InvalidRequest);
+    };
+    let sniffed_mime = sniffed.mime_type();
+    if let Some(declared) = declared_content_type.as_ref() {
+        if declared.essence_str() != sniffed_mime {
+            let _ = upload.abort().await;
+            return Err(AuthFailure::InvalidRequest);
+        }
+    }
+    upload.complete().await.map_err(|_| AuthFailure::Internal)?;
 
     let sha256_hex = {
-        let digest = Sha256::digest(&body);
+        let digest = hasher.finalize();
         let mut out = String::with_capacity(digest.len() * 2);
         for byte in digest {
             let _ = std::fmt::Write::write_fmt(&mut out, format_args!("{byte:02x}"));
@@ -1717,7 +1772,7 @@ async fn upload_attachment(
     };
 
     if let Some(pool) = &state.db_pool {
-        sqlx::query(
+        let persist_result = sqlx::query(
             "INSERT INTO attachments (attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, object_key, created_at_unix)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
@@ -1727,13 +1782,16 @@ async fn upload_attachment(
         .bind(auth.user_id.to_string())
         .bind(&filename)
         .bind(sniffed_mime)
-        .bind(i64::try_from(body_len).map_err(|_| AuthFailure::InvalidRequest)?)
+        .bind(i64::try_from(total_size).map_err(|_| AuthFailure::InvalidRequest)?)
         .bind(&sha256_hex)
         .bind(&object_key)
         .bind(now_unix())
         .execute(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
+        .await;
+        if persist_result.is_err() {
+            let _ = state.attachment_store.delete(&object_path).await;
+            return Err(AuthFailure::Internal);
+        }
     } else {
         state.attachments.write().await.insert(
             attachment_id.clone(),
@@ -1742,7 +1800,7 @@ async fn upload_attachment(
                 channel_id: path.channel_id.clone(),
                 owner_id: auth.user_id,
                 mime_type: String::from(sniffed_mime),
-                size_bytes: body_len,
+                size_bytes: total_size,
                 object_key: object_key.clone(),
             },
         );
@@ -1755,7 +1813,7 @@ async fn upload_attachment(
         owner_id: auth.user_id.to_string(),
         filename,
         mime_type: String::from(sniffed_mime),
-        size_bytes: body_len,
+        size_bytes: total_size,
         sha256_hex,
     }))
 }

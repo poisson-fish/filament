@@ -231,6 +231,28 @@ async fn attachment_flow_enforces_mime_auth_and_quota_with_reclaim() {
 }
 
 #[tokio::test]
+async fn attachment_upload_rejects_payloads_over_configured_limit() {
+    let app = test_app();
+    let auth = register_and_login(&app, "phase2_limit", "203.0.113.74").await;
+    let channel = create_channel_context(&app, &auth, "203.0.113.74").await;
+
+    let oversized = vec![0_u8; 2048];
+    let upload = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/attachments?filename=too-big.bin",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/octet-stream")
+        .header("x-forwarded-for", "203.0.113.74")
+        .body(Body::from(oversized))
+        .expect("oversized upload request should build");
+    let response = app.oneshot(upload).await.unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
 async fn message_edit_and_delete_preserve_safe_markdown_tokens() {
     let app = test_app();
     let auth = register_and_login(&app, "phase2_editor", "203.0.113.71").await;
