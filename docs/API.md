@@ -112,6 +112,37 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
   - Auth required
   - Response `200`: `{ "user_id": "...", "username": "..." }`
 
+### Friendships
+- `GET /friends`
+  - Auth required
+  - Response `200`:
+    - `{ "friends": [{ "user_id": "...", "username": "...", "created_at_unix": 123 }] }`
+- `POST /friends/requests`
+  - Auth required
+  - Request: `{ "recipient_user_id": "..." }`
+  - Rejects self-targeting, duplicates, existing friendships, and unknown users
+  - Response `200`:
+    - `{ "request_id": "...", "sender_user_id": "...", "recipient_user_id": "...", "created_at_unix": 123 }`
+- `GET /friends/requests`
+  - Auth required
+  - Permission-safe exposure: only caller-visible incoming/outgoing requests are returned
+  - Response `200`:
+    - `{ "incoming": [FriendRequest], "outgoing": [FriendRequest] }`
+  - `FriendRequest`:
+    - `{ "request_id": "...", "sender_user_id": "...", "sender_username": "...", "recipient_user_id": "...", "recipient_username": "...", "created_at_unix": 123 }`
+- `POST /friends/requests/{request_id}/accept`
+  - Auth required
+  - Only the request recipient may accept
+  - Response `200`: `{ "accepted": true }`
+- `DELETE /friends/requests/{request_id}`
+  - Auth required
+  - Sender or recipient may delete/cancel
+  - Response `204 No Content`
+- `DELETE /friends/{friend_user_id}`
+  - Auth required
+  - Removes an existing friendship pair (idempotent)
+  - Response `204 No Content`
+
 ### Guilds and Channels
 - `POST /guilds`
   - Auth required

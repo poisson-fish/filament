@@ -3,6 +3,9 @@ import {
   attachmentFromResponse,
   channelPermissionSnapshotFromResponse,
   channelIdFromInput,
+  friendListFromResponse,
+  friendRequestCreateFromResponse,
+  friendRequestListFromResponse,
   guildVisibilityFromInput,
   guildIdFromInput,
   markdownTokensFromResponse,
@@ -163,5 +166,41 @@ describe("chat domain invariants", () => {
       ],
     });
     expect(directory.guilds[0]?.name).toBe("Lobby");
+  });
+
+  it("validates friendship payloads", () => {
+    const friends = friendListFromResponse({
+      friends: [
+        {
+          user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          username: "alice",
+          created_at_unix: 1,
+        },
+      ],
+    });
+    expect(friends[0]?.username).toBe("alice");
+
+    const requests = friendRequestListFromResponse({
+      incoming: [
+        {
+          request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+          sender_user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          sender_username: "alice",
+          recipient_user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          recipient_username: "bob",
+          created_at_unix: 2,
+        },
+      ],
+      outgoing: [],
+    });
+    expect(requests.incoming[0]?.senderUsername).toBe("alice");
+
+    const create = friendRequestCreateFromResponse({
+      request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+      sender_user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      recipient_user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      created_at_unix: 3,
+    });
+    expect(create.createdAtUnix).toBe(3);
   });
 });

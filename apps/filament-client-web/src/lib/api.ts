@@ -17,6 +17,9 @@ import {
   type GuildId,
   type GuildName,
   type GuildVisibility,
+  type FriendRecord,
+  type FriendRequestCreateResult,
+  type FriendRequestList,
   type MediaPublishSource,
   type MessageContent,
   type MessageHistory,
@@ -36,6 +39,9 @@ import {
   attachmentFromResponse,
   channelFromResponse,
   channelPermissionSnapshotFromResponse,
+  friendListFromResponse,
+  friendRequestCreateFromResponse,
+  friendRequestListFromResponse,
   guildFromResponse,
   messageFromResponse,
   messageHistoryFromResponse,
@@ -334,6 +340,73 @@ export async function fetchMe(session: AuthSession): Promise<{ userId: UserId; u
     userId: userIdFromInput(userId),
     username,
   };
+}
+
+export async function fetchFriends(session: AuthSession): Promise<FriendRecord[]> {
+  const dto = await requestJson({
+    method: "GET",
+    path: "/friends",
+    accessToken: session.accessToken,
+  });
+  return friendListFromResponse(dto);
+}
+
+export async function fetchFriendRequests(session: AuthSession): Promise<FriendRequestList> {
+  const dto = await requestJson({
+    method: "GET",
+    path: "/friends/requests",
+    accessToken: session.accessToken,
+  });
+  return friendRequestListFromResponse(dto);
+}
+
+export async function createFriendRequest(
+  session: AuthSession,
+  recipientUserId: UserId,
+): Promise<FriendRequestCreateResult> {
+  const dto = await requestJson({
+    method: "POST",
+    path: "/friends/requests",
+    accessToken: session.accessToken,
+    body: { recipient_user_id: recipientUserId },
+  });
+  return friendRequestCreateFromResponse(dto);
+}
+
+export async function acceptFriendRequest(
+  session: AuthSession,
+  requestId: string,
+): Promise<void> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/friends/requests/${requestId}/accept`,
+    accessToken: session.accessToken,
+  });
+  if (!dto || typeof dto !== "object" || (dto as { accepted?: unknown }).accepted !== true) {
+    throw new ApiError(500, "invalid_friend_accept_shape", "Unexpected friend accept response.");
+  }
+}
+
+export async function deleteFriendRequest(
+  session: AuthSession,
+  requestId: string,
+): Promise<void> {
+  await requestNoContent({
+    method: "DELETE",
+    path: `/friends/requests/${requestId}`,
+    accessToken: session.accessToken,
+  });
+}
+
+export async function removeFriend(
+  session: AuthSession,
+  friendUserId: UserId,
+): Promise<void> {
+  await requestNoContent({
+    method: "DELETE",
+    path: `/friends/${friendUserId}`,
+    accessToken: session.accessToken,
+  });
 }
 
 export async function fetchHealth(): Promise<{ status: "ok" }> {

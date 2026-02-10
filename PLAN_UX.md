@@ -20,6 +20,7 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - 2026-02-10: Added channel self-permission snapshot endpoint (`GET /guilds/{guild_id}/channels/{channel_id}/permissions/self`) and applied least-visibility UI gating so privileged/operator controls are hidden unless explicitly allowed for the active channel role/permissions.
 - 2026-02-10: Added authenticated "new workspace" UX flow in the web shell so users can create additional guilds/channels at any time (including mobile header access), with limit-error handling and regression coverage.
 - 2026-02-10: Added hCaptcha-backed signup hardening across `POST /auth/register` (server-side verification, fail-closed behavior) and web registration UX (token capture + submission), with server/frontend regression tests and deploy/docs updates.
+- 2026-02-10: Added friendship system support across server + web client (`/friends`, `/friends/requests`, accept/remove flows), including strict ID validation, permission-safe request visibility, and regression coverage.
 
 ## Completed
 - [x] Login flow reliably navigates to app shell.
@@ -46,12 +47,12 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - [x] Add configurable per-user guild creation limits: allow self-serve guild creation for all users, constrained by a server-configured max created guild count per user.
 - [x] Add UX flow for any authenticated user to create their own guild (subject to server-configured limits).
 - [x] Add captcha verification to account creation UX + backend registration flow to reduce automated signup abuse.
+- [x] Add friendship system UX + backend support (requests, acceptance, list management, and permission-safe exposure).
 
 ## In Progress
 - [ ] None.
 
 ## Next
-- [ ] Add friendship system UX + backend support (requests, acceptance, list management, and permission-safe exposure).
 - [ ] Add robust username query/lookup system with client-side caching and smart invalidation so name resolution is dynamic without naive repeated re-fetching.
 - [ ] Improve ops console UX by moving guild/admin settings into layered overlay panels (open/close) instead of a single dense rail.
 - [ ] If backend adds list endpoints for guilds/channels, replace local workspace cache bootstrap with server-driven discovery.

@@ -27,6 +27,8 @@ import {
   type AttachmentRecord,
   type ChannelId,
   type ChannelPermissionSnapshot,
+  type FriendRecord,
+  type FriendRequestList,
   type GuildVisibility,
   type GuildId,
   type MarkdownToken,
@@ -42,11 +44,14 @@ import {
 import {
   ApiError,
   addGuildMember,
+  acceptFriendRequest,
   addMessageReaction,
   banGuildMember,
   createChannel,
   createChannelMessage,
+  createFriendRequest,
   createGuild,
+  deleteFriendRequest,
   deleteChannelAttachment,
   deleteChannelMessage,
   downloadChannelAttachment,
@@ -54,6 +59,8 @@ import {
   echoMessage,
   fetchChannelMessages,
   fetchChannelPermissionSnapshot,
+  fetchFriendRequests,
+  fetchFriends,
   fetchHealth,
   fetchMe,
   fetchPublicGuildDirectory,
@@ -64,6 +71,7 @@ import {
   reconcileGuildSearchIndex,
   refreshAuthSession,
   removeMessageReaction,
+  removeFriend,
   searchGuildMessages,
   setChannelRoleOverride,
   updateGuildMemberRole,
@@ -301,6 +309,15 @@ export function AppShellPage() {
   const [isSearchingPublicGuilds, setSearchingPublicGuilds] = createSignal(false);
   const [publicGuildSearchError, setPublicGuildSearchError] = createSignal("");
   const [publicGuildDirectory, setPublicGuildDirectory] = createSignal<GuildRecord[]>([]);
+  const [friendRecipientUserIdInput, setFriendRecipientUserIdInput] = createSignal("");
+  const [friends, setFriends] = createSignal<FriendRecord[]>([]);
+  const [friendRequests, setFriendRequests] = createSignal<FriendRequestList>({
+    incoming: [],
+    outgoing: [],
+  });
+  const [isRunningFriendAction, setRunningFriendAction] = createSignal(false);
+  const [friendStatus, setFriendStatus] = createSignal("");
+  const [friendError, setFriendError] = createSignal("");
 
   const [newChannelName, setNewChannelName] = createSignal("backend");
   const [isCreatingChannel, setCreatingChannel] = createSignal(false);
@@ -424,6 +441,26 @@ export function AppShellPage() {
     }
   };
 
+  const refreshFriendDirectory = async () => {
+    const session = auth.session();
+    if (!session) {
+      setFriends([]);
+      setFriendRequests({ incoming: [], outgoing: [] });
+      return;
+    }
+    setFriendError("");
+    try {
+      const [friendList, requestList] = await Promise.all([
+        fetchFriends(session),
+        fetchFriendRequests(session),
+      ]);
+      setFriends(friendList);
+      setFriendRequests(requestList);
+    } catch (error) {
+      setFriendError(mapError(error, "Unable to load friendship state."));
+    }
+  };
+
   const [profile] = createResource(async () => {
     const session = auth.session();
     if (!session) {
@@ -506,6 +543,18 @@ export function AppShellPage() {
       return;
     }
     void untrack(() => loadPublicGuildDirectory());
+  });
+
+  createEffect(() => {
+    const session = auth.session();
+    if (!session) {
+      setFriends([]);
+      setFriendRequests({ incoming: [], outgoing: [] });
+      setFriendStatus("");
+      setFriendError("");
+      return;
+    }
+    void untrack(() => refreshFriendDirectory());
   });
 
   createEffect(() => {
@@ -931,6 +980,85 @@ export function AppShellPage() {
   const runPublicGuildSearch = async (event: SubmitEvent) => {
     event.preventDefault();
     await loadPublicGuildDirectory(publicGuildSearchQuery());
+  };
+
+  const submitFriendRequest = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const session = auth.session();
+    if (!session || isRunningFriendAction()) {
+      return;
+    }
+    setRunningFriendAction(true);
+    setFriendError("");
+    setFriendStatus("");
+    try {
+      const recipientUserId = userIdFromInput(friendRecipientUserIdInput().trim());
+      await createFriendRequest(session, recipientUserId);
+      setFriendRecipientUserIdInput("");
+      await refreshFriendDirectory();
+      setFriendStatus("Friend request sent.");
+    } catch (error) {
+      setFriendError(mapError(error, "Unable to create friend request."));
+    } finally {
+      setRunningFriendAction(false);
+    }
+  };
+
+  const acceptIncomingFriendRequest = async (requestId: string) => {
+    const session = auth.session();
+    if (!session || isRunningFriendAction()) {
+      return;
+    }
+    setRunningFriendAction(true);
+    setFriendError("");
+    setFriendStatus("");
+    try {
+      await acceptFriendRequest(session, requestId);
+      await refreshFriendDirectory();
+      setFriendStatus("Friend request accepted.");
+    } catch (error) {
+      setFriendError(mapError(error, "Unable to accept friend request."));
+    } finally {
+      setRunningFriendAction(false);
+    }
+  };
+
+  const dismissFriendRequest = async (requestId: string) => {
+    const session = auth.session();
+    if (!session || isRunningFriendAction()) {
+      return;
+    }
+    setRunningFriendAction(true);
+    setFriendError("");
+    setFriendStatus("");
+    try {
+      await deleteFriendRequest(session, requestId);
+      await refreshFriendDirectory();
+      setFriendStatus("Friend request removed.");
+    } catch (error) {
+      setFriendError(mapError(error, "Unable to remove friend request."));
+    } finally {
+      setRunningFriendAction(false);
+    }
+  };
+
+  const removeFriendship = async (friendUserId: UserId) => {
+    const session = auth.session();
+    if (!session || isRunningFriendAction()) {
+      return;
+    }
+    setRunningFriendAction(true);
+    setFriendError("");
+    setFriendStatus("");
+    try {
+      await removeFriend(session, friendUserId);
+      await refreshFriendDirectory();
+      setFriendStatus("Friend removed.");
+    } catch (error) {
+      setFriendError(mapError(error, "Unable to remove friend."));
+    } finally {
+      setRunningFriendAction(false);
+    }
   };
 
   const rebuildSearch = async () => {
@@ -1381,6 +1509,111 @@ export function AppShellPage() {
                 <span class="presence idle" />
                 no-public-workspaces
               </li>
+            </Show>
+          </ul>
+        </section>
+
+        <section class="public-directory" aria-label="friendships">
+          <p class="group-label">FRIENDS</p>
+          <form class="inline-form" onSubmit={submitFriendRequest}>
+            <label>
+              User ID
+              <input
+                value={friendRecipientUserIdInput()}
+                onInput={(event) => setFriendRecipientUserIdInput(event.currentTarget.value)}
+                maxlength="26"
+                placeholder="01ARZ3NDEKTSV4RRFFQ69G5FAV"
+              />
+            </label>
+            <button type="submit" disabled={isRunningFriendAction()}>
+              {isRunningFriendAction() ? "Submitting..." : "Send request"}
+            </button>
+          </form>
+          <Show when={friendStatus()}>
+            <p class="status ok">{friendStatus()}</p>
+          </Show>
+          <Show when={friendError()}>
+            <p class="status error">{friendError()}</p>
+          </Show>
+
+          <p class="group-label">INCOMING</p>
+          <ul>
+            <For each={friendRequests().incoming}>
+              {(request) => (
+                <li>
+                  <div class="stacked-meta">
+                    <span>{request.senderUsername}</span>
+                    <span class="muted mono">{request.senderUserId}</span>
+                  </div>
+                  <div class="button-row">
+                    <button
+                      type="button"
+                      onClick={() => void acceptIncomingFriendRequest(request.requestId)}
+                      disabled={isRunningFriendAction()}
+                    >
+                      Accept
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void dismissFriendRequest(request.requestId)}
+                      disabled={isRunningFriendAction()}
+                    >
+                      Ignore
+                    </button>
+                  </div>
+                </li>
+              )}
+            </For>
+            <Show when={friendRequests().incoming.length === 0}>
+              <li class="muted">no-incoming-requests</li>
+            </Show>
+          </ul>
+
+          <p class="group-label">OUTGOING</p>
+          <ul>
+            <For each={friendRequests().outgoing}>
+              {(request) => (
+                <li>
+                  <div class="stacked-meta">
+                    <span>{request.recipientUsername}</span>
+                    <span class="muted mono">{request.recipientUserId}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void dismissFriendRequest(request.requestId)}
+                    disabled={isRunningFriendAction()}
+                  >
+                    Cancel
+                  </button>
+                </li>
+              )}
+            </For>
+            <Show when={friendRequests().outgoing.length === 0}>
+              <li class="muted">no-outgoing-requests</li>
+            </Show>
+          </ul>
+
+          <p class="group-label">FRIEND LIST</p>
+          <ul>
+            <For each={friends()}>
+              {(friend) => (
+                <li>
+                  <div class="stacked-meta">
+                    <span>{friend.username}</span>
+                    <span class="muted mono">{friend.userId}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void removeFriendship(friend.userId)}
+                    disabled={isRunningFriendAction()}
+                  >
+                    Remove
+                  </button>
+                </li>
+              )}
+            </For>
+            <Show when={friends().length === 0}>
+              <li class="muted">no-friends</li>
             </Show>
           </ul>
         </section>

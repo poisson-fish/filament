@@ -5,6 +5,7 @@ export type ChannelId = string & { readonly __brand: "channel_id" };
 export type MessageId = string & { readonly __brand: "message_id" };
 export type UserId = string & { readonly __brand: "user_id" };
 export type AttachmentId = string & { readonly __brand: "attachment_id" };
+export type FriendRequestId = string & { readonly __brand: "friend_request_id" };
 export type GuildName = string & { readonly __brand: "guild_name" };
 export type ChannelName = string & { readonly __brand: "channel_name" };
 export type MessageContent = string & { readonly __brand: "message_content" };
@@ -52,7 +53,9 @@ const MAX_MARKDOWN_INLINE_CHARS = 4096;
 const MAX_LIVEKIT_TEXT_CHARS = 512;
 const MAX_LIVEKIT_TOKEN_CHARS = 8192;
 
-function idFromInput<T extends GuildId | ChannelId | MessageId | UserId | AttachmentId>(
+function idFromInput<
+  T extends GuildId | ChannelId | MessageId | UserId | AttachmentId | FriendRequestId,
+>(
   input: string,
   label: string,
 ): T {
@@ -60,6 +63,10 @@ function idFromInput<T extends GuildId | ChannelId | MessageId | UserId | Attach
     throw new DomainValidationError(`${label} must be a valid ULID.`);
   }
   return input as T;
+}
+
+function friendRequestIdFromInput(input: string): FriendRequestId {
+  return idFromInput<FriendRequestId>(input, "Friend request ID");
 }
 
 function visibleNameFromInput<T extends GuildName | ChannelName>(
@@ -512,6 +519,83 @@ export function voiceTokenFromResponse(dto: unknown): VoiceTokenRecord {
       mediaPublishSourceFromInput(entry),
     ),
     expiresInSecs: requirePositiveInteger(data.expires_in_secs, "expires_in_secs"),
+  };
+}
+
+export interface FriendRecord {
+  userId: UserId;
+  username: string;
+  createdAtUnix: number;
+}
+
+export interface FriendRequestRecord {
+  requestId: FriendRequestId;
+  senderUserId: UserId;
+  senderUsername: string;
+  recipientUserId: UserId;
+  recipientUsername: string;
+  createdAtUnix: number;
+}
+
+export interface FriendRequestList {
+  incoming: FriendRequestRecord[];
+  outgoing: FriendRequestRecord[];
+}
+
+export interface FriendRequestCreateResult {
+  requestId: FriendRequestId;
+  senderUserId: UserId;
+  recipientUserId: UserId;
+  createdAtUnix: number;
+}
+
+function friendFromResponse(dto: unknown): FriendRecord {
+  const data = requireObject(dto, "friend");
+  return {
+    userId: userIdFromInput(requireString(data.user_id, "user_id")),
+    username: requireString(data.username, "username", 64),
+    createdAtUnix: requireNonNegativeInteger(data.created_at_unix, "created_at_unix"),
+  };
+}
+
+function friendRequestFromResponse(dto: unknown): FriendRequestRecord {
+  const data = requireObject(dto, "friend request");
+  return {
+    requestId: friendRequestIdFromInput(requireString(data.request_id, "request_id")),
+    senderUserId: userIdFromInput(requireString(data.sender_user_id, "sender_user_id")),
+    senderUsername: requireString(data.sender_username, "sender_username", 64),
+    recipientUserId: userIdFromInput(requireString(data.recipient_user_id, "recipient_user_id")),
+    recipientUsername: requireString(data.recipient_username, "recipient_username", 64),
+    createdAtUnix: requirePositiveInteger(data.created_at_unix, "created_at_unix"),
+  };
+}
+
+export function friendListFromResponse(dto: unknown): FriendRecord[] {
+  const data = requireObject(dto, "friend list");
+  if (!Array.isArray(data.friends)) {
+    throw new DomainValidationError("friends must be an array.");
+  }
+  return data.friends.map((entry) => friendFromResponse(entry));
+}
+
+export function friendRequestListFromResponse(dto: unknown): FriendRequestList {
+  const data = requireObject(dto, "friend request list");
+  if (!Array.isArray(data.incoming) || !Array.isArray(data.outgoing)) {
+    throw new DomainValidationError("incoming and outgoing must be arrays.");
+  }
+  return {
+    incoming: data.incoming.map((entry) => friendRequestFromResponse(entry)),
+    outgoing: data.outgoing.map((entry) => friendRequestFromResponse(entry)),
+  };
+}
+
+export function friendRequestCreateFromResponse(dto: unknown): FriendRequestCreateResult {
+  const data = requireObject(dto, "friend request create");
+  return {
+    requestId: friendRequestIdFromInput(requireString(data.request_id, "request_id")),
+    senderUserId: userIdFromInput(requireString(data.sender_user_id, "sender_user_id")),
+    recipientUserId: userIdFromInput(requireString(data.recipient_user_id, "recipient_user_id")),
+    createdAtUnix: requirePositiveInteger(data.created_at_unix, "created_at_unix"),
   };
 }
 
