@@ -233,12 +233,13 @@ Every phase has:
 - Dev compose: Postgres + filament-server + LiveKit
 
 ### Status
-- NOT STARTED
+- IN PROGRESS
 
 ### Notes
 - Decide ID type globally: default **ULID**.
 - Decide session strategy early: opaque refresh tokens in DB + short-lived PASETO access token.
 - Enforce body limits globally in axum; don’t rely on per-handler.
+- 2026-02-10: CI/security baseline implemented (`fmt`, `clippy`, `test`, `cargo audit`, `cargo deny`, dependency review, SBOM workflow).
 
 ### TODOs
 - Add `cargo-deny.toml` with license allowlist (MIT/Apache/BSD/ISC), ban unknown sources.
