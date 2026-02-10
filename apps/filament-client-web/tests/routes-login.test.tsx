@@ -7,7 +7,9 @@ describe("routing", () => {
     window.sessionStorage.clear();
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("renders login page at /login", async () => {
@@ -70,5 +72,57 @@ describe("routing", () => {
 
     expect(await screen.findByRole("heading", { name: "Create your first workspace" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("sends captcha token during registration when hcaptcha is configured", async () => {
+    vi.stubEnv("VITE_FILAMENT_HCAPTCHA_SITE_KEY", "10000000-ffff-ffff-ffff-000000000001");
+    vi.stubGlobal("hcaptcha", {
+      render: (_container: HTMLElement, config: { callback: (token: string) => void }) => {
+        config.callback("tok_222222222222222222222222222222222222");
+        return "widget_1";
+      },
+      reset: () => {},
+      remove: () => {},
+    });
+    vi.spyOn(document.head, "appendChild").mockImplementation((node) => {
+      const script = node as HTMLScriptElement;
+      if (typeof script.onload === "function") {
+        script.onload(new Event("load"));
+      }
+      return node;
+    });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/register")) {
+        const rawBody = typeof init?.body === "string" ? init.body : "";
+        const body = JSON.parse(rawBody) as { captcha_token?: string };
+        expect(body.captcha_token).toBe("tok_222222222222222222222222222222222222");
+        return new Response(JSON.stringify({ accepted: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ error: "not_found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    window.history.replaceState({}, "", "/login");
+    render(() => <App />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Register" }));
+    await fireEvent.input(screen.getByLabelText("Username"), { target: { value: "alice_77" } });
+    await fireEvent.input(screen.getByLabelText("Password"), { target: { value: "supersecure12" } });
+    const submitButton = document.querySelector(
+      ".auth-form button[type='submit']",
+    ) as HTMLButtonElement | null;
+    expect(submitButton).not.toBeNull();
+    await fireEvent.click(submitButton!);
+
+    expect(await screen.findByText("Account accepted. Continue with login.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

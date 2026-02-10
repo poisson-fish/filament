@@ -4,6 +4,7 @@ import {
   type Username,
   authSessionFromResponse,
   type AccessToken,
+  type CaptchaToken,
   type RefreshToken,
 } from "../domain/auth";
 import {
@@ -244,6 +245,7 @@ async function requestBinary(input: {
 export async function registerWithPassword(input: {
   username: Username;
   password: Password;
+  captchaToken?: CaptchaToken;
 }): Promise<void> {
   const dto = await requestJson({
     method: "POST",
@@ -251,6 +253,7 @@ export async function registerWithPassword(input: {
     body: {
       username: input.username,
       password: input.password,
+      ...(input.captchaToken ? { captcha_token: input.captchaToken } : {}),
     },
   });
 

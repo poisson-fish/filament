@@ -27,6 +27,8 @@ async fn main() -> anyhow::Result<()> {
                 })
             },
         )?;
+    let captcha_hcaptcha_site_key = std::env::var("FILAMENT_HCAPTCHA_SITE_KEY").ok();
+    let captcha_hcaptcha_secret = std::env::var("FILAMENT_HCAPTCHA_SECRET").ok();
     let app_config = AppConfig {
         attachment_root: std::env::var("FILAMENT_ATTACHMENT_ROOT")
             .map_or_else(|_| PathBuf::from("./data/attachments"), PathBuf::from),
@@ -35,6 +37,10 @@ async fn main() -> anyhow::Result<()> {
         livekit_api_key: Some(livekit_api_key),
         livekit_api_secret: Some(livekit_api_secret),
         max_created_guilds_per_user,
+        captcha_hcaptcha_site_key,
+        captcha_hcaptcha_secret,
+        captcha_verify_url: std::env::var("FILAMENT_HCAPTCHA_VERIFY_URL")
+            .unwrap_or_else(|_| String::from("https://hcaptcha.com/siteverify")),
         database_url: Some(database_url),
         ..AppConfig::default()
     };

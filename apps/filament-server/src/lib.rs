@@ -49,6 +49,7 @@ use pasetors::{
     Local,
 };
 use rand::{rngs::OsRng, RngCore};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
@@ -98,7 +99,10 @@ pub const DEFAULT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE: u32 = 6;
 pub const DEFAULT_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
 pub const DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL: usize = 3;
 pub const DEFAULT_MAX_CREATED_GUILDS_PER_USER: usize = 5;
+pub const DEFAULT_CAPTCHA_VERIFY_TIMEOUT_SECS: u64 = 3;
 pub const MAX_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
+const MAX_CAPTCHA_TOKEN_CHARS: usize = 4096;
+const MIN_CAPTCHA_TOKEN_CHARS: usize = 20;
 const LOGIN_LOCK_THRESHOLD: u8 = 5;
 const LOGIN_LOCK_SECS: i64 = 30;
 const MAX_HISTORY_LIMIT: usize = 100;
@@ -140,6 +144,10 @@ pub struct AppConfig {
     pub media_subscribe_token_cap_per_channel: usize,
     pub max_created_guilds_per_user: usize,
     pub livekit_token_ttl: Duration,
+    pub captcha_hcaptcha_site_key: Option<String>,
+    pub captcha_hcaptcha_secret: Option<String>,
+    pub captcha_verify_url: String,
+    pub captcha_verify_timeout: Duration,
     pub livekit_url: String,
     pub livekit_api_key: Option<String>,
     pub livekit_api_secret: Option<String>,
@@ -168,6 +176,10 @@ impl Default for AppConfig {
             media_subscribe_token_cap_per_channel: DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL,
             max_created_guilds_per_user: DEFAULT_MAX_CREATED_GUILDS_PER_USER,
             livekit_token_ttl: Duration::from_secs(DEFAULT_LIVEKIT_TOKEN_TTL_SECS),
+            captcha_hcaptcha_site_key: None,
+            captcha_hcaptcha_secret: None,
+            captcha_verify_url: String::from("https://hcaptcha.com/siteverify"),
+            captcha_verify_timeout: Duration::from_secs(DEFAULT_CAPTCHA_VERIFY_TIMEOUT_SECS),
             livekit_url: String::from("ws://127.0.0.1:7880"),
             livekit_api_key: None,
             livekit_api_secret: None,
@@ -194,6 +206,7 @@ struct RuntimeSecurityConfig {
     media_subscribe_token_cap_per_channel: usize,
     max_created_guilds_per_user: usize,
     livekit_token_ttl: Duration,
+    captcha: Option<Arc<CaptchaConfig>>,
 }
 
 #[derive(Clone)]
@@ -201,6 +214,13 @@ struct LiveKitConfig {
     api_key: String,
     api_secret: String,
     url: String,
+}
+
+#[derive(Clone)]
+struct CaptchaConfig {
+    secret: String,
+    verify_url: String,
+    verify_timeout: Duration,
 }
 
 #[derive(Clone)]
@@ -290,6 +310,7 @@ impl AppState {
             .map_err(|e| anyhow!("token key init failed: {e}"))?;
         let dummy_password_hash = hash_password("filament-dummy-password")?;
         let livekit = build_livekit_config(config)?;
+        let captcha = build_captcha_config(config)?;
         let db_pool = if let Some(database_url) = &config.database_url {
             Some(
                 PgPoolOptions::new()
@@ -345,6 +366,7 @@ impl AppState {
                 media_subscribe_token_cap_per_channel: config.media_subscribe_token_cap_per_channel,
                 max_created_guilds_per_user: config.max_created_guilds_per_user,
                 livekit_token_ttl: config.livekit_token_ttl,
+                captcha: captcha.map(Arc::new),
             }),
             livekit: livekit.map(Arc::new),
         })
@@ -967,6 +989,7 @@ async fn slow() -> Json<HealthResponse> {
 struct RegisterRequest {
     username: String,
     password: String,
+    captcha_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1257,6 +1280,76 @@ struct GatewayAuthQuery {
     access_token: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct CaptchaToken(String);
+
+impl CaptchaToken {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for CaptchaToken {
+    type Error = ();
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if !(MIN_CAPTCHA_TOKEN_CHARS..=MAX_CAPTCHA_TOKEN_CHARS).contains(&value.chars().count()) {
+            return Err(());
+        }
+        if value
+            .chars()
+            .any(|char| !(('\u{21}'..='\u{7e}').contains(&char)))
+        {
+            return Err(());
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HcaptchaVerifyResponse {
+    success: bool,
+}
+
+async fn verify_captcha_token(
+    state: &AppState,
+    headers: &HeaderMap,
+    token: Option<String>,
+) -> Result<(), AuthFailure> {
+    let Some(config) = state.runtime.captcha.clone() else {
+        return Ok(());
+    };
+
+    let token = token
+        .ok_or(AuthFailure::CaptchaFailed)
+        .and_then(|raw| CaptchaToken::try_from(raw).map_err(|()| AuthFailure::CaptchaFailed))?;
+
+    let client = Client::builder()
+        .timeout(config.verify_timeout)
+        .build()
+        .map_err(|_| AuthFailure::Internal)?;
+    let remote_ip = extract_client_ip(headers);
+    let response = client
+        .post(&config.verify_url)
+        .form(&[
+            ("secret", config.secret.as_str()),
+            ("response", token.as_str()),
+            ("remoteip", remote_ip.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|_| AuthFailure::CaptchaFailed)?;
+    let verify: HcaptchaVerifyResponse = response
+        .json()
+        .await
+        .map_err(|_| AuthFailure::CaptchaFailed)?;
+    if !verify.success {
+        return Err(AuthFailure::CaptchaFailed);
+    }
+    Ok(())
+}
+
 async fn register(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1264,6 +1357,7 @@ async fn register(
 ) -> Result<Json<RegisterResponse>, AuthFailure> {
     enforce_auth_route_rate_limit(&state, &headers, "register").await?;
     ensure_db_schema(&state).await?;
+    verify_captcha_token(&state, &headers, payload.captcha_token).await?;
 
     let username = Username::try_from(payload.username).map_err(|_| AuthFailure::InvalidRequest)?;
     validate_password(&payload.password).map_err(|_| AuthFailure::InvalidRequest)?;
@@ -4821,6 +4915,38 @@ fn build_livekit_config(config: &AppConfig) -> anyhow::Result<Option<LiveKitConf
     }
 }
 
+fn build_captcha_config(config: &AppConfig) -> anyhow::Result<Option<CaptchaConfig>> {
+    match (
+        &config.captcha_hcaptcha_site_key,
+        &config.captcha_hcaptcha_secret,
+    ) {
+        (None, None) => Ok(None),
+        (Some(_), None) | (None, Some(_)) => {
+            Err(anyhow!("hcaptcha site key and secret must be set together"))
+        }
+        (Some(site_key), Some(secret)) => {
+            let site_key = site_key.trim();
+            let secret = secret.trim();
+            if site_key.is_empty() || secret.is_empty() {
+                return Err(anyhow!("hcaptcha site key and secret cannot be empty"));
+            }
+            let verify_url = validate_captcha_verify_url(&config.captcha_verify_url)?;
+            if config.captcha_verify_timeout.is_zero()
+                || config.captcha_verify_timeout > Duration::from_secs(10)
+            {
+                return Err(anyhow!(
+                    "captcha verify timeout must be between 1 and 10 seconds"
+                ));
+            }
+            Ok(Some(CaptchaConfig {
+                secret: secret.to_owned(),
+                verify_url,
+                verify_timeout: config.captcha_verify_timeout,
+            }))
+        }
+    }
+}
+
 fn validate_livekit_url(value: &str) -> anyhow::Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.len() > 256 {
@@ -4830,6 +4956,22 @@ fn validate_livekit_url(value: &str) -> anyhow::Result<String> {
         return Err(anyhow!("livekit url must use ws:// or wss://"));
     }
     Ok(trimmed.to_owned())
+}
+
+fn validate_captcha_verify_url(value: &str) -> anyhow::Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.len() > 256 {
+        return Err(anyhow!("captcha verify url is invalid"));
+    }
+    if trimmed.starts_with("https://")
+        || trimmed.starts_with("http://127.0.0.1")
+        || trimmed.starts_with("http://localhost")
+    {
+        return Ok(trimmed.to_owned());
+    }
+    Err(anyhow!(
+        "captcha verify url must use https://, or localhost http:// for tests"
+    ))
 }
 
 async fn enforce_auth_route_rate_limit(
@@ -4967,6 +5109,7 @@ fn extract_client_ip(headers: &HeaderMap) -> String {
 #[derive(Debug)]
 enum AuthFailure {
     InvalidRequest,
+    CaptchaFailed,
     Unauthorized,
     Forbidden,
     GuildCreationLimitReached,
@@ -4984,6 +5127,7 @@ impl IntoResponse for AuthFailure {
             Self::Forbidden => record_auth_failure("forbidden"),
             Self::RateLimited => record_rate_limit_hit("http", "auth_failure"),
             Self::InvalidRequest
+            | Self::CaptchaFailed
             | Self::GuildCreationLimitReached
             | Self::NotFound
             | Self::PayloadTooLarge
@@ -4996,6 +5140,13 @@ impl IntoResponse for AuthFailure {
                 StatusCode::BAD_REQUEST,
                 Json(AuthError {
                     error: "invalid_request",
+                }),
+            )
+                .into_response(),
+            Self::CaptchaFailed => (
+                StatusCode::FORBIDDEN,
+                Json(AuthError {
+                    error: "captcha_failed",
                 }),
             )
                 .into_response(),
@@ -5076,6 +5227,8 @@ mod tests {
     use axum::{body::Body, http::Request, http::StatusCode};
     use serde_json::{json, Value};
     use std::{collections::HashMap, time::Duration};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use tokio::sync::{mpsc, watch};
     use tower::ServiceExt;
     use uuid::Uuid;
@@ -5112,6 +5265,28 @@ mod tests {
 
     async fn register_and_login(app: &axum::Router, ip: &str) -> AuthResponse {
         register_and_login_as(app, "alice_1", ip).await
+    }
+
+    async fn spawn_hcaptcha_stub(success: bool) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request_buf = [0_u8; 4096];
+            let _ = stream.read(&mut request_buf).await;
+            let body = if success {
+                r#"{"success":true}"#
+            } else {
+                r#"{"success":false}"#
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        format!("http://127.0.0.1:{}/siteverify", addr.port())
     }
 
     async fn authed_json_request(
@@ -5347,6 +5522,85 @@ mod tests {
             refresh_after_logout_response.status(),
             StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[tokio::test]
+    async fn register_requires_valid_hcaptcha_when_enabled() {
+        let verify_url = spawn_hcaptcha_stub(false).await;
+        let app = build_router(&AppConfig {
+            captcha_hcaptcha_site_key: Some(String::from("10000000-ffff-ffff-ffff-000000000001")),
+            captcha_hcaptcha_secret: Some(String::from(
+                "0x0000000000000000000000000000000000000000",
+            )),
+            captcha_verify_url: verify_url,
+            ..AppConfig::default()
+        })
+        .unwrap();
+
+        let missing_token = Request::builder()
+            .method("POST")
+            .uri("/auth/register")
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", "203.0.113.12")
+            .body(Body::from(
+                json!({"username":"captcha_user","password":"super-secure-password"}).to_string(),
+            ))
+            .unwrap();
+        let missing_response = app.clone().oneshot(missing_token).await.unwrap();
+        assert_eq!(missing_response.status(), StatusCode::FORBIDDEN);
+
+        let bad_token = Request::builder()
+            .method("POST")
+            .uri("/auth/register")
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", "203.0.113.12")
+            .body(Body::from(
+                json!({
+                    "username":"captcha_user",
+                    "password":"super-secure-password",
+                    "captcha_token":"tok_000000000000000000000000000000000000"
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let bad_response = app.oneshot(bad_token).await.unwrap();
+        assert_eq!(bad_response.status(), StatusCode::FORBIDDEN);
+        let bad_body = axum::body::to_bytes(bad_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let bad_json: Value = serde_json::from_slice(&bad_body).unwrap();
+        assert_eq!(bad_json["error"], "captcha_failed");
+    }
+
+    #[tokio::test]
+    async fn register_accepts_valid_hcaptcha_when_enabled() {
+        let verify_url = spawn_hcaptcha_stub(true).await;
+        let app = build_router(&AppConfig {
+            captcha_hcaptcha_site_key: Some(String::from("10000000-ffff-ffff-ffff-000000000001")),
+            captcha_hcaptcha_secret: Some(String::from(
+                "0x0000000000000000000000000000000000000000",
+            )),
+            captcha_verify_url: verify_url,
+            ..AppConfig::default()
+        })
+        .unwrap();
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/auth/register")
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", "203.0.113.13")
+            .body(Body::from(
+                json!({
+                    "username":"captcha_ok",
+                    "password":"super-secure-password",
+                    "captcha_token":"tok_111111111111111111111111111111111111"
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -5872,6 +6126,15 @@ mod tests {
     fn zero_created_guild_limit_is_rejected() {
         let result = build_router(&AppConfig {
             max_created_guilds_per_user: 0,
+            ..AppConfig::default()
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn partial_hcaptcha_config_is_rejected() {
+        let result = build_router(&AppConfig {
+            captcha_hcaptcha_site_key: Some(String::from("site")),
             ..AppConfig::default()
         });
         assert!(result.is_err());

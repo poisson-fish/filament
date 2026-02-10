@@ -1,12 +1,14 @@
-import { createSignal, Show } from "solid-js";
+import { Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { Navigate, useNavigate } from "@solidjs/router";
 import {
+  captchaTokenFromInput,
   DomainValidationError,
   passwordFromInput,
   usernameFromInput,
 } from "../domain/auth";
 import { ApiError, loginWithPassword, registerWithPassword } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
+import { ensureHcaptchaScript, hcaptchaSiteKey } from "../lib/hcaptcha";
 
 function mapApiError(error: unknown): string {
   if (error instanceof DomainValidationError) {
@@ -21,6 +23,9 @@ function mapApiError(error: unknown): string {
     }
     if (error.code === "network_error") {
       return "Cannot reach server. Verify API origin and TLS setup.";
+    }
+    if (error.code === "captcha_failed") {
+      return "Captcha verification failed. Please retry.";
     }
     return "Auth failed. Please retry.";
   }
@@ -39,6 +44,58 @@ export function LoginPage() {
   const [isSubmitting, setSubmitting] = createSignal(false);
   const [statusMessage, setStatusMessage] = createSignal("");
   const [errorMessage, setErrorMessage] = createSignal("");
+  const [captchaReady, setCaptchaReady] = createSignal(false);
+  const [captchaToken, setCaptchaToken] = createSignal("");
+  const [captchaError, setCaptchaError] = createSignal("");
+  let captchaContainer: HTMLDivElement | undefined;
+  let captchaWidgetId: string | null = null;
+  const siteKey = hcaptchaSiteKey();
+
+  const resetCaptcha = () => {
+    setCaptchaToken("");
+    if (captchaWidgetId && window.hcaptcha) {
+      window.hcaptcha.reset(captchaWidgetId);
+    }
+  };
+
+  createEffect(() => {
+    if (!siteKey || !isRegisterMode() || !captchaContainer || captchaWidgetId) {
+      return;
+    }
+    void (async () => {
+      try {
+        await ensureHcaptchaScript();
+        if (!window.hcaptcha || !captchaContainer) {
+          throw new Error("hcaptcha unavailable");
+        }
+        captchaWidgetId = window.hcaptcha.render(captchaContainer, {
+          sitekey: siteKey,
+          callback: (token) => {
+            setCaptchaToken(token);
+            setCaptchaError("");
+          },
+          "expired-callback": () => {
+            setCaptchaToken("");
+            setCaptchaError("Captcha expired. Please verify again.");
+          },
+          "error-callback": () => {
+            setCaptchaToken("");
+            setCaptchaError("Captcha failed to load. Please retry.");
+          },
+        });
+        setCaptchaReady(true);
+      } catch {
+        setCaptchaReady(false);
+        setCaptchaError("Captcha unavailable. Please retry later.");
+      }
+    })();
+  });
+
+  onCleanup(() => {
+    if (captchaWidgetId && window.hcaptcha) {
+      window.hcaptcha.remove(captchaWidgetId);
+    }
+  });
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
@@ -55,12 +112,18 @@ export function LoginPage() {
       const validatedPassword = passwordFromInput(password());
 
       if (isRegisterMode()) {
+        const validatedCaptchaToken =
+          siteKey !== null
+            ? captchaTokenFromInput(captchaToken())
+            : undefined;
         await registerWithPassword({
           username: validatedUsername,
           password: validatedPassword,
+          captchaToken: validatedCaptchaToken,
         });
         setStatusMessage("Account accepted. Continue with login.");
         setRegisterMode(false);
+        resetCaptcha();
       } else {
         const session = await loginWithPassword({
           username: validatedUsername,
@@ -93,14 +156,20 @@ export function LoginPage() {
           <button
             type="button"
             classList={{ active: !isRegisterMode() }}
-            onClick={() => setRegisterMode(false)}
+            onClick={() => {
+              setRegisterMode(false);
+              setCaptchaError("");
+            }}
           >
             Login
           </button>
           <button
             type="button"
             classList={{ active: isRegisterMode() }}
-            onClick={() => setRegisterMode(true)}
+            onClick={() => {
+              setRegisterMode(true);
+              setCaptchaError("");
+            }}
           >
             Register
           </button>
@@ -131,6 +200,25 @@ export function LoginPage() {
               onInput={(event) => setPassword(event.currentTarget.value)}
             />
           </label>
+
+          <Show when={isRegisterMode() && siteKey !== null}>
+            <div class="captcha-block">
+              <div
+                class="h-captcha"
+                ref={(element) => {
+                  captchaContainer = element;
+                }}
+              />
+              <Show when={!captchaReady()}>
+                <p class="muted">Loading captcha challenge...</p>
+              </Show>
+              <Show when={captchaError()}>
+                <p class="status error" role="alert">
+                  {captchaError()}
+                </p>
+              </Show>
+            </div>
+          </Show>
 
           <button type="submit" disabled={isSubmitting()}>
             {isSubmitting() ? "Working..." : isRegisterMode() ? "Create account" : "Login"}

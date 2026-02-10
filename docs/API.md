@@ -88,7 +88,12 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
 
 ### Auth
 - `POST /auth/register`
-  - Request: `{ "username": "...", "password": "..." }`
+  - Request: `{ "username": "...", "password": "...", "captcha_token"?: "..." }`
+  - If hCaptcha is enabled on the server (`FILAMENT_HCAPTCHA_SITE_KEY` + `FILAMENT_HCAPTCHA_SECRET`):
+    - `captcha_token` is required
+    - token must be visible ASCII and `20..=4096` chars
+    - verification uses hCaptcha `siteverify` and fails closed on verification/network errors
+    - invalid/failed verification returns `403 {"error":"captcha_failed"}`
   - Always returns accepted shape for valid input (existing/new user not disclosed)
   - Response `200`: `{ "accepted": true }`
 - `POST /auth/login`

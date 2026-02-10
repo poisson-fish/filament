@@ -2,6 +2,7 @@ import {
   DomainValidationError,
   accessTokenFromInput,
   authSessionFromResponse,
+  captchaTokenFromInput,
   passwordFromInput,
   refreshTokenFromInput,
   usernameFromInput,
@@ -22,6 +23,7 @@ describe("auth domain invariants", () => {
     expect(() => accessTokenFromInput(`A${"B".repeat(31)}\n`)).toThrow(
       DomainValidationError,
     );
+    expect(() => captchaTokenFromInput("short")).toThrow(DomainValidationError);
   });
 
   it("maps login response into a bounded auth session", () => {

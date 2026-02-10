@@ -9,6 +9,7 @@ export type Username = string & { readonly __brand: "username" };
 export type Password = string & { readonly __brand: "password" };
 export type AccessToken = string & { readonly __brand: "access_token" };
 export type RefreshToken = string & { readonly __brand: "refresh_token" };
+export type CaptchaToken = string & { readonly __brand: "captcha_token" };
 
 const USERNAME_PATTERN = /^[A-Za-z0-9_.]+$/;
 
@@ -50,6 +51,19 @@ export function accessTokenFromInput(input: string): AccessToken {
 
 export function refreshTokenFromInput(input: string): RefreshToken {
   return tokenFromInput(input, "refresh token") as RefreshToken;
+}
+
+export function captchaTokenFromInput(input: string): CaptchaToken {
+  if (input.length < 20 || input.length > 4096) {
+    throw new DomainValidationError("Captcha token has invalid length.");
+  }
+  for (const char of input) {
+    const code = char.charCodeAt(0);
+    if (code < 0x21 || code > 0x7e) {
+      throw new DomainValidationError("Captcha token has invalid charset.");
+    }
+  }
+  return input as CaptchaToken;
 }
 
 export interface AuthSession {

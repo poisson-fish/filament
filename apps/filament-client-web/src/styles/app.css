@@ -134,6 +134,17 @@ select {
   outline-offset: 1px;
 }
 
+.captcha-block {
+  margin-top: 0.25rem;
+  display: grid;
+  gap: 0.35rem;
+  justify-items: start;
+}
+
+.captcha-block .status {
+  margin-top: 0;
+}
+
 .auth-form button[type="submit"] {
   margin-top: 0.32rem;
   border: 0;
