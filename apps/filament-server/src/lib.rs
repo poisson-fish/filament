@@ -36,7 +36,8 @@ use pasetors::{
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::{mpsc, watch, RwLock};
+use sqlx::{postgres::PgPoolOptions, PgPool, Row};
+use tokio::sync::{mpsc, watch, OnceCell, RwLock};
 use tower::ServiceBuilder;
 use tower_governor::{
     governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
@@ -76,6 +77,7 @@ pub struct AppConfig {
     pub gateway_ingress_window: Duration,
     pub gateway_outbound_queue: usize,
     pub max_gateway_event_bytes: usize,
+    pub database_url: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -89,6 +91,7 @@ impl Default for AppConfig {
             gateway_ingress_window: Duration::from_secs(DEFAULT_GATEWAY_INGRESS_WINDOW_SECS),
             gateway_outbound_queue: DEFAULT_GATEWAY_OUTBOUND_QUEUE,
             max_gateway_event_bytes: DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+            database_url: None,
         }
     }
 }
@@ -104,6 +107,8 @@ struct RuntimeSecurityConfig {
 
 #[derive(Clone)]
 pub struct AppState {
+    db_pool: Option<PgPool>,
+    db_init: Arc<OnceCell<()>>,
     users: Arc<RwLock<HashMap<String, UserRecord>>>,
     user_ids: Arc<RwLock<HashMap<String, String>>>,
     sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
@@ -124,7 +129,20 @@ impl AppState {
         let token_key = SymmetricKey::<V4>::from(&key_bytes)
             .map_err(|e| anyhow!("token key init failed: {e}"))?;
         let dummy_password_hash = hash_password("filament-dummy-password")?;
+        let db_pool = if let Some(database_url) = &config.database_url {
+            Some(
+                PgPoolOptions::new()
+                    .max_connections(10)
+                    .connect_lazy(database_url)
+                    .map_err(|e| anyhow!("postgres pool init failed: {e}"))?,
+            )
+        } else {
+            None
+        };
+
         Ok(Self {
+            db_pool,
+            db_init: Arc::new(OnceCell::new()),
             users: Arc::new(RwLock::new(HashMap::new())),
             user_ids: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -192,6 +210,127 @@ struct AuthContext {
 enum ConnectionControl {
     Open,
     Close,
+}
+
+async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
+    let Some(pool) = &state.db_pool else {
+        return Ok(());
+    };
+
+    state
+        .db_init
+        .get_or_try_init(|| async move {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    failed_logins SMALLINT NOT NULL DEFAULT 0,
+                    locked_until_unix BIGINT NULL
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    refresh_token_hash BYTEA NOT NULL,
+                    expires_at_unix BIGINT NOT NULL,
+                    revoked BOOLEAN NOT NULL DEFAULT FALSE
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS used_refresh_tokens (
+                    token_hash BYTEA PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS guilds (
+                    guild_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at_unix BIGINT NOT NULL
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS guild_members (
+                    guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    role SMALLINT NOT NULL,
+                    PRIMARY KEY(guild_id, user_id)
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS channels (
+                    channel_id TEXT PRIMARY KEY,
+                    guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    created_at_unix BIGINT NOT NULL
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS messages (
+                    message_id TEXT PRIMARY KEY,
+                    guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+                    channel_id TEXT NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
+                    author_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                    content TEXT NOT NULL,
+                    created_at_unix BIGINT NOT NULL
+                )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_messages_channel_message_id
+                    ON messages(channel_id, message_id DESC)",
+            )
+            .execute(pool)
+            .await?;
+
+            Ok::<(), sqlx::Error>(())
+        })
+        .await
+        .map_err(|e| {
+            tracing::error!(event = "db.init", error = %e);
+            AuthFailure::Internal
+        })?;
+
+    Ok(())
+}
+
+fn role_to_i16(role: Role) -> i16 {
+    match role {
+        Role::Owner => 2,
+        Role::Moderator => 1,
+        Role::Member => 0,
+    }
+}
+
+fn role_from_i16(value: i16) -> Option<Role> {
+    match value {
+        2 => Some(Role::Owner),
+        1 => Some(Role::Moderator),
+        0 => Some(Role::Member),
+        _ => None,
+    }
 }
 
 /// Build the axum router with global security middleware.
@@ -416,9 +555,33 @@ async fn register(
     Json(payload): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, AuthFailure> {
     enforce_auth_route_rate_limit(&state, &headers, "register").await?;
+    ensure_db_schema(&state).await?;
 
     let username = Username::try_from(payload.username).map_err(|_| AuthFailure::InvalidRequest)?;
     validate_password(&payload.password).map_err(|_| AuthFailure::InvalidRequest)?;
+
+    if let Some(pool) = &state.db_pool {
+        let password_hash = hash_password(&payload.password).map_err(|_| AuthFailure::Internal)?;
+        let user_id = UserId::new();
+        let insert_result = sqlx::query(
+            "INSERT INTO users (user_id, username, password_hash, failed_logins, locked_until_unix)
+             VALUES ($1, $2, $3, 0, NULL)
+             ON CONFLICT (username) DO NOTHING",
+        )
+        .bind(user_id.to_string())
+        .bind(username.as_str())
+        .bind(password_hash)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        if insert_result.rows_affected() == 0 {
+            tracing::info!(event = "auth.register", outcome = "existing_user");
+        } else {
+            tracing::info!(event = "auth.register", outcome = "created", user_id = %user_id);
+        }
+        return Ok(Json(RegisterResponse { accepted: true }));
+    }
 
     let mut users = state.users.write().await;
     if users.contains_key(username.as_str()) {
@@ -450,15 +613,112 @@ async fn register(
     Ok(Json(RegisterResponse { accepted: true }))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, AuthFailure> {
     enforce_auth_route_rate_limit(&state, &headers, "login").await?;
+    ensure_db_schema(&state).await?;
 
     let username = Username::try_from(payload.username).map_err(|_| AuthFailure::Unauthorized)?;
     validate_password(&payload.password).map_err(|_| AuthFailure::Unauthorized)?;
+
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "SELECT user_id, password_hash, failed_logins, locked_until_unix
+             FROM users WHERE username = $1",
+        )
+        .bind(username.as_str())
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        let now = now_unix();
+        let (user_id, verified) = if let Some(row) = row {
+            let user_id_text: String = row.try_get("user_id").map_err(|_| AuthFailure::Internal)?;
+            let user_id = UserId::try_from(user_id_text).map_err(|_| AuthFailure::Internal)?;
+            let password_hash: String = row
+                .try_get("password_hash")
+                .map_err(|_| AuthFailure::Internal)?;
+            let failed_logins: i16 = row
+                .try_get("failed_logins")
+                .map_err(|_| AuthFailure::Internal)?;
+            let locked_until_unix: Option<i64> = row
+                .try_get("locked_until_unix")
+                .map_err(|_| AuthFailure::Internal)?;
+
+            if locked_until_unix.is_some_and(|lock_until| lock_until > now) {
+                tracing::warn!(event = "auth.login", outcome = "locked", username = %username.as_str());
+                return Err(AuthFailure::Unauthorized);
+            }
+
+            let verified = verify_password(&password_hash, &payload.password);
+            if verified {
+                sqlx::query(
+                    "UPDATE users SET failed_logins = 0, locked_until_unix = NULL WHERE user_id = $1",
+                )
+                .bind(user_id.to_string())
+                .execute(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+                (Some(user_id), true)
+            } else {
+                let mut updated_failed = i32::from(failed_logins) + 1;
+                let mut lock_until = None;
+                if updated_failed >= i32::from(LOGIN_LOCK_THRESHOLD) {
+                    updated_failed = 0;
+                    lock_until = Some(now + LOGIN_LOCK_SECS);
+                    tracing::warn!(event = "auth.login", outcome = "lockout", username = %username.as_str());
+                } else {
+                    tracing::warn!(event = "auth.login", outcome = "bad_password", username = %username.as_str());
+                }
+                sqlx::query(
+                    "UPDATE users SET failed_logins = $2, locked_until_unix = $3 WHERE user_id = $1",
+                )
+                .bind(user_id.to_string())
+                .bind(i16::try_from(updated_failed).unwrap_or(i16::MAX))
+                .bind(lock_until)
+                .execute(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+                (None, false)
+            }
+        } else {
+            let _ = verify_password(&state.dummy_password_hash, &payload.password);
+            tracing::warn!(event = "auth.login", outcome = "invalid_credentials");
+            (None, false)
+        };
+
+        if !verified {
+            return Err(AuthFailure::Unauthorized);
+        }
+        let user_id = user_id.ok_or(AuthFailure::Internal)?;
+
+        let session_id = Ulid::new().to_string();
+        let (access_token, refresh_token, refresh_hash) =
+            issue_tokens(&state, user_id, username.as_str(), &session_id)
+                .map_err(|_| AuthFailure::Internal)?;
+        sqlx::query(
+            "INSERT INTO sessions (session_id, user_id, refresh_token_hash, expires_at_unix, revoked)
+             VALUES ($1, $2, $3, $4, FALSE)",
+        )
+        .bind(&session_id)
+        .bind(user_id.to_string())
+        .bind(refresh_hash.as_slice())
+        .bind(now + REFRESH_TOKEN_TTL_SECS)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        tracing::info!(event = "auth.login", outcome = "success", user_id = %user_id);
+
+        return Ok(Json(AuthResponse {
+            access_token,
+            refresh_token,
+            expires_in_secs: ACCESS_TOKEN_TTL_SECS,
+        }));
+    }
 
     let mut users = state.users.write().await;
     let now = now_unix();
@@ -525,16 +785,109 @@ async fn login(
     }))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(payload): Json<RefreshRequest>,
 ) -> Result<Json<AuthResponse>, AuthFailure> {
     enforce_auth_route_rate_limit(&state, &headers, "refresh").await?;
+    ensure_db_schema(&state).await?;
 
     if payload.refresh_token.is_empty() || payload.refresh_token.len() > 512 {
         tracing::warn!(event = "auth.refresh", outcome = "invalid_token_format");
         return Err(AuthFailure::Unauthorized);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let token_hash = hash_refresh_token(&payload.refresh_token);
+        if let Some(row) =
+            sqlx::query("SELECT session_id FROM used_refresh_tokens WHERE token_hash = $1")
+                .bind(token_hash.as_slice())
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?
+        {
+            let replay_session_id: String = row
+                .try_get("session_id")
+                .map_err(|_| AuthFailure::Internal)?;
+            sqlx::query("UPDATE sessions SET revoked = TRUE WHERE session_id = $1")
+                .bind(&replay_session_id)
+                .execute(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+            tracing::warn!(event = "auth.refresh", outcome = "replay_detected", session_id = %replay_session_id);
+            return Err(AuthFailure::Unauthorized);
+        }
+
+        let session_id = payload
+            .refresh_token
+            .split('.')
+            .next()
+            .ok_or(AuthFailure::Unauthorized)?
+            .to_owned();
+
+        let row = sqlx::query(
+            "SELECT user_id, refresh_token_hash, expires_at_unix, revoked
+             FROM sessions WHERE session_id = $1",
+        )
+        .bind(&session_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let row = row.ok_or(AuthFailure::Unauthorized)?;
+
+        let session_user_id: String = row.try_get("user_id").map_err(|_| AuthFailure::Internal)?;
+        let refresh_hash: Vec<u8> = row
+            .try_get("refresh_token_hash")
+            .map_err(|_| AuthFailure::Internal)?;
+        let expires_at_unix: i64 = row
+            .try_get("expires_at_unix")
+            .map_err(|_| AuthFailure::Internal)?;
+        let revoked: bool = row.try_get("revoked").map_err(|_| AuthFailure::Internal)?;
+
+        if revoked
+            || expires_at_unix < now_unix()
+            || refresh_hash.as_slice() != token_hash.as_slice()
+        {
+            tracing::warn!(event = "auth.refresh", outcome = "rejected", session_id = %session_id);
+            return Err(AuthFailure::Unauthorized);
+        }
+
+        let user_id = UserId::try_from(session_user_id).map_err(|_| AuthFailure::Internal)?;
+        let username = find_username_by_user_id(&state, user_id)
+            .await
+            .ok_or(AuthFailure::Unauthorized)?;
+
+        let (access_token, refresh_token, rotated_hash) =
+            issue_tokens(&state, user_id, &username, &session_id)
+                .map_err(|_| AuthFailure::Internal)?;
+        sqlx::query(
+            "UPDATE sessions SET refresh_token_hash = $2, expires_at_unix = $3 WHERE session_id = $1",
+        )
+        .bind(&session_id)
+        .bind(rotated_hash.as_slice())
+        .bind(now_unix() + REFRESH_TOKEN_TTL_SECS)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        sqlx::query(
+            "INSERT INTO used_refresh_tokens (token_hash, session_id) VALUES ($1, $2)
+             ON CONFLICT (token_hash) DO NOTHING",
+        )
+        .bind(token_hash.as_slice())
+        .bind(&session_id)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        tracing::info!(event = "auth.refresh", outcome = "success", session_id = %session_id, user_id = %user_id);
+        return Ok(Json(AuthResponse {
+            access_token,
+            refresh_token,
+            expires_in_secs: ACCESS_TOKEN_TTL_SECS,
+        }));
     }
 
     let token_hash = hash_refresh_token(&payload.refresh_token);
@@ -602,9 +955,45 @@ async fn logout(
     State(state): State<AppState>,
     Json(payload): Json<RefreshRequest>,
 ) -> Result<StatusCode, AuthFailure> {
+    ensure_db_schema(&state).await?;
+
     if payload.refresh_token.is_empty() || payload.refresh_token.len() > 512 {
         tracing::warn!(event = "auth.logout", outcome = "invalid_token_format");
         return Err(AuthFailure::Unauthorized);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let session_id = payload
+            .refresh_token
+            .split('.')
+            .next()
+            .ok_or(AuthFailure::Unauthorized)?
+            .to_owned();
+        let token_hash = hash_refresh_token(&payload.refresh_token);
+        let row =
+            sqlx::query("SELECT user_id, refresh_token_hash FROM sessions WHERE session_id = $1")
+                .bind(&session_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        let row = row.ok_or(AuthFailure::Unauthorized)?;
+        let user_id: String = row.try_get("user_id").map_err(|_| AuthFailure::Internal)?;
+        let session_hash: Vec<u8> = row
+            .try_get("refresh_token_hash")
+            .map_err(|_| AuthFailure::Internal)?;
+
+        if session_hash.as_slice() != token_hash.as_slice() {
+            tracing::warn!(event = "auth.logout", outcome = "hash_mismatch", session_id = %session_id);
+            return Err(AuthFailure::Unauthorized);
+        }
+
+        sqlx::query("UPDATE sessions SET revoked = TRUE WHERE session_id = $1")
+            .bind(&session_id)
+            .execute(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        tracing::info!(event = "auth.logout", outcome = "success", session_id = %session_id, user_id = %user_id);
+        return Ok(StatusCode::NO_CONTENT);
     }
 
     let session_id = payload
@@ -644,10 +1033,35 @@ async fn create_guild(
     headers: HeaderMap,
     Json(payload): Json<CreateGuildRequest>,
 ) -> Result<Json<GuildResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let name = GuildName::try_from(payload.name).map_err(|_| AuthFailure::InvalidRequest)?;
 
     let guild_id = Ulid::new().to_string();
+    if let Some(pool) = &state.db_pool {
+        let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+        sqlx::query("INSERT INTO guilds (guild_id, name, created_at_unix) VALUES ($1, $2, $3)")
+            .bind(&guild_id)
+            .bind(name.as_str())
+            .bind(now_unix())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        sqlx::query("INSERT INTO guild_members (guild_id, user_id, role) VALUES ($1, $2, $3)")
+            .bind(&guild_id)
+            .bind(auth.user_id.to_string())
+            .bind(role_to_i16(Role::Owner))
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+
+        return Ok(Json(GuildResponse {
+            guild_id,
+            name: name.as_str().to_owned(),
+        }));
+    }
+
     let mut members = HashMap::new();
     members.insert(auth.user_id, Role::Owner);
 
@@ -671,8 +1085,50 @@ async fn create_channel(
     Path(path): Path<GuildPath>,
     Json(payload): Json<CreateChannelRequest>,
 ) -> Result<Json<ChannelResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let name = ChannelName::try_from(payload.name).map_err(|_| AuthFailure::InvalidRequest)?;
+
+    if let Some(pool) = &state.db_pool {
+        let role_row =
+            sqlx::query("SELECT role FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+                .bind(&path.guild_id)
+                .bind(auth.user_id.to_string())
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        let role_row = role_row.ok_or(AuthFailure::Forbidden)?;
+        let role_value: i16 = role_row
+            .try_get("role")
+            .map_err(|_| AuthFailure::Internal)?;
+        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
+        if !matches!(role, Role::Owner | Role::Moderator) {
+            return Err(AuthFailure::Forbidden);
+        }
+
+        let channel_id = Ulid::new().to_string();
+        sqlx::query(
+            "INSERT INTO channels (channel_id, guild_id, name, created_at_unix) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&channel_id)
+        .bind(&path.guild_id)
+        .bind(name.as_str())
+        .bind(now_unix())
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            if matches!(e, sqlx::Error::Database(_)) {
+                AuthFailure::NotFound
+            } else {
+                AuthFailure::Internal
+            }
+        })?;
+
+        return Ok(Json(ChannelResponse {
+            channel_id,
+            name: name.as_str().to_owned(),
+        }));
+    }
 
     let mut guilds = state.guilds.write().await;
     let guild = guilds
@@ -719,16 +1175,79 @@ async fn create_message(
     Ok(Json(response))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn get_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(path): Path<ChannelPath>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<MessageHistoryResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let limit = query.limit.unwrap_or(20);
     if limit == 0 || limit > MAX_HISTORY_LIMIT {
         return Err(AuthFailure::InvalidRequest);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let role_row =
+            sqlx::query("SELECT role FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+                .bind(&path.guild_id)
+                .bind(auth.user_id.to_string())
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        let role_row = role_row.ok_or(AuthFailure::Forbidden)?;
+        let role_value: i16 = role_row
+            .try_get("role")
+            .map_err(|_| AuthFailure::Internal)?;
+        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
+        if !has_permission(role, Permission::CreateMessage) {
+            return Err(AuthFailure::Forbidden);
+        }
+
+        let limit_i64 = i64::try_from(limit).map_err(|_| AuthFailure::InvalidRequest)?;
+        let rows = sqlx::query(
+            "SELECT message_id, author_id, content, created_at_unix
+             FROM messages
+             WHERE guild_id = $1 AND channel_id = $2 AND ($3::text IS NULL OR message_id < $3)
+             ORDER BY message_id DESC
+             LIMIT $4",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(query.before.clone())
+        .bind(limit_i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let message_id: String = row
+                .try_get("message_id")
+                .map_err(|_| AuthFailure::Internal)?;
+            let author_id: String = row
+                .try_get("author_id")
+                .map_err(|_| AuthFailure::Internal)?;
+            let content: String = row.try_get("content").map_err(|_| AuthFailure::Internal)?;
+            let created_at_unix: i64 = row
+                .try_get("created_at_unix")
+                .map_err(|_| AuthFailure::Internal)?;
+            messages.push(MessageResponse {
+                message_id,
+                guild_id: path.guild_id.clone(),
+                channel_id: path.channel_id.clone(),
+                author_id,
+                content,
+                created_at_unix,
+            });
+        }
+        let next_before = messages.last().map(|message| message.message_id.clone());
+        return Ok(Json(MessageHistoryResponse {
+            messages,
+            next_before,
+        }));
     }
 
     let guilds = state.guilds.read().await;
@@ -939,6 +1458,7 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
     send_task.abort();
 }
 
+#[allow(clippy::too_many_lines)]
 async fn create_message_internal(
     state: &AppState,
     auth: &AuthContext,
@@ -947,6 +1467,76 @@ async fn create_message_internal(
     content: String,
 ) -> Result<MessageResponse, AuthFailure> {
     validate_message_content(&content)?;
+
+    if let Some(pool) = &state.db_pool {
+        ensure_db_schema(state).await?;
+        let role_row = sqlx::query(
+            "SELECT gm.role
+             FROM guild_members gm
+             JOIN channels c ON c.guild_id = gm.guild_id
+             WHERE gm.guild_id = $1 AND gm.user_id = $2 AND c.channel_id = $3",
+        )
+        .bind(guild_id)
+        .bind(auth.user_id.to_string())
+        .bind(channel_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let role_row = role_row.ok_or(AuthFailure::Forbidden)?;
+        let role_value: i16 = role_row
+            .try_get("role")
+            .map_err(|_| AuthFailure::Internal)?;
+        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
+        if !has_permission(role, Permission::CreateMessage) {
+            return Err(AuthFailure::Forbidden);
+        }
+
+        let message_id = Ulid::new().to_string();
+        let created_at_unix = now_unix();
+        sqlx::query(
+            "INSERT INTO messages (message_id, guild_id, channel_id, author_id, content, created_at_unix)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(&message_id)
+        .bind(guild_id)
+        .bind(channel_id)
+        .bind(auth.user_id.to_string())
+        .bind(&content)
+        .bind(created_at_unix)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            if matches!(e, sqlx::Error::Database(_)) {
+                AuthFailure::NotFound
+            } else {
+                AuthFailure::Internal
+            }
+        })?;
+
+        let response = MessageResponse {
+            message_id,
+            guild_id: guild_id.to_owned(),
+            channel_id: channel_id.to_owned(),
+            author_id: auth.user_id.to_string(),
+            content,
+            created_at_unix,
+        };
+
+        let event = outbound_event(
+            "message_create",
+            serde_json::json!({
+                "message_id": response.message_id,
+                "guild_id": response.guild_id,
+                "channel_id": response.channel_id,
+                "author_id": response.author_id,
+                "content": response.content,
+                "created_at_unix": response.created_at_unix,
+            }),
+        );
+
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), event).await;
+        return Ok(response);
+    }
 
     let mut guilds = state.guilds.write().await;
     let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
@@ -1081,6 +1671,30 @@ async fn user_can_write_channel(
     guild_id: &str,
     channel_id: &str,
 ) -> bool {
+    if let Some(pool) = &state.db_pool {
+        if ensure_db_schema(state).await.is_err() {
+            return false;
+        }
+        let row = sqlx::query(
+            "SELECT gm.role
+             FROM guild_members gm
+             JOIN channels c ON c.guild_id = gm.guild_id
+             WHERE gm.guild_id = $1 AND gm.user_id = $2 AND c.channel_id = $3",
+        )
+        .bind(guild_id)
+        .bind(user_id.to_string())
+        .bind(channel_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+        let Some(row) = row else {
+            return false;
+        };
+        let role = row.try_get::<i16, _>("role").ok().and_then(role_from_i16);
+        return role.is_some_and(|value| has_permission(value, Permission::CreateMessage));
+    }
+
     let guilds = state.guilds.read().await;
     let Some(guild) = guilds.get(guild_id) else {
         return false;
@@ -1178,6 +1792,7 @@ async fn authenticate_with_token(
     state: &AppState,
     access_token: &str,
 ) -> Result<AuthContext, AuthFailure> {
+    ensure_db_schema(state).await?;
     let claims = verify_access_token(state, access_token).map_err(|_| AuthFailure::Unauthorized)?;
     let user_id = claims
         .get_claim("sub")
@@ -1186,19 +1801,31 @@ async fn authenticate_with_token(
     let username = find_username_by_subject(state, user_id)
         .await
         .ok_or(AuthFailure::Unauthorized)?;
-    let users = state.users.read().await;
-    let user = users.get(&username).ok_or(AuthFailure::Unauthorized)?;
-    Ok(AuthContext {
-        user_id: user.id,
-        username: user.username.as_str().to_owned(),
-    })
+    let user_id = UserId::try_from(user_id.to_owned()).map_err(|_| AuthFailure::Unauthorized)?;
+    Ok(AuthContext { user_id, username })
 }
 
 async fn find_username_by_subject(state: &AppState, user_id: &str) -> Option<String> {
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query("SELECT username FROM users WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .ok()?;
+        return row.and_then(|value| value.try_get("username").ok());
+    }
     state.user_ids.read().await.get(user_id).cloned()
 }
 
 async fn find_username_by_user_id(state: &AppState, user_id: UserId) -> Option<String> {
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query("SELECT username FROM users WHERE user_id = $1")
+            .bind(user_id.to_string())
+            .fetch_optional(pool)
+            .await
+            .ok()?;
+        return row.and_then(|value| value.try_get("username").ok());
+    }
     state
         .user_ids
         .read()
@@ -1396,6 +2023,7 @@ mod tests {
             gateway_ingress_window: Duration::from_secs(10),
             gateway_outbound_queue: 256,
             max_gateway_event_bytes: DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+            database_url: None,
         })
         .unwrap();
 
@@ -1481,6 +2109,7 @@ mod tests {
             gateway_ingress_window: Duration::from_secs(10),
             gateway_outbound_queue: 256,
             max_gateway_event_bytes: DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+            database_url: None,
         })
         .unwrap();
 
@@ -1720,5 +2349,14 @@ mod tests {
             .await;
 
         assert_eq!(*control_rx.borrow(), ConnectionControl::Close);
+    }
+
+    #[test]
+    fn invalid_postgres_url_is_rejected() {
+        let result = build_router(&AppConfig {
+            database_url: Some(String::from("postgres://bad url")),
+            ..AppConfig::default()
+        });
+        assert!(result.is_err());
     }
 }

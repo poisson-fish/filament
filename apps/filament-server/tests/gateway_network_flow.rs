@@ -123,6 +123,7 @@ fn test_app() -> axum::Router {
         gateway_ingress_window: Duration::from_secs(10),
         gateway_outbound_queue: 256,
         max_gateway_event_bytes: filament_server::DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+        database_url: None,
     })
     .expect("router should build")
 }

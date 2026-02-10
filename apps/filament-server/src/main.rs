@@ -9,7 +9,10 @@ use tokio::net::TcpListener;
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let app_config = AppConfig::default();
+    let app_config = AppConfig {
+        database_url: std::env::var("FILAMENT_DATABASE_URL").ok(),
+        ..AppConfig::default()
+    };
     let app = build_router(&app_config)?;
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     let listener = TcpListener::bind(addr).await?;

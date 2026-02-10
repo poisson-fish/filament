@@ -14,6 +14,8 @@ pub enum DomainError {
     InvalidName,
     #[error("username is invalid")]
     InvalidUsername,
+    #[error("user id is invalid")]
+    InvalidUserId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -29,6 +31,15 @@ impl UserId {
 impl Default for UserId {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl TryFrom<String> for UserId {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let parsed = Ulid::from_string(&value).map_err(|_| DomainError::InvalidUserId)?;
+        Ok(Self(parsed))
     }
 }
 
@@ -152,7 +163,7 @@ fn validate_name(value: &str, min: usize, max: usize) -> Result<(), DomainError>
 mod tests {
     use super::{
         has_permission, project_name, ChannelName, DomainError, GuildName, Permission, Role,
-        Username,
+        UserId, Username,
     };
 
     #[test]
@@ -188,5 +199,15 @@ mod tests {
         assert!(has_permission(Role::Moderator, Permission::DeleteMessage));
         assert!(!has_permission(Role::Member, Permission::DeleteMessage));
         assert!(has_permission(Role::Member, Permission::CreateMessage));
+    }
+
+    #[test]
+    fn user_id_round_trip_and_parse_validation() {
+        let id = UserId::new();
+        let parsed = UserId::try_from(id.to_string()).unwrap();
+        assert_eq!(id, parsed);
+
+        let invalid = UserId::try_from(String::from("not-a-ulid")).unwrap_err();
+        assert_eq!(invalid, DomainError::InvalidUserId);
     }
 }
