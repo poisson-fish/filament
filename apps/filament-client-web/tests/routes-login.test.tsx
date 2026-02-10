@@ -44,6 +44,12 @@ describe("routing", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
+      if (url.includes("/guilds/public")) {
+        return new Response(JSON.stringify({ guilds: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ error: "not_found" }), {
         status: 404,
         headers: { "content-type": "application/json" },

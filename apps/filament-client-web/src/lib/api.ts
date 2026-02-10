@@ -14,11 +14,13 @@ import {
   type ChannelName,
   type GuildId,
   type GuildName,
+  type GuildVisibility,
   type MediaPublishSource,
   type MessageContent,
   type MessageHistory,
   type MessageId,
   type MessageRecord,
+  type PublicGuildDirectory,
   type ModerationResult,
   type PermissionName,
   type ReactionEmoji,
@@ -35,6 +37,7 @@ import {
   messageFromResponse,
   messageHistoryFromResponse,
   moderationResultFromResponse,
+  publicGuildDirectoryFromResponse,
   reactionFromResponse,
   searchReconcileFromResponse,
   searchResultsFromResponse,
@@ -351,17 +354,42 @@ export async function echoMessage(input: { message: string }): Promise<string> {
   return (dto as { message: string }).message;
 }
 
-export async function createGuild(session: AuthSession, input: { name: GuildName }): Promise<{
+export async function createGuild(
+  session: AuthSession,
+  input: { name: GuildName; visibility?: GuildVisibility },
+): Promise<{
   guildId: GuildId;
   name: GuildName;
+  visibility: GuildVisibility;
 }> {
   const dto = await requestJson({
     method: "POST",
     path: "/guilds",
     accessToken: session.accessToken,
-    body: { name: input.name },
+    body: { name: input.name, visibility: input.visibility },
   });
   return guildFromResponse(dto);
+}
+
+export async function fetchPublicGuildDirectory(
+  session: AuthSession,
+  input?: { query?: string; limit?: number },
+): Promise<PublicGuildDirectory> {
+  const params = new URLSearchParams();
+  const query = input?.query?.trim();
+  if (query && query.length > 0) {
+    params.set("q", query.slice(0, 64));
+  }
+  if (input?.limit && Number.isInteger(input.limit) && input.limit > 0 && input.limit <= 50) {
+    params.set("limit", String(input.limit));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  const dto = await requestJson({
+    method: "GET",
+    path: `/guilds/public${suffix}`,
+    accessToken: session.accessToken,
+  });
+  return publicGuildDirectoryFromResponse(dto);
 }
 
 export async function createChannel(

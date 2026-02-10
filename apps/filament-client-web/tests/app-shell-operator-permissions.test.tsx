@@ -110,6 +110,10 @@ function createOperatorFixtureFetch(role: FixtureRole) {
       });
     }
 
+    if (method === "GET" && url.includes("/guilds/public")) {
+      return jsonResponse({ guilds: [] });
+    }
+
     if (method === "POST" && url.includes(`/guilds/${GUILD_ID}/members/${TARGET_USER_ID}`)) {
       return role === "owner"
         ? jsonResponse({ accepted: true })

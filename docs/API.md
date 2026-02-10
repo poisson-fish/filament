@@ -110,8 +110,16 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
 ### Guilds and Channels
 - `POST /guilds`
   - Auth required
-  - Request: `{ "name": "..." }` (1..64 visible chars/spaces)
-  - Response `200`: `{ "guild_id": "...", "name": "..." }`
+  - Request: `{ "name": "...", "visibility"?: "private"|"public" }` (`visibility` defaults to `private`)
+  - `name`: 1..64 visible chars/spaces
+  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }`
+- `GET /guilds/public?q=<query>&limit=<n>`
+  - Auth required
+  - Returns only guilds marked `public`
+  - `q` optional, case-insensitive substring on guild name, max `64` chars
+  - `limit` default `20`, max `50`
+  - Response `200`:
+    - `{ "guilds": [{ "guild_id": "...", "name": "...", "visibility": "public" }] }`
 - `POST /guilds/{guild_id}/channels`
   - Auth required; role must be `owner` or `moderator`
   - Request: `{ "name": "..." }` (1..64 visible chars/spaces)

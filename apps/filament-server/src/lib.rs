@@ -363,8 +363,17 @@ struct SessionRecord {
     revoked: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum GuildVisibility {
+    Private,
+    Public,
+}
+
 #[derive(Debug, Clone)]
 struct GuildRecord {
+    name: String,
+    visibility: GuildVisibility,
     members: HashMap<UserId, Role>,
     banned_members: HashSet<UserId>,
     channels: HashMap<String, ChannelRecord>,
@@ -460,8 +469,16 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                 "CREATE TABLE IF NOT EXISTS guilds (
                     guild_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
+                    visibility SMALLINT NOT NULL DEFAULT 0,
                     created_at_unix BIGINT NOT NULL
                 )",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "ALTER TABLE guilds
+                 ADD COLUMN IF NOT EXISTS visibility SMALLINT NOT NULL DEFAULT 0",
             )
             .execute(pool)
             .await?;
@@ -609,6 +626,21 @@ fn role_from_i16(value: i16) -> Option<Role> {
         2 => Some(Role::Owner),
         1 => Some(Role::Moderator),
         0 => Some(Role::Member),
+        _ => None,
+    }
+}
+
+fn visibility_to_i16(visibility: GuildVisibility) -> i16 {
+    match visibility {
+        GuildVisibility::Private => 0,
+        GuildVisibility::Public => 1,
+    }
+}
+
+fn visibility_from_i16(value: i16) -> Option<GuildVisibility> {
+    match value {
+        0 => Some(GuildVisibility::Private),
+        1 => Some(GuildVisibility::Public),
         _ => None,
     }
 }
@@ -764,6 +796,7 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route("/auth/logout", post(logout))
         .route("/auth/me", get(me))
         .route("/guilds", post(create_guild))
+        .route("/guilds/public", get(list_public_guilds))
         .route("/guilds/{guild_id}/channels", post(create_channel))
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/overrides/{role}",
@@ -923,12 +956,14 @@ struct MeResponse {
 #[serde(deny_unknown_fields)]
 struct CreateGuildRequest {
     name: String,
+    visibility: Option<GuildVisibility>,
 }
 
 #[derive(Debug, Serialize)]
 struct GuildResponse {
     guild_id: String,
     name: String,
+    visibility: GuildVisibility,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1073,6 +1108,24 @@ struct SearchQuery {
     q: String,
     limit: Option<usize>,
     channel_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PublicGuildListQuery {
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct PublicGuildListItem {
+    guild_id: String,
+    name: String,
+    visibility: GuildVisibility,
+}
+
+#[derive(Debug, Serialize)]
+struct PublicGuildListResponse {
+    guilds: Vec<PublicGuildListItem>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1632,13 +1685,17 @@ async fn create_guild(
     ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let name = GuildName::try_from(payload.name).map_err(|_| AuthFailure::InvalidRequest)?;
+    let visibility = payload.visibility.unwrap_or(GuildVisibility::Private);
 
     let guild_id = Ulid::new().to_string();
     if let Some(pool) = &state.db_pool {
         let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
-        sqlx::query("INSERT INTO guilds (guild_id, name, created_at_unix) VALUES ($1, $2, $3)")
+        sqlx::query(
+            "INSERT INTO guilds (guild_id, name, visibility, created_at_unix) VALUES ($1, $2, $3, $4)",
+        )
             .bind(&guild_id)
             .bind(name.as_str())
+            .bind(visibility_to_i16(visibility))
             .bind(now_unix())
             .execute(&mut *tx)
             .await
@@ -1655,6 +1712,7 @@ async fn create_guild(
         return Ok(Json(GuildResponse {
             guild_id,
             name: name.as_str().to_owned(),
+            visibility,
         }));
     }
 
@@ -1664,6 +1722,8 @@ async fn create_guild(
     state.guilds.write().await.insert(
         guild_id.clone(),
         GuildRecord {
+            name: name.as_str().to_owned(),
+            visibility,
             members,
             banned_members: HashSet::new(),
             channels: HashMap::new(),
@@ -1673,7 +1733,100 @@ async fn create_guild(
     Ok(Json(GuildResponse {
         guild_id,
         name: name.as_str().to_owned(),
+        visibility,
     }))
+}
+
+const DEFAULT_PUBLIC_GUILD_LIST_LIMIT: usize = 20;
+const MAX_PUBLIC_GUILD_LIST_LIMIT: usize = 50;
+const MAX_PUBLIC_GUILD_QUERY_CHARS: usize = 64;
+
+async fn list_public_guilds(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<PublicGuildListQuery>,
+) -> Result<Json<PublicGuildListResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let _auth = authenticate(&state, &headers).await?;
+
+    let limit = query.limit.unwrap_or(DEFAULT_PUBLIC_GUILD_LIST_LIMIT);
+    if limit == 0 || limit > MAX_PUBLIC_GUILD_LIST_LIMIT {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let needle = query.q.map(|value| value.trim().to_ascii_lowercase());
+    if needle
+        .as_ref()
+        .is_some_and(|value| value.len() > MAX_PUBLIC_GUILD_QUERY_CHARS)
+    {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let has_query = needle.as_ref().is_some_and(|value| !value.is_empty());
+
+    if let Some(pool) = &state.db_pool {
+        let limit_i64 = i64::try_from(limit).map_err(|_| AuthFailure::InvalidRequest)?;
+        let sql_like = needle
+            .as_ref()
+            .filter(|_| has_query)
+            .map(|value| format!("%{value}%"));
+        let rows = sqlx::query(
+            "SELECT guild_id, name, visibility
+             FROM guilds
+             WHERE visibility = $1
+               AND ($2::text IS NULL OR LOWER(name) LIKE $2)
+             ORDER BY created_at_unix DESC
+             LIMIT $3",
+        )
+        .bind(visibility_to_i16(GuildVisibility::Public))
+        .bind(sql_like)
+        .bind(limit_i64)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        let mut guilds = Vec::with_capacity(rows.len());
+        for row in rows {
+            let visibility_raw: i16 = row
+                .try_get("visibility")
+                .map_err(|_| AuthFailure::Internal)?;
+            let visibility = visibility_from_i16(visibility_raw).ok_or(AuthFailure::Internal)?;
+            if visibility != GuildVisibility::Public {
+                continue;
+            }
+            guilds.push(PublicGuildListItem {
+                guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+                name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
+                visibility,
+            });
+        }
+        return Ok(Json(PublicGuildListResponse { guilds }));
+    }
+
+    let guilds = state.guilds.read().await;
+    let query_term = needle
+        .as_ref()
+        .filter(|_| has_query)
+        .map(std::string::String::as_str);
+    let mut results = guilds
+        .iter()
+        .filter_map(|(guild_id, guild)| {
+            if guild.visibility != GuildVisibility::Public {
+                return None;
+            }
+            if let Some(term) = query_term {
+                if !guild.name.to_ascii_lowercase().contains(term) {
+                    return None;
+                }
+            }
+            Some(PublicGuildListItem {
+                guild_id: guild_id.clone(),
+                name: guild.name.clone(),
+                visibility: guild.visibility,
+            })
+        })
+        .collect::<Vec<_>>();
+    results.sort_by(|left, right| right.guild_id.cmp(&left.guild_id));
+    results.truncate(limit);
+    Ok(Json(PublicGuildListResponse { guilds: results }))
 }
 
 async fn create_channel(
@@ -5125,6 +5278,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn public_guild_discovery_lists_only_public_guilds() {
+        let app = build_router(&AppConfig::default()).unwrap();
+        let auth = register_and_login(&app, "203.0.113.71").await;
+
+        let create_private = Request::builder()
+            .method("POST")
+            .uri("/guilds")
+            .header("authorization", format!("Bearer {}", auth.access_token))
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", "203.0.113.71")
+            .body(Body::from(json!({"name":"Internal Vault"}).to_string()))
+            .unwrap();
+        let private_response = app.clone().oneshot(create_private).await.unwrap();
+        assert_eq!(private_response.status(), StatusCode::OK);
+
+        let create_public = Request::builder()
+            .method("POST")
+            .uri("/guilds")
+            .header("authorization", format!("Bearer {}", auth.access_token))
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", "203.0.113.71")
+            .body(Body::from(
+                json!({"name":"Public Lobby","visibility":"public"}).to_string(),
+            ))
+            .unwrap();
+        let public_response = app.clone().oneshot(create_public).await.unwrap();
+        assert_eq!(public_response.status(), StatusCode::OK);
+        let public_body = axum::body::to_bytes(public_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let public_json: Value = serde_json::from_slice(&public_body).unwrap();
+        assert_eq!(public_json["visibility"], "public");
+
+        let list_public = Request::builder()
+            .method("GET")
+            .uri("/guilds/public")
+            .header("authorization", format!("Bearer {}", auth.access_token))
+            .header("x-forwarded-for", "203.0.113.71")
+            .body(Body::empty())
+            .unwrap();
+        let public_list_response = app.clone().oneshot(list_public).await.unwrap();
+        assert_eq!(public_list_response.status(), StatusCode::OK);
+        let public_list_body = axum::body::to_bytes(public_list_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let public_list_json: Value = serde_json::from_slice(&public_list_body).unwrap();
+        assert_eq!(public_list_json["guilds"].as_array().unwrap().len(), 1);
+        assert_eq!(public_list_json["guilds"][0]["name"], "Public Lobby");
+        assert_eq!(public_list_json["guilds"][0]["visibility"], "public");
+
+        let filtered = Request::builder()
+            .method("GET")
+            .uri("/guilds/public?q=lobby")
+            .header("authorization", format!("Bearer {}", auth.access_token))
+            .header("x-forwarded-for", "203.0.113.71")
+            .body(Body::empty())
+            .unwrap();
+        let filtered_response = app.clone().oneshot(filtered).await.unwrap();
+        assert_eq!(filtered_response.status(), StatusCode::OK);
+        let filtered_body = axum::body::to_bytes(filtered_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let filtered_json: Value = serde_json::from_slice(&filtered_body).unwrap();
+        assert_eq!(filtered_json["guilds"].as_array().unwrap().len(), 1);
+
+        let unauthenticated = Request::builder()
+            .method("GET")
+            .uri("/guilds/public")
+            .header("x-forwarded-for", "203.0.113.72")
+            .body(Body::empty())
+            .unwrap();
+        let unauthenticated_response = app.oneshot(unauthenticated).await.unwrap();
+        assert_eq!(unauthenticated_response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
     async fn gateway_broadcasts_message_to_subscribed_connection() {
         let state = AppState::new(&AppConfig::default()).unwrap();
         let user_id = super::UserId::new();
@@ -5148,6 +5377,8 @@ mod tests {
         let guild_id = String::from("g");
         let channel_id = String::from("c");
         let mut guild = super::GuildRecord {
+            name: String::from("Gateway Test"),
+            visibility: super::GuildVisibility::Private,
             members: HashMap::new(),
             banned_members: std::collections::HashSet::new(),
             channels: HashMap::new(),

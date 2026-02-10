@@ -15,6 +15,7 @@ export type LivekitToken = string & { readonly __brand: "livekit_token" };
 export type LivekitUrl = string & { readonly __brand: "livekit_url" };
 export type LivekitRoom = string & { readonly __brand: "livekit_room" };
 export type LivekitIdentity = string & { readonly __brand: "livekit_identity" };
+export type GuildVisibility = "private" | "public";
 export type RoleName = "owner" | "moderator" | "member";
 export type PermissionName =
   | "manage_roles"
@@ -198,6 +199,13 @@ export function roleFromInput(input: string): RoleName {
   return input;
 }
 
+export function guildVisibilityFromInput(input: string): GuildVisibility {
+  if (input !== "private" && input !== "public") {
+    throw new DomainValidationError("Guild visibility must be private or public.");
+  }
+  return input;
+}
+
 export function permissionFromInput(input: string): PermissionName {
   if (
     input !== "manage_roles" &&
@@ -246,6 +254,7 @@ function livekitTokenFromInput(input: string): LivekitToken {
 export interface GuildRecord {
   guildId: GuildId;
   name: GuildName;
+  visibility: GuildVisibility;
 }
 
 export interface ChannelRecord {
@@ -321,6 +330,7 @@ export function guildFromResponse(dto: unknown): GuildRecord {
   return {
     guildId: guildIdFromInput(requireString(data.guild_id, "guild_id")),
     name: guildNameFromInput(requireString(data.name, "name")),
+    visibility: guildVisibilityFromInput(requireString(data.visibility, "visibility", 16)),
   };
 }
 
@@ -329,6 +339,20 @@ export function channelFromResponse(dto: unknown): ChannelRecord {
   return {
     channelId: channelIdFromInput(requireString(data.channel_id, "channel_id")),
     name: channelNameFromInput(requireString(data.name, "name")),
+  };
+}
+
+export interface PublicGuildDirectory {
+  guilds: GuildRecord[];
+}
+
+export function publicGuildDirectoryFromResponse(dto: unknown): PublicGuildDirectory {
+  const data = requireObject(dto, "public guild directory");
+  if (!Array.isArray(data.guilds)) {
+    throw new DomainValidationError("Public guild directory must contain a guilds array.");
+  }
+  return {
+    guilds: data.guilds.map((entry) => guildFromResponse(entry)),
   };
 }
 
@@ -480,6 +504,7 @@ export function voiceTokenFromResponse(dto: unknown): VoiceTokenRecord {
 export interface WorkspaceRecord {
   guildId: GuildId;
   guildName: GuildName;
+  visibility: GuildVisibility;
   channels: ChannelRecord[];
 }
 
@@ -492,6 +517,10 @@ export function workspaceFromStorage(dto: unknown): WorkspaceRecord {
   return {
     guildId: guildIdFromInput(requireString(data.guildId, "guildId")),
     guildName: guildNameFromInput(requireString(data.guildName, "guildName")),
+    visibility:
+      typeof data.visibility === "string"
+        ? guildVisibilityFromInput(requireString(data.visibility, "visibility", 16))
+        : "private",
     channels: channelsDto.map((channel) => {
       const channelObj = requireObject(channel, "channel cache");
       return {

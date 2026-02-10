@@ -8,12 +8,14 @@ import {
   createResource,
   createSignal,
   onCleanup,
+  untrack,
 } from "solid-js";
 import type { AuthSession } from "../domain/auth";
 import { DomainValidationError } from "../domain/auth";
 import {
   attachmentFilenameFromInput,
   channelNameFromInput,
+  guildVisibilityFromInput,
   guildNameFromInput,
   messageContentFromInput,
   permissionFromInput,
@@ -24,10 +26,12 @@ import {
   type AttachmentId,
   type AttachmentRecord,
   type ChannelId,
+  type GuildVisibility,
   type GuildId,
   type MarkdownToken,
   type MessageId,
   type MessageRecord,
+  type GuildRecord,
   type PermissionName,
   type RoleName,
   type SearchResults,
@@ -50,6 +54,7 @@ import {
   fetchChannelMessages,
   fetchHealth,
   fetchMe,
+  fetchPublicGuildDirectory,
   issueVoiceToken,
   kickGuildMember,
   logoutAuthSession,
@@ -276,9 +281,14 @@ export function AppShellPage() {
   const [deletingMessageId, setDeletingMessageId] = createSignal<MessageId | null>(null);
 
   const [createGuildName, setCreateGuildName] = createSignal("Security Ops");
+  const [createGuildVisibility, setCreateGuildVisibility] = createSignal<GuildVisibility>("private");
   const [createChannelName, setCreateChannelName] = createSignal("incident-room");
   const [isCreatingWorkspace, setCreatingWorkspace] = createSignal(false);
   const [workspaceError, setWorkspaceError] = createSignal("");
+  const [publicGuildSearchQuery, setPublicGuildSearchQuery] = createSignal("");
+  const [isSearchingPublicGuilds, setSearchingPublicGuilds] = createSignal(false);
+  const [publicGuildSearchError, setPublicGuildSearchError] = createSignal("");
+  const [publicGuildDirectory, setPublicGuildDirectory] = createSignal<GuildRecord[]>([]);
 
   const [newChannelName, setNewChannelName] = createSignal("backend");
   const [isCreatingChannel, setCreatingChannel] = createSignal(false);
@@ -358,6 +368,31 @@ export function AppShellPage() {
     return attachmentByChannel()[key] ?? [];
   });
 
+  const loadPublicGuildDirectory = async (query?: string) => {
+    const session = auth.session();
+    if (!session) {
+      setPublicGuildDirectory([]);
+      return;
+    }
+    if (isSearchingPublicGuilds()) {
+      return;
+    }
+    setSearchingPublicGuilds(true);
+    setPublicGuildSearchError("");
+    try {
+      const directory = await fetchPublicGuildDirectory(session, {
+        query,
+        limit: 20,
+      });
+      setPublicGuildDirectory(directory.guilds);
+    } catch (error) {
+      setPublicGuildSearchError(mapError(error, "Unable to load public workspace directory."));
+      setPublicGuildDirectory([]);
+    } finally {
+      setSearchingPublicGuilds(false);
+    }
+  };
+
   const [profile] = createResource(async () => {
     const session = auth.session();
     if (!session) {
@@ -429,6 +464,16 @@ export function AppShellPage() {
     onCleanup(() => {
       cancelled = true;
     });
+  });
+
+  createEffect(() => {
+    const session = auth.session();
+    if (!session) {
+      setPublicGuildDirectory([]);
+      setPublicGuildSearchError("");
+      return;
+    }
+    void untrack(() => loadPublicGuildDirectory());
   });
 
   createEffect(() => {
@@ -577,13 +622,17 @@ export function AppShellPage() {
     setWorkspaceError("");
     setCreatingWorkspace(true);
     try {
-      const guild = await createGuild(session, { name: guildNameFromInput(createGuildName()) });
+      const guild = await createGuild(session, {
+        name: guildNameFromInput(createGuildName()),
+        visibility: guildVisibilityFromInput(createGuildVisibility()),
+      });
       const channel = await createChannel(session, guild.guildId, {
         name: channelNameFromInput(createChannelName()),
       });
       const createdWorkspace: WorkspaceRecord = {
         guildId: guild.guildId,
         guildName: guild.name,
+        visibility: guild.visibility,
         channels: [channel],
       };
       setWorkspaces((existing) => [...existing, createdWorkspace]);
@@ -784,6 +833,11 @@ export function AppShellPage() {
     } finally {
       setSearching(false);
     }
+  };
+
+  const runPublicGuildSearch = async (event: SubmitEvent) => {
+    event.preventDefault();
+    await loadPublicGuildDirectory(publicGuildSearchQuery());
   };
 
   const rebuildSearch = async () => {
@@ -1131,7 +1185,7 @@ export function AppShellPage() {
         <For each={workspaces()}>
           {(workspace) => (
             <button
-              title={workspace.guildName}
+              title={`${workspace.guildName} (${workspace.visibility})`}
               classList={{ active: activeGuildId() === workspace.guildId }}
               onClick={() => {
                 setActiveGuildId(workspace.guildId);
@@ -1147,7 +1201,9 @@ export function AppShellPage() {
       <aside class="channel-rail">
         <header>
           <h2>{activeWorkspace()?.guildName ?? "No Workspace"}</h2>
-          <span>Hardened workspace</span>
+          <span>
+            {activeWorkspace() ? `${activeWorkspace()!.visibility} workspace` : "Hardened workspace"}
+          </span>
         </header>
 
         <Switch>
@@ -1193,6 +1249,46 @@ export function AppShellPage() {
             </nav>
           </Match>
         </Switch>
+
+        <section class="public-directory" aria-label="public-workspace-directory">
+          <p class="group-label">PUBLIC WORKSPACES</p>
+          <form class="inline-form" onSubmit={runPublicGuildSearch}>
+            <label>
+              Search
+              <input
+                value={publicGuildSearchQuery()}
+                onInput={(event) => setPublicGuildSearchQuery(event.currentTarget.value)}
+                maxlength="64"
+                placeholder="workspace name"
+              />
+            </label>
+            <button type="submit" disabled={isSearchingPublicGuilds()}>
+              {isSearchingPublicGuilds() ? "Searching..." : "Find public"}
+            </button>
+          </form>
+          <Show when={publicGuildSearchError()}>
+            <p class="status error">{publicGuildSearchError()}</p>
+          </Show>
+          <ul>
+            <For each={publicGuildDirectory()}>
+              {(guild) => (
+                <li>
+                  <span class="presence online" />
+                  <div class="stacked-meta">
+                    <span>{guild.name}</span>
+                    <span class="muted mono">{guild.visibility}</span>
+                  </div>
+                </li>
+              )}
+            </For>
+            <Show when={!isSearchingPublicGuilds() && publicGuildDirectory().length === 0}>
+              <li>
+                <span class="presence idle" />
+                no-public-workspaces
+              </li>
+            </Show>
+          </ul>
+        </section>
       </aside>
 
       <main class="chat-panel">
@@ -1342,6 +1438,18 @@ export function AppShellPage() {
                   onInput={(event) => setCreateGuildName(event.currentTarget.value)}
                   maxlength="64"
                 />
+              </label>
+              <label>
+                Visibility
+                <select
+                  value={createGuildVisibility()}
+                  onChange={(event) =>
+                    setCreateGuildVisibility(guildVisibilityFromInput(event.currentTarget.value))
+                  }
+                >
+                  <option value="private">private</option>
+                  <option value="public">public</option>
+                </select>
               </label>
               <label>
                 First channel

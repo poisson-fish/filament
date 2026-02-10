@@ -2,11 +2,13 @@ import {
   attachmentFilenameFromInput,
   attachmentFromResponse,
   channelIdFromInput,
+  guildVisibilityFromInput,
   guildIdFromInput,
   markdownTokensFromResponse,
   messageContentFromInput,
   messageFromResponse,
   permissionFromInput,
+  publicGuildDirectoryFromResponse,
   reactionEmojiFromInput,
   reactionFromResponse,
   roleFromInput,
@@ -57,10 +59,21 @@ describe("chat domain invariants", () => {
     const workspace = workspaceFromStorage({
       guildId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       guildName: "Security",
+      visibility: "public",
       channels: [{ channelId: "01ARZ3NDEKTSV4RRFFQ69G5FAV", name: "incident-room" }],
     });
 
     expect(workspace.channels[0]?.name).toBe("incident-room");
+    expect(workspace.visibility).toBe("public");
+  });
+
+  it("defaults cached workspace visibility to private when omitted", () => {
+    const workspace = workspaceFromStorage({
+      guildId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      guildName: "Security",
+      channels: [{ channelId: "01ARZ3NDEKTSV4RRFFQ69G5FAV", name: "incident-room" }],
+    });
+    expect(workspace.visibility).toBe("private");
   });
 
   it("validates reactions", () => {
@@ -117,5 +130,22 @@ describe("chat domain invariants", () => {
     expect(roleFromInput("member")).toBe("member");
     expect(permissionFromInput("create_message")).toBe("create_message");
     expect(() => permissionFromInput("bad_perm")).toThrow();
+  });
+
+  it("validates guild visibility and public directory payloads", () => {
+    expect(guildVisibilityFromInput("private")).toBe("private");
+    expect(guildVisibilityFromInput("public")).toBe("public");
+    expect(() => guildVisibilityFromInput("internal")).toThrow();
+
+    const directory = publicGuildDirectoryFromResponse({
+      guilds: [
+        {
+          guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          name: "Lobby",
+          visibility: "public",
+        },
+      ],
+    });
+    expect(directory.guilds[0]?.name).toBe("Lobby");
   });
 });
