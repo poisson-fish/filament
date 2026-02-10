@@ -87,6 +87,9 @@ describe("app shell guild creation limits", () => {
       if (url.includes("/auth/me")) {
         return jsonResponse({ user_id: USER_ID, username: USERNAME });
       }
+      if (method === "GET" && url.endsWith("/guilds")) {
+        return jsonResponse({ guilds: [] });
+      }
       if (method === "POST" && url.includes("/guilds")) {
         return jsonResponse({ error: "guild_creation_limit_reached" }, 403);
       }
@@ -134,6 +137,16 @@ describe("app shell guild creation limits", () => {
 
       if (url.includes("/auth/me")) {
         return jsonResponse({ user_id: USER_ID, username: USERNAME });
+      }
+      if (method === "GET" && url.endsWith("/guilds")) {
+        return jsonResponse({
+          guilds: [{ guild_id: EXISTING_GUILD_ID, name: "Existing Guild", visibility: "private" }],
+        });
+      }
+      if (method === "GET" && url.endsWith(`/guilds/${EXISTING_GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [{ channel_id: EXISTING_CHANNEL_ID, name: "general" }],
+        });
       }
       if (
         method === "GET" &&

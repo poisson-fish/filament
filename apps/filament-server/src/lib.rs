@@ -414,6 +414,7 @@ struct GuildRecord {
 
 #[derive(Debug, Clone)]
 struct ChannelRecord {
+    name: String,
     messages: Vec<MessageRecord>,
     role_overrides: HashMap<Role, ChannelPermissionOverwrite>,
 }
@@ -931,9 +932,12 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             "/friends/requests/{request_id}",
             delete(delete_friend_request),
         )
-        .route("/guilds", post(create_guild))
+        .route("/guilds", post(create_guild).get(list_guilds))
         .route("/guilds/public", get(list_public_guilds))
-        .route("/guilds/{guild_id}/channels", post(create_channel))
+        .route(
+            "/guilds/{guild_id}/channels",
+            post(create_channel).get(list_guild_channels),
+        )
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/permissions/self",
             get(get_channel_permissions),
@@ -1166,6 +1170,11 @@ struct GuildResponse {
     visibility: GuildVisibility,
 }
 
+#[derive(Debug, Serialize)]
+struct GuildListResponse {
+    guilds: Vec<GuildResponse>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateChannelRequest {
@@ -1176,6 +1185,11 @@ struct CreateChannelRequest {
 struct ChannelResponse {
     channel_id: String,
     name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ChannelListResponse {
+    channels: Vec<ChannelResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2585,6 +2599,69 @@ async fn create_guild(
     }))
 }
 
+const MAX_GUILD_LIST_LIMIT: usize = 200;
+
+async fn list_guilds(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<GuildListResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+
+    if let Some(pool) = &state.db_pool {
+        let rows = sqlx::query(
+            "SELECT g.guild_id, g.name, g.visibility
+             FROM guild_members gm
+             JOIN guilds g ON g.guild_id = gm.guild_id
+             LEFT JOIN guild_bans gb ON gb.guild_id = gm.guild_id AND gb.user_id = gm.user_id
+             WHERE gm.user_id = $1
+               AND gb.user_id IS NULL
+             ORDER BY g.created_at_unix DESC
+             LIMIT $2",
+        )
+        .bind(auth.user_id.to_string())
+        .bind(i64::try_from(MAX_GUILD_LIST_LIMIT).map_err(|_| AuthFailure::Internal)?)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        let mut guilds = Vec::with_capacity(rows.len());
+        for row in rows {
+            let visibility_raw: i16 = row
+                .try_get("visibility")
+                .map_err(|_| AuthFailure::Internal)?;
+            let visibility = visibility_from_i16(visibility_raw).ok_or(AuthFailure::Internal)?;
+            guilds.push(GuildResponse {
+                guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+                name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
+                visibility,
+            });
+        }
+        return Ok(Json(GuildListResponse { guilds }));
+    }
+
+    let guilds = state.guilds.read().await;
+    let mut response = guilds
+        .iter()
+        .filter_map(|(guild_id, guild)| {
+            if guild.banned_members.contains(&auth.user_id) {
+                return None;
+            }
+            if !guild.members.contains_key(&auth.user_id) {
+                return None;
+            }
+            Some(GuildResponse {
+                guild_id: guild_id.clone(),
+                name: guild.name.clone(),
+                visibility: guild.visibility,
+            })
+        })
+        .collect::<Vec<_>>();
+    response.sort_by(|left, right| right.guild_id.cmp(&left.guild_id));
+    response.truncate(MAX_GUILD_LIST_LIMIT);
+    Ok(Json(GuildListResponse { guilds: response }))
+}
+
 const DEFAULT_PUBLIC_GUILD_LIST_LIMIT: usize = 20;
 const MAX_PUBLIC_GUILD_LIST_LIMIT: usize = 50;
 const MAX_PUBLIC_GUILD_QUERY_CHARS: usize = 64;
@@ -2677,6 +2754,105 @@ async fn list_public_guilds(
     Ok(Json(PublicGuildListResponse { guilds: results }))
 }
 
+const MAX_CHANNEL_LIST_LIMIT: usize = 500;
+
+async fn list_guild_channels(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+) -> Result<Json<ChannelListResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+
+    if let Some(pool) = &state.db_pool {
+        let rows = sqlx::query(
+            "SELECT c.channel_id, c.name, gm.role, co.allow_mask, co.deny_mask
+             FROM guild_members gm
+             JOIN channels c ON c.guild_id = gm.guild_id
+             LEFT JOIN channel_role_overrides co
+               ON co.guild_id = c.guild_id
+              AND co.channel_id = c.channel_id
+              AND co.role = gm.role
+             LEFT JOIN guild_bans gb ON gb.guild_id = gm.guild_id AND gb.user_id = gm.user_id
+             WHERE gm.guild_id = $1
+               AND gm.user_id = $2
+               AND gb.user_id IS NULL
+             ORDER BY c.created_at_unix ASC
+             LIMIT $3",
+        )
+        .bind(&path.guild_id)
+        .bind(auth.user_id.to_string())
+        .bind(i64::try_from(MAX_CHANNEL_LIST_LIMIT).map_err(|_| AuthFailure::Internal)?)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        if rows.is_empty() {
+            user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+            return Ok(Json(ChannelListResponse {
+                channels: Vec::new(),
+            }));
+        }
+
+        let mut channels = Vec::new();
+        for row in rows {
+            let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
+            let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
+            let allow_mask = row.try_get::<Option<i64>, _>("allow_mask").ok().flatten();
+            let deny_mask = row.try_get::<Option<i64>, _>("deny_mask").ok().flatten();
+            let overwrite = if let (Some(allow), Some(deny)) = (allow_mask, deny_mask) {
+                Some(ChannelPermissionOverwrite {
+                    allow: permission_set_from_i64(allow)?,
+                    deny: permission_set_from_i64(deny)?,
+                })
+            } else {
+                None
+            };
+            let permissions = apply_channel_overwrite(base_permissions(role), overwrite);
+            if !permissions.contains(Permission::CreateMessage) {
+                continue;
+            }
+            channels.push(ChannelResponse {
+                channel_id: row
+                    .try_get("channel_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
+            });
+        }
+        return Ok(Json(ChannelListResponse { channels }));
+    }
+
+    let guilds = state.guilds.read().await;
+    let guild = guilds.get(&path.guild_id).ok_or(AuthFailure::NotFound)?;
+    let role = guild
+        .members
+        .get(&auth.user_id)
+        .copied()
+        .ok_or(AuthFailure::Forbidden)?;
+    if guild.banned_members.contains(&auth.user_id) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let mut channels = guild
+        .channels
+        .iter()
+        .filter_map(|(channel_id, channel)| {
+            let overwrite = channel.role_overrides.get(&role).copied();
+            let permissions = apply_channel_overwrite(base_permissions(role), overwrite);
+            if !permissions.contains(Permission::CreateMessage) {
+                return None;
+            }
+            Some(ChannelResponse {
+                channel_id: channel_id.clone(),
+                name: channel.name.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    channels.sort_by(|left, right| left.channel_id.cmp(&right.channel_id));
+    channels.truncate(MAX_CHANNEL_LIST_LIMIT);
+    Ok(Json(ChannelListResponse { channels }))
+}
+
 async fn create_channel(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2745,6 +2921,7 @@ async fn create_channel(
     guild.channels.insert(
         channel_id.clone(),
         ChannelRecord {
+            name: name.as_str().to_owned(),
             messages: Vec::new(),
             role_overrides: HashMap::new(),
         },
@@ -6582,6 +6759,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn guild_and_channel_list_endpoints_are_member_scoped() {
+        let app = build_router(&AppConfig::default()).unwrap();
+        let owner_auth = register_and_login_as(&app, "owner_list", "203.0.113.90").await;
+        let member_auth = register_and_login_as(&app, "member_list", "203.0.113.91").await;
+        let stranger_auth = register_and_login_as(&app, "stranger_list", "203.0.113.92").await;
+
+        let member_user_id = user_id_from_me(&app, &member_auth, "203.0.113.91").await;
+
+        let guild_a = create_guild_for_test(&app, &owner_auth, "203.0.113.90").await;
+        let guild_b = create_guild_for_test(&app, &owner_auth, "203.0.113.90").await;
+        let channel_a = create_channel_for_test(&app, &owner_auth, "203.0.113.90", &guild_a).await;
+        let _channel_b = create_channel_for_test(&app, &owner_auth, "203.0.113.90", &guild_b).await;
+
+        add_member_for_test(&app, &owner_auth, "203.0.113.90", &guild_a, &member_user_id).await;
+
+        let (guild_list_status, guild_list_payload) = authed_json_request(
+            &app,
+            "GET",
+            String::from("/guilds"),
+            &member_auth.access_token,
+            "203.0.113.91",
+            None,
+        )
+        .await;
+        assert_eq!(guild_list_status, StatusCode::OK);
+        let guilds = guild_list_payload.unwrap()["guilds"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(guilds.len(), 1);
+        assert_eq!(guilds[0]["guild_id"].as_str().unwrap(), guild_a);
+
+        let (channel_list_status, channel_list_payload) = authed_json_request(
+            &app,
+            "GET",
+            format!("/guilds/{guild_a}/channels"),
+            &member_auth.access_token,
+            "203.0.113.91",
+            None,
+        )
+        .await;
+        assert_eq!(channel_list_status, StatusCode::OK);
+        let channels = channel_list_payload.unwrap()["channels"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0]["channel_id"].as_str().unwrap(), channel_a);
+
+        deny_member_create_message_for_test(
+            &app,
+            &owner_auth,
+            "203.0.113.90",
+            &guild_a,
+            &channel_a,
+        )
+        .await;
+
+        let (restricted_status, restricted_payload) = authed_json_request(
+            &app,
+            "GET",
+            format!("/guilds/{guild_a}/channels"),
+            &member_auth.access_token,
+            "203.0.113.91",
+            None,
+        )
+        .await;
+        assert_eq!(restricted_status, StatusCode::OK);
+        assert_eq!(
+            restricted_payload.unwrap()["channels"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let (stranger_status, _) = authed_json_request(
+            &app,
+            "GET",
+            format!("/guilds/{guild_a}/channels"),
+            &stranger_auth.access_token,
+            "203.0.113.92",
+            None,
+        )
+        .await;
+        assert_eq!(stranger_status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
     async fn public_guild_discovery_lists_only_public_guilds() {
         let app = build_router(&AppConfig::default()).unwrap();
         let auth = register_and_login(&app, "203.0.113.71").await;
@@ -6863,6 +7129,7 @@ mod tests {
         guild.channels.insert(
             channel_id.clone(),
             super::ChannelRecord {
+                name: String::from("gateway-room"),
                 messages: Vec::new(),
                 role_overrides: HashMap::new(),
             },

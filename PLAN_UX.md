@@ -22,6 +22,7 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - 2026-02-10: Added hCaptcha-backed signup hardening across `POST /auth/register` (server-side verification, fail-closed behavior) and web registration UX (token capture + submission), with server/frontend regression tests and deploy/docs updates.
 - 2026-02-10: Added friendship system support across server + web client (`/friends`, `/friends/requests`, accept/remove flows), including strict ID validation, permission-safe request visibility, and regression coverage.
 - 2026-02-10: Refactored ops console into layered open/close overlay panels for search, attachments, voice, moderation, and utility actions to replace dense always-expanded admin rails; updated permission fixture tests for panel launch/back flows.
+- 2026-02-10: Added authenticated workspace/channel list discovery endpoints (`GET /guilds`, `GET /guilds/{guild_id}/channels`) and replaced web-shell local cache bootstrap probing with server-driven discovery + persistence, with frontend and server regression coverage.
 
 ## Completed
 - [x] Login flow reliably navigates to app shell.
@@ -55,4 +56,4 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - [ ] None.
 
 ## Next
-- [ ] If backend adds list endpoints for guilds/channels, replace local workspace cache bootstrap with server-driven discovery.
+- [x] If backend adds list endpoints for guilds/channels, replace local workspace cache bootstrap with server-driven discovery.

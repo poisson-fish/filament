@@ -118,6 +118,16 @@ describe("app shell friendship flows", () => {
       if (method === "GET" && url.includes("/auth/me")) {
         return jsonResponse({ user_id: ALICE_USER_ID, username: "alice" });
       }
+      if (method === "GET" && url.endsWith("/guilds")) {
+        return jsonResponse({
+          guilds: [{ guild_id: GUILD_ID, name: "Security Ops", visibility: "private" }],
+        });
+      }
+      if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [{ channel_id: CHANNEL_ID, name: "incident-room" }],
+        });
+      }
       if (
         method === "GET" &&
         url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)

@@ -97,6 +97,16 @@ describe("app shell public discovery", () => {
       if (url.includes("/auth/me")) {
         return jsonResponse({ user_id: USER_ID, username: USERNAME });
       }
+      if (url.endsWith("/guilds")) {
+        return jsonResponse({
+          guilds: [{ guild_id: GUILD_ID, name: "Member Guild", visibility: "private" }],
+        });
+      }
+      if (url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [{ channel_id: CHANNEL_ID, name: "incident-room" }],
+        });
+      }
       if (
         url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`) ||
         url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages?limit=50`)

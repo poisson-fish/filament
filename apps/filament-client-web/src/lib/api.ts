@@ -12,8 +12,10 @@ import {
   type AttachmentId,
   type AttachmentRecord,
   type ChannelId,
+  type ChannelRecord,
   type ChannelPermissionSnapshot,
   type ChannelName,
+  type GuildRecord,
   type GuildId,
   type GuildName,
   type GuildVisibility,
@@ -467,6 +469,18 @@ export async function createGuild(
   return guildFromResponse(dto);
 }
 
+export async function fetchGuilds(session: AuthSession): Promise<GuildRecord[]> {
+  const dto = await requestJson({
+    method: "GET",
+    path: "/guilds",
+    accessToken: session.accessToken,
+  });
+  if (!dto || typeof dto !== "object" || !Array.isArray((dto as { guilds?: unknown }).guilds)) {
+    throw new ApiError(500, "invalid_guild_list_shape", "Unexpected guild list response.");
+  }
+  return (dto as { guilds: unknown[] }).guilds.map((entry) => guildFromResponse(entry));
+}
+
 export async function fetchPublicGuildDirectory(
   session: AuthSession,
   input?: { query?: string; limit?: number },
@@ -486,6 +500,21 @@ export async function fetchPublicGuildDirectory(
     accessToken: session.accessToken,
   });
   return publicGuildDirectoryFromResponse(dto);
+}
+
+export async function fetchGuildChannels(
+  session: AuthSession,
+  guildId: GuildId,
+): Promise<ChannelRecord[]> {
+  const dto = await requestJson({
+    method: "GET",
+    path: `/guilds/${guildId}/channels`,
+    accessToken: session.accessToken,
+  });
+  if (!dto || typeof dto !== "object" || !Array.isArray((dto as { channels?: unknown }).channels)) {
+    throw new ApiError(500, "invalid_channel_list_shape", "Unexpected channel list response.");
+  }
+  return (dto as { channels: unknown[] }).channels.map((entry) => channelFromResponse(entry));
 }
 
 export async function createChannel(

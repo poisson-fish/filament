@@ -13,7 +13,6 @@ const USERNAME = "alice";
 const MEMBER_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const PRIVATE_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const MEMBER_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
-const PRIVATE_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -71,14 +70,9 @@ function seedSessionAndWorkspaceCache(): void {
     WORKSPACE_CACHE_KEY,
     JSON.stringify([
       {
-        guildId: MEMBER_GUILD_ID,
-        guildName: "Member Guild",
-        channels: [{ channelId: MEMBER_CHANNEL_ID, name: "incident-room" }],
-      },
-      {
-        guildId: PRIVATE_GUILD_ID,
-        guildName: "Private Guild",
-        channels: [{ channelId: PRIVATE_CHANNEL_ID, name: "hidden-room" }],
+        guildId: "01ARZ3NDEKTSV4RRFFQ69G5FAA",
+        guildName: "Stale Guild",
+        channels: [{ channelId: "01ARZ3NDEKTSV4RRFFQ69G5FAB", name: "stale-room" }],
       },
     ]),
   );
@@ -99,7 +93,7 @@ describe("app shell workspace visibility", () => {
     vi.unstubAllGlobals();
   });
 
-  it("filters cached workspaces to only guilds the authenticated user can access", async () => {
+  it("uses server-driven workspace discovery and persists only accessible workspaces", async () => {
     seedSessionAndWorkspaceCache();
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -110,6 +104,33 @@ describe("app shell workspace visibility", () => {
           user_id: USER_ID,
           username: USERNAME,
         });
+      }
+
+      if (url.endsWith("/guilds")) {
+        return jsonResponse({
+          guilds: [
+            {
+              guild_id: MEMBER_GUILD_ID,
+              name: "Member Guild",
+              visibility: "private",
+            },
+            {
+              guild_id: PRIVATE_GUILD_ID,
+              name: "Private Guild",
+              visibility: "private",
+            },
+          ],
+        });
+      }
+
+      if (url.endsWith(`/guilds/${MEMBER_GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [{ channel_id: MEMBER_CHANNEL_ID, name: "incident-room" }],
+        });
+      }
+
+      if (url.endsWith(`/guilds/${PRIVATE_GUILD_ID}/channels`)) {
+        return jsonResponse({ error: "forbidden" }, 403);
       }
 
       if (
@@ -125,9 +146,6 @@ describe("app shell workspace visibility", () => {
         return jsonResponse({ messages: [], next_before: null });
       }
 
-      if (url.includes(`/guilds/${PRIVATE_GUILD_ID}/channels/${PRIVATE_CHANNEL_ID}/permissions/self`)) {
-        return jsonResponse({ error: "forbidden" }, 403);
-      }
       if (url.includes("/guilds/public")) {
         return jsonResponse({ guilds: [] });
       }

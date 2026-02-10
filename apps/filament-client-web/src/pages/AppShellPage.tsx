@@ -10,7 +10,6 @@ import {
   onCleanup,
   untrack,
 } from "solid-js";
-import type { AuthSession } from "../domain/auth";
 import { DomainValidationError } from "../domain/auth";
 import {
   attachmentFilenameFromInput,
@@ -59,6 +58,8 @@ import {
   echoMessage,
   fetchChannelMessages,
   fetchChannelPermissionSnapshot,
+  fetchGuildChannels,
+  fetchGuilds,
   fetchFriendRequests,
   fetchFriends,
   fetchHealth,
@@ -79,7 +80,7 @@ import {
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { connectGateway } from "../lib/gateway";
-import { clearWorkspaceCache, loadWorkspaceCache, saveWorkspaceCache } from "../lib/workspace-cache";
+import { clearWorkspaceCache, saveWorkspaceCache } from "../lib/workspace-cache";
 import {
   clearUsernameLookupCache,
   primeUsernameCache,
@@ -248,32 +249,6 @@ function parsePermissionCsv(value: string): PermissionName[] {
     unique.add(permissionFromInput(token));
   }
   return [...unique];
-}
-
-const MAX_CACHED_WORKSPACES = 64;
-const MAX_CHANNEL_PROBES_PER_WORKSPACE = 16;
-
-async function canAccessChannel(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-): Promise<boolean> {
-  try {
-    const snapshot = await fetchChannelPermissionSnapshot(session, guildId, channelId);
-    return snapshot.permissions.includes("create_message");
-  } catch (error) {
-    if (error instanceof ApiError) {
-      if (
-        error.code === "forbidden" ||
-        error.code === "not_found" ||
-        error.code === "invalid_credentials" ||
-        error.code === "network_error"
-      ) {
-        return false;
-      }
-    }
-    return false;
-  }
 }
 
 function canDiscoverWorkspaceOperation(
@@ -491,52 +466,59 @@ export function AppShellPage() {
 
     let cancelled = false;
     setWorkspaceBootstrapDone(false);
-    const cached = loadWorkspaceCache().slice(0, MAX_CACHED_WORKSPACES);
 
     const bootstrap = async () => {
-      const validated = await Promise.all(
-        cached.map(async (workspace) => {
-          const sampledChannels = workspace.channels.slice(0, MAX_CHANNEL_PROBES_PER_WORKSPACE);
-          if (sampledChannels.length === 0) {
-            return null;
-          }
-
-          const channelAccess = await Promise.all(
-            sampledChannels.map((channel) =>
-              canAccessChannel(session, workspace.guildId, channel.channelId),
-            ),
-          );
-          const channels = sampledChannels.filter((_, index) => channelAccess[index]);
-          if (channels.length === 0) {
-            return null;
-          }
-
-          return {
-            ...workspace,
-            channels,
-          };
-        }),
-      );
-
-      if (cancelled) {
-        return;
+      try {
+        const guilds = await fetchGuilds(session);
+        const workspacesWithChannels = await Promise.all(
+          guilds.map(async (guild) => {
+            try {
+              return {
+                guildId: guild.guildId,
+                guildName: guild.name,
+                visibility: guild.visibility,
+                channels: await fetchGuildChannels(session, guild.guildId),
+              };
+            } catch (error) {
+              if (error instanceof ApiError && (error.code === "forbidden" || error.code === "not_found")) {
+                return null;
+              }
+              throw error;
+            }
+          }),
+        );
+        if (cancelled) {
+          return;
+        }
+        const filtered = workspacesWithChannels.filter(
+          (workspace): workspace is WorkspaceRecord =>
+            workspace !== null && workspace.channels.length > 0,
+        );
+        setWorkspaces(filtered);
+        const selectedGuild = activeGuildId();
+        const selectedWorkspace =
+          (selectedGuild && filtered.find((workspace) => workspace.guildId === selectedGuild)) ??
+          filtered[0] ??
+          null;
+        setActiveGuildId(selectedWorkspace?.guildId ?? null);
+        const selectedChannel = activeChannelId();
+        const nextChannel =
+          (selectedChannel &&
+            selectedWorkspace?.channels.find((channel) => channel.channelId === selectedChannel)) ??
+          selectedWorkspace?.channels[0] ??
+          null;
+        setActiveChannelId(nextChannel?.channelId ?? null);
+      } catch {
+        if (!cancelled) {
+          setWorkspaces([]);
+          setActiveGuildId(null);
+          setActiveChannelId(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setWorkspaceBootstrapDone(true);
+        }
       }
-      const filtered = validated.filter((entry): entry is WorkspaceRecord => entry !== null);
-      setWorkspaces(filtered);
-      const selectedGuild = activeGuildId();
-      const selectedWorkspace =
-        (selectedGuild && filtered.find((workspace) => workspace.guildId === selectedGuild)) ??
-        filtered[0] ??
-        null;
-      setActiveGuildId(selectedWorkspace?.guildId ?? null);
-      const selectedChannel = activeChannelId();
-      const nextChannel =
-        (selectedChannel &&
-          selectedWorkspace?.channels.find((channel) => channel.channelId === selectedChannel)) ??
-        selectedWorkspace?.channels[0] ??
-        null;
-      setActiveChannelId(nextChannel?.channelId ?? null);
-      setWorkspaceBootstrapDone(true);
     };
 
     void bootstrap();
