@@ -1,0 +1,294 @@
+# Filament Server API
+
+This document describes the currently implemented API surface in `apps/filament-server`.
+
+## Scope and Version
+- Transport:
+  - REST over HTTP
+  - Gateway over WebSocket (`/gateway/ws`)
+- Gateway protocol version: `1`
+- This reflects the implementation in `apps/filament-server/src/lib.rs` and related tests.
+
+## Base Conventions
+- IDs are ULID strings.
+- JSON request bodies for most endpoints use strict decoding (`deny_unknown_fields`), so unknown fields are rejected.
+- Authenticated routes require `Authorization: Bearer <access_token>` unless stated otherwise.
+- Timestamps are Unix seconds (`*_unix`).
+
+## Authentication Model
+- Access token:
+  - PASETO local token
+  - TTL: `900` seconds (15 minutes)
+- Refresh token:
+  - Opaque format: `<session_id>.<secret>`
+  - Rotation on every refresh
+  - Replay detection revokes the session
+- Password policy:
+  - Length `12..=128`
+- Username policy:
+  - Length `3..=32`
+  - Allowed chars: ASCII alphanumeric, `_`, `.`
+
+## Error Model
+Application errors return JSON:
+
+```json
+{ "error": "<code>" }
+```
+
+Common codes:
+- `invalid_request` -> `400`
+- `invalid_credentials` -> `401`
+- `forbidden` -> `403`
+- `not_found` -> `404`
+- `rate_limited` -> `429`
+- `payload_too_large` -> `413`
+- `quota_exceeded` -> `409`
+- `internal_error` -> `500`
+
+Global middleware can also return non-handler errors such as `408 Request Timeout` and baseline `429` rate limit responses.
+
+## Security and Limits (defaults)
+- Global JSON body limit: `1 MiB`
+- Request timeout: `10s`
+- Baseline IP rate limit: `60 req/min`
+- Auth route rate limit (`register/login/refresh`): `20 req/min` per route+IP
+- Gateway max event size: `64 KiB`
+- Gateway ingress limit: `20 events / 10s / connection`
+- Gateway outbound queue: `256` events/connection
+- Message content length: `1..=2000`
+- History pagination max `limit`: `100`
+- Search defaults:
+  - query max chars: `256`
+  - default limit: `20`
+  - max limit: `50`
+  - max terms: `20`
+  - max wildcards (`*` + `?`): `4`
+  - max fuzzy marker (`~`): `2`
+  - `:` disallowed in query
+- Attachment upload max: `25 MiB`
+- Per-user attachment quota: `250 MiB`
+- Attachment filename: non-empty, max `128`, no `/`, `\\`, or `NUL`
+- Reaction emoji path segment: non-empty, max `32` chars, no whitespace
+- LiveKit token TTL: max/default `300s`
+
+## REST API
+
+### Public Utility
+- `GET /health`
+  - Response `200`: `{ "status": "ok" }`
+- `GET /metrics`
+  - Response `200`: Prometheus text format
+- `POST /echo`
+  - Request: `{ "message": "..." }`
+  - Empty message -> `400`
+  - Response `200`: `{ "message": "..." }`
+- `GET /slow`
+  - Test route for timeout behavior
+
+### Auth
+- `POST /auth/register`
+  - Request: `{ "username": "...", "password": "..." }`
+  - Always returns accepted shape for valid input (existing/new user not disclosed)
+  - Response `200`: `{ "accepted": true }`
+- `POST /auth/login`
+  - Request: `{ "username": "...", "password": "..." }`
+  - On success `200`:
+    - `{ "access_token": "...", "refresh_token": "...", "expires_in_secs": 900 }`
+  - Invalid credentials/locked account -> `401 {"error":"invalid_credentials"}`
+- `POST /auth/refresh`
+  - Request: `{ "refresh_token": "..." }`
+  - Success `200`: same shape as login
+  - Replay/invalid/revoked/expired -> `401`
+- `POST /auth/logout`
+  - Request: `{ "refresh_token": "..." }`
+  - Success `204 No Content`
+- `GET /auth/me`
+  - Auth required
+  - Response `200`: `{ "user_id": "...", "username": "..." }`
+
+### Guilds and Channels
+- `POST /guilds`
+  - Auth required
+  - Request: `{ "name": "..." }` (1..64 visible chars/spaces)
+  - Response `200`: `{ "guild_id": "...", "name": "..." }`
+- `POST /guilds/{guild_id}/channels`
+  - Auth required; role must be `owner` or `moderator`
+  - Request: `{ "name": "..." }` (1..64 visible chars/spaces)
+  - Response `200`: `{ "channel_id": "...", "name": "..." }`
+
+### Messages
+- `POST /guilds/{guild_id}/channels/{channel_id}/messages`
+  - Auth required, `create_message` permission
+  - Request: `{ "content": "..." }`
+  - Response `200`:
+    - `{ "message_id", "guild_id", "channel_id", "author_id", "content", "markdown_tokens", "created_at_unix" }`
+- `GET /guilds/{guild_id}/channels/{channel_id}/messages?limit=<n>&before=<message_id>`
+  - Auth required, `create_message` permission
+  - `limit` default `20`, max `100`
+  - Response `200`:
+    - `{ "messages": [MessageResponse], "next_before": "..." | null }`
+- `PATCH /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}`
+  - Auth required
+  - Author may edit own message; moderators/owners can edit via `delete_message` permission
+  - Request: `{ "content": "..." }`
+  - Response `200`: `MessageResponse`
+- `DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}`
+  - Auth required
+  - Author may delete own message; moderators/owners can delete via `delete_message` permission
+  - Response `204`
+
+#### `MessageResponse` and markdown tokens
+`markdown_tokens` is a safe token stream (no raw HTML rendering path). Token variants include:
+- `paragraph_start`, `paragraph_end`
+- `emphasis_start`, `emphasis_end`
+- `strong_start`, `strong_end`
+- `list_start { ordered }`, `list_end`
+- `list_item_start`, `list_item_end`
+- `link_start { href }`, `link_end` (only `http`, `https`, `mailto` links survive sanitization)
+- `text { text }`
+- `code { code }`
+- `soft_break`, `hard_break`
+
+### Reactions
+- `POST /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}`
+- `DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}`
+  - Auth required, channel write permission
+  - Response `200`: `{ "emoji": "...", "count": <number> }`
+
+### Attachments
+- `POST /guilds/{guild_id}/channels/{channel_id}/attachments?filename=<name>`
+  - Auth required, channel write permission
+  - Raw binary body upload (not multipart)
+  - MIME is sniffed from bytes (`infer`); if `Content-Type` is provided it must match sniffed type
+  - Response `200`:
+    - `{ "attachment_id", "guild_id", "channel_id", "owner_id", "filename", "mime_type", "size_bytes", "sha256_hex" }`
+- `GET /guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}`
+  - Auth required, channel write permission
+  - Response `200`: raw bytes with `Content-Type: <mime_type>`
+- `DELETE /guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}`
+  - Auth required
+  - Allowed for owner or users with `delete_message` permission
+  - Response `204`
+
+### Search
+- `GET /guilds/{guild_id}/search?q=<query>&limit=<n>&channel_id=<channel_id>`
+  - Auth required, member with `create_message` permission
+  - Response `200`:
+    - `{ "message_ids": ["..."], "messages": [MessageResponse] }`
+- `POST /guilds/{guild_id}/search/rebuild`
+  - Auth required; `owner`/`moderator`
+  - Rebuilds Tantivy index from source-of-truth messages
+  - Response `204`
+- `POST /guilds/{guild_id}/search/reconcile`
+  - Auth required; `owner`/`moderator`
+  - Reconciles missing/orphaned docs (bounded)
+  - Response `200`: `{ "upserted": <number>, "deleted": <number> }`
+
+### Membership and Moderation
+- `POST /guilds/{guild_id}/members/{user_id}`
+  - Add member as `member`
+  - Requires `manage_roles`
+  - Response `200`: `{ "accepted": true }`
+- `PATCH /guilds/{guild_id}/members/{user_id}`
+  - Request: `{ "role": "owner|moderator|member" }`
+  - Role transition rules are enforced (`can_assign_role`)
+  - Response `200`: `{ "accepted": true }`
+- `POST /guilds/{guild_id}/members/{user_id}/kick`
+  - Requires moderation privileges (`ban_member` + hierarchy)
+  - Response `200`: `{ "accepted": true }`
+- `POST /guilds/{guild_id}/members/{user_id}/ban`
+  - Requires moderation privileges (`ban_member` + hierarchy)
+  - Response `200`: `{ "accepted": true }`
+
+### Channel Role Overrides
+- `POST /guilds/{guild_id}/channels/{channel_id}/overrides/{role}`
+  - `role` path: `owner|moderator|member`
+  - Request:
+    - `{ "allow": [Permission...], "deny": [Permission...] }`
+  - `allow` and `deny` cannot overlap
+  - Requires `manage_channel_overrides`
+  - Response `200`: `{ "accepted": true }`
+
+Permission enum values:
+- `manage_roles`
+- `manage_channel_overrides`
+- `delete_message`
+- `ban_member`
+- `create_message`
+- `publish_video`
+- `publish_screen_share`
+- `subscribe_streams`
+
+### LiveKit Voice/Video Token
+- `POST /guilds/{guild_id}/channels/{channel_id}/voice/token`
+  - Auth required
+  - Request:
+    - `{ "can_publish"?: bool, "can_subscribe"?: bool, "publish_sources"?: ["microphone"|"camera"|"screen_share"] }`
+  - Effective grants are clamped by channel permissions and abuse controls:
+    - token request rate limit
+    - publish rate limit (camera/screen share)
+    - subscribe active-token cap per user/channel
+  - Response `200`:
+    - `{ "token", "livekit_url", "room", "identity", "can_publish", "can_subscribe", "publish_sources", "expires_in_secs" }`
+
+## Gateway WebSocket API
+
+### Connect
+- Endpoint: `GET /gateway/ws`
+- Auth methods:
+  - Query param: `?access_token=<token>`
+  - Or bearer header
+- On successful upgrade, server sends:
+  - `{"v":1,"t":"ready","d":{"user_id":"..."}}`
+
+### Envelope
+All client and server events use:
+
+```json
+{ "v": 1, "t": "event_type", "d": { ... } }
+```
+
+Rules:
+- `v` must be `1`
+- `t` charset: `a-z`, `0-9`, `_`, `.`; max len `64`
+- max event payload size `64 KiB`
+
+### Client -> Server events
+- `subscribe`
+  - `d`: `{ "guild_id": "...", "channel_id": "..." }`
+  - Subscribes connection to channel broadcast + presence scope
+- `message_create`
+  - `d`: `{ "guild_id": "...", "channel_id": "...", "content": "..." }`
+  - Creates and broadcasts message (same validation as REST)
+
+Unknown event types or invalid envelopes close the connection.
+
+### Server -> Client events
+- `ready`
+  - `d`: `{ "user_id": "..." }`
+- `subscribed`
+  - `d`: `{ "guild_id": "...", "channel_id": "..." }`
+- `message_create`
+  - `d`: message payload (same fields as `MessageResponse`)
+- `presence_sync`
+  - `d`: `{ "guild_id": "...", "user_ids": ["..."] }`
+- `presence_update`
+  - `d`: `{ "guild_id": "...", "user_id": "...", "status": "online|offline" }`
+
+### Gateway disconnect reasons (observed in implementation)
+The server tracks disconnect categories including:
+- `slow_consumer`
+- `event_too_large`
+- `ingress_rate_limited`
+- `invalid_envelope`
+- `unknown_event`
+- `forbidden_channel`
+- `message_rejected`
+- `socket_error`
+- `client_close`
+- `connection_closed`
+
+## Notes
+- Search index is derived/cache; source of truth is persisted message storage.
+- Voice token route name remains `/voice/token` but supports scoped publish/subscribe grants for voice/video/screen share.
