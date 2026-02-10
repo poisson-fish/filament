@@ -15,7 +15,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-${REPO_ROOT}/infra/docker-compose.yml}"
-COMPOSE_PROJECT="${COMPOSE_PROJECT:-filament}"
+DEFAULT_COMPOSE_PROJECT="$(basename "$(dirname "${COMPOSE_FILE}")")"
+COMPOSE_PROJECT="${COMPOSE_PROJECT:-${DEFAULT_COMPOSE_PROJECT}}"
 POSTGRES_SERVICE="${POSTGRES_SERVICE:-postgres}"
 SERVER_SERVICE="${SERVER_SERVICE:-filament-server}"
 POSTGRES_USER="${POSTGRES_USER:-filament}"
@@ -46,10 +47,8 @@ compose exec -T "${POSTGRES_SERVICE}" \
   < "${BACKUP_DIR}/postgres.dump"
 
 echo "[restore] restoring attachments"
-compose exec -T "${SERVER_SERVICE}" sh -lc \
-  "mkdir -p '${ATTACHMENT_ROOT}' && rm -rf '${ATTACHMENT_ROOT:?}'/*"
-compose exec -T "${SERVER_SERVICE}" sh -lc \
-  "tar -xzf - -C '${ATTACHMENT_ROOT}'" \
+compose run --rm -T --no-deps --entrypoint sh "${SERVER_SERVICE}" -lc \
+  "mkdir -p '${ATTACHMENT_ROOT}' && rm -rf '${ATTACHMENT_ROOT:?}'/* && tar -xzf - -m -C '${ATTACHMENT_ROOT}' --no-same-owner --no-same-permissions" \
   < "${BACKUP_DIR}/attachments.tar.gz"
 
 echo "[restore] restarting services"

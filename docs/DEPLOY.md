@@ -23,7 +23,7 @@ Port map (default compose):
 The compose baseline applies hardening controls where practical:
 - non-root runtime for `filament-server` image
 - `no-new-privileges` enabled across services
-- `cap_drop: [ALL]` on edge/server/media containers
+- `cap_drop: [ALL]` on server/media containers; the stock `caddy:2.8.4-alpine` image cannot start with `cap_drop: [ALL]` because `/usr/bin/caddy` carries file capabilities
 - read-only root filesystem for `filament-server` and `livekit`
 - explicit writable mounts only for required data paths (`pg-data`, `filament-attachments`, Caddy state)
 
@@ -104,7 +104,7 @@ Scripts are provided under `infra/scripts/`:
 
 Defaults:
 - compose file: `infra/docker-compose.yml`
-- compose project: `filament`
+- compose project: derived from compose-file directory name (`infra` for `infra/docker-compose.yml`), overridable via `COMPOSE_PROJECT`
 - artifacts are checksummed with `SHA256SUMS`
 
 Example:
