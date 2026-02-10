@@ -467,8 +467,38 @@ select {
   border-top: 1px solid var(--line-soft);
   padding: 0.85rem 1rem;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   gap: 0.6rem;
+  align-items: center;
+}
+
+.composer-file-input {
+  display: none;
+}
+
+.composer-attach-button {
+  width: 2.2rem;
+  min-height: 2.2rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+}
+
+.composer-attachments {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.composer-attachment-pill {
+  border: 1px solid rgba(98, 167, 255, 0.45);
+  border-radius: 999px;
+  background: rgba(20, 33, 57, 0.82);
+  color: var(--ink-1);
+  padding: 0.28rem 0.62rem;
+  font-size: 0.8rem;
 }
 
 .workspace-create-panel {

@@ -630,6 +630,41 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
             .execute(&mut *tx)
             .await?;
 
+            // Backfill legacy attachment schemas so uploads do not fail after upgrades.
+            sqlx::query("ALTER TABLE attachments ADD COLUMN IF NOT EXISTS object_key TEXT")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "UPDATE attachments
+                 SET object_key = CONCAT('attachments/', attachment_id)
+                 WHERE object_key IS NULL OR object_key = ''",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("ALTER TABLE attachments ALTER COLUMN object_key SET NOT NULL")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_object_key_unique
+                    ON attachments(object_key)",
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            sqlx::query("ALTER TABLE attachments ADD COLUMN IF NOT EXISTS created_at_unix BIGINT")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "UPDATE attachments
+                 SET created_at_unix = 0
+                 WHERE created_at_unix IS NULL",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("ALTER TABLE attachments ALTER COLUMN created_at_unix SET NOT NULL")
+                .execute(&mut *tx)
+                .await?;
+
             sqlx::query(
                 "CREATE INDEX IF NOT EXISTS idx_attachments_owner
                     ON attachments(owner_id)",
@@ -3502,7 +3537,15 @@ async fn upload_attachment(
         .bind(now_unix())
         .execute(pool)
         .await;
-        if persist_result.is_err() {
+        if let Err(error) = persist_result {
+            tracing::error!(
+                event = "attachments.persist_failed",
+                attachment_id = %attachment_id,
+                guild_id = %path.guild_id,
+                channel_id = %path.channel_id,
+                user_id = %auth.user_id,
+                error = %error
+            );
             let _ = state.attachment_store.delete(&object_path).await;
             return Err(AuthFailure::Internal);
         }

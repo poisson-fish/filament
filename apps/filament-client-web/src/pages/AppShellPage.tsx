@@ -88,6 +88,7 @@ import {
 } from "../lib/username-cache";
 
 const THUMBS_UP = reactionEmojiFromInput("👍");
+const MAX_COMPOSER_ATTACHMENTS = 5;
 
 interface ReactionView {
   count: number;
@@ -270,6 +271,7 @@ type OverlayPanel =
 
 export function AppShellPage() {
   const auth = useAuth();
+  let composerAttachmentInputRef: HTMLInputElement | undefined;
 
   const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>([]);
   const [activeGuildId, setActiveGuildId] = createSignal<GuildId | null>(null);
@@ -289,6 +291,7 @@ export function AppShellPage() {
   const [editingDraft, setEditingDraft] = createSignal("");
   const [isSavingEdit, setSavingEdit] = createSignal(false);
   const [deletingMessageId, setDeletingMessageId] = createSignal<MessageId | null>(null);
+  const [composerAttachments, setComposerAttachments] = createSignal<File[]>([]);
 
   const [createGuildName, setCreateGuildName] = createSignal("Security Ops");
   const [createGuildVisibility, setCreateGuildVisibility] = createSignal<GuildVisibility>("private");
@@ -1035,17 +1038,115 @@ export function AppShellPage() {
     setMessageError("");
     setMessageStatus("");
     setSendingMessage(true);
+    let uploadedForMessage: AttachmentRecord[] = [];
     try {
+      const selectedFiles = composerAttachments();
+      for (const file of selectedFiles) {
+        const filename = attachmentFilenameFromInput(file.name);
+        const uploaded = await uploadChannelAttachment(session, guildId, channelId, file, filename);
+        uploadedForMessage.push(uploaded);
+      }
+
+      const attachmentLines = uploadedForMessage.map(
+        (record) => `[attachment:${record.filename}] id:${record.attachmentId}`,
+      );
+      const composedContent =
+        attachmentLines.length === 0
+          ? composer()
+          : [composer().trim(), ...attachmentLines].filter((value) => value.length > 0).join("\n");
       const created = await createChannelMessage(session, guildId, channelId, {
-        content: messageContentFromInput(composer()),
+        content: messageContentFromInput(composedContent),
       });
       setMessages((existing) => mergeMessage(existing, created));
       setComposer("");
+      setComposerAttachments([]);
+      if (composerAttachmentInputRef) {
+        composerAttachmentInputRef.value = "";
+      }
+      if (uploadedForMessage.length > 0) {
+        const key = channelKey(guildId, channelId);
+        setAttachmentByChannel((existing) => {
+          const current = existing[key] ?? [];
+          const uploadedIds = new Set(uploadedForMessage.map((record) => record.attachmentId));
+          const deduped = current.filter((entry) => !uploadedIds.has(entry.attachmentId));
+          return {
+            ...existing,
+            [key]: [...uploadedForMessage, ...deduped],
+          };
+        });
+        setMessageStatus(
+          `Sent with ${uploadedForMessage.length} attachment${uploadedForMessage.length === 1 ? "" : "s"}.`,
+        );
+      }
     } catch (error) {
+      if (uploadedForMessage.length > 0) {
+        await Promise.allSettled(
+          uploadedForMessage.map((record) =>
+            deleteChannelAttachment(session, guildId, channelId, record.attachmentId),
+          ),
+        );
+      }
       setMessageError(mapError(error, "Unable to send message."));
     } finally {
       setSendingMessage(false);
     }
+  };
+
+  const openComposerAttachmentPicker = () => {
+    if (!activeChannel() || !canAccessActiveChannel()) {
+      setMessageError("Select a channel first.");
+      return;
+    }
+    composerAttachmentInputRef?.click();
+  };
+
+  const onComposerAttachmentInput = (event: InputEvent & { currentTarget: HTMLInputElement }) => {
+    const incomingFiles = [...(event.currentTarget.files ?? [])];
+    if (incomingFiles.length === 0) {
+      return;
+    }
+
+    setMessageError("");
+    const existing = composerAttachments();
+    const existingKeys = new Set(
+      existing.map((file) => `${file.name}:${file.size}:${file.lastModified}:${file.type}`),
+    );
+    const next = [...existing];
+    let reachedCap = existing.length >= MAX_COMPOSER_ATTACHMENTS;
+    for (const file of incomingFiles) {
+      const dedupeKey = `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
+      if (existingKeys.has(dedupeKey)) {
+        continue;
+      }
+      if (next.length >= MAX_COMPOSER_ATTACHMENTS) {
+        reachedCap = true;
+        break;
+      }
+      next.push(file);
+      existingKeys.add(dedupeKey);
+    }
+    setComposerAttachments(next);
+
+    if (composerAttachmentInputRef) {
+      composerAttachmentInputRef.value = "";
+    }
+    if (reachedCap) {
+      setMessageError(`Maximum ${MAX_COMPOSER_ATTACHMENTS} attachments per message.`);
+    }
+  };
+
+  const removeComposerAttachment = (target: File) => {
+    setComposerAttachments((existing) =>
+      existing.filter(
+        (file) =>
+          !(
+            file.name === target.name &&
+            file.size === target.size &&
+            file.lastModified === target.lastModified &&
+            file.type === target.type
+          ),
+      ),
+    );
   };
 
   const beginEditMessage = (message: MessageRecord) => {
@@ -1832,6 +1933,25 @@ export function AppShellPage() {
 
                 <form class="composer" onSubmit={sendMessage}>
                   <input
+                    ref={(value) => {
+                      composerAttachmentInputRef = value;
+                    }}
+                    type="file"
+                    multiple
+                    class="composer-file-input"
+                    onInput={onComposerAttachmentInput}
+                  />
+                  <button
+                    type="button"
+                    class="composer-attach-button"
+                    onClick={openComposerAttachmentPicker}
+                    disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
+                    aria-label="Attach files"
+                    title="Attach files"
+                  >
+                    +
+                  </button>
+                  <input
                     value={composer()}
                     onInput={(event) => setComposer(event.currentTarget.value)}
                     maxlength="2000"
@@ -1841,6 +1961,22 @@ export function AppShellPage() {
                   <button type="submit" disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}>
                     {isSendingMessage() ? "Sending..." : "Send"}
                   </button>
+                  <Show when={composerAttachments().length > 0}>
+                    <div class="composer-attachments">
+                      <For each={composerAttachments()}>
+                        {(file) => (
+                          <button
+                            type="button"
+                            class="composer-attachment-pill"
+                            onClick={() => removeComposerAttachment(file)}
+                            title={`Remove ${file.name}`}
+                          >
+                            {file.name} ({formatBytes(file.size)}) x
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
                 </form>
               </Show>
             </>
