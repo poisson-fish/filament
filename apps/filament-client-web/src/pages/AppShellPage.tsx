@@ -1,44 +1,119 @@
-import { For, Show, createResource, createSignal } from "solid-js";
-import { ApiError, fetchMe } from "../lib/api";
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import { DomainValidationError } from "../domain/auth";
+import {
+  channelNameFromInput,
+  guildNameFromInput,
+  messageContentFromInput,
+  searchQueryFromInput,
+  type ChannelId,
+  type GuildId,
+  type MessageRecord,
+  type SearchResults,
+  type WorkspaceRecord,
+} from "../domain/chat";
+import {
+  ApiError,
+  createChannel,
+  createChannelMessage,
+  createGuild,
+  fetchChannelMessages,
+  fetchMe,
+  searchGuildMessages,
+} from "../lib/api";
 import { useAuth } from "../lib/auth-context";
+import { clearWorkspaceCache, loadWorkspaceCache, saveWorkspaceCache } from "../lib/workspace-cache";
 
-const DEMO_SERVERS = [
-  { id: "S", name: "Security" },
-  { id: "E", name: "Engineering" },
-  { id: "P", name: "Product" },
-  { id: "D", name: "Design" },
-];
-
-const DEMO_CHANNELS = ["incident-room", "announcements", "backend", "frontend", "random"];
-
-const DEMO_MESSAGES = [
-  {
-    author: "hardened-bot",
-    time: "09:13",
-    text: "Daily check: auth/login rate limits healthy across all nodes.",
-  },
-  {
-    author: "ops",
-    time: "09:18",
-    text: "LiveKit token issuance latency p95 is under 50ms this morning.",
-  },
-  {
-    author: "you",
-    time: "09:24",
-    text: "Client shell rollout ready. Tracking login UX polish and route guard tests.",
-  },
-];
+function mapError(error: unknown, fallback: string): string {
+  if (error instanceof DomainValidationError) {
+    return error.message;
+  }
+  if (error instanceof ApiError) {
+    if (error.code === "rate_limited") {
+      return "Rate limited. Please wait and retry.";
+    }
+    if (error.code === "forbidden") {
+      return "Permission denied for this action.";
+    }
+    if (error.code === "not_found") {
+      return "Requested resource was not found.";
+    }
+    if (error.code === "network_error") {
+      return "Cannot reach server. Verify API origin and TLS setup.";
+    }
+    return `Request failed (${error.code}).`;
+  }
+  return fallback;
+}
 
 function profileErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === "invalid_credentials") {
     return "Session expired. Please login again.";
   }
-  return "Profile unavailable.";
+  return mapError(error, "Profile unavailable.");
+}
+
+function formatMessageTime(createdAtUnix: number): string {
+  return new Date(createdAtUnix * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function shortActor(value: string): string {
+  return value.length > 14 ? `${value.slice(0, 14)}...` : value;
+}
+
+function upsertWorkspace(
+  existing: WorkspaceRecord[],
+  guildId: GuildId,
+  updater: (workspace: WorkspaceRecord) => WorkspaceRecord,
+): WorkspaceRecord[] {
+  return existing.map((workspace) => (workspace.guildId === guildId ? updater(workspace) : workspace));
 }
 
 export function AppShellPage() {
   const auth = useAuth();
+
+  const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>(loadWorkspaceCache());
+  const [activeGuildId, setActiveGuildId] = createSignal<GuildId | null>(
+    workspaces()[0]?.guildId ?? null,
+  );
+  const [activeChannelId, setActiveChannelId] = createSignal<ChannelId | null>(
+    workspaces()[0]?.channels[0]?.channelId ?? null,
+  );
+
   const [composer, setComposer] = createSignal("");
+  const [messageStatus, setMessageStatus] = createSignal("");
+  const [messageError, setMessageError] = createSignal("");
+  const [isLoadingMessages, setLoadingMessages] = createSignal(false);
+  const [isSendingMessage, setSendingMessage] = createSignal(false);
+  const [messages, setMessages] = createSignal<MessageRecord[]>([]);
+
+  const [createGuildName, setCreateGuildName] = createSignal("Security Ops");
+  const [createChannelName, setCreateChannelName] = createSignal("incident-room");
+  const [isCreatingWorkspace, setCreatingWorkspace] = createSignal(false);
+  const [workspaceError, setWorkspaceError] = createSignal("");
+
+  const [newChannelName, setNewChannelName] = createSignal("backend");
+  const [isCreatingChannel, setCreatingChannel] = createSignal(false);
+  const [channelCreateError, setChannelCreateError] = createSignal("");
+  const [showNewChannelForm, setShowNewChannelForm] = createSignal(false);
+
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchError, setSearchError] = createSignal("");
+  const [isSearching, setSearching] = createSignal(false);
+  const [searchResults, setSearchResults] = createSignal<SearchResults | null>(null);
+
+  const activeWorkspace = createMemo(
+    () => workspaces().find((workspace) => workspace.guildId === activeGuildId()) ?? null,
+  );
+
+  const activeChannel = createMemo(
+    () =>
+      activeWorkspace()?.channels.find((channel) => channel.channelId === activeChannelId()) ??
+      null,
+  );
+
   const [profile] = createResource(async () => {
     const session = auth.session();
     if (!session) {
@@ -47,66 +122,356 @@ export function AppShellPage() {
     return fetchMe(session);
   });
 
+  createEffect(() => {
+    saveWorkspaceCache(workspaces());
+  });
+
+  createEffect(() => {
+    const selectedGuild = activeGuildId();
+    if (!selectedGuild || !workspaces().some((workspace) => workspace.guildId === selectedGuild)) {
+      setActiveGuildId(workspaces()[0]?.guildId ?? null);
+      return;
+    }
+
+    const channel = activeChannelId();
+    const workspace = workspaces().find((entry) => entry.guildId === selectedGuild);
+    if (!workspace) {
+      return;
+    }
+    if (!channel || !workspace.channels.some((entry) => entry.channelId === channel)) {
+      setActiveChannelId(workspace.channels[0]?.channelId ?? null);
+    }
+  });
+
+  const refreshMessages = async () => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId) {
+      setMessages([]);
+      return;
+    }
+
+    setMessageError("");
+    setLoadingMessages(true);
+    try {
+      const history = await fetchChannelMessages(session, guildId, channelId, { limit: 50 });
+      setMessages([...history.messages].reverse());
+    } catch (error) {
+      setMessageError(mapError(error, "Unable to load messages."));
+      setMessages([]);
+    } finally {
+      setLoadingMessages(false);
+    }
+  };
+
+  createEffect(() => {
+    void activeGuildId();
+    void activeChannelId();
+    void refreshMessages();
+  });
+
+  const createFirstWorkspace = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const session = auth.session();
+    if (!session) {
+      setWorkspaceError("Missing auth session.");
+      return;
+    }
+    if (isCreatingWorkspace()) {
+      return;
+    }
+
+    setWorkspaceError("");
+    setCreatingWorkspace(true);
+    try {
+      const guild = await createGuild(session, { name: guildNameFromInput(createGuildName()) });
+      const channel = await createChannel(session, guild.guildId, {
+        name: channelNameFromInput(createChannelName()),
+      });
+      const createdWorkspace: WorkspaceRecord = {
+        guildId: guild.guildId,
+        guildName: guild.name,
+        channels: [channel],
+      };
+      setWorkspaces((existing) => [...existing, createdWorkspace]);
+      setActiveGuildId(createdWorkspace.guildId);
+      setActiveChannelId(channel.channelId);
+      setMessageStatus("Workspace created.");
+    } catch (error) {
+      setWorkspaceError(mapError(error, "Unable to create workspace."));
+    } finally {
+      setCreatingWorkspace(false);
+    }
+  };
+
+  const createNewChannel = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const session = auth.session();
+    const guildId = activeGuildId();
+    if (!session || !guildId) {
+      setChannelCreateError("Select a workspace first.");
+      return;
+    }
+    if (isCreatingChannel()) {
+      return;
+    }
+
+    setChannelCreateError("");
+    setCreatingChannel(true);
+    try {
+      const created = await createChannel(session, guildId, {
+        name: channelNameFromInput(newChannelName()),
+      });
+      setWorkspaces((existing) =>
+        upsertWorkspace(existing, guildId, (workspace) => {
+          if (workspace.channels.some((channel) => channel.channelId === created.channelId)) {
+            return workspace;
+          }
+          return {
+            ...workspace,
+            channels: [...workspace.channels, created],
+          };
+        }),
+      );
+      setActiveChannelId(created.channelId);
+      setShowNewChannelForm(false);
+      setNewChannelName("backend");
+    } catch (error) {
+      setChannelCreateError(mapError(error, "Unable to create channel."));
+    } finally {
+      setCreatingChannel(false);
+    }
+  };
+
+  const sendMessage = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId) {
+      setMessageError("Select a channel first.");
+      return;
+    }
+
+    if (isSendingMessage()) {
+      return;
+    }
+
+    setMessageError("");
+    setMessageStatus("");
+    setSendingMessage(true);
+    try {
+      const created = await createChannelMessage(session, guildId, channelId, {
+        content: messageContentFromInput(composer()),
+      });
+      setMessages((existing) => [...existing, created]);
+      setComposer("");
+    } catch (error) {
+      setMessageError(mapError(error, "Unable to send message."));
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
+  const runSearch = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const session = auth.session();
+    const guildId = activeGuildId();
+    if (!session || !guildId) {
+      setSearchError("Select a workspace first.");
+      return;
+    }
+
+    if (isSearching()) {
+      return;
+    }
+
+    setSearching(true);
+    setSearchError("");
+    try {
+      const results = await searchGuildMessages(session, guildId, {
+        query: searchQueryFromInput(searchQuery()),
+        limit: 12,
+        channelId: activeChannelId() ?? undefined,
+      });
+      setSearchResults(results);
+    } catch (error) {
+      setSearchError(mapError(error, "Search request failed."));
+      setSearchResults(null);
+    } finally {
+      setSearching(false);
+    }
+  };
+
   const logout = () => {
     auth.clearAuthenticatedSession();
+    clearWorkspaceCache();
   };
 
   return (
     <div class="app-shell">
       <aside class="server-rail" aria-label="servers">
-        <For each={DEMO_SERVERS}>
-          {(server) => <button title={server.name}>{server.id}</button>}
+        <header class="rail-label">WS</header>
+        <For each={workspaces()}>
+          {(workspace) => (
+            <button
+              title={workspace.guildName}
+              classList={{ active: activeGuildId() === workspace.guildId }}
+              onClick={() => {
+                setActiveGuildId(workspace.guildId);
+                setActiveChannelId(workspace.channels[0]?.channelId ?? null);
+              }}
+            >
+              {workspace.guildName.slice(0, 1).toUpperCase()}
+            </button>
+          )}
         </For>
       </aside>
 
       <aside class="channel-rail">
         <header>
-          <h2>Filament</h2>
-          <span>Secure Workspace</span>
+          <h2>{activeWorkspace()?.guildName ?? "No Workspace"}</h2>
+          <span>Hardened workspace</span>
         </header>
-        <nav>
-          <For each={DEMO_CHANNELS}>{(channel) => <button>#{channel}</button>}</For>
-        </nav>
+
+        <Switch>
+          <Match when={!activeWorkspace()}>
+            <p class="muted">Create a workspace to begin.</p>
+          </Match>
+          <Match when={activeWorkspace()}>
+            <nav aria-label="channels">
+              <p class="group-label">TEXT CHANNELS</p>
+              <For each={activeWorkspace()?.channels ?? []}>
+                {(channel) => (
+                  <button
+                    classList={{ active: activeChannelId() === channel.channelId }}
+                    onClick={() => setActiveChannelId(channel.channelId)}
+                  >
+                    <span>#{channel.name}</span>
+                  </button>
+                )}
+              </For>
+
+              <button class="create-channel-toggle" onClick={() => setShowNewChannelForm((v) => !v)}>
+                {showNewChannelForm() ? "Cancel" : "New channel"}
+              </button>
+
+              <Show when={showNewChannelForm()}>
+                <form class="inline-form" onSubmit={createNewChannel}>
+                  <label>
+                    Channel name
+                    <input
+                      value={newChannelName()}
+                      onInput={(event) => setNewChannelName(event.currentTarget.value)}
+                      maxlength="64"
+                    />
+                  </label>
+                  <button type="submit" disabled={isCreatingChannel()}>
+                    {isCreatingChannel() ? "Creating..." : "Create"}
+                  </button>
+                </form>
+                <Show when={channelCreateError()}>
+                  <p class="status error">{channelCreateError()}</p>
+                </Show>
+              </Show>
+            </nav>
+          </Match>
+        </Switch>
       </aside>
 
       <main class="chat-panel">
         <header class="chat-header">
           <div>
-            <h3>#incident-room</h3>
-            <p>Security-first ops channel</p>
+            <h3>{activeChannel() ? `#${activeChannel()!.name}` : "#no-channel"}</h3>
+            <p>REST-backed messaging with bounded payload validation</p>
           </div>
-          <button class="logout" onClick={logout}>
-            Logout
-          </button>
+          <div class="header-actions">
+            <button type="button" onClick={() => void refreshMessages()}>
+              Refresh
+            </button>
+            <button class="logout" onClick={logout}>
+              Logout
+            </button>
+          </div>
         </header>
 
-        <section class="message-list" aria-live="polite">
-          <For each={DEMO_MESSAGES}>
-            {(message) => (
-              <article class="message-row">
-                <p>
-                  <strong>{message.author}</strong>
-                  <span>{message.time}</span>
-                </p>
-                <p>{message.text}</p>
-              </article>
-            )}
-          </For>
-        </section>
+        <Show when={workspaces().length === 0} fallback={
+          <>
+            <Show when={isLoadingMessages()}>
+              <p class="panel-note">Loading messages...</p>
+            </Show>
+            <Show when={messageError()}>
+              <p class="status error panel-note">{messageError()}</p>
+            </Show>
+            <section class="message-list" aria-live="polite">
+              <For each={messages()}>
+                {(message) => (
+                  <article class="message-row">
+                    <p>
+                      <strong>{shortActor(message.authorId)}</strong>
+                      <span>{formatMessageTime(message.createdAtUnix)}</span>
+                    </p>
+                    <p>{message.content}</p>
+                  </article>
+                )}
+              </For>
+              <Show when={!isLoadingMessages() && messages().length === 0 && !messageError()}>
+                <p class="muted">No messages yet in this channel.</p>
+              </Show>
+            </section>
+            <form class="composer" onSubmit={sendMessage}>
+              <input
+                value={composer()}
+                onInput={(event) => setComposer(event.currentTarget.value)}
+                maxlength="2000"
+                placeholder={activeChannel() ? `Message #${activeChannel()!.name}` : "Select channel"}
+                disabled={!activeChannel() || isSendingMessage()}
+              />
+              <button type="submit" disabled={!activeChannel() || isSendingMessage()}>
+                {isSendingMessage() ? "Sending..." : "Send"}
+              </button>
+            </form>
+          </>
+        }>
+          <section class="empty-workspace">
+            <h3>Create your first workspace</h3>
+            <p class="muted">The API currently exposes create routes, so this client provisions your first guild/channel here.</p>
+            <form class="inline-form" onSubmit={createFirstWorkspace}>
+              <label>
+                Workspace name
+                <input
+                  value={createGuildName()}
+                  onInput={(event) => setCreateGuildName(event.currentTarget.value)}
+                  maxlength="64"
+                />
+              </label>
+              <label>
+                First channel
+                <input
+                  value={createChannelName()}
+                  onInput={(event) => setCreateChannelName(event.currentTarget.value)}
+                  maxlength="64"
+                />
+              </label>
+              <button type="submit" disabled={isCreatingWorkspace()}>
+                {isCreatingWorkspace() ? "Creating..." : "Create workspace"}
+              </button>
+            </form>
+            <Show when={workspaceError()}>
+              <p class="status error">{workspaceError()}</p>
+            </Show>
+          </section>
+        </Show>
 
-        <form class="composer" onSubmit={(event) => event.preventDefault()}>
-          <input
-            value={composer()}
-            onInput={(event) => setComposer(event.currentTarget.value)}
-            maxlength="2000"
-            placeholder="Message #incident-room"
-          />
-        </form>
+        <Show when={messageStatus()}>
+          <p class="status ok panel-note">{messageStatus()}</p>
+        </Show>
       </main>
 
       <aside class="member-rail">
         <header>
-          <h4>Session</h4>
+          <h4>Profile + Search</h4>
         </header>
         <Show when={profile.loading}>
           <p class="muted">Loading profile...</p>
@@ -124,6 +489,41 @@ export function AppShellPage() {
             </div>
           )}
         </Show>
+
+        <section class="member-group">
+          <p class="group-label">SEARCH</p>
+          <form class="inline-form" onSubmit={runSearch}>
+            <label>
+              Query
+              <input
+                value={searchQuery()}
+                onInput={(event) => setSearchQuery(event.currentTarget.value)}
+                maxlength="256"
+                placeholder="needle"
+              />
+            </label>
+            <button type="submit" disabled={isSearching() || !activeWorkspace()}>
+              {isSearching() ? "Searching..." : "Search"}
+            </button>
+          </form>
+          <Show when={searchError()}>
+            <p class="status error">{searchError()}</p>
+          </Show>
+          <Show when={searchResults()}>
+            {(results) => (
+              <ul>
+                <For each={results().messages}>
+                  {(message) => (
+                    <li>
+                      <span class="presence online" />
+                      {shortActor(message.authorId)}: {message.content.slice(0, 32)}
+                    </li>
+                  )}
+                </For>
+              </ul>
+            )}
+          </Show>
+        </section>
       </aside>
     </div>
   );

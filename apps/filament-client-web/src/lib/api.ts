@@ -1,10 +1,26 @@
 import {
-  type AccessToken,
   type AuthSession,
   type Password,
   type Username,
   authSessionFromResponse,
 } from "../domain/auth";
+import {
+  type ChannelId,
+  type ChannelName,
+  type GuildId,
+  type GuildName,
+  type MessageContent,
+  type MessageHistory,
+  type MessageId,
+  type MessageRecord,
+  type SearchQuery,
+  type SearchResults,
+  channelFromResponse,
+  guildFromResponse,
+  messageFromResponse,
+  messageHistoryFromResponse,
+  searchResultsFromResponse,
+} from "../domain/chat";
 import { bearerHeader } from "./session";
 
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
@@ -25,6 +41,13 @@ export class ApiError extends Error {
 
 interface ApiConfig {
   baseUrl: string;
+}
+
+interface JsonRequest {
+  method: "GET" | "POST" | "PATCH";
+  path: string;
+  body?: unknown;
+  accessToken?: AuthSession["accessToken"];
 }
 
 function resolvedBaseUrl(): string {
@@ -87,45 +110,25 @@ function readApiError(data: unknown): string {
   return typeof error === "string" ? error : "unexpected_error";
 }
 
-async function postJson(path: string, body: unknown): Promise<unknown> {
+async function requestJson(request: JsonRequest): Promise<unknown> {
   const config = apiConfig();
+  const headers: Record<string, string> = {};
+
+  if (request.body !== undefined) {
+    headers["content-type"] = "application/json";
+  }
+  if (request.accessToken) {
+    headers.authorization = bearerHeader(request.accessToken);
+  }
+
   let response: Response;
   try {
     response = await fetchWithTimeout(
-      `${config.baseUrl}${path}`,
+      `${config.baseUrl}${request.path}`,
       {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
-        credentials: "omit",
-      },
-      REQUEST_TIMEOUT_MS,
-    );
-  } catch {
-    throw new ApiError(0, "network_error", "Unable to reach Filament API.");
-  }
-
-  const data = await readBoundedJson(response);
-  if (!response.ok) {
-    const code = readApiError(data);
-    throw new ApiError(response.status, code, code);
-  }
-  return data;
-}
-
-async function getJson(path: string, accessToken: AccessToken): Promise<unknown> {
-  const config = apiConfig();
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(
-      `${config.baseUrl}${path}`,
-      {
-        method: "GET",
-        headers: {
-          authorization: bearerHeader(accessToken),
-        },
+        method: request.method,
+        headers,
+        body: request.body === undefined ? undefined : JSON.stringify(request.body),
         credentials: "omit",
       },
       REQUEST_TIMEOUT_MS,
@@ -146,9 +149,13 @@ export async function registerWithPassword(input: {
   username: Username;
   password: Password;
 }): Promise<void> {
-  const dto = await postJson("/auth/register", {
-    username: input.username,
-    password: input.password,
+  const dto = await requestJson({
+    method: "POST",
+    path: "/auth/register",
+    body: {
+      username: input.username,
+      password: input.password,
+    },
   });
 
   if (!dto || typeof dto !== "object" || (dto as { accepted?: unknown }).accepted !== true) {
@@ -160,9 +167,13 @@ export async function loginWithPassword(input: {
   username: Username;
   password: Password;
 }): Promise<AuthSession> {
-  const dto = await postJson("/auth/login", {
-    username: input.username,
-    password: input.password,
+  const dto = await requestJson({
+    method: "POST",
+    path: "/auth/login",
+    body: {
+      username: input.username,
+      password: input.password,
+    },
   });
 
   if (!dto || typeof dto !== "object") {
@@ -177,7 +188,12 @@ export async function loginWithPassword(input: {
 }
 
 export async function fetchMe(session: AuthSession): Promise<{ userId: string; username: string }> {
-  const dto = await getJson("/auth/me", session.accessToken);
+  const dto = await requestJson({
+    method: "GET",
+    path: "/auth/me",
+    accessToken: session.accessToken,
+  });
+
   if (!dto || typeof dto !== "object") {
     throw new ApiError(500, "invalid_me_shape", "Unexpected profile response.");
   }
@@ -192,4 +208,91 @@ export async function fetchMe(session: AuthSession): Promise<{ userId: string; u
     userId,
     username,
   };
+}
+
+export async function createGuild(session: AuthSession, input: { name: GuildName }): Promise<{
+  guildId: GuildId;
+  name: GuildName;
+}> {
+  const dto = await requestJson({
+    method: "POST",
+    path: "/guilds",
+    accessToken: session.accessToken,
+    body: { name: input.name },
+  });
+  return guildFromResponse(dto);
+}
+
+export async function createChannel(
+  session: AuthSession,
+  guildId: GuildId,
+  input: { name: ChannelName },
+): Promise<{ channelId: ChannelId; name: ChannelName }> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/channels`,
+    accessToken: session.accessToken,
+    body: { name: input.name },
+  });
+  return channelFromResponse(dto);
+}
+
+export async function fetchChannelMessages(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  input?: { limit?: number; before?: MessageId },
+): Promise<MessageHistory> {
+  const params = new URLSearchParams();
+  if (input?.limit && Number.isInteger(input.limit) && input.limit > 0 && input.limit <= 100) {
+    params.set("limit", String(input.limit));
+  }
+  if (input?.before) {
+    params.set("before", input.before);
+  }
+
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  const dto = await requestJson({
+    method: "GET",
+    path: `/guilds/${guildId}/channels/${channelId}/messages${query}`,
+    accessToken: session.accessToken,
+  });
+  return messageHistoryFromResponse(dto);
+}
+
+export async function createChannelMessage(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  input: { content: MessageContent },
+): Promise<MessageRecord> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/channels/${channelId}/messages`,
+    accessToken: session.accessToken,
+    body: { content: input.content },
+  });
+  return messageFromResponse(dto);
+}
+
+export async function searchGuildMessages(
+  session: AuthSession,
+  guildId: GuildId,
+  input: { query: SearchQuery; limit?: number; channelId?: ChannelId },
+): Promise<SearchResults> {
+  const params = new URLSearchParams();
+  params.set("q", input.query);
+  if (input.limit && Number.isInteger(input.limit) && input.limit > 0 && input.limit <= 50) {
+    params.set("limit", String(input.limit));
+  }
+  if (input.channelId) {
+    params.set("channel_id", input.channelId);
+  }
+
+  const dto = await requestJson({
+    method: "GET",
+    path: `/guilds/${guildId}/search?${params.toString()}`,
+    accessToken: session.accessToken,
+  });
+  return searchResultsFromResponse(dto);
 }

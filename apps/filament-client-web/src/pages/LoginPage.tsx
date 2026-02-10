@@ -1,5 +1,5 @@
 import { createSignal, Show } from "solid-js";
-import { Navigate } from "@solidjs/router";
+import { Navigate, useNavigate } from "@solidjs/router";
 import {
   DomainValidationError,
   passwordFromInput,
@@ -29,6 +29,7 @@ function mapApiError(error: unknown): string {
 
 export function LoginPage() {
   const auth = useAuth();
+  const navigate = useNavigate();
   if (auth.session()) {
     return <Navigate href="/app" />;
   }
@@ -66,6 +67,7 @@ export function LoginPage() {
           password: validatedPassword,
         });
         auth.setAuthenticatedSession(session);
+        navigate("/app", { replace: true });
       }
     } catch (error) {
       setErrorMessage(mapApiError(error));
