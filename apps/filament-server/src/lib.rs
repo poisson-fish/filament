@@ -45,7 +45,16 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
-use tokio::sync::{mpsc, watch, OnceCell, RwLock};
+use tantivy::{
+    collector::TopDocs,
+    query::{BooleanQuery, Occur, QueryParser, TermQuery},
+    schema::{
+        Field, IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions, Value,
+        STORED, STRING,
+    },
+    TantivyDocument, Term,
+};
+use tokio::sync::{mpsc, oneshot, watch, OnceCell, RwLock};
 use tower::ServiceBuilder;
 use tower_governor::{
     governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
@@ -73,10 +82,18 @@ pub const DEFAULT_GATEWAY_OUTBOUND_QUEUE: usize = 256;
 pub const DEFAULT_MAX_GATEWAY_EVENT_BYTES: usize = filament_protocol::MAX_EVENT_BYTES;
 pub const DEFAULT_MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 pub const DEFAULT_USER_ATTACHMENT_QUOTA_BYTES: u64 = 250 * 1024 * 1024;
+pub const DEFAULT_SEARCH_QUERY_MAX_CHARS: usize = 256;
+pub const DEFAULT_SEARCH_RESULT_LIMIT: usize = 20;
+pub const DEFAULT_SEARCH_RESULT_LIMIT_MAX: usize = 50;
+pub const DEFAULT_SEARCH_QUERY_TIMEOUT_MILLIS: u64 = 200;
 const LOGIN_LOCK_THRESHOLD: u8 = 5;
 const LOGIN_LOCK_SECS: i64 = 30;
 const MAX_HISTORY_LIMIT: usize = 100;
 const MAX_MIME_SNIFF_BYTES: usize = 8192;
+const MAX_SEARCH_TERMS: usize = 20;
+const MAX_SEARCH_WILDCARDS: usize = 4;
+const MAX_SEARCH_FUZZY: usize = 2;
+const SEARCH_INDEX_QUEUE_CAPACITY: usize = 1024;
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -90,6 +107,9 @@ pub struct AppConfig {
     pub max_gateway_event_bytes: usize,
     pub max_attachment_bytes: usize,
     pub user_attachment_quota_bytes: u64,
+    pub search_query_max_chars: usize,
+    pub search_result_limit_max: usize,
+    pub search_query_timeout: Duration,
     pub attachment_root: PathBuf,
     pub database_url: Option<String>,
 }
@@ -107,6 +127,9 @@ impl Default for AppConfig {
             max_gateway_event_bytes: DEFAULT_MAX_GATEWAY_EVENT_BYTES,
             max_attachment_bytes: DEFAULT_MAX_ATTACHMENT_BYTES,
             user_attachment_quota_bytes: DEFAULT_USER_ATTACHMENT_QUOTA_BYTES,
+            search_query_max_chars: DEFAULT_SEARCH_QUERY_MAX_CHARS,
+            search_result_limit_max: DEFAULT_SEARCH_RESULT_LIMIT_MAX,
+            search_query_timeout: Duration::from_millis(DEFAULT_SEARCH_QUERY_TIMEOUT_MILLIS),
             attachment_root: PathBuf::from("./data/attachments"),
             database_url: None,
         }
@@ -122,6 +145,53 @@ struct RuntimeSecurityConfig {
     max_gateway_event_bytes: usize,
     max_attachment_bytes: usize,
     user_attachment_quota_bytes: u64,
+    search_query_max_chars: usize,
+    search_result_limit_max: usize,
+    search_query_timeout: Duration,
+}
+
+#[derive(Clone)]
+struct SearchService {
+    tx: mpsc::Sender<SearchCommand>,
+    state: Arc<SearchIndexState>,
+}
+
+#[derive(Clone)]
+struct SearchIndexState {
+    index: tantivy::Index,
+    reader: tantivy::IndexReader,
+    fields: SearchFields,
+}
+
+#[derive(Clone, Copy)]
+struct SearchFields {
+    message_id: Field,
+    guild_id: Field,
+    channel_id: Field,
+    author_id: Field,
+    created_at_unix: Field,
+    content: Field,
+}
+
+#[derive(Clone)]
+struct IndexedMessage {
+    message_id: String,
+    guild_id: String,
+    channel_id: String,
+    author_id: String,
+    created_at_unix: i64,
+    content: String,
+}
+
+enum SearchOperation {
+    Upsert(IndexedMessage),
+    Delete { message_id: String },
+    Rebuild { docs: Vec<IndexedMessage> },
+}
+
+struct SearchCommand {
+    op: SearchOperation,
+    ack: Option<oneshot::Sender<Result<(), AuthFailure>>>,
 }
 
 #[derive(Clone)]
@@ -141,6 +211,8 @@ pub struct AppState {
     attachment_store: Arc<LocalFileSystem>,
     attachments: Arc<RwLock<HashMap<String, AttachmentRecord>>>,
     audit_logs: Arc<RwLock<Vec<serde_json::Value>>>,
+    search: SearchService,
+    search_bootstrapped: Arc<OnceCell<()>>,
     runtime: Arc<RuntimeSecurityConfig>,
 }
 
@@ -166,6 +238,7 @@ impl AppState {
             .map_err(|e| anyhow!("attachment root init failed: {e}"))?;
         let attachment_store = LocalFileSystem::new_with_prefix(&config.attachment_root)
             .map_err(|e| anyhow!("attachment store init failed: {e}"))?;
+        let search = init_search_service().map_err(|e| anyhow!("search init failed: {e}"))?;
 
         Ok(Self {
             db_pool,
@@ -183,6 +256,8 @@ impl AppState {
             attachment_store: Arc::new(attachment_store),
             attachments: Arc::new(RwLock::new(HashMap::new())),
             audit_logs: Arc::new(RwLock::new(Vec::new())),
+            search,
+            search_bootstrapped: Arc::new(OnceCell::new()),
             runtime: Arc::new(RuntimeSecurityConfig {
                 auth_route_requests_per_minute: config.auth_route_requests_per_minute,
                 gateway_ingress_events_per_window: config.gateway_ingress_events_per_window,
@@ -191,6 +266,9 @@ impl AppState {
                 max_gateway_event_bytes: config.max_gateway_event_bytes,
                 max_attachment_bytes: config.max_attachment_bytes,
                 user_attachment_quota_bytes: config.user_attachment_quota_bytes,
+                search_query_max_chars: config.search_query_max_chars,
+                search_result_limit_max: config.search_result_limit_max,
+                search_query_timeout: config.search_query_timeout,
             }),
         })
     }
@@ -471,6 +549,11 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}",
             patch(edit_message).delete(delete_message),
         )
+        .route("/guilds/{guild_id}/search", get(search_messages))
+        .route(
+            "/guilds/{guild_id}/search/rebuild",
+            post(rebuild_search_index),
+        )
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}",
             get(download_attachment).delete(delete_attachment),
@@ -697,6 +780,19 @@ struct MemberPath {
 struct HistoryQuery {
     limit: Option<usize>,
     before: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    q: String,
+    limit: Option<usize>,
+    channel_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchResponse {
+    message_ids: Vec<String>,
+    messages: Vec<MessageResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1471,6 +1567,60 @@ async fn get_messages(
     }))
 }
 
+#[allow(clippy::too_many_lines)]
+async fn search_messages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<SearchResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    if !has_permission(role, Permission::CreateMessage) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    validate_search_query(&state, &query)?;
+    ensure_search_bootstrapped(&state).await?;
+    let limit = query.limit.unwrap_or(DEFAULT_SEARCH_RESULT_LIMIT);
+    let channel_id = query.channel_id.clone();
+    let message_ids = run_search_query(
+        &state,
+        &path.guild_id,
+        channel_id.as_deref(),
+        &query.q,
+        limit,
+    )
+    .await?;
+    let messages =
+        hydrate_messages_by_id(&state, &path.guild_id, channel_id.as_deref(), &message_ids).await?;
+
+    Ok(Json(SearchResponse {
+        message_ids,
+        messages,
+    }))
+}
+
+async fn rebuild_search_index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+) -> Result<StatusCode, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    if !matches!(role, Role::Owner | Role::Moderator) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let docs = collect_all_indexed_messages(&state).await?;
+    enqueue_search_operation(&state, SearchOperation::Rebuild { docs }, true).await?;
+    state.search_bootstrapped.set(()).ok();
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[allow(clippy::too_many_lines)]
 async fn edit_message(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1539,6 +1689,12 @@ async fn edit_message(
             )
             .await?;
         }
+        enqueue_search_operation(
+            &state,
+            SearchOperation::Upsert(indexed_message_from_response(&response)),
+            true,
+        )
+        .await?;
         return Ok(Json(response));
     }
 
@@ -1566,7 +1722,7 @@ async fn edit_message(
     message.content.clone_from(&payload.content);
     message.markdown_tokens.clone_from(&markdown_tokens);
 
-    Ok(Json(MessageResponse {
+    let response = MessageResponse {
         message_id: message.id.clone(),
         guild_id: path.guild_id,
         channel_id: path.channel_id,
@@ -1574,7 +1730,14 @@ async fn edit_message(
         content: message.content.clone(),
         markdown_tokens,
         created_at_unix: message.created_at_unix,
-    }))
+    };
+    enqueue_search_operation(
+        &state,
+        SearchOperation::Upsert(indexed_message_from_response(&response)),
+        true,
+    )
+    .await?;
+    Ok(Json(response))
 }
 
 async fn delete_message(
@@ -1632,6 +1795,14 @@ async fn delete_message(
             )
             .await?;
         }
+        enqueue_search_operation(
+            &state,
+            SearchOperation::Delete {
+                message_id: path.message_id.clone(),
+            },
+            true,
+        )
+        .await?;
         return Ok(StatusCode::NO_CONTENT);
     }
 
@@ -1660,6 +1831,14 @@ async fn delete_message(
         return Err(AuthFailure::Forbidden);
     }
     channel.messages.remove(index);
+    enqueue_search_operation(
+        &state,
+        SearchOperation::Delete {
+            message_id: path.message_id,
+        },
+        true,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2221,6 +2400,12 @@ async fn create_message_internal(
         );
 
         broadcast_channel_event(state, &channel_key(guild_id, channel_id), event).await;
+        enqueue_search_operation(
+            state,
+            SearchOperation::Upsert(indexed_message_from_response(&response)),
+            true,
+        )
+        .await?;
         return Ok(response);
     }
 
@@ -2274,8 +2459,471 @@ async fn create_message_internal(
     );
 
     broadcast_channel_event(state, &channel_key(guild_id, channel_id), event).await;
+    enqueue_search_operation(
+        state,
+        SearchOperation::Upsert(indexed_message_from_response(&response)),
+        true,
+    )
+    .await?;
 
     Ok(response)
+}
+
+fn build_search_schema() -> (Schema, SearchFields) {
+    let mut schema_builder = Schema::builder();
+    let message_id = schema_builder.add_text_field("message_id", STRING | STORED);
+    let guild_id = schema_builder.add_text_field("guild_id", STRING | STORED);
+    let channel_id = schema_builder.add_text_field("channel_id", STRING | STORED);
+    let author_id = schema_builder.add_text_field("author_id", STRING | STORED);
+    let created_at_unix =
+        schema_builder.add_i64_field("created_at_unix", NumericOptions::default().set_stored());
+    let content_options = TextOptions::default()
+        .set_stored()
+        .set_indexing_options(TextFieldIndexing::default().set_tokenizer("default"));
+    let content = schema_builder.add_text_field("content", content_options);
+    let schema = schema_builder.build();
+    (
+        schema,
+        SearchFields {
+            message_id,
+            guild_id,
+            channel_id,
+            author_id,
+            created_at_unix,
+            content,
+        },
+    )
+}
+
+fn init_search_service() -> anyhow::Result<SearchService> {
+    let (schema, fields) = build_search_schema();
+    let index = tantivy::Index::create_in_ram(schema);
+    let reader = index
+        .reader()
+        .map_err(|e| anyhow!("search reader init failed: {e}"))?;
+    let state = Arc::new(SearchIndexState {
+        index,
+        reader,
+        fields,
+    });
+    let (tx, mut rx) = mpsc::channel::<SearchCommand>(SEARCH_INDEX_QUEUE_CAPACITY);
+    let worker_state = state.clone();
+    std::thread::Builder::new()
+        .name(String::from("filament-search-index"))
+        .spawn(move || {
+            while let Some(command) = rx.blocking_recv() {
+                let mut batch = vec![command];
+                while batch.len() < 128 {
+                    let Ok(next) = rx.try_recv() else {
+                        break;
+                    };
+                    batch.push(next);
+                }
+                let batch_result = apply_search_batch(&worker_state, batch);
+                if let Err(error) = batch_result {
+                    tracing::error!(event = "search.index.batch", error = %error);
+                }
+            }
+        })
+        .map_err(|e| anyhow!("search worker spawn failed: {e}"))?;
+    Ok(SearchService { tx, state })
+}
+
+fn apply_search_batch(
+    search: &Arc<SearchIndexState>,
+    mut batch: Vec<SearchCommand>,
+) -> anyhow::Result<()> {
+    let mut ops = Vec::with_capacity(batch.len());
+    let mut pending_acks = Vec::new();
+    for command in batch.drain(..) {
+        if let Some(ack) = command.ack {
+            pending_acks.push(ack);
+        }
+        ops.push(command.op);
+    }
+
+    let apply_result = (|| -> anyhow::Result<()> {
+        let mut writer = search.index.writer(50_000_000)?;
+        for op in ops {
+            apply_search_operation(search, &mut writer, op);
+        }
+        writer.commit()?;
+        search.reader.reload()?;
+        Ok(())
+    })();
+
+    match apply_result {
+        Ok(()) => {
+            for ack in pending_acks {
+                let _ = ack.send(Ok(()));
+            }
+            Ok(())
+        }
+        Err(error) => {
+            for ack in pending_acks {
+                let _ = ack.send(Err(AuthFailure::Internal));
+            }
+            Err(error)
+        }
+    }
+}
+
+fn apply_search_operation(
+    search: &SearchIndexState,
+    writer: &mut tantivy::IndexWriter,
+    op: SearchOperation,
+) {
+    match op {
+        SearchOperation::Upsert(doc) => {
+            writer.delete_term(Term::from_field_text(
+                search.fields.message_id,
+                &doc.message_id,
+            ));
+            let mut tantivy_doc = TantivyDocument::default();
+            tantivy_doc.add_text(search.fields.message_id, doc.message_id);
+            tantivy_doc.add_text(search.fields.guild_id, doc.guild_id);
+            tantivy_doc.add_text(search.fields.channel_id, doc.channel_id);
+            tantivy_doc.add_text(search.fields.author_id, doc.author_id);
+            tantivy_doc.add_i64(search.fields.created_at_unix, doc.created_at_unix);
+            tantivy_doc.add_text(search.fields.content, doc.content);
+            let _ = writer.add_document(tantivy_doc);
+        }
+        SearchOperation::Delete { message_id } => {
+            writer.delete_term(Term::from_field_text(search.fields.message_id, &message_id));
+        }
+        SearchOperation::Rebuild { docs } => {
+            let _ = writer.delete_all_documents();
+            for doc in docs {
+                let mut tantivy_doc = TantivyDocument::default();
+                tantivy_doc.add_text(search.fields.message_id, doc.message_id);
+                tantivy_doc.add_text(search.fields.guild_id, doc.guild_id);
+                tantivy_doc.add_text(search.fields.channel_id, doc.channel_id);
+                tantivy_doc.add_text(search.fields.author_id, doc.author_id);
+                tantivy_doc.add_i64(search.fields.created_at_unix, doc.created_at_unix);
+                tantivy_doc.add_text(search.fields.content, doc.content);
+                let _ = writer.add_document(tantivy_doc);
+            }
+        }
+    }
+}
+
+fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
+    IndexedMessage {
+        message_id: message.message_id.clone(),
+        guild_id: message.guild_id.clone(),
+        channel_id: message.channel_id.clone(),
+        author_id: message.author_id.clone(),
+        created_at_unix: message.created_at_unix,
+        content: message.content.clone(),
+    }
+}
+
+fn validate_search_query(state: &AppState, query: &SearchQuery) -> Result<(), AuthFailure> {
+    let raw = query.q.trim();
+    if raw.is_empty() || raw.len() > state.runtime.search_query_max_chars {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let limit = query.limit.unwrap_or(DEFAULT_SEARCH_RESULT_LIMIT);
+    if limit == 0 || limit > state.runtime.search_result_limit_max {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if raw.split_whitespace().count() > MAX_SEARCH_TERMS {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let wildcard_count = raw.matches('*').count() + raw.matches('?').count();
+    if wildcard_count > MAX_SEARCH_WILDCARDS {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if raw.matches('~').count() > MAX_SEARCH_FUZZY {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if raw.contains(':') {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(())
+}
+
+async fn ensure_search_bootstrapped(state: &AppState) -> Result<(), AuthFailure> {
+    state
+        .search_bootstrapped
+        .get_or_try_init(|| async move {
+            let docs = collect_all_indexed_messages(state).await?;
+            enqueue_search_operation(state, SearchOperation::Rebuild { docs }, true).await?;
+            Ok(())
+        })
+        .await?;
+    Ok(())
+}
+
+async fn enqueue_search_operation(
+    state: &AppState,
+    op: SearchOperation,
+    wait_for_apply: bool,
+) -> Result<(), AuthFailure> {
+    if wait_for_apply {
+        let (ack_tx, ack_rx) = oneshot::channel();
+        state
+            .search
+            .tx
+            .send(SearchCommand {
+                op,
+                ack: Some(ack_tx),
+            })
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        ack_rx.await.map_err(|_| AuthFailure::Internal)?
+    } else {
+        state
+            .search
+            .tx
+            .send(SearchCommand { op, ack: None })
+            .await
+            .map_err(|_| AuthFailure::Internal)
+    }
+}
+
+async fn collect_all_indexed_messages(
+    state: &AppState,
+) -> Result<Vec<IndexedMessage>, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let rows = sqlx::query(
+            "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
+             FROM messages",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let mut docs = Vec::with_capacity(rows.len());
+        for row in rows {
+            docs.push(IndexedMessage {
+                message_id: row
+                    .try_get("message_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+                channel_id: row
+                    .try_get("channel_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                author_id: row
+                    .try_get("author_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                content: row.try_get("content").map_err(|_| AuthFailure::Internal)?,
+                created_at_unix: row
+                    .try_get("created_at_unix")
+                    .map_err(|_| AuthFailure::Internal)?,
+            });
+        }
+        return Ok(docs);
+    }
+
+    let guilds = state.guilds.read().await;
+    let mut docs = Vec::new();
+    for (guild_id, guild) in &*guilds {
+        for (channel_id, channel) in &guild.channels {
+            for message in &channel.messages {
+                docs.push(IndexedMessage {
+                    message_id: message.id.clone(),
+                    guild_id: guild_id.clone(),
+                    channel_id: channel_id.clone(),
+                    author_id: message.author_id.to_string(),
+                    content: message.content.clone(),
+                    created_at_unix: message.created_at_unix,
+                });
+            }
+        }
+    }
+    Ok(docs)
+}
+
+async fn run_search_query(
+    state: &AppState,
+    guild_id: &str,
+    channel_id: Option<&str>,
+    raw_query: &str,
+    limit: usize,
+) -> Result<Vec<String>, AuthFailure> {
+    let query = raw_query.trim().to_owned();
+    let guild = guild_id.to_owned();
+    let channel = channel_id.map(ToOwned::to_owned);
+    let search_state = state.search.state.clone();
+    let timeout = state.runtime.search_query_timeout;
+
+    tokio::time::timeout(timeout, async move {
+        tokio::task::spawn_blocking(move || {
+            let searcher = search_state.reader.searcher();
+            let parser =
+                QueryParser::for_index(&search_state.index, vec![search_state.fields.content]);
+            let parsed = parser
+                .parse_query(&query)
+                .map_err(|_| AuthFailure::InvalidRequest)?;
+            let mut clauses = vec![
+                (
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(search_state.fields.guild_id, &guild),
+                        IndexRecordOption::Basic,
+                    )) as Box<dyn tantivy::query::Query>,
+                ),
+                (Occur::Must, parsed),
+            ];
+            if let Some(channel_id) = channel {
+                clauses.push((
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(search_state.fields.channel_id, &channel_id),
+                        IndexRecordOption::Basic,
+                    )) as Box<dyn tantivy::query::Query>,
+                ));
+            }
+            let boolean_query = BooleanQuery::from(clauses);
+            let top_docs = searcher
+                .search(&boolean_query, &TopDocs::with_limit(limit))
+                .map_err(|_| AuthFailure::Internal)?;
+            let mut message_ids = Vec::with_capacity(top_docs.len());
+            for (_score, address) in top_docs {
+                let Ok(doc) = searcher.doc::<TantivyDocument>(address) else {
+                    continue;
+                };
+                let Some(value) = doc.get_first(search_state.fields.message_id) else {
+                    continue;
+                };
+                let Some(message_id) = value.as_str() else {
+                    continue;
+                };
+                message_ids.push(message_id.to_owned());
+            }
+            Ok::<Vec<String>, AuthFailure>(message_ids)
+        })
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    })
+    .await
+    .map_err(|_| AuthFailure::InvalidRequest)?
+}
+
+#[allow(clippy::too_many_lines)]
+async fn hydrate_messages_by_id(
+    state: &AppState,
+    guild_id: &str,
+    channel_id: Option<&str>,
+    message_ids: &[String],
+) -> Result<Vec<MessageResponse>, AuthFailure> {
+    if message_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let rows = if let Some(channel_id) = channel_id {
+            sqlx::query(
+                "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
+                 FROM messages
+                 WHERE guild_id = $1 AND channel_id = $2 AND message_id = ANY($3::text[])",
+            )
+            .bind(guild_id)
+            .bind(channel_id)
+            .bind(message_ids)
+            .fetch_all(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?
+        } else {
+            sqlx::query(
+                "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
+                 FROM messages
+                 WHERE guild_id = $1 AND message_id = ANY($2::text[])",
+            )
+            .bind(guild_id)
+            .bind(message_ids)
+            .fetch_all(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?
+        };
+
+        let mut by_id = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let message_id: String = row
+                .try_get("message_id")
+                .map_err(|_| AuthFailure::Internal)?;
+            let guild_id: String = row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?;
+            let channel_id: String = row
+                .try_get("channel_id")
+                .map_err(|_| AuthFailure::Internal)?;
+            let author_id: String = row
+                .try_get("author_id")
+                .map_err(|_| AuthFailure::Internal)?;
+            let content: String = row.try_get("content").map_err(|_| AuthFailure::Internal)?;
+            let created_at_unix: i64 = row
+                .try_get("created_at_unix")
+                .map_err(|_| AuthFailure::Internal)?;
+            by_id.insert(
+                message_id.clone(),
+                MessageResponse {
+                    message_id,
+                    guild_id,
+                    channel_id,
+                    author_id,
+                    markdown_tokens: tokenize_markdown(&content),
+                    content,
+                    created_at_unix,
+                },
+            );
+        }
+
+        let mut hydrated = Vec::with_capacity(message_ids.len());
+        for message_id in message_ids {
+            if let Some(message) = by_id.remove(message_id) {
+                hydrated.push(message);
+            }
+        }
+        return Ok(hydrated);
+    }
+
+    let guilds = state.guilds.read().await;
+    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+    let mut by_id = HashMap::new();
+    if let Some(channel_id) = channel_id {
+        let channel = guild
+            .channels
+            .get(channel_id)
+            .ok_or(AuthFailure::NotFound)?;
+        for message in &channel.messages {
+            by_id.insert(
+                message.id.clone(),
+                MessageResponse {
+                    message_id: message.id.clone(),
+                    guild_id: guild_id.to_owned(),
+                    channel_id: channel_id.to_owned(),
+                    author_id: message.author_id.to_string(),
+                    content: message.content.clone(),
+                    markdown_tokens: message.markdown_tokens.clone(),
+                    created_at_unix: message.created_at_unix,
+                },
+            );
+        }
+    } else {
+        for (channel_id, channel) in &guild.channels {
+            for message in &channel.messages {
+                by_id.insert(
+                    message.id.clone(),
+                    MessageResponse {
+                        message_id: message.id.clone(),
+                        guild_id: guild_id.to_owned(),
+                        channel_id: channel_id.clone(),
+                        author_id: message.author_id.to_string(),
+                        content: message.content.clone(),
+                        markdown_tokens: message.markdown_tokens.clone(),
+                        created_at_unix: message.created_at_unix,
+                    },
+                );
+            }
+        }
+    }
+
+    let mut hydrated = Vec::with_capacity(message_ids.len());
+    for message_id in message_ids {
+        if let Some(message) = by_id.remove(message_id) {
+            hydrated.push(message);
+        }
+    }
+    Ok(hydrated)
 }
 
 async fn broadcast_channel_event(state: &AppState, key: &str, payload: String) {

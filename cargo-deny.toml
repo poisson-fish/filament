@@ -1,7 +1,11 @@
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-ignore = []
+ignore = [
+  # Tantivy currently pulls `instant` transitively via `measure_time`.
+  # No safe upgrade exists in RustSec at this time.
+  "RUSTSEC-2024-0384",
+]
 yanked = "deny"
 
 [licenses]
