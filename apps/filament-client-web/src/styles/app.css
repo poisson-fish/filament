@@ -508,6 +508,7 @@ select {
   align-content: start;
   gap: 0.75rem;
   overflow: auto;
+  position: relative;
 }
 
 .profile-card {
@@ -541,6 +542,11 @@ select {
   gap: 0.42rem;
 }
 
+.member-group {
+  display: grid;
+  gap: 0.5rem;
+}
+
 .member-group li {
   border: 1px solid var(--line-soft);
   border-radius: 0.6rem;
@@ -550,6 +556,52 @@ select {
   align-items: center;
   gap: 0.45rem;
   overflow-wrap: anywhere;
+}
+
+.ops-launch-grid {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ops-launch-grid button {
+  border: 1px solid rgba(98, 167, 255, 0.4);
+  border-radius: 0.62rem;
+  background: rgba(18, 38, 68, 0.8);
+  color: #d7e8ff;
+  padding: 0.48rem 0.6rem;
+  text-align: left;
+}
+
+.ops-overlay {
+  position: absolute;
+  inset: 0.72rem;
+  border: 1px solid var(--line);
+  border-radius: 0.86rem;
+  background: linear-gradient(180deg, rgba(12, 23, 43, 0.97), rgba(8, 17, 33, 0.98));
+  box-shadow: 0 0.8rem 1.5rem rgba(1, 8, 21, 0.55);
+  padding: 0.76rem;
+  display: grid;
+  align-content: start;
+  gap: 0.72rem;
+  overflow: auto;
+}
+
+.ops-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ops-overlay-header button {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.56rem;
+  background: rgba(20, 33, 57, 0.82);
+  color: var(--ink-1);
+  padding: 0.35rem 0.6rem;
+}
+
+.ops-overlay-header .group-label {
+  margin-left: auto;
 }
 
 .presence {

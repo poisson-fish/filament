@@ -282,6 +282,8 @@ function canDiscoverWorkspaceOperation(
   return role === "owner" || role === "moderator";
 }
 
+type OpsOverlayPanel = "search" | "attachments" | "voice" | "moderation" | "utility";
+
 export function AppShellPage() {
   const auth = useAuth();
 
@@ -379,6 +381,7 @@ export function AppShellPage() {
   const [diagError, setDiagError] = createSignal("");
   const [isCheckingHealth, setCheckingHealth] = createSignal(false);
   const [isEchoing, setEchoing] = createSignal(false);
+  const [activeOpsPanel, setActiveOpsPanel] = createSignal<OpsOverlayPanel | null>(null);
 
   const activeWorkspace = createMemo(
     () => workspaces().find((workspace) => workspace.guildId === activeGuildId()) ?? null,
@@ -803,6 +806,20 @@ export function AppShellPage() {
     } else {
       setMessages([]);
       setNextBefore(null);
+    }
+  });
+
+  createEffect(() => {
+    const panel = activeOpsPanel();
+    if (!panel) {
+      return;
+    }
+    if (!canAccessActiveChannel() && panel !== "utility") {
+      setActiveOpsPanel(null);
+      return;
+    }
+    if (panel === "moderation" && !hasModerationAccess()) {
+      setActiveOpsPanel(null);
     }
   });
 
@@ -1964,323 +1981,388 @@ export function AppShellPage() {
 
         <Show when={canAccessActiveChannel()}>
           <section class="member-group">
-          <p class="group-label">ONLINE ({onlineMembers().length})</p>
-          <ul>
-            <For each={onlineMembers()}>
-              {(memberId) => (
+            <p class="group-label">ONLINE ({onlineMembers().length})</p>
+            <ul>
+              <For each={onlineMembers()}>
+                {(memberId) => (
+                  <li>
+                    <span class="presence online" />
+                    {displayUserLabel(memberId)}
+                  </li>
+                )}
+              </For>
+              <Show when={onlineMembers().length === 0}>
                 <li>
-                  <span class="presence online" />
-                  {displayUserLabel(memberId)}
+                  <span class="presence idle" />
+                  no-presence-yet
                 </li>
-              )}
-            </For>
-            <Show when={onlineMembers().length === 0}>
-              <li>
-                <span class="presence idle" />
-                no-presence-yet
-              </li>
-            </Show>
-          </ul>
-          </section>
-        </Show>
-
-        <Show when={canAccessActiveChannel()}>
-          <section class="member-group">
-          <p class="group-label">SEARCH</p>
-          <form class="inline-form" onSubmit={runSearch}>
-            <label>
-              Query
-              <input
-                value={searchQuery()}
-                onInput={(event) => setSearchQuery(event.currentTarget.value)}
-                maxlength="256"
-                placeholder="needle"
-              />
-            </label>
-            <button type="submit" disabled={isSearching() || !activeWorkspace()}>
-              {isSearching() ? "Searching..." : "Search"}
-            </button>
-          </form>
-          <Show when={canManageSearchMaintenance()}>
-            <div class="button-row">
-              <button type="button" onClick={() => void rebuildSearch()} disabled={isRunningSearchOps() || !activeWorkspace()}>
-                Rebuild Index
-              </button>
-              <button type="button" onClick={() => void reconcileSearch()} disabled={isRunningSearchOps() || !activeWorkspace()}>
-                Reconcile Index
-              </button>
-            </div>
-          </Show>
-          <Show when={searchOpsStatus()}>
-            <p class="status ok">{searchOpsStatus()}</p>
-          </Show>
-          <Show when={searchError()}>
-            <p class="status error">{searchError()}</p>
-          </Show>
-          <Show when={searchResults()}>
-            {(results) => (
-              <ul>
-                <For each={results().messages}>
-                  {(message) => (
-                    <li>
-                      <span class="presence online" />
-                      {displayUserLabel(message.authorId)}: {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
-                    </li>
-                  )}
-                </For>
-              </ul>
-            )}
-          </Show>
-          </section>
-        </Show>
-
-        <Show when={canAccessActiveChannel()}>
-          <section class="member-group">
-          <p class="group-label">ATTACHMENTS</p>
-          <form class="inline-form" onSubmit={uploadAttachment}>
-            <label>
-              File
-              <input
-                type="file"
-                onInput={(event) => {
-                  const file = event.currentTarget.files?.[0] ?? null;
-                  setSelectedAttachment(file);
-                  setAttachmentFilename(file?.name ?? "");
-                }}
-              />
-            </label>
-            <label>
-              Filename
-              <input
-                value={attachmentFilename()}
-                onInput={(event) => setAttachmentFilename(event.currentTarget.value)}
-                maxlength="128"
-                placeholder="upload.bin"
-              />
-            </label>
-            <button type="submit" disabled={isUploadingAttachment() || !activeChannel()}>
-              {isUploadingAttachment() ? "Uploading..." : "Upload"}
-            </button>
-          </form>
-          <Show when={attachmentStatus()}>
-            <p class="status ok">{attachmentStatus()}</p>
-          </Show>
-          <Show when={attachmentError()}>
-            <p class="status error">{attachmentError()}</p>
-          </Show>
-          <ul>
-            <For each={activeAttachments()}>
-              {(record) => (
-                <li>
-                  <span class="presence online" />
-                  <div class="stacked-meta">
-                    <span>{record.filename}</span>
-                    <span class="muted mono">{record.mimeType} · {formatBytes(record.sizeBytes)}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void downloadAttachment(record)}
-                    disabled={downloadingAttachmentId() === record.attachmentId}
-                  >
-                    {downloadingAttachmentId() === record.attachmentId ? "..." : "Get"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void removeAttachment(record)}
-                    disabled={deletingAttachmentId() === record.attachmentId}
-                  >
-                    {deletingAttachmentId() === record.attachmentId ? "..." : "Del"}
-                  </button>
-                </li>
-              )}
-            </For>
-            <Show when={activeAttachments().length === 0}>
-              <li>
-                <span class="presence idle" />
-                no-local-attachments
-              </li>
-            </Show>
-          </ul>
-          </section>
-        </Show>
-
-        <Show when={canAccessActiveChannel()}>
-          <section class="member-group">
-          <p class="group-label">VOICE TOKEN</p>
-          <form class="inline-form" onSubmit={requestVoiceToken}>
-            <label class="checkbox-row">
-              <input
-                type="checkbox"
-                checked={voiceCanPublish()}
-                onChange={(event) => setVoiceCanPublish(event.currentTarget.checked)}
-              />
-              can_publish
-            </label>
-            <label class="checkbox-row">
-              <input
-                type="checkbox"
-                checked={voiceCanSubscribe()}
-                onChange={(event) => setVoiceCanSubscribe(event.currentTarget.checked)}
-              />
-              can_subscribe
-            </label>
-            <label class="checkbox-row">
-              <input
-                type="checkbox"
-                checked={voiceMicrophone()}
-                onChange={(event) => setVoiceMicrophone(event.currentTarget.checked)}
-              />
-              microphone
-            </label>
-            <label class="checkbox-row">
-              <input
-                type="checkbox"
-                checked={voiceCamera()}
-                onChange={(event) => setVoiceCamera(event.currentTarget.checked)}
-              />
-              camera
-            </label>
-            <label class="checkbox-row">
-              <input
-                type="checkbox"
-                checked={voiceScreenShare()}
-                onChange={(event) => setVoiceScreenShare(event.currentTarget.checked)}
-              />
-              screen_share
-            </label>
-            <button type="submit" disabled={isIssuingVoiceToken() || !activeChannel()}>
-              {isIssuingVoiceToken() ? "Issuing..." : "Issue token"}
-            </button>
-          </form>
-          <Show when={voiceTokenPreview()}>
-            {(prefix) => <p class="mono">token_prefix: {prefix()}...</p>}
-          </Show>
-          <Show when={voiceTokenStatus()}>
-            <p class="status ok">{voiceTokenStatus()}</p>
-          </Show>
-          <Show when={voiceTokenError()}>
-            <p class="status error">{voiceTokenError()}</p>
-          </Show>
-          </section>
-        </Show>
-
-        <Show when={hasModerationAccess()}>
-          <section class="member-group">
-          <p class="group-label">MODERATION</p>
-          <form class="inline-form">
-            <label>
-              Target user ULID
-              <input
-                value={moderationUserIdInput()}
-                onInput={(event) => setModerationUserIdInput(event.currentTarget.value)}
-                maxlength="26"
-                placeholder="01ARZ..."
-              />
-            </label>
-            <label>
-              Role
-              <select
-                value={moderationRoleInput()}
-                onChange={(event) => setModerationRoleInput(roleFromInput(event.currentTarget.value))}
-              >
-                <option value="member">member</option>
-                <option value="moderator">moderator</option>
-                <option value="owner">owner</option>
-              </select>
-            </label>
-            <div class="button-row">
-              <Show when={canManageRoles()}>
-                <button
-                  type="button"
-                  disabled={isModerating() || !activeWorkspace()}
-                  onClick={() => void runMemberAction("add")}
-                >
-                  Add
-                </button>
-                <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("role")}>
-                  Set Role
-                </button>
               </Show>
-              <Show when={canBanMembers()}>
-                <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("kick")}>
-                  Kick
-                </button>
-                <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("ban")}>
-                  Ban
-                </button>
-              </Show>
-            </div>
-          </form>
-          <Show when={canManageChannelOverrides()}>
-            <form class="inline-form" onSubmit={applyOverride}>
-              <label>
-                Override role
-                <select
-                  value={overrideRoleInput()}
-                  onChange={(event) => setOverrideRoleInput(roleFromInput(event.currentTarget.value))}
-                >
-                  <option value="member">member</option>
-                  <option value="moderator">moderator</option>
-                  <option value="owner">owner</option>
-                </select>
-              </label>
-              <label>
-                Allow permissions (csv)
-                <input
-                  value={overrideAllowCsv()}
-                  onInput={(event) => setOverrideAllowCsv(event.currentTarget.value)}
-                  placeholder="create_message,subscribe_streams"
-                />
-              </label>
-              <label>
-                Deny permissions (csv)
-                <input
-                  value={overrideDenyCsv()}
-                  onInput={(event) => setOverrideDenyCsv(event.currentTarget.value)}
-                  placeholder="delete_message"
-                />
-              </label>
-              <button type="submit" disabled={isModerating() || !activeChannel()}>
-                Apply channel override
-              </button>
-            </form>
-          </Show>
-          <Show when={moderationStatus()}>
-            <p class="status ok">{moderationStatus()}</p>
-          </Show>
-          <Show when={moderationError()}>
-            <p class="status error">{moderationError()}</p>
-          </Show>
+            </ul>
           </section>
         </Show>
 
         <section class="member-group">
-          <p class="group-label">UTILITY</p>
-          <div class="button-row">
-            <button type="button" onClick={() => void runHealthCheck()} disabled={isCheckingHealth()}>
-              {isCheckingHealth() ? "Checking..." : "Health"}
+          <p class="group-label">GUILD SETTINGS</p>
+          <div class="ops-launch-grid">
+            <Show when={canAccessActiveChannel()}>
+              <button type="button" onClick={() => setActiveOpsPanel("search")}>
+                Open search panel
+              </button>
+              <button type="button" onClick={() => setActiveOpsPanel("attachments")}>
+                Open attachments panel
+              </button>
+              <button type="button" onClick={() => setActiveOpsPanel("voice")}>
+                Open voice panel
+              </button>
+            </Show>
+            <Show when={hasModerationAccess()}>
+              <button type="button" onClick={() => setActiveOpsPanel("moderation")}>
+                Open moderation panel
+              </button>
+            </Show>
+            <button type="button" onClick={() => setActiveOpsPanel("utility")}>
+              Open utility panel
             </button>
           </div>
-          <form class="inline-form" onSubmit={runEcho}>
-            <label>
-              Echo
-              <input
-                value={echoInput()}
-                onInput={(event) => setEchoInput(event.currentTarget.value)}
-                maxlength="128"
-              />
-            </label>
-            <button type="submit" disabled={isEchoing()}>
-              {isEchoing() ? "Sending..." : "Echo"}
-            </button>
-          </form>
-          <Show when={healthStatus()}>
-            <p class="status ok">{healthStatus()}</p>
-          </Show>
-          <Show when={diagError()}>
-            <p class="status error">{diagError()}</p>
-          </Show>
         </section>
+
+        <Show when={activeOpsPanel()}>
+          {(panel) => (
+            <section class="ops-overlay" role="dialog" aria-label={`${panel()} panel`}>
+              <header class="ops-overlay-header">
+                <button type="button" onClick={() => setActiveOpsPanel(null)}>
+                  Back
+                </button>
+                <p class="group-label">{panel().toUpperCase()}</p>
+              </header>
+
+              <Switch>
+                <Match when={panel() === "search" && canAccessActiveChannel()}>
+                  <section class="member-group">
+                    <p class="group-label">SEARCH</p>
+                    <form class="inline-form" onSubmit={runSearch}>
+                      <label>
+                        Query
+                        <input
+                          value={searchQuery()}
+                          onInput={(event) => setSearchQuery(event.currentTarget.value)}
+                          maxlength="256"
+                          placeholder="needle"
+                        />
+                      </label>
+                      <button type="submit" disabled={isSearching() || !activeWorkspace()}>
+                        {isSearching() ? "Searching..." : "Search"}
+                      </button>
+                    </form>
+                    <Show when={canManageSearchMaintenance()}>
+                      <div class="button-row">
+                        <button
+                          type="button"
+                          onClick={() => void rebuildSearch()}
+                          disabled={isRunningSearchOps() || !activeWorkspace()}
+                        >
+                          Rebuild Index
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void reconcileSearch()}
+                          disabled={isRunningSearchOps() || !activeWorkspace()}
+                        >
+                          Reconcile Index
+                        </button>
+                      </div>
+                    </Show>
+                    <Show when={searchOpsStatus()}>
+                      <p class="status ok">{searchOpsStatus()}</p>
+                    </Show>
+                    <Show when={searchError()}>
+                      <p class="status error">{searchError()}</p>
+                    </Show>
+                    <Show when={searchResults()}>
+                      {(results) => (
+                        <ul>
+                          <For each={results().messages}>
+                            {(message) => (
+                              <li>
+                                <span class="presence online" />
+                                {displayUserLabel(message.authorId)}:{" "}
+                                {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
+                              </li>
+                            )}
+                          </For>
+                        </ul>
+                      )}
+                    </Show>
+                  </section>
+                </Match>
+
+                <Match when={panel() === "attachments" && canAccessActiveChannel()}>
+                  <section class="member-group">
+                    <p class="group-label">ATTACHMENTS</p>
+                    <form class="inline-form" onSubmit={uploadAttachment}>
+                      <label>
+                        File
+                        <input
+                          type="file"
+                          onInput={(event) => {
+                            const file = event.currentTarget.files?.[0] ?? null;
+                            setSelectedAttachment(file);
+                            setAttachmentFilename(file?.name ?? "");
+                          }}
+                        />
+                      </label>
+                      <label>
+                        Filename
+                        <input
+                          value={attachmentFilename()}
+                          onInput={(event) => setAttachmentFilename(event.currentTarget.value)}
+                          maxlength="128"
+                          placeholder="upload.bin"
+                        />
+                      </label>
+                      <button type="submit" disabled={isUploadingAttachment() || !activeChannel()}>
+                        {isUploadingAttachment() ? "Uploading..." : "Upload"}
+                      </button>
+                    </form>
+                    <Show when={attachmentStatus()}>
+                      <p class="status ok">{attachmentStatus()}</p>
+                    </Show>
+                    <Show when={attachmentError()}>
+                      <p class="status error">{attachmentError()}</p>
+                    </Show>
+                    <ul>
+                      <For each={activeAttachments()}>
+                        {(record) => (
+                          <li>
+                            <span class="presence online" />
+                            <div class="stacked-meta">
+                              <span>{record.filename}</span>
+                              <span class="muted mono">
+                                {record.mimeType} · {formatBytes(record.sizeBytes)}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void downloadAttachment(record)}
+                              disabled={downloadingAttachmentId() === record.attachmentId}
+                            >
+                              {downloadingAttachmentId() === record.attachmentId ? "..." : "Get"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void removeAttachment(record)}
+                              disabled={deletingAttachmentId() === record.attachmentId}
+                            >
+                              {deletingAttachmentId() === record.attachmentId ? "..." : "Del"}
+                            </button>
+                          </li>
+                        )}
+                      </For>
+                      <Show when={activeAttachments().length === 0}>
+                        <li>
+                          <span class="presence idle" />
+                          no-local-attachments
+                        </li>
+                      </Show>
+                    </ul>
+                  </section>
+                </Match>
+
+                <Match when={panel() === "voice" && canAccessActiveChannel()}>
+                  <section class="member-group">
+                    <p class="group-label">VOICE TOKEN</p>
+                    <form class="inline-form" onSubmit={requestVoiceToken}>
+                      <label class="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={voiceCanPublish()}
+                          onChange={(event) => setVoiceCanPublish(event.currentTarget.checked)}
+                        />
+                        can_publish
+                      </label>
+                      <label class="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={voiceCanSubscribe()}
+                          onChange={(event) => setVoiceCanSubscribe(event.currentTarget.checked)}
+                        />
+                        can_subscribe
+                      </label>
+                      <label class="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={voiceMicrophone()}
+                          onChange={(event) => setVoiceMicrophone(event.currentTarget.checked)}
+                        />
+                        microphone
+                      </label>
+                      <label class="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={voiceCamera()}
+                          onChange={(event) => setVoiceCamera(event.currentTarget.checked)}
+                        />
+                        camera
+                      </label>
+                      <label class="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={voiceScreenShare()}
+                          onChange={(event) => setVoiceScreenShare(event.currentTarget.checked)}
+                        />
+                        screen_share
+                      </label>
+                      <button type="submit" disabled={isIssuingVoiceToken() || !activeChannel()}>
+                        {isIssuingVoiceToken() ? "Issuing..." : "Issue token"}
+                      </button>
+                    </form>
+                    <Show when={voiceTokenPreview()}>
+                      {(prefix) => <p class="mono">token_prefix: {prefix()}...</p>}
+                    </Show>
+                    <Show when={voiceTokenStatus()}>
+                      <p class="status ok">{voiceTokenStatus()}</p>
+                    </Show>
+                    <Show when={voiceTokenError()}>
+                      <p class="status error">{voiceTokenError()}</p>
+                    </Show>
+                  </section>
+                </Match>
+
+                <Match when={panel() === "moderation" && hasModerationAccess()}>
+                  <section class="member-group">
+                    <p class="group-label">MODERATION</p>
+                    <form class="inline-form">
+                      <label>
+                        Target user ULID
+                        <input
+                          value={moderationUserIdInput()}
+                          onInput={(event) => setModerationUserIdInput(event.currentTarget.value)}
+                          maxlength="26"
+                          placeholder="01ARZ..."
+                        />
+                      </label>
+                      <label>
+                        Role
+                        <select
+                          value={moderationRoleInput()}
+                          onChange={(event) => setModerationRoleInput(roleFromInput(event.currentTarget.value))}
+                        >
+                          <option value="member">member</option>
+                          <option value="moderator">moderator</option>
+                          <option value="owner">owner</option>
+                        </select>
+                      </label>
+                      <div class="button-row">
+                        <Show when={canManageRoles()}>
+                          <button
+                            type="button"
+                            disabled={isModerating() || !activeWorkspace()}
+                            onClick={() => void runMemberAction("add")}
+                          >
+                            Add
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isModerating() || !activeWorkspace()}
+                            onClick={() => void runMemberAction("role")}
+                          >
+                            Set Role
+                          </button>
+                        </Show>
+                        <Show when={canBanMembers()}>
+                          <button
+                            type="button"
+                            disabled={isModerating() || !activeWorkspace()}
+                            onClick={() => void runMemberAction("kick")}
+                          >
+                            Kick
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isModerating() || !activeWorkspace()}
+                            onClick={() => void runMemberAction("ban")}
+                          >
+                            Ban
+                          </button>
+                        </Show>
+                      </div>
+                    </form>
+                    <Show when={canManageChannelOverrides()}>
+                      <form class="inline-form" onSubmit={applyOverride}>
+                        <label>
+                          Override role
+                          <select
+                            value={overrideRoleInput()}
+                            onChange={(event) => setOverrideRoleInput(roleFromInput(event.currentTarget.value))}
+                          >
+                            <option value="member">member</option>
+                            <option value="moderator">moderator</option>
+                            <option value="owner">owner</option>
+                          </select>
+                        </label>
+                        <label>
+                          Allow permissions (csv)
+                          <input
+                            value={overrideAllowCsv()}
+                            onInput={(event) => setOverrideAllowCsv(event.currentTarget.value)}
+                            placeholder="create_message,subscribe_streams"
+                          />
+                        </label>
+                        <label>
+                          Deny permissions (csv)
+                          <input
+                            value={overrideDenyCsv()}
+                            onInput={(event) => setOverrideDenyCsv(event.currentTarget.value)}
+                            placeholder="delete_message"
+                          />
+                        </label>
+                        <button type="submit" disabled={isModerating() || !activeChannel()}>
+                          Apply channel override
+                        </button>
+                      </form>
+                    </Show>
+                    <Show when={moderationStatus()}>
+                      <p class="status ok">{moderationStatus()}</p>
+                    </Show>
+                    <Show when={moderationError()}>
+                      <p class="status error">{moderationError()}</p>
+                    </Show>
+                  </section>
+                </Match>
+
+                <Match when={panel() === "utility"}>
+                  <section class="member-group">
+                    <p class="group-label">UTILITY</p>
+                    <div class="button-row">
+                      <button type="button" onClick={() => void runHealthCheck()} disabled={isCheckingHealth()}>
+                        {isCheckingHealth() ? "Checking..." : "Health"}
+                      </button>
+                    </div>
+                    <form class="inline-form" onSubmit={runEcho}>
+                      <label>
+                        Echo
+                        <input
+                          value={echoInput()}
+                          onInput={(event) => setEchoInput(event.currentTarget.value)}
+                          maxlength="128"
+                        />
+                      </label>
+                      <button type="submit" disabled={isEchoing()}>
+                        {isEchoing() ? "Sending..." : "Echo"}
+                      </button>
+                    </form>
+                    <Show when={healthStatus()}>
+                      <p class="status ok">{healthStatus()}</p>
+                    </Show>
+                    <Show when={diagError()}>
+                      <p class="status error">{diagError()}</p>
+                    </Show>
+                  </section>
+                </Match>
+              </Switch>
+            </section>
+          )}
+        </Show>
       </aside>
     </div>
   );

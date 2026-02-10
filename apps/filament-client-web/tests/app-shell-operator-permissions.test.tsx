@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { vi } from "vitest";
 import { App } from "../src/App";
 
@@ -217,12 +217,23 @@ describe("operator console permission fixtures", () => {
     render(() => <App />);
 
     expect(await screen.findByRole("heading", { name: "Ops Console" })).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open search panel" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Rebuild Index" })).toBeEnabled(),
     );
     expect(screen.getByRole("button", { name: "Reconcile Index" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open voice panel" }));
     expect(screen.getByRole("button", { name: "Issue token" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open moderation panel" }));
     expect(screen.getByRole("button", { name: "Apply channel override" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.queryByRole("button", { name: "Issue token" })).not.toBeInTheDocument();
   });
 
   it("hides privileged operator controls for restricted member fixtures", async () => {
@@ -235,12 +246,19 @@ describe("operator console permission fixtures", () => {
 
     expect(await screen.findByRole("heading", { name: "Ops Console" })).toBeInTheDocument();
 
+    fireEvent.click(await screen.findByRole("button", { name: "Open voice panel" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Issue token" })).toBeEnabled(),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open search panel" }));
     expect(screen.queryByRole("button", { name: "Rebuild Index" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
     expect(screen.queryByRole("button", { name: "Apply channel override" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Ban" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open moderation panel" })).not.toBeInTheDocument();
   });
 });
