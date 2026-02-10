@@ -3,31 +3,50 @@ import {
   type Password,
   type Username,
   authSessionFromResponse,
+  type AccessToken,
+  type RefreshToken,
 } from "../domain/auth";
 import {
+  type AttachmentFilename,
+  type AttachmentId,
+  type AttachmentRecord,
   type ChannelId,
   type ChannelName,
   type GuildId,
   type GuildName,
+  type MediaPublishSource,
   type MessageContent,
   type MessageHistory,
   type MessageId,
   type MessageRecord,
+  type ModerationResult,
+  type PermissionName,
   type ReactionEmoji,
   type ReactionRecord,
+  type RoleName,
   type SearchQuery,
+  type SearchReconcileResult,
   type SearchResults,
+  type UserId,
+  type VoiceTokenRecord,
+  attachmentFromResponse,
   channelFromResponse,
   guildFromResponse,
   messageFromResponse,
   messageHistoryFromResponse,
+  moderationResultFromResponse,
   reactionFromResponse,
+  searchReconcileFromResponse,
   searchResultsFromResponse,
+  userIdFromInput,
+  voiceTokenFromResponse,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
 
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
 const MAX_RESPONSE_BYTES = 64 * 1024;
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_ATTACHMENT_DOWNLOAD_BYTES = 26 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 7_000;
 
 export class ApiError extends Error {
@@ -50,7 +69,16 @@ interface JsonRequest {
   method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
-  accessToken?: AuthSession["accessToken"];
+  accessToken?: AccessToken;
+  headers?: Record<string, string>;
+}
+
+interface BodyRequest {
+  method: "POST" | "PATCH" | "DELETE";
+  path: string;
+  body: BodyInit;
+  accessToken?: AccessToken;
+  headers?: Record<string, string>;
 }
 
 function resolvedBaseUrl(): string {
@@ -88,6 +116,35 @@ async function fetchWithTimeout(
   }
 }
 
+async function sendRequest(input: {
+  method: string;
+  path: string;
+  accessToken?: AccessToken;
+  headers?: Record<string, string>;
+  body?: BodyInit;
+}): Promise<Response> {
+  const config = apiConfig();
+  const headers: Record<string, string> = { ...(input.headers ?? {}) };
+  if (input.accessToken) {
+    headers.authorization = bearerHeader(input.accessToken);
+  }
+
+  try {
+    return await fetchWithTimeout(
+      `${config.baseUrl}${input.path}`,
+      {
+        method: input.method,
+        headers,
+        body: input.body,
+        credentials: "omit",
+      },
+      REQUEST_TIMEOUT_MS,
+    );
+  } catch {
+    throw new ApiError(0, "network_error", "Unable to reach Filament API.");
+  }
+}
+
 async function readBoundedJson(response: Response): Promise<unknown> {
   const text = await response.text();
   if (text.length > MAX_RESPONSE_BYTES) {
@@ -114,31 +171,17 @@ function readApiError(data: unknown): string {
 }
 
 async function requestJson(request: JsonRequest): Promise<unknown> {
-  const config = apiConfig();
-  const headers: Record<string, string> = {};
-
+  const headers: Record<string, string> = { ...(request.headers ?? {}) };
   if (request.body !== undefined) {
     headers["content-type"] = "application/json";
   }
-  if (request.accessToken) {
-    headers.authorization = bearerHeader(request.accessToken);
-  }
-
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(
-      `${config.baseUrl}${request.path}`,
-      {
-        method: request.method,
-        headers,
-        body: request.body === undefined ? undefined : JSON.stringify(request.body),
-        credentials: "omit",
-      },
-      REQUEST_TIMEOUT_MS,
-    );
-  } catch {
-    throw new ApiError(0, "network_error", "Unable to reach Filament API.");
-  }
+  const response = await sendRequest({
+    method: request.method,
+    path: request.path,
+    accessToken: request.accessToken,
+    headers,
+    body: request.body === undefined ? undefined : JSON.stringify(request.body),
+  });
 
   const data = await readBoundedJson(response);
   if (!response.ok) {
@@ -146,6 +189,51 @@ async function requestJson(request: JsonRequest): Promise<unknown> {
     throw new ApiError(response.status, code, code);
   }
   return data;
+}
+
+async function requestNoContent(request: JsonRequest): Promise<void> {
+  const dto = await requestJson(request);
+  if (dto !== null) {
+    throw new ApiError(500, "unexpected_body", "Expected empty response body.");
+  }
+}
+
+async function requestJsonWithBody(request: BodyRequest): Promise<unknown> {
+  const response = await sendRequest({
+    method: request.method,
+    path: request.path,
+    accessToken: request.accessToken,
+    headers: request.headers,
+    body: request.body,
+  });
+  const data = await readBoundedJson(response);
+  if (!response.ok) {
+    throw new ApiError(response.status, readApiError(data), readApiError(data));
+  }
+  return data;
+}
+
+async function requestBinary(input: {
+  path: string;
+  accessToken: AccessToken;
+}): Promise<{ bytes: Uint8Array; mimeType: string | null }> {
+  const response = await sendRequest({
+    method: "GET",
+    path: input.path,
+    accessToken: input.accessToken,
+  });
+  if (!response.ok) {
+    const data = await readBoundedJson(response);
+    throw new ApiError(response.status, readApiError(data), readApiError(data));
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  if (arrayBuffer.byteLength > MAX_ATTACHMENT_DOWNLOAD_BYTES) {
+    throw new ApiError(response.status, "oversized_response", "Attachment response too large.");
+  }
+  return {
+    bytes: new Uint8Array(arrayBuffer),
+    mimeType: response.headers.get("content-type"),
+  };
 }
 
 export async function registerWithPassword(input: {
@@ -190,7 +278,34 @@ export async function loginWithPassword(input: {
   });
 }
 
-export async function fetchMe(session: AuthSession): Promise<{ userId: string; username: string }> {
+export async function refreshAuthSession(
+  refreshToken: RefreshToken,
+): Promise<AuthSession> {
+  const dto = await requestJson({
+    method: "POST",
+    path: "/auth/refresh",
+    body: { refresh_token: refreshToken },
+  });
+
+  if (!dto || typeof dto !== "object") {
+    throw new ApiError(500, "invalid_refresh_shape", "Unexpected refresh response.");
+  }
+  return authSessionFromResponse(dto as {
+    access_token: string;
+    refresh_token: string;
+    expires_in_secs: number;
+  });
+}
+
+export async function logoutAuthSession(refreshToken: RefreshToken): Promise<void> {
+  await requestNoContent({
+    method: "POST",
+    path: "/auth/logout",
+    body: { refresh_token: refreshToken },
+  });
+}
+
+export async function fetchMe(session: AuthSession): Promise<{ userId: UserId; username: string }> {
   const dto = await requestJson({
     method: "GET",
     path: "/auth/me",
@@ -208,9 +323,32 @@ export async function fetchMe(session: AuthSession): Promise<{ userId: string; u
   }
 
   return {
-    userId,
+    userId: userIdFromInput(userId),
     username,
   };
+}
+
+export async function fetchHealth(): Promise<{ status: "ok" }> {
+  const dto = await requestJson({
+    method: "GET",
+    path: "/health",
+  });
+  if (!dto || typeof dto !== "object" || (dto as { status?: unknown }).status !== "ok") {
+    throw new ApiError(500, "invalid_health_shape", "Unexpected health response.");
+  }
+  return { status: "ok" };
+}
+
+export async function echoMessage(input: { message: string }): Promise<string> {
+  const dto = await requestJson({
+    method: "POST",
+    path: "/echo",
+    body: { message: input.message },
+  });
+  if (!dto || typeof dto !== "object" || typeof (dto as { message?: unknown }).message !== "string") {
+    throw new ApiError(500, "invalid_echo_shape", "Unexpected echo response.");
+  }
+  return (dto as { message: string }).message;
 }
 
 export async function createGuild(session: AuthSession, input: { name: GuildName }): Promise<{
@@ -278,6 +416,35 @@ export async function createChannelMessage(
   return messageFromResponse(dto);
 }
 
+export async function editChannelMessage(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  messageId: MessageId,
+  input: { content: MessageContent },
+): Promise<MessageRecord> {
+  const dto = await requestJson({
+    method: "PATCH",
+    path: `/guilds/${guildId}/channels/${channelId}/messages/${messageId}`,
+    accessToken: session.accessToken,
+    body: { content: input.content },
+  });
+  return messageFromResponse(dto);
+}
+
+export async function deleteChannelMessage(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  messageId: MessageId,
+): Promise<void> {
+  await requestNoContent({
+    method: "DELETE",
+    path: `/guilds/${guildId}/channels/${channelId}/messages/${messageId}`,
+    accessToken: session.accessToken,
+  });
+}
+
 export async function searchGuildMessages(
   session: AuthSession,
   guildId: GuildId,
@@ -298,6 +465,29 @@ export async function searchGuildMessages(
     accessToken: session.accessToken,
   });
   return searchResultsFromResponse(dto);
+}
+
+export async function rebuildGuildSearchIndex(
+  session: AuthSession,
+  guildId: GuildId,
+): Promise<void> {
+  await requestNoContent({
+    method: "POST",
+    path: `/guilds/${guildId}/search/rebuild`,
+    accessToken: session.accessToken,
+  });
+}
+
+export async function reconcileGuildSearchIndex(
+  session: AuthSession,
+  guildId: GuildId,
+): Promise<SearchReconcileResult> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/search/reconcile`,
+    accessToken: session.accessToken,
+  });
+  return searchReconcileFromResponse(dto);
 }
 
 export async function addMessageReaction(
@@ -328,4 +518,150 @@ export async function removeMessageReaction(
     accessToken: session.accessToken,
   });
   return reactionFromResponse(dto);
+}
+
+export async function uploadChannelAttachment(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  file: File,
+  filename: AttachmentFilename,
+): Promise<AttachmentRecord> {
+  if (file.size < 1 || file.size > MAX_ATTACHMENT_BYTES) {
+    throw new ApiError(400, "invalid_request", "Attachment size must be within server limits.");
+  }
+  const query = new URLSearchParams({ filename });
+  const headers: Record<string, string> = {};
+  if (file.type && file.type.length <= 128) {
+    headers["content-type"] = file.type;
+  }
+  const dto = await requestJsonWithBody({
+    method: "POST",
+    path: `/guilds/${guildId}/channels/${channelId}/attachments?${query.toString()}`,
+    accessToken: session.accessToken,
+    headers,
+    body: file,
+  });
+  return attachmentFromResponse(dto);
+}
+
+export async function downloadChannelAttachment(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  attachmentId: AttachmentId,
+): Promise<{ bytes: Uint8Array; mimeType: string | null }> {
+  return requestBinary({
+    path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
+    accessToken: session.accessToken,
+  });
+}
+
+export async function deleteChannelAttachment(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  attachmentId: AttachmentId,
+): Promise<void> {
+  await requestNoContent({
+    method: "DELETE",
+    path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
+    accessToken: session.accessToken,
+  });
+}
+
+export async function addGuildMember(
+  session: AuthSession,
+  guildId: GuildId,
+  userId: UserId,
+): Promise<ModerationResult> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/members/${userId}`,
+    accessToken: session.accessToken,
+  });
+  return moderationResultFromResponse(dto);
+}
+
+export async function updateGuildMemberRole(
+  session: AuthSession,
+  guildId: GuildId,
+  userId: UserId,
+  role: RoleName,
+): Promise<ModerationResult> {
+  const dto = await requestJson({
+    method: "PATCH",
+    path: `/guilds/${guildId}/members/${userId}`,
+    accessToken: session.accessToken,
+    body: { role },
+  });
+  return moderationResultFromResponse(dto);
+}
+
+export async function kickGuildMember(
+  session: AuthSession,
+  guildId: GuildId,
+  userId: UserId,
+): Promise<ModerationResult> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/members/${userId}/kick`,
+    accessToken: session.accessToken,
+  });
+  return moderationResultFromResponse(dto);
+}
+
+export async function banGuildMember(
+  session: AuthSession,
+  guildId: GuildId,
+  userId: UserId,
+): Promise<ModerationResult> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/members/${userId}/ban`,
+    accessToken: session.accessToken,
+  });
+  return moderationResultFromResponse(dto);
+}
+
+export async function setChannelRoleOverride(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  role: RoleName,
+  input: {
+    allow: PermissionName[];
+    deny: PermissionName[];
+  },
+): Promise<ModerationResult> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/channels/${channelId}/overrides/${role}`,
+    accessToken: session.accessToken,
+    body: input,
+  });
+  return moderationResultFromResponse(dto);
+}
+
+export async function issueVoiceToken(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  input: {
+    canPublish?: boolean;
+    canSubscribe?: boolean;
+    publishSources?: MediaPublishSource[];
+  },
+): Promise<VoiceTokenRecord> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/channels/${channelId}/voice/token`,
+    accessToken: session.accessToken,
+    body: {
+      can_publish: input.canPublish,
+      can_subscribe: input.canSubscribe,
+      publish_sources: input.publishSources,
+    },
+  });
+  return voiceTokenFromResponse(dto);
 }

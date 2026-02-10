@@ -11,28 +11,55 @@ import {
 } from "solid-js";
 import { DomainValidationError } from "../domain/auth";
 import {
+  attachmentFilenameFromInput,
   channelNameFromInput,
   guildNameFromInput,
   messageContentFromInput,
+  permissionFromInput,
   reactionEmojiFromInput,
+  roleFromInput,
   searchQueryFromInput,
+  userIdFromInput,
+  type AttachmentId,
+  type AttachmentRecord,
   type ChannelId,
   type GuildId,
+  type MarkdownToken,
   type MessageId,
   type MessageRecord,
+  type PermissionName,
+  type RoleName,
   type SearchResults,
+  type UserId,
   type WorkspaceRecord,
 } from "../domain/chat";
 import {
   ApiError,
+  addGuildMember,
   addMessageReaction,
+  banGuildMember,
   createChannel,
   createChannelMessage,
   createGuild,
+  deleteChannelAttachment,
+  deleteChannelMessage,
+  downloadChannelAttachment,
+  editChannelMessage,
+  echoMessage,
   fetchChannelMessages,
+  fetchHealth,
   fetchMe,
+  issueVoiceToken,
+  kickGuildMember,
+  logoutAuthSession,
+  rebuildGuildSearchIndex,
+  reconcileGuildSearchIndex,
+  refreshAuthSession,
   removeMessageReaction,
   searchGuildMessages,
+  setChannelRoleOverride,
+  updateGuildMemberRole,
+  uploadChannelAttachment,
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { connectGateway } from "../lib/gateway";
@@ -47,6 +74,21 @@ interface ReactionView {
 
 function reactionKey(messageId: MessageId, emoji: string): string {
   return `${messageId}|${emoji}`;
+}
+
+function channelKey(guildId: GuildId, channelId: ChannelId): string {
+  return `${guildId}|${channelId}`;
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  const kib = value / 1024;
+  if (kib < 1024) {
+    return `${kib.toFixed(1)} KiB`;
+  }
+  return `${(kib / 1024).toFixed(2)} MiB`;
 }
 
 function mapError(error: unknown, fallback: string): string {
@@ -65,6 +107,18 @@ function mapError(error: unknown, fallback: string): string {
     }
     if (error.code === "network_error") {
       return "Cannot reach server. Verify API origin and TLS setup.";
+    }
+    if (error.code === "payload_too_large") {
+      return "Payload is too large for this endpoint.";
+    }
+    if (error.code === "quota_exceeded") {
+      return "Attachment quota exceeded for this user.";
+    }
+    if (error.code === "invalid_credentials") {
+      return "Authentication failed. Please login again.";
+    }
+    if (error.code === "invalid_request") {
+      return "Request payload did not pass API validation.";
     }
     return `Request failed (${error.code}).`;
   }
@@ -107,6 +161,71 @@ function mergeMessage(existing: MessageRecord[], incoming: MessageRecord): Messa
   return [...existing, incoming];
 }
 
+function prependOlderMessages(
+  existing: MessageRecord[],
+  olderAscending: MessageRecord[],
+): MessageRecord[] {
+  const known = new Set(existing.map((entry) => entry.messageId));
+  const prepend = olderAscending.filter((entry) => !known.has(entry.messageId));
+  return [...prepend, ...existing];
+}
+
+function tokenizeToDisplayText(tokens: MarkdownToken[]): string {
+  let output = "";
+  let pendingLink: string | null = null;
+
+  for (const token of tokens) {
+    if (token.type === "text") {
+      output += token.text;
+      continue;
+    }
+    if (token.type === "code") {
+      output += `\`${token.code}\``;
+      continue;
+    }
+    if (token.type === "soft_break" || token.type === "hard_break") {
+      output += "\n";
+      continue;
+    }
+    if (token.type === "paragraph_end") {
+      output += "\n\n";
+      continue;
+    }
+    if (token.type === "list_item_start") {
+      output += "• ";
+      continue;
+    }
+    if (token.type === "list_item_end") {
+      output += "\n";
+      continue;
+    }
+    if (token.type === "link_start") {
+      pendingLink = token.href;
+      continue;
+    }
+    if (token.type === "link_end") {
+      if (pendingLink) {
+        output += ` (${pendingLink})`;
+      }
+      pendingLink = null;
+    }
+  }
+
+  return output.trimEnd();
+}
+
+function parsePermissionCsv(value: string): PermissionName[] {
+  const unique = new Set<PermissionName>();
+  const tokens = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  for (const token of tokens) {
+    unique.add(permissionFromInput(token));
+  }
+  return [...unique];
+}
+
 export function AppShellPage() {
   const auth = useAuth();
 
@@ -122,9 +241,15 @@ export function AppShellPage() {
   const [messageStatus, setMessageStatus] = createSignal("");
   const [messageError, setMessageError] = createSignal("");
   const [isLoadingMessages, setLoadingMessages] = createSignal(false);
+  const [isLoadingOlder, setLoadingOlder] = createSignal(false);
   const [isSendingMessage, setSendingMessage] = createSignal(false);
   const [messages, setMessages] = createSignal<MessageRecord[]>([]);
+  const [nextBefore, setNextBefore] = createSignal<MessageId | null>(null);
   const [reactionState, setReactionState] = createSignal<Record<string, ReactionView>>({});
+  const [editingMessageId, setEditingMessageId] = createSignal<MessageId | null>(null);
+  const [editingDraft, setEditingDraft] = createSignal("");
+  const [isSavingEdit, setSavingEdit] = createSignal(false);
+  const [deletingMessageId, setDeletingMessageId] = createSignal<MessageId | null>(null);
 
   const [createGuildName, setCreateGuildName] = createSignal("Security Ops");
   const [createChannelName, setCreateChannelName] = createSignal("incident-room");
@@ -140,9 +265,50 @@ export function AppShellPage() {
   const [searchError, setSearchError] = createSignal("");
   const [isSearching, setSearching] = createSignal(false);
   const [searchResults, setSearchResults] = createSignal<SearchResults | null>(null);
+  const [isRunningSearchOps, setRunningSearchOps] = createSignal(false);
+  const [searchOpsStatus, setSearchOpsStatus] = createSignal("");
 
   const [gatewayOnline, setGatewayOnline] = createSignal(false);
   const [onlineMembers, setOnlineMembers] = createSignal<string[]>([]);
+
+  const [attachmentByChannel, setAttachmentByChannel] = createSignal<Record<string, AttachmentRecord[]>>({});
+  const [selectedAttachment, setSelectedAttachment] = createSignal<File | null>(null);
+  const [attachmentFilename, setAttachmentFilename] = createSignal("");
+  const [attachmentStatus, setAttachmentStatus] = createSignal("");
+  const [attachmentError, setAttachmentError] = createSignal("");
+  const [isUploadingAttachment, setUploadingAttachment] = createSignal(false);
+  const [downloadingAttachmentId, setDownloadingAttachmentId] = createSignal<AttachmentId | null>(null);
+  const [deletingAttachmentId, setDeletingAttachmentId] = createSignal<AttachmentId | null>(null);
+
+  const [voiceCanPublish, setVoiceCanPublish] = createSignal(true);
+  const [voiceCanSubscribe, setVoiceCanSubscribe] = createSignal(false);
+  const [voiceMicrophone, setVoiceMicrophone] = createSignal(true);
+  const [voiceCamera, setVoiceCamera] = createSignal(false);
+  const [voiceScreenShare, setVoiceScreenShare] = createSignal(false);
+  const [isIssuingVoiceToken, setIssuingVoiceToken] = createSignal(false);
+  const [voiceTokenStatus, setVoiceTokenStatus] = createSignal("");
+  const [voiceTokenError, setVoiceTokenError] = createSignal("");
+  const [voiceTokenPreview, setVoiceTokenPreview] = createSignal<string | null>(null);
+
+  const [moderationUserIdInput, setModerationUserIdInput] = createSignal("");
+  const [moderationRoleInput, setModerationRoleInput] = createSignal<RoleName>("member");
+  const [isModerating, setModerating] = createSignal(false);
+  const [moderationStatus, setModerationStatus] = createSignal("");
+  const [moderationError, setModerationError] = createSignal("");
+
+  const [overrideRoleInput, setOverrideRoleInput] = createSignal<RoleName>("member");
+  const [overrideAllowCsv, setOverrideAllowCsv] = createSignal("create_message");
+  const [overrideDenyCsv, setOverrideDenyCsv] = createSignal("");
+
+  const [isRefreshingSession, setRefreshingSession] = createSignal(false);
+  const [sessionStatus, setSessionStatus] = createSignal("");
+  const [sessionError, setSessionError] = createSignal("");
+
+  const [healthStatus, setHealthStatus] = createSignal("");
+  const [echoInput, setEchoInput] = createSignal("hello filament");
+  const [diagError, setDiagError] = createSignal("");
+  const [isCheckingHealth, setCheckingHealth] = createSignal(false);
+  const [isEchoing, setEchoing] = createSignal(false);
 
   const activeWorkspace = createMemo(
     () => workspaces().find((workspace) => workspace.guildId === activeGuildId()) ?? null,
@@ -153,6 +319,20 @@ export function AppShellPage() {
       activeWorkspace()?.channels.find((channel) => channel.channelId === activeChannelId()) ??
       null,
   );
+
+  const activeChannelKey = createMemo(() => {
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    return guildId && channelId ? channelKey(guildId, channelId) : null;
+  });
+
+  const activeAttachments = createMemo(() => {
+    const key = activeChannelKey();
+    if (!key) {
+      return [];
+    }
+    return attachmentByChannel()[key] ?? [];
+  });
 
   const [profile] = createResource(async () => {
     const session = auth.session();
@@ -189,6 +369,7 @@ export function AppShellPage() {
     const channelId = activeChannelId();
     if (!session || !guildId || !channelId) {
       setMessages([]);
+      setNextBefore(null);
       return;
     }
 
@@ -197,11 +378,41 @@ export function AppShellPage() {
     try {
       const history = await fetchChannelMessages(session, guildId, channelId, { limit: 50 });
       setMessages([...history.messages].reverse());
+      setNextBefore(history.nextBefore);
+      setEditingMessageId(null);
+      setEditingDraft("");
     } catch (error) {
       setMessageError(mapError(error, "Unable to load messages."));
       setMessages([]);
+      setNextBefore(null);
     } finally {
       setLoadingMessages(false);
+    }
+  };
+
+  const loadOlderMessages = async () => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    const before = nextBefore();
+    if (!session || !guildId || !channelId || !before || isLoadingOlder()) {
+      return;
+    }
+
+    setLoadingOlder(true);
+    setMessageError("");
+    try {
+      const history = await fetchChannelMessages(session, guildId, channelId, {
+        limit: 50,
+        before,
+      });
+      const olderAscending = [...history.messages].reverse();
+      setMessages((existing) => prependOlderMessages(existing, olderAscending));
+      setNextBefore(history.nextBefore);
+    } catch (error) {
+      setMessageError(mapError(error, "Unable to load older messages."));
+    } finally {
+      setLoadingOlder(false);
     }
   };
 
@@ -209,6 +420,14 @@ export function AppShellPage() {
     void activeGuildId();
     void activeChannelId();
     setReactionState({});
+    setSearchResults(null);
+    setSearchError("");
+    setSearchOpsStatus("");
+    setAttachmentStatus("");
+    setAttachmentError("");
+    setVoiceTokenStatus("");
+    setVoiceTokenError("");
+    setVoiceTokenPreview(null);
     void refreshMessages();
   });
 
@@ -318,6 +537,7 @@ export function AppShellPage() {
       setActiveChannelId(created.channelId);
       setShowNewChannelForm(false);
       setNewChannelName("backend");
+      setMessageStatus("Channel created.");
     } catch (error) {
       setChannelCreateError(mapError(error, "Unable to create channel."));
     } finally {
@@ -352,6 +572,65 @@ export function AppShellPage() {
       setMessageError(mapError(error, "Unable to send message."));
     } finally {
       setSendingMessage(false);
+    }
+  };
+
+  const beginEditMessage = (message: MessageRecord) => {
+    setEditingMessageId(message.messageId);
+    setEditingDraft(message.content);
+  };
+
+  const cancelEditMessage = () => {
+    setEditingMessageId(null);
+    setEditingDraft("");
+  };
+
+  const saveEditMessage = async (messageId: MessageId) => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId || isSavingEdit()) {
+      return;
+    }
+
+    setSavingEdit(true);
+    setMessageError("");
+    try {
+      const updated = await editChannelMessage(session, guildId, channelId, messageId, {
+        content: messageContentFromInput(editingDraft()),
+      });
+      setMessages((existing) => mergeMessage(existing, updated));
+      setEditingMessageId(null);
+      setEditingDraft("");
+      setMessageStatus("Message updated.");
+    } catch (error) {
+      setMessageError(mapError(error, "Unable to edit message."));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const removeMessage = async (messageId: MessageId) => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId || deletingMessageId()) {
+      return;
+    }
+
+    setDeletingMessageId(messageId);
+    setMessageError("");
+    try {
+      await deleteChannelMessage(session, guildId, channelId, messageId);
+      setMessages((existing) => existing.filter((entry) => entry.messageId !== messageId));
+      if (editingMessageId() === messageId) {
+        cancelEditMessage();
+      }
+      setMessageStatus("Message deleted.");
+    } catch (error) {
+      setMessageError(mapError(error, "Unable to delete message."));
+    } finally {
+      setDeletingMessageId(null);
     }
   };
 
@@ -403,7 +682,7 @@ export function AppShellPage() {
     try {
       const results = await searchGuildMessages(session, guildId, {
         query: searchQueryFromInput(searchQuery()),
-        limit: 12,
+        limit: 20,
         channelId: activeChannelId() ?? undefined,
       });
       setSearchResults(results);
@@ -415,9 +694,336 @@ export function AppShellPage() {
     }
   };
 
-  const logout = () => {
+  const rebuildSearch = async () => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    if (!session || !guildId || isRunningSearchOps()) {
+      return;
+    }
+
+    setRunningSearchOps(true);
+    setSearchError("");
+    setSearchOpsStatus("");
+    try {
+      await rebuildGuildSearchIndex(session, guildId);
+      setSearchOpsStatus("Search index rebuild queued.");
+    } catch (error) {
+      setSearchError(mapError(error, "Unable to rebuild search index."));
+    } finally {
+      setRunningSearchOps(false);
+    }
+  };
+
+  const reconcileSearch = async () => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    if (!session || !guildId || isRunningSearchOps()) {
+      return;
+    }
+
+    setRunningSearchOps(true);
+    setSearchError("");
+    setSearchOpsStatus("");
+    try {
+      const result = await reconcileGuildSearchIndex(session, guildId);
+      setSearchOpsStatus(`Reconciled search index (upserted ${result.upserted}, deleted ${result.deleted}).`);
+    } catch (error) {
+      setSearchError(mapError(error, "Unable to reconcile search index."));
+    } finally {
+      setRunningSearchOps(false);
+    }
+  };
+
+  const uploadAttachment = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    const file = selectedAttachment();
+    if (!session || !guildId || !channelId) {
+      setAttachmentError("Select a channel first.");
+      return;
+    }
+    if (!file) {
+      setAttachmentError("Select a file to upload.");
+      return;
+    }
+    if (isUploadingAttachment()) {
+      return;
+    }
+
+    setAttachmentStatus("");
+    setAttachmentError("");
+    setUploadingAttachment(true);
+
+    try {
+      const filename = attachmentFilenameFromInput(
+        attachmentFilename().trim().length > 0 ? attachmentFilename().trim() : file.name,
+      );
+      const uploaded = await uploadChannelAttachment(session, guildId, channelId, file, filename);
+      const key = channelKey(guildId, channelId);
+      setAttachmentByChannel((existing) => {
+        const current = existing[key] ?? [];
+        const deduped = current.filter((entry) => entry.attachmentId !== uploaded.attachmentId);
+        return {
+          ...existing,
+          [key]: [uploaded, ...deduped],
+        };
+      });
+      setAttachmentStatus(`Uploaded ${uploaded.filename} (${formatBytes(uploaded.sizeBytes)}).`);
+      setSelectedAttachment(null);
+      setAttachmentFilename("");
+    } catch (error) {
+      setAttachmentError(mapError(error, "Unable to upload attachment."));
+    } finally {
+      setUploadingAttachment(false);
+    }
+  };
+
+  const downloadAttachment = async (record: AttachmentRecord) => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId || downloadingAttachmentId()) {
+      return;
+    }
+
+    setDownloadingAttachmentId(record.attachmentId);
+    setAttachmentError("");
+    try {
+      const payload = await downloadChannelAttachment(session, guildId, channelId, record.attachmentId);
+      const blob = new Blob([payload.bytes], {
+        type: payload.mimeType ?? record.mimeType,
+      });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = record.filename;
+      anchor.rel = "noopener";
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch (error) {
+      setAttachmentError(mapError(error, "Unable to download attachment."));
+    } finally {
+      setDownloadingAttachmentId(null);
+    }
+  };
+
+  const removeAttachment = async (record: AttachmentRecord) => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId || deletingAttachmentId()) {
+      return;
+    }
+
+    setDeletingAttachmentId(record.attachmentId);
+    setAttachmentError("");
+    try {
+      await deleteChannelAttachment(session, guildId, channelId, record.attachmentId);
+      const key = channelKey(guildId, channelId);
+      setAttachmentByChannel((existing) => ({
+        ...existing,
+        [key]: (existing[key] ?? []).filter((entry) => entry.attachmentId !== record.attachmentId),
+      }));
+      setAttachmentStatus(`Deleted ${record.filename}.`);
+    } catch (error) {
+      setAttachmentError(mapError(error, "Unable to delete attachment."));
+    } finally {
+      setDeletingAttachmentId(null);
+    }
+  };
+
+  const requestVoiceToken = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId || isIssuingVoiceToken()) {
+      return;
+    }
+
+    const publishSources = [] as Array<"microphone" | "camera" | "screen_share">;
+    if (voiceMicrophone()) {
+      publishSources.push("microphone");
+    }
+    if (voiceCamera()) {
+      publishSources.push("camera");
+    }
+    if (voiceScreenShare()) {
+      publishSources.push("screen_share");
+    }
+
+    setIssuingVoiceToken(true);
+    setVoiceTokenError("");
+    setVoiceTokenStatus("");
+    try {
+      const token = await issueVoiceToken(session, guildId, channelId, {
+        canPublish: voiceCanPublish(),
+        canSubscribe: voiceCanSubscribe(),
+        publishSources,
+      });
+      setVoiceTokenPreview(token.token.slice(0, 18));
+      setVoiceTokenStatus(
+        `Voice token issued (${token.expiresInSecs}s, publish=${token.canPublish}, subscribe=${token.canSubscribe}).`,
+      );
+    } catch (error) {
+      setVoiceTokenError(mapError(error, "Unable to issue voice token."));
+      setVoiceTokenPreview(null);
+    } finally {
+      setIssuingVoiceToken(false);
+    }
+  };
+
+  const runModerationAction = async (
+    action: (sessionUserId: UserId, sessionUsername: string) => Promise<void>,
+  ) => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    if (!session || !guildId || isModerating()) {
+      return;
+    }
+
+    setModerationError("");
+    setModerationStatus("");
+    setModerating(true);
+    try {
+      const me = await fetchMe(session);
+      await action(me.userId, me.username);
+    } catch (error) {
+      setModerationError(mapError(error, "Moderation action failed."));
+    } finally {
+      setModerating(false);
+    }
+  };
+
+  const runMemberAction = async (action: "add" | "role" | "kick" | "ban") => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    if (!session || !guildId) {
+      setModerationError("Select a workspace first.");
+      return;
+    }
+
+    const targetUserId = userIdFromInput(moderationUserIdInput().trim());
+    await runModerationAction(async () => {
+      if (action === "add") {
+        await addGuildMember(session, guildId, targetUserId);
+        setModerationStatus("Member add request accepted.");
+        return;
+      }
+      if (action === "role") {
+        const role = roleFromInput(moderationRoleInput());
+        await updateGuildMemberRole(session, guildId, targetUserId, role);
+        setModerationStatus(`Member role updated to ${role}.`);
+        return;
+      }
+      if (action === "kick") {
+        await kickGuildMember(session, guildId, targetUserId);
+        setModerationStatus("Member kicked.");
+        return;
+      }
+      await banGuildMember(session, guildId, targetUserId);
+      setModerationStatus("Member banned.");
+    });
+  };
+
+  const applyOverride = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId || isModerating()) {
+      return;
+    }
+
+    try {
+      const allow = parsePermissionCsv(overrideAllowCsv());
+      const deny = parsePermissionCsv(overrideDenyCsv());
+      if (allow.some((permission) => deny.includes(permission))) {
+        throw new DomainValidationError("Allow and deny permission sets cannot overlap.");
+      }
+
+      setModerating(true);
+      setModerationError("");
+      setModerationStatus("");
+      await setChannelRoleOverride(session, guildId, channelId, roleFromInput(overrideRoleInput()), {
+        allow,
+        deny,
+      });
+      setModerationStatus("Channel role override updated.");
+    } catch (error) {
+      setModerationError(mapError(error, "Unable to set channel override."));
+    } finally {
+      setModerating(false);
+    }
+  };
+
+  const refreshSession = async () => {
+    const session = auth.session();
+    if (!session || isRefreshingSession()) {
+      return;
+    }
+
+    setRefreshingSession(true);
+    setSessionError("");
+    setSessionStatus("");
+    try {
+      const next = await refreshAuthSession(session.refreshToken);
+      auth.setAuthenticatedSession(next);
+      setSessionStatus("Session refreshed.");
+    } catch (error) {
+      setSessionError(mapError(error, "Unable to refresh session."));
+    } finally {
+      setRefreshingSession(false);
+    }
+  };
+
+  const logout = async () => {
+    const session = auth.session();
+    if (session) {
+      try {
+        await logoutAuthSession(session.refreshToken);
+      } catch {
+        // best-effort logout; local session will still be cleared
+      }
+    }
     auth.clearAuthenticatedSession();
     clearWorkspaceCache();
+  };
+
+  const runHealthCheck = async () => {
+    if (isCheckingHealth()) {
+      return;
+    }
+    setCheckingHealth(true);
+    setDiagError("");
+    try {
+      const health = await fetchHealth();
+      setHealthStatus(`Health: ${health.status}`);
+    } catch (error) {
+      setDiagError(mapError(error, "Health check failed."));
+    } finally {
+      setCheckingHealth(false);
+    }
+  };
+
+  const runEcho = async (event: SubmitEvent) => {
+    event.preventDefault();
+    if (isEchoing()) {
+      return;
+    }
+
+    setEchoing(true);
+    setDiagError("");
+    try {
+      const echoed = await echoMessage({ message: echoInput() });
+      setHealthStatus(`Echo: ${echoed.slice(0, 60)}`);
+    } catch (error) {
+      setDiagError(mapError(error, "Echo request failed."));
+    } finally {
+      setEchoing(false);
+    }
   };
 
   return (
@@ -504,65 +1110,127 @@ export function AppShellPage() {
             <button type="button" onClick={() => void refreshMessages()}>
               Refresh
             </button>
-            <button class="logout" onClick={logout}>
+            <button type="button" onClick={() => void refreshSession()} disabled={isRefreshingSession()}>
+              {isRefreshingSession() ? "Refreshing..." : "Refresh session"}
+            </button>
+            <button class="logout" onClick={() => void logout()}>
               Logout
             </button>
           </div>
         </header>
 
-        <Show when={workspaces().length === 0} fallback={
-          <>
-            <Show when={isLoadingMessages()}>
-              <p class="panel-note">Loading messages...</p>
-            </Show>
-            <Show when={messageError()}>
-              <p class="status error panel-note">{messageError()}</p>
-            </Show>
-            <section class="message-list" aria-live="polite">
-              <For each={messages()}>
-                {(message) => {
-                  const state = () => reactionState()[reactionKey(message.messageId, THUMBS_UP)] ?? { count: 0, reacted: false };
-                  return (
-                    <article class="message-row">
-                      <p>
-                        <strong>{shortActor(message.authorId)}</strong>
-                        <span>{formatMessageTime(message.createdAtUnix)}</span>
-                      </p>
-                      <p>{message.content}</p>
-                      <div class="reaction-row">
-                        <button
-                          type="button"
-                          classList={{ reacted: state().reacted }}
-                          onClick={() => void toggleThumbsUp(message.messageId)}
-                        >
-                          {THUMBS_UP} {state().count}
-                        </button>
-                      </div>
-                    </article>
-                  );
-                }}
-              </For>
-              <Show when={!isLoadingMessages() && messages().length === 0 && !messageError()}>
-                <p class="muted">No messages yet in this channel.</p>
+        <Show
+          when={workspaces().length === 0}
+          fallback={
+            <>
+              <Show when={isLoadingMessages()}>
+                <p class="panel-note">Loading messages...</p>
               </Show>
-            </section>
-            <form class="composer" onSubmit={sendMessage}>
-              <input
-                value={composer()}
-                onInput={(event) => setComposer(event.currentTarget.value)}
-                maxlength="2000"
-                placeholder={activeChannel() ? `Message #${activeChannel()!.name}` : "Select channel"}
-                disabled={!activeChannel() || isSendingMessage()}
-              />
-              <button type="submit" disabled={!activeChannel() || isSendingMessage()}>
-                {isSendingMessage() ? "Sending..." : "Send"}
-              </button>
-            </form>
-          </>
-        }>
+              <Show when={messageError()}>
+                <p class="status error panel-note">{messageError()}</p>
+              </Show>
+              <Show when={sessionStatus()}>
+                <p class="status ok panel-note">{sessionStatus()}</p>
+              </Show>
+              <Show when={sessionError()}>
+                <p class="status error panel-note">{sessionError()}</p>
+              </Show>
+
+              <section class="message-list" aria-live="polite">
+                <Show when={nextBefore()}>
+                  <button type="button" class="load-older" onClick={() => void loadOlderMessages()} disabled={isLoadingOlder()}>
+                    {isLoadingOlder() ? "Loading older..." : "Load older messages"}
+                  </button>
+                </Show>
+
+                <For each={messages()}>
+                  {(message) => {
+                    const state =
+                      () => reactionState()[reactionKey(message.messageId, THUMBS_UP)] ?? { count: 0, reacted: false };
+                    const isEditing = () => editingMessageId() === message.messageId;
+                    return (
+                      <article class="message-row">
+                        <p>
+                          <strong>{shortActor(message.authorId)}</strong>
+                          <span>{formatMessageTime(message.createdAtUnix)}</span>
+                        </p>
+                        <Show
+                          when={isEditing()}
+                          fallback={<p class="message-tokenized">{tokenizeToDisplayText(message.markdownTokens) || message.content}</p>}
+                        >
+                          <form
+                            class="inline-form message-edit"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              void saveEditMessage(message.messageId);
+                            }}
+                          >
+                            <input
+                              value={editingDraft()}
+                              onInput={(event) => setEditingDraft(event.currentTarget.value)}
+                              maxlength="2000"
+                            />
+                            <div class="message-actions">
+                              <button type="submit" disabled={isSavingEdit()}>
+                                {isSavingEdit() ? "Saving..." : "Save"}
+                              </button>
+                              <button type="button" onClick={cancelEditMessage}>
+                                Cancel
+                              </button>
+                            </div>
+                          </form>
+                        </Show>
+                        <div class="message-actions compact">
+                          <button type="button" onClick={() => beginEditMessage(message)}>
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void removeMessage(message.messageId)}
+                            disabled={deletingMessageId() === message.messageId}
+                          >
+                            {deletingMessageId() === message.messageId ? "Deleting..." : "Delete"}
+                          </button>
+                        </div>
+                        <div class="reaction-row">
+                          <button
+                            type="button"
+                            classList={{ reacted: state().reacted }}
+                            onClick={() => void toggleThumbsUp(message.messageId)}
+                          >
+                            {THUMBS_UP} {state().count}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  }}
+                </For>
+
+                <Show when={!isLoadingMessages() && messages().length === 0 && !messageError()}>
+                  <p class="muted">No messages yet in this channel.</p>
+                </Show>
+              </section>
+
+              <form class="composer" onSubmit={sendMessage}>
+                <input
+                  value={composer()}
+                  onInput={(event) => setComposer(event.currentTarget.value)}
+                  maxlength="2000"
+                  placeholder={activeChannel() ? `Message #${activeChannel()!.name}` : "Select channel"}
+                  disabled={!activeChannel() || isSendingMessage()}
+                />
+                <button type="submit" disabled={!activeChannel() || isSendingMessage()}>
+                  {isSendingMessage() ? "Sending..." : "Send"}
+                </button>
+              </form>
+            </>
+          }
+        >
           <section class="empty-workspace">
             <h3>Create your first workspace</h3>
-            <p class="muted">The API currently exposes create routes, so this client provisions your first guild/channel here.</p>
+            <p class="muted">
+              The API currently exposes create routes, so this client provisions your first guild/channel here.
+            </p>
             <form class="inline-form" onSubmit={createFirstWorkspace}>
               <label>
                 Workspace name
@@ -597,8 +1265,9 @@ export function AppShellPage() {
 
       <aside class="member-rail">
         <header>
-          <h4>Profile + Search</h4>
+          <h4>Ops Console</h4>
         </header>
+
         <Show when={profile.loading}>
           <p class="muted">Loading profile...</p>
         </Show>
@@ -652,6 +1321,17 @@ export function AppShellPage() {
               {isSearching() ? "Searching..." : "Search"}
             </button>
           </form>
+          <div class="button-row">
+            <button type="button" onClick={() => void rebuildSearch()} disabled={isRunningSearchOps() || !activeWorkspace()}>
+              Rebuild Index
+            </button>
+            <button type="button" onClick={() => void reconcileSearch()} disabled={isRunningSearchOps() || !activeWorkspace()}>
+              Reconcile Index
+            </button>
+          </div>
+          <Show when={searchOpsStatus()}>
+            <p class="status ok">{searchOpsStatus()}</p>
+          </Show>
           <Show when={searchError()}>
             <p class="status error">{searchError()}</p>
           </Show>
@@ -662,12 +1342,250 @@ export function AppShellPage() {
                   {(message) => (
                     <li>
                       <span class="presence online" />
-                      {shortActor(message.authorId)}: {message.content.slice(0, 32)}
+                      {shortActor(message.authorId)}: {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
                     </li>
                   )}
                 </For>
               </ul>
             )}
+          </Show>
+        </section>
+
+        <section class="member-group">
+          <p class="group-label">ATTACHMENTS</p>
+          <form class="inline-form" onSubmit={uploadAttachment}>
+            <label>
+              File
+              <input
+                type="file"
+                onInput={(event) => {
+                  const file = event.currentTarget.files?.[0] ?? null;
+                  setSelectedAttachment(file);
+                  setAttachmentFilename(file?.name ?? "");
+                }}
+              />
+            </label>
+            <label>
+              Filename
+              <input
+                value={attachmentFilename()}
+                onInput={(event) => setAttachmentFilename(event.currentTarget.value)}
+                maxlength="128"
+                placeholder="upload.bin"
+              />
+            </label>
+            <button type="submit" disabled={isUploadingAttachment() || !activeChannel()}>
+              {isUploadingAttachment() ? "Uploading..." : "Upload"}
+            </button>
+          </form>
+          <Show when={attachmentStatus()}>
+            <p class="status ok">{attachmentStatus()}</p>
+          </Show>
+          <Show when={attachmentError()}>
+            <p class="status error">{attachmentError()}</p>
+          </Show>
+          <ul>
+            <For each={activeAttachments()}>
+              {(record) => (
+                <li>
+                  <span class="presence online" />
+                  <div class="stacked-meta">
+                    <span>{record.filename}</span>
+                    <span class="muted mono">{record.mimeType} · {formatBytes(record.sizeBytes)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void downloadAttachment(record)}
+                    disabled={downloadingAttachmentId() === record.attachmentId}
+                  >
+                    {downloadingAttachmentId() === record.attachmentId ? "..." : "Get"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeAttachment(record)}
+                    disabled={deletingAttachmentId() === record.attachmentId}
+                  >
+                    {deletingAttachmentId() === record.attachmentId ? "..." : "Del"}
+                  </button>
+                </li>
+              )}
+            </For>
+            <Show when={activeAttachments().length === 0}>
+              <li>
+                <span class="presence idle" />
+                no-local-attachments
+              </li>
+            </Show>
+          </ul>
+        </section>
+
+        <section class="member-group">
+          <p class="group-label">VOICE TOKEN</p>
+          <form class="inline-form" onSubmit={requestVoiceToken}>
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={voiceCanPublish()}
+                onChange={(event) => setVoiceCanPublish(event.currentTarget.checked)}
+              />
+              can_publish
+            </label>
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={voiceCanSubscribe()}
+                onChange={(event) => setVoiceCanSubscribe(event.currentTarget.checked)}
+              />
+              can_subscribe
+            </label>
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={voiceMicrophone()}
+                onChange={(event) => setVoiceMicrophone(event.currentTarget.checked)}
+              />
+              microphone
+            </label>
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={voiceCamera()}
+                onChange={(event) => setVoiceCamera(event.currentTarget.checked)}
+              />
+              camera
+            </label>
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={voiceScreenShare()}
+                onChange={(event) => setVoiceScreenShare(event.currentTarget.checked)}
+              />
+              screen_share
+            </label>
+            <button type="submit" disabled={isIssuingVoiceToken() || !activeChannel()}>
+              {isIssuingVoiceToken() ? "Issuing..." : "Issue token"}
+            </button>
+          </form>
+          <Show when={voiceTokenPreview()}>
+            {(prefix) => <p class="mono">token_prefix: {prefix()}...</p>}
+          </Show>
+          <Show when={voiceTokenStatus()}>
+            <p class="status ok">{voiceTokenStatus()}</p>
+          </Show>
+          <Show when={voiceTokenError()}>
+            <p class="status error">{voiceTokenError()}</p>
+          </Show>
+        </section>
+
+        <section class="member-group">
+          <p class="group-label">MODERATION</p>
+          <form
+            class="inline-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void runMemberAction("add");
+            }}
+          >
+            <label>
+              Target user ULID
+              <input
+                value={moderationUserIdInput()}
+                onInput={(event) => setModerationUserIdInput(event.currentTarget.value)}
+                maxlength="26"
+                placeholder="01ARZ..."
+              />
+            </label>
+            <label>
+              Role
+              <select
+                value={moderationRoleInput()}
+                onChange={(event) => setModerationRoleInput(roleFromInput(event.currentTarget.value))}
+              >
+                <option value="member">member</option>
+                <option value="moderator">moderator</option>
+                <option value="owner">owner</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button type="submit" disabled={isModerating() || !activeWorkspace()}>
+                Add
+              </button>
+              <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("role")}>
+                Set Role
+              </button>
+              <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("kick")}>
+                Kick
+              </button>
+              <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("ban")}>
+                Ban
+              </button>
+            </div>
+          </form>
+          <form class="inline-form" onSubmit={applyOverride}>
+            <label>
+              Override role
+              <select
+                value={overrideRoleInput()}
+                onChange={(event) => setOverrideRoleInput(roleFromInput(event.currentTarget.value))}
+              >
+                <option value="member">member</option>
+                <option value="moderator">moderator</option>
+                <option value="owner">owner</option>
+              </select>
+            </label>
+            <label>
+              Allow permissions (csv)
+              <input
+                value={overrideAllowCsv()}
+                onInput={(event) => setOverrideAllowCsv(event.currentTarget.value)}
+                placeholder="create_message,subscribe_streams"
+              />
+            </label>
+            <label>
+              Deny permissions (csv)
+              <input
+                value={overrideDenyCsv()}
+                onInput={(event) => setOverrideDenyCsv(event.currentTarget.value)}
+                placeholder="delete_message"
+              />
+            </label>
+            <button type="submit" disabled={isModerating() || !activeChannel()}>
+              Apply channel override
+            </button>
+          </form>
+          <Show when={moderationStatus()}>
+            <p class="status ok">{moderationStatus()}</p>
+          </Show>
+          <Show when={moderationError()}>
+            <p class="status error">{moderationError()}</p>
+          </Show>
+        </section>
+
+        <section class="member-group">
+          <p class="group-label">UTILITY</p>
+          <div class="button-row">
+            <button type="button" onClick={() => void runHealthCheck()} disabled={isCheckingHealth()}>
+              {isCheckingHealth() ? "Checking..." : "Health"}
+            </button>
+          </div>
+          <form class="inline-form" onSubmit={runEcho}>
+            <label>
+              Echo
+              <input
+                value={echoInput()}
+                onInput={(event) => setEchoInput(event.currentTarget.value)}
+                maxlength="128"
+              />
+            </label>
+            <button type="submit" disabled={isEchoing()}>
+              {isEchoing() ? "Sending..." : "Echo"}
+            </button>
+          </form>
+          <Show when={healthStatus()}>
+            <p class="status ok">{healthStatus()}</p>
+          </Show>
+          <Show when={diagError()}>
+            <p class="status error">{diagError()}</p>
           </Show>
         </section>
       </aside>
