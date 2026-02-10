@@ -18,6 +18,8 @@
 - Refresh token replay.
 - Fanout amplification and slow-consumer exhaustion.
 - Upload abuse (zip bombs, MIME spoofing, path traversal attempts).
+- Storage exhaustion via many small uploads from a single user.
+- Orphaned attachment data causing quota/accounting drift.
 - Malicious markdown/link payloads targeting client execution.
 
 ## Mandatory Mitigations (Phase 0 baseline)

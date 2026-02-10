@@ -99,6 +99,7 @@ These are baseline limits. Tighten by endpoint/route as needed, but never loosen
 
 - HTTP request body cap: `1 MiB` default JSON body, explicit per-route override for larger payloads
 - Attachment upload cap: `25 MiB` per file (streaming write required)
+- Per-user attachment storage quota: configurable, enforced across all user-owned attachments
 - WS frame cap: `64 KiB`
 - WS message/event cap: `64 KiB` after decode
 - WS outbound queue per connection: `256` events max, then drop/close slow consumer
@@ -145,6 +146,7 @@ These are baseline limits. Tighten by endpoint/route as needed, but never loosen
 - mime: `mime`, `infer`
 - hashing: `sha2`
 - storage abstraction: `object_store` (local + S3-compatible)
+- local storage root path must be configurable via environment (default mounted data dir in compose)
 
 ## Search
 - `tantivy`
@@ -309,27 +311,32 @@ Every phase has:
 
 ### Scope
 - Attachments upload with limits, MIME sniffing (`infer`), hashing (`sha2`)
-- Storage via `object_store` (local by default)
+- Storage via `object_store` (local by default) with configurable local root path
 - Markdown parsing (`pulldown-cmark`) to UI tokens (no HTML)
 - Message edit/delete w/ permissions
 - Basic moderation: ban/kick, delete messages
+- Attachment delete flow for users to reclaim quota
 
 ### Status
 - NOT STARTED
 
 ### Notes
 - Never trust client `Content-Type`; always sniff.
-- Implement per-guild storage quota + retention hooks.
+- Implement per-user total storage quota across all user attachments (configurable).
+- Local attachment root path is runtime-configured (env), and compose mounts persistent storage at that path.
 - Markdown: implement allowlist of features; links sanitized.
 
 ### TODOs
 - Virus scanning optional hook (clamd integration as optional service).
 - Add attachment download auth checks (signed URLs or auth-gated endpoints).
 - Add markdown tokenization tests to ensure no HTML rendering path exists.
-- Add per-guild attachment quotas and retention enforcement tests.
+- Add per-user attachment quota enforcement tests (upload denied on quota breach).
+- Add attachment deletion endpoint/service flow and quota-reclamation tests.
+- Add storage-root path configuration wiring (`FILAMENT_ATTACHMENT_ROOT`) in compose/deploy docs.
 
 ### Exit Criteria
 - Integration tests cover upload caps, MIME sniffing mismatch rejection, and auth-gated download.
+- Integration tests cover per-user quota enforcement and quota reclamation after attachment deletion.
 - Unit tests cover markdown allowlist behavior and link scheme filtering.
 - Moderation endpoints enforce permissions and emit audit records.
 
@@ -337,6 +344,7 @@ Every phase has:
 - Upload DoS mitigations: streaming writes + hard size caps.
 - Path traversal protections (no user-controlled paths).
 - Link handling: disable `file://`, internal schemes.
+- Storage exhaustion controls: per-user quotas enforced server-side, with deterministic quota release on delete.
 
 ---
 
@@ -518,6 +526,7 @@ Every phase has:
 - Add `DEPLOY.md` w/ ports, TLS, TURN guidance.
 - Add backup/restore scripts.
 - Add scheduled restore drill procedure and verification checklist.
+- Document attachment storage volume mount + `FILAMENT_ATTACHMENT_ROOT` environment configuration.
 
 ### Security Outlook
 - Secure defaults: non-root containers, read-only FS where possible, drop caps.

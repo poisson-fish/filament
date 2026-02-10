@@ -34,4 +34,7 @@
 ## Upload and Content Safety
 - Never trust client-provided `Content-Type`; MIME sniff with `infer`.
 - Enforce hard upload caps and streaming writes.
+- Enforce configurable per-user attachment storage quotas across all user-owned attachments.
+- Attachment storage root path is configured by environment (`FILAMENT_ATTACHMENT_ROOT`) and must point to a non-user-controlled server path.
+- Attachment delete operations must reclaim quota deterministically.
 - Markdown is transformed into safe UI tokens; no raw HTML rendering.
