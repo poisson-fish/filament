@@ -1349,7 +1349,8 @@ export function AppShellPage() {
     setAttachmentError("");
     try {
       const payload = await downloadChannelAttachment(session, guildId, channelId, record.attachmentId);
-      const blob = new Blob([payload.bytes], {
+      const bytes = new Uint8Array(payload.bytes);
+      const blob = new Blob([bytes], {
         type: payload.mimeType ?? record.mimeType,
       });
       const objectUrl = URL.createObjectURL(blob);

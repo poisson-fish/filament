@@ -466,6 +466,7 @@ struct ConnectionPresence {
 
 #[allow(clippy::too_many_lines)]
 async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
+    const SCHEMA_INIT_LOCK_ID: i64 = 0x4649_4c41_4d45_4e54;
     let Some(pool) = &state.db_pool else {
         return Ok(());
     };
@@ -473,6 +474,12 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
     state
         .db_init
         .get_or_try_init(|| async move {
+            let mut tx = pool.begin().await?;
+            sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                .bind(SCHEMA_INIT_LOCK_ID)
+                .execute(&mut *tx)
+                .await?;
+
             sqlx::query(
                 "CREATE TABLE IF NOT EXISTS users (
                     user_id TEXT PRIMARY KEY,
@@ -482,7 +489,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     locked_until_unix BIGINT NULL
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -494,7 +501,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     revoked BOOLEAN NOT NULL DEFAULT FALSE
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -503,7 +510,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -515,21 +522,21 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     created_at_unix BIGINT NOT NULL
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
                 "ALTER TABLE guilds
                  ADD COLUMN IF NOT EXISTS visibility SMALLINT NOT NULL DEFAULT 0",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
                 "ALTER TABLE guilds
                  ADD COLUMN IF NOT EXISTS created_by_user_id TEXT REFERENCES users(user_id)",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -540,7 +547,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     PRIMARY KEY(guild_id, user_id)
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -552,7 +559,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                    AND gm.role = $1",
             )
             .bind(role_to_i16(Role::Owner))
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -563,7 +570,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     created_at_unix BIGINT NOT NULL
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -576,7 +583,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     created_at_unix BIGINT NOT NULL
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -589,7 +596,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     PRIMARY KEY(guild_id, channel_id, role)
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -603,7 +610,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     PRIMARY KEY(guild_id, channel_id, message_id, emoji, user_id)
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -620,14 +627,14 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     created_at_unix BIGINT NOT NULL
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
                 "CREATE INDEX IF NOT EXISTS idx_attachments_owner
                     ON attachments(owner_id)",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -639,7 +646,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     PRIMARY KEY(user_a_id, user_b_id)
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -651,21 +658,21 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     CHECK (sender_user_id <> recipient_user_id)
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
                 "CREATE INDEX IF NOT EXISTS idx_friendship_requests_sender
                     ON friendship_requests(sender_user_id)",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
                 "CREATE INDEX IF NOT EXISTS idx_friendship_requests_recipient
                     ON friendship_requests(recipient_user_id)",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -677,7 +684,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     PRIMARY KEY(guild_id, user_id)
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
@@ -691,15 +698,17 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     created_at_unix BIGINT NOT NULL
                 )",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
                 "CREATE INDEX IF NOT EXISTS idx_messages_channel_message_id
                     ON messages(channel_id, message_id DESC)",
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
+
+            tx.commit().await?;
 
             Ok::<(), sqlx::Error>(())
         })
