@@ -286,15 +286,16 @@ Every phase has:
 - 2026-02-10: Added `/gateway/ws` with versioned envelope parsing (`{ v, t, d }`), strict gateway event-size enforcement, per-connection ingress event rate controls, bounded outbound queue, and slow-consumer close signaling.
 - 2026-02-10: Added per-route auth endpoint rate limits (`register`, `login`, `refresh`) and structured auth audit logs for register/login/lockout/refresh/logout outcomes.
 - 2026-02-10: Added/expanded tests for remaining Phase 1 behavior: auth route-specific rate limits, history pagination over persisted channel messages, gateway subscriber broadcast flow, and slow-consumer handling. Full local gates passed (`fmt`, `clippy -D warnings`, workspace tests).
+- 2026-02-10: Added a live network gateway integration harness (`apps/filament-server/tests/gateway_network_flow.rs`) that boots a TCP listener, performs websocket auth handshake, validates `ready` + `subscribed` events, and verifies end-to-end `message_create` broadcast flow over a real socket.
+- 2026-02-10: Re-ran local security/tooling gates after the network gateway harness addition: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
 
 ### TODOs
 - Replace in-memory auth/session/guild/message stores with Postgres-backed persistence while preserving hashed refresh tokens, refresh rotation/replay detection, and session-family revocation semantics.
-- Add a network-level websocket handshake/flow integration test harness against a live server instance to complement the current in-process gateway flow tests.
 
 ### Exit Criteria
 - Unit tests cover newtype invariants, token mint/verify paths, and permission checks.
 - Integration tests cover auth register/login/refresh/logout/me flow including refresh rotation + replay detection and account-enumeration response consistency.
-- Completed in this increment: gateway message-flow behavior (subscribe + message broadcast), pagination tests against stored history, and slow-consumer handling validation.
+- Completed in this increment: gateway message-flow behavior (subscribe + message broadcast), pagination tests against stored history, slow-consumer handling validation, and network-level websocket handshake/message-flow coverage against a live server instance.
 - Remaining to exit Phase 1: migrate auth/session/guild/channel/message persistence from in-memory stores to Postgres-backed storage.
 
 ### Security Outlook
