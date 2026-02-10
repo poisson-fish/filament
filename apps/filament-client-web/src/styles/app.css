@@ -326,6 +326,21 @@ input {
   cursor: pointer;
 }
 
+.gateway-badge {
+  border: 1px solid #5b3d3d;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  padding: 0.24rem 0.48rem;
+  color: #ffc5c5;
+  background: rgba(120, 30, 30, 0.25);
+}
+
+.gateway-badge.online {
+  border-color: #2f755b;
+  color: #b9ffd7;
+  background: rgba(25, 106, 74, 0.24);
+}
+
 .message-list {
   padding: 0.88rem 1.03rem;
   display: grid;
@@ -357,6 +372,24 @@ input {
 .message-row span {
   color: var(--ink-2);
   font-size: 0.8rem;
+}
+
+.reaction-row {
+  margin-top: 0.5rem;
+}
+
+.reaction-row button {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(20, 33, 57, 0.72);
+  color: var(--ink-1);
+  padding: 0.2rem 0.5rem;
+}
+
+.reaction-row button.reacted {
+  border-color: rgba(98, 167, 255, 0.6);
+  background: rgba(34, 74, 134, 0.48);
+  color: #d0e7ff;
 }
 
 .composer {

@@ -13,12 +13,15 @@ import {
   type MessageHistory,
   type MessageId,
   type MessageRecord,
+  type ReactionEmoji,
+  type ReactionRecord,
   type SearchQuery,
   type SearchResults,
   channelFromResponse,
   guildFromResponse,
   messageFromResponse,
   messageHistoryFromResponse,
+  reactionFromResponse,
   searchResultsFromResponse,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
@@ -44,7 +47,7 @@ interface ApiConfig {
 }
 
 interface JsonRequest {
-  method: "GET" | "POST" | "PATCH";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
   accessToken?: AuthSession["accessToken"];
@@ -295,4 +298,34 @@ export async function searchGuildMessages(
     accessToken: session.accessToken,
   });
   return searchResultsFromResponse(dto);
+}
+
+export async function addMessageReaction(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  messageId: MessageId,
+  emoji: ReactionEmoji,
+): Promise<ReactionRecord> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+    accessToken: session.accessToken,
+  });
+  return reactionFromResponse(dto);
+}
+
+export async function removeMessageReaction(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+  messageId: MessageId,
+  emoji: ReactionEmoji,
+): Promise<ReactionRecord> {
+  const dto = await requestJson({
+    method: "DELETE",
+    path: `/guilds/${guildId}/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+    accessToken: session.accessToken,
+  });
+  return reactionFromResponse(dto);
 }

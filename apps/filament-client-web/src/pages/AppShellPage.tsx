@@ -1,27 +1,53 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal } from "solid-js";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 import { DomainValidationError } from "../domain/auth";
 import {
   channelNameFromInput,
   guildNameFromInput,
   messageContentFromInput,
+  reactionEmojiFromInput,
   searchQueryFromInput,
   type ChannelId,
   type GuildId,
+  type MessageId,
   type MessageRecord,
   type SearchResults,
   type WorkspaceRecord,
 } from "../domain/chat";
 import {
   ApiError,
+  addMessageReaction,
   createChannel,
   createChannelMessage,
   createGuild,
   fetchChannelMessages,
   fetchMe,
+  removeMessageReaction,
   searchGuildMessages,
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
+import { connectGateway } from "../lib/gateway";
 import { clearWorkspaceCache, loadWorkspaceCache, saveWorkspaceCache } from "../lib/workspace-cache";
+
+const THUMBS_UP = reactionEmojiFromInput("👍");
+
+interface ReactionView {
+  count: number;
+  reacted: boolean;
+}
+
+function reactionKey(messageId: MessageId, emoji: string): string {
+  return `${messageId}|${emoji}`;
+}
 
 function mapError(error: unknown, fallback: string): string {
   if (error instanceof DomainValidationError) {
@@ -71,6 +97,16 @@ function upsertWorkspace(
   return existing.map((workspace) => (workspace.guildId === guildId ? updater(workspace) : workspace));
 }
 
+function mergeMessage(existing: MessageRecord[], incoming: MessageRecord): MessageRecord[] {
+  const index = existing.findIndex((entry) => entry.messageId === incoming.messageId);
+  if (index >= 0) {
+    const next = [...existing];
+    next[index] = incoming;
+    return next;
+  }
+  return [...existing, incoming];
+}
+
 export function AppShellPage() {
   const auth = useAuth();
 
@@ -88,6 +124,7 @@ export function AppShellPage() {
   const [isLoadingMessages, setLoadingMessages] = createSignal(false);
   const [isSendingMessage, setSendingMessage] = createSignal(false);
   const [messages, setMessages] = createSignal<MessageRecord[]>([]);
+  const [reactionState, setReactionState] = createSignal<Record<string, ReactionView>>({});
 
   const [createGuildName, setCreateGuildName] = createSignal("Security Ops");
   const [createChannelName, setCreateChannelName] = createSignal("incident-room");
@@ -103,6 +140,9 @@ export function AppShellPage() {
   const [searchError, setSearchError] = createSignal("");
   const [isSearching, setSearching] = createSignal(false);
   const [searchResults, setSearchResults] = createSignal<SearchResults | null>(null);
+
+  const [gatewayOnline, setGatewayOnline] = createSignal(false);
+  const [onlineMembers, setOnlineMembers] = createSignal<string[]>([]);
 
   const activeWorkspace = createMemo(
     () => workspaces().find((workspace) => workspace.guildId === activeGuildId()) ?? null,
@@ -168,7 +208,48 @@ export function AppShellPage() {
   createEffect(() => {
     void activeGuildId();
     void activeChannelId();
+    setReactionState({});
     void refreshMessages();
+  });
+
+  createEffect(() => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId) {
+      setGatewayOnline(false);
+      setOnlineMembers([]);
+      return;
+    }
+
+    const gateway = connectGateway(session.accessToken, guildId, channelId, {
+      onOpenStateChange: (isOpen) => setGatewayOnline(isOpen),
+      onMessageCreate: (message) => {
+        if (message.guildId !== guildId || message.channelId !== channelId) {
+          return;
+        }
+        setMessages((existing) => mergeMessage(existing, message));
+      },
+      onPresenceSync: (payload) => {
+        if (payload.guildId !== guildId) {
+          return;
+        }
+        setOnlineMembers(payload.userIds);
+      },
+      onPresenceUpdate: (payload) => {
+        if (payload.guildId !== guildId) {
+          return;
+        }
+        setOnlineMembers((existing) => {
+          if (payload.status === "online") {
+            return existing.includes(payload.userId) ? existing : [...existing, payload.userId];
+          }
+          return existing.filter((entry) => entry !== payload.userId);
+        });
+      },
+    });
+
+    onCleanup(() => gateway.close());
   });
 
   const createFirstWorkspace = async (event: SubmitEvent) => {
@@ -265,12 +346,42 @@ export function AppShellPage() {
       const created = await createChannelMessage(session, guildId, channelId, {
         content: messageContentFromInput(composer()),
       });
-      setMessages((existing) => [...existing, created]);
+      setMessages((existing) => mergeMessage(existing, created));
       setComposer("");
     } catch (error) {
       setMessageError(mapError(error, "Unable to send message."));
     } finally {
       setSendingMessage(false);
+    }
+  };
+
+  const toggleThumbsUp = async (messageId: MessageId) => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId) {
+      return;
+    }
+
+    const key = reactionKey(messageId, THUMBS_UP);
+    const state = reactionState()[key] ?? { count: 0, reacted: false };
+
+    try {
+      if (state.reacted) {
+        const response = await removeMessageReaction(session, guildId, channelId, messageId, THUMBS_UP);
+        setReactionState((existing) => ({
+          ...existing,
+          [key]: { count: response.count, reacted: false },
+        }));
+      } else {
+        const response = await addMessageReaction(session, guildId, channelId, messageId, THUMBS_UP);
+        setReactionState((existing) => ({
+          ...existing,
+          [key]: { count: response.count, reacted: true },
+        }));
+      }
+    } catch (error) {
+      setMessageError(mapError(error, "Unable to update reaction."));
     }
   };
 
@@ -384,9 +495,12 @@ export function AppShellPage() {
         <header class="chat-header">
           <div>
             <h3>{activeChannel() ? `#${activeChannel()!.name}` : "#no-channel"}</h3>
-            <p>REST-backed messaging with bounded payload validation</p>
+            <p>Gateway {gatewayOnline() ? "connected" : "disconnected"}</p>
           </div>
           <div class="header-actions">
+            <span classList={{ "gateway-badge": true, online: gatewayOnline() }}>
+              {gatewayOnline() ? "Live" : "Offline"}
+            </span>
             <button type="button" onClick={() => void refreshMessages()}>
               Refresh
             </button>
@@ -406,15 +520,27 @@ export function AppShellPage() {
             </Show>
             <section class="message-list" aria-live="polite">
               <For each={messages()}>
-                {(message) => (
-                  <article class="message-row">
-                    <p>
-                      <strong>{shortActor(message.authorId)}</strong>
-                      <span>{formatMessageTime(message.createdAtUnix)}</span>
-                    </p>
-                    <p>{message.content}</p>
-                  </article>
-                )}
+                {(message) => {
+                  const state = () => reactionState()[reactionKey(message.messageId, THUMBS_UP)] ?? { count: 0, reacted: false };
+                  return (
+                    <article class="message-row">
+                      <p>
+                        <strong>{shortActor(message.authorId)}</strong>
+                        <span>{formatMessageTime(message.createdAtUnix)}</span>
+                      </p>
+                      <p>{message.content}</p>
+                      <div class="reaction-row">
+                        <button
+                          type="button"
+                          classList={{ reacted: state().reacted }}
+                          onClick={() => void toggleThumbsUp(message.messageId)}
+                        >
+                          {THUMBS_UP} {state().count}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                }}
               </For>
               <Show when={!isLoadingMessages() && messages().length === 0 && !messageError()}>
                 <p class="muted">No messages yet in this channel.</p>
@@ -489,6 +615,26 @@ export function AppShellPage() {
             </div>
           )}
         </Show>
+
+        <section class="member-group">
+          <p class="group-label">ONLINE ({onlineMembers().length})</p>
+          <ul>
+            <For each={onlineMembers()}>
+              {(memberId) => (
+                <li>
+                  <span class="presence online" />
+                  {shortActor(memberId)}
+                </li>
+              )}
+            </For>
+            <Show when={onlineMembers().length === 0}>
+              <li>
+                <span class="presence idle" />
+                no-presence-yet
+              </li>
+            </Show>
+          </ul>
+        </section>
 
         <section class="member-group">
           <p class="group-label">SEARCH</p>

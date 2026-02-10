@@ -7,6 +7,7 @@ export type GuildName = string & { readonly __brand: "guild_name" };
 export type ChannelName = string & { readonly __brand: "channel_name" };
 export type MessageContent = string & { readonly __brand: "message_content" };
 export type SearchQuery = string & { readonly __brand: "search_query" };
+export type ReactionEmoji = string & { readonly __brand: "reaction_emoji" };
 
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
@@ -73,6 +74,18 @@ export function searchQueryFromInput(input: string): SearchQuery {
     throw new DomainValidationError("Search query cannot contain ':'.");
   }
   return value as SearchQuery;
+}
+
+export function reactionEmojiFromInput(input: string): ReactionEmoji {
+  if (input.length < 1 || input.length > 32) {
+    throw new DomainValidationError("Reaction emoji must be 1-32 characters.");
+  }
+  for (const char of input) {
+    if (/\s/.test(char)) {
+      throw new DomainValidationError("Reaction emoji cannot contain whitespace.");
+    }
+  }
+  return input as ReactionEmoji;
 }
 
 export interface GuildRecord {
@@ -176,6 +189,23 @@ export function searchResultsFromResponse(dto: unknown): SearchResults {
   return {
     messageIds: data.message_ids.map((id) => messageIdFromInput(requireString(id, "message_id"))),
     messages: data.messages.map((message) => messageFromResponse(message)),
+  };
+}
+
+export interface ReactionRecord {
+  emoji: ReactionEmoji;
+  count: number;
+}
+
+export function reactionFromResponse(dto: unknown): ReactionRecord {
+  const data = requireObject(dto, "reaction");
+  const count = data.count;
+  if (!Number.isInteger(count) || (count as number) < 0) {
+    throw new DomainValidationError("Reaction count must be a non-negative integer.");
+  }
+  return {
+    emoji: reactionEmojiFromInput(requireString(data.emoji, "emoji")),
+    count: count as number,
   };
 }
 

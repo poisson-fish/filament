@@ -3,6 +3,8 @@ import {
   guildIdFromInput,
   messageContentFromInput,
   messageFromResponse,
+  reactionEmojiFromInput,
+  reactionFromResponse,
   searchQueryFromInput,
   workspaceFromStorage,
 } from "../src/domain/chat";
@@ -48,5 +50,12 @@ describe("chat domain invariants", () => {
     });
 
     expect(workspace.channels[0]?.name).toBe("incident-room");
+  });
+
+  it("validates reactions", () => {
+    const reaction = reactionFromResponse({ emoji: "👍", count: 2 });
+    expect(reaction.count).toBe(2);
+    expect(reactionEmojiFromInput("thumbs_up")).toBe("thumbs_up");
+    expect(() => reactionEmojiFromInput("bad emoji")).toThrow();
   });
 });
