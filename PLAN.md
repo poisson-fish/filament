@@ -452,7 +452,7 @@ Every phase has:
 - Speaking indicators (optional)
 
 ### Status
-- NOT STARTED
+- DONE
 
 ### Notes
 - Filament server is the policy engine:
@@ -460,11 +460,17 @@ Every phase has:
   - who can publish audio/video
   - who can subscribe
 - Tokens must be short-lived and scoped (room + permissions).
+- 2026-02-10: Added LiveKit voice token issuance endpoint in `filament-server` (`POST /guilds/{guild_id}/channels/{channel_id}/voice/token`) with deterministic room mapping, channel-scoped grants, and voice-first publish source restriction (`microphone` only).
+- 2026-02-10: Added LiveKit security/runtime configuration in `AppConfig` + runtime env enforcement (`FILAMENT_LIVEKIT_API_KEY`, `FILAMENT_LIVEKIT_API_SECRET`, `FILAMENT_LIVEKIT_URL`) and TTL hard cap enforcement (`<= 5 minutes`).
+- 2026-02-10: Added per-user/IP/channel voice-token mint rate limiting and audit log writes (`media.token.issue`) including room, channel, permissions, TTL, and client IP metadata.
+- 2026-02-10: Added domain newtypes in `filament-core` (`LiveKitRoomName`, `LiveKitIdentity`) with invariant constructors and unit coverage to avoid stringly-typed media identity logic.
+- 2026-02-10: Added integration coverage in `apps/filament-server/tests/phase5_livekit_voice.rs` for signed room-scoped token issuance, denied-path enforcement under channel permission overrides, and media-token issuance rate limiting.
+- 2026-02-10: Updated deployment/security docs and compose env defaults for LiveKit token issuance and key rotation baseline.
 
 ### TODOs
-- Implement LiveKit key management + rotation plan.
-- Document firewall/ports; optional TURN config.
-- Add token mint rate limits and audit logging for media token issuance.
+- Implement speaking indicators and gateway events for active speaker UX.
+- Harden room identity/session binding strategy if multi-device semantics require stronger replay controls.
+- Phase 6 start gate: implement publish/subscribe policy expansion for video and screen-share tracks.
 
 ### Exit Criteria
 - Integration tests verify room-scoped permission-scoped token issuance and denied-path behavior.

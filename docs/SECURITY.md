@@ -42,3 +42,9 @@
 - Attachment storage root path is configured by environment (`FILAMENT_ATTACHMENT_ROOT`) and must point to a non-user-controlled server path.
 - Attachment delete operations must reclaim quota deterministically.
 - Markdown is transformed into safe UI tokens; no raw HTML rendering.
+
+## LiveKit Voice Token Issuance
+- `filament-server` is the policy engine for media room join/publish privileges.
+- Voice tokens are room-scoped, permission-scoped, and capped to a maximum `5 minute` TTL.
+- Token minting is rate-limited per user/IP/channel and issuance is written to audit logs.
+- LiveKit API key and secret are required runtime secrets (`FILAMENT_LIVEKIT_API_KEY`, `FILAMENT_LIVEKIT_API_SECRET`).

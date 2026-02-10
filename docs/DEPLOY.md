@@ -14,9 +14,13 @@ This document covers baseline deployment and storage durability requirements for
 Set these variables for `filament-server`:
 - `FILAMENT_DATABASE_URL`: required in runtime; points to Postgres
 - `FILAMENT_ATTACHMENT_ROOT`: required for attachment object storage root
+- `FILAMENT_LIVEKIT_API_KEY`: required in runtime; LiveKit API key for server-minted tokens
+- `FILAMENT_LIVEKIT_API_SECRET`: required in runtime; paired secret for token signing
+- `FILAMENT_LIVEKIT_URL`: required for clients; `ws://` or `wss://` LiveKit signaling URL
 
 Default compose value:
 - `FILAMENT_ATTACHMENT_ROOT=/var/lib/filament/attachments`
+- `FILAMENT_LIVEKIT_URL=ws://livekit:7880`
 
 ## Attachment Storage Persistence
 
@@ -59,6 +63,19 @@ Tantivy index is rebuildable cache and should not be treated as primary backup d
 - Prefer reverse-proxy TLS termination with modern ciphers and HTTP->HTTPS redirect.
 - Keep `filament-server` and `livekit` bound to private network interfaces when possible.
 - Expose only required ports at the edge.
+
+## LiveKit Token Policy
+
+- Voice token issuance is channel-scoped and signed by `filament-server`.
+- Token TTL is capped at `5 minutes` (`MAX_LIVEKIT_TOKEN_TTL_SECS`).
+- Minting is rate-limited per user/IP/channel and every issuance is audit logged (`media.token.issue`).
+
+### LiveKit key rotation baseline
+
+1. Generate a new API key/secret in LiveKit and deploy it to `filament-server` secrets.
+2. Restart `filament-server` with new `FILAMENT_LIVEKIT_API_KEY` + `FILAMENT_LIVEKIT_API_SECRET`.
+3. Revoke old keys in LiveKit once new issuance has been validated.
+4. During incident response, rotate immediately and invalidate old keys before service restore.
 
 ## Security Defaults
 

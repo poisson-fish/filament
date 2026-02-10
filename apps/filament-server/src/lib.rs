@@ -29,10 +29,12 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use filament_core::{
     apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
     has_permission, tokenize_markdown, ChannelName, ChannelPermissionOverwrite, GuildName,
-    MarkdownToken, Permission, PermissionSet, Role, UserId, Username,
+    LiveKitIdentity, LiveKitRoomName, MarkdownToken, Permission, PermissionSet, Role, UserId,
+    Username,
 };
 use filament_protocol::{parse_envelope, Envelope, EventType, PROTOCOL_VERSION};
 use futures_util::{SinkExt, StreamExt};
+use livekit_api::access_token::{AccessToken as LiveKitAccessToken, VideoGrants};
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath, ObjectStore};
 use pasetors::{
     claims::{Claims, ClaimsValidationRules},
@@ -87,6 +89,9 @@ pub const DEFAULT_SEARCH_QUERY_MAX_CHARS: usize = 256;
 pub const DEFAULT_SEARCH_RESULT_LIMIT: usize = 20;
 pub const DEFAULT_SEARCH_RESULT_LIMIT_MAX: usize = 50;
 pub const DEFAULT_SEARCH_QUERY_TIMEOUT_MILLIS: u64 = 200;
+pub const DEFAULT_MEDIA_TOKEN_REQUESTS_PER_MINUTE: u32 = 20;
+pub const DEFAULT_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
+pub const MAX_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
 const LOGIN_LOCK_THRESHOLD: u8 = 5;
 const LOGIN_LOCK_SECS: i64 = 30;
 const MAX_HISTORY_LIMIT: usize = 100;
@@ -113,6 +118,11 @@ pub struct AppConfig {
     pub search_query_max_chars: usize,
     pub search_result_limit_max: usize,
     pub search_query_timeout: Duration,
+    pub media_token_requests_per_minute: u32,
+    pub livekit_token_ttl: Duration,
+    pub livekit_url: String,
+    pub livekit_api_key: Option<String>,
+    pub livekit_api_secret: Option<String>,
     pub attachment_root: PathBuf,
     pub database_url: Option<String>,
 }
@@ -133,6 +143,11 @@ impl Default for AppConfig {
             search_query_max_chars: DEFAULT_SEARCH_QUERY_MAX_CHARS,
             search_result_limit_max: DEFAULT_SEARCH_RESULT_LIMIT_MAX,
             search_query_timeout: Duration::from_millis(DEFAULT_SEARCH_QUERY_TIMEOUT_MILLIS),
+            media_token_requests_per_minute: DEFAULT_MEDIA_TOKEN_REQUESTS_PER_MINUTE,
+            livekit_token_ttl: Duration::from_secs(DEFAULT_LIVEKIT_TOKEN_TTL_SECS),
+            livekit_url: String::from("ws://127.0.0.1:7880"),
+            livekit_api_key: None,
+            livekit_api_secret: None,
             attachment_root: PathBuf::from("./data/attachments"),
             database_url: None,
         }
@@ -151,6 +166,15 @@ struct RuntimeSecurityConfig {
     search_query_max_chars: usize,
     search_result_limit_max: usize,
     search_query_timeout: Duration,
+    media_token_requests_per_minute: u32,
+    livekit_token_ttl: Duration,
+}
+
+#[derive(Clone)]
+struct LiveKitConfig {
+    api_key: String,
+    api_secret: String,
+    url: String,
 }
 
 #[derive(Clone)]
@@ -216,6 +240,7 @@ pub struct AppState {
     token_key: Arc<SymmetricKey<V4>>,
     dummy_password_hash: Arc<String>,
     auth_route_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    media_token_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
     subscriptions: Arc<RwLock<Subscriptions>>,
     connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
@@ -226,6 +251,7 @@ pub struct AppState {
     search: SearchService,
     search_bootstrapped: Arc<OnceCell<()>>,
     runtime: Arc<RuntimeSecurityConfig>,
+    livekit: Option<Arc<LiveKitConfig>>,
 }
 
 impl AppState {
@@ -235,6 +261,7 @@ impl AppState {
         let token_key = SymmetricKey::<V4>::from(&key_bytes)
             .map_err(|e| anyhow!("token key init failed: {e}"))?;
         let dummy_password_hash = hash_password("filament-dummy-password")?;
+        let livekit = build_livekit_config(config)?;
         let db_pool = if let Some(database_url) = &config.database_url {
             Some(
                 PgPoolOptions::new()
@@ -262,6 +289,7 @@ impl AppState {
             token_key: Arc::new(token_key),
             dummy_password_hash: Arc::new(dummy_password_hash),
             auth_route_hits: Arc::new(RwLock::new(HashMap::new())),
+            media_token_hits: Arc::new(RwLock::new(HashMap::new())),
             guilds: Arc::new(RwLock::new(HashMap::new())),
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
             connection_controls: Arc::new(RwLock::new(HashMap::new())),
@@ -282,7 +310,10 @@ impl AppState {
                 search_query_max_chars: config.search_query_max_chars,
                 search_result_limit_max: config.search_result_limit_max,
                 search_query_timeout: config.search_query_timeout,
+                media_token_requests_per_minute: config.media_token_requests_per_minute,
+                livekit_token_ttl: config.livekit_token_ttl,
             }),
+            livekit: livekit.map(Arc::new),
         })
     }
 }
@@ -582,6 +613,13 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             filament_protocol::MAX_EVENT_BYTES
         ));
     }
+    if config.livekit_token_ttl.is_zero()
+        || config.livekit_token_ttl > Duration::from_secs(MAX_LIVEKIT_TOKEN_TTL_SECS)
+    {
+        return Err(anyhow!(
+            "livekit token ttl must be between 1 and {MAX_LIVEKIT_TOKEN_TTL_SECS} seconds"
+        ));
+    }
 
     let governor_config = Arc::new(
         GovernorConfigBuilder::default()
@@ -621,6 +659,10 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}",
             post(add_reaction).delete(remove_reaction),
+        )
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/voice/token",
+            post(issue_voice_token),
         )
         .route("/guilds/{guild_id}/search", get(search_messages))
         .route(
@@ -914,6 +956,24 @@ struct SearchResponse {
 struct SearchReconcileResponse {
     upserted: usize,
     deleted: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VoiceTokenRequest {
+    can_publish: Option<bool>,
+    can_subscribe: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct VoiceTokenResponse {
+    token: String,
+    livekit_url: String,
+    room: String,
+    identity: String,
+    can_publish: bool,
+    can_subscribe: bool,
+    expires_in_secs: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2623,6 +2683,88 @@ async fn ban_member(
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
+async fn issue_voice_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<ChannelPath>,
+    Json(payload): Json<VoiceTokenRequest>,
+) -> Result<Json<VoiceTokenResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    enforce_media_token_rate_limit(&state, &headers, auth.user_id, &path).await?;
+    let (_, permissions) =
+        channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
+    if !permissions.contains(Permission::CreateMessage) {
+        return Err(AuthFailure::Forbidden);
+    }
+    let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    let livekit = state.livekit.clone().ok_or(AuthFailure::Internal)?;
+
+    let room = LiveKitRoomName::try_from(format!(
+        "filament.voice.{}.{}",
+        path.guild_id, path.channel_id
+    ))
+    .map_err(|_| AuthFailure::Internal)?;
+    let identity = LiveKitIdentity::try_from(format!("u.{}.{}", auth.user_id, Ulid::new()))
+        .map_err(|_| AuthFailure::Internal)?;
+
+    let mut grants = VideoGrants {
+        room_join: true,
+        room: room.as_str().to_owned(),
+        ..VideoGrants::default()
+    };
+    let role_can_publish = has_permission(role, Permission::CreateMessage);
+    let requested_publish = payload.can_publish.unwrap_or(true);
+    let requested_subscribe = payload.can_subscribe.unwrap_or(true);
+    grants.can_publish = role_can_publish && requested_publish;
+    grants.can_subscribe = requested_subscribe;
+    grants.can_publish_data = grants.can_publish;
+    grants.can_publish_sources = if grants.can_publish {
+        vec![String::from("microphone")]
+    } else {
+        Vec::new()
+    };
+
+    if !grants.can_publish && !grants.can_subscribe {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    let token = LiveKitAccessToken::with_api_key(&livekit.api_key, &livekit.api_secret)
+        .with_identity(identity.as_str())
+        .with_name(&auth.username)
+        .with_ttl(state.runtime.livekit_token_ttl)
+        .with_grants(grants.clone())
+        .to_jwt()
+        .map_err(|_| AuthFailure::Internal)?;
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        None,
+        "media.token.issue",
+        serde_json::json!({
+            "channel_id": path.channel_id,
+            "room": room.as_str(),
+            "can_publish": grants.can_publish,
+            "can_subscribe": grants.can_subscribe,
+            "ttl_secs": state.runtime.livekit_token_ttl.as_secs(),
+            "client_ip": extract_client_ip(&headers),
+        }),
+    )
+    .await?;
+
+    Ok(Json(VoiceTokenResponse {
+        token,
+        livekit_url: livekit.url.clone(),
+        room: room.as_str().to_owned(),
+        identity: identity.as_str().to_owned(),
+        can_publish: grants.can_publish,
+        can_subscribe: grants.can_subscribe,
+        expires_in_secs: state.runtime.livekit_token_ttl.as_secs(),
+    }))
+}
+
 async fn gateway_ws(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
@@ -4175,6 +4317,39 @@ fn channel_key(guild_id: &str, channel_id: &str) -> String {
     format!("{guild_id}:{channel_id}")
 }
 
+fn build_livekit_config(config: &AppConfig) -> anyhow::Result<Option<LiveKitConfig>> {
+    match (&config.livekit_api_key, &config.livekit_api_secret) {
+        (None, None) => Ok(None),
+        (Some(_), None) | (None, Some(_)) => {
+            Err(anyhow!("livekit api key and secret must be set together"))
+        }
+        (Some(api_key), Some(api_secret)) => {
+            let api_key = api_key.trim();
+            let api_secret = api_secret.trim();
+            if api_key.is_empty() || api_secret.is_empty() {
+                return Err(anyhow!("livekit api key and secret cannot be empty"));
+            }
+            let url = validate_livekit_url(&config.livekit_url)?;
+            Ok(Some(LiveKitConfig {
+                api_key: api_key.to_owned(),
+                api_secret: api_secret.to_owned(),
+                url,
+            }))
+        }
+    }
+}
+
+fn validate_livekit_url(value: &str) -> anyhow::Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.len() > 256 {
+        return Err(anyhow!("livekit url is invalid"));
+    }
+    if !(trimmed.starts_with("ws://") || trimmed.starts_with("wss://")) {
+        return Err(anyhow!("livekit url must use ws:// or wss://"));
+    }
+    Ok(trimmed.to_owned())
+}
+
 async fn enforce_auth_route_rate_limit(
     state: &AppState,
     headers: &HeaderMap,
@@ -4191,6 +4366,29 @@ async fn enforce_auth_route_rate_limit(
         usize::try_from(state.runtime.auth_route_requests_per_minute).unwrap_or(usize::MAX);
     if route_hits.len() >= max_hits {
         tracing::warn!(event = "auth.rate_limit", route = %route, ip = %ip);
+        return Err(AuthFailure::RateLimited);
+    }
+    route_hits.push(now);
+    Ok(())
+}
+
+async fn enforce_media_token_rate_limit(
+    state: &AppState,
+    headers: &HeaderMap,
+    user_id: UserId,
+    path: &ChannelPath,
+) -> Result<(), AuthFailure> {
+    let ip = extract_client_ip(headers);
+    let key = format!("{ip}:{}:{}:{}", user_id, path.guild_id, path.channel_id);
+    let now = now_unix();
+
+    let mut hits = state.media_token_hits.write().await;
+    let route_hits = hits.entry(key).or_default();
+    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < 60);
+    let max_hits =
+        usize::try_from(state.runtime.media_token_requests_per_minute).unwrap_or(usize::MAX);
+    if route_hits.len() >= max_hits {
+        tracing::warn!(event = "media.token.rate_limit", ip = %ip, user_id = %user_id, guild_id = %path.guild_id, channel_id = %path.channel_id);
         return Err(AuthFailure::RateLimited);
     }
     route_hits.push(now);

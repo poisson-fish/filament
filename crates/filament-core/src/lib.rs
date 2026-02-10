@@ -18,6 +18,10 @@ pub enum DomainError {
     InvalidUsername,
     #[error("user id is invalid")]
     InvalidUserId,
+    #[error("livekit room name is invalid")]
+    InvalidLiveKitRoomName,
+    #[error("livekit identity is invalid")]
+    InvalidLiveKitIdentity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +129,44 @@ impl TryFrom<String> for ChannelName {
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         validate_name(&value, 1, 64)?;
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LiveKitRoomName(String);
+
+impl LiveKitRoomName {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for LiveKitRoomName {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        validate_livekit_identifier(&value).map_err(|_| DomainError::InvalidLiveKitRoomName)?;
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LiveKitIdentity(String);
+
+impl LiveKitIdentity {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for LiveKitIdentity {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        validate_livekit_identifier(&value).map_err(|_| DomainError::InvalidLiveKitIdentity)?;
         Ok(Self(value))
     }
 }
@@ -362,13 +404,26 @@ fn validate_name(value: &str, min: usize, max: usize) -> Result<(), DomainError>
     Err(DomainError::InvalidName)
 }
 
+fn validate_livekit_identifier(value: &str) -> Result<(), DomainError> {
+    if !(1..=128).contains(&value.len()) {
+        return Err(DomainError::InvalidName);
+    }
+    if value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    {
+        return Ok(());
+    }
+    Err(DomainError::InvalidName)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
         has_permission, project_name, role_rank, tokenize_markdown, ChannelName,
-        ChannelPermissionOverwrite, DomainError, GuildName, MarkdownToken, Permission,
-        PermissionSet, Role, UserId, Username,
+        ChannelPermissionOverwrite, DomainError, GuildName, LiveKitIdentity, LiveKitRoomName,
+        MarkdownToken, Permission, PermissionSet, Role, UserId, Username,
     };
 
     #[test]
@@ -396,6 +451,24 @@ mod tests {
         let channel = ChannelName::try_from(String::from("general-chat")).unwrap();
         assert_eq!(guild.as_str(), "General Guild");
         assert_eq!(channel.as_str(), "general-chat");
+    }
+
+    #[test]
+    fn livekit_identifiers_enforce_invariants() {
+        let room = LiveKitRoomName::try_from(String::from("filament.voice.abcd-1234")).unwrap();
+        let identity =
+            LiveKitIdentity::try_from(String::from("u_01ARZ3NDEKTSV4RRFFQ69G5FAV")).unwrap();
+        assert_eq!(room.as_str(), "filament.voice.abcd-1234");
+        assert_eq!(identity.as_str(), "u_01ARZ3NDEKTSV4RRFFQ69G5FAV");
+
+        assert_eq!(
+            LiveKitRoomName::try_from(String::from("bad room")).unwrap_err(),
+            DomainError::InvalidLiveKitRoomName
+        );
+        assert_eq!(
+            LiveKitIdentity::try_from(String::new()).unwrap_err(),
+            DomainError::InvalidLiveKitIdentity
+        );
     }
 
     #[test]
