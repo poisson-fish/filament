@@ -371,7 +371,7 @@ Every phase has:
 - Search API returns message IDs → Postgres fetch
 
 ### Status
-- IN PROGRESS
+- DONE
 
 ### Notes
 - Treat index as cache: rebuild job from Postgres is mandatory.
@@ -383,11 +383,13 @@ Every phase has:
 - 2026-02-10: Added integration tests in `apps/filament-server/tests/phase3_search.rs` covering index consistency for create/edit/delete/rebuild and query-abuse rejection paths.
 - 2026-02-10: Local quality/security gates run for this increment: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
 - 2026-02-10: Added `cargo-deny` advisory policy exception for `RUSTSEC-2024-0384` (`instant` via Tantivy transitive dependency) with explicit justification; advisory currently has no safe upgrade path.
+- 2026-02-10: Added bounded reconciliation endpoint (`POST /guilds/{guild_id}/search/reconcile`) that compares per-guild source-of-truth message IDs against Tantivy IDs and repairs missing/orphaned docs without full index rebuild.
+- 2026-02-10: Added no-op reconciliation coverage in `apps/filament-server/tests/phase3_search.rs` and Postgres-backed drift-repair integration coverage in `apps/filament-server/tests/postgres_phase3_search.rs` (missing-doc upsert + orphan-doc delete + hydrated search validation).
+- 2026-02-10: Updated `docs/DEPLOY.md` restore guidance to include explicit search rebuild + reconcile operational steps after restore.
 
 ### TODOs
-- Add index reconciliation job (detect and repair missing docs without full rebuild).
 - Evaluate Tantivy upgrade path to remove transitive `instant`/`lru` RustSec warnings when upstream releases a safe path.
-- Add Postgres-backed integration coverage for search hydration path in CI (`FILAMENT_TEST_DATABASE_URL`).
+- Phase 4 start gate: begin roles/permissions v1 implementation with centralized override logic in `filament-core`.
 
 ### Exit Criteria
 - Integration tests verify search returns IDs, Postgres hydration path, and consistency after edits/deletes.

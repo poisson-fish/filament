@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use tantivy::{
-    collector::TopDocs,
+    collector::{Count, TopDocs},
     query::{BooleanQuery, Occur, QueryParser, TermQuery},
     schema::{
         Field, IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions, Value,
@@ -94,6 +94,7 @@ const MAX_SEARCH_TERMS: usize = 20;
 const MAX_SEARCH_WILDCARDS: usize = 4;
 const MAX_SEARCH_FUZZY: usize = 2;
 const SEARCH_INDEX_QUEUE_CAPACITY: usize = 1024;
+const MAX_SEARCH_RECONCILE_DOCS: usize = 10_000;
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -185,8 +186,16 @@ struct IndexedMessage {
 
 enum SearchOperation {
     Upsert(IndexedMessage),
-    Delete { message_id: String },
-    Rebuild { docs: Vec<IndexedMessage> },
+    Delete {
+        message_id: String,
+    },
+    Rebuild {
+        docs: Vec<IndexedMessage>,
+    },
+    Reconcile {
+        upserts: Vec<IndexedMessage>,
+        delete_message_ids: Vec<String>,
+    },
 }
 
 struct SearchCommand {
@@ -555,6 +564,10 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             post(rebuild_search_index),
         )
         .route(
+            "/guilds/{guild_id}/search/reconcile",
+            post(reconcile_search_index),
+        )
+        .route(
             "/guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}",
             get(download_attachment).delete(delete_attachment),
         )
@@ -793,6 +806,12 @@ struct SearchQuery {
 struct SearchResponse {
     message_ids: Vec<String>,
     messages: Vec<MessageResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchReconcileResponse {
+    upserted: usize,
+    deleted: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1618,6 +1637,38 @@ async fn rebuild_search_index(
     enqueue_search_operation(&state, SearchOperation::Rebuild { docs }, true).await?;
     state.search_bootstrapped.set(()).ok();
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn reconcile_search_index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+) -> Result<Json<SearchReconcileResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
+    if !matches!(role, Role::Owner | Role::Moderator) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    ensure_search_bootstrapped(&state).await?;
+    let (upserts, delete_message_ids) =
+        plan_search_reconciliation(&state, &path.guild_id, MAX_SEARCH_RECONCILE_DOCS).await?;
+    let upserted = upserts.len();
+    let deleted = delete_message_ids.len();
+    if upserted > 0 || deleted > 0 {
+        enqueue_search_operation(
+            &state,
+            SearchOperation::Reconcile {
+                upserts,
+                delete_message_ids,
+            },
+            true,
+        )
+        .await?;
+    }
+
+    Ok(Json(SearchReconcileResponse { upserted, deleted }))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2573,20 +2624,28 @@ fn apply_search_operation(
     writer: &mut tantivy::IndexWriter,
     op: SearchOperation,
 ) {
+    fn upsert_doc(
+        search: &SearchIndexState,
+        writer: &mut tantivy::IndexWriter,
+        doc: IndexedMessage,
+    ) {
+        writer.delete_term(Term::from_field_text(
+            search.fields.message_id,
+            &doc.message_id,
+        ));
+        let mut tantivy_doc = TantivyDocument::default();
+        tantivy_doc.add_text(search.fields.message_id, doc.message_id);
+        tantivy_doc.add_text(search.fields.guild_id, doc.guild_id);
+        tantivy_doc.add_text(search.fields.channel_id, doc.channel_id);
+        tantivy_doc.add_text(search.fields.author_id, doc.author_id);
+        tantivy_doc.add_i64(search.fields.created_at_unix, doc.created_at_unix);
+        tantivy_doc.add_text(search.fields.content, doc.content);
+        let _ = writer.add_document(tantivy_doc);
+    }
+
     match op {
         SearchOperation::Upsert(doc) => {
-            writer.delete_term(Term::from_field_text(
-                search.fields.message_id,
-                &doc.message_id,
-            ));
-            let mut tantivy_doc = TantivyDocument::default();
-            tantivy_doc.add_text(search.fields.message_id, doc.message_id);
-            tantivy_doc.add_text(search.fields.guild_id, doc.guild_id);
-            tantivy_doc.add_text(search.fields.channel_id, doc.channel_id);
-            tantivy_doc.add_text(search.fields.author_id, doc.author_id);
-            tantivy_doc.add_i64(search.fields.created_at_unix, doc.created_at_unix);
-            tantivy_doc.add_text(search.fields.content, doc.content);
-            let _ = writer.add_document(tantivy_doc);
+            upsert_doc(search, writer, doc);
         }
         SearchOperation::Delete { message_id } => {
             writer.delete_term(Term::from_field_text(search.fields.message_id, &message_id));
@@ -2594,14 +2653,18 @@ fn apply_search_operation(
         SearchOperation::Rebuild { docs } => {
             let _ = writer.delete_all_documents();
             for doc in docs {
-                let mut tantivy_doc = TantivyDocument::default();
-                tantivy_doc.add_text(search.fields.message_id, doc.message_id);
-                tantivy_doc.add_text(search.fields.guild_id, doc.guild_id);
-                tantivy_doc.add_text(search.fields.channel_id, doc.channel_id);
-                tantivy_doc.add_text(search.fields.author_id, doc.author_id);
-                tantivy_doc.add_i64(search.fields.created_at_unix, doc.created_at_unix);
-                tantivy_doc.add_text(search.fields.content, doc.content);
-                let _ = writer.add_document(tantivy_doc);
+                upsert_doc(search, writer, doc);
+            }
+        }
+        SearchOperation::Reconcile {
+            upserts,
+            delete_message_ids,
+        } => {
+            for message_id in delete_message_ids {
+                writer.delete_term(Term::from_field_text(search.fields.message_id, &message_id));
+            }
+            for doc in upserts {
+                upsert_doc(search, writer, doc);
             }
         }
     }
@@ -2732,6 +2795,149 @@ async fn collect_all_indexed_messages(
         }
     }
     Ok(docs)
+}
+
+async fn collect_indexed_messages_for_guild(
+    state: &AppState,
+    guild_id: &str,
+    max_docs: usize,
+) -> Result<Vec<IndexedMessage>, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let limit =
+            i64::try_from(max_docs.saturating_add(1)).map_err(|_| AuthFailure::InvalidRequest)?;
+        let rows = sqlx::query(
+            "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
+             FROM messages
+             WHERE guild_id = $1
+             ORDER BY created_at_unix DESC
+             LIMIT $2",
+        )
+        .bind(guild_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        if rows.len() > max_docs {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        let mut docs = Vec::with_capacity(rows.len());
+        for row in rows {
+            docs.push(IndexedMessage {
+                message_id: row
+                    .try_get("message_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+                channel_id: row
+                    .try_get("channel_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                author_id: row
+                    .try_get("author_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                content: row.try_get("content").map_err(|_| AuthFailure::Internal)?,
+                created_at_unix: row
+                    .try_get("created_at_unix")
+                    .map_err(|_| AuthFailure::Internal)?,
+            });
+        }
+        return Ok(docs);
+    }
+
+    let guilds = state.guilds.read().await;
+    let Some(guild) = guilds.get(guild_id) else {
+        return Err(AuthFailure::NotFound);
+    };
+    let mut docs = Vec::new();
+    for (channel_id, channel) in &guild.channels {
+        for message in &channel.messages {
+            if docs.len() >= max_docs {
+                return Err(AuthFailure::InvalidRequest);
+            }
+            docs.push(IndexedMessage {
+                message_id: message.id.clone(),
+                guild_id: guild_id.to_owned(),
+                channel_id: channel_id.clone(),
+                author_id: message.author_id.to_string(),
+                content: message.content.clone(),
+                created_at_unix: message.created_at_unix,
+            });
+        }
+    }
+    Ok(docs)
+}
+
+async fn collect_index_message_ids_for_guild(
+    state: &AppState,
+    guild_id: &str,
+    max_docs: usize,
+) -> Result<HashSet<String>, AuthFailure> {
+    let guild = guild_id.to_owned();
+    let search_state = state.search.state.clone();
+    let timeout = state.runtime.search_query_timeout;
+
+    tokio::time::timeout(timeout, async move {
+        tokio::task::spawn_blocking(move || {
+            let searcher = search_state.reader.searcher();
+            let guild_query = TermQuery::new(
+                Term::from_field_text(search_state.fields.guild_id, &guild),
+                IndexRecordOption::Basic,
+            );
+            let count = searcher
+                .search(&guild_query, &Count)
+                .map_err(|_| AuthFailure::Internal)?;
+            if count > max_docs {
+                return Err(AuthFailure::InvalidRequest);
+            }
+            if count == 0 {
+                return Ok(HashSet::new());
+            }
+
+            let top_docs = searcher
+                .search(&guild_query, &TopDocs::with_limit(count))
+                .map_err(|_| AuthFailure::Internal)?;
+            let mut message_ids = HashSet::with_capacity(top_docs.len());
+            for (_score, address) in top_docs {
+                let Ok(doc) = searcher.doc::<TantivyDocument>(address) else {
+                    continue;
+                };
+                let Some(value) = doc.get_first(search_state.fields.message_id) else {
+                    continue;
+                };
+                let Some(message_id) = value.as_str() else {
+                    continue;
+                };
+                message_ids.insert(message_id.to_owned());
+            }
+            Ok::<HashSet<String>, AuthFailure>(message_ids)
+        })
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    })
+    .await
+    .map_err(|_| AuthFailure::InvalidRequest)?
+}
+
+async fn plan_search_reconciliation(
+    state: &AppState,
+    guild_id: &str,
+    max_docs: usize,
+) -> Result<(Vec<IndexedMessage>, Vec<String>), AuthFailure> {
+    let source_docs = collect_indexed_messages_for_guild(state, guild_id, max_docs).await?;
+    let index_ids = collect_index_message_ids_for_guild(state, guild_id, max_docs).await?;
+    let source_ids: HashSet<String> = source_docs
+        .iter()
+        .map(|doc| doc.message_id.clone())
+        .collect();
+    let mut upserts: Vec<IndexedMessage> = source_docs
+        .into_iter()
+        .filter(|doc| !index_ids.contains(&doc.message_id))
+        .collect();
+    let mut delete_message_ids: Vec<String> = index_ids
+        .into_iter()
+        .filter(|message_id| !source_ids.contains(message_id))
+        .collect();
+    upserts.sort_by(|a, b| a.message_id.cmp(&b.message_id));
+    delete_message_ids.sort_unstable();
+    Ok((upserts, delete_message_ids))
 }
 
 async fn run_search_query(

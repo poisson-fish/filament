@@ -162,6 +162,23 @@ async fn search(app: &axum::Router, auth: &AuthResponse, guild_id: &str, q: &str
     parse_json_body(response).await
 }
 
+async fn reconcile(app: &axum::Router, auth: &AuthResponse, guild_id: &str) -> Value {
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{guild_id}/search/reconcile"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", "203.0.113.80")
+        .body(Body::empty())
+        .expect("reconcile request should build");
+    let response = app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("reconcile request should execute");
+    assert_eq!(response.status(), StatusCode::OK);
+    parse_json_body(response).await
+}
+
 #[tokio::test]
 async fn search_indexes_create_edit_delete_and_rebuild_paths() {
     let app = test_app();
@@ -321,4 +338,23 @@ async fn search_query_abuse_limits_are_enforced() {
         .expect("field-query search request should build");
     let field_query_response = app.oneshot(field_query_request).await.unwrap();
     assert_eq!(field_query_response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn search_reconcile_reports_noop_when_index_is_consistent() {
+    let app = test_app();
+    let auth = register_and_login(&app, "phase3_reconcile_noop", "203.0.113.82").await;
+    let channel = create_channel_context(&app, &auth, "203.0.113.82").await;
+    let _ = create_message(
+        &app,
+        &auth,
+        &channel,
+        "203.0.113.82",
+        "phase3 reconcile noop message",
+    )
+    .await;
+
+    let reconcile_json = reconcile(&app, &auth, &channel.guild_id).await;
+    assert_eq!(reconcile_json["upserted"], 0);
+    assert_eq!(reconcile_json["deleted"], 0);
 }

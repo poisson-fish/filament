@@ -36,7 +36,7 @@ Back up both:
 - Postgres data (system of record for metadata and auth/session state)
 - Attachment volume (`FILAMENT_ATTACHMENT_ROOT`)
 
-Tantivy index (future phase) is rebuildable cache and should not be treated as primary backup data.
+Tantivy index is rebuildable cache and should not be treated as primary backup data.
 
 ### Backup cadence (baseline)
 
@@ -49,7 +49,10 @@ Tantivy index (future phase) is rebuildable cache and should not be treated as p
 2. Restore attachment volume to the configured `FILAMENT_ATTACHMENT_ROOT`.
 3. Start compose stack and verify `/health`.
 4. Verify auth login and attachment download for a known record.
-5. Verify new upload and deletion both succeed (quota accounting remains correct).
+5. Rebuild and reconcile search index for each guild:
+   - `POST /guilds/{guild_id}/search/rebuild`
+   - `POST /guilds/{guild_id}/search/reconcile`
+6. Verify new upload and deletion both succeed (quota accounting remains correct).
 
 ## Network/TLS Notes
 
