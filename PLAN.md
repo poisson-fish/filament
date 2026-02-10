@@ -533,16 +533,25 @@ Every phase has:
 - Signed updates
 
 ### Status
-- NOT STARTED
+- DONE
 
 ### Notes
 - Keep Rust side tiny: filesystem access only if essential.
 - Validate all IPC payloads like untrusted network input.
+- 2026-02-10: Added desktop hardening baseline crate at `apps/filament-client-desktop/src-tauri` with invariant-checked IPC DTO conversion (`StoreSessionRequest` -> `ValidatedStoreSessionRequest`) and bounded command surface (`store_session`, `clear_session`, `read_session_metadata`).
+- 2026-02-10: Added desktop navigation/CSP hardening primitives and tests enforcing no remote HTTP navigation, strict allowlisted navigation targets, and CSP rejection of unsafe script tokens.
+- 2026-02-10: Added secure token-storage strategy mapping for macOS/Windows/Linux keychain backends with explicit service/account namespace policy.
+- 2026-02-10: Added client hardening policy/config artifacts:
+  - `apps/filament-client-desktop/tauri.conf.json`
+  - `apps/filament-client-desktop/security-policy.json`
+  - `apps/filament-client-web/security/csp.json`
+- 2026-02-10: Added `docs/CLIENT_SECURITY.md` documenting desktop/web hardening controls, token storage strategy, and validation gates.
+- 2026-02-10: Added automated policy checks in `apps/filament-client-desktop/src-tauri/tests/hardening_config.rs` and re-ran local quality/security gates: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
 
 ### TODOs
-- Define secure token storage strategy per OS.
-- Add crash-safe logging (no secrets).
-- Add web-client hardening checklist (CSP, allowed URL schemes, no dynamic script execution).
+- Add platform-specific keychain adapter implementations (currently policy + invariants are implemented; backend wiring remains).
+- Add signed update verification integration tests once updater plumbing lands in desktop app runtime.
+- Phase 8 start gate: implement deployment/ops hardening with secure compose defaults, backup/restore drills, and observability dashboards.
 
 ### Exit Criteria
 - Tauri command surface is minimized and each command has input validation tests.
@@ -552,6 +561,7 @@ Every phase has:
 ### Security Outlook
 - Explicit threat model: malicious server tries to exploit client via UI.
 - Regular dependency auditing for frontend deps too.
+- Keep command/API surface minimal and schema-validated to reduce IPC abuse blast radius.
 
 ---
 

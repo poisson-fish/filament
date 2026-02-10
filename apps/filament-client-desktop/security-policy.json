@@ -1,0 +1,20 @@
+{
+  "navigation": {
+    "allow": [
+      "tauri://localhost",
+      "https://app.filament.local"
+    ],
+    "deny_remote_http": true,
+    "deny_remote_https_hosts": true
+  },
+  "ipc": {
+    "allowed_commands": [
+      "store_session",
+      "clear_session",
+      "read_session_metadata"
+    ]
+  },
+  "updates": {
+    "signed_only": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "csp": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local wss://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;",
+  "allowed_url_schemes": [
+    "https",
+    "wss"
+  ],
+  "forbidden_script_behaviors": [
+    "eval",
+    "new Function",
+    "inline-script"
+  ]
+}

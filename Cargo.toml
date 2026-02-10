@@ -3,6 +3,7 @@ members = [
   "crates/filament-core",
   "crates/filament-protocol",
   "apps/filament-server",
+  "apps/filament-client-desktop/src-tauri",
 ]
 resolver = "2"
 
