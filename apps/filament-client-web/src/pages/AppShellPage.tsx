@@ -120,6 +120,9 @@ function mapError(error: unknown, fallback: string): string {
     if (error.code === "quota_exceeded") {
       return "Attachment quota exceeded for this user.";
     }
+    if (error.code === "guild_creation_limit_reached") {
+      return "Guild creation limit reached for this account.";
+    }
     if (error.code === "invalid_credentials") {
       return "Authentication failed. Please login again.";
     }

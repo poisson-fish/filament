@@ -16,6 +16,7 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - 2026-02-10: Added integration-like operator console tests in `apps/filament-client-web/tests/app-shell-operator-permissions.test.tsx` to validate owner/member permission fixture behavior for moderation, channel overrides, search maintenance, and voice token actions.
 - 2026-02-10: Fixed client guild visibility bootstrap by pruning cached workspaces/channels that fail authenticated access checks; added `apps/filament-client-web/tests/app-shell-workspace-visibility.test.tsx` coverage to prevent non-member/private guild leakage in UI/cache.
 - 2026-02-10: Added guild visibility model (`private|public`) across server/client, `GET /guilds/public` authenticated discovery endpoint with bounded query/limit, and public workspace directory UX in the web shell with tests.
+- 2026-02-10: Added server-configured per-user guild creation caps (`FILAMENT_MAX_CREATED_GUILDS_PER_USER`) with strict API enforcement, explicit creator tracking, and web-shell error handling/tests for limit exhaustion.
 
 ## Completed
 - [x] Login flow reliably navigates to app shell.
@@ -43,7 +44,7 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - [ ] None.
 
 ## Next
-- [ ] Add configurable per-user guild creation limits: allow self-serve guild creation for all users, constrained by a server-configured max created guild count per user.
+- [x] Add configurable per-user guild creation limits: allow self-serve guild creation for all users, constrained by a server-configured max created guild count per user.
 - [ ] Enforce least-visibility defaults across API + client: if a user lacks default permission for a resource, the resource must not be discoverable or rendered in UI (including preventing ops console exposure for non-members).
 - [ ] Add UX flow for any authenticated user to create their own guild (subject to server-configured limits).
 - [ ] Add friendship system UX + backend support (requests, acceptance, list management, and permission-safe exposure).

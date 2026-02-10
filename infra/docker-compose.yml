@@ -47,6 +47,7 @@ services:
     environment:
       RUST_LOG: info
       FILAMENT_BIND_ADDR: 0.0.0.0:3000
+      FILAMENT_MAX_CREATED_GUILDS_PER_USER: 5
       FILAMENT_DATABASE_URL: postgres://filament:filament@postgres:5432/filament
       FILAMENT_ATTACHMENT_ROOT: /var/lib/filament/attachments
       FILAMENT_LIVEKIT_API_KEY: devkey

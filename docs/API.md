@@ -112,7 +112,9 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
   - Auth required
   - Request: `{ "name": "...", "visibility"?: "private"|"public" }` (`visibility` defaults to `private`)
   - `name`: 1..64 visible chars/spaces
+  - Enforces per-user creator cap configured by server (`FILAMENT_MAX_CREATED_GUILDS_PER_USER`)
   - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }`
+  - When limit is reached: `403 {"error":"guild_creation_limit_reached"}`
 - `GET /guilds/public?q=<query>&limit=<n>`
   - Auth required
   - Returns only guilds marked `public`

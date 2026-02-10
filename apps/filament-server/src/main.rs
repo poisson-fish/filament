@@ -16,6 +16,17 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("FILAMENT_LIVEKIT_API_KEY is required for runtime"))?;
     let livekit_api_secret = std::env::var("FILAMENT_LIVEKIT_API_SECRET")
         .map_err(|_| anyhow::anyhow!("FILAMENT_LIVEKIT_API_SECRET is required for runtime"))?;
+    let max_created_guilds_per_user = std::env::var("FILAMENT_MAX_CREATED_GUILDS_PER_USER")
+        .map_or_else(
+            |_| Ok(AppConfig::default().max_created_guilds_per_user),
+            |value| {
+                value.parse::<usize>().map_err(|e| {
+                    anyhow::anyhow!(
+                        "invalid FILAMENT_MAX_CREATED_GUILDS_PER_USER value {value:?}: {e}"
+                    )
+                })
+            },
+        )?;
     let app_config = AppConfig {
         attachment_root: std::env::var("FILAMENT_ATTACHMENT_ROOT")
             .map_or_else(|_| PathBuf::from("./data/attachments"), PathBuf::from),
@@ -23,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|_| String::from("ws://127.0.0.1:7880")),
         livekit_api_key: Some(livekit_api_key),
         livekit_api_secret: Some(livekit_api_secret),
+        max_created_guilds_per_user,
         database_url: Some(database_url),
         ..AppConfig::default()
     };

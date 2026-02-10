@@ -97,6 +97,7 @@ pub const DEFAULT_MEDIA_TOKEN_REQUESTS_PER_MINUTE: u32 = 20;
 pub const DEFAULT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE: u32 = 6;
 pub const DEFAULT_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
 pub const DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL: usize = 3;
+pub const DEFAULT_MAX_CREATED_GUILDS_PER_USER: usize = 5;
 pub const MAX_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
 const LOGIN_LOCK_THRESHOLD: u8 = 5;
 const LOGIN_LOCK_SECS: i64 = 30;
@@ -137,6 +138,7 @@ pub struct AppConfig {
     pub media_token_requests_per_minute: u32,
     pub media_publish_requests_per_minute: u32,
     pub media_subscribe_token_cap_per_channel: usize,
+    pub max_created_guilds_per_user: usize,
     pub livekit_token_ttl: Duration,
     pub livekit_url: String,
     pub livekit_api_key: Option<String>,
@@ -164,6 +166,7 @@ impl Default for AppConfig {
             media_token_requests_per_minute: DEFAULT_MEDIA_TOKEN_REQUESTS_PER_MINUTE,
             media_publish_requests_per_minute: DEFAULT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE,
             media_subscribe_token_cap_per_channel: DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL,
+            max_created_guilds_per_user: DEFAULT_MAX_CREATED_GUILDS_PER_USER,
             livekit_token_ttl: Duration::from_secs(DEFAULT_LIVEKIT_TOKEN_TTL_SECS),
             livekit_url: String::from("ws://127.0.0.1:7880"),
             livekit_api_key: None,
@@ -189,6 +192,7 @@ struct RuntimeSecurityConfig {
     media_token_requests_per_minute: u32,
     media_publish_requests_per_minute: u32,
     media_subscribe_token_cap_per_channel: usize,
+    max_created_guilds_per_user: usize,
     livekit_token_ttl: Duration,
 }
 
@@ -339,6 +343,7 @@ impl AppState {
                 media_token_requests_per_minute: config.media_token_requests_per_minute,
                 media_publish_requests_per_minute: config.media_publish_requests_per_minute,
                 media_subscribe_token_cap_per_channel: config.media_subscribe_token_cap_per_channel,
+                max_created_guilds_per_user: config.max_created_guilds_per_user,
                 livekit_token_ttl: config.livekit_token_ttl,
             }),
             livekit: livekit.map(Arc::new),
@@ -374,6 +379,7 @@ enum GuildVisibility {
 struct GuildRecord {
     name: String,
     visibility: GuildVisibility,
+    created_by_user_id: UserId,
     members: HashMap<UserId, Role>,
     banned_members: HashSet<UserId>,
     channels: HashMap<String, ChannelRecord>,
@@ -470,6 +476,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     guild_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     visibility SMALLINT NOT NULL DEFAULT 0,
+                    created_by_user_id TEXT REFERENCES users(user_id),
                     created_at_unix BIGINT NOT NULL
                 )",
             )
@@ -484,6 +491,13 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
             .await?;
 
             sqlx::query(
+                "ALTER TABLE guilds
+                 ADD COLUMN IF NOT EXISTS created_by_user_id TEXT REFERENCES users(user_id)",
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
                 "CREATE TABLE IF NOT EXISTS guild_members (
                     guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
                     user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -491,6 +505,18 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     PRIMARY KEY(guild_id, user_id)
                 )",
             )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "UPDATE guilds AS g
+                 SET created_by_user_id = gm.user_id
+                 FROM guild_members AS gm
+                 WHERE g.created_by_user_id IS NULL
+                   AND gm.guild_id = g.guild_id
+                   AND gm.role = $1",
+            )
+            .bind(role_to_i16(Role::Owner))
             .execute(pool)
             .await?;
 
@@ -763,6 +789,11 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
     if config.media_subscribe_token_cap_per_channel == 0 {
         return Err(anyhow!(
             "media subscribe token cap must be at least 1 active token"
+        ));
+    }
+    if config.max_created_guilds_per_user == 0 {
+        return Err(anyhow!(
+            "max created guilds per user must be at least 1 guild"
         ));
     }
     if config.livekit_token_ttl.is_zero()
@@ -1688,21 +1719,46 @@ async fn create_guild(
     let visibility = payload.visibility.unwrap_or(GuildVisibility::Private);
 
     let guild_id = Ulid::new().to_string();
+    let creator_user_id = auth.user_id.to_string();
+    let limit = state.runtime.max_created_guilds_per_user;
     if let Some(pool) = &state.db_pool {
         let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
-        sqlx::query(
-            "INSERT INTO guilds (guild_id, name, visibility, created_at_unix) VALUES ($1, $2, $3, $4)",
-        )
-            .bind(&guild_id)
-            .bind(name.as_str())
-            .bind(visibility_to_i16(visibility))
-            .bind(now_unix())
-            .execute(&mut *tx)
+        sqlx::query_scalar::<_, String>("SELECT user_id FROM users WHERE user_id = $1 FOR UPDATE")
+            .bind(&creator_user_id)
+            .fetch_one(&mut *tx)
             .await
             .map_err(|_| AuthFailure::Internal)?;
+        let existing_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM guilds WHERE created_by_user_id = $1",
+        )
+        .bind(&creator_user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        if existing_count >= i64::try_from(limit).map_err(|_| AuthFailure::Internal)? {
+            tracing::warn!(
+                event = "guild.create",
+                outcome = "limit_reached",
+                user_id = %auth.user_id,
+                max_created_guilds_per_user = limit,
+            );
+            return Err(AuthFailure::GuildCreationLimitReached);
+        }
+        sqlx::query(
+            "INSERT INTO guilds (guild_id, name, visibility, created_by_user_id, created_at_unix)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(&guild_id)
+        .bind(name.as_str())
+        .bind(visibility_to_i16(visibility))
+        .bind(&creator_user_id)
+        .bind(now_unix())
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
         sqlx::query("INSERT INTO guild_members (guild_id, user_id, role) VALUES ($1, $2, $3)")
             .bind(&guild_id)
-            .bind(auth.user_id.to_string())
+            .bind(&creator_user_id)
             .bind(role_to_i16(Role::Owner))
             .execute(&mut *tx)
             .await
@@ -1719,11 +1775,27 @@ async fn create_guild(
     let mut members = HashMap::new();
     members.insert(auth.user_id, Role::Owner);
 
-    state.guilds.write().await.insert(
+    let mut guilds = state.guilds.write().await;
+    let current_count = guilds
+        .values()
+        .filter(|record| record.created_by_user_id == auth.user_id)
+        .count();
+    if current_count >= limit {
+        tracing::warn!(
+            event = "guild.create",
+            outcome = "limit_reached",
+            user_id = %auth.user_id,
+            max_created_guilds_per_user = limit,
+        );
+        return Err(AuthFailure::GuildCreationLimitReached);
+    }
+
+    guilds.insert(
         guild_id.clone(),
         GuildRecord {
             name: name.as_str().to_owned(),
             visibility,
+            created_by_user_id: auth.user_id,
             members,
             banned_members: HashSet::new(),
             channels: HashMap::new(),
@@ -4851,6 +4923,7 @@ enum AuthFailure {
     InvalidRequest,
     Unauthorized,
     Forbidden,
+    GuildCreationLimitReached,
     NotFound,
     RateLimited,
     PayloadTooLarge,
@@ -4865,6 +4938,7 @@ impl IntoResponse for AuthFailure {
             Self::Forbidden => record_auth_failure("forbidden"),
             Self::RateLimited => record_rate_limit_hit("http", "auth_failure"),
             Self::InvalidRequest
+            | Self::GuildCreationLimitReached
             | Self::NotFound
             | Self::PayloadTooLarge
             | Self::QuotaExceeded
@@ -4889,6 +4963,13 @@ impl IntoResponse for AuthFailure {
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
                 Json(AuthError { error: "forbidden" }),
+            )
+                .into_response(),
+            Self::GuildCreationLimitReached => (
+                StatusCode::FORBIDDEN,
+                Json(AuthError {
+                    error: "guild_creation_limit_reached",
+                }),
             )
                 .into_response(),
             Self::NotFound => (
@@ -5354,6 +5435,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_guild_enforces_per_user_creation_limit() {
+        let app = build_router(&AppConfig {
+            max_created_guilds_per_user: 1,
+            ..AppConfig::default()
+        })
+        .unwrap();
+        let auth = register_and_login(&app, "203.0.113.73").await;
+
+        let first_create = Request::builder()
+            .method("POST")
+            .uri("/guilds")
+            .header("authorization", format!("Bearer {}", auth.access_token))
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", "203.0.113.73")
+            .body(Body::from(json!({"name":"Alpha"}).to_string()))
+            .unwrap();
+        let first_response = app.clone().oneshot(first_create).await.unwrap();
+        assert_eq!(first_response.status(), StatusCode::OK);
+
+        let second_create = Request::builder()
+            .method("POST")
+            .uri("/guilds")
+            .header("authorization", format!("Bearer {}", auth.access_token))
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", "203.0.113.73")
+            .body(Body::from(json!({"name":"Beta"}).to_string()))
+            .unwrap();
+        let second_response = app.oneshot(second_create).await.unwrap();
+        assert_eq!(second_response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(second_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["error"], "guild_creation_limit_reached");
+    }
+
+    #[tokio::test]
     async fn gateway_broadcasts_message_to_subscribed_connection() {
         let state = AppState::new(&AppConfig::default()).unwrap();
         let user_id = super::UserId::new();
@@ -5379,6 +5497,7 @@ mod tests {
         let mut guild = super::GuildRecord {
             name: String::from("Gateway Test"),
             visibility: super::GuildVisibility::Private,
+            created_by_user_id: user_id,
             members: HashMap::new(),
             banned_members: std::collections::HashSet::new(),
             channels: HashMap::new(),
@@ -5452,6 +5571,15 @@ mod tests {
     fn invalid_postgres_url_is_rejected() {
         let result = build_router(&AppConfig {
             database_url: Some(String::from("postgres://bad url")),
+            ..AppConfig::default()
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn zero_created_guild_limit_is_rejected() {
+        let result = build_router(&AppConfig {
+            max_created_guilds_per_user: 0,
             ..AppConfig::default()
         });
         assert!(result.is_err());

@@ -38,11 +38,13 @@ Set these variables for `filament-server`:
 - `FILAMENT_LIVEKIT_API_SECRET`: required paired LiveKit secret
 - `FILAMENT_LIVEKIT_URL`: required signaling URL exposed to clients (`ws://` or `wss://`)
 - `FILAMENT_BIND_ADDR`: bind socket for server process (default `0.0.0.0:3000`)
+- `FILAMENT_MAX_CREATED_GUILDS_PER_USER`: max guilds an authenticated user may create (default `5`, must be >= `1`)
 
 Default compose values:
 - `FILAMENT_ATTACHMENT_ROOT=/var/lib/filament/attachments`
 - `FILAMENT_LIVEKIT_URL=ws://livekit:7880`
 - `FILAMENT_BIND_ADDR=0.0.0.0:3000`
+- `FILAMENT_MAX_CREATED_GUILDS_PER_USER=5`
 
 ## Attachment Storage Persistence
 
