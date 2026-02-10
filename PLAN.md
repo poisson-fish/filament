@@ -272,7 +272,7 @@ Every phase has:
 - Postgres persistence + history pagination
 
 ### Status
-- IN PROGRESS
+- DONE
 
 ### Notes
 - Prefer **newtypes + TryFrom** for usernames/channel names to ensure invariants.
@@ -288,18 +288,21 @@ Every phase has:
 - 2026-02-10: Added/expanded tests for remaining Phase 1 behavior: auth route-specific rate limits, history pagination over persisted channel messages, gateway subscriber broadcast flow, and slow-consumer handling. Full local gates passed (`fmt`, `clippy -D warnings`, workspace tests).
 - 2026-02-10: Added a live network gateway integration harness (`apps/filament-server/tests/gateway_network_flow.rs`) that boots a TCP listener, performs websocket auth handshake, validates `ready` + `subscribed` events, and verifies end-to-end `message_create` broadcast flow over a real socket.
 - 2026-02-10: Re-ran local security/tooling gates after the network gateway harness addition: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
-- 2026-02-10: Added optional Postgres-backed persistence path for Phase 1 auth/session/guild/channel/message data in `filament-server` using `sqlx` (users, sessions, replay-token hashes, guilds/members, channels, messages) with startup-safe lazy schema initialization and preserved refresh rotation/replay detection semantics. Runtime uses Postgres when `FILAMENT_DATABASE_URL` is set; in-memory fallback is kept for hermetic tests.
+- 2026-02-10: Added optional Postgres-backed persistence path for Phase 1 auth/session/guild/channel/message data in `filament-server` using `sqlx` (users, sessions, replay-token hashes, guilds/members, channels, messages) with startup-safe lazy schema initialization and preserved refresh rotation/replay detection semantics. In-memory fallback remains for hermetic tests.
 - 2026-02-10: Re-ran local quality/security gates after Postgres persistence addition and dependency tightening (`sqlx` postgres-only features): `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
+- 2026-02-10: Added live Postgres integration coverage in `apps/filament-server/tests/postgres_phase1_flow.rs` for register/login/me/refresh/logout with replay detection, account-enumeration response consistency, guild/channel creation, and persisted message pagination.
+- 2026-02-10: CI now provisions Postgres for the Rust test job and exports `FILAMENT_TEST_DATABASE_URL`, ensuring Postgres-backed Phase 1 integration coverage runs on every push/PR.
+- 2026-02-10: Cutover policy finalized and implemented: runtime `filament-server` now requires `FILAMENT_DATABASE_URL`; in-memory persistence is test-only and documented in `docs/SECURITY.md`.
 
 ### TODOs
-- Add integration tests that run the full auth + guild/channel/message flows against a live Postgres instance (not in-memory fallback).
-- Decide and document the cutover point for removing in-memory persistence fallback from non-test runtime configurations.
+- Phase 2 start gate: begin attachments + markdown tokenization implementation with upload caps, MIME sniffing, and quota enforcement.
 
 ### Exit Criteria
 - Unit tests cover newtype invariants, token mint/verify paths, and permission checks.
 - Integration tests cover auth register/login/refresh/logout/me flow including refresh rotation + replay detection and account-enumeration response consistency.
-- Completed in this increment: gateway message-flow behavior (subscribe + message broadcast), pagination tests against stored history, slow-consumer handling validation, and network-level websocket handshake/message-flow coverage against a live server instance.
-- Remaining to exit Phase 1: Postgres-backed integration coverage for auth/session/guild/channel/message flows and final cutover policy for non-DB fallback.
+- Integration tests cover gateway message-flow behavior (subscribe + message broadcast), pagination against stored history, slow-consumer handling, and network-level websocket handshake/message flow against a live server instance.
+- Postgres-backed integration coverage for auth/session/guild/channel/message flows is wired into CI with a live Postgres service.
+- Non-DB fallback cutover policy is documented and enforced for runtime (`FILAMENT_DATABASE_URL` required).
 
 ### Security Outlook
 - Argon2id parameters set for server-class machines.

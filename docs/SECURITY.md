@@ -31,6 +31,10 @@
 - Rotation is required on every refresh.
 - Replay detection is mandatory: if an old refresh token is replayed, revoke the session family.
 
+## Persistence Cutover Policy
+- Production runtime requires `FILAMENT_DATABASE_URL`; in-memory persistence is not permitted for deployed server processes.
+- In-memory persistence remains test-only for hermetic unit/integration coverage where Postgres is intentionally unavailable.
+
 ## Upload and Content Safety
 - Never trust client-provided `Content-Type`; MIME sniff with `infer`.
 - Enforce hard upload caps and streaming writes.

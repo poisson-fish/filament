@@ -9,8 +9,10 @@ use tokio::net::TcpListener;
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
+    let database_url = std::env::var("FILAMENT_DATABASE_URL")
+        .map_err(|_| anyhow::anyhow!("FILAMENT_DATABASE_URL is required for runtime"))?;
     let app_config = AppConfig {
-        database_url: std::env::var("FILAMENT_DATABASE_URL").ok(),
+        database_url: Some(database_url),
         ..AppConfig::default()
     };
     let app = build_router(&app_config)?;

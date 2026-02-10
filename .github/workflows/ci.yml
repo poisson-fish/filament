@@ -15,6 +15,22 @@ concurrency:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: filament
+          POSTGRES_PASSWORD: filament
+          POSTGRES_DB: filament_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U filament -d filament_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      FILAMENT_TEST_DATABASE_URL: postgres://filament:filament@127.0.0.1:5432/filament_test
     steps:
       - name: Checkout
         uses: actions/checkout@v4
