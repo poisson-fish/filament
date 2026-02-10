@@ -14,6 +14,7 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - 2026-02-10: Expanded client domain/API coverage for attachments, moderation, channel overrides, voice token issuance, search maintenance, and auth refresh/logout endpoints.
 - 2026-02-10: Upgraded app shell UX with message edit/delete, history pagination, safe markdown token rendering, attachment lifecycle actions, moderation controls, and utility diagnostics.
 - 2026-02-10: Added integration-like operator console tests in `apps/filament-client-web/tests/app-shell-operator-permissions.test.tsx` to validate owner/member permission fixture behavior for moderation, channel overrides, search maintenance, and voice token actions.
+- 2026-02-10: Fixed client guild visibility bootstrap by pruning cached workspaces/channels that fail authenticated access checks; added `apps/filament-client-web/tests/app-shell-workspace-visibility.test.tsx` coverage to prevent non-member/private guild leakage in UI/cache.
 
 ## Completed
 - [x] Login flow reliably navigates to app shell.
@@ -34,12 +35,12 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - [x] Session refresh/logout actions wired to `/auth/refresh` + `/auth/logout`.
 - [x] Chat message rendering uses server `markdown_tokens` safe token stream (no HTML path).
 - [x] Validate expanded operator UI against backend role/permission fixtures with dedicated integration-like frontend tests.
+- [x] Fix guild visibility bug: only show guilds the authenticated user is a member of; private guilds must require invite/membership before appearing.
 
 ## In Progress
 - [ ] None.
 
 ## Next
-- [ ] Fix guild visibility bug: only show guilds the authenticated user is a member of; private guilds must require invite/membership before appearing.
 - [ ] Add public guild discovery model: support guild visibility state (private/public) and a server-level searchable public guild list UI.
 - [ ] Add configurable per-user guild creation limits: allow self-serve guild creation for all users, constrained by a server-configured max created guild count per user.
 - [ ] Enforce least-visibility defaults across API + client: if a user lacks default permission for a resource, the resource must not be discoverable or rendered in UI (including preventing ops console exposure for non-members).

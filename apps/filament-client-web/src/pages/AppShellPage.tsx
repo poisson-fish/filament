@@ -9,6 +9,7 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
+import type { AuthSession } from "../domain/auth";
 import { DomainValidationError } from "../domain/auth";
 import {
   attachmentFilenameFromInput,
@@ -226,16 +227,39 @@ function parsePermissionCsv(value: string): PermissionName[] {
   return [...unique];
 }
 
+const MAX_CACHED_WORKSPACES = 64;
+const MAX_CHANNEL_PROBES_PER_WORKSPACE = 16;
+
+async function canAccessChannel(
+  session: AuthSession,
+  guildId: GuildId,
+  channelId: ChannelId,
+): Promise<boolean> {
+  try {
+    await fetchChannelMessages(session, guildId, channelId, { limit: 1 });
+    return true;
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (
+        error.code === "forbidden" ||
+        error.code === "not_found" ||
+        error.code === "invalid_credentials" ||
+        error.code === "network_error"
+      ) {
+        return false;
+      }
+    }
+    return false;
+  }
+}
+
 export function AppShellPage() {
   const auth = useAuth();
 
-  const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>(loadWorkspaceCache());
-  const [activeGuildId, setActiveGuildId] = createSignal<GuildId | null>(
-    workspaces()[0]?.guildId ?? null,
-  );
-  const [activeChannelId, setActiveChannelId] = createSignal<ChannelId | null>(
-    workspaces()[0]?.channels[0]?.channelId ?? null,
-  );
+  const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>([]);
+  const [activeGuildId, setActiveGuildId] = createSignal<GuildId | null>(null);
+  const [activeChannelId, setActiveChannelId] = createSignal<ChannelId | null>(null);
+  const [workspaceBootstrapDone, setWorkspaceBootstrapDone] = createSignal(false);
 
   const [composer, setComposer] = createSignal("");
   const [messageStatus, setMessageStatus] = createSignal("");
@@ -343,6 +367,74 @@ export function AppShellPage() {
   });
 
   createEffect(() => {
+    const session = auth.session();
+    if (!session) {
+      setWorkspaces([]);
+      setWorkspaceBootstrapDone(true);
+      return;
+    }
+
+    let cancelled = false;
+    setWorkspaceBootstrapDone(false);
+    const cached = loadWorkspaceCache().slice(0, MAX_CACHED_WORKSPACES);
+
+    const bootstrap = async () => {
+      const validated = await Promise.all(
+        cached.map(async (workspace) => {
+          const sampledChannels = workspace.channels.slice(0, MAX_CHANNEL_PROBES_PER_WORKSPACE);
+          if (sampledChannels.length === 0) {
+            return null;
+          }
+
+          const channelAccess = await Promise.all(
+            sampledChannels.map((channel) =>
+              canAccessChannel(session, workspace.guildId, channel.channelId),
+            ),
+          );
+          const channels = sampledChannels.filter((_, index) => channelAccess[index]);
+          if (channels.length === 0) {
+            return null;
+          }
+
+          return {
+            ...workspace,
+            channels,
+          };
+        }),
+      );
+
+      if (cancelled) {
+        return;
+      }
+      const filtered = validated.filter((entry): entry is WorkspaceRecord => entry !== null);
+      setWorkspaces(filtered);
+      const selectedGuild = activeGuildId();
+      const selectedWorkspace =
+        (selectedGuild && filtered.find((workspace) => workspace.guildId === selectedGuild)) ??
+        filtered[0] ??
+        null;
+      setActiveGuildId(selectedWorkspace?.guildId ?? null);
+      const selectedChannel = activeChannelId();
+      const nextChannel =
+        (selectedChannel &&
+          selectedWorkspace?.channels.find((channel) => channel.channelId === selectedChannel)) ??
+        selectedWorkspace?.channels[0] ??
+        null;
+      setActiveChannelId(nextChannel?.channelId ?? null);
+      setWorkspaceBootstrapDone(true);
+    };
+
+    void bootstrap();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  createEffect(() => {
+    if (!workspaceBootstrapDone()) {
+      return;
+    }
     saveWorkspaceCache(workspaces());
   });
 
@@ -905,7 +997,13 @@ export function AppShellPage() {
       return;
     }
 
-    const targetUserId = userIdFromInput(moderationUserIdInput().trim());
+    let targetUserId: UserId;
+    try {
+      targetUserId = userIdFromInput(moderationUserIdInput().trim());
+    } catch (error) {
+      setModerationError(mapError(error, "Target user ID is invalid."));
+      return;
+    }
     await runModerationAction(async () => {
       if (action === "add") {
         await addGuildMember(session, guildId, targetUserId);
@@ -1120,109 +1218,114 @@ export function AppShellPage() {
         </header>
 
         <Show
-          when={workspaces().length === 0}
+          when={workspaceBootstrapDone() && workspaces().length === 0}
           fallback={
             <>
-              <Show when={isLoadingMessages()}>
-                <p class="panel-note">Loading messages...</p>
+              <Show when={!workspaceBootstrapDone()}>
+                <p class="panel-note">Validating workspace access...</p>
               </Show>
-              <Show when={messageError()}>
-                <p class="status error panel-note">{messageError()}</p>
-              </Show>
-              <Show when={sessionStatus()}>
-                <p class="status ok panel-note">{sessionStatus()}</p>
-              </Show>
-              <Show when={sessionError()}>
-                <p class="status error panel-note">{sessionError()}</p>
-              </Show>
+              <Show when={workspaceBootstrapDone()}>
+                <Show when={isLoadingMessages()}>
+                  <p class="panel-note">Loading messages...</p>
+                </Show>
+                <Show when={messageError()}>
+                  <p class="status error panel-note">{messageError()}</p>
+                </Show>
+                <Show when={sessionStatus()}>
+                  <p class="status ok panel-note">{sessionStatus()}</p>
+                </Show>
+                <Show when={sessionError()}>
+                  <p class="status error panel-note">{sessionError()}</p>
+                </Show>
 
-              <section class="message-list" aria-live="polite">
-                <Show when={nextBefore()}>
-                  <button type="button" class="load-older" onClick={() => void loadOlderMessages()} disabled={isLoadingOlder()}>
-                    {isLoadingOlder() ? "Loading older..." : "Load older messages"}
+                <section class="message-list" aria-live="polite">
+                  <Show when={nextBefore()}>
+                    <button type="button" class="load-older" onClick={() => void loadOlderMessages()} disabled={isLoadingOlder()}>
+                      {isLoadingOlder() ? "Loading older..." : "Load older messages"}
+                    </button>
+                  </Show>
+
+                  <For each={messages()}>
+                    {(message) => {
+                      const state =
+                        () => reactionState()[reactionKey(message.messageId, THUMBS_UP)] ?? { count: 0, reacted: false };
+                      const isEditing = () => editingMessageId() === message.messageId;
+                      return (
+                        <article class="message-row">
+                          <p>
+                            <strong>{shortActor(message.authorId)}</strong>
+                            <span>{formatMessageTime(message.createdAtUnix)}</span>
+                          </p>
+                          <Show
+                            when={isEditing()}
+                            fallback={<p class="message-tokenized">{tokenizeToDisplayText(message.markdownTokens) || message.content}</p>}
+                          >
+                            <form
+                              class="inline-form message-edit"
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                void saveEditMessage(message.messageId);
+                              }}
+                            >
+                              <input
+                                value={editingDraft()}
+                                onInput={(event) => setEditingDraft(event.currentTarget.value)}
+                                maxlength="2000"
+                              />
+                              <div class="message-actions">
+                                <button type="submit" disabled={isSavingEdit()}>
+                                  {isSavingEdit() ? "Saving..." : "Save"}
+                                </button>
+                                <button type="button" onClick={cancelEditMessage}>
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          </Show>
+                          <div class="message-actions compact">
+                            <button type="button" onClick={() => beginEditMessage(message)}>
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void removeMessage(message.messageId)}
+                              disabled={deletingMessageId() === message.messageId}
+                            >
+                              {deletingMessageId() === message.messageId ? "Deleting..." : "Delete"}
+                            </button>
+                          </div>
+                          <div class="reaction-row">
+                            <button
+                              type="button"
+                              classList={{ reacted: state().reacted }}
+                              onClick={() => void toggleThumbsUp(message.messageId)}
+                            >
+                              {THUMBS_UP} {state().count}
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    }}
+                  </For>
+
+                  <Show when={!isLoadingMessages() && messages().length === 0 && !messageError()}>
+                    <p class="muted">No messages yet in this channel.</p>
+                  </Show>
+                </section>
+
+                <form class="composer" onSubmit={sendMessage}>
+                  <input
+                    value={composer()}
+                    onInput={(event) => setComposer(event.currentTarget.value)}
+                    maxlength="2000"
+                    placeholder={activeChannel() ? `Message #${activeChannel()!.name}` : "Select channel"}
+                    disabled={!activeChannel() || isSendingMessage()}
+                  />
+                  <button type="submit" disabled={!activeChannel() || isSendingMessage()}>
+                    {isSendingMessage() ? "Sending..." : "Send"}
                   </button>
-                </Show>
-
-                <For each={messages()}>
-                  {(message) => {
-                    const state =
-                      () => reactionState()[reactionKey(message.messageId, THUMBS_UP)] ?? { count: 0, reacted: false };
-                    const isEditing = () => editingMessageId() === message.messageId;
-                    return (
-                      <article class="message-row">
-                        <p>
-                          <strong>{shortActor(message.authorId)}</strong>
-                          <span>{formatMessageTime(message.createdAtUnix)}</span>
-                        </p>
-                        <Show
-                          when={isEditing()}
-                          fallback={<p class="message-tokenized">{tokenizeToDisplayText(message.markdownTokens) || message.content}</p>}
-                        >
-                          <form
-                            class="inline-form message-edit"
-                            onSubmit={(event) => {
-                              event.preventDefault();
-                              void saveEditMessage(message.messageId);
-                            }}
-                          >
-                            <input
-                              value={editingDraft()}
-                              onInput={(event) => setEditingDraft(event.currentTarget.value)}
-                              maxlength="2000"
-                            />
-                            <div class="message-actions">
-                              <button type="submit" disabled={isSavingEdit()}>
-                                {isSavingEdit() ? "Saving..." : "Save"}
-                              </button>
-                              <button type="button" onClick={cancelEditMessage}>
-                                Cancel
-                              </button>
-                            </div>
-                          </form>
-                        </Show>
-                        <div class="message-actions compact">
-                          <button type="button" onClick={() => beginEditMessage(message)}>
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void removeMessage(message.messageId)}
-                            disabled={deletingMessageId() === message.messageId}
-                          >
-                            {deletingMessageId() === message.messageId ? "Deleting..." : "Delete"}
-                          </button>
-                        </div>
-                        <div class="reaction-row">
-                          <button
-                            type="button"
-                            classList={{ reacted: state().reacted }}
-                            onClick={() => void toggleThumbsUp(message.messageId)}
-                          >
-                            {THUMBS_UP} {state().count}
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  }}
-                </For>
-
-                <Show when={!isLoadingMessages() && messages().length === 0 && !messageError()}>
-                  <p class="muted">No messages yet in this channel.</p>
-                </Show>
-              </section>
-
-              <form class="composer" onSubmit={sendMessage}>
-                <input
-                  value={composer()}
-                  onInput={(event) => setComposer(event.currentTarget.value)}
-                  maxlength="2000"
-                  placeholder={activeChannel() ? `Message #${activeChannel()!.name}` : "Select channel"}
-                  disabled={!activeChannel() || isSendingMessage()}
-                />
-                <button type="submit" disabled={!activeChannel() || isSendingMessage()}>
-                  {isSendingMessage() ? "Sending..." : "Send"}
-                </button>
-              </form>
+                </form>
+              </Show>
             </>
           }
         >
@@ -1479,13 +1582,7 @@ export function AppShellPage() {
 
         <section class="member-group">
           <p class="group-label">MODERATION</p>
-          <form
-            class="inline-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void runMemberAction("add");
-            }}
-          >
+          <form class="inline-form">
             <label>
               Target user ULID
               <input
@@ -1507,7 +1604,11 @@ export function AppShellPage() {
               </select>
             </label>
             <div class="button-row">
-              <button type="submit" disabled={isModerating() || !activeWorkspace()}>
+              <button
+                type="button"
+                disabled={isModerating() || !activeWorkspace()}
+                onClick={() => void runMemberAction("add")}
+              >
                 Add
               </button>
               <button type="button" disabled={isModerating() || !activeWorkspace()} onClick={() => void runMemberAction("role")}>
