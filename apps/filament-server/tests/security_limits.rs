@@ -10,6 +10,7 @@ async fn rejects_body_over_limit() {
         max_body_bytes: 32,
         request_timeout: Duration::from_secs(1),
         rate_limit_requests_per_minute: 60,
+        ..AppConfig::default()
     };
     let app = build_router(&config).unwrap();
 
@@ -33,6 +34,7 @@ async fn times_out_slow_requests() {
         max_body_bytes: 1024,
         request_timeout: Duration::from_millis(20),
         rate_limit_requests_per_minute: 60,
+        ..AppConfig::default()
     };
     let app = build_router(&config).unwrap();
 
@@ -53,6 +55,7 @@ async fn rate_limits_per_client_ip() {
         max_body_bytes: 1024,
         request_timeout: Duration::from_secs(1),
         rate_limit_requests_per_minute: 2,
+        ..AppConfig::default()
     };
     let app = build_router(&config).unwrap();
 

@@ -280,24 +280,27 @@ Every phase has:
 - 2026-02-10: Implemented auth/session HTTP flows in `filament-server` (`/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`) with Argon2id password hashing, PASETO v4 local access tokens, refresh-token hashing, refresh rotation, and refresh replay detection.
 - 2026-02-10: Added account-enumeration resistance controls (consistent login failure responses + dummy hash verification path) and lockout/backoff guardrails for repeated failed login attempts.
 - 2026-02-10: Security/tooling checks run locally for this increment: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
+- 2026-02-10: Added Phase 1 realtime text primitives in `filament-server`: auth-gated guild/channel/message routes (`/guilds`, `/guilds/{guild_id}/channels`, `/guilds/{guild_id}/channels/{channel_id}/messages`) with permission checks and bounded history pagination (`limit` default 20, max 100, optional `before` cursor).
+- 2026-02-10: Added `/gateway/ws` with versioned envelope parsing (`{ v, t, d }`), strict gateway event-size enforcement, per-connection ingress event rate controls, bounded outbound queue, and slow-consumer close signaling.
+- 2026-02-10: Added per-route auth endpoint rate limits (`register`, `login`, `refresh`) and structured auth audit logs for register/login/lockout/refresh/logout outcomes.
+- 2026-02-10: Added/expanded tests for remaining Phase 1 behavior: auth route-specific rate limits, history pagination over persisted channel messages, gateway subscriber broadcast flow, and slow-consumer handling. Full local gates passed (`fmt`, `clippy -D warnings`, workspace tests).
 
 ### TODOs
-- Add Postgres-backed session/user persistence (replace in-memory auth/session stores) with hashed refresh tokens and session-family revocation.
-- Add gateway WS connect/auth/subscribe/send/receive with max frame/message caps, ingress rate limits, bounded outbound queues, and slow-consumer disconnect handling.
-- Add guild/channel CRUD + permission-checked message send/history pagination backed by Postgres.
-- Add per-route auth-specific rate limits and explicit audit logging for auth events (login success/fail, refresh, logout, lockout).
-- Add integration tests for WS handshake/message flow, REST pagination, and route-specific rate-limit behavior.
+- Replace in-memory auth/session/guild/message stores with Postgres-backed persistence while preserving hashed refresh tokens, refresh rotation/replay detection, and session-family revocation semantics.
+- Add a network-level websocket handshake/flow integration test harness against a live server instance to complement the current in-process gateway flow tests.
 
 ### Exit Criteria
 - Unit tests cover newtype invariants, token mint/verify paths, and permission checks.
 - Integration tests cover auth register/login/refresh/logout/me flow including refresh rotation + replay detection and account-enumeration response consistency.
-- Remaining to exit Phase 1: WS handshake/message-flow tests, pagination tests against persisted history, and slow-consumer handling validation.
+- Completed in this increment: gateway message-flow behavior (subscribe + message broadcast), pagination tests against stored history, and slow-consumer handling validation.
+- Remaining to exit Phase 1: migrate auth/session/guild/channel/message persistence from in-memory stores to Postgres-backed storage.
 
 ### Security Outlook
 - Argon2id parameters set for server-class machines.
 - Lock down account enumeration responses.
 - Audit logging for auth events (login, refresh, password change).
 - Refresh tokens are stored hashed server-side and rotated on refresh with replay detection.
+- Gateway abuse controls enforced: strict event-size limit, ingress rate limiting, bounded per-connection outbound queue, and slow-consumer disconnect signaling.
 
 ---
 
