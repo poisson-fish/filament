@@ -1,8 +1,16 @@
 # Filament
 
-Filament is a security-first, self-hosted Discord-like platform for realtime chat plus voice/video via LiveKit.
+Filament is a security-first, self-hosted Discord-like platform for realtime chat, voice, video, and screen sharing.
 
-The backend is Rust (`filament-server`) with PostgreSQL as source-of-truth, Tantivy for derived search, and a strict protocol/security posture designed for hostile network input.
+It is built around a hardened Rust backend (`filament-server`), PostgreSQL as source-of-truth, Tantivy as a rebuildable search index, and LiveKit as the SFU for media transport.
+
+## At a Glance
+
+- Security-first architecture with strict request/message limits and rate limiting
+- Realtime text over WebSocket gateway plus REST API for CRUD/search/admin flows
+- Voice/video/screen share via server-issued, scoped LiveKit tokens
+- Self-hostable with Docker Compose baseline
+- Web and desktop clients (mobile planned)
 
 ## Current Status
 
@@ -10,6 +18,62 @@ Implementation is actively tracked in `PLAN.md`.
 
 - Completed through Phase 8 (server, auth, gateway, attachments, search, roles/moderation, LiveKit integration, desktop hardening, deployment/ops baseline)
 - Phase 9 (mobile) is planned
+
+## Architecture
+
+```text
+Web Client (SolidJS) ─────┐
+Desktop Client (Tauri) ───┼──> Reverse Proxy (Caddy) ──> filament-server (Rust, Axum)
+                          │                                  │
+                          │                                  ├─ PostgreSQL (source-of-truth)
+                          │                                  ├─ Tantivy (derived index/cache)
+                          │                                  ├─ Attachment storage (object_store/local volume)
+                          │                                  └─ LiveKit token issuance + policy enforcement
+                          └─────────────────────────────────────> LiveKit SFU (voice/video/screen)
+```
+
+Design principles:
+
+- Untrusted-input model at every network boundary (client and server)
+- Domain invariants and validated DTO-to-domain conversion
+- Bounded queues, payload caps, rate limits, and timeouts by default
+- Search index treated as cache, never as sole source of truth
+
+## Core Features
+
+- Authentication and sessions:
+  - Argon2id password hashing
+  - PASETO access tokens + rotating refresh tokens
+  - Anti-enumeration friendly auth behavior
+- Realtime messaging:
+  - Versioned gateway envelope (`{ v, t, d }`)
+  - Guilds, channels, message history, pagination, reactions
+- Content safety:
+  - Markdown to safe token model (no HTML embed/render path)
+  - Link sanitization and strict parsing
+- Attachments:
+  - Size limits, MIME sniffing, quota enforcement, secure storage paths
+- Moderation and authorization:
+  - Roles/permissions model, membership controls, audit-oriented operations
+- Search:
+  - Tantivy-backed query with bounded complexity and result caps
+  - Rebuild/reconcile flows from Postgres
+- Media:
+  - LiveKit integration for voice/video/screen share
+  - Short-lived, scoped, permission-limited media tokens
+
+## Technology Stack
+
+| Area | Technologies |
+|---|---|
+| Server | Rust, Tokio, Axum, Tower |
+| Auth | Argon2id, PASETO, refresh-token rotation |
+| Database | PostgreSQL + `sqlx` |
+| Search | Tantivy (derived index) |
+| Media | LiveKit SFU |
+| Clients | SolidJS web, Tauri + SolidJS desktop |
+| Infra | Docker Compose, Caddy |
+| Security/Quality | `cargo audit`, `cargo deny`, clippy, tests, SBOM |
 
 ## Project Structure
 
@@ -55,6 +119,7 @@ Default local endpoints:
 - Filament API/Gateway (via proxy): `http://localhost:8080`
 - Health check: `http://localhost:8080/health`
 - LiveKit signaling: `ws://localhost:7880`
+- Metrics endpoint: `http://localhost:8080/metrics`
 
 Useful commands:
 
@@ -64,6 +129,9 @@ docker compose -f infra/docker-compose.yml ps
 
 # View logs
 docker compose -f infra/docker-compose.yml logs -f filament-server
+
+# Check health quickly
+curl -fsS http://localhost:8080/health
 
 # Stop services
 docker compose -f infra/docker-compose.yml down
@@ -79,4 +147,3 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features
 cargo test --workspace
 ```
-
