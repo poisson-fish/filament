@@ -77,5 +77,8 @@ jobs:
       - name: Web tests
         run: npm test
 
+      - name: Operator permission fixture tests
+        run: npx vitest run tests/app-shell-operator-permissions.test.tsx
+
       - name: Build web client
         run: npm run build

@@ -13,6 +13,7 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - 2026-02-10: Added message reactions (`POST/DELETE .../reactions/{emoji}`) to API client and UI.
 - 2026-02-10: Expanded client domain/API coverage for attachments, moderation, channel overrides, voice token issuance, search maintenance, and auth refresh/logout endpoints.
 - 2026-02-10: Upgraded app shell UX with message edit/delete, history pagination, safe markdown token rendering, attachment lifecycle actions, moderation controls, and utility diagnostics.
+- 2026-02-10: Added integration-like operator console tests in `apps/filament-client-web/tests/app-shell-operator-permissions.test.tsx` to validate owner/member permission fixture behavior for moderation, channel overrides, search maintenance, and voice token actions.
 
 ## Completed
 - [x] Login flow reliably navigates to app shell.
@@ -32,9 +33,10 @@ Implement as much of `docs/API.md` as possible in the web client while preservin
 - [x] Channel role override UI wired to `/overrides/{role}`.
 - [x] Session refresh/logout actions wired to `/auth/refresh` + `/auth/logout`.
 - [x] Chat message rendering uses server `markdown_tokens` safe token stream (no HTML path).
+- [x] Validate expanded operator UI against backend role/permission fixtures with dedicated integration-like frontend tests.
 
 ## In Progress
-- [ ] Validate expanded operator UI against backend role/permission fixtures with dedicated integration-like frontend tests.
+- [ ] None.
 
 ## Next
 - [ ] Fix guild visibility bug: only show guilds the authenticated user is a member of; private guilds must require invite/membership before appearing.
