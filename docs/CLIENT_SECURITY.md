@@ -39,9 +39,15 @@ No plaintext token persistence in logs, local files, or crash reports is permitt
   - `apps/filament-client-web/security/csp.json`
 - Allowed URL schemes for network access are restricted to `https` and `wss`.
 - Dangerous script behaviors (`eval`, `new Function`, inline scripts) are forbidden.
+- Auth routes are hosted at `/login`; authenticated shell is served at `/app` with route guards.
+- Session tokens are kept in bounded `sessionStorage` payloads and re-validated on read.
+- API client uses bounded JSON response parsing and request timeouts to limit malicious payload impact.
 
 ## Validation Gates
 
 These controls are enforced by tests in:
 - `apps/filament-client-desktop/src-tauri/tests/hardening_config.rs`
 - `apps/filament-client-desktop/src-tauri/src/lib.rs`
+- `apps/filament-client-web/tests/domain-auth.test.ts`
+- `apps/filament-client-web/tests/session-storage.test.ts`
+- `apps/filament-client-web/tests/routes-login.test.tsx`

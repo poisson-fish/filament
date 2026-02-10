@@ -547,6 +547,7 @@ Every phase has:
   - `apps/filament-client-web/security/csp.json`
 - 2026-02-10: Added `docs/CLIENT_SECURITY.md` documenting desktop/web hardening controls, token storage strategy, and validation gates.
 - 2026-02-10: Added automated policy checks in `apps/filament-client-desktop/src-tauri/tests/hardening_config.rs` and re-ran local quality/security gates: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `cargo audit`, `cargo deny check --config cargo-deny.toml`.
+- 2026-02-10: Added initial SolidJS web client at `apps/filament-client-web` with `/login` register/login flow, authenticated `/app` shell, bounded auth/session domain validators, response-size/time-bound API handling, and route/session tests (`domain-auth`, `session-storage`, `routes-login`) for malicious-input resilience.
 
 ### TODOs
 - Add platform-specific keychain adapter implementations (currently policy + invariants are implemented; backend wiring remains).
