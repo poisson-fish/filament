@@ -32,6 +32,9 @@ function resolvedBaseUrl(): string {
   if (typeof envValue === "string" && envValue.length > 0) {
     return envValue;
   }
+  if (import.meta.env.DEV) {
+    return "/api";
+  }
   return DEFAULT_API_ORIGIN;
 }
 
