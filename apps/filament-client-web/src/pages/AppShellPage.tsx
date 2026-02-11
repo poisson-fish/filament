@@ -657,6 +657,27 @@ type OverlayPanel =
   | "moderation"
   | "utility";
 
+type SettingsCategory = "voice" | "profile";
+
+interface SettingsCategoryItem {
+  id: SettingsCategory;
+  label: string;
+  summary: string;
+}
+
+const SETTINGS_CATEGORIES: SettingsCategoryItem[] = [
+  {
+    id: "voice",
+    label: "Voice",
+    summary: "Audio devices and call behavior.",
+  },
+  {
+    id: "profile",
+    label: "Profile",
+    summary: "Account and identity placeholder.",
+  },
+];
+
 export function AppShellPage() {
   const auth = useAuth();
   let composerAttachmentInputRef: HTMLInputElement | undefined;
@@ -768,6 +789,7 @@ export function AppShellPage() {
   const [isCheckingHealth, setCheckingHealth] = createSignal(false);
   const [isEchoing, setEchoing] = createSignal(false);
   const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<OverlayPanel | null>(null);
+  const [activeSettingsCategory, setActiveSettingsCategory] = createSignal<SettingsCategory>("voice");
   const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
   const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(false);
   let rtcClient: RtcClient | null = null;
@@ -876,6 +898,9 @@ export function AppShellPage() {
     }
     if (panel === "channel-create") {
       setChannelCreateError("");
+    }
+    if (panel === "settings") {
+      setActiveSettingsCategory("voice");
     }
     setActiveOverlayPanel(panel);
   };
@@ -3398,14 +3423,46 @@ export function AppShellPage() {
                     <section class="settings-panel-layout" aria-label="settings">
                       <aside class="settings-panel-rail" aria-label="Settings category rail">
                         <p class="group-label">CATEGORIES</p>
-                        <p class="muted">Category navigation is being added next.</p>
+                        <ul class="settings-category-list">
+                          <For each={SETTINGS_CATEGORIES}>
+                            {(category) => {
+                              const isActive = () => activeSettingsCategory() === category.id;
+                              return (
+                                <li>
+                                  <button
+                                    type="button"
+                                    class="settings-category-button"
+                                    classList={{ "settings-category-button-active": isActive() }}
+                                    onClick={() => setActiveSettingsCategory(category.id)}
+                                    aria-label={`Open ${category.label} settings category`}
+                                    aria-current={isActive() ? "page" : undefined}
+                                  >
+                                    <span class="settings-category-name">{category.label}</span>
+                                    <span class="settings-category-summary muted">{category.summary}</span>
+                                  </button>
+                                </li>
+                              );
+                            }}
+                          </For>
+                        </ul>
                       </aside>
                       <section class="settings-panel-content" aria-label="Settings content pane">
-                        <p class="group-label">SETTINGS</p>
-                        <p class="muted">
-                          Settings panel foundation is now available with a category rail and
-                          content pane. Voice/Profile categories are next in Phase 4.
-                        </p>
+                        <Switch>
+                          <Match when={activeSettingsCategory() === "voice"}>
+                            <p class="group-label">VOICE</p>
+                            <p class="muted">
+                              Voice settings baseline is active. Audio Devices submenu is next in
+                              Phase 4.
+                            </p>
+                          </Match>
+                          <Match when={activeSettingsCategory() === "profile"}>
+                            <p class="group-label">PROFILE</p>
+                            <p class="muted">
+                              Profile settings remain a non-functional placeholder for a future
+                              plan phase.
+                            </p>
+                          </Match>
+                        </Switch>
                       </section>
                     </section>
                   </Match>

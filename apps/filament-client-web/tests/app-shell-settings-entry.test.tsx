@@ -148,9 +148,12 @@ describe("app shell settings entry point", () => {
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
     expect(screen.getByLabelText("Settings category rail")).toBeInTheDocument();
     expect(screen.getByLabelText("Settings content pane")).toBeInTheDocument();
-    expect(
-      screen.getByText(/category rail and content pane/i),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Voice settings category" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("button", { name: "Open Profile settings category" })).toBeInTheDocument();
+    expect(screen.getByText(/Voice settings baseline is active/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() =>
@@ -172,6 +175,28 @@ describe("app shell settings entry point", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Settings panel" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("switches between Voice and Profile categories", async () => {
+    seedAuthenticatedWorkspace();
+    vi.stubGlobal("fetch", createSettingsFixtureFetch());
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
+    expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Profile settings category" }));
+    expect(screen.getByText(/Profile settings remain a non-functional placeholder/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Profile settings category" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("button", { name: "Open Voice settings category" })).not.toHaveAttribute(
+      "aria-current",
     );
   });
 });
