@@ -14,6 +14,7 @@ const GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const TEXT_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
 const USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+const REMOTE_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
 type FixtureChannel = {
   channelId: string;
   name: string;
@@ -59,6 +60,7 @@ const rtcMock = vi.hoisted(() => {
   let snapshot = createDisconnectedSnapshot();
   let joinParticipants: MockParticipant[] = [];
   let joinFailure: Error | null = null;
+  let localParticipantIdentity = "u.local";
 
   const cloneParticipants = (participants: MockParticipant[]): MockParticipant[] =>
     participants.map((entry) => ({
@@ -110,7 +112,7 @@ const rtcMock = vi.hoisted(() => {
     snapshot = {
       ...snapshot,
       connectionStatus: "connected",
-      localParticipantIdentity: "u.local",
+      localParticipantIdentity,
       participants: cloneParticipants(joinParticipants),
       activeSpeakerIdentities: [],
       lastErrorCode: null,
@@ -272,11 +274,16 @@ const rtcMock = vi.hoisted(() => {
     joinFailure = error;
   };
 
+  const setLocalParticipantIdentity = (identity: string) => {
+    localParticipantIdentity = identity;
+  };
+
   const reset = () => {
     listeners.clear();
     snapshot = createDisconnectedSnapshot();
     joinParticipants = [];
     joinFailure = null;
+    localParticipantIdentity = "u.local";
     createRtcClient.mockClear();
     join.mockClear();
     leave.mockClear();
@@ -309,6 +316,7 @@ const rtcMock = vi.hoisted(() => {
     setVideoTracks,
     setConnectionStatus,
     setJoinFailure,
+    setLocalParticipantIdentity,
     reset,
   };
 });
@@ -406,6 +414,7 @@ function seedAuthenticatedWorkspace(channels: FixtureChannel[] = DEFAULT_CHANNEL
 function createVoiceFixtureFetch(options?: {
   channels?: FixtureChannel[];
   voicePermissions?: string[];
+  userLookupById?: Record<string, string>;
   voiceTokenResponse?: {
     can_publish?: boolean;
     can_subscribe?: boolean;
@@ -424,7 +433,9 @@ function createVoiceFixtureFetch(options?: {
     publish_sources: ["microphone"],
   };
   const channelsById = new Map(channels.map((channel) => [channel.channelId, channel]));
+  const userLookupById = options?.userLookupById ?? {};
   let voiceTokenBody: unknown = null;
+  const userLookupBodies: unknown[] = [];
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input);
@@ -487,6 +498,23 @@ function createVoiceFixtureFetch(options?: {
       return jsonResponse({ incoming: [], outgoing: [] });
     }
 
+    if (method === "POST" && url.endsWith("/users/lookup")) {
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      userLookupBodies.push(body);
+      const userIds = Array.isArray(body.user_ids) ? body.user_ids : [];
+      const users = userIds.flatMap((userId: unknown) => {
+        if (typeof userId !== "string") {
+          return [];
+        }
+        const username = userLookupById[userId];
+        if (!username) {
+          return [];
+        }
+        return [{ user_id: userId, username }];
+      });
+      return jsonResponse({ users });
+    }
+
     if (
       method === "POST" &&
       channel?.kind === "voice" &&
@@ -518,6 +546,7 @@ function createVoiceFixtureFetch(options?: {
   return {
     fetchMock,
     voiceTokenBody: () => voiceTokenBody,
+    userLookupBodies: () => userLookupBodies,
   };
 }
 
@@ -807,6 +836,38 @@ describe("app shell voice controls", () => {
     expect(screen.getByText("u.remote.1")).toBeInTheDocument();
     expect(screen.getByText("u.remote.2")).toBeInTheDocument();
     expect(screen.queryByLabelText("Voice stream tiles")).not.toBeInTheDocument();
+  });
+
+  it("resolves voice participant usernames from cache lookup when identity is livekit-scoped", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch({
+      userLookupById: {
+        [REMOTE_USER_ID]: "bob",
+      },
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    rtcMock.setLocalParticipantIdentity(`u.${USER_ID}.01ARZ3NDEKTSV4RRFFQ69G5FB2`);
+    rtcMock.setJoinParticipants([
+      {
+        identity: `u.${REMOTE_USER_ID}.01ARZ3NDEKTSV4RRFFQ69G5FB3`,
+        subscribedTrackCount: 1,
+      },
+    ]);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByText("alice (you)")).toBeInTheDocument();
+    expect(await screen.findByText("bob")).toBeInTheDocument();
+    await waitFor(() => {
+      const lookupBodies = fixture.userLookupBodies();
+      expect(lookupBodies.length).toBeGreaterThan(0);
+      expect(JSON.stringify(lookupBodies)).toContain(REMOTE_USER_ID);
+    });
   });
 
   it("highlights active speakers and clears highlight after returning to idle", async () => {

@@ -640,6 +640,18 @@ function shortActor(value: string): string {
   return value.length > 14 ? `${value.slice(0, 14)}...` : value;
 }
 
+function userIdFromVoiceIdentity(identity: string): UserId | null {
+  const [prefix, rawUserId, ...rest] = identity.split(".");
+  if (prefix !== "u" || !rawUserId || rest.length === 0) {
+    return null;
+  }
+  try {
+    return userIdFromInput(rawUserId);
+  } catch {
+    return null;
+  }
+}
+
 function actorAvatarGlyph(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
@@ -1435,7 +1447,11 @@ export function AppShellPage() {
     setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
   };
 
-  const actorLabel = (actorId: string): string => resolvedUsernames()[actorId] ?? shortActor(actorId);
+  const actorLookupId = (actorId: string): string => userIdFromVoiceIdentity(actorId) ?? actorId;
+  const actorLabel = (actorId: string): string => {
+    const lookupId = actorLookupId(actorId);
+    return resolvedUsernames()[lookupId] ?? shortActor(lookupId);
+  };
   const displayUserLabel = (userId: string): string => actorLabel(userId);
   const voiceParticipantLabel = (identity: string, isLocal: boolean): string => {
     const label = actorLabel(identity);
@@ -1675,10 +1691,9 @@ export function AppShellPage() {
       }
     }
     for (const participant of voiceRosterEntries()) {
-      try {
-        lookupIds.add(userIdFromInput(participant.identity));
-      } catch {
-        continue;
+      const participantUserId = userIdFromVoiceIdentity(participant.identity);
+      if (participantUserId) {
+        lookupIds.add(participantUserId);
       }
     }
     const result = searchResults();
