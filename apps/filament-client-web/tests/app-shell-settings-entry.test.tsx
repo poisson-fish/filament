@@ -177,20 +177,20 @@ describe("app shell settings entry point", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Settings category rail")).toBeInTheDocument();
-    expect(screen.getByLabelText("Settings content pane")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Voice settings category" })).toHaveAttribute(
+    expect(await screen.findByLabelText("Settings category rail")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Settings content pane")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open Voice settings category" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(screen.getByRole("button", { name: "Open Profile settings category" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Voice settings submenu")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Voice Audio Devices submenu" })).toHaveAttribute(
+    expect(await screen.findByRole("button", { name: "Open Profile settings category" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Voice settings submenu")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open Voice Audio Devices submenu" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(screen.getByLabelText("Select microphone device")).toBeInTheDocument();
-    expect(screen.getByLabelText("Select speaker device")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Select microphone device")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Select speaker device")).toBeInTheDocument();
     await waitFor(() => expect(media.enumerateDevices).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -229,7 +229,7 @@ describe("app shell settings entry point", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Profile settings category" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Profile settings category" }));
     expect(screen.getByText(/Profile settings remain a non-functional placeholder/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Profile settings category" })).toHaveAttribute(
       "aria-current",

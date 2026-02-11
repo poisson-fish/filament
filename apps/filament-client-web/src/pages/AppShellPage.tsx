@@ -1406,7 +1406,9 @@ export function AppShellPage() {
     if (!isVoiceAudioSettingsOpen) {
       return;
     }
-    void refreshAudioDeviceInventory();
+    // Avoid tracking internal state reads from refreshAudioDeviceInventory in this effect,
+    // otherwise toggling refresh flags can cause a self-sustaining rerun loop.
+    void untrack(() => refreshAudioDeviceInventory());
   });
 
   createEffect(() => {
