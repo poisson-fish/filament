@@ -147,11 +147,11 @@ Make voice channels usable end-to-end (join, talk, leave) in app shell.
 - [x] On join, request token from backend with voice-first sources (`microphone`) and connect via RTC wrapper.
 - [x] Show call connection state (`connecting`, `connected`, `reconnecting`, `error`) and actionable error messages.
 - [x] Display in-call participant roster from LiveKit participant events.
-- [ ] Implement VAD/active-speaker state from LiveKit audio-level events with debounce/hysteresis to avoid flicker.
-- [ ] Highlight currently speaking participant names in green in the in-call participant roster.
+- [x] Implement VAD/active-speaker state from LiveKit audio-level events with debounce/hysteresis to avoid flicker.
+- [x] Highlight currently speaking participant names in green in the in-call participant roster.
 - [ ] Ensure channel switch/logout always leaves room and clears media state.
 - [ ] Add UI tests for join/leave/mute state and API payload correctness.
-- [ ] Add tests for active-speaker highlighting transitions (`idle -> speaking -> idle`).
+- [x] Add tests for active-speaker highlighting transitions (`idle -> speaking -> idle`).
 
 ### Exit Criteria
 - User can join voice channel and publish microphone audio.

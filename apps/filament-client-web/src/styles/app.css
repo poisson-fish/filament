@@ -459,6 +459,18 @@ select {
   background: rgba(30, 57, 99, 0.54);
 }
 
+.voice-roster-speaking {
+  border-color: rgba(93, 174, 117, 0.8);
+}
+
+.voice-roster-name {
+  color: var(--ink-1);
+}
+
+.voice-roster-name-speaking {
+  color: #98f3ac;
+}
+
 .message-list {
   padding: 0.88rem 1.03rem;
   display: grid;

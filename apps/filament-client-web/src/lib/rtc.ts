@@ -14,9 +14,12 @@ const MAX_TRACK_SID_CHARS = 128;
 const MAX_ERROR_MESSAGE_CHARS = 256;
 const MAX_SUBSCRIBERS = 32;
 const LIVEKIT_TOKEN_PATTERN = /^[\x21-\x7e]+$/;
+const MAX_ACTIVE_SPEAKERS_CAP = 4_097;
 
 export const RTC_DEFAULT_MAX_PARTICIPANTS = 256;
 export const RTC_DEFAULT_MAX_TRACKS_PER_PARTICIPANT = 32;
+export const RTC_DEFAULT_ACTIVE_SPEAKER_DEBOUNCE_MS = 180;
+export const RTC_DEFAULT_ACTIVE_SPEAKER_HYSTERESIS_MS = 900;
 
 export type RtcConnectionStatus =
   | "disconnected"
@@ -43,6 +46,7 @@ export interface RtcSnapshot {
   localParticipantIdentity: string | null;
   isMicrophoneEnabled: boolean;
   participants: RtcParticipantSnapshot[];
+  activeSpeakerIdentities: string[];
   lastErrorCode: RtcErrorCode | null;
   lastErrorMessage: string | null;
 }
@@ -91,12 +95,17 @@ interface LocalParticipantLike {
   setMicrophoneEnabled(enabled: boolean): Promise<unknown>;
 }
 
+interface SpeakerParticipantLike {
+  identity?: unknown;
+}
+
 type RoomListener = (...args: unknown[]) => void;
 
 interface RtcRoomLike {
   state: ConnectionState;
   localParticipant: LocalParticipantLike;
   remoteParticipants: Map<string, RemoteParticipantLike>;
+  activeSpeakers?: SpeakerParticipantLike[];
   on(event: RoomEvent, listener: RoomListener): unknown;
   off(event: RoomEvent, listener: RoomListener): unknown;
   connect(url: string, token: string, options?: RoomConnectOptions): Promise<void>;
@@ -114,6 +123,8 @@ interface CreateRtcClientOptions {
   roomFactory?: (options?: RoomOptions) => RtcRoomLike;
   maxParticipants?: number;
   maxTracksPerParticipant?: number;
+  activeSpeakerDebounceMs?: number;
+  activeSpeakerHysteresisMs?: number;
 }
 
 function sanitizeErrorMessage(error: unknown): string {
@@ -208,6 +219,20 @@ function requirePositiveInteger(
   return value;
 }
 
+function requireBoundedDelayMs(
+  value: number | undefined,
+  fallback: number,
+  label: string,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isInteger(value) || value < 0 || value > 60_000) {
+    throw new RtcClientError("join_failed", `${label} must be an integer between 0 and 60000.`);
+  }
+  return value;
+}
+
 export function rtcUrlFromInput(input: string): LivekitUrl {
   const value = input.trim();
   if (value.length < 1 || value.length > MAX_LIVEKIT_URL_CHARS) {
@@ -253,8 +278,14 @@ class RtcClientImpl implements RtcClient {
   private readonly roomFactory: (options?: RoomOptions) => RtcRoomLike;
   private readonly maxParticipants: number;
   private readonly maxTracksPerParticipant: number;
+  private readonly activeSpeakerDebounceMs: number;
+  private readonly activeSpeakerHysteresisMs: number;
   private readonly subscribers = new Set<(snapshot: RtcSnapshot) => void>();
   private readonly participants = new Map<string, TrackedParticipant>();
+  private readonly activeSpeakerIdentities = new Set<string>();
+  private readonly pendingSpeakerOnTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly pendingSpeakerOffTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private latestRawActiveSpeakers = new Set<string>();
   private activeRoom: RtcRoomLike | null = null;
   private roomListeners: RegisteredRoomListener[] = [];
   private queuedOperation: Promise<void> = Promise.resolve();
@@ -279,6 +310,16 @@ class RtcClientImpl implements RtcClient {
       RTC_DEFAULT_MAX_TRACKS_PER_PARTICIPANT,
       "maxTracksPerParticipant",
     );
+    this.activeSpeakerDebounceMs = requireBoundedDelayMs(
+      options.activeSpeakerDebounceMs,
+      RTC_DEFAULT_ACTIVE_SPEAKER_DEBOUNCE_MS,
+      "activeSpeakerDebounceMs",
+    );
+    this.activeSpeakerHysteresisMs = requireBoundedDelayMs(
+      options.activeSpeakerHysteresisMs,
+      RTC_DEFAULT_ACTIVE_SPEAKER_HYSTERESIS_MS,
+      "activeSpeakerHysteresisMs",
+    );
   }
 
   snapshot(): RtcSnapshot {
@@ -294,6 +335,9 @@ class RtcClientImpl implements RtcClient {
       localParticipantIdentity: this.localParticipantIdentity,
       isMicrophoneEnabled: this.isMicrophoneEnabled,
       participants,
+      activeSpeakerIdentities: [...this.activeSpeakerIdentities].sort((left, right) =>
+        left.localeCompare(right),
+      ),
       lastErrorCode: this.lastError?.code ?? null,
       lastErrorMessage: this.lastError?.message ?? null,
     };
@@ -348,6 +392,7 @@ class RtcClientImpl implements RtcClient {
 
       this.localParticipantIdentity = readIdentity(room.localParticipant);
       this.seedParticipants(room);
+      this.reconcileActiveSpeakerState(this.collectSpeakerIdentities(room.activeSpeakers ?? []));
       this.lastError = null;
       this.connectionStatus = toRtcConnectionStatus(room.state);
       this.emitSnapshot();
@@ -463,6 +508,7 @@ class RtcClientImpl implements RtcClient {
         return;
       }
       this.participants.delete(identity);
+      this.removeActiveSpeakerIdentity(identity);
       this.emitSnapshot();
     });
 
@@ -480,6 +526,13 @@ class RtcClientImpl implements RtcClient {
       }
       this.removeTrackSubscription(participant, publication);
       this.emitSnapshot();
+    });
+
+    register(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      if (room !== this.activeRoom || !Array.isArray(speakers)) {
+        return;
+      }
+      this.reconcileActiveSpeakerState(this.collectSpeakerIdentities(speakers));
     });
 
     register(RoomEvent.Disconnected, () => {
@@ -562,7 +615,130 @@ class RtcClientImpl implements RtcClient {
     }
   }
 
+  private collectSpeakerIdentities(participants: SpeakerParticipantLike[]): Set<string> {
+    const maxActiveSpeakers = Math.min(this.maxParticipants + 1, MAX_ACTIVE_SPEAKERS_CAP);
+    const identities = new Set<string>();
+    for (const participant of participants) {
+      if (identities.size >= maxActiveSpeakers) {
+        break;
+      }
+      const identity = readIdentity(participant);
+      if (!identity || !this.isKnownIdentity(identity)) {
+        continue;
+      }
+      identities.add(identity);
+    }
+    return identities;
+  }
+
+  private reconcileActiveSpeakerState(rawSpeakers: Set<string>): void {
+    this.latestRawActiveSpeakers = rawSpeakers;
+
+    for (const [identity, timer] of this.pendingSpeakerOnTimers.entries()) {
+      if (rawSpeakers.has(identity)) {
+        continue;
+      }
+      clearTimeout(timer);
+      this.pendingSpeakerOnTimers.delete(identity);
+    }
+
+    for (const [identity, timer] of this.pendingSpeakerOffTimers.entries()) {
+      if (!rawSpeakers.has(identity)) {
+        continue;
+      }
+      clearTimeout(timer);
+      this.pendingSpeakerOffTimers.delete(identity);
+    }
+
+    let changed = false;
+    for (const identity of rawSpeakers) {
+      if (this.activeSpeakerIdentities.has(identity)) {
+        continue;
+      }
+      if (this.pendingSpeakerOnTimers.has(identity)) {
+        continue;
+      }
+      if (this.activeSpeakerDebounceMs === 0) {
+        this.activeSpeakerIdentities.add(identity);
+        changed = true;
+        continue;
+      }
+      const timer = setTimeout(() => {
+        this.pendingSpeakerOnTimers.delete(identity);
+        if (!this.latestRawActiveSpeakers.has(identity) || !this.isKnownIdentity(identity)) {
+          return;
+        }
+        if (!this.activeSpeakerIdentities.has(identity)) {
+          this.activeSpeakerIdentities.add(identity);
+          this.emitSnapshot();
+        }
+      }, this.activeSpeakerDebounceMs);
+      this.pendingSpeakerOnTimers.set(identity, timer);
+    }
+
+    for (const identity of [...this.activeSpeakerIdentities]) {
+      if (rawSpeakers.has(identity)) {
+        continue;
+      }
+      if (this.pendingSpeakerOffTimers.has(identity)) {
+        continue;
+      }
+      if (this.activeSpeakerHysteresisMs === 0) {
+        this.activeSpeakerIdentities.delete(identity);
+        changed = true;
+        continue;
+      }
+      const timer = setTimeout(() => {
+        this.pendingSpeakerOffTimers.delete(identity);
+        if (this.latestRawActiveSpeakers.has(identity)) {
+          return;
+        }
+        if (this.activeSpeakerIdentities.delete(identity)) {
+          this.emitSnapshot();
+        }
+      }, this.activeSpeakerHysteresisMs);
+      this.pendingSpeakerOffTimers.set(identity, timer);
+    }
+
+    if (changed) {
+      this.emitSnapshot();
+    }
+  }
+
+  private removeActiveSpeakerIdentity(identity: string): void {
+    const pendingOn = this.pendingSpeakerOnTimers.get(identity);
+    if (pendingOn) {
+      clearTimeout(pendingOn);
+      this.pendingSpeakerOnTimers.delete(identity);
+    }
+    const pendingOff = this.pendingSpeakerOffTimers.get(identity);
+    if (pendingOff) {
+      clearTimeout(pendingOff);
+      this.pendingSpeakerOffTimers.delete(identity);
+    }
+    this.latestRawActiveSpeakers.delete(identity);
+    this.activeSpeakerIdentities.delete(identity);
+  }
+
+  private isKnownIdentity(identity: string): boolean {
+    return this.localParticipantIdentity === identity || this.participants.has(identity);
+  }
+
+  private clearActiveSpeakerTimers(): void {
+    for (const timer of this.pendingSpeakerOnTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.pendingSpeakerOnTimers.clear();
+    for (const timer of this.pendingSpeakerOffTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.pendingSpeakerOffTimers.clear();
+  }
+
   private clearTrackedState(): void {
+    this.clearActiveSpeakerTimers();
+    this.latestRawActiveSpeakers.clear();
+    this.activeSpeakerIdentities.clear();
     this.participants.clear();
     this.localParticipantIdentity = null;
     this.isMicrophoneEnabled = false;

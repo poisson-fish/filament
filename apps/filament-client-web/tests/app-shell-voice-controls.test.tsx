@@ -19,6 +19,7 @@ const rtcMock = vi.hoisted(() => {
     localParticipantIdentity: string | null;
     isMicrophoneEnabled: boolean;
     participants: MockParticipant[];
+    activeSpeakerIdentities: string[];
     lastErrorCode: string | null;
     lastErrorMessage: string | null;
   };
@@ -28,6 +29,7 @@ const rtcMock = vi.hoisted(() => {
     localParticipantIdentity: null,
     isMicrophoneEnabled: false,
     participants: [],
+    activeSpeakerIdentities: [],
     lastErrorCode: null,
     lastErrorMessage: null,
   });
@@ -58,6 +60,7 @@ const rtcMock = vi.hoisted(() => {
       connectionStatus: "connected",
       localParticipantIdentity: "u.local",
       participants: cloneParticipants(joinParticipants),
+      activeSpeakerIdentities: [],
       lastErrorCode: null,
       lastErrorMessage: null,
     };
@@ -116,6 +119,14 @@ const rtcMock = vi.hoisted(() => {
     joinParticipants = cloneParticipants(participants);
   };
 
+  const setActiveSpeakerIdentities = (identities: string[]) => {
+    snapshot = {
+      ...snapshot,
+      activeSpeakerIdentities: [...new Set(identities)],
+    };
+    emit();
+  };
+
   const reset = () => {
     listeners.clear();
     snapshot = createDisconnectedSnapshot();
@@ -136,6 +147,7 @@ const rtcMock = vi.hoisted(() => {
     toggleMicrophone,
     destroy,
     setJoinParticipants,
+    setActiveSpeakerIdentities,
     reset,
   };
 });
@@ -377,5 +389,31 @@ describe("app shell voice controls", () => {
     expect(screen.getByText("u.local (you)")).toBeInTheDocument();
     expect(screen.getByText("u.remote.1")).toBeInTheDocument();
     expect(screen.getByText("u.remote.2")).toBeInTheDocument();
+  });
+
+  it("highlights active speakers and clears highlight after returning to idle", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    rtcMock.setJoinParticipants([{ identity: "u.remote.1", subscribedTrackCount: 1 }]);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByText("u.remote.1")).not.toHaveClass("voice-roster-name-speaking");
+
+    rtcMock.setActiveSpeakerIdentities(["u.remote.1"]);
+    await waitFor(() =>
+      expect(screen.getByText("u.remote.1")).toHaveClass("voice-roster-name-speaking"),
+    );
+
+    rtcMock.setActiveSpeakerIdentities([]);
+    await waitFor(() =>
+      expect(screen.getByText("u.remote.1")).not.toHaveClass("voice-roster-name-speaking"),
+    );
   });
 });

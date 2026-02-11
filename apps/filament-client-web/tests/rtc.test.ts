@@ -1,6 +1,8 @@
 import { ConnectionState, RoomEvent } from "livekit-client";
 import type { LivekitToken, LivekitUrl } from "../src/domain/chat";
 import {
+  RTC_DEFAULT_ACTIVE_SPEAKER_DEBOUNCE_MS,
+  RTC_DEFAULT_ACTIVE_SPEAKER_HYSTERESIS_MS,
   RTC_DEFAULT_MAX_PARTICIPANTS,
   RTC_DEFAULT_MAX_TRACKS_PER_PARTICIPANT,
   createRtcClient,
@@ -267,12 +269,47 @@ describe("rtc client lifecycle", () => {
     expect(room.disconnectCalls).toBe(1);
     expect(room.listenerCount()).toBe(0);
   });
+
+  it("transitions active speaker state with debounce and hysteresis", async () => {
+    vi.useFakeTimers();
+    try {
+      const room = new MockRoom();
+      const alpha = buildRemoteParticipant("alpha");
+      room.remoteParticipants.set("alpha", alpha);
+      const client = createRtcClient({
+        roomFactory: () => room,
+        activeSpeakerDebounceMs: 100,
+        activeSpeakerHysteresisMs: 300,
+      });
+
+      await client.join({ livekitUrl: validUrl, token: validToken });
+      expect(client.snapshot().activeSpeakerIdentities).toEqual([]);
+
+      room.emit(RoomEvent.ActiveSpeakersChanged, [alpha]);
+      await vi.advanceTimersByTimeAsync(99);
+      expect(client.snapshot().activeSpeakerIdentities).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(client.snapshot().activeSpeakerIdentities).toEqual(["alpha"]);
+
+      room.emit(RoomEvent.ActiveSpeakersChanged, []);
+      await vi.advanceTimersByTimeAsync(299);
+      expect(client.snapshot().activeSpeakerIdentities).toEqual(["alpha"]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(client.snapshot().activeSpeakerIdentities).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("rtc defaults", () => {
   it("retains phase baseline bounds", () => {
     expect(RTC_DEFAULT_MAX_PARTICIPANTS).toBe(256);
     expect(RTC_DEFAULT_MAX_TRACKS_PER_PARTICIPANT).toBe(32);
+    expect(RTC_DEFAULT_ACTIVE_SPEAKER_DEBOUNCE_MS).toBe(180);
+    expect(RTC_DEFAULT_ACTIVE_SPEAKER_HYSTERESIS_MS).toBe(900);
   });
 
   it("validates custom bounds", () => {
@@ -294,6 +331,16 @@ describe("rtc defaults", () => {
     expect(() =>
       createRtcClient({
         maxTracksPerParticipant: Number.NaN,
+      }),
+    ).toThrow(RtcClientError);
+    expect(() =>
+      createRtcClient({
+        activeSpeakerDebounceMs: -1,
+      }),
+    ).toThrow(RtcClientError);
+    expect(() =>
+      createRtcClient({
+        activeSpeakerHysteresisMs: -1,
       }),
     ).toThrow(RtcClientError);
   });

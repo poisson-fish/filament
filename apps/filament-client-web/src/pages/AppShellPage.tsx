@@ -118,6 +118,7 @@ const RTC_DISCONNECTED_SNAPSHOT: RtcSnapshot = {
   localParticipantIdentity: null,
   isMicrophoneEnabled: false,
   participants: [],
+  activeSpeakerIdentities: [],
   lastErrorCode: null,
   lastErrorMessage: null,
 };
@@ -137,6 +138,7 @@ interface VoiceRosterEntry {
   identity: string;
   subscribedTrackCount: number;
   isLocal: boolean;
+  isSpeaking: boolean;
 }
 
 interface ReactionPickerOption {
@@ -834,12 +836,14 @@ export function AppShellPage() {
     const snapshot = rtcSnapshot();
     const entries: VoiceRosterEntry[] = [];
     const seenIdentities = new Set<string>();
+    const activeSpeakers = new Set(snapshot.activeSpeakerIdentities);
     const localIdentity = snapshot.localParticipantIdentity;
     if (localIdentity) {
       entries.push({
         identity: localIdentity,
         subscribedTrackCount: 0,
         isLocal: true,
+        isSpeaking: activeSpeakers.has(localIdentity),
       });
       seenIdentities.add(localIdentity);
     }
@@ -851,6 +855,7 @@ export function AppShellPage() {
         identity: participant.identity,
         subscribedTrackCount: participant.subscribedTrackCount,
         isLocal: false,
+        isSpeaking: activeSpeakers.has(participant.identity),
       });
       seenIdentities.add(participant.identity);
     }
@@ -2778,8 +2783,18 @@ export function AppShellPage() {
                       <ul>
                         <For each={voiceRosterEntries()}>
                           {(entry) => (
-                            <li classList={{ "voice-roster-local": entry.isLocal }}>
-                              <span>
+                            <li
+                              classList={{
+                                "voice-roster-local": entry.isLocal,
+                                "voice-roster-speaking": entry.isSpeaking,
+                              }}
+                            >
+                              <span
+                                classList={{
+                                  "voice-roster-name": true,
+                                  "voice-roster-name-speaking": entry.isSpeaking,
+                                }}
+                              >
                                 {entry.isLocal
                                   ? `${shortActor(entry.identity)} (you)`
                                   : shortActor(entry.identity)}
