@@ -371,6 +371,28 @@ function channelKey(guildId: GuildId, channelId: ChannelId): string {
   return `${guildId}|${channelId}`;
 }
 
+function parseChannelKey(value: string): { guildId: GuildId; channelId: ChannelId } | null {
+  const [guildId, channelId, ...rest] = value.split("|");
+  if (!guildId || !channelId || rest.length > 0) {
+    return null;
+  }
+  return {
+    guildId: guildId as GuildId,
+    channelId: channelId as ChannelId,
+  };
+}
+
+function formatVoiceDuration(totalSeconds: number): string {
+  const safeSeconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function formatBytes(value: number): string {
   if (value < 1024) {
     return `${value} B`;
@@ -603,6 +625,18 @@ function formatMessageTime(createdAtUnix: number): string {
 
 function shortActor(value: string): string {
   return value.length > 14 ? `${value.slice(0, 14)}...` : value;
+}
+
+function actorAvatarGlyph(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return "?";
+  }
+  const [first, second] = trimmed.split(/\s+/);
+  if (second && first.length > 0) {
+    return `${first[0]!}${second[0]!}`.toUpperCase();
+  }
+  return trimmed.slice(0, 1).toUpperCase();
 }
 
 function upsertWorkspace(
@@ -846,6 +880,10 @@ export function AppShellPage() {
   const [isTogglingVoiceCamera, setTogglingVoiceCamera] = createSignal(false);
   const [isTogglingVoiceScreenShare, setTogglingVoiceScreenShare] = createSignal(false);
   const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(null);
+  const [voiceSessionStartedAtUnixMs, setVoiceSessionStartedAtUnixMs] = createSignal<number | null>(
+    null,
+  );
+  const [voiceDurationClockUnixMs, setVoiceDurationClockUnixMs] = createSignal(Date.now());
   const [voiceSessionCapabilities, setVoiceSessionCapabilities] = createSignal<VoiceSessionCapabilities>(
     DEFAULT_VOICE_SESSION_CAPABILITIES,
   );
@@ -932,6 +970,39 @@ export function AppShellPage() {
     const channelId = activeChannelId();
     return guildId && channelId ? channelKey(guildId, channelId) : null;
   });
+  const activeVoiceSession = createMemo(() => {
+    const key = voiceSessionChannelKey();
+    return key ? parseChannelKey(key) : null;
+  });
+  const activeVoiceWorkspace = createMemo(() => {
+    const voiceSession = activeVoiceSession();
+    if (!voiceSession) {
+      return null;
+    }
+    return workspaces().find((workspace) => workspace.guildId === voiceSession.guildId) ?? null;
+  });
+  const activeVoiceSessionChannel = createMemo(() => {
+    const voiceSession = activeVoiceSession();
+    const workspace = activeVoiceWorkspace();
+    if (!voiceSession || !workspace) {
+      return null;
+    }
+    return (
+      workspace.channels.find((channel) => channel.channelId === voiceSession.channelId && channel.kind === "voice") ??
+      null
+    );
+  });
+  const activeVoiceSessionLabel = createMemo(() => {
+    const workspace = activeVoiceWorkspace();
+    const channel = activeVoiceSessionChannel();
+    if (workspace && channel) {
+      return `${channel.name} / ${workspace.guildName}`;
+    }
+    if (channel) {
+      return channel.name;
+    }
+    return "Unknown voice room";
+  });
 
   const activeAttachments = createMemo(() => {
     const key = activeChannelKey();
@@ -960,13 +1031,13 @@ export function AppShellPage() {
     voiceSessionCapabilities().publishSources.includes(source);
   const canToggleVoiceCamera = createMemo(
     () =>
-      isVoiceSessionForActiveChannel() &&
+      isVoiceSessionActive() &&
       canPublishVoiceCamera() &&
       hasVoicePublishGrant("camera"),
   );
   const canToggleVoiceScreenShare = createMemo(
     () =>
-      isVoiceSessionForActiveChannel() &&
+      isVoiceSessionActive() &&
       canPublishVoiceScreenShare() &&
       hasVoicePublishGrant("screen_share"),
   );
@@ -1034,6 +1105,17 @@ export function AppShellPage() {
       hints.push("Remote stream subscription is denied for this call.");
     }
     return hints;
+  });
+  const voiceSessionDurationLabel = createMemo(() => {
+    if (!isVoiceSessionActive()) {
+      return "0:00";
+    }
+    const startedAt = voiceSessionStartedAtUnixMs();
+    if (!startedAt) {
+      return "0:00";
+    }
+    const elapsedSeconds = Math.floor((voiceDurationClockUnixMs() - startedAt) / 1000);
+    return formatVoiceDuration(elapsedSeconds);
   });
 
   const canCloseActivePanel = createMemo(() => {
@@ -1241,6 +1323,7 @@ export function AppShellPage() {
     }
     setRtcSnapshot(RTC_DISCONNECTED_SNAPSHOT);
     setVoiceSessionChannelKey(null);
+    setVoiceSessionStartedAtUnixMs(null);
     setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
   };
 
@@ -2003,9 +2086,19 @@ export function AppShellPage() {
   });
 
   createEffect(() => {
+    if (!isVoiceSessionActive() || !voiceSessionStartedAtUnixMs()) {
+      return;
+    }
+    setVoiceDurationClockUnixMs(Date.now());
+    const timer = window.setInterval(() => {
+      setVoiceDurationClockUnixMs(Date.now());
+    }, 1000);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  createEffect(() => {
     const session = auth.session();
     const connectedChannelKey = voiceSessionChannelKey();
-    const selectedChannelKey = activeChannelKey();
     if (!connectedChannelKey || isLeavingVoice()) {
       return;
     }
@@ -2013,7 +2106,16 @@ export function AppShellPage() {
       void leaveVoiceChannel();
       return;
     }
-    if (!selectedChannelKey || selectedChannelKey !== connectedChannelKey) {
+    const connected = parseChannelKey(connectedChannelKey);
+    if (!connected) {
+      void leaveVoiceChannel();
+      return;
+    }
+    const workspace = workspaces().find((entry) => entry.guildId === connected.guildId) ?? null;
+    const voiceChannelStillVisible = workspace?.channels.some(
+      (channel) => channel.channelId === connected.channelId && channel.kind === "voice",
+    );
+    if (!workspace || !voiceChannelStillVisible) {
       void leaveVoiceChannel();
     }
   });
@@ -2046,6 +2148,7 @@ export function AppShellPage() {
       !isLeaving
     ) {
       setVoiceSessionChannelKey(null);
+      setVoiceSessionStartedAtUnixMs(null);
       setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
       setVoiceStatus("");
       setVoiceError("Voice connection dropped. Select Join Voice to reconnect.");
@@ -2675,6 +2778,7 @@ export function AppShellPage() {
       // Leave should still clear local voice state even if transport teardown fails.
     } finally {
       setVoiceSessionChannelKey(null);
+      setVoiceSessionStartedAtUnixMs(null);
       setRtcSnapshot(RTC_DISCONNECTED_SNAPSHOT);
       setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
       if (statusMessage) {
@@ -2724,6 +2828,8 @@ export function AppShellPage() {
         token: token.token,
       });
       setVoiceSessionChannelKey(channelKey(guildId, channel.channelId));
+      setVoiceSessionStartedAtUnixMs(Date.now());
+      setVoiceDurationClockUnixMs(Date.now());
       setVoiceSessionCapabilities({
         canSubscribe: token.canSubscribe,
         publishSources: [...token.publishSources],
@@ -3037,109 +3143,252 @@ export function AppShellPage() {
 
         <Show when={!isChannelRailCollapsed()}>
           <aside class="channel-rail">
-            <header>
+            <header class="channel-rail-header">
               <h2>{activeWorkspace()?.guildName ?? "No Workspace"}</h2>
-              <span>
-                {activeWorkspace() ? `${activeWorkspace()!.visibility} workspace` : "Hardened workspace"}
-              </span>
+              <button
+                type="button"
+                class="channel-rail-header-action"
+                aria-label="Open settings from channel rail"
+                title="Settings"
+                onClick={() => openOverlayPanel("settings")}
+              >
+                *
+              </button>
             </header>
+            <span class="channel-rail-subtitle">
+              {activeWorkspace() ? `${activeWorkspace()!.visibility} workspace` : "Hardened workspace"}
+            </span>
 
             <Switch>
               <Match when={!activeWorkspace()}>
                 <p class="muted">Create a workspace to begin.</p>
               </Match>
               <Match when={activeWorkspace()}>
-                <nav aria-label="channels">
-                  <p class="group-label">TEXT CHANNELS</p>
-                  <For each={activeTextChannels()}>
-                    {(channel) => (
-                      <button
-                        classList={{ active: activeChannelId() === channel.channelId }}
-                        onClick={() => setActiveChannelId(channel.channelId)}
-                      >
-                        <span>{channelRailLabel({ kind: channel.kind, name: channel.name })}</span>
-                      </button>
-                    )}
-                  </For>
-
-                  <p class="group-label">VOICE CHANNELS</p>
-                  <For each={activeVoiceChannels()}>
-                    {(channel) => (
-                      <div class="voice-channel-entry">
+                <nav aria-label="channels" class="channel-nav">
+                  <section class="channel-group">
+                    <div class="channel-group-header">
+                      <p class="group-label">TEXT CHANNELS</p>
+                      <Show when={canManageWorkspaceChannels()}>
                         <button
-                          classList={{ active: activeChannelId() === channel.channelId }}
+                          type="button"
+                          class="channel-group-action"
+                          aria-label="Create text channel"
+                          title="Create text channel"
+                          onClick={() => {
+                            setNewChannelKind(channelKindFromInput("text"));
+                            openOverlayPanel("channel-create");
+                          }}
+                        >
+                          +
+                        </button>
+                      </Show>
+                    </div>
+                    <For each={activeTextChannels()}>
+                      {(channel) => (
+                        <button
+                          classList={{
+                            active: activeChannelId() === channel.channelId,
+                            "channel-row": true,
+                          }}
+                          aria-label={channelRailLabel({ kind: channel.kind, name: channel.name })}
                           onClick={() => setActiveChannelId(channel.channelId)}
                         >
-                          <span>{channelRailLabel({ kind: channel.kind, name: channel.name })}</span>
+                          <span class="channel-row-main">
+                            <span class="channel-row-kind" aria-hidden="true">
+                              #
+                            </span>
+                            <span>{channel.name}</span>
+                          </span>
                         </button>
-                        <Show when={isVoiceSessionForChannel(channel.channelId)}>
-                          <section class="voice-channel-presence" aria-label="In-call participants">
-                            <p class="voice-channel-presence-title">
-                              In call ({voiceRosterEntries().length})
-                            </p>
-                            <Show
-                              when={voiceRosterEntries().length > 0}
-                              fallback={
-                                <p class="voice-channel-presence-empty">Waiting for participants...</p>
-                              }
-                            >
-                              <ul>
-                                <For each={voiceRosterEntries()}>
-                                  {(entry) => (
-                                    <li
-                                      classList={{
-                                        "voice-channel-presence-participant": true,
-                                        "voice-channel-presence-participant-local": entry.isLocal,
-                                        "voice-channel-presence-participant-speaking": entry.isSpeaking,
-                                      }}
-                                    >
-                                      <span
+                      )}
+                    </For>
+                  </section>
+
+                  <section class="channel-group">
+                    <div class="channel-group-header">
+                      <p class="group-label">VOICE CHANNELS</p>
+                      <Show when={canManageWorkspaceChannels()}>
+                        <button
+                          type="button"
+                          class="channel-group-action"
+                          aria-label="Create voice channel"
+                          title="Create voice channel"
+                          onClick={() => {
+                            setNewChannelKind(channelKindFromInput("voice"));
+                            openOverlayPanel("channel-create");
+                          }}
+                        >
+                          +
+                        </button>
+                      </Show>
+                    </div>
+                    <For each={activeVoiceChannels()}>
+                      {(channel) => (
+                        <div class="voice-channel-entry">
+                          <button
+                            classList={{
+                              active: activeChannelId() === channel.channelId,
+                              "channel-row": true,
+                            }}
+                            aria-label={channelRailLabel({ kind: channel.kind, name: channel.name })}
+                            onClick={() => setActiveChannelId(channel.channelId)}
+                          >
+                            <span class="channel-row-main">
+                              <span class="channel-row-kind channel-row-kind-voice" aria-hidden="true">
+                                VC
+                              </span>
+                              <span>{channel.name}</span>
+                            </span>
+                            <Show when={isVoiceSessionForChannel(channel.channelId)}>
+                              <span class="channel-row-status">{voiceSessionDurationLabel()}</span>
+                            </Show>
+                          </button>
+                          <Show when={isVoiceSessionForChannel(channel.channelId)}>
+                            <section class="voice-channel-presence" aria-label="In-call participants">
+                              <Show
+                                when={voiceRosterEntries().length > 0}
+                                fallback={
+                                  <p class="voice-channel-presence-empty">Waiting for participants...</p>
+                                }
+                              >
+                                <ul class="voice-channel-presence-tree">
+                                  <For each={voiceRosterEntries()}>
+                                    {(entry) => (
+                                      <li
                                         classList={{
-                                          "voice-channel-presence-name": true,
-                                          "voice-channel-presence-name-speaking": entry.isSpeaking,
+                                          "voice-channel-presence-participant": true,
+                                          "voice-channel-presence-participant-local": entry.isLocal,
+                                          "voice-channel-presence-participant-speaking": entry.isSpeaking,
                                         }}
                                       >
-                                        {voiceParticipantLabel(entry.identity, entry.isLocal)}
-                                      </span>
-                                      <span class="voice-channel-presence-badges">
-                                        <Show when={entry.hasCamera}>
-                                          <span class="voice-participant-media-badge video">Video</span>
-                                        </Show>
-                                        <Show when={entry.hasScreenShare}>
-                                          <span class="voice-participant-media-badge screen">Share</span>
-                                        </Show>
-                                      </span>
-                                    </li>
-                                  )}
-                                </For>
-                              </ul>
-                            </Show>
-                            <Show when={voiceStreamPermissionHints().length > 0}>
-                              <div
-                                class="voice-channel-stream-hints"
-                                aria-label="Voice stream permission status"
-                              >
-                                <For each={voiceStreamPermissionHints()}>
-                                  {(hint) => <p>{hint}</p>}
-                                </For>
-                              </div>
-                            </Show>
-                          </section>
-                        </Show>
-                      </div>
-                    )}
-                  </For>
-
-                  <Show when={canManageWorkspaceChannels()}>
-                    <button
-                      type="button"
-                      class="create-channel-toggle"
-                      onClick={() => openOverlayPanel("channel-create")}
-                    >
-                      New channel
-                    </button>
-                  </Show>
+                                        <span class="voice-tree-avatar" aria-hidden="true">
+                                          {actorAvatarGlyph(actorLabel(entry.identity))}
+                                        </span>
+                                        <span
+                                          classList={{
+                                            "voice-channel-presence-name": true,
+                                            "voice-channel-presence-name-speaking": entry.isSpeaking,
+                                          }}
+                                        >
+                                          {voiceParticipantLabel(entry.identity, entry.isLocal)}
+                                        </span>
+                                        <span class="voice-channel-presence-badges">
+                                          <Show when={entry.hasCamera}>
+                                            <span class="voice-participant-media-badge video">Video</span>
+                                          </Show>
+                                          <Show when={entry.hasScreenShare}>
+                                            <span class="voice-participant-media-badge screen">Share</span>
+                                          </Show>
+                                        </span>
+                                      </li>
+                                    )}
+                                  </For>
+                                </ul>
+                              </Show>
+                              <Show when={voiceStreamPermissionHints().length > 0}>
+                                <div
+                                  class="voice-channel-stream-hints"
+                                  aria-label="Voice stream permission status"
+                                >
+                                  <For each={voiceStreamPermissionHints()}>
+                                    {(hint) => <p>{hint}</p>}
+                                  </For>
+                                </div>
+                              </Show>
+                            </section>
+                          </Show>
+                        </div>
+                      )}
+                    </For>
+                  </section>
                 </nav>
+                <Show when={canShowVoiceHeaderControls() || isVoiceSessionActive()}>
+                  <section class="voice-connected-dock" aria-label="Voice connected dock">
+                    <div class="voice-connected-dock-head">
+                      <p class="voice-connected-dock-title">
+                        {isVoiceSessionActive() ? "Voice Connected" : "Voice Channel Ready"}
+                      </p>
+                      <Show when={isVoiceSessionActive()}>
+                        <span class="voice-connected-dock-duration">{voiceSessionDurationLabel()}</span>
+                      </Show>
+                    </div>
+                    <p class="voice-connected-dock-channel">
+                      {isVoiceSessionActive()
+                        ? activeVoiceSessionLabel()
+                        : channelHeaderLabel({ kind: activeChannel()!.kind, name: activeChannel()!.name })}
+                    </p>
+                    <div class="voice-connected-dock-controls">
+                      <Show when={canShowVoiceHeaderControls() && !isVoiceSessionActive()}>
+                        <button
+                          type="button"
+                          onClick={() => void joinVoiceChannel()}
+                          disabled={isJoiningVoice() || isLeavingVoice()}
+                        >
+                          {isJoiningVoice() ? "Joining..." : "Join Voice"}
+                        </button>
+                      </Show>
+                      <Show when={isVoiceSessionActive()}>
+                        <button
+                          type="button"
+                          onClick={() => void toggleVoiceMicrophone()}
+                          disabled={
+                            isTogglingVoiceMic() ||
+                            rtcSnapshot().connectionStatus !== "connected" ||
+                            isJoiningVoice() ||
+                            isLeavingVoice()
+                          }
+                        >
+                          {isTogglingVoiceMic()
+                            ? "Updating..."
+                            : rtcSnapshot().isMicrophoneEnabled
+                              ? "Mute Mic"
+                              : "Unmute Mic"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void toggleVoiceCamera()}
+                          disabled={
+                            isTogglingVoiceCamera() ||
+                            rtcSnapshot().connectionStatus !== "connected" ||
+                            isJoiningVoice() ||
+                            isLeavingVoice() ||
+                            !canToggleVoiceCamera()
+                          }
+                        >
+                          {isTogglingVoiceCamera()
+                            ? "Updating..."
+                            : rtcSnapshot().isCameraEnabled
+                              ? "Camera Off"
+                              : "Camera On"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void toggleVoiceScreenShare()}
+                          disabled={
+                            isTogglingVoiceScreenShare() ||
+                            rtcSnapshot().connectionStatus !== "connected" ||
+                            isJoiningVoice() ||
+                            isLeavingVoice() ||
+                            !canToggleVoiceScreenShare()
+                          }
+                        >
+                          {isTogglingVoiceScreenShare()
+                            ? "Updating..."
+                            : rtcSnapshot().isScreenShareEnabled
+                              ? "Stop Share"
+                              : "Share Screen"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void leaveVoiceChannel("Voice session ended.")}
+                          disabled={isLeavingVoice() || isJoiningVoice()}
+                        >
+                          {isLeavingVoice() ? "Leaving..." : "Leave"}
+                        </button>
+                      </Show>
+                    </div>
+                  </section>
+                </Show>
               </Match>
             </Switch>
           </aside>
@@ -3159,7 +3408,7 @@ export function AppShellPage() {
             <span classList={{ "gateway-badge": true, online: gatewayOnline() }}>
               {gatewayOnline() ? "Live" : "Offline"}
             </span>
-            <Show when={canShowVoiceHeaderControls()}>
+            <Show when={canShowVoiceHeaderControls() || isVoiceSessionActive()}>
               <span
                 classList={{
                   "voice-badge": true,
@@ -3171,74 +3420,6 @@ export function AppShellPage() {
               >
                 Voice {voiceConnectionState()}
               </span>
-            </Show>
-            <Show when={canShowVoiceHeaderControls() && !isVoiceSessionForActiveChannel()}>
-              <button
-                type="button"
-                onClick={() => void joinVoiceChannel()}
-                disabled={isJoiningVoice() || isLeavingVoice()}
-              >
-                {isJoiningVoice() ? "Joining..." : "Join Voice"}
-              </button>
-            </Show>
-            <Show when={canShowVoiceHeaderControls() && isVoiceSessionForActiveChannel()}>
-              <button
-                type="button"
-                onClick={() => void leaveVoiceChannel("Voice session ended.")}
-                disabled={isLeavingVoice() || isJoiningVoice()}
-              >
-                {isLeavingVoice() ? "Leaving..." : "Leave"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void toggleVoiceMicrophone()}
-                disabled={
-                  isTogglingVoiceMic() ||
-                  rtcSnapshot().connectionStatus !== "connected" ||
-                  isJoiningVoice() ||
-                  isLeavingVoice()
-                }
-              >
-                {isTogglingVoiceMic()
-                  ? "Updating..."
-                  : rtcSnapshot().isMicrophoneEnabled
-                    ? "Mute Mic"
-                    : "Unmute Mic"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void toggleVoiceCamera()}
-                disabled={
-                  isTogglingVoiceCamera() ||
-                  rtcSnapshot().connectionStatus !== "connected" ||
-                  isJoiningVoice() ||
-                  isLeavingVoice() ||
-                  !canToggleVoiceCamera()
-                }
-              >
-                {isTogglingVoiceCamera()
-                  ? "Updating..."
-                  : rtcSnapshot().isCameraEnabled
-                    ? "Camera Off"
-                    : "Camera On"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void toggleVoiceScreenShare()}
-                disabled={
-                  isTogglingVoiceScreenShare() ||
-                  rtcSnapshot().connectionStatus !== "connected" ||
-                  isJoiningVoice() ||
-                  isLeavingVoice() ||
-                  !canToggleVoiceScreenShare()
-                }
-              >
-                {isTogglingVoiceScreenShare()
-                  ? "Updating..."
-                  : rtcSnapshot().isScreenShareEnabled
-                    ? "Stop Share"
-                    : "Share Screen"}
-              </button>
             </Show>
             <button type="button" onClick={() => setChannelRailCollapsed((value) => !value)}>
               {isChannelRailCollapsed() ? "Show channels" : "Hide channels"}
@@ -3284,10 +3465,10 @@ export function AppShellPage() {
                 <Show when={sessionError()}>
                   <p class="status error panel-note">{sessionError()}</p>
                 </Show>
-                <Show when={voiceStatus() && canShowVoiceHeaderControls()}>
+                <Show when={voiceStatus() && (canShowVoiceHeaderControls() || isVoiceSessionActive())}>
                   <p class="status ok panel-note">{voiceStatus()}</p>
                 </Show>
-                <Show when={voiceError() && canShowVoiceHeaderControls()}>
+                <Show when={voiceError() && (canShowVoiceHeaderControls() || isVoiceSessionActive())}>
                   <p class="status error panel-note">{voiceError()}</p>
                 </Show>
                 <Show when={activeChannel() && !canAccessActiveChannel()}>
@@ -3320,218 +3501,223 @@ export function AppShellPage() {
                         () => profile()?.userId === message.authorId || canDeleteMessages();
                       return (
                         <article class="message-row">
-                          <p>
-                            <strong>{displayUserLabel(message.authorId)}</strong>
-                            <span>{formatMessageTime(message.createdAtUnix)}</span>
-                          </p>
-                          <Show
-                            when={isEditing()}
-                            fallback={
-                              <Show when={tokenizeToDisplayText(message.markdownTokens) || message.content}>
-                                <p class="message-tokenized">
-                                  {tokenizeToDisplayText(message.markdownTokens) || message.content}
-                                </p>
-                              </Show>
-                            }
-                          >
-                            <form
-                              class="inline-form message-edit"
-                              onSubmit={(event) => {
-                                event.preventDefault();
-                                void saveEditMessage(message.messageId);
-                              }}
+                          <div class="message-avatar" aria-hidden="true">
+                            {actorAvatarGlyph(displayUserLabel(message.authorId))}
+                          </div>
+                          <div class="message-main">
+                            <p class="message-meta">
+                              <strong>{displayUserLabel(message.authorId)}</strong>
+                              <span>{formatMessageTime(message.createdAtUnix)}</span>
+                            </p>
+                            <Show
+                              when={isEditing()}
+                              fallback={
+                                <Show when={tokenizeToDisplayText(message.markdownTokens) || message.content}>
+                                  <p class="message-tokenized">
+                                    {tokenizeToDisplayText(message.markdownTokens) || message.content}
+                                  </p>
+                                </Show>
+                              }
                             >
-                              <input
-                                value={editingDraft()}
-                                onInput={(event) => setEditingDraft(event.currentTarget.value)}
-                                maxlength="2000"
-                              />
-                              <div class="message-actions">
-                                <button type="submit" disabled={isSavingEdit()}>
-                                  {isSavingEdit() ? "Saving..." : "Save"}
-                                </button>
-                                <button type="button" onClick={cancelEditMessage}>
-                                  Cancel
-                                </button>
-                              </div>
-                            </form>
-                          </Show>
-                          <Show when={message.attachments.length > 0}>
-                            <div class="message-attachments">
-                              <For each={message.attachments}>
-                                {(record) => {
-                                  const preview = () => messageMediaByAttachmentId()[record.attachmentId];
-                                  return (
-                                    <div class="message-attachment-card">
-                                      <Show
-                                        when={preview() && preview()!.kind === "image"}
-                                        fallback={
-                                          <Show
-                                            when={preview() && preview()!.kind === "video"}
-                                            fallback={
-                                              <Show
-                                                when={loadingMediaPreviewIds()[record.attachmentId]}
-                                                fallback={
-                                                  <Show
-                                                    when={failedMediaPreviewIds()[record.attachmentId]}
-                                                    fallback={
-                                                      <button
-                                                        type="button"
-                                                        class="message-attachment-download"
-                                                        onClick={() => void downloadAttachment(record)}
-                                                        disabled={downloadingAttachmentId() === record.attachmentId}
-                                                      >
-                                                        {downloadingAttachmentId() === record.attachmentId
-                                                          ? "Fetching..."
-                                                          : `Download ${record.filename}`}
-                                                      </button>
-                                                    }
-                                                  >
-                                                    <div class="message-attachment-failed">
-                                                      <span>Preview unavailable.</span>
-                                                      <button
-                                                        type="button"
-                                                        class="message-attachment-retry"
-                                                        onClick={() => retryMediaPreview(record.attachmentId)}
-                                                      >
-                                                        Retry preview
-                                                      </button>
-                                                    </div>
-                                                  </Show>
-                                                }
-                                              >
-                                                <p class="message-attachment-loading">Loading preview...</p>
-                                              </Show>
-                                            }
-                                          >
-                                            <video
-                                              class="message-attachment-video"
-                                              src={preview()!.url}
-                                              controls
-                                              preload="metadata"
-                                              playsinline
-                                            />
-                                          </Show>
-                                        }
-                                      >
-                                        <img
-                                          class="message-attachment-image"
-                                          src={preview()!.url}
-                                          alt={record.filename}
-                                          loading="lazy"
-                                          decoding="async"
-                                          referrerPolicy="no-referrer"
-                                        />
-                                      </Show>
-                                      <p class="message-attachment-meta">
-                                        {record.filename} ({formatBytes(record.sizeBytes)})
-                                      </p>
-                                    </div>
-                                  );
+                              <form
+                                class="inline-form message-edit"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  void saveEditMessage(message.messageId);
                                 }}
-                              </For>
-                            </div>
-                          </Show>
-                          <Show when={canEditOrDelete()}>
-                            <div class="message-actions compact">
-                              <button
-                                type="button"
-                                class="icon-button"
-                                onClick={() => beginEditMessage(message)}
-                                aria-label="Edit message"
-                                title="Edit message"
                               >
-                                <span
-                                  class="icon-mask"
-                                  style={`--icon-url: url("${EDIT_MESSAGE_ICON_URL}")`}
-                                  aria-hidden="true"
+                                <input
+                                  value={editingDraft()}
+                                  onInput={(event) => setEditingDraft(event.currentTarget.value)}
+                                  maxlength="2000"
                                 />
-                              </button>
-                              <button
-                                type="button"
-                                classList={{ "icon-button": true, "is-busy": isDeleting(), danger: true }}
-                                onClick={() => void removeMessage(message.messageId)}
-                                disabled={isDeleting()}
-                                aria-label="Delete message"
-                                title={isDeleting() ? "Deleting message..." : "Delete message"}
-                              >
-                                <span
-                                  class="icon-mask"
-                                  style={`--icon-url: url("${DELETE_MESSAGE_ICON_URL}")`}
-                                  aria-hidden="true"
-                                />
-                              </button>
-                            </div>
-                          </Show>
-                          <div class="reaction-row">
-                            <div class="reaction-controls">
-                              <div class="reaction-list">
-                                <For each={reactions()}>
-                                  {(reaction) => (
-                                    <button
-                                      type="button"
-                                      classList={{ "reaction-chip": true, reacted: reaction.reacted }}
-                                      onClick={() =>
-                                        void toggleMessageReaction(message.messageId, reaction.emoji)}
-                                      disabled={reaction.pending}
-                                      aria-label={`${reaction.emoji} reaction (${reaction.count})`}
-                                    >
-                                      <span class="reaction-chip-emoji">{reaction.emoji}</span>
-                                      <span class="reaction-chip-count">{reaction.count}</span>
-                                    </button>
-                                  )}
-                                </For>
-                              </div>
-                              <button
-                                type="button"
-                                class="icon-button reaction-add-trigger"
-                                onClick={() => toggleReactionPicker(message.messageId)}
-                                aria-label="Add reaction"
-                                title="Add reaction"
-                              >
-                                <span
-                                  class="icon-mask"
-                                  style={`--icon-url: url("${ADD_REACTION_ICON_URL}")`}
-                                  aria-hidden="true"
-                                />
-                              </button>
-                            </div>
-                            <Show when={isReactionPickerOpen()}>
-                              <div class="reaction-picker" role="dialog" aria-label="Choose reaction">
-                                <div class="reaction-picker-header">
-                                  <p class="reaction-picker-title">React</p>
-                                  <button
-                                    type="button"
-                                    class="reaction-picker-close"
-                                    onClick={() => setOpenReactionPickerMessageId(null)}
-                                  >
-                                    Close
+                                <div class="message-actions">
+                                  <button type="submit" disabled={isSavingEdit()}>
+                                    {isSavingEdit() ? "Saving..." : "Save"}
+                                  </button>
+                                  <button type="button" onClick={cancelEditMessage}>
+                                    Cancel
                                   </button>
                                 </div>
-                                <div class="reaction-picker-grid">
-                                  <For each={OPENMOJI_REACTION_OPTIONS}>
-                                    {(option) => (
+                              </form>
+                            </Show>
+                            <Show when={message.attachments.length > 0}>
+                              <div class="message-attachments">
+                                <For each={message.attachments}>
+                                  {(record) => {
+                                    const preview = () => messageMediaByAttachmentId()[record.attachmentId];
+                                    return (
+                                      <div class="message-attachment-card">
+                                        <Show
+                                          when={preview() && preview()!.kind === "image"}
+                                          fallback={
+                                            <Show
+                                              when={preview() && preview()!.kind === "video"}
+                                              fallback={
+                                                <Show
+                                                  when={loadingMediaPreviewIds()[record.attachmentId]}
+                                                  fallback={
+                                                    <Show
+                                                      when={failedMediaPreviewIds()[record.attachmentId]}
+                                                      fallback={
+                                                        <button
+                                                          type="button"
+                                                          class="message-attachment-download"
+                                                          onClick={() => void downloadAttachment(record)}
+                                                          disabled={downloadingAttachmentId() === record.attachmentId}
+                                                        >
+                                                          {downloadingAttachmentId() === record.attachmentId
+                                                            ? "Fetching..."
+                                                            : `Download ${record.filename}`}
+                                                        </button>
+                                                      }
+                                                    >
+                                                      <div class="message-attachment-failed">
+                                                        <span>Preview unavailable.</span>
+                                                        <button
+                                                          type="button"
+                                                          class="message-attachment-retry"
+                                                          onClick={() => retryMediaPreview(record.attachmentId)}
+                                                        >
+                                                          Retry preview
+                                                        </button>
+                                                      </div>
+                                                    </Show>
+                                                  }
+                                                >
+                                                  <p class="message-attachment-loading">Loading preview...</p>
+                                                </Show>
+                                              }
+                                            >
+                                              <video
+                                                class="message-attachment-video"
+                                                src={preview()!.url}
+                                                controls
+                                                preload="metadata"
+                                                playsinline
+                                              />
+                                            </Show>
+                                          }
+                                        >
+                                          <img
+                                            class="message-attachment-image"
+                                            src={preview()!.url}
+                                            alt={record.filename}
+                                            loading="lazy"
+                                            decoding="async"
+                                            referrerPolicy="no-referrer"
+                                          />
+                                        </Show>
+                                        <p class="message-attachment-meta">
+                                          {record.filename} ({formatBytes(record.sizeBytes)})
+                                        </p>
+                                      </div>
+                                    );
+                                  }}
+                                </For>
+                              </div>
+                            </Show>
+                            <Show when={canEditOrDelete()}>
+                              <div class="message-actions compact">
+                                <button
+                                  type="button"
+                                  class="icon-button"
+                                  onClick={() => beginEditMessage(message)}
+                                  aria-label="Edit message"
+                                  title="Edit message"
+                                >
+                                  <span
+                                    class="icon-mask"
+                                    style={`--icon-url: url("${EDIT_MESSAGE_ICON_URL}")`}
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  classList={{ "icon-button": true, "is-busy": isDeleting(), danger: true }}
+                                  onClick={() => void removeMessage(message.messageId)}
+                                  disabled={isDeleting()}
+                                  aria-label="Delete message"
+                                  title={isDeleting() ? "Deleting message..." : "Delete message"}
+                                >
+                                  <span
+                                    class="icon-mask"
+                                    style={`--icon-url: url("${DELETE_MESSAGE_ICON_URL}")`}
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                              </div>
+                            </Show>
+                            <div class="reaction-row">
+                              <div class="reaction-controls">
+                                <div class="reaction-list">
+                                  <For each={reactions()}>
+                                    {(reaction) => (
                                       <button
                                         type="button"
-                                        class="reaction-picker-option"
+                                        classList={{ "reaction-chip": true, reacted: reaction.reacted }}
                                         onClick={() =>
-                                          void addReactionFromPicker(message.messageId, option.emoji)}
-                                        aria-label={`Add ${option.label} reaction`}
-                                        title={option.label}
+                                          void toggleMessageReaction(message.messageId, reaction.emoji)}
+                                        disabled={reaction.pending}
+                                        aria-label={`${reaction.emoji} reaction (${reaction.count})`}
                                       >
-                                        <img
-                                          src={option.iconUrl}
-                                          alt=""
-                                          loading="lazy"
-                                          decoding="async"
-                                          referrerPolicy="no-referrer"
-                                        />
+                                        <span class="reaction-chip-emoji">{reaction.emoji}</span>
+                                        <span class="reaction-chip-count">{reaction.count}</span>
                                       </button>
                                     )}
                                   </For>
                                 </div>
+                                <button
+                                  type="button"
+                                  class="icon-button reaction-add-trigger"
+                                  onClick={() => toggleReactionPicker(message.messageId)}
+                                  aria-label="Add reaction"
+                                  title="Add reaction"
+                                >
+                                  <span
+                                    class="icon-mask"
+                                    style={`--icon-url: url("${ADD_REACTION_ICON_URL}")`}
+                                    aria-hidden="true"
+                                  />
+                                </button>
                               </div>
-                            </Show>
+                              <Show when={isReactionPickerOpen()}>
+                                <div class="reaction-picker" role="dialog" aria-label="Choose reaction">
+                                  <div class="reaction-picker-header">
+                                    <p class="reaction-picker-title">React</p>
+                                    <button
+                                      type="button"
+                                      class="reaction-picker-close"
+                                      onClick={() => setOpenReactionPickerMessageId(null)}
+                                    >
+                                      Close
+                                    </button>
+                                  </div>
+                                  <div class="reaction-picker-grid">
+                                    <For each={OPENMOJI_REACTION_OPTIONS}>
+                                      {(option) => (
+                                        <button
+                                          type="button"
+                                          class="reaction-picker-option"
+                                          onClick={() =>
+                                            void addReactionFromPicker(message.messageId, option.emoji)}
+                                          aria-label={`Add ${option.label} reaction`}
+                                          title={option.label}
+                                        >
+                                          <img
+                                            src={option.iconUrl}
+                                            alt=""
+                                            loading="lazy"
+                                            decoding="async"
+                                            referrerPolicy="no-referrer"
+                                          />
+                                        </button>
+                                      )}
+                                    </For>
+                                  </div>
+                                </div>
+                              </Show>
+                            </div>
                           </div>
                         </article>
                       );

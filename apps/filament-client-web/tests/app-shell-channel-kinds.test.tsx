@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { vi } from "vitest";
 import { App } from "../src/App";
 
@@ -164,14 +164,15 @@ describe("app shell channel kinds", () => {
     await screen.findByRole("button", { name: "#incident-room" });
     await screen.findByRole("button", { name: "bridge-call" });
 
-    await fireEvent.click(await screen.findByRole("button", { name: "New channel" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Create text channel" }));
     await fireEvent.input(screen.getByLabelText("Channel name"), {
       target: { value: "war-room" },
     });
     await fireEvent.change(screen.getByLabelText("Channel type"), {
       target: { value: "voice" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Create channel" }));
+    const createChannelDialog = await screen.findByRole("dialog", { name: "Create channel panel" });
+    await fireEvent.click(within(createChannelDialog).getByRole("button", { name: "Create channel" }));
 
     await waitFor(() =>
       expect(createChannelBody).toEqual({ name: "war-room", kind: "voice" }),

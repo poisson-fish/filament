@@ -802,7 +802,7 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
 
-    expect(await screen.findByText("In call (3)")).toBeInTheDocument();
+    expect(await screen.findByLabelText("In-call participants")).toBeInTheDocument();
     expect(screen.getByText("u.local (you)")).toBeInTheDocument();
     expect(screen.getByText("u.remote.1")).toBeInTheDocument();
     expect(screen.getByText("u.remote.2")).toBeInTheDocument();
@@ -877,7 +877,7 @@ describe("app shell voice controls", () => {
     expect(screen.queryByLabelText("Voice stream tiles")).not.toBeInTheDocument();
   });
 
-  it("leaves the voice room and clears in-call state when switching channels", async () => {
+  it("keeps the voice room active when switching channels in the same workspace", async () => {
     const channels: FixtureChannel[] = [
       { channelId: CHANNEL_ID, name: "bridge", kind: "voice" },
       { channelId: TEXT_CHANNEL_ID, name: "general", kind: "text" },
@@ -895,11 +895,12 @@ describe("app shell voice controls", () => {
     expect(await screen.findByLabelText("In-call participants")).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "#general" }));
-    await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));
-    expect(screen.queryByLabelText("In-call participants")).not.toBeInTheDocument();
+    await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(0));
+    expect(await screen.findByLabelText("In-call participants")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Leave" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "bridge" }));
-    expect(await screen.findByRole("button", { name: "Join Voice" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Leave" })).toBeInTheDocument();
   });
 
   it("logs out with deterministic RTC teardown and clears local auth state", async () => {
