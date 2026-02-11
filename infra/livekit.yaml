@@ -6,3 +6,6 @@ rtc:
   node_ip: 192.168.1.103
 keys:
   devkey: devsecret
+
+logging:
+  level: info
