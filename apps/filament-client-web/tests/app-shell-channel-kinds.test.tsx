@@ -164,7 +164,20 @@ describe("app shell channel kinds", () => {
     await screen.findByRole("button", { name: "#incident-room" });
     await screen.findByRole("button", { name: "bridge-call" });
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Create text channel" }));
+    const channelNav = screen.getByRole("navigation", { name: "channels" });
+    expect(channelNav.querySelectorAll(".channel-group-header")).toHaveLength(2);
+
+    const textGroupHeader = screen.getByText("TEXT CHANNELS").closest(".channel-group-header");
+    expect(textGroupHeader).not.toBeNull();
+    const createTextChannelButton = await screen.findByRole("button", { name: "Create text channel" });
+    expect(textGroupHeader as HTMLElement).toContainElement(createTextChannelButton);
+
+    const voiceGroupHeader = screen.getByText("VOICE CHANNELS").closest(".channel-group-header");
+    expect(voiceGroupHeader).not.toBeNull();
+    const createVoiceChannelButton = await screen.findByRole("button", { name: "Create voice channel" });
+    expect(voiceGroupHeader as HTMLElement).toContainElement(createVoiceChannelButton);
+
+    await fireEvent.click(createTextChannelButton);
     await fireEvent.input(screen.getByLabelText("Channel name"), {
       target: { value: "war-room" },
     });

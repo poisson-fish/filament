@@ -5551,6 +5551,7 @@ async fn remove_connection(state: &AppState, connection_id: Uuid) {
         listeners.remove(&connection_id);
         !listeners.is_empty()
     });
+    drop(subscriptions);
 
     let Some(removed_presence) = removed_presence else {
         return;

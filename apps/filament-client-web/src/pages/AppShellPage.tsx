@@ -10,6 +10,7 @@ import {
   onCleanup,
   untrack,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import { DomainValidationError } from "../domain/auth";
 import {
   attachmentFilenameFromInput,
@@ -123,6 +124,13 @@ const MAX_COMPOSER_ATTACHMENTS = 5;
 const MAX_EMBED_PREVIEW_BYTES = 25 * 1024 * 1024;
 const MAX_MEDIA_PREVIEW_RETRIES = 2;
 const INITIAL_MEDIA_PREVIEW_DELAY_MS = 75;
+const MESSAGE_AUTOLOAD_TOP_THRESHOLD_PX = 120;
+const MESSAGE_LOAD_OLDER_BUTTON_TOP_THRESHOLD_PX = 340;
+const MESSAGE_STICKY_BOTTOM_THRESHOLD_PX = 140;
+const REACTION_PICKER_OVERLAY_GAP_PX = 8;
+const REACTION_PICKER_OVERLAY_MARGIN_PX = 8;
+const REACTION_PICKER_OVERLAY_MAX_WIDTH_PX = 368;
+const REACTION_PICKER_OVERLAY_ESTIMATED_HEIGHT_PX = 252;
 const RTC_DISCONNECTED_SNAPSHOT: RtcSnapshot = {
   connectionStatus: "disconnected",
   localParticipantIdentity: null,
@@ -168,6 +176,11 @@ interface ReactionPickerOption {
   emoji: ReactionEmoji;
   label: string;
   iconUrl: string;
+}
+
+interface ReactionPickerOverlayPosition {
+  top: number;
+  left: number;
 }
 
 const OPENMOJI_REACTION_OPTIONS: ReactionPickerOption[] = [
@@ -792,6 +805,7 @@ const VOICE_SETTINGS_SUBMENU: VoiceSettingsSubmenuItem[] = [
 export function AppShellPage() {
   const auth = useAuth();
   let composerAttachmentInputRef: HTMLInputElement | undefined;
+  let messageListRef: HTMLElement | undefined;
   const inflightMessageMediaLoads = new Set<string>();
   const previewRetryAttempts = new Map<string, number>();
   let previewSessionRefreshPromise: Promise<void> | null = null;
@@ -817,9 +831,12 @@ export function AppShellPage() {
   const [failedMediaPreviewIds, setFailedMediaPreviewIds] = createSignal<Record<string, true>>({});
   const [mediaPreviewRetryTick, setMediaPreviewRetryTick] = createSignal(0);
   const [nextBefore, setNextBefore] = createSignal<MessageId | null>(null);
+  const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
   const [reactionState, setReactionState] = createSignal<Record<string, ReactionView>>({});
   const [pendingReactionByKey, setPendingReactionByKey] = createSignal<Record<string, true>>({});
   const [openReactionPickerMessageId, setOpenReactionPickerMessageId] = createSignal<MessageId | null>(null);
+  const [reactionPickerOverlayPosition, setReactionPickerOverlayPosition] =
+    createSignal<ReactionPickerOverlayPosition | null>(null);
   const [editingMessageId, setEditingMessageId] = createSignal<MessageId | null>(null);
   const [editingDraft, setEditingDraft] = createSignal("");
   const [isSavingEdit, setSavingEdit] = createSignal(false);
@@ -1130,6 +1147,97 @@ export function AppShellPage() {
     if (category === "voice") {
       setActiveVoiceSettingsSubmenu("audio-devices");
     }
+  };
+
+  const runAfterPaint = (callback: () => void): void => {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => callback());
+      return;
+    }
+    window.setTimeout(callback, 0);
+  };
+
+  const runAfterMessageListPaint = (callback: (element: HTMLElement) => void): void => {
+    runAfterPaint(() => {
+      const element = messageListRef;
+      if (!element) {
+        return;
+      }
+      callback(element);
+    });
+  };
+
+  const isMessageListNearBottom = (): boolean => {
+    const element = messageListRef;
+    if (!element) {
+      return true;
+    }
+    const distanceFromBottom = element.scrollHeight - element.clientHeight - element.scrollTop;
+    return distanceFromBottom <= MESSAGE_STICKY_BOTTOM_THRESHOLD_PX;
+  };
+
+  const updateLoadOlderButtonVisibility = (): void => {
+    const before = nextBefore();
+    const element = messageListRef;
+    if (!before || !element) {
+      setShowLoadOlderButton(false);
+      return;
+    }
+    setShowLoadOlderButton(element.scrollTop <= MESSAGE_LOAD_OLDER_BUTTON_TOP_THRESHOLD_PX);
+  };
+
+  const scrollMessageListToBottom = (): void => {
+    runAfterMessageListPaint((element) => {
+      element.scrollTop = element.scrollHeight;
+      updateLoadOlderButtonVisibility();
+    });
+  };
+
+  const reactionPickerAnchorSelector = (messageId: MessageId): string =>
+    `[data-reaction-anchor-for="${messageId}"]`;
+
+  const updateReactionPickerOverlayPosition = (messageId: MessageId): void => {
+    const anchor = document.querySelector(
+      reactionPickerAnchorSelector(messageId),
+    ) as HTMLElement | null;
+    if (!anchor) {
+      setReactionPickerOverlayPosition(null);
+      return;
+    }
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const pickerWidth = Math.min(
+      REACTION_PICKER_OVERLAY_MAX_WIDTH_PX,
+      Math.max(240, viewportWidth - REACTION_PICKER_OVERLAY_MARGIN_PX * 2),
+    );
+    const anchorRect = anchor.getBoundingClientRect();
+    const maxLeft = Math.max(
+      REACTION_PICKER_OVERLAY_MARGIN_PX,
+      viewportWidth - pickerWidth - REACTION_PICKER_OVERLAY_MARGIN_PX,
+    );
+    const left = Math.min(
+      maxLeft,
+      Math.max(
+        REACTION_PICKER_OVERLAY_MARGIN_PX,
+        anchorRect.right - pickerWidth,
+      ),
+    );
+
+    const preferredTop = anchorRect.bottom + REACTION_PICKER_OVERLAY_GAP_PX;
+    const canPlaceBelow =
+      preferredTop + REACTION_PICKER_OVERLAY_ESTIMATED_HEIGHT_PX <=
+      viewportHeight - REACTION_PICKER_OVERLAY_MARGIN_PX;
+    const top = canPlaceBelow
+      ? preferredTop
+      : Math.max(
+          REACTION_PICKER_OVERLAY_MARGIN_PX,
+          anchorRect.top -
+            REACTION_PICKER_OVERLAY_ESTIMATED_HEIGHT_PX -
+            REACTION_PICKER_OVERLAY_GAP_PX,
+        );
+
+    setReactionPickerOverlayPosition({ top, left });
   };
 
   const persistVoiceDevicePreferences = (next: VoiceDevicePreferences): void => {
@@ -1689,6 +1797,7 @@ export function AppShellPage() {
     if (!session || !guildId || !channelId) {
       setMessages([]);
       setNextBefore(null);
+      setShowLoadOlderButton(false);
       return;
     }
 
@@ -1700,10 +1809,12 @@ export function AppShellPage() {
       setNextBefore(history.nextBefore);
       setEditingMessageId(null);
       setEditingDraft("");
+      scrollMessageListToBottom();
     } catch (error) {
       setMessageError(mapError(error, "Unable to load messages."));
       setMessages([]);
       setNextBefore(null);
+      setShowLoadOlderButton(false);
     } finally {
       setLoadingMessages(false);
     }
@@ -1718,6 +1829,8 @@ export function AppShellPage() {
       return;
     }
 
+    const previousScrollHeight = messageListRef?.scrollHeight ?? null;
+    const previousScrollTop = messageListRef?.scrollTop ?? null;
     setLoadingOlder(true);
     setMessageError("");
     try {
@@ -1728,10 +1841,33 @@ export function AppShellPage() {
       const olderAscending = [...history.messages].reverse();
       setMessages((existing) => prependOlderMessages(existing, olderAscending));
       setNextBefore(history.nextBefore);
+      if (previousScrollHeight !== null && previousScrollTop !== null) {
+        runAfterMessageListPaint((element) => {
+          const delta = element.scrollHeight - previousScrollHeight;
+          element.scrollTop = previousScrollTop + delta;
+          updateLoadOlderButtonVisibility();
+        });
+      }
     } catch (error) {
       setMessageError(mapError(error, "Unable to load older messages."));
     } finally {
       setLoadingOlder(false);
+    }
+  };
+
+  const onMessageListScroll = () => {
+    updateLoadOlderButtonVisibility();
+    const openPickerMessageId = openReactionPickerMessageId();
+    if (openPickerMessageId) {
+      updateReactionPickerOverlayPosition(openPickerMessageId);
+    }
+    const before = nextBefore();
+    const element = messageListRef;
+    if (!before || !element || isLoadingOlder()) {
+      return;
+    }
+    if (element.scrollTop <= MESSAGE_AUTOLOAD_TOP_THRESHOLD_PX) {
+      void loadOlderMessages();
     }
   };
 
@@ -1754,7 +1890,61 @@ export function AppShellPage() {
     } else {
       setMessages([]);
       setNextBefore(null);
+      setShowLoadOlderButton(false);
     }
+  });
+
+  createEffect(() => {
+    void nextBefore();
+    updateLoadOlderButtonVisibility();
+  });
+
+  createEffect(() => {
+    const openPickerMessageId = openReactionPickerMessageId();
+    if (!openPickerMessageId) {
+      setReactionPickerOverlayPosition(null);
+      return;
+    }
+
+    const updatePosition = () => updateReactionPickerOverlayPosition(openPickerMessageId);
+    runAfterPaint(updatePosition);
+
+    const onWindowResize = () => updatePosition();
+    const onWindowScroll = () => updatePosition();
+    const onWindowKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenReactionPickerMessageId(null);
+      }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      const picker = document.querySelector(".reaction-picker-floating") as HTMLElement | null;
+      if (picker?.contains(target)) {
+        return;
+      }
+      if (
+        target instanceof Element &&
+        target.closest(reactionPickerAnchorSelector(openPickerMessageId))
+      ) {
+        return;
+      }
+      setOpenReactionPickerMessageId(null);
+    };
+
+    window.addEventListener("resize", onWindowResize);
+    window.addEventListener("scroll", onWindowScroll, true);
+    window.addEventListener("keydown", onWindowKeydown);
+    window.addEventListener("pointerdown", onPointerDown);
+
+    onCleanup(() => {
+      window.removeEventListener("resize", onWindowResize);
+      window.removeEventListener("scroll", onWindowScroll, true);
+      window.removeEventListener("keydown", onWindowKeydown);
+      window.removeEventListener("pointerdown", onPointerDown);
+    });
   });
 
   createEffect(() => {
@@ -2061,7 +2251,11 @@ export function AppShellPage() {
         if (message.guildId !== guildId || message.channelId !== channelId) {
           return;
         }
+        const shouldStickToBottom = isMessageListNearBottom();
         setMessages((existing) => mergeMessage(existing, message));
+        if (shouldStickToBottom) {
+          scrollMessageListToBottom();
+        }
       },
       onPresenceSync: (payload) => {
         if (payload.guildId !== guildId) {
@@ -2282,7 +2476,11 @@ export function AppShellPage() {
             ? uploadedForMessage.map((record) => record.attachmentId)
             : undefined,
       });
+      const shouldStickToBottom = isMessageListNearBottom();
       setMessages((existing) => mergeMessage(existing, created));
+      if (shouldStickToBottom) {
+        scrollMessageListToBottom();
+      }
       setComposer("");
       setComposerAttachments([]);
       if (composerAttachmentInputRef) {
@@ -3477,8 +3675,16 @@ export function AppShellPage() {
                   </p>
                 </Show>
 
-                <section class="message-list" aria-live="polite">
-                  <Show when={nextBefore()}>
+                <section
+                  ref={(element) => {
+                    messageListRef = element;
+                    updateLoadOlderButtonVisibility();
+                  }}
+                  class="message-list"
+                  aria-live="polite"
+                  onScroll={onMessageListScroll}
+                >
+                  <Show when={nextBefore() && showLoadOlderButton()}>
                     <button type="button" class="load-older" onClick={() => void loadOlderMessages()} disabled={isLoadingOlder()}>
                       {isLoadingOlder() ? "Loading older..." : "Load older messages"}
                     </button>
@@ -3617,8 +3823,47 @@ export function AppShellPage() {
                                 </For>
                               </div>
                             </Show>
+                            <Show when={reactions().length > 0 || isReactionPickerOpen()}>
+                              <div class="reaction-row">
+                                <div class="reaction-controls">
+                                  <div class="reaction-list">
+                                    <For each={reactions()}>
+                                      {(reaction) => (
+                                        <button
+                                          type="button"
+                                          classList={{ "reaction-chip": true, reacted: reaction.reacted }}
+                                          onClick={() =>
+                                            void toggleMessageReaction(message.messageId, reaction.emoji)}
+                                          disabled={reaction.pending}
+                                          aria-label={`${reaction.emoji} reaction (${reaction.count})`}
+                                        >
+                                          <span class="reaction-chip-emoji">{reaction.emoji}</span>
+                                          <span class="reaction-chip-count">{reaction.count}</span>
+                                        </button>
+                                      )}
+                                    </For>
+                                  </div>
+                                </div>
+                              </div>
+                            </Show>
+                          </div>
+                          <div class="message-hover-actions">
+                            <button
+                              type="button"
+                              class="icon-button"
+                              onClick={() => toggleReactionPicker(message.messageId)}
+                              data-reaction-anchor-for={message.messageId}
+                              aria-label="Add reaction"
+                              title="Add reaction"
+                            >
+                              <span
+                                class="icon-mask"
+                                style={`--icon-url: url("${ADD_REACTION_ICON_URL}")`}
+                                aria-hidden="true"
+                              />
+                            </button>
                             <Show when={canEditOrDelete()}>
-                              <div class="message-actions compact">
+                              <>
                                 <button
                                   type="button"
                                   class="icon-button"
@@ -3646,78 +3891,8 @@ export function AppShellPage() {
                                     aria-hidden="true"
                                   />
                                 </button>
-                              </div>
+                              </>
                             </Show>
-                            <div class="reaction-row">
-                              <div class="reaction-controls">
-                                <div class="reaction-list">
-                                  <For each={reactions()}>
-                                    {(reaction) => (
-                                      <button
-                                        type="button"
-                                        classList={{ "reaction-chip": true, reacted: reaction.reacted }}
-                                        onClick={() =>
-                                          void toggleMessageReaction(message.messageId, reaction.emoji)}
-                                        disabled={reaction.pending}
-                                        aria-label={`${reaction.emoji} reaction (${reaction.count})`}
-                                      >
-                                        <span class="reaction-chip-emoji">{reaction.emoji}</span>
-                                        <span class="reaction-chip-count">{reaction.count}</span>
-                                      </button>
-                                    )}
-                                  </For>
-                                </div>
-                                <button
-                                  type="button"
-                                  class="icon-button reaction-add-trigger"
-                                  onClick={() => toggleReactionPicker(message.messageId)}
-                                  aria-label="Add reaction"
-                                  title="Add reaction"
-                                >
-                                  <span
-                                    class="icon-mask"
-                                    style={`--icon-url: url("${ADD_REACTION_ICON_URL}")`}
-                                    aria-hidden="true"
-                                  />
-                                </button>
-                              </div>
-                              <Show when={isReactionPickerOpen()}>
-                                <div class="reaction-picker" role="dialog" aria-label="Choose reaction">
-                                  <div class="reaction-picker-header">
-                                    <p class="reaction-picker-title">React</p>
-                                    <button
-                                      type="button"
-                                      class="reaction-picker-close"
-                                      onClick={() => setOpenReactionPickerMessageId(null)}
-                                    >
-                                      Close
-                                    </button>
-                                  </div>
-                                  <div class="reaction-picker-grid">
-                                    <For each={OPENMOJI_REACTION_OPTIONS}>
-                                      {(option) => (
-                                        <button
-                                          type="button"
-                                          class="reaction-picker-option"
-                                          onClick={() =>
-                                            void addReactionFromPicker(message.messageId, option.emoji)}
-                                          aria-label={`Add ${option.label} reaction`}
-                                          title={option.label}
-                                        >
-                                          <img
-                                            src={option.iconUrl}
-                                            alt=""
-                                            loading="lazy"
-                                            decoding="async"
-                                            referrerPolicy="no-referrer"
-                                          />
-                                        </button>
-                                      )}
-                                    </For>
-                                  </div>
-                                </div>
-                              </Show>
-                            </div>
                           </div>
                         </article>
                       );
@@ -3787,6 +3962,56 @@ export function AppShellPage() {
                     </div>
                   </Show>
                 </form>
+
+                <Show when={openReactionPickerMessageId()}>
+                  {(messageIdAccessor) => (
+                    <Show when={reactionPickerOverlayPosition()}>
+                      {(positionAccessor) => (
+                        <Portal>
+                          <div
+                            class="reaction-picker reaction-picker-floating"
+                            role="dialog"
+                            aria-label="Choose reaction"
+                            style={`top: ${positionAccessor().top}px; left: ${positionAccessor().left}px;`}
+                          >
+                            <div class="reaction-picker-header">
+                              <p class="reaction-picker-title">React</p>
+                              <button
+                                type="button"
+                                class="reaction-picker-close"
+                                onClick={() => setOpenReactionPickerMessageId(null)}
+                              >
+                                Close
+                              </button>
+                            </div>
+                            <div class="reaction-picker-grid">
+                              <For each={OPENMOJI_REACTION_OPTIONS}>
+                                {(option) => (
+                                  <button
+                                    type="button"
+                                    class="reaction-picker-option"
+                                    onClick={() =>
+                                      void addReactionFromPicker(messageIdAccessor(), option.emoji)}
+                                    aria-label={`Add ${option.label} reaction`}
+                                    title={option.label}
+                                  >
+                                    <img
+                                      src={option.iconUrl}
+                                      alt=""
+                                      loading="lazy"
+                                      decoding="async"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  </button>
+                                )}
+                              </For>
+                            </div>
+                          </div>
+                        </Portal>
+                      )}
+                    </Show>
+                  )}
+                </Show>
               </Show>
             </>
           }
