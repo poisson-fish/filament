@@ -186,10 +186,10 @@ Make voice channels usable end-to-end (join, talk, leave) in app shell.
 Add a baseline settings panel with left-rail categories and a `Voice` submenu containing audio device settings.
 
 ### Completion Status
-`NOT STARTED`
+`IN PROGRESS`
 
 ### Tasks
-- [ ] Add a global Settings entry point in app shell (gear/action) with open/close behavior.
+- [x] Add a global Settings entry point in app shell (gear/action) with open/close behavior.
 - [ ] Build settings panel layout with left rail for categories and right content pane.
 - [ ] Add baseline categories structure in rail, including `Voice` and `Profile` (profile as placeholder only in this plan).
 - [ ] Implement `Voice -> Audio Devices` submenu page.

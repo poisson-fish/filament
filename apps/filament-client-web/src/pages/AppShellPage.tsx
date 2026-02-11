@@ -649,6 +649,7 @@ function channelHeaderLabel(input: { kind: ChannelKindName; name: string }): str
 type OverlayPanel =
   | "workspace-create"
   | "channel-create"
+  | "settings"
   | "public-directory"
   | "friendships"
   | "search"
@@ -892,6 +893,8 @@ export function AppShellPage() {
         return "Create workspace";
       case "channel-create":
         return "Create channel";
+      case "settings":
+        return "Settings";
       case "public-directory":
         return "Public workspace directory";
       case "friendships":
@@ -911,7 +914,7 @@ export function AppShellPage() {
     if (panel === "workspace-create" || panel === "channel-create") {
       return "panel-window panel-window-compact";
     }
-    if (panel === "public-directory" || panel === "friendships") {
+    if (panel === "settings" || panel === "public-directory" || panel === "friendships") {
       return "panel-window panel-window-medium";
     }
     return "panel-window";
@@ -2610,6 +2613,15 @@ export function AppShellPage() {
             >
               F
             </button>
+            <button
+              type="button"
+              class="server-action"
+              aria-label="Open settings panel"
+              title="Settings"
+              onClick={() => openOverlayPanel("settings")}
+            >
+              S
+            </button>
           </div>
         </aside>
 
@@ -3379,6 +3391,16 @@ export function AppShellPage() {
                           </li>
                         </Show>
                       </ul>
+                    </section>
+                  </Match>
+
+                  <Match when={panel() === "settings"}>
+                    <section class="member-group" aria-label="settings">
+                      <p class="group-label">SETTINGS</p>
+                      <p class="muted">
+                        Settings panel foundation is now available. Voice/Profile categories are
+                        next in Phase 4.
+                      </p>
                     </section>
                   </Match>
 
