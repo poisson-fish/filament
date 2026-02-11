@@ -116,6 +116,21 @@ import {
   type MessageMediaPreview,
   type ReactionView,
 } from "../features/app-shell/helpers";
+import { ChannelRail } from "../features/app-shell/components/ChannelRail";
+import { ChatHeader } from "../features/app-shell/components/ChatHeader";
+import { MemberRail } from "../features/app-shell/components/MemberRail";
+import { ServerRail } from "../features/app-shell/components/ServerRail";
+import {
+  type OverlayPanel,
+  type ReactionPickerOption,
+  type ReactionPickerOverlayPosition,
+  type SettingsCategory,
+  type SettingsCategoryItem,
+  type VoiceRosterEntry,
+  type VoiceSessionCapabilities,
+  type VoiceSettingsSubmenu,
+  type VoiceSettingsSubmenuItem,
+} from "../features/app-shell/types";
 import { connectGateway } from "../lib/gateway";
 import { createRtcClient, type RtcClient, type RtcSnapshot } from "../lib/rtc";
 import {
@@ -169,30 +184,6 @@ const RTC_DISCONNECTED_SNAPSHOT: RtcSnapshot = {
   lastErrorCode: null,
   lastErrorMessage: null,
 };
-
-interface VoiceRosterEntry {
-  identity: string;
-  isLocal: boolean;
-  isSpeaking: boolean;
-  hasCamera: boolean;
-  hasScreenShare: boolean;
-}
-
-interface VoiceSessionCapabilities {
-  canSubscribe: boolean;
-  publishSources: MediaPublishSource[];
-}
-
-interface ReactionPickerOption {
-  emoji: ReactionEmoji;
-  label: string;
-  iconUrl: string;
-}
-
-interface ReactionPickerOverlayPosition {
-  top: number;
-  left: number;
-}
 
 const OPENMOJI_REACTION_OPTIONS: ReactionPickerOption[] = [
   {
@@ -321,32 +312,6 @@ const DEFAULT_VOICE_SESSION_CAPABILITIES: VoiceSessionCapabilities = {
   canSubscribe: false,
   publishSources: [],
 };
-
-type OverlayPanel =
-  | "workspace-create"
-  | "channel-create"
-  | "settings"
-  | "public-directory"
-  | "friendships"
-  | "search"
-  | "attachments"
-  | "moderation"
-  | "utility";
-
-type SettingsCategory = "voice" | "profile";
-type VoiceSettingsSubmenu = "audio-devices";
-
-interface SettingsCategoryItem {
-  id: SettingsCategory;
-  label: string;
-  summary: string;
-}
-
-interface VoiceSettingsSubmenuItem {
-  id: VoiceSettingsSubmenu;
-  label: string;
-  summary: string;
-}
 
 const SETTINGS_CATEGORIES: SettingsCategoryItem[] = [
   {
@@ -2861,368 +2826,77 @@ export function AppShellPage() {
           "member-rail-collapsed": isMemberRailCollapsed(),
         }}
       >
-        <aside class="server-rail" aria-label="servers">
-          <header class="rail-label">WS</header>
-          <div class="server-list">
-            <For each={workspaces()}>
-              {(workspace) => (
-                <button
-                  title={`${workspace.guildName} (${workspace.visibility})`}
-                  classList={{ active: activeGuildId() === workspace.guildId }}
-                  onClick={() => {
-                    setActiveGuildId(workspace.guildId);
-                    setActiveChannelId(workspace.channels[0]?.channelId ?? null);
-                  }}
-                >
-                  {workspace.guildName.slice(0, 1).toUpperCase()}
-                </button>
-              )}
-            </For>
-          </div>
-          <div class="server-rail-footer">
-            <button
-              type="button"
-              class="server-action"
-              aria-label="Open workspace create panel"
-              title="Create workspace"
-              onClick={() => openOverlayPanel("workspace-create")}
-              disabled={isCreatingWorkspace()}
-            >
-              +
-            </button>
-            <button
-              type="button"
-              class="server-action"
-              aria-label="Open public workspace directory panel"
-              title="Public workspace directory"
-              onClick={() => openOverlayPanel("public-directory")}
-            >
-              D
-            </button>
-            <button
-              type="button"
-              class="server-action"
-              aria-label="Open friendships panel"
-              title="Friendships"
-              onClick={() => openOverlayPanel("friendships")}
-            >
-              F
-            </button>
-            <button
-              type="button"
-              class="server-action"
-              aria-label="Open settings panel"
-              title="Settings"
-              onClick={() => openOverlayPanel("settings")}
-            >
-              S
-            </button>
-          </div>
-        </aside>
+        <ServerRail
+          workspaces={workspaces()}
+          activeGuildId={activeGuildId()}
+          isCreatingWorkspace={isCreatingWorkspace()}
+          onSelectWorkspace={(guildId, firstChannelId) => {
+            setActiveGuildId(guildId);
+            setActiveChannelId(firstChannelId);
+          }}
+          onOpenPanel={openOverlayPanel}
+        />
 
         <Show when={!isChannelRailCollapsed()}>
-          <aside class="channel-rail">
-            <header class="channel-rail-header">
-              <h2>{activeWorkspace()?.guildName ?? "No Workspace"}</h2>
-              <button
-                type="button"
-                class="channel-rail-header-action"
-                aria-label="Open settings from channel rail"
-                title="Settings"
-                onClick={() => openOverlayPanel("settings")}
-              >
-                *
-              </button>
-            </header>
-            <span class="channel-rail-subtitle">
-              {activeWorkspace() ? `${activeWorkspace()!.visibility} workspace` : "Hardened workspace"}
-            </span>
-
-            <Switch>
-              <Match when={!activeWorkspace()}>
-                <p class="muted">Create a workspace to begin.</p>
-              </Match>
-              <Match when={activeWorkspace()}>
-                <nav aria-label="channels" class="channel-nav">
-                  <section class="channel-group">
-                    <div class="channel-group-header">
-                      <p class="group-label">TEXT CHANNELS</p>
-                      <Show when={canManageWorkspaceChannels()}>
-                        <button
-                          type="button"
-                          class="channel-group-action"
-                          aria-label="Create text channel"
-                          title="Create text channel"
-                          onClick={() => {
-                            setNewChannelKind(channelKindFromInput("text"));
-                            openOverlayPanel("channel-create");
-                          }}
-                        >
-                          +
-                        </button>
-                      </Show>
-                    </div>
-                    <For each={activeTextChannels()}>
-                      {(channel) => (
-                        <button
-                          classList={{
-                            active: activeChannelId() === channel.channelId,
-                            "channel-row": true,
-                          }}
-                          aria-label={channelRailLabel({ kind: channel.kind, name: channel.name })}
-                          onClick={() => setActiveChannelId(channel.channelId)}
-                        >
-                          <span class="channel-row-main">
-                            <span class="channel-row-kind" aria-hidden="true">
-                              #
-                            </span>
-                            <span>{channel.name}</span>
-                          </span>
-                        </button>
-                      )}
-                    </For>
-                  </section>
-
-                  <section class="channel-group">
-                    <div class="channel-group-header">
-                      <p class="group-label">VOICE CHANNELS</p>
-                      <Show when={canManageWorkspaceChannels()}>
-                        <button
-                          type="button"
-                          class="channel-group-action"
-                          aria-label="Create voice channel"
-                          title="Create voice channel"
-                          onClick={() => {
-                            setNewChannelKind(channelKindFromInput("voice"));
-                            openOverlayPanel("channel-create");
-                          }}
-                        >
-                          +
-                        </button>
-                      </Show>
-                    </div>
-                    <For each={activeVoiceChannels()}>
-                      {(channel) => (
-                        <div class="voice-channel-entry">
-                          <button
-                            classList={{
-                              active: activeChannelId() === channel.channelId,
-                              "channel-row": true,
-                            }}
-                            aria-label={channelRailLabel({ kind: channel.kind, name: channel.name })}
-                            onClick={() => setActiveChannelId(channel.channelId)}
-                          >
-                            <span class="channel-row-main">
-                              <span class="channel-row-kind channel-row-kind-voice" aria-hidden="true">
-                                VC
-                              </span>
-                              <span>{channel.name}</span>
-                            </span>
-                            <Show when={isVoiceSessionForChannel(channel.channelId)}>
-                              <span class="channel-row-status">{voiceSessionDurationLabel()}</span>
-                            </Show>
-                          </button>
-                          <Show when={isVoiceSessionForChannel(channel.channelId)}>
-                            <section class="voice-channel-presence" aria-label="In-call participants">
-                              <Show
-                                when={voiceRosterEntries().length > 0}
-                                fallback={
-                                  <p class="voice-channel-presence-empty">Waiting for participants...</p>
-                                }
-                              >
-                                <ul class="voice-channel-presence-tree">
-                                  <For each={voiceRosterEntries()}>
-                                    {(entry) => (
-                                      <li
-                                        classList={{
-                                          "voice-channel-presence-participant": true,
-                                          "voice-channel-presence-participant-local": entry.isLocal,
-                                          "voice-channel-presence-participant-speaking": entry.isSpeaking,
-                                        }}
-                                      >
-                                        <span class="voice-tree-avatar" aria-hidden="true">
-                                          {actorAvatarGlyph(actorLabel(entry.identity))}
-                                        </span>
-                                        <span
-                                          classList={{
-                                            "voice-channel-presence-name": true,
-                                            "voice-channel-presence-name-speaking": entry.isSpeaking,
-                                          }}
-                                        >
-                                          {voiceParticipantLabel(entry.identity, entry.isLocal)}
-                                        </span>
-                                        <span class="voice-channel-presence-badges">
-                                          <Show when={entry.hasCamera}>
-                                            <span class="voice-participant-media-badge video">Video</span>
-                                          </Show>
-                                          <Show when={entry.hasScreenShare}>
-                                            <span class="voice-participant-media-badge screen">Share</span>
-                                          </Show>
-                                        </span>
-                                      </li>
-                                    )}
-                                  </For>
-                                </ul>
-                              </Show>
-                              <Show when={voiceStreamPermissionHints().length > 0}>
-                                <div
-                                  class="voice-channel-stream-hints"
-                                  aria-label="Voice stream permission status"
-                                >
-                                  <For each={voiceStreamPermissionHints()}>
-                                    {(hint) => <p>{hint}</p>}
-                                  </For>
-                                </div>
-                              </Show>
-                            </section>
-                          </Show>
-                        </div>
-                      )}
-                    </For>
-                  </section>
-                </nav>
-                <Show when={canShowVoiceHeaderControls() || isVoiceSessionActive()}>
-                  <section class="voice-connected-dock" aria-label="Voice connected dock">
-                    <div class="voice-connected-dock-head">
-                      <p class="voice-connected-dock-title">
-                        {isVoiceSessionActive() ? "Voice Connected" : "Voice Channel Ready"}
-                      </p>
-                      <Show when={isVoiceSessionActive()}>
-                        <span class="voice-connected-dock-duration">{voiceSessionDurationLabel()}</span>
-                      </Show>
-                    </div>
-                    <p class="voice-connected-dock-channel">
-                      {isVoiceSessionActive()
-                        ? activeVoiceSessionLabel()
-                        : channelHeaderLabel({ kind: activeChannel()!.kind, name: activeChannel()!.name })}
-                    </p>
-                    <div class="voice-connected-dock-controls">
-                      <Show when={canShowVoiceHeaderControls() && !isVoiceSessionActive()}>
-                        <button
-                          type="button"
-                          onClick={() => void joinVoiceChannel()}
-                          disabled={isJoiningVoice() || isLeavingVoice()}
-                        >
-                          {isJoiningVoice() ? "Joining..." : "Join Voice"}
-                        </button>
-                      </Show>
-                      <Show when={isVoiceSessionActive()}>
-                        <button
-                          type="button"
-                          onClick={() => void toggleVoiceMicrophone()}
-                          disabled={
-                            isTogglingVoiceMic() ||
-                            rtcSnapshot().connectionStatus !== "connected" ||
-                            isJoiningVoice() ||
-                            isLeavingVoice()
-                          }
-                        >
-                          {isTogglingVoiceMic()
-                            ? "Updating..."
-                            : rtcSnapshot().isMicrophoneEnabled
-                              ? "Mute Mic"
-                              : "Unmute Mic"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void toggleVoiceCamera()}
-                          disabled={
-                            isTogglingVoiceCamera() ||
-                            rtcSnapshot().connectionStatus !== "connected" ||
-                            isJoiningVoice() ||
-                            isLeavingVoice() ||
-                            !canToggleVoiceCamera()
-                          }
-                        >
-                          {isTogglingVoiceCamera()
-                            ? "Updating..."
-                            : rtcSnapshot().isCameraEnabled
-                              ? "Camera Off"
-                              : "Camera On"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void toggleVoiceScreenShare()}
-                          disabled={
-                            isTogglingVoiceScreenShare() ||
-                            rtcSnapshot().connectionStatus !== "connected" ||
-                            isJoiningVoice() ||
-                            isLeavingVoice() ||
-                            !canToggleVoiceScreenShare()
-                          }
-                        >
-                          {isTogglingVoiceScreenShare()
-                            ? "Updating..."
-                            : rtcSnapshot().isScreenShareEnabled
-                              ? "Stop Share"
-                              : "Share Screen"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void leaveVoiceChannel("Voice session ended.")}
-                          disabled={isLeavingVoice() || isJoiningVoice()}
-                        >
-                          {isLeavingVoice() ? "Leaving..." : "Leave"}
-                        </button>
-                      </Show>
-                    </div>
-                  </section>
-                </Show>
-              </Match>
-            </Switch>
-          </aside>
+          <ChannelRail
+            activeWorkspace={activeWorkspace()}
+            activeChannel={activeChannel()}
+            activeChannelId={activeChannelId()}
+            activeTextChannels={activeTextChannels()}
+            activeVoiceChannels={activeVoiceChannels()}
+            canManageWorkspaceChannels={canManageWorkspaceChannels()}
+            canShowVoiceHeaderControls={canShowVoiceHeaderControls()}
+            isVoiceSessionActive={isVoiceSessionActive()}
+            isVoiceSessionForChannel={isVoiceSessionForChannel}
+            voiceSessionDurationLabel={voiceSessionDurationLabel()}
+            voiceRosterEntries={voiceRosterEntries()}
+            voiceStreamPermissionHints={voiceStreamPermissionHints()}
+            activeVoiceSessionLabel={activeVoiceSessionLabel()}
+            rtcSnapshot={rtcSnapshot()}
+            canToggleVoiceCamera={canToggleVoiceCamera()}
+            canToggleVoiceScreenShare={canToggleVoiceScreenShare()}
+            isJoiningVoice={isJoiningVoice()}
+            isLeavingVoice={isLeavingVoice()}
+            isTogglingVoiceMic={isTogglingVoiceMic()}
+            isTogglingVoiceCamera={isTogglingVoiceCamera()}
+            isTogglingVoiceScreenShare={isTogglingVoiceScreenShare()}
+            actorLabel={actorLabel}
+            voiceParticipantLabel={voiceParticipantLabel}
+            onOpenSettings={() => openOverlayPanel("settings")}
+            onCreateTextChannel={() => {
+              setNewChannelKind(channelKindFromInput("text"));
+              openOverlayPanel("channel-create");
+            }}
+            onCreateVoiceChannel={() => {
+              setNewChannelKind(channelKindFromInput("voice"));
+              openOverlayPanel("channel-create");
+            }}
+            onSelectChannel={(channelId) => setActiveChannelId(channelId)}
+            onJoinVoice={() => void joinVoiceChannel()}
+            onToggleVoiceMicrophone={() => void toggleVoiceMicrophone()}
+            onToggleVoiceCamera={() => void toggleVoiceCamera()}
+            onToggleVoiceScreenShare={() => void toggleVoiceScreenShare()}
+            onLeaveVoice={() => void leaveVoiceChannel("Voice session ended.")}
+          />
         </Show>
 
         <main class="chat-panel">
-        <header class="chat-header">
-          <div>
-            <h3>
-              {activeChannel()
-                ? channelHeaderLabel({ kind: activeChannel()!.kind, name: activeChannel()!.name })
-                : "#no-channel"}
-            </h3>
-            <p>Gateway {gatewayOnline() ? "connected" : "disconnected"}</p>
-          </div>
-          <div class="header-actions">
-            <span classList={{ "gateway-badge": true, online: gatewayOnline() }}>
-              {gatewayOnline() ? "Live" : "Offline"}
-            </span>
-            <Show when={canShowVoiceHeaderControls() || isVoiceSessionActive()}>
-              <span
-                classList={{
-                  "voice-badge": true,
-                  connected: voiceConnectionState() === "connected",
-                  connecting: voiceConnectionState() === "connecting",
-                  reconnecting: voiceConnectionState() === "reconnecting",
-                  error: voiceConnectionState() === "error",
-                }}
-              >
-                Voice {voiceConnectionState()}
-              </span>
-            </Show>
-            <button type="button" onClick={() => setChannelRailCollapsed((value) => !value)}>
-              {isChannelRailCollapsed() ? "Show channels" : "Hide channels"}
-            </button>
-            <button type="button" onClick={() => setMemberRailCollapsed((value) => !value)}>
-              {isMemberRailCollapsed() ? "Show members" : "Hide members"}
-            </button>
-            <button type="button" onClick={() => openOverlayPanel("public-directory")}>
-              Directory
-            </button>
-            <button type="button" onClick={() => openOverlayPanel("friendships")}>
-              Friends
-            </button>
-            <button type="button" onClick={() => void refreshMessages()}>
-              Refresh
-            </button>
-            <button type="button" onClick={() => void refreshSession()} disabled={isRefreshingSession()}>
-              {isRefreshingSession() ? "Refreshing..." : "Refresh session"}
-            </button>
-            <button class="logout" onClick={() => void logout()}>
-              Logout
-            </button>
-          </div>
-        </header>
+          <ChatHeader
+            activeChannel={activeChannel()}
+            gatewayOnline={gatewayOnline()}
+            canShowVoiceHeaderControls={canShowVoiceHeaderControls()}
+            isVoiceSessionActive={isVoiceSessionActive()}
+            voiceConnectionState={voiceConnectionState()}
+            isChannelRailCollapsed={isChannelRailCollapsed()}
+            isMemberRailCollapsed={isMemberRailCollapsed()}
+            isRefreshingSession={isRefreshingSession()}
+            onToggleChannelRail={() => setChannelRailCollapsed((value) => !value)}
+            onToggleMemberRail={() => setMemberRailCollapsed((value) => !value)}
+            onOpenPanel={openOverlayPanel}
+            onRefreshMessages={() => void refreshMessages()}
+            onRefreshSession={() => void refreshSession()}
+            onLogout={() => void logout()}
+          />
 
         <Show
           when={workspaceBootstrapDone() && workspaces().length === 0}
@@ -3609,82 +3283,19 @@ export function AppShellPage() {
       </main>
 
         <Show when={!isMemberRailCollapsed()}>
-          <aside class="member-rail">
-            <header>
-              <h4>Workspace Tools</h4>
-            </header>
-
-            <Show when={profile.loading}>
-              <p class="muted">Loading profile...</p>
-            </Show>
-            <Show when={profile.error}>
-              <p class="status error">{profileErrorMessage(profile.error)}</p>
-            </Show>
-            <Show when={profile()}>
-              {(value) => (
-                <div class="profile-card">
-                  <p class="label">Username</p>
-                  <p>{value().username}</p>
-                  <p class="label">User ID</p>
-                  <p class="mono">{value().userId}</p>
-                </div>
-              )}
-            </Show>
-
-            <Show when={activeWorkspace() && activeChannel() && !canAccessActiveChannel()}>
-              <p class="muted">No authorized workspace/channel selected for operator actions.</p>
-            </Show>
-
-            <Show when={canAccessActiveChannel()}>
-              <section class="member-group">
-                <p class="group-label">ONLINE ({onlineMembers().length})</p>
-                <ul>
-                  <For each={onlineMembers()}>
-                    {(memberId) => (
-                      <li>
-                        <span class="presence online" />
-                        {displayUserLabel(memberId)}
-                      </li>
-                    )}
-                  </For>
-                  <Show when={onlineMembers().length === 0}>
-                    <li>
-                      <span class="presence idle" />
-                      no-presence-yet
-                    </li>
-                  </Show>
-                </ul>
-              </section>
-            </Show>
-
-            <section class="member-group">
-              <p class="group-label">PANELS</p>
-              <div class="ops-launch-grid">
-                <button type="button" onClick={() => openOverlayPanel("public-directory")}>
-                  Open directory panel
-                </button>
-                <button type="button" onClick={() => openOverlayPanel("friendships")}>
-                  Open friendships panel
-                </button>
-                <Show when={canAccessActiveChannel()}>
-                  <button type="button" onClick={() => openOverlayPanel("search")}>
-                    Open search panel
-                  </button>
-                  <button type="button" onClick={() => openOverlayPanel("attachments")}>
-                    Open attachments panel
-                  </button>
-                </Show>
-                <Show when={hasModerationAccess()}>
-                  <button type="button" onClick={() => openOverlayPanel("moderation")}>
-                    Open moderation panel
-                  </button>
-                </Show>
-                <button type="button" onClick={() => openOverlayPanel("utility")}>
-                  Open utility panel
-                </button>
-              </div>
-            </section>
-          </aside>
+          <MemberRail
+            profileLoading={profile.loading}
+            profileErrorText={profile.error ? profileErrorMessage(profile.error) : ""}
+            profile={profile() ?? null}
+            showUnauthorizedWorkspaceNote={Boolean(
+              activeWorkspace() && activeChannel() && !canAccessActiveChannel(),
+            )}
+            canAccessActiveChannel={canAccessActiveChannel()}
+            onlineMembers={onlineMembers()}
+            hasModerationAccess={hasModerationAccess()}
+            displayUserLabel={displayUserLabel}
+            onOpenPanel={openOverlayPanel}
+          />
         </Show>
       </div>
 
