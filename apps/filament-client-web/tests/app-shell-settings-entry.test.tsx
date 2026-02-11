@@ -146,8 +146,10 @@ describe("app shell settings entry point", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Settings category rail")).toBeInTheDocument();
+    expect(screen.getByLabelText("Settings content pane")).toBeInTheDocument();
     expect(
-      screen.getByText(/Settings panel foundation is now available\./),
+      screen.getByText(/category rail and content pane/i),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));

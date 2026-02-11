@@ -190,7 +190,7 @@ Add a baseline settings panel with left-rail categories and a `Voice` submenu co
 
 ### Tasks
 - [x] Add a global Settings entry point in app shell (gear/action) with open/close behavior.
-- [ ] Build settings panel layout with left rail for categories and right content pane.
+- [x] Build settings panel layout with left rail for categories and right content pane.
 - [ ] Add baseline categories structure in rail, including `Voice` and `Profile` (profile as placeholder only in this plan).
 - [ ] Implement `Voice -> Audio Devices` submenu page.
 - [ ] Add audio input/output device selectors (microphone, speaker) using browser media-device enumeration with strict error handling.

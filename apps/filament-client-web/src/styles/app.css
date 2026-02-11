@@ -1600,6 +1600,27 @@ select {
   gap: 0.7rem;
 }
 
+.settings-panel-layout {
+  min-height: 18rem;
+  display: grid;
+  grid-template-columns: minmax(10rem, 12rem) minmax(0, 1fr);
+  gap: 0.88rem;
+}
+
+.settings-panel-rail {
+  border-right: 1px solid #333945;
+  padding-right: 0.88rem;
+  display: grid;
+  align-content: start;
+  gap: 0.6rem;
+}
+
+.settings-panel-content {
+  display: grid;
+  align-content: start;
+  gap: 0.6rem;
+}
+
 @media (max-width: 1200px) {
   .app-shell,
   .app-shell.channel-rail-collapsed,
@@ -1662,5 +1683,18 @@ select {
   .panel-window-compact {
     width: 100%;
     max-height: 94vh;
+  }
+
+  .settings-panel-layout {
+    min-height: 0;
+    grid-template-columns: 1fr;
+    gap: 0.72rem;
+  }
+
+  .settings-panel-rail {
+    border-right: 0;
+    border-bottom: 1px solid #333945;
+    padding-right: 0;
+    padding-bottom: 0.72rem;
   }
 }

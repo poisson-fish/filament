@@ -3395,12 +3395,18 @@ export function AppShellPage() {
                   </Match>
 
                   <Match when={panel() === "settings"}>
-                    <section class="member-group" aria-label="settings">
-                      <p class="group-label">SETTINGS</p>
-                      <p class="muted">
-                        Settings panel foundation is now available. Voice/Profile categories are
-                        next in Phase 4.
-                      </p>
+                    <section class="settings-panel-layout" aria-label="settings">
+                      <aside class="settings-panel-rail" aria-label="Settings category rail">
+                        <p class="group-label">CATEGORIES</p>
+                        <p class="muted">Category navigation is being added next.</p>
+                      </aside>
+                      <section class="settings-panel-content" aria-label="Settings content pane">
+                        <p class="group-label">SETTINGS</p>
+                        <p class="muted">
+                          Settings panel foundation is now available with a category rail and
+                          content pane. Voice/Profile categories are next in Phase 4.
+                        </p>
+                      </section>
                     </section>
                   </Match>
 
