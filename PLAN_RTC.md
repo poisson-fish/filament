@@ -235,15 +235,15 @@ Add a baseline settings panel with left-rail categories and a `Voice` submenu co
 Enable camera and screen share controls within voice channels, with permission-aware behavior.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add `Camera On/Off` and `Share Screen/Stop Share` controls for active calls.
-- [ ] Request publish sources based on desired capabilities and backend grants.
-- [ ] Render remote video tiles and local preview, with bounded visible stream count (client DoS guardrail).
-- [ ] Surface permission-denied states clearly when camera/screen grants are not allowed.
-- [ ] Keep stream controls capability-based on top of voice; do not add a separate video-channel execution path.
-- [ ] Add tests for source request mapping, permission-clamped UI, and tile rendering fallback behavior.
+- [x] Add `Camera On/Off` and `Share Screen/Stop Share` controls for active calls.
+- [x] Request publish sources based on desired capabilities and backend grants.
+- [x] Render remote video tiles and local preview, with bounded visible stream count (client DoS guardrail).
+- [x] Surface permission-denied states clearly when camera/screen grants are not allowed.
+- [x] Keep stream controls capability-based on top of voice; do not add a separate video-channel execution path.
+- [x] Add tests for source request mapping, permission-clamped UI, and tile rendering fallback behavior.
 
 ### Exit Criteria
 - Camera and screen share can be started/stopped for authorized users.
@@ -252,12 +252,26 @@ Enable camera and screen share controls within voice channels, with permission-a
 - UI remains stable when remote participants publish/unpublish frequently.
 
 ### Implementation Notes (Fill After Completion)
-- Date completed:
-- PR/commit:
+- Date completed: 2026-02-11
+- PR/commit: local changes pending commit
 - Files changed:
+  - `apps/filament-client-web/src/lib/rtc.ts`
+  - `apps/filament-client-web/src/pages/AppShellPage.tsx`
+  - `apps/filament-client-web/src/styles/app.css`
+  - `apps/filament-client-web/tests/rtc.test.ts`
+  - `apps/filament-client-web/tests/app-shell-voice-controls.test.tsx`
+  - `PLAN_RTC.md`
 - Security-impact notes:
+  - Stream publish controls are now explicitly dual-gated by channel permission snapshot and effective token grants, so unauthorized camera/screen publishes never render enabled controls client-side.
+  - Voice token requests now include only capability-derived publish sources (`microphone` baseline + permitted camera/screen), with backend clamping still authoritative and surfaced in explicit in-call denial messaging.
+  - RTC wrapper now tracks local/remote camera + screen-share stream state via bounded per-identity entries (max two sources per identity), preventing unbounded tile-state growth under hostile publish churn.
+  - Stream tile rendering is capped to a fixed visible bound (`12`) with overflow messaging, limiting DOM amplification from high-frequency or large participant stream sets.
 - Tests run:
+  - `npm --prefix apps/filament-client-web test -- rtc.test.ts app-shell-voice-controls.test.tsx`
+  - `npm --prefix apps/filament-client-web test`
+  - `npm --prefix apps/filament-client-web run build`
 - Follow-ups/debt:
+  - Phase 6 should add dedicated reconnect/token-expiry stream UX (camera/screen state recovery messaging when reconnecting with clamped or expired grants).
 
 ### Handoff To Next Phase
 - Preserve media control state model for final hardening/docs phase.

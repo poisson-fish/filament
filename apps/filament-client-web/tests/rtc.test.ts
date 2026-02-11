@@ -1,4 +1,4 @@
-import { ConnectionState, RoomEvent } from "livekit-client";
+import { ConnectionState, type MediaDeviceKind, RoomEvent } from "livekit-client";
 import type { LivekitToken, LivekitUrl } from "../src/domain/chat";
 import {
   RTC_DEFAULT_ACTIVE_SPEAKER_DEBOUNCE_MS,
@@ -16,13 +16,29 @@ type RoomListener = (...args: unknown[]) => void;
 
 interface MockRemoteParticipant {
   identity: string;
-  trackPublications: Map<string, { trackSid: string }>;
+  trackPublications: Map<string, MockTrackPublication>;
 }
 
-function buildRemoteParticipant(identity: string, trackSids: string[] = []): MockRemoteParticipant {
-  const trackPublications = new Map<string, { trackSid: string }>();
-  for (const sid of trackSids) {
-    trackPublications.set(sid, { trackSid: sid });
+interface MockTrackPublication {
+  trackSid: string;
+  source?: "camera" | "screen_share" | "microphone";
+}
+
+function buildTrackPublication(
+  trackSid: string,
+  source?: "camera" | "screen_share" | "microphone",
+): MockTrackPublication {
+  return source ? { trackSid, source } : { trackSid };
+}
+
+function buildRemoteParticipant(
+  identity: string,
+  publications: Array<string | MockTrackPublication> = [],
+): MockRemoteParticipant {
+  const trackPublications = new Map<string, MockTrackPublication>();
+  for (const publication of publications) {
+    const next = typeof publication === "string" ? buildTrackPublication(publication) : publication;
+    trackPublications.set(next.trackSid, next);
   }
   return {
     identity,
@@ -32,14 +48,35 @@ function buildRemoteParticipant(identity: string, trackSids: string[] = []): Moc
 
 class MockRoom {
   state: ConnectionState = ConnectionState.Disconnected;
+  private localCameraTrackSid: string | null = null;
+  private localScreenTrackSid: string | null = null;
+  private localTrackCounter = 0;
   readonly localParticipant = {
     identity: "local-user",
+    isCameraEnabled: false,
+    isScreenShareEnabled: false,
+    videoTrackPublications: new Map<string, MockTrackPublication>(),
     setMicrophoneEnabled: vi.fn(async (_enabled: boolean) => {}),
+    setCameraEnabled: vi.fn(async (enabled: boolean) => {
+      this.localParticipant.isCameraEnabled = enabled;
+      this.setLocalVideoTrack("camera", enabled);
+    }),
+    setScreenShareEnabled: vi.fn(async (enabled: boolean) => {
+      this.localParticipant.isScreenShareEnabled = enabled;
+      this.setLocalVideoTrack("screen_share", enabled);
+    }),
   };
   readonly remoteParticipants = new Map<string, MockRemoteParticipant>();
   readonly connectCalls: Array<{ url: string; token: string }> = [];
+  readonly switchDeviceCalls: Array<{
+    kind: MediaDeviceKind;
+    deviceId: string;
+    exact: boolean | undefined;
+  }> = [];
   disconnectCalls = 0;
   connectFailure: Error | null = null;
+  switchDeviceFailure: Error | null = null;
+  switchDeviceResult = true;
   private readonly listeners = new Map<RoomEvent, Set<RoomListener>>();
 
   on(event: RoomEvent, listener: RoomListener): void {
@@ -86,12 +123,56 @@ class MockRoom {
     this.emit(RoomEvent.Disconnected);
   }
 
+  async switchActiveDevice(
+    kind: MediaDeviceKind,
+    deviceId: string,
+    exact?: boolean,
+  ): Promise<boolean> {
+    this.switchDeviceCalls.push({ kind, deviceId, exact });
+    if (this.switchDeviceFailure) {
+      throw this.switchDeviceFailure;
+    }
+    return this.switchDeviceResult;
+  }
+
   listenerCount(): number {
     let total = 0;
     for (const listeners of this.listeners.values()) {
       total += listeners.size;
     }
     return total;
+  }
+
+  private nextLocalTrackSid(prefix: string): string {
+    this.localTrackCounter += 1;
+    return `${prefix}-${this.localTrackCounter}`;
+  }
+
+  private setLocalVideoTrack(source: "camera" | "screen_share", enabled: boolean): void {
+    const sid =
+      source === "camera" ? this.localCameraTrackSid : this.localScreenTrackSid;
+    if (!enabled) {
+      if (!sid) {
+        return;
+      }
+      this.localParticipant.videoTrackPublications.delete(sid);
+      if (source === "camera") {
+        this.localCameraTrackSid = null;
+      } else {
+        this.localScreenTrackSid = null;
+      }
+      this.emit(RoomEvent.LocalTrackUnpublished, buildTrackPublication(sid, source), this.localParticipant);
+      return;
+    }
+
+    const nextSid = sid ?? this.nextLocalTrackSid(source === "camera" ? "LCAM" : "LSCR");
+    this.localParticipant.videoTrackPublications.set(nextSid, buildTrackPublication(nextSid, source));
+    if (source === "camera") {
+      this.localCameraTrackSid = nextSid;
+    } else {
+      this.localScreenTrackSid = nextSid;
+    }
+    this.emit(RoomEvent.LocalTrackPublished, buildTrackPublication(nextSid, source), this.localParticipant);
   }
 }
 
@@ -189,6 +270,60 @@ describe("rtc client lifecycle", () => {
     expect(client.snapshot().isMicrophoneEnabled).toBe(false);
   });
 
+  it("updates camera and screen share state via set/toggle", async () => {
+    const room = new MockRoom();
+    const client = createRtcClient({
+      roomFactory: () => room,
+    });
+
+    await client.join({ livekitUrl: validUrl, token: validToken });
+    await client.setCameraEnabled(true);
+    const cameraNext = await client.toggleCamera();
+    await client.setScreenShareEnabled(true);
+    const screenNext = await client.toggleScreenShare();
+
+    expect(cameraNext).toBe(false);
+    expect(screenNext).toBe(false);
+    expect(room.localParticipant.setCameraEnabled).toHaveBeenNthCalledWith(1, true);
+    expect(room.localParticipant.setCameraEnabled).toHaveBeenNthCalledWith(2, false);
+    expect(room.localParticipant.setScreenShareEnabled).toHaveBeenNthCalledWith(1, true);
+    expect(room.localParticipant.setScreenShareEnabled).toHaveBeenNthCalledWith(2, false);
+    expect(client.snapshot().isCameraEnabled).toBe(false);
+    expect(client.snapshot().isScreenShareEnabled).toBe(false);
+  });
+
+  it("stages preferred audio devices and applies them during join", async () => {
+    const room = new MockRoom();
+    const client = createRtcClient({
+      roomFactory: () => room,
+    });
+
+    await client.setAudioInputDevice("mic-01");
+    await client.setAudioOutputDevice("spk-09");
+    await client.join({ livekitUrl: validUrl, token: validToken });
+
+    expect(room.switchDeviceCalls).toEqual([
+      { kind: "audioinput", deviceId: "mic-01", exact: true },
+      { kind: "audiooutput", deviceId: "spk-09", exact: true },
+    ]);
+  });
+
+  it("switches preferred audio devices while connected", async () => {
+    const room = new MockRoom();
+    const client = createRtcClient({
+      roomFactory: () => room,
+    });
+
+    await client.join({ livekitUrl: validUrl, token: validToken });
+    await client.setAudioInputDevice("mic-11");
+    await client.setAudioOutputDevice("spk-11");
+
+    expect(room.switchDeviceCalls).toEqual([
+      { kind: "audioinput", deviceId: "mic-11", exact: true },
+      { kind: "audiooutput", deviceId: "spk-11", exact: true },
+    ]);
+  });
+
   it("fails closed for invalid URL inputs before connection attempts", async () => {
     const room = new MockRoom();
     const client = createRtcClient({
@@ -204,6 +339,21 @@ describe("rtc client lifecycle", () => {
       code: "invalid_livekit_url",
     });
     expect(room.connectCalls).toHaveLength(0);
+  });
+
+  it("rejects malformed audio device IDs", async () => {
+    const room = new MockRoom();
+    const client = createRtcClient({
+      roomFactory: () => room,
+    });
+
+    await expect(client.setAudioInputDevice("")).rejects.toMatchObject({
+      code: "invalid_audio_device_id",
+    });
+    await expect(client.setAudioOutputDevice("\n")).rejects.toMatchObject({
+      code: "invalid_audio_device_id",
+    });
+    expect(room.switchDeviceCalls).toHaveLength(0);
   });
 
   it("surfaces join errors and clears tracked state", async () => {
@@ -226,6 +376,23 @@ describe("rtc client lifecycle", () => {
     expect(client.snapshot().lastErrorCode).toBe("join_failed");
     expect(client.snapshot().participants).toEqual([]);
     expect(room.disconnectCalls).toBe(1);
+  });
+
+  it("keeps voice connected when audio-device apply fails during join", async () => {
+    const room = new MockRoom();
+    room.switchDeviceFailure = new Error("not_found");
+    const client = createRtcClient({
+      roomFactory: () => room,
+    });
+
+    await client.setAudioInputDevice("missing-mic");
+    await client.join({
+      livekitUrl: validUrl,
+      token: validToken,
+    });
+
+    expect(client.snapshot().connectionStatus).toBe("connected");
+    expect(client.snapshot().lastErrorCode).toBe("audio_device_switch_failed");
   });
 
   it("bounds participant and track state growth", async () => {
@@ -252,6 +419,61 @@ describe("rtc client lifecycle", () => {
     expect(snapshot.participants).toEqual([
       { identity: "alpha", subscribedTrackCount: 1 },
       { identity: "beta", subscribedTrackCount: 0 },
+    ]);
+  });
+
+  it("tracks local and remote camera/screen streams with bounded tile identities", async () => {
+    const room = new MockRoom();
+    const client = createRtcClient({
+      roomFactory: () => room,
+      maxParticipants: 2,
+    });
+
+    await client.join({ livekitUrl: validUrl, token: validToken });
+    const alpha = buildRemoteParticipant("alpha");
+    room.emit(RoomEvent.ParticipantConnected, alpha);
+
+    room.emit(
+      RoomEvent.TrackSubscribed,
+      { trackSid: "RV1", source: "camera" },
+      buildTrackPublication("RV1", "camera"),
+      alpha,
+    );
+    room.emit(
+      RoomEvent.TrackSubscribed,
+      { trackSid: "RV2", source: "screen_share" },
+      buildTrackPublication("RV2", "screen_share"),
+      alpha,
+    );
+    room.emit(
+      RoomEvent.TrackSubscribed,
+      { trackSid: "RA1", source: "microphone" },
+      buildTrackPublication("RA1", "microphone"),
+      alpha,
+    );
+    await client.setCameraEnabled(true);
+    await client.setScreenShareEnabled(true);
+
+    expect(
+      client
+        .snapshot()
+        .videoTracks.map((track) => `${track.isLocal ? "local" : "remote"}:${track.participantIdentity}:${track.source}`),
+    ).toEqual([
+      "local:local-user:camera",
+      "local:local-user:screen_share",
+      "remote:alpha:camera",
+      "remote:alpha:screen_share",
+    ]);
+
+    room.emit(RoomEvent.TrackUnpublished, buildTrackPublication("RV1", "camera"), alpha);
+    expect(
+      client
+        .snapshot()
+        .videoTracks.map((track) => `${track.isLocal ? "local" : "remote"}:${track.participantIdentity}:${track.source}`),
+    ).toEqual([
+      "local:local-user:camera",
+      "local:local-user:screen_share",
+      "remote:alpha:screen_share",
     ]);
   });
 

@@ -4,6 +4,7 @@ import { App } from "../src/App";
 
 const SESSION_STORAGE_KEY = "filament.auth.session.v1";
 const WORKSPACE_CACHE_KEY = "filament.workspace.cache.v1";
+const VOICE_SETTINGS_KEY = "filament.voice.settings.v1";
 
 const ACCESS_TOKEN = "A".repeat(64);
 const REFRESH_TOKEN = "B".repeat(64);
@@ -21,11 +22,20 @@ const DEFAULT_CHANNELS: FixtureChannel[] = [{ channelId: CHANNEL_ID, name: "brid
 
 const rtcMock = vi.hoisted(() => {
   type MockParticipant = { identity: string; subscribedTrackCount: number };
+  type MockVideoTrack = {
+    trackSid: string;
+    participantIdentity: string;
+    source: "camera" | "screen_share";
+    isLocal: boolean;
+  };
   type MockSnapshot = {
     connectionStatus: "disconnected" | "connecting" | "connected" | "reconnecting" | "error";
     localParticipantIdentity: string | null;
     isMicrophoneEnabled: boolean;
+    isCameraEnabled: boolean;
+    isScreenShareEnabled: boolean;
     participants: MockParticipant[];
+    videoTracks: MockVideoTrack[];
     activeSpeakerIdentities: string[];
     lastErrorCode: string | null;
     lastErrorMessage: string | null;
@@ -35,7 +45,10 @@ const rtcMock = vi.hoisted(() => {
     connectionStatus: "disconnected",
     localParticipantIdentity: null,
     isMicrophoneEnabled: false,
+    isCameraEnabled: false,
+    isScreenShareEnabled: false,
     participants: [],
+    videoTracks: [],
     activeSpeakerIdentities: [],
     lastErrorCode: null,
     lastErrorMessage: null,
@@ -50,11 +63,29 @@ const rtcMock = vi.hoisted(() => {
       identity: entry.identity,
       subscribedTrackCount: entry.subscribedTrackCount,
     }));
+  const cloneVideoTracks = (tracks: MockVideoTrack[]): MockVideoTrack[] =>
+    tracks.map((track) => ({ ...track }));
+
+  const upsertLocalVideoTrack = (
+    tracks: MockVideoTrack[],
+    nextTrack: MockVideoTrack,
+  ): MockVideoTrack[] => {
+    const filtered = tracks.filter(
+      (track) =>
+        !(
+          track.isLocal &&
+          track.source === nextTrack.source &&
+          track.participantIdentity === nextTrack.participantIdentity
+        ),
+    );
+    return [...filtered, nextTrack];
+  };
 
   const emit = () => {
     const next = {
       ...snapshot,
       participants: cloneParticipants(snapshot.participants),
+      videoTracks: cloneVideoTracks(snapshot.videoTracks),
     };
     for (const listener of listeners) {
       listener(next);
@@ -96,10 +127,59 @@ const rtcMock = vi.hoisted(() => {
     return snapshot.isMicrophoneEnabled;
   });
 
+  const setCameraEnabled = vi.fn(async (enabled: boolean) => {
+    snapshot = {
+      ...snapshot,
+      isCameraEnabled: enabled,
+      videoTracks: enabled
+        ? upsertLocalVideoTrack(snapshot.videoTracks, {
+            trackSid: "L-CAMERA",
+            participantIdentity: "u.local",
+            source: "camera",
+            isLocal: true,
+          })
+        : snapshot.videoTracks.filter((track) => !(track.isLocal && track.source === "camera")),
+    };
+    emit();
+  });
+
+  const toggleCamera = vi.fn(async () => {
+    const enabled = !snapshot.isCameraEnabled;
+    await setCameraEnabled(enabled);
+    return enabled;
+  });
+
+  const setScreenShareEnabled = vi.fn(async (enabled: boolean) => {
+    snapshot = {
+      ...snapshot,
+      isScreenShareEnabled: enabled,
+      videoTracks: enabled
+        ? upsertLocalVideoTrack(snapshot.videoTracks, {
+            trackSid: "L-SCREEN",
+            participantIdentity: "u.local",
+            source: "screen_share",
+            isLocal: true,
+          })
+        : snapshot.videoTracks.filter(
+            (track) => !(track.isLocal && track.source === "screen_share"),
+          ),
+    };
+    emit();
+  });
+
+  const toggleScreenShare = vi.fn(async () => {
+    const enabled = !snapshot.isScreenShareEnabled;
+    await setScreenShareEnabled(enabled);
+    return enabled;
+  });
+
   const destroy = vi.fn(async () => {
     await leave();
     listeners.clear();
   });
+
+  const setAudioInputDevice = vi.fn(async (_deviceId: string | null) => {});
+  const setAudioOutputDevice = vi.fn(async (_deviceId: string | null) => {});
 
   const client = {
     snapshot: () => snapshot,
@@ -108,6 +188,7 @@ const rtcMock = vi.hoisted(() => {
       listener({
         ...snapshot,
         participants: cloneParticipants(snapshot.participants),
+        videoTracks: cloneVideoTracks(snapshot.videoTracks),
       });
       return () => {
         listeners.delete(listener);
@@ -115,8 +196,14 @@ const rtcMock = vi.hoisted(() => {
     },
     join,
     leave,
+    setAudioInputDevice,
+    setAudioOutputDevice,
     setMicrophoneEnabled,
     toggleMicrophone,
+    setCameraEnabled,
+    toggleCamera,
+    setScreenShareEnabled,
+    toggleScreenShare,
     destroy,
   };
 
@@ -134,6 +221,16 @@ const rtcMock = vi.hoisted(() => {
     emit();
   };
 
+  const setVideoTracks = (tracks: MockVideoTrack[]) => {
+    snapshot = {
+      ...snapshot,
+      videoTracks: cloneVideoTracks(tracks),
+      isCameraEnabled: tracks.some((track) => track.isLocal && track.source === "camera"),
+      isScreenShareEnabled: tracks.some((track) => track.isLocal && track.source === "screen_share"),
+    };
+    emit();
+  };
+
   const reset = () => {
     listeners.clear();
     snapshot = createDisconnectedSnapshot();
@@ -141,8 +238,14 @@ const rtcMock = vi.hoisted(() => {
     createRtcClient.mockClear();
     join.mockClear();
     leave.mockClear();
+    setAudioInputDevice.mockClear();
+    setAudioOutputDevice.mockClear();
     setMicrophoneEnabled.mockClear();
     toggleMicrophone.mockClear();
+    setCameraEnabled.mockClear();
+    toggleCamera.mockClear();
+    setScreenShareEnabled.mockClear();
+    toggleScreenShare.mockClear();
     destroy.mockClear();
   };
 
@@ -150,11 +253,18 @@ const rtcMock = vi.hoisted(() => {
     createRtcClient,
     join,
     leave,
+    setAudioInputDevice,
+    setAudioOutputDevice,
     setMicrophoneEnabled,
     toggleMicrophone,
+    setCameraEnabled,
+    toggleCamera,
+    setScreenShareEnabled,
+    toggleScreenShare,
     destroy,
     setJoinParticipants,
     setActiveSpeakerIdentities,
+    setVideoTracks,
     reset,
   };
 });
@@ -249,8 +359,22 @@ function seedAuthenticatedWorkspace(channels: FixtureChannel[] = DEFAULT_CHANNEL
   );
 }
 
-function createVoiceFixtureFetch(options?: { channels?: FixtureChannel[] }) {
+function createVoiceFixtureFetch(options?: {
+  channels?: FixtureChannel[];
+  voicePermissions?: string[];
+  voiceTokenResponse?: {
+    can_publish?: boolean;
+    can_subscribe?: boolean;
+    publish_sources?: string[];
+  };
+}) {
   const channels = options?.channels ?? DEFAULT_CHANNELS;
+  const voicePermissions = options?.voicePermissions ?? ["create_message", "subscribe_streams"];
+  const voiceTokenResponse = options?.voiceTokenResponse ?? {
+    can_publish: true,
+    can_subscribe: true,
+    publish_sources: ["microphone"],
+  };
   const channelsById = new Map(channels.map((channel) => [channel.channelId, channel]));
   let voiceTokenBody: unknown = null;
 
@@ -290,7 +414,7 @@ function createVoiceFixtureFetch(options?: { channels?: FixtureChannel[] }) {
         role: "member",
         permissions:
           channel.kind === "voice"
-            ? ["create_message", "subscribe_streams"]
+            ? voicePermissions
             : ["create_message"],
       });
     }
@@ -326,9 +450,9 @@ function createVoiceFixtureFetch(options?: { channels?: FixtureChannel[] }) {
         livekit_url: "wss://livekit.example.com",
         room: "filament.voice.room",
         identity: "u.identity.123",
-        can_publish: true,
-        can_subscribe: true,
-        publish_sources: ["microphone"],
+        can_publish: voiceTokenResponse.can_publish ?? true,
+        can_subscribe: voiceTokenResponse.can_subscribe ?? true,
+        publish_sources: voiceTokenResponse.publish_sources ?? ["microphone"],
         expires_in_secs: 300,
       });
     }
@@ -384,6 +508,57 @@ describe("app shell voice controls", () => {
     expect(await screen.findByRole("button", { name: "Mute Mic" })).toBeInTheDocument();
   });
 
+  it("requests publish sources for camera/screen when stream permissions allow them", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch({
+      voicePermissions: [
+        "create_message",
+        "subscribe_streams",
+        "publish_video",
+        "publish_screen_share",
+      ],
+      voiceTokenResponse: {
+        can_publish: true,
+        can_subscribe: true,
+        publish_sources: ["microphone", "camera", "screen_share"],
+      },
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+    expect(fixture.voiceTokenBody()).toEqual({
+      can_subscribe: true,
+      publish_sources: ["microphone", "camera", "screen_share"],
+    });
+  });
+
+  it("wires saved audio device preferences into RTC before join", async () => {
+    seedAuthenticatedWorkspace();
+    window.localStorage.setItem(
+      VOICE_SETTINGS_KEY,
+      JSON.stringify({
+        audioInputDeviceId: "mic-pref-1",
+        audioOutputDeviceId: "spk-pref-1",
+      }),
+    );
+    const fixture = createVoiceFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+    expect(rtcMock.setAudioInputDevice).toHaveBeenCalledWith("mic-pref-1");
+    expect(rtcMock.setAudioOutputDevice).toHaveBeenCalledWith("spk-pref-1");
+  });
+
   it("supports mute/unmute and leave after joining", async () => {
     seedAuthenticatedWorkspace();
     const fixture = createVoiceFixtureFetch();
@@ -403,6 +578,73 @@ describe("app shell voice controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Leave" }));
     await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: "Join Voice" })).toBeInTheDocument();
+  });
+
+  it("supports camera and screen-share toggles when grants allow publishing", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch({
+      voicePermissions: [
+        "create_message",
+        "subscribe_streams",
+        "publish_video",
+        "publish_screen_share",
+      ],
+      voiceTokenResponse: {
+        can_publish: true,
+        can_subscribe: true,
+        publish_sources: ["microphone", "camera", "screen_share"],
+      },
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Camera On" }));
+    await waitFor(() => expect(rtcMock.toggleCamera).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Camera Off" })).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Share Screen" }));
+    await waitFor(() => expect(rtcMock.toggleScreenShare).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Stop Share" })).toBeInTheDocument();
+  });
+
+  it("clamps camera/screen controls when token grants do not include those sources", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch({
+      voicePermissions: [
+        "create_message",
+        "subscribe_streams",
+        "publish_video",
+        "publish_screen_share",
+      ],
+      voiceTokenResponse: {
+        can_publish: true,
+        can_subscribe: true,
+        publish_sources: ["microphone"],
+      },
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByRole("button", { name: "Camera On" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Share Screen" })).toBeDisabled();
+    expect(
+      screen.getByText("Camera disabled: this voice token did not grant camera publish."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Screen share disabled: this voice token did not grant screen publish."),
+    ).toBeInTheDocument();
   });
 
   it("renders in-call participant roster while voice session is active", async () => {
@@ -451,6 +693,39 @@ describe("app shell voice controls", () => {
     await waitFor(() =>
       expect(screen.getByText("u.remote.1")).not.toHaveClass("voice-roster-name-speaking"),
     );
+  });
+
+  it("renders stream-tile fallback and enforces a bounded visible tile count", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText("No active camera or screen streams yet."),
+    ).toBeInTheDocument();
+
+    rtcMock.setVideoTracks(
+      Array.from({ length: 14 }).map((_, index) => ({
+        trackSid: `R-${index}`,
+        participantIdentity: `u.remote.${index}`,
+        source: "camera",
+        isLocal: false,
+      })),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Showing first 12 of 14 streams."),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByText("u.remote.0")).toBeInTheDocument();
+    expect(screen.queryByText("u.remote.12")).not.toBeInTheDocument();
   });
 
   it("leaves the voice room and clears in-call state when switching channels", async () => {

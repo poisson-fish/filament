@@ -37,6 +37,7 @@ import {
   type MessageRecord,
   type ReactionEmoji,
   type GuildRecord,
+  type MediaPublishSource,
   type PermissionName,
   type RoleName,
   type SearchResults,
@@ -90,6 +91,15 @@ import {
   type RtcClient,
   type RtcSnapshot,
 } from "../lib/rtc";
+import {
+  enumerateAudioDevices,
+  loadVoiceDevicePreferences,
+  reconcileVoiceDevicePreferences,
+  saveVoiceDevicePreferences,
+  type AudioDeviceOption,
+  type MediaDeviceId,
+  type VoiceDevicePreferences,
+} from "../lib/voice-device-settings";
 import { clearWorkspaceCache, saveWorkspaceCache } from "../lib/workspace-cache";
 import {
   clearUsernameLookupCache,
@@ -117,10 +127,18 @@ const RTC_DISCONNECTED_SNAPSHOT: RtcSnapshot = {
   connectionStatus: "disconnected",
   localParticipantIdentity: null,
   isMicrophoneEnabled: false,
+  isCameraEnabled: false,
+  isScreenShareEnabled: false,
   participants: [],
+  videoTracks: [],
   activeSpeakerIdentities: [],
   lastErrorCode: null,
   lastErrorMessage: null,
+};
+const MAX_VISIBLE_STREAM_TILES = 12;
+const DEFAULT_VOICE_SESSION_CAPABILITIES: VoiceSessionCapabilities = {
+  canSubscribe: false,
+  publishSources: [],
 };
 
 interface ReactionView {
@@ -139,6 +157,11 @@ interface VoiceRosterEntry {
   subscribedTrackCount: number;
   isLocal: boolean;
   isSpeaking: boolean;
+}
+
+interface VoiceSessionCapabilities {
+  canSubscribe: boolean;
+  publishSources: MediaPublishSource[];
 }
 
 interface ReactionPickerOption {
@@ -495,6 +518,9 @@ function mapRtcError(error: unknown, fallback: string): string {
     if (error.code === "invalid_livekit_token") {
       return "Voice token was rejected by local validation.";
     }
+    if (error.code === "invalid_audio_device_id") {
+      return "Selected audio device is invalid.";
+    }
     if (error.code === "join_failed") {
       return "Unable to connect to voice right now.";
     }
@@ -503,6 +529,15 @@ function mapRtcError(error: unknown, fallback: string): string {
     }
     if (error.code === "microphone_toggle_failed") {
       return "Unable to change microphone state.";
+    }
+    if (error.code === "camera_toggle_failed") {
+      return "Unable to change camera state.";
+    }
+    if (error.code === "screen_share_toggle_failed") {
+      return "Unable to change screen share state.";
+    }
+    if (error.code === "audio_device_switch_failed") {
+      return "Unable to switch the selected audio device.";
     }
     return error.message;
   }
@@ -781,7 +816,12 @@ export function AppShellPage() {
   const [isJoiningVoice, setJoiningVoice] = createSignal(false);
   const [isLeavingVoice, setLeavingVoice] = createSignal(false);
   const [isTogglingVoiceMic, setTogglingVoiceMic] = createSignal(false);
+  const [isTogglingVoiceCamera, setTogglingVoiceCamera] = createSignal(false);
+  const [isTogglingVoiceScreenShare, setTogglingVoiceScreenShare] = createSignal(false);
   const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(null);
+  const [voiceSessionCapabilities, setVoiceSessionCapabilities] = createSignal<VoiceSessionCapabilities>(
+    DEFAULT_VOICE_SESSION_CAPABILITIES,
+  );
 
   const [moderationUserIdInput, setModerationUserIdInput] = createSignal("");
   const [moderationRoleInput, setModerationRoleInput] = createSignal<RoleName>("member");
@@ -807,6 +847,14 @@ export function AppShellPage() {
   const [activeSettingsCategory, setActiveSettingsCategory] = createSignal<SettingsCategory>("voice");
   const [activeVoiceSettingsSubmenu, setActiveVoiceSettingsSubmenu] =
     createSignal<VoiceSettingsSubmenu>("audio-devices");
+  const [voiceDevicePreferences, setVoiceDevicePreferences] = createSignal<VoiceDevicePreferences>(
+    loadVoiceDevicePreferences(),
+  );
+  const [audioInputDevices, setAudioInputDevices] = createSignal<AudioDeviceOption[]>([]);
+  const [audioOutputDevices, setAudioOutputDevices] = createSignal<AudioDeviceOption[]>([]);
+  const [isRefreshingAudioDevices, setRefreshingAudioDevices] = createSignal(false);
+  const [audioDevicesStatus, setAudioDevicesStatus] = createSignal("");
+  const [audioDevicesError, setAudioDevicesError] = createSignal("");
   const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
   const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(false);
   let rtcClient: RtcClient | null = null;
@@ -833,6 +881,9 @@ export function AppShellPage() {
     channelPermissions()?.permissions.includes(permission) ?? false;
 
   const canAccessActiveChannel = createMemo(() => hasPermission("create_message"));
+  const canPublishVoiceCamera = createMemo(() => hasPermission("publish_video"));
+  const canPublishVoiceScreenShare = createMemo(() => hasPermission("publish_screen_share"));
+  const canSubscribeVoiceStreams = createMemo(() => hasPermission("subscribe_streams"));
   const canManageWorkspaceChannels = createMemo(() => {
     const role = channelPermissions()?.role;
     return canDiscoverWorkspaceOperation(role);
@@ -869,6 +920,20 @@ export function AppShellPage() {
     const key = activeChannelKey();
     return Boolean(key) && key === voiceSessionChannelKey() && isVoiceSessionActive();
   });
+  const hasVoicePublishGrant = (source: MediaPublishSource): boolean =>
+    voiceSessionCapabilities().publishSources.includes(source);
+  const canToggleVoiceCamera = createMemo(
+    () =>
+      isVoiceSessionForActiveChannel() &&
+      canPublishVoiceCamera() &&
+      hasVoicePublishGrant("camera"),
+  );
+  const canToggleVoiceScreenShare = createMemo(
+    () =>
+      isVoiceSessionForActiveChannel() &&
+      canPublishVoiceScreenShare() &&
+      hasVoicePublishGrant("screen_share"),
+  );
   const canShowVoiceHeaderControls = createMemo(
     () => isActiveVoiceChannel() && canAccessActiveChannel(),
   );
@@ -901,6 +966,45 @@ export function AppShellPage() {
     }
     return entries;
   });
+  const visibleVoiceVideoTiles = createMemo(() => {
+    if (!isVoiceSessionForActiveChannel()) {
+      return [];
+    }
+    const canShowRemote = voiceSessionCapabilities().canSubscribe && canSubscribeVoiceStreams();
+    return rtcSnapshot()
+      .videoTracks.filter((track) => track.isLocal || canShowRemote)
+      .slice(0, MAX_VISIBLE_STREAM_TILES);
+  });
+  const hiddenVoiceVideoTileCount = createMemo(() => {
+    if (!isVoiceSessionForActiveChannel()) {
+      return 0;
+    }
+    const canShowRemote = voiceSessionCapabilities().canSubscribe && canSubscribeVoiceStreams();
+    const total = rtcSnapshot().videoTracks.filter((track) => track.isLocal || canShowRemote).length;
+    return Math.max(0, total - visibleVoiceVideoTiles().length);
+  });
+  const voiceStreamPermissionHints = createMemo(() => {
+    if (!isVoiceSessionForActiveChannel()) {
+      return [];
+    }
+    const hints: string[] = [];
+    if (!canPublishVoiceCamera()) {
+      hints.push("Camera disabled: channel permission publish_video is missing.");
+    } else if (!hasVoicePublishGrant("camera")) {
+      hints.push("Camera disabled: this voice token did not grant camera publish.");
+    }
+    if (!canPublishVoiceScreenShare()) {
+      hints.push("Screen share disabled: channel permission publish_screen_share is missing.");
+    } else if (!hasVoicePublishGrant("screen_share")) {
+      hints.push("Screen share disabled: this voice token did not grant screen publish.");
+    }
+    if (!canSubscribeVoiceStreams()) {
+      hints.push("Remote stream subscription is denied by channel permission.");
+    } else if (!voiceSessionCapabilities().canSubscribe) {
+      hints.push("Remote stream subscription is denied for this call.");
+    }
+    return hints;
+  });
 
   const canCloseActivePanel = createMemo(() => {
     if (activeOverlayPanel() !== "workspace-create") {
@@ -913,6 +1017,117 @@ export function AppShellPage() {
     setActiveSettingsCategory(category);
     if (category === "voice") {
       setActiveVoiceSettingsSubmenu("audio-devices");
+    }
+  };
+
+  const persistVoiceDevicePreferences = (next: VoiceDevicePreferences): void => {
+    setVoiceDevicePreferences(next);
+    try {
+      saveVoiceDevicePreferences(next);
+    } catch {
+      setAudioDevicesError("Unable to persist audio device preferences in local storage.");
+    }
+  };
+
+  const refreshAudioDeviceInventory = async (): Promise<void> => {
+    if (isRefreshingAudioDevices()) {
+      return;
+    }
+    setRefreshingAudioDevices(true);
+    setAudioDevicesError("");
+    try {
+      const inventory = await enumerateAudioDevices();
+      setAudioInputDevices(inventory.audioInputs);
+      setAudioOutputDevices(inventory.audioOutputs);
+      setAudioDevicesStatus(
+        `Detected ${inventory.audioInputs.length} microphone(s) and ${inventory.audioOutputs.length} speaker(s).`,
+      );
+      const current = voiceDevicePreferences();
+      const reconciled = reconcileVoiceDevicePreferences(current, inventory);
+      if (
+        current.audioInputDeviceId !== reconciled.audioInputDeviceId ||
+        current.audioOutputDeviceId !== reconciled.audioOutputDeviceId
+      ) {
+        persistVoiceDevicePreferences(reconciled);
+        setAudioDevicesStatus(
+          "Some saved audio devices are no longer available. Reverted to system defaults.",
+        );
+      }
+    } catch (error) {
+      setAudioInputDevices([]);
+      setAudioOutputDevices([]);
+      setAudioDevicesStatus("");
+      setAudioDevicesError(mapError(error, "Unable to enumerate audio devices."));
+    } finally {
+      setRefreshingAudioDevices(false);
+    }
+  };
+
+  const setVoiceDevicePreference = async (
+    kind: "audioinput" | "audiooutput",
+    nextValue: string,
+  ): Promise<void> => {
+    const options = kind === "audioinput" ? audioInputDevices() : audioOutputDevices();
+    if (nextValue.length > 0 && !options.some((entry) => entry.deviceId === nextValue)) {
+      setAudioDevicesError(
+        kind === "audioinput"
+          ? "Selected microphone is not available."
+          : "Selected speaker is not available.",
+      );
+      return;
+    }
+
+    const nextDeviceId = nextValue.length > 0 ? (nextValue as MediaDeviceId) : null;
+    const next: VoiceDevicePreferences =
+      kind === "audioinput"
+        ? {
+            ...voiceDevicePreferences(),
+            audioInputDeviceId: nextDeviceId,
+          }
+        : {
+            ...voiceDevicePreferences(),
+            audioOutputDeviceId: nextDeviceId,
+          };
+    setAudioDevicesError("");
+    persistVoiceDevicePreferences(next);
+
+    if (!rtcClient || !isVoiceSessionActive()) {
+      setAudioDevicesStatus(
+        kind === "audioinput"
+          ? "Microphone preference saved for the next voice join."
+          : "Speaker preference saved for the next voice join.",
+      );
+      return;
+    }
+
+    try {
+      if (kind === "audioinput") {
+        await rtcClient.setAudioInputDevice(next.audioInputDeviceId);
+      } else {
+        await rtcClient.setAudioOutputDevice(next.audioOutputDeviceId);
+      }
+      if (nextDeviceId) {
+        setAudioDevicesStatus(
+          kind === "audioinput"
+            ? "Microphone updated for the active voice session."
+            : "Speaker updated for the active voice session.",
+        );
+      } else {
+        setAudioDevicesStatus(
+          kind === "audioinput"
+            ? "Microphone preference cleared. Current session keeps its current device."
+            : "Speaker preference cleared. Current session keeps its current device.",
+        );
+      }
+    } catch (error) {
+      setAudioDevicesError(
+        mapRtcError(
+          error,
+          kind === "audioinput"
+            ? "Unable to apply microphone selection."
+            : "Unable to apply speaker selection.",
+        ),
+      );
     }
   };
 
@@ -996,6 +1211,7 @@ export function AppShellPage() {
     }
     setRtcSnapshot(RTC_DISCONNECTED_SNAPSHOT);
     setVoiceSessionChannelKey(null);
+    setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
   };
 
   const displayUserLabel = (userId: string): string => resolvedUsernames()[userId] ?? shortActor(userId);
@@ -1694,6 +1910,17 @@ export function AppShellPage() {
   });
 
   createEffect(() => {
+    const isVoiceAudioSettingsOpen =
+      activeOverlayPanel() === "settings" &&
+      activeSettingsCategory() === "voice" &&
+      activeVoiceSettingsSubmenu() === "audio-devices";
+    if (!isVoiceAudioSettingsOpen) {
+      return;
+    }
+    void refreshAudioDeviceInventory();
+  });
+
+  createEffect(() => {
     const session = auth.session();
     const guildId = activeGuildId();
     const channelId = activeChannelId();
@@ -2371,6 +2598,7 @@ export function AppShellPage() {
     } finally {
       setVoiceSessionChannelKey(null);
       setRtcSnapshot(RTC_DISCONNECTED_SNAPSHOT);
+      setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
       if (statusMessage) {
         setVoiceStatus(statusMessage);
       }
@@ -2396,17 +2624,36 @@ export function AppShellPage() {
     setJoiningVoice(true);
     setVoiceError("");
     setVoiceStatus("");
+    setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
     try {
+      const requestedPublishSources: MediaPublishSource[] = ["microphone"];
+      if (canPublishVoiceCamera()) {
+        requestedPublishSources.push("camera");
+      }
+      if (canPublishVoiceScreenShare()) {
+        requestedPublishSources.push("screen_share");
+      }
       const token = await issueVoiceToken(session, guildId, channel.channelId, {
-        canSubscribe: true,
-        publishSources: ["microphone"],
+        canSubscribe: canSubscribeVoiceStreams(),
+        publishSources: requestedPublishSources,
       });
       const client = ensureRtcClient();
+      const preferences = voiceDevicePreferences();
+      await client.setAudioInputDevice(preferences.audioInputDeviceId);
+      await client.setAudioOutputDevice(preferences.audioOutputDeviceId);
       await client.join({
         livekitUrl: token.livekitUrl,
         token: token.token,
       });
       setVoiceSessionChannelKey(channelKey(guildId, channel.channelId));
+      setVoiceSessionCapabilities({
+        canSubscribe: token.canSubscribe,
+        publishSources: [...token.publishSources],
+      });
+      const joinSnapshot = client.snapshot();
+      if (joinSnapshot.lastErrorCode === "audio_device_switch_failed" && joinSnapshot.lastErrorMessage) {
+        setAudioDevicesError(joinSnapshot.lastErrorMessage);
+      }
 
       if (token.canPublish && token.publishSources.includes("microphone")) {
         try {
@@ -2444,6 +2691,46 @@ export function AppShellPage() {
       setVoiceError(mapRtcError(error, "Unable to update microphone."));
     } finally {
       setTogglingVoiceMic(false);
+    }
+  };
+
+  const toggleVoiceCamera = async () => {
+    if (!rtcClient || isTogglingVoiceCamera()) {
+      return;
+    }
+    if (!canToggleVoiceCamera()) {
+      setVoiceError("Camera publish is not allowed for this call.");
+      return;
+    }
+    setTogglingVoiceCamera(true);
+    setVoiceError("");
+    try {
+      const enabled = await rtcClient.toggleCamera();
+      setVoiceStatus(enabled ? "Camera enabled." : "Camera disabled.");
+    } catch (error) {
+      setVoiceError(mapRtcError(error, "Unable to update camera."));
+    } finally {
+      setTogglingVoiceCamera(false);
+    }
+  };
+
+  const toggleVoiceScreenShare = async () => {
+    if (!rtcClient || isTogglingVoiceScreenShare()) {
+      return;
+    }
+    if (!canToggleVoiceScreenShare()) {
+      setVoiceError("Screen share publish is not allowed for this call.");
+      return;
+    }
+    setTogglingVoiceScreenShare(true);
+    setVoiceError("");
+    try {
+      const enabled = await rtcClient.toggleScreenShare();
+      setVoiceStatus(enabled ? "Screen share enabled." : "Screen share stopped.");
+    } catch (error) {
+      setVoiceError(mapRtcError(error, "Unable to update screen share."));
+    } finally {
+      setTogglingVoiceScreenShare(false);
     }
   };
 
@@ -2788,6 +3075,40 @@ export function AppShellPage() {
                     ? "Mute Mic"
                     : "Unmute Mic"}
               </button>
+              <button
+                type="button"
+                onClick={() => void toggleVoiceCamera()}
+                disabled={
+                  isTogglingVoiceCamera() ||
+                  rtcSnapshot().connectionStatus !== "connected" ||
+                  isJoiningVoice() ||
+                  isLeavingVoice() ||
+                  !canToggleVoiceCamera()
+                }
+              >
+                {isTogglingVoiceCamera()
+                  ? "Updating..."
+                  : rtcSnapshot().isCameraEnabled
+                    ? "Camera Off"
+                    : "Camera On"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void toggleVoiceScreenShare()}
+                disabled={
+                  isTogglingVoiceScreenShare() ||
+                  rtcSnapshot().connectionStatus !== "connected" ||
+                  isJoiningVoice() ||
+                  isLeavingVoice() ||
+                  !canToggleVoiceScreenShare()
+                }
+              >
+                {isTogglingVoiceScreenShare()
+                  ? "Updating..."
+                  : rtcSnapshot().isScreenShareEnabled
+                    ? "Stop Share"
+                    : "Share Screen"}
+              </button>
             </Show>
             <button type="button" onClick={() => setChannelRailCollapsed((value) => !value)}>
               {isChannelRailCollapsed() ? "Show channels" : "Hide channels"}
@@ -2870,6 +3191,55 @@ export function AppShellPage() {
                           )}
                         </For>
                       </ul>
+                    </Show>
+                  </section>
+                </Show>
+                <Show when={canShowVoiceHeaderControls() && isVoiceSessionForActiveChannel()}>
+                  <Show when={voiceStreamPermissionHints().length > 0}>
+                    <div class="voice-stream-hints" aria-label="Voice stream permission status">
+                      <For each={voiceStreamPermissionHints()}>
+                        {(hint) => <p>{hint}</p>}
+                      </For>
+                    </div>
+                  </Show>
+                  <section class="voice-video-grid" aria-label="Voice stream tiles">
+                    <p class="voice-video-grid-title">Streams ({visibleVoiceVideoTiles().length})</p>
+                    <Show
+                      when={visibleVoiceVideoTiles().length > 0}
+                      fallback={
+                        <p class="voice-video-grid-empty">
+                          No active camera or screen streams yet.
+                        </p>
+                      }
+                    >
+                      <div class="voice-video-grid-tiles">
+                        <For each={visibleVoiceVideoTiles()}>
+                          {(tile) => (
+                            <article
+                              classList={{
+                                "voice-video-tile": true,
+                                "voice-video-tile-local": tile.isLocal,
+                                "voice-video-tile-screen": tile.source === "screen_share",
+                              }}
+                            >
+                              <p class="voice-video-tile-identity">
+                                {tile.isLocal
+                                  ? `${shortActor(tile.participantIdentity)} (you)`
+                                  : shortActor(tile.participantIdentity)}
+                              </p>
+                              <p class="voice-video-tile-meta">
+                                {tile.source === "screen_share" ? "Screen share" : "Camera"} stream
+                              </p>
+                            </article>
+                          )}
+                        </For>
+                      </div>
+                      <Show when={hiddenVoiceVideoTileCount() > 0}>
+                        <p class="voice-video-grid-overflow">
+                          Showing first {MAX_VISIBLE_STREAM_TILES} of{" "}
+                          {visibleVoiceVideoTiles().length + hiddenVoiceVideoTileCount()} streams.
+                        </p>
+                      </Show>
                     </Show>
                   </section>
                 </Show>
@@ -3510,10 +3880,76 @@ export function AppShellPage() {
                                 <Switch>
                                   <Match when={activeVoiceSettingsSubmenu() === "audio-devices"}>
                                     <p class="group-label">AUDIO DEVICES</p>
-                                    <p class="muted">
-                                      Audio Devices page is active. Microphone and speaker selectors
-                                      are implemented in the next Phase 4 step.
-                                    </p>
+                                    <form class="inline-form" onSubmit={(event) => event.preventDefault()}>
+                                      <label>
+                                        Microphone
+                                        <select
+                                          aria-label="Select microphone device"
+                                          value={voiceDevicePreferences().audioInputDeviceId ?? ""}
+                                          onChange={(event) =>
+                                            void setVoiceDevicePreference(
+                                              "audioinput",
+                                              event.currentTarget.value,
+                                            )
+                                          }
+                                          disabled={isRefreshingAudioDevices()}
+                                        >
+                                          <option value="">System default</option>
+                                          <For each={audioInputDevices()}>
+                                            {(device) => (
+                                              <option value={device.deviceId}>{device.label}</option>
+                                            )}
+                                          </For>
+                                        </select>
+                                      </label>
+                                      <label>
+                                        Speaker
+                                        <select
+                                          aria-label="Select speaker device"
+                                          value={voiceDevicePreferences().audioOutputDeviceId ?? ""}
+                                          onChange={(event) =>
+                                            void setVoiceDevicePreference(
+                                              "audiooutput",
+                                              event.currentTarget.value,
+                                            )
+                                          }
+                                          disabled={isRefreshingAudioDevices()}
+                                        >
+                                          <option value="">System default</option>
+                                          <For each={audioOutputDevices()}>
+                                            {(device) => (
+                                              <option value={device.deviceId}>{device.label}</option>
+                                            )}
+                                          </For>
+                                        </select>
+                                      </label>
+                                      <button
+                                        type="button"
+                                        onClick={() => void refreshAudioDeviceInventory()}
+                                        disabled={isRefreshingAudioDevices()}
+                                      >
+                                        {isRefreshingAudioDevices() ? "Refreshing..." : "Refresh devices"}
+                                      </button>
+                                    </form>
+                                    <Show when={audioDevicesStatus()}>
+                                      <p class="status ok">{audioDevicesStatus()}</p>
+                                    </Show>
+                                    <Show when={audioDevicesError()}>
+                                      <p class="status error">{audioDevicesError()}</p>
+                                    </Show>
+                                    <Show
+                                      when={
+                                        !isRefreshingAudioDevices() &&
+                                        audioInputDevices().length === 0 &&
+                                        audioOutputDevices().length === 0 &&
+                                        !audioDevicesError()
+                                      }
+                                    >
+                                      <p class="muted">
+                                        No audio devices were detected yet. Refresh after granting
+                                        media permissions.
+                                      </p>
+                                    </Show>
                                   </Match>
                                 </Switch>
                               </section>

@@ -1,5 +1,6 @@
 import {
   ConnectionState,
+  type MediaDeviceKind,
   Room,
   RoomEvent,
   type RoomConnectOptions,
@@ -15,6 +16,8 @@ const MAX_ERROR_MESSAGE_CHARS = 256;
 const MAX_SUBSCRIBERS = 32;
 const LIVEKIT_TOKEN_PATTERN = /^[\x21-\x7e]+$/;
 const MAX_ACTIVE_SPEAKERS_CAP = 4_097;
+const MAX_AUDIO_DEVICE_ID_CHARS = 512;
+const MAX_VIDEO_TRACKS_PER_IDENTITY = 2;
 
 export const RTC_DEFAULT_MAX_PARTICIPANTS = 256;
 export const RTC_DEFAULT_MAX_TRACKS_PER_PARTICIPANT = 32;
@@ -31,9 +34,13 @@ export type RtcConnectionStatus =
 export type RtcErrorCode =
   | "invalid_livekit_url"
   | "invalid_livekit_token"
+  | "invalid_audio_device_id"
   | "join_failed"
   | "not_connected"
   | "microphone_toggle_failed"
+  | "camera_toggle_failed"
+  | "screen_share_toggle_failed"
+  | "audio_device_switch_failed"
   | "listener_limit_exceeded";
 
 export interface RtcParticipantSnapshot {
@@ -41,11 +48,23 @@ export interface RtcParticipantSnapshot {
   subscribedTrackCount: number;
 }
 
+export type RtcVideoSource = "camera" | "screen_share";
+
+export interface RtcVideoTrackSnapshot {
+  trackSid: string;
+  participantIdentity: string;
+  source: RtcVideoSource;
+  isLocal: boolean;
+}
+
 export interface RtcSnapshot {
   connectionStatus: RtcConnectionStatus;
   localParticipantIdentity: string | null;
   isMicrophoneEnabled: boolean;
+  isCameraEnabled: boolean;
+  isScreenShareEnabled: boolean;
   participants: RtcParticipantSnapshot[];
+  videoTracks: RtcVideoTrackSnapshot[];
   activeSpeakerIdentities: string[];
   lastErrorCode: RtcErrorCode | null;
   lastErrorMessage: string | null;
@@ -59,10 +78,16 @@ export interface RtcJoinRequest {
 export interface RtcClient {
   snapshot(): RtcSnapshot;
   subscribe(listener: (snapshot: RtcSnapshot) => void): () => void;
+  setAudioInputDevice(deviceId: string | null): Promise<void>;
+  setAudioOutputDevice(deviceId: string | null): Promise<void>;
   join(request: RtcJoinRequest): Promise<void>;
   leave(): Promise<void>;
   setMicrophoneEnabled(enabled: boolean): Promise<void>;
   toggleMicrophone(): Promise<boolean>;
+  setCameraEnabled(enabled: boolean): Promise<void>;
+  toggleCamera(): Promise<boolean>;
+  setScreenShareEnabled(enabled: boolean): Promise<void>;
+  toggleScreenShare(): Promise<boolean>;
   destroy(): Promise<void>;
 }
 
@@ -83,6 +108,7 @@ interface TrackedParticipant {
 
 interface TrackPublicationLike {
   trackSid?: unknown;
+  source?: unknown;
 }
 
 interface RemoteParticipantLike {
@@ -92,7 +118,12 @@ interface RemoteParticipantLike {
 
 interface LocalParticipantLike {
   identity?: unknown;
+  isCameraEnabled?: unknown;
+  isScreenShareEnabled?: unknown;
+  videoTrackPublications?: Map<string, TrackPublicationLike>;
   setMicrophoneEnabled(enabled: boolean): Promise<unknown>;
+  setCameraEnabled(enabled: boolean): Promise<unknown>;
+  setScreenShareEnabled(enabled: boolean): Promise<unknown>;
 }
 
 interface SpeakerParticipantLike {
@@ -110,11 +141,19 @@ interface RtcRoomLike {
   off(event: RoomEvent, listener: RoomListener): unknown;
   connect(url: string, token: string, options?: RoomConnectOptions): Promise<void>;
   disconnect(stopTracks?: boolean): Promise<void>;
+  switchActiveDevice(kind: MediaDeviceKind, deviceId: string, exact?: boolean): Promise<boolean>;
 }
 
 interface RegisteredRoomListener {
   event: RoomEvent;
   listener: RoomListener;
+}
+
+interface TrackedVideoTrack {
+  trackSid: string;
+  participantIdentity: string;
+  source: RtcVideoSource;
+  isLocal: boolean;
 }
 
 interface CreateRtcClientOptions {
@@ -154,7 +193,8 @@ function readTrackSid(publication: unknown): string | null {
   if (!publication || typeof publication !== "object") {
     return null;
   }
-  const sid = (publication as { trackSid?: unknown }).trackSid;
+  const sidCandidate = publication as { trackSid?: unknown; sid?: unknown };
+  const sid = typeof sidCandidate.trackSid === "string" ? sidCandidate.trackSid : sidCandidate.sid;
   if (typeof sid !== "string") {
     return null;
   }
@@ -180,6 +220,24 @@ function collectTrackSids(
     trackSids.add(sid);
   }
   return trackSids;
+}
+
+function sourceFromUnknown(value: unknown): RtcVideoSource | null {
+  if (value === "camera") {
+    return "camera";
+  }
+  if (value === "screen_share" || value === "screenShare") {
+    return "screen_share";
+  }
+  return null;
+}
+
+function readTrackSource(input: unknown): RtcVideoSource | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const source = (input as { source?: unknown }).source;
+  return sourceFromUnknown(source);
 }
 
 function toRtcConnectionStatus(state: ConnectionState): RtcConnectionStatus {
@@ -233,6 +291,41 @@ function requireBoundedDelayMs(
   return value;
 }
 
+function normalizeAudioDeviceId(input: string | null | undefined): string | null {
+  if (input === null || typeof input === "undefined") {
+    return null;
+  }
+  if (typeof input !== "string") {
+    throw new RtcClientError("invalid_audio_device_id", "Audio device ID must be a string.");
+  }
+  if (input.length < 1 || input.length > MAX_AUDIO_DEVICE_ID_CHARS) {
+    throw new RtcClientError(
+      "invalid_audio_device_id",
+      "Audio device ID is empty or too long.",
+    );
+  }
+  for (const char of input) {
+    const code = char.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) {
+      throw new RtcClientError(
+        "invalid_audio_device_id",
+        "Audio device ID contains invalid characters.",
+      );
+    }
+  }
+  return input;
+}
+
+function audioDeviceLabel(kind: MediaDeviceKind): string {
+  if (kind === "audioinput") {
+    return "microphone";
+  }
+  if (kind === "audiooutput") {
+    return "speaker";
+  }
+  return kind;
+}
+
 export function rtcUrlFromInput(input: string): LivekitUrl {
   const value = input.trim();
   if (value.length < 1 || value.length > MAX_LIVEKIT_URL_CHARS) {
@@ -282,6 +375,8 @@ class RtcClientImpl implements RtcClient {
   private readonly activeSpeakerHysteresisMs: number;
   private readonly subscribers = new Set<(snapshot: RtcSnapshot) => void>();
   private readonly participants = new Map<string, TrackedParticipant>();
+  private readonly videoTracksByKey = new Map<string, TrackedVideoTrack>();
+  private readonly videoTrackKeyBySid = new Map<string, string>();
   private readonly activeSpeakerIdentities = new Set<string>();
   private readonly pendingSpeakerOnTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingSpeakerOffTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -292,6 +387,10 @@ class RtcClientImpl implements RtcClient {
   private connectionStatus: RtcConnectionStatus = "disconnected";
   private localParticipantIdentity: string | null = null;
   private isMicrophoneEnabled = false;
+  private isCameraEnabled = false;
+  private isScreenShareEnabled = false;
+  private preferredAudioInputDeviceId: string | null = null;
+  private preferredAudioOutputDeviceId: string | null = null;
   private lastError: { code: RtcErrorCode; message: string } | null = null;
 
   constructor(options: CreateRtcClientOptions) {
@@ -329,12 +428,27 @@ class RtcClientImpl implements RtcClient {
         subscribedTrackCount: participant.trackSids.size,
       }))
       .sort((left, right) => left.identity.localeCompare(right.identity));
+    const videoTracks = Array.from(this.videoTracksByKey.values()).sort((left, right) => {
+      if (left.isLocal !== right.isLocal) {
+        return left.isLocal ? -1 : 1;
+      }
+      if (left.participantIdentity !== right.participantIdentity) {
+        return left.participantIdentity.localeCompare(right.participantIdentity);
+      }
+      if (left.source !== right.source) {
+        return left.source === "camera" ? -1 : 1;
+      }
+      return left.trackSid.localeCompare(right.trackSid);
+    });
 
     return {
       connectionStatus: this.connectionStatus,
       localParticipantIdentity: this.localParticipantIdentity,
       isMicrophoneEnabled: this.isMicrophoneEnabled,
+      isCameraEnabled: this.isCameraEnabled,
+      isScreenShareEnabled: this.isScreenShareEnabled,
       participants,
+      videoTracks,
       activeSpeakerIdentities: [...this.activeSpeakerIdentities].sort((left, right) =>
         left.localeCompare(right),
       ),
@@ -355,6 +469,32 @@ class RtcClientImpl implements RtcClient {
     return () => {
       this.subscribers.delete(listener);
     };
+  }
+
+  setAudioInputDevice(deviceId: string | null): Promise<void> {
+    return this.runSerialized(async () => {
+      this.preferredAudioInputDeviceId = normalizeAudioDeviceId(deviceId);
+      const room = this.activeRoom;
+      if (!room || !this.preferredAudioInputDeviceId) {
+        return;
+      }
+      await this.switchRoomAudioDevice(room, "audioinput", this.preferredAudioInputDeviceId);
+      this.lastError = null;
+      this.emitSnapshot();
+    });
+  }
+
+  setAudioOutputDevice(deviceId: string | null): Promise<void> {
+    return this.runSerialized(async () => {
+      this.preferredAudioOutputDeviceId = normalizeAudioDeviceId(deviceId);
+      const room = this.activeRoom;
+      if (!room || !this.preferredAudioOutputDeviceId) {
+        return;
+      }
+      await this.switchRoomAudioDevice(room, "audiooutput", this.preferredAudioOutputDeviceId);
+      this.lastError = null;
+      this.emitSnapshot();
+    });
   }
 
   join(request: RtcJoinRequest): Promise<void> {
@@ -392,8 +532,18 @@ class RtcClientImpl implements RtcClient {
 
       this.localParticipantIdentity = readIdentity(room.localParticipant);
       this.seedParticipants(room);
+      this.refreshLocalMediaState(room);
       this.reconcileActiveSpeakerState(this.collectSpeakerIdentities(room.activeSpeakers ?? []));
-      this.lastError = null;
+      try {
+        await this.applyPreferredAudioDevices(room);
+        this.lastError = null;
+      } catch (error) {
+        const message = sanitizeErrorMessage(error);
+        this.lastError = {
+          code: "audio_device_switch_failed",
+          message: `Connected, but unable to apply selected audio device: ${message}`,
+        };
+      }
       this.connectionStatus = toRtcConnectionStatus(room.state);
       this.emitSnapshot();
     });
@@ -419,6 +569,34 @@ class RtcClientImpl implements RtcClient {
     return this.runSerialized(async () => {
       const next = !this.isMicrophoneEnabled;
       await this.setMicrophoneEnabledInternal(next);
+      return next;
+    });
+  }
+
+  setCameraEnabled(enabled: boolean): Promise<void> {
+    return this.runSerialized(async () => {
+      await this.setCameraEnabledInternal(enabled);
+    });
+  }
+
+  toggleCamera(): Promise<boolean> {
+    return this.runSerialized(async () => {
+      const next = !this.isCameraEnabled;
+      await this.setCameraEnabledInternal(next);
+      return next;
+    });
+  }
+
+  setScreenShareEnabled(enabled: boolean): Promise<void> {
+    return this.runSerialized(async () => {
+      await this.setScreenShareEnabledInternal(enabled);
+    });
+  }
+
+  toggleScreenShare(): Promise<boolean> {
+    return this.runSerialized(async () => {
+      const next = !this.isScreenShareEnabled;
+      await this.setScreenShareEnabledInternal(next);
       return next;
     });
   }
@@ -451,6 +629,78 @@ class RtcClientImpl implements RtcClient {
       };
       this.emitSnapshot();
       throw new RtcClientError("microphone_toggle_failed", this.lastError.message);
+    }
+  }
+
+  private async setCameraEnabledInternal(enabled: boolean): Promise<void> {
+    const room = this.activeRoom;
+    if (!room) {
+      throw new RtcClientError("not_connected", "Cannot toggle camera while not connected.");
+    }
+    try {
+      await room.localParticipant.setCameraEnabled(enabled);
+      this.refreshLocalMediaState(room);
+      this.lastError = null;
+      this.emitSnapshot();
+    } catch (error) {
+      const message = sanitizeErrorMessage(error);
+      this.lastError = {
+        code: "camera_toggle_failed",
+        message: `Unable to update camera state: ${message}`,
+      };
+      this.emitSnapshot();
+      throw new RtcClientError("camera_toggle_failed", this.lastError.message);
+    }
+  }
+
+  private async setScreenShareEnabledInternal(enabled: boolean): Promise<void> {
+    const room = this.activeRoom;
+    if (!room) {
+      throw new RtcClientError("not_connected", "Cannot toggle screen share while not connected.");
+    }
+    try {
+      await room.localParticipant.setScreenShareEnabled(enabled);
+      this.refreshLocalMediaState(room);
+      this.lastError = null;
+      this.emitSnapshot();
+    } catch (error) {
+      const message = sanitizeErrorMessage(error);
+      this.lastError = {
+        code: "screen_share_toggle_failed",
+        message: `Unable to update screen share state: ${message}`,
+      };
+      this.emitSnapshot();
+      throw new RtcClientError("screen_share_toggle_failed", this.lastError.message);
+    }
+  }
+
+  private async applyPreferredAudioDevices(room: RtcRoomLike): Promise<void> {
+    if (this.preferredAudioInputDeviceId) {
+      await this.switchRoomAudioDevice(room, "audioinput", this.preferredAudioInputDeviceId);
+    }
+    if (this.preferredAudioOutputDeviceId) {
+      await this.switchRoomAudioDevice(room, "audiooutput", this.preferredAudioOutputDeviceId);
+    }
+  }
+
+  private async switchRoomAudioDevice(
+    room: RtcRoomLike,
+    kind: MediaDeviceKind,
+    deviceId: string,
+  ): Promise<void> {
+    try {
+      const switched = await room.switchActiveDevice(kind, deviceId, true);
+      if (!switched) {
+        throw new Error(`selected ${audioDeviceLabel(kind)} is unavailable`);
+      }
+    } catch (error) {
+      const message = sanitizeErrorMessage(error);
+      this.lastError = {
+        code: "audio_device_switch_failed",
+        message: `Unable to switch ${audioDeviceLabel(kind)}: ${message}`,
+      };
+      this.emitSnapshot();
+      throw new RtcClientError("audio_device_switch_failed", this.lastError.message);
     }
   }
 
@@ -508,15 +758,17 @@ class RtcClientImpl implements RtcClient {
         return;
       }
       this.participants.delete(identity);
+      this.removeVideoTracksForIdentity(identity, false);
       this.removeActiveSpeakerIdentity(identity);
       this.emitSnapshot();
     });
 
-    register(RoomEvent.TrackSubscribed, (_track, publication, participant) => {
+    register(RoomEvent.TrackSubscribed, (track, publication, participant) => {
       if (room !== this.activeRoom || !this.isRemoteParticipantLike(participant)) {
         return;
       }
       this.addTrackSubscription(participant, publication);
+      this.upsertRemoteVideoTrack(participant, publication, track);
       this.emitSnapshot();
     });
 
@@ -525,6 +777,31 @@ class RtcClientImpl implements RtcClient {
         return;
       }
       this.removeTrackSubscription(participant, publication);
+      this.removeVideoTrackByPublication(publication);
+      this.emitSnapshot();
+    });
+
+    register(RoomEvent.TrackUnpublished, (publication, participant) => {
+      if (room !== this.activeRoom || !this.isRemoteParticipantLike(participant)) {
+        return;
+      }
+      this.removeVideoTrackByPublication(publication);
+      this.emitSnapshot();
+    });
+
+    register(RoomEvent.LocalTrackPublished, () => {
+      if (room !== this.activeRoom) {
+        return;
+      }
+      this.refreshLocalMediaState(room);
+      this.emitSnapshot();
+    });
+
+    register(RoomEvent.LocalTrackUnpublished, () => {
+      if (room !== this.activeRoom) {
+        return;
+      }
+      this.refreshLocalMediaState(room);
       this.emitSnapshot();
     });
 
@@ -609,9 +886,147 @@ class RtcClientImpl implements RtcClient {
     tracked.trackSids.delete(trackSid);
   }
 
+  private upsertRemoteVideoTrack(
+    participant: RemoteParticipantLike,
+    publication: unknown,
+    track?: unknown,
+  ): void {
+    const identity = readIdentity(participant);
+    const trackSid = readTrackSid(publication) ?? readTrackSid(track);
+    const source = readTrackSource(publication) ?? readTrackSource(track);
+    if (!identity || !trackSid || !source) {
+      return;
+    }
+    this.upsertVideoTrack(identity, false, source, trackSid);
+  }
+
+  private upsertVideoTrack(
+    participantIdentity: string,
+    isLocal: boolean,
+    source: RtcVideoSource,
+    trackSid: string,
+  ): void {
+    const key = this.videoTrackIdentityKey(participantIdentity, isLocal, source);
+    const maxVideoTracks =
+      this.maxParticipants * MAX_VIDEO_TRACKS_PER_IDENTITY + MAX_VIDEO_TRACKS_PER_IDENTITY;
+    if (!this.videoTracksByKey.has(key) && this.videoTracksByKey.size >= maxVideoTracks) {
+      return;
+    }
+    const existingBySid = this.videoTrackKeyBySid.get(trackSid);
+    if (existingBySid && existingBySid !== key) {
+      this.videoTracksByKey.delete(existingBySid);
+      this.videoTrackKeyBySid.delete(trackSid);
+    }
+    const previous = this.videoTracksByKey.get(key);
+    if (previous && previous.trackSid !== trackSid) {
+      this.videoTrackKeyBySid.delete(previous.trackSid);
+    }
+    this.videoTracksByKey.set(key, {
+      trackSid,
+      participantIdentity,
+      source,
+      isLocal,
+    });
+    this.videoTrackKeyBySid.set(trackSid, key);
+  }
+
+  private videoTrackIdentityKey(
+    participantIdentity: string,
+    isLocal: boolean,
+    source: RtcVideoSource,
+  ): string {
+    return `${isLocal ? "local" : "remote"}|${participantIdentity}|${source}`;
+  }
+
+  private removeVideoTrackByPublication(publication: unknown): void {
+    const trackSid = readTrackSid(publication);
+    if (!trackSid) {
+      return;
+    }
+    this.removeVideoTrackBySid(trackSid);
+  }
+
+  private removeVideoTrackBySid(trackSid: string): void {
+    const key = this.videoTrackKeyBySid.get(trackSid);
+    if (!key) {
+      return;
+    }
+    this.videoTrackKeyBySid.delete(trackSid);
+    const tracked = this.videoTracksByKey.get(key);
+    if (tracked?.trackSid === trackSid) {
+      this.videoTracksByKey.delete(key);
+    }
+  }
+
+  private removeVideoTracksForIdentity(participantIdentity: string, isLocal: boolean): void {
+    const toRemove: string[] = [];
+    for (const tracked of this.videoTracksByKey.values()) {
+      if (tracked.participantIdentity !== participantIdentity || tracked.isLocal !== isLocal) {
+        continue;
+      }
+      toRemove.push(tracked.trackSid);
+    }
+    for (const trackSid of toRemove) {
+      this.removeVideoTrackBySid(trackSid);
+    }
+  }
+
+  private hasVideoTrack(
+    participantIdentity: string,
+    isLocal: boolean,
+    source: RtcVideoSource,
+  ): boolean {
+    return this.videoTracksByKey.has(this.videoTrackIdentityKey(participantIdentity, isLocal, source));
+  }
+
+  private refreshLocalMediaState(room: RtcRoomLike): void {
+    const localParticipant = room.localParticipant;
+    const localIdentity = readIdentity(localParticipant);
+    if (!localIdentity) {
+      this.isCameraEnabled = false;
+      this.isScreenShareEnabled = false;
+      return;
+    }
+    this.removeVideoTracksForIdentity(localIdentity, true);
+    if (localParticipant.videoTrackPublications instanceof Map) {
+      for (const publication of localParticipant.videoTrackPublications.values()) {
+        const trackSid = readTrackSid(publication);
+        const source = readTrackSource(publication);
+        if (!trackSid || !source) {
+          continue;
+        }
+        this.upsertVideoTrack(localIdentity, true, source, trackSid);
+      }
+    }
+    this.isCameraEnabled = this.readParticipantMediaEnabled(localParticipant.isCameraEnabled)
+      ?? this.hasVideoTrack(localIdentity, true, "camera");
+    this.isScreenShareEnabled = this.readParticipantMediaEnabled(localParticipant.isScreenShareEnabled)
+      ?? this.hasVideoTrack(localIdentity, true, "screen_share");
+  }
+
+  private readParticipantMediaEnabled(value: unknown): boolean | null {
+    return typeof value === "boolean" ? value : null;
+  }
+
+  private seedRemoteVideoTracks(participant: RemoteParticipantLike): void {
+    const identity = readIdentity(participant);
+    if (!identity) {
+      return;
+    }
+    for (const publication of participant.trackPublications.values()) {
+      const trackSid = readTrackSid(publication);
+      const source = readTrackSource(publication);
+      if (!trackSid || !source) {
+        continue;
+      }
+      this.upsertVideoTrack(identity, false, source, trackSid);
+    }
+  }
+
   private seedParticipants(room: RtcRoomLike): void {
     for (const participant of room.remoteParticipants.values()) {
       this.upsertParticipant(participant);
+      this.seedRemoteVideoTracks(participant);
     }
   }
 
@@ -740,8 +1155,12 @@ class RtcClientImpl implements RtcClient {
     this.latestRawActiveSpeakers.clear();
     this.activeSpeakerIdentities.clear();
     this.participants.clear();
+    this.videoTracksByKey.clear();
+    this.videoTrackKeyBySid.clear();
     this.localParticipantIdentity = null;
     this.isMicrophoneEnabled = false;
+    this.isCameraEnabled = false;
+    this.isScreenShareEnabled = false;
   }
 
   private async disconnectActiveRoom(): Promise<void> {

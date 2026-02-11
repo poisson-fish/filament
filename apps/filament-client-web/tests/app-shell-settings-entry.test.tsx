@@ -4,6 +4,7 @@ import { App } from "../src/App";
 
 const SESSION_STORAGE_KEY = "filament.auth.session.v1";
 const WORKSPACE_CACHE_KEY = "filament.workspace.cache.v1";
+const VOICE_SETTINGS_KEY = "filament.voice.settings.v1";
 
 const ACCESS_TOKEN = "A".repeat(64);
 const REFRESH_TOKEN = "B".repeat(64);
@@ -56,7 +57,10 @@ function requestMethod(init?: RequestInit): string {
   return (init?.method ?? "GET").toUpperCase();
 }
 
-function seedAuthenticatedWorkspace(): void {
+function seedAuthenticatedWorkspace(input?: {
+  audioInputDeviceId?: string | null;
+  audioOutputDeviceId?: string | null;
+}): void {
   window.sessionStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
@@ -76,6 +80,29 @@ function seedAuthenticatedWorkspace(): void {
       },
     ]),
   );
+
+  if (input) {
+    window.localStorage.setItem(
+      VOICE_SETTINGS_KEY,
+      JSON.stringify({
+        audioInputDeviceId: input.audioInputDeviceId ?? null,
+        audioOutputDeviceId: input.audioOutputDeviceId ?? null,
+      }),
+    );
+  }
+}
+
+function stubMediaDevices(
+  devices: Array<{ kind: string; deviceId: string; label: string }>,
+): { enumerateDevices: ReturnType<typeof vi.fn> } {
+  const enumerateDevices = vi.fn(async () => devices);
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      enumerateDevices,
+    },
+  });
+  return { enumerateDevices };
 }
 
 function createSettingsFixtureFetch() {
@@ -140,6 +167,10 @@ describe("app shell settings entry point", () => {
     seedAuthenticatedWorkspace();
     vi.stubGlobal("fetch", createSettingsFixtureFetch());
     vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    const media = stubMediaDevices([
+      { kind: "audioinput", deviceId: "mic-1", label: "Desk Mic" },
+      { kind: "audiooutput", deviceId: "spk-1", label: "Desk Speaker" },
+    ]);
 
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
@@ -158,7 +189,9 @@ describe("app shell settings entry point", () => {
       "aria-current",
       "page",
     );
-    expect(screen.getByText(/Audio Devices page is active/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Select microphone device")).toBeInTheDocument();
+    expect(screen.getByLabelText("Select speaker device")).toBeInTheDocument();
+    await waitFor(() => expect(media.enumerateDevices).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() =>
@@ -170,6 +203,7 @@ describe("app shell settings entry point", () => {
     seedAuthenticatedWorkspace();
     vi.stubGlobal("fetch", createSettingsFixtureFetch());
     vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    stubMediaDevices([]);
 
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
@@ -187,6 +221,7 @@ describe("app shell settings entry point", () => {
     seedAuthenticatedWorkspace();
     vi.stubGlobal("fetch", createSettingsFixtureFetch());
     vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    stubMediaDevices([]);
 
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
@@ -209,6 +244,48 @@ describe("app shell settings entry point", () => {
       "aria-current",
       "page",
     );
-    expect(screen.getByText(/Audio Devices page is active/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Select microphone device")).toBeInTheDocument();
+  });
+
+  it("persists microphone and speaker selections from Audio Devices", async () => {
+    seedAuthenticatedWorkspace({
+      audioInputDeviceId: "mic-1",
+      audioOutputDeviceId: "spk-1",
+    });
+    vi.stubGlobal("fetch", createSettingsFixtureFetch());
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    stubMediaDevices([
+      { kind: "audioinput", deviceId: "mic-1", label: "Desk Mic" },
+      { kind: "audioinput", deviceId: "mic-2", label: "USB Mic" },
+      { kind: "audiooutput", deviceId: "spk-1", label: "Desk Speaker" },
+      { kind: "audiooutput", deviceId: "spk-2", label: "Headphones" },
+    ]);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
+    expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
+
+    const microphoneSelect = await screen.findByLabelText("Select microphone device");
+    const speakerSelect = await screen.findByLabelText("Select speaker device");
+    await screen.findByText("USB Mic");
+    await screen.findByText("Headphones");
+
+    fireEvent.change(microphoneSelect, {
+      target: { value: "mic-2" },
+    });
+    fireEvent.change(speakerSelect, {
+      target: { value: "spk-2" },
+    });
+
+    await waitFor(() => {
+      const raw = window.localStorage.getItem(VOICE_SETTINGS_KEY);
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw!)).toEqual({
+        audioInputDeviceId: "mic-2",
+        audioOutputDeviceId: "spk-2",
+      });
+    });
   });
 });
