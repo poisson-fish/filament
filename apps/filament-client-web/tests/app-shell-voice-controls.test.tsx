@@ -10,7 +10,14 @@ const REFRESH_TOKEN = "B".repeat(64);
 
 const GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const TEXT_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
 const USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+type FixtureChannel = {
+  channelId: string;
+  name: string;
+  kind: "text" | "voice";
+};
+const DEFAULT_CHANNELS: FixtureChannel[] = [{ channelId: CHANNEL_ID, name: "bridge", kind: "voice" }];
 
 const rtcMock = vi.hoisted(() => {
   type MockParticipant = { identity: string; subscribedTrackCount: number };
@@ -215,7 +222,12 @@ function requestMethod(init?: RequestInit): string {
   return (init?.method ?? "GET").toUpperCase();
 }
 
-function seedAuthenticatedWorkspace(): void {
+function extractChannelId(url: string): string | null {
+  const match = url.match(new RegExp(`/guilds/${GUILD_ID}/channels/([^/?]+)`));
+  return match?.[1] ?? null;
+}
+
+function seedAuthenticatedWorkspace(channels: FixtureChannel[] = DEFAULT_CHANNELS): void {
   window.sessionStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
@@ -231,13 +243,15 @@ function seedAuthenticatedWorkspace(): void {
       {
         guildId: GUILD_ID,
         guildName: "Security Ops",
-        channels: [{ channelId: CHANNEL_ID, name: "bridge", kind: "voice" }],
+        channels,
       },
     ]),
   );
 }
 
-function createVoiceFixtureFetch() {
+function createVoiceFixtureFetch(options?: { channels?: FixtureChannel[] }) {
+  const channels = options?.channels ?? DEFAULT_CHANNELS;
+  const channelsById = new Map(channels.map((channel) => [channel.channelId, channel]));
   let voiceTokenBody: unknown = null;
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -256,18 +270,36 @@ function createVoiceFixtureFetch() {
 
     if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
       return jsonResponse({
-        channels: [{ channel_id: CHANNEL_ID, name: "bridge", kind: "voice" }],
+        channels: channels.map((channel) => ({
+          channel_id: channel.channelId,
+          name: channel.name,
+          kind: channel.kind,
+        })),
       });
     }
 
-    if (method === "GET" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)) {
+    const channelId = extractChannelId(url);
+    const channel = channelId ? channelsById.get(channelId) : undefined;
+
+    if (
+      method === "GET" &&
+      channel &&
+      url.includes(`/guilds/${GUILD_ID}/channels/${channel.channelId}/permissions/self`)
+    ) {
       return jsonResponse({
         role: "member",
-        permissions: ["create_message", "subscribe_streams"],
+        permissions:
+          channel.kind === "voice"
+            ? ["create_message", "subscribe_streams"]
+            : ["create_message"],
       });
     }
 
-    if (method === "GET" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages`)) {
+    if (
+      method === "GET" &&
+      channel &&
+      url.includes(`/guilds/${GUILD_ID}/channels/${channel.channelId}/messages`)
+    ) {
       return jsonResponse({ messages: [], next_before: null });
     }
 
@@ -283,7 +315,11 @@ function createVoiceFixtureFetch() {
       return jsonResponse({ incoming: [], outgoing: [] });
     }
 
-    if (method === "POST" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/voice/token`)) {
+    if (
+      method === "POST" &&
+      channel?.kind === "voice" &&
+      url.includes(`/guilds/${GUILD_ID}/channels/${channel.channelId}/voice/token`)
+    ) {
       voiceTokenBody = init?.body ? JSON.parse(init.body as string) : null;
       return jsonResponse({
         token: "T".repeat(96),
@@ -415,5 +451,50 @@ describe("app shell voice controls", () => {
     await waitFor(() =>
       expect(screen.getByText("u.remote.1")).not.toHaveClass("voice-roster-name-speaking"),
     );
+  });
+
+  it("leaves the voice room and clears in-call state when switching channels", async () => {
+    const channels: FixtureChannel[] = [
+      { channelId: CHANNEL_ID, name: "bridge", kind: "voice" },
+      { channelId: TEXT_CHANNEL_ID, name: "general", kind: "text" },
+    ];
+    seedAuthenticatedWorkspace(channels);
+    const fixture = createVoiceFixtureFetch({ channels });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+    expect(await screen.findByLabelText("In-call participants")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "#general" }));
+    await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));
+    expect(screen.queryByLabelText("In-call participants")).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "bridge" }));
+    expect(await screen.findByRole("button", { name: "Join Voice" })).toBeInTheDocument();
+  });
+
+  it("logs out with deterministic RTC teardown and clears local auth state", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(rtcMock.destroy).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Welcome Back")).toBeInTheDocument();
+    expect(window.sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+    expect(window.localStorage.getItem(WORKSPACE_CACHE_KEY)).toBeNull();
   });
 });

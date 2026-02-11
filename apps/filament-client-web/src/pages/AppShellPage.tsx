@@ -934,8 +934,13 @@ export function AppShellPage() {
       stopRtcSubscription = null;
     }
     if (rtcClient) {
-      await rtcClient.destroy();
-      rtcClient = null;
+      try {
+        await rtcClient.destroy();
+      } catch {
+        // Deterministic local teardown even if remote transport cleanup fails.
+      } finally {
+        rtcClient = null;
+      }
     }
     setRtcSnapshot(RTC_DISCONNECTED_SNAPSHOT);
     setVoiceSessionChannelKey(null);

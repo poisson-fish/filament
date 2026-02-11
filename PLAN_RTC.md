@@ -139,7 +139,7 @@ Add a hardened RTC client layer in web app that can connect/disconnect safely us
 Make voice channels usable end-to-end (join, talk, leave) in app shell.
 
 ### Completion Status
-`IN PROGRESS`
+`DONE`
 
 ### Tasks
 - [x] Replace operator-style "Issue token" flow with channel-centric voice controls for `voice` channels.
@@ -149,8 +149,8 @@ Make voice channels usable end-to-end (join, talk, leave) in app shell.
 - [x] Display in-call participant roster from LiveKit participant events.
 - [x] Implement VAD/active-speaker state from LiveKit audio-level events with debounce/hysteresis to avoid flicker.
 - [x] Highlight currently speaking participant names in green in the in-call participant roster.
-- [ ] Ensure channel switch/logout always leaves room and clears media state.
-- [ ] Add UI tests for join/leave/mute state and API payload correctness.
+- [x] Ensure channel switch/logout always leaves room and clears media state.
+- [x] Add UI tests for join/leave/mute state and API payload correctness.
 - [x] Add tests for active-speaker highlighting transitions (`idle -> speaking -> idle`).
 
 ### Exit Criteria
@@ -161,12 +161,22 @@ Make voice channels usable end-to-end (join, talk, leave) in app shell.
 - Tests cover primary voice paths.
 
 ### Implementation Notes (Fill After Completion)
-- Date completed:
-- PR/commit:
+- Date completed: 2026-02-11
+- PR/commit: local changes pending commit
 - Files changed:
+  - `apps/filament-client-web/src/pages/AppShellPage.tsx`
+  - `apps/filament-client-web/tests/app-shell-voice-controls.test.tsx`
+  - `PLAN_RTC.md`
 - Security-impact notes:
+  - RTC teardown now fail-closes in `releaseRtcClient()` and always clears local room/media state even if SDK `destroy()` fails.
+  - Voice session cleanup is now explicitly covered in UI tests for channel switching and logout to reduce regression risk for stale microphone/session state.
+  - Voice token request flow remains voice-first and least-privilege (`publish_sources: ["microphone"]`, `can_subscribe: true`) with test assertions.
 - Tests run:
+  - `npm --prefix apps/filament-client-web test -- app-shell-voice-controls.test.tsx`
+  - `npm --prefix apps/filament-client-web test`
+  - `npm --prefix apps/filament-client-web run build`
 - Follow-ups/debt:
+  - Phase 4 should reuse Phase 3 teardown semantics while layering device-selection state into join/publish behavior.
 
 ### Handoff To Next Phase
 - Keep voice call state stable while layering settings UX for audio-device control.
