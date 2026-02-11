@@ -1,5 +1,7 @@
+import { createSignal } from "solid-js";
 import { describe, expect, it } from "vitest";
 import {
+  openOverlayPanelWithDefaults,
   isOverlayPanelAuthorized,
   overlayPanelClassName,
   overlayPanelTitle,
@@ -43,5 +45,44 @@ describe("app shell overlay controller", () => {
     expect(overlayPanelClassName("workspace-create")).toBe("panel-window panel-window-compact");
     expect(overlayPanelClassName("settings")).toBe("panel-window panel-window-medium");
     expect(overlayPanelClassName("utility")).toBe("panel-window");
+  });
+
+  it("applies deterministic defaults when opening panels", () => {
+    const [panel, setPanel] = createSignal<ReturnType<typeof sanitizeOverlayPanel>>(null);
+    const [workspaceError, setWorkspaceError] = createSignal("workspace-error");
+    const [channelError, setChannelError] = createSignal("channel-error");
+    const [settingsCategory, setSettingsCategory] = createSignal<"voice" | "profile">("profile");
+    const [settingsSubmenu, setSettingsSubmenu] = createSignal<"audio-devices">("audio-devices");
+
+    openOverlayPanelWithDefaults("workspace-create", {
+      setPanel,
+      setWorkspaceError,
+      setChannelCreateError: setChannelError,
+      setActiveSettingsCategory: setSettingsCategory,
+      setActiveVoiceSettingsSubmenu: setSettingsSubmenu,
+    });
+    expect(panel()).toBe("workspace-create");
+    expect(workspaceError()).toBe("");
+
+    openOverlayPanelWithDefaults("channel-create", {
+      setPanel,
+      setWorkspaceError,
+      setChannelCreateError: setChannelError,
+      setActiveSettingsCategory: setSettingsCategory,
+      setActiveVoiceSettingsSubmenu: setSettingsSubmenu,
+    });
+    expect(panel()).toBe("channel-create");
+    expect(channelError()).toBe("");
+
+    openOverlayPanelWithDefaults("settings", {
+      setPanel,
+      setWorkspaceError,
+      setChannelCreateError: setChannelError,
+      setActiveSettingsCategory: setSettingsCategory,
+      setActiveVoiceSettingsSubmenu: setSettingsSubmenu,
+    });
+    expect(panel()).toBe("settings");
+    expect(settingsCategory()).toBe("voice");
+    expect(settingsSubmenu()).toBe("audio-devices");
   });
 });

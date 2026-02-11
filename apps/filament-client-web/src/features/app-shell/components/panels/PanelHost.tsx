@@ -1,14 +1,51 @@
-import { Match, Show, Switch } from "solid-js";
+import { Match, Show, Suspense, Switch, lazy } from "solid-js";
 import type { OverlayPanel } from "../../types";
-import { AttachmentsPanel, type AttachmentsPanelProps } from "./AttachmentsPanel";
 import { ChannelCreatePanel, type ChannelCreatePanelProps } from "./ChannelCreatePanel";
-import { FriendshipsPanel, type FriendshipsPanelProps } from "./FriendshipsPanel";
-import { ModerationPanel, type ModerationPanelProps } from "./ModerationPanel";
-import { PublicDirectoryPanel, type PublicDirectoryPanelProps } from "./PublicDirectoryPanel";
-import { SearchPanel, type SearchPanelProps } from "./SearchPanel";
-import { SettingsPanel, type SettingsPanelProps } from "./SettingsPanel";
-import { UtilityPanel, type UtilityPanelProps } from "./UtilityPanel";
+import type { AttachmentsPanelProps } from "./AttachmentsPanel";
+import type { FriendshipsPanelProps } from "./FriendshipsPanel";
+import type { ModerationPanelProps } from "./ModerationPanel";
+import type { PublicDirectoryPanelProps } from "./PublicDirectoryPanel";
+import type { SearchPanelProps } from "./SearchPanel";
+import type { SettingsPanelProps } from "./SettingsPanel";
+import type { UtilityPanelProps } from "./UtilityPanel";
 import { WorkspaceCreatePanel, type WorkspaceCreatePanelProps } from "./WorkspaceCreatePanel";
+
+const PublicDirectoryPanelLazy = lazy(() =>
+  import("./lazy/PublicPanelGroup").then((module) => ({
+    default: module.PublicDirectoryPanel,
+  })),
+);
+const SettingsPanelLazy = lazy(() =>
+  import("./lazy/PublicPanelGroup").then((module) => ({
+    default: module.SettingsPanel,
+  })),
+);
+const FriendshipsPanelLazy = lazy(() =>
+  import("./lazy/PublicPanelGroup").then((module) => ({
+    default: module.FriendshipsPanel,
+  })),
+);
+
+const SearchPanelLazy = lazy(() =>
+  import("./lazy/OperatorPanelGroup").then((module) => ({
+    default: module.SearchPanel,
+  })),
+);
+const AttachmentsPanelLazy = lazy(() =>
+  import("./lazy/OperatorPanelGroup").then((module) => ({
+    default: module.AttachmentsPanel,
+  })),
+);
+const ModerationPanelLazy = lazy(() =>
+  import("./lazy/OperatorPanelGroup").then((module) => ({
+    default: module.ModerationPanel,
+  })),
+);
+const UtilityPanelLazy = lazy(() =>
+  import("./lazy/OperatorPanelGroup").then((module) => ({
+    default: module.UtilityPanel,
+  })),
+);
 
 export interface PanelHostProps {
   panel: OverlayPanel | null;
@@ -56,43 +93,45 @@ export function PanelHost(props: PanelHostProps) {
               </button>
             </header>
             <div class="panel-window-body">
-              <Switch>
-                <Match when={panelAccessor() === "workspace-create"}>
-                  <WorkspaceCreatePanel {...props.workspaceCreatePanelProps} />
-                </Match>
+              <Suspense fallback={<p class="panel-note">Loading panel...</p>}>
+                <Switch>
+                  <Match when={panelAccessor() === "workspace-create"}>
+                    <WorkspaceCreatePanel {...props.workspaceCreatePanelProps} />
+                  </Match>
 
-                <Match when={panelAccessor() === "channel-create" && props.canManageWorkspaceChannels}>
-                  <ChannelCreatePanel {...props.channelCreatePanelProps} />
-                </Match>
+                  <Match when={panelAccessor() === "channel-create" && props.canManageWorkspaceChannels}>
+                    <ChannelCreatePanel {...props.channelCreatePanelProps} />
+                  </Match>
 
-                <Match when={panelAccessor() === "public-directory"}>
-                  <PublicDirectoryPanel {...props.publicDirectoryPanelProps} />
-                </Match>
+                  <Match when={panelAccessor() === "public-directory"}>
+                    <PublicDirectoryPanelLazy {...props.publicDirectoryPanelProps} />
+                  </Match>
 
-                <Match when={panelAccessor() === "settings"}>
-                  <SettingsPanel {...props.settingsPanelProps} />
-                </Match>
+                  <Match when={panelAccessor() === "settings"}>
+                    <SettingsPanelLazy {...props.settingsPanelProps} />
+                  </Match>
 
-                <Match when={panelAccessor() === "friendships"}>
-                  <FriendshipsPanel {...props.friendshipsPanelProps} />
-                </Match>
+                  <Match when={panelAccessor() === "friendships"}>
+                    <FriendshipsPanelLazy {...props.friendshipsPanelProps} />
+                  </Match>
 
-                <Match when={panelAccessor() === "search" && props.canAccessActiveChannel}>
-                  <SearchPanel {...props.searchPanelProps} />
-                </Match>
+                  <Match when={panelAccessor() === "search" && props.canAccessActiveChannel}>
+                    <SearchPanelLazy {...props.searchPanelProps} />
+                  </Match>
 
-                <Match when={panelAccessor() === "attachments" && props.canAccessActiveChannel}>
-                  <AttachmentsPanel {...props.attachmentsPanelProps} />
-                </Match>
+                  <Match when={panelAccessor() === "attachments" && props.canAccessActiveChannel}>
+                    <AttachmentsPanelLazy {...props.attachmentsPanelProps} />
+                  </Match>
 
-                <Match when={panelAccessor() === "moderation" && props.hasModerationAccess}>
-                  <ModerationPanel {...props.moderationPanelProps} />
-                </Match>
+                  <Match when={panelAccessor() === "moderation" && props.hasModerationAccess}>
+                    <ModerationPanelLazy {...props.moderationPanelProps} />
+                  </Match>
 
-                <Match when={panelAccessor() === "utility"}>
-                  <UtilityPanel {...props.utilityPanelProps} />
-                </Match>
-              </Switch>
+                  <Match when={panelAccessor() === "utility"}>
+                    <UtilityPanelLazy {...props.utilityPanelProps} />
+                  </Match>
+                </Switch>
+              </Suspense>
             </div>
           </section>
         </div>

@@ -238,7 +238,7 @@ describe("operator console permission fixtures", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Open moderation panel" }));
-    expect(screen.getByRole("button", { name: "Apply channel override" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Apply channel override" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("button", { name: "Open voice panel" })).not.toBeInTheDocument();

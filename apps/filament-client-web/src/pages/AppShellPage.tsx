@@ -40,7 +40,6 @@ import {
   type WorkspaceRecord,
 } from "../domain/chat";
 import {
-  ApiError,
   addGuildMember,
   acceptFriendRequest,
   addMessageReaction,
@@ -52,14 +51,10 @@ import {
   deleteFriendRequest,
   deleteChannelAttachment,
   deleteChannelMessage,
-  downloadChannelAttachmentPreview,
   downloadChannelAttachment,
   editChannelMessage,
   echoMessage,
   fetchChannelMessages,
-  fetchChannelPermissionSnapshot,
-  fetchGuildChannels,
-  fetchGuilds,
   fetchFriendRequests,
   fetchFriends,
   fetchHealth,
@@ -85,6 +80,7 @@ import {
   channelKey,
   clearKeysByPrefix,
   createObjectUrl,
+  formatBytes,
   formatVoiceDuration,
   mapError,
   mapRtcError,
@@ -96,14 +92,12 @@ import {
   parsePermissionCsv,
   profileErrorMessage,
   reactionKey,
-  resolveAttachmentPreviewType,
   revokeObjectUrl,
   shortActor,
   upsertReactionEntry,
   upsertWorkspace,
   userIdFromVoiceIdentity,
   voiceConnectionLabel,
-  type MessageMediaPreview,
   type ReactionView,
 } from "../features/app-shell/helpers";
 import { ChannelRail } from "../features/app-shell/components/ChannelRail";
@@ -115,25 +109,24 @@ import { ReactionPickerPortal } from "../features/app-shell/components/messages/
 import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
 import { ServerRail } from "../features/app-shell/components/ServerRail";
 import {
-  collectMediaPreviewTargets,
-  mediaPreviewRetryDelayMs,
-  nextMediaPreviewAttempt,
-  retainRecordByAllowedIds,
-  shouldRetryMediaPreview,
+  createMessageMediaPreviewController,
 } from "../features/app-shell/controllers/message-controller";
 import {
+  createOverlayPanelAuthorizationController,
+  createOverlayPanelEscapeController,
+  openOverlayPanelWithDefaults,
   overlayPanelClassName,
   overlayPanelTitle,
-  sanitizeOverlayPanel,
 } from "../features/app-shell/controllers/overlay-controller";
 import {
-  resolveVoiceConnectionTransition,
+  createVoiceSessionLifecycleController,
   resolveVoiceDevicePreferenceStatus,
   unavailableVoiceDeviceError,
 } from "../features/app-shell/controllers/voice-controller";
 import {
-  filterAccessibleWorkspaces,
-  resolveWorkspaceSelection,
+  createChannelPermissionsController,
+  createWorkspaceBootstrapController,
+  createWorkspaceSelectionController,
 } from "../features/app-shell/controllers/workspace-controller";
 import {
   type OverlayPanel,
@@ -177,9 +170,6 @@ const DELETE_MESSAGE_ICON_URL = new URL(
   import.meta.url,
 ).href;
 const MAX_COMPOSER_ATTACHMENTS = 5;
-const MAX_EMBED_PREVIEW_BYTES = 25 * 1024 * 1024;
-const MAX_MEDIA_PREVIEW_RETRIES = 2;
-const INITIAL_MEDIA_PREVIEW_DELAY_MS = 75;
 const MESSAGE_AUTOLOAD_TOP_THRESHOLD_PX = 120;
 const MESSAGE_LOAD_OLDER_BUTTON_TOP_THRESHOLD_PX = 340;
 const MESSAGE_STICKY_BOTTOM_THRESHOLD_PX = 140;
@@ -353,9 +343,6 @@ export function AppShellPage() {
   const auth = useAuth();
   let composerAttachmentInputRef: HTMLInputElement | undefined;
   let messageListRef: HTMLElement | undefined;
-  const inflightMessageMediaLoads = new Set<string>();
-  const previewRetryAttempts = new Map<string, number>();
-  let previewSessionRefreshPromise: Promise<void> | null = null;
 
   const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>([]);
   const [activeGuildId, setActiveGuildId] = createSignal<GuildId | null>(null);
@@ -369,14 +356,6 @@ export function AppShellPage() {
   const [isLoadingOlder, setLoadingOlder] = createSignal(false);
   const [isSendingMessage, setSendingMessage] = createSignal(false);
   const [messages, setMessages] = createSignal<MessageRecord[]>([]);
-  const [messageMediaByAttachmentId, setMessageMediaByAttachmentId] = createSignal<
-    Record<string, MessageMediaPreview>
-  >({});
-  const [loadingMediaPreviewIds, setLoadingMediaPreviewIds] = createSignal<Record<string, true>>(
-    {},
-  );
-  const [failedMediaPreviewIds, setFailedMediaPreviewIds] = createSignal<Record<string, true>>({});
-  const [mediaPreviewRetryTick, setMediaPreviewRetryTick] = createSignal(0);
   const [nextBefore, setNextBefore] = createSignal<MessageId | null>(null);
   const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
   const [reactionState, setReactionState] = createSignal<Record<string, ReactionView>>({});
@@ -486,8 +465,6 @@ export function AppShellPage() {
   const [audioDevicesError, setAudioDevicesError] = createSignal("");
   const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
   const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(false);
-  let previousVoiceConnectionStatus: RtcSnapshot["connectionStatus"] =
-    RTC_DISCONNECTED_SNAPSHOT.connectionStatus;
   let rtcClient: RtcClient | null = null;
   let stopRtcSubscription: (() => void) | null = null;
 
@@ -883,16 +860,13 @@ export function AppShellPage() {
   };
 
   const openOverlayPanel = (panel: OverlayPanel) => {
-    if (panel === "workspace-create") {
-      setWorkspaceError("");
-    }
-    if (panel === "channel-create") {
-      setChannelCreateError("");
-    }
-    if (panel === "settings") {
-      openSettingsCategory("voice");
-    }
-    setActiveOverlayPanel(panel);
+    openOverlayPanelWithDefaults(panel, {
+      setPanel: setActiveOverlayPanel,
+      setWorkspaceError,
+      setChannelCreateError,
+      setActiveSettingsCategory,
+      setActiveVoiceSettingsSubmenu,
+    });
   };
 
   const closeOverlayPanel = () => {
@@ -901,6 +875,60 @@ export function AppShellPage() {
     }
     setActiveOverlayPanel(null);
   };
+
+  createWorkspaceBootstrapController({
+    session: auth.session,
+    activeGuildId,
+    activeChannelId,
+    setWorkspaces,
+    setActiveGuildId,
+    setActiveChannelId,
+    setWorkspaceBootstrapDone,
+  });
+
+  createWorkspaceSelectionController({
+    workspaces,
+    activeGuildId,
+    activeChannelId,
+    setActiveGuildId,
+    setActiveChannelId,
+  });
+
+  createChannelPermissionsController({
+    session: auth.session,
+    activeGuildId,
+    activeChannelId,
+    setWorkspaces,
+    setChannelPermissions,
+  });
+
+  createOverlayPanelAuthorizationController({
+    panel: activeOverlayPanel,
+    context: () => ({
+      canAccessActiveChannel: canAccessActiveChannel(),
+      canManageWorkspaceChannels: canManageWorkspaceChannels(),
+      hasModerationAccess: hasModerationAccess(),
+    }),
+    setPanel: setActiveOverlayPanel,
+  });
+
+  createOverlayPanelEscapeController({
+    panel: activeOverlayPanel,
+    onEscape: closeOverlayPanel,
+  });
+
+  const {
+    messageMediaByAttachmentId,
+    loadingMediaPreviewIds,
+    failedMediaPreviewIds,
+    retryMediaPreview,
+  } = createMessageMediaPreviewController({
+    session: auth.session,
+    setAuthenticatedSession: auth.setAuthenticatedSession,
+    activeGuildId,
+    activeChannelId,
+    messages,
+  });
 
   const ensureRtcClient = (): RtcClient => {
     if (rtcClient) {
@@ -962,7 +990,7 @@ export function AppShellPage() {
   };
 
   const clearReactionStateForMessage = (messageId: MessageId) => {
-    const prefix = reactionPrefix(messageId);
+    const prefix = `${messageId}|`;
     setReactionState((existing) => clearKeysByPrefix(existing, prefix));
     setPendingReactionByKey((existing) => clearKeysByPrefix(existing, prefix));
     if (openReactionPickerMessageId() === messageId) {
@@ -1021,70 +1049,6 @@ export function AppShellPage() {
       throw new Error("missing_session");
     }
     return fetchMe(session);
-  });
-
-  createEffect(() => {
-    const session = auth.session();
-    if (!session) {
-      setWorkspaces([]);
-      setChannelPermissions(null);
-      setWorkspaceBootstrapDone(true);
-      return;
-    }
-
-    let cancelled = false;
-    setWorkspaceBootstrapDone(false);
-
-    const bootstrap = async () => {
-      try {
-        const guilds = await fetchGuilds(session);
-        const workspacesWithChannels = await Promise.all(
-          guilds.map(async (guild) => {
-            try {
-              return {
-                guildId: guild.guildId,
-                guildName: guild.name,
-                visibility: guild.visibility,
-                channels: await fetchGuildChannels(session, guild.guildId),
-              };
-            } catch (error) {
-              if (error instanceof ApiError && (error.code === "forbidden" || error.code === "not_found")) {
-                return null;
-              }
-              throw error;
-            }
-          }),
-        );
-        if (cancelled) {
-          return;
-        }
-        const filtered = filterAccessibleWorkspaces(workspacesWithChannels);
-        setWorkspaces(filtered);
-        const nextSelection = resolveWorkspaceSelection(
-          filtered,
-          activeGuildId(),
-          activeChannelId(),
-        );
-        setActiveGuildId(nextSelection.guildId);
-        setActiveChannelId(nextSelection.channelId);
-      } catch {
-        if (!cancelled) {
-          setWorkspaces([]);
-          setActiveGuildId(null);
-          setActiveChannelId(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setWorkspaceBootstrapDone(true);
-        }
-      }
-    };
-
-    void bootstrap();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
   });
 
   createEffect(() => {
@@ -1219,63 +1183,6 @@ export function AppShellPage() {
     if (workspaces().length === 0) {
       setActiveOverlayPanel("workspace-create");
     }
-  });
-
-  createEffect(() => {
-    const nextSelection = resolveWorkspaceSelection(
-      workspaces(),
-      activeGuildId(),
-      activeChannelId(),
-    );
-    if (nextSelection.guildId !== activeGuildId()) {
-      setActiveGuildId(nextSelection.guildId);
-    }
-    if (nextSelection.channelId !== activeChannelId()) {
-      setActiveChannelId(nextSelection.channelId);
-    }
-  });
-
-  createEffect(() => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId) {
-      setChannelPermissions(null);
-      return;
-    }
-
-    let cancelled = false;
-    const loadPermissions = async () => {
-      try {
-        const snapshot = await fetchChannelPermissionSnapshot(session, guildId, channelId);
-        if (!cancelled) {
-          setChannelPermissions(snapshot);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setChannelPermissions(null);
-          if (error instanceof ApiError && (error.code === "forbidden" || error.code === "not_found")) {
-            setWorkspaces((existing) => {
-              const updated = existing.map((workspace) => {
-                if (workspace.guildId !== guildId) {
-                  return workspace;
-                }
-                return {
-                  ...workspace,
-                  channels: workspace.channels.filter((channel) => channel.channelId !== channelId),
-                };
-              });
-              return filterAccessibleWorkspaces(updated);
-            });
-          }
-        }
-      }
-    };
-    void loadPermissions();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
   });
 
   const refreshMessages = async () => {
@@ -1447,262 +1354,6 @@ export function AppShellPage() {
   });
 
   createEffect(() => {
-    void mediaPreviewRetryTick();
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    const messageList = messages();
-    if (!session || !guildId || !channelId) {
-      setMessageMediaByAttachmentId((existing) => {
-        for (const preview of Object.values(existing)) {
-          revokeObjectUrl(preview.url);
-        }
-        return {};
-      });
-      setLoadingMediaPreviewIds({});
-      setFailedMediaPreviewIds({});
-      previewRetryAttempts.clear();
-      return;
-    }
-
-    const previewTargets = collectMediaPreviewTargets(
-      messageList,
-      MAX_EMBED_PREVIEW_BYTES,
-    );
-
-    const existingPreviews = untrack(() => messageMediaByAttachmentId());
-    const targetIds = new Set<string>([...previewTargets.keys()]);
-    setMessageMediaByAttachmentId((existing) => {
-      const next: Record<string, MessageMediaPreview> = {};
-      for (const [attachmentId, preview] of Object.entries(existing)) {
-        if (targetIds.has(attachmentId)) {
-          next[attachmentId] = preview;
-        } else {
-          revokeObjectUrl(preview.url);
-          previewRetryAttempts.delete(attachmentId);
-        }
-      }
-      return next;
-    });
-    setLoadingMediaPreviewIds((existing) =>
-      retainRecordByAllowedIds(existing, targetIds),
-    );
-    setFailedMediaPreviewIds((existing) =>
-      retainRecordByAllowedIds(existing, targetIds),
-    );
-
-    let cancelled = false;
-    const refreshSessionForPreview = async (): Promise<void> => {
-      if (previewSessionRefreshPromise) {
-        return previewSessionRefreshPromise;
-      }
-      const current = auth.session();
-      if (!current) {
-        throw new Error("missing_session");
-      }
-      previewSessionRefreshPromise = (async () => {
-        const next = await refreshAuthSession(current.refreshToken);
-        auth.setAuthenticatedSession(next);
-      })();
-      try {
-        await previewSessionRefreshPromise;
-      } finally {
-        previewSessionRefreshPromise = null;
-      }
-    };
-
-    for (const [attachmentId, attachment] of previewTargets) {
-      if (existingPreviews[attachmentId] || inflightMessageMediaLoads.has(attachmentId)) {
-        continue;
-      }
-      inflightMessageMediaLoads.add(attachmentId);
-      setLoadingMediaPreviewIds((existing) => ({
-        ...existing,
-        [attachmentId]: true,
-      }));
-      setFailedMediaPreviewIds((existing) => {
-        if (!existing[attachmentId]) {
-          return existing;
-        }
-        const next = { ...existing };
-        delete next[attachmentId];
-        return next;
-      });
-      const attempt = previewRetryAttempts.get(attachmentId) ?? 0;
-      const runFetch = async () => {
-        let activeSession = auth.session() ?? session;
-        try {
-          return await downloadChannelAttachmentPreview(
-            activeSession,
-            guildId,
-            channelId,
-            attachmentId,
-          );
-        } catch (error) {
-          if (
-            error instanceof ApiError &&
-            error.code === "invalid_credentials" &&
-            attempt === 0
-          ) {
-            await refreshSessionForPreview();
-            activeSession = auth.session() ?? activeSession;
-            return downloadChannelAttachmentPreview(
-              activeSession,
-              guildId,
-              channelId,
-              attachmentId,
-            );
-          }
-          throw error;
-        }
-      };
-      const processFetch = () =>
-        runFetch()
-        .then((payload) => {
-          if (cancelled) {
-            return;
-          }
-          const { mimeType, kind } = resolveAttachmentPreviewType(
-            payload.mimeType,
-            attachment.mimeType,
-            attachment.filename,
-          );
-          if (kind === "file") {
-            setLoadingMediaPreviewIds((existing) => {
-              const next = { ...existing };
-              delete next[attachmentId];
-              return next;
-            });
-            return;
-          }
-          const blob = new Blob([payload.bytes.buffer as ArrayBuffer], { type: mimeType });
-          const url = createObjectUrl(blob);
-          if (!url) {
-            setLoadingMediaPreviewIds((existing) => {
-              const next = { ...existing };
-              delete next[attachmentId];
-              return next;
-            });
-            setFailedMediaPreviewIds((existing) => ({
-              ...existing,
-              [attachmentId]: true,
-            }));
-            return;
-          }
-          setMessageMediaByAttachmentId((existing) => {
-            const previous = existing[attachmentId];
-            if (previous) {
-              revokeObjectUrl(previous.url);
-            }
-            return {
-              ...existing,
-              [attachmentId]: {
-                url,
-                kind,
-                mimeType,
-              },
-            };
-          });
-          previewRetryAttempts.delete(attachmentId);
-          setLoadingMediaPreviewIds((existing) => {
-            const next = { ...existing };
-            delete next[attachmentId];
-            return next;
-          });
-        })
-        .catch(() => {
-          if (cancelled) {
-            return;
-          }
-          const nextAttempt = nextMediaPreviewAttempt(
-            previewRetryAttempts,
-            attachmentId,
-          );
-          previewRetryAttempts.set(attachmentId, nextAttempt);
-          if (shouldRetryMediaPreview(nextAttempt, MAX_MEDIA_PREVIEW_RETRIES)) {
-            window.setTimeout(() => {
-              setMediaPreviewRetryTick((value) => value + 1);
-            }, mediaPreviewRetryDelayMs(nextAttempt));
-            return;
-          }
-          setLoadingMediaPreviewIds((existing) => {
-            const next = { ...existing };
-            delete next[attachmentId];
-            return next;
-          });
-          setFailedMediaPreviewIds((existing) => ({
-            ...existing,
-            [attachmentId]: true,
-          }));
-        })
-        .finally(() => {
-          inflightMessageMediaLoads.delete(attachmentId);
-        });
-      if (attempt === 0) {
-        window.setTimeout(() => {
-          if (cancelled) {
-            inflightMessageMediaLoads.delete(attachmentId);
-            return;
-          }
-          void processFetch();
-        }, INITIAL_MEDIA_PREVIEW_DELAY_MS);
-      } else {
-        void processFetch();
-      }
-    }
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  onCleanup(() => {
-    for (const preview of Object.values(messageMediaByAttachmentId())) {
-      revokeObjectUrl(preview.url);
-    }
-    setMessageMediaByAttachmentId({});
-    setLoadingMediaPreviewIds({});
-    setFailedMediaPreviewIds({});
-  });
-
-  const retryMediaPreview = (attachmentId: AttachmentId) => {
-    previewRetryAttempts.delete(attachmentId);
-    setFailedMediaPreviewIds((existing) => {
-      const next = { ...existing };
-      delete next[attachmentId];
-      return next;
-    });
-    setMediaPreviewRetryTick((value) => value + 1);
-  };
-
-  createEffect(() => {
-    const panel = activeOverlayPanel();
-    const sanitized = sanitizeOverlayPanel(panel, {
-      canAccessActiveChannel: canAccessActiveChannel(),
-      canManageWorkspaceChannels: canManageWorkspaceChannels(),
-      hasModerationAccess: hasModerationAccess(),
-    });
-    if (sanitized !== panel) {
-      setActiveOverlayPanel(sanitized);
-    }
-  });
-
-  createEffect(() => {
-    if (!activeOverlayPanel()) {
-      return;
-    }
-
-    const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        closeOverlayPanel();
-      }
-    };
-
-    window.addEventListener("keydown", onKeydown);
-    onCleanup(() => window.removeEventListener("keydown", onKeydown));
-  });
-
-  createEffect(() => {
     const isVoiceAudioSettingsOpen =
       activeOverlayPanel() === "settings" &&
       activeSettingsCategory() === "voice" &&
@@ -1755,68 +1406,6 @@ export function AppShellPage() {
     });
 
     onCleanup(() => gateway.close());
-  });
-
-  createEffect(() => {
-    if (!isVoiceSessionActive() || !voiceSessionStartedAtUnixMs()) {
-      return;
-    }
-    setVoiceDurationClockUnixMs(Date.now());
-    const timer = window.setInterval(() => {
-      setVoiceDurationClockUnixMs(Date.now());
-    }, 1000);
-    onCleanup(() => window.clearInterval(timer));
-  });
-
-  createEffect(() => {
-    const session = auth.session();
-    const connectedChannelKey = voiceSessionChannelKey();
-    if (!connectedChannelKey || isLeavingVoice()) {
-      return;
-    }
-    if (!session) {
-      void leaveVoiceChannel();
-      return;
-    }
-    const connected = parseChannelKey(connectedChannelKey);
-    if (!connected) {
-      void leaveVoiceChannel();
-      return;
-    }
-    const workspace = workspaces().find((entry) => entry.guildId === connected.guildId) ?? null;
-    const voiceChannelStillVisible = workspace?.channels.some(
-      (channel) => channel.channelId === connected.channelId && channel.kind === "voice",
-    );
-    if (!workspace || !voiceChannelStillVisible) {
-      void leaveVoiceChannel();
-    }
-  });
-
-  createEffect(() => {
-    const snapshot = rtcSnapshot();
-    const transition = resolveVoiceConnectionTransition({
-      previousStatus: previousVoiceConnectionStatus,
-      currentStatus: snapshot.connectionStatus,
-      hasConnectedChannel: Boolean(voiceSessionChannelKey()),
-      isJoining: isJoiningVoice(),
-      isLeaving: isLeavingVoice(),
-    });
-
-    if (transition.shouldClearSession) {
-      setVoiceSessionChannelKey(null);
-      setVoiceSessionStartedAtUnixMs(null);
-      setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
-    }
-    if (transition.statusMessage) {
-      setVoiceStatus(transition.statusMessage);
-      setVoiceError("");
-    }
-    if (transition.errorMessage) {
-      setVoiceStatus("");
-      setVoiceError(transition.errorMessage);
-    }
-
-    previousVoiceConnectionStatus = snapshot.connectionStatus;
   });
 
   onCleanup(() => {
@@ -2453,6 +2042,25 @@ export function AppShellPage() {
       setLeavingVoice(false);
     }
   };
+
+  createVoiceSessionLifecycleController({
+    session: auth.session,
+    workspaces,
+    rtcSnapshot,
+    isVoiceSessionActive,
+    voiceSessionChannelKey,
+    voiceSessionStartedAtUnixMs,
+    isJoiningVoice,
+    isLeavingVoice,
+    leaveVoiceChannel: () => leaveVoiceChannel(),
+    setVoiceDurationClockUnixMs,
+    setVoiceSessionChannelKey,
+    setVoiceSessionStartedAtUnixMs,
+    setVoiceSessionCapabilities,
+    defaultVoiceSessionCapabilities: DEFAULT_VOICE_SESSION_CAPABILITIES,
+    setVoiceStatus,
+    setVoiceError,
+  });
 
   const joinVoiceChannel = async () => {
     const session = auth.session();

@@ -1,9 +1,33 @@
-import type { OverlayPanel } from "../types";
+import { createEffect, onCleanup, type Accessor, type Setter } from "solid-js";
+import type {
+  OverlayPanel,
+  SettingsCategory,
+  VoiceSettingsSubmenu,
+} from "../types";
 
 export interface OverlayAuthorizationContext {
   canAccessActiveChannel: boolean;
   canManageWorkspaceChannels: boolean;
   hasModerationAccess: boolean;
+}
+
+export interface OverlayPanelOpenOptions {
+  setPanel: Setter<OverlayPanel | null>;
+  setWorkspaceError: Setter<string>;
+  setChannelCreateError: Setter<string>;
+  setActiveSettingsCategory: Setter<SettingsCategory>;
+  setActiveVoiceSettingsSubmenu: Setter<VoiceSettingsSubmenu>;
+}
+
+export interface OverlayPanelAuthorizationControllerOptions {
+  panel: Accessor<OverlayPanel | null>;
+  context: Accessor<OverlayAuthorizationContext>;
+  setPanel: Setter<OverlayPanel | null>;
+}
+
+export interface OverlayPanelEscapeControllerOptions {
+  panel: Accessor<OverlayPanel | null>;
+  onEscape: () => void;
 }
 
 export function overlayPanelTitle(panel: OverlayPanel): string {
@@ -66,4 +90,52 @@ export function sanitizeOverlayPanel(
     return null;
   }
   return panel;
+}
+
+export function openOverlayPanelWithDefaults(
+  panel: OverlayPanel,
+  options: OverlayPanelOpenOptions,
+): void {
+  if (panel === "workspace-create") {
+    options.setWorkspaceError("");
+  }
+  if (panel === "channel-create") {
+    options.setChannelCreateError("");
+  }
+  if (panel === "settings") {
+    options.setActiveSettingsCategory("voice");
+    options.setActiveVoiceSettingsSubmenu("audio-devices");
+  }
+  options.setPanel(panel);
+}
+
+export function createOverlayPanelAuthorizationController(
+  options: OverlayPanelAuthorizationControllerOptions,
+): void {
+  createEffect(() => {
+    const panel = options.panel();
+    const sanitized = sanitizeOverlayPanel(panel, options.context());
+    if (sanitized !== panel) {
+      options.setPanel(sanitized);
+    }
+  });
+}
+
+export function createOverlayPanelEscapeController(
+  options: OverlayPanelEscapeControllerOptions,
+): void {
+  createEffect(() => {
+    if (!options.panel()) {
+      return;
+    }
+
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        options.onEscape();
+      }
+    };
+
+    window.addEventListener("keydown", onKeydown);
+    onCleanup(() => window.removeEventListener("keydown", onKeydown));
+  });
 }

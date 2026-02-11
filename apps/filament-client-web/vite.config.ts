@@ -3,6 +3,15 @@ import solid from "vite-plugin-solid";
 
 export default defineConfig({
   plugins: [solid()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          livekit: ["livekit-client"],
+        },
+      },
+    },
+  },
   server: {
     host: "0.0.0.0",
     port: 4173,
