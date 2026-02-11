@@ -36,7 +36,7 @@ Set these variables for `filament-server`:
 - `FILAMENT_ATTACHMENT_ROOT`: required attachment object storage root
 - `FILAMENT_LIVEKIT_API_KEY`: required LiveKit API key for token minting
 - `FILAMENT_LIVEKIT_API_SECRET`: required paired LiveKit secret
-- `FILAMENT_LIVEKIT_URL`: required signaling URL exposed to clients (`ws://` or `wss://`)
+- `FILAMENT_LIVEKIT_URL`: required signaling URL exposed to clients (`ws://` or `wss://`), and it must be reachable from end-user browsers
 - `FILAMENT_BIND_ADDR`: bind socket for server process (default `0.0.0.0:3000`)
 - `FILAMENT_MAX_CREATED_GUILDS_PER_USER`: max guilds an authenticated user may create (default `5`, must be >= `1`)
 - `FILAMENT_HCAPTCHA_SITE_KEY`: optional hCaptcha site key (must be set with secret)
@@ -45,9 +45,20 @@ Set these variables for `filament-server`:
 
 Default compose values:
 - `FILAMENT_ATTACHMENT_ROOT=/var/lib/filament/attachments`
-- `FILAMENT_LIVEKIT_URL=ws://livekit:7880`
+- `FILAMENT_LIVEKIT_URL=ws://localhost:7880`
 - `FILAMENT_BIND_ADDR=0.0.0.0:3000`
 - `FILAMENT_MAX_CREATED_GUILDS_PER_USER=5`
+
+### LiveKit signaling URL reachability
+
+`FILAMENT_LIVEKIT_URL` is returned directly to clients in `/voice/token` responses, so do not set it to internal-only DNS names unless clients can resolve them.
+
+Recommended patterns:
+- local compose on one machine: `ws://localhost:7880`
+- internal dev/staging with DNS: `wss://livekit.dev.example.com`
+- production internet-facing: `wss://livekit.example.com`
+
+Misconfiguration symptom: voice join fails with signaling connection errors even though token issuance succeeds.
 
 ## Attachment Storage Persistence
 

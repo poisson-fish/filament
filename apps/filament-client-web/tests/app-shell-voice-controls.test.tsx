@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { vi } from "vitest";
 import { App } from "../src/App";
+import { RtcClientError } from "../src/lib/rtc";
 
 const SESSION_STORAGE_KEY = "filament.auth.session.v1";
 const WORKSPACE_CACHE_KEY = "filament.workspace.cache.v1";
@@ -57,6 +58,7 @@ const rtcMock = vi.hoisted(() => {
   const listeners = new Set<(snapshot: MockSnapshot) => void>();
   let snapshot = createDisconnectedSnapshot();
   let joinParticipants: MockParticipant[] = [];
+  let joinFailure: Error | null = null;
 
   const cloneParticipants = (participants: MockParticipant[]): MockParticipant[] =>
     participants.map((entry) => ({
@@ -93,6 +95,18 @@ const rtcMock = vi.hoisted(() => {
   };
 
   const join = vi.fn(async () => {
+    if (joinFailure) {
+      const coded = joinFailure as Error & { code?: unknown };
+      const errorCode = typeof coded.code === "string" ? coded.code : "join_failed";
+      snapshot = {
+        ...snapshot,
+        connectionStatus: "error",
+        lastErrorCode: errorCode,
+        lastErrorMessage: joinFailure.message,
+      };
+      emit();
+      throw joinFailure;
+    }
     snapshot = {
       ...snapshot,
       connectionStatus: "connected",
@@ -231,10 +245,38 @@ const rtcMock = vi.hoisted(() => {
     emit();
   };
 
+  const setConnectionStatus = (
+    status: MockSnapshot["connectionStatus"],
+    options?: { lastErrorCode?: string | null; lastErrorMessage?: string | null },
+  ) => {
+    snapshot = {
+      ...snapshot,
+      connectionStatus: status,
+      lastErrorCode:
+        options?.lastErrorCode !== undefined
+          ? options.lastErrorCode
+          : status === "error"
+            ? snapshot.lastErrorCode
+            : null,
+      lastErrorMessage:
+        options?.lastErrorMessage !== undefined
+          ? options.lastErrorMessage
+          : status === "error"
+            ? snapshot.lastErrorMessage
+            : null,
+    };
+    emit();
+  };
+
+  const setJoinFailure = (error: Error | null) => {
+    joinFailure = error;
+  };
+
   const reset = () => {
     listeners.clear();
     snapshot = createDisconnectedSnapshot();
     joinParticipants = [];
+    joinFailure = null;
     createRtcClient.mockClear();
     join.mockClear();
     leave.mockClear();
@@ -265,6 +307,8 @@ const rtcMock = vi.hoisted(() => {
     setJoinParticipants,
     setActiveSpeakerIdentities,
     setVideoTracks,
+    setConnectionStatus,
+    setJoinFailure,
     reset,
   };
 });
@@ -367,6 +411,10 @@ function createVoiceFixtureFetch(options?: {
     can_subscribe?: boolean;
     publish_sources?: string[];
   };
+  voiceTokenError?: {
+    status: number;
+    code: string;
+  };
 }) {
   const channels = options?.channels ?? DEFAULT_CHANNELS;
   const voicePermissions = options?.voicePermissions ?? ["create_message", "subscribe_streams"];
@@ -445,6 +493,9 @@ function createVoiceFixtureFetch(options?: {
       url.includes(`/guilds/${GUILD_ID}/channels/${channel.channelId}/voice/token`)
     ) {
       voiceTokenBody = init?.body ? JSON.parse(init.body as string) : null;
+      if (options?.voiceTokenError) {
+        return jsonResponse({ error: options.voiceTokenError.code }, options.voiceTokenError.status);
+      }
       return jsonResponse({
         token: "T".repeat(96),
         livekit_url: "wss://livekit.example.com",
@@ -644,6 +695,94 @@ describe("app shell voice controls", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText("Screen share disabled: this voice token did not grant screen publish."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows explicit troubleshooting for permission rejection on voice join", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch({
+      voiceTokenError: {
+        status: 403,
+        code: "forbidden",
+      },
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    expect(
+      await screen.findByText("Voice join rejected by channel permissions or overrides."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows explicit troubleshooting for expired session while issuing voice token", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch({
+      voiceTokenError: {
+        status: 401,
+        code: "invalid_credentials",
+      },
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    expect(
+      await screen.findByText(
+        "Voice token request expired with your session. Refresh session or login again, then retry Join Voice.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows explicit troubleshooting for reconnect and unexpected disconnect", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+
+    rtcMock.setConnectionStatus("reconnecting");
+    expect(
+      await screen.findByText("Voice reconnecting. Media may recover automatically."),
+    ).toBeInTheDocument();
+
+    rtcMock.setConnectionStatus("connected");
+    expect(await screen.findByText("Voice reconnected.")).toBeInTheDocument();
+
+    rtcMock.setConnectionStatus("disconnected");
+    expect(
+      await screen.findByText("Voice connection dropped. Select Join Voice to reconnect."),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Join Voice" })).toBeInTheDocument();
+  });
+
+  it("shows explicit troubleshooting when LiveKit join fails", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    rtcMock.setJoinFailure(
+      new RtcClientError("join_failed", "Failed to connect to LiveKit: connection refused"),
+    );
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText("Voice connection failed. Verify LiveKit signaling reachability and retry."),
     ).toBeInTheDocument();
   });
 

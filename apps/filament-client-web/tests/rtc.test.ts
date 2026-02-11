@@ -422,6 +422,36 @@ describe("rtc client lifecycle", () => {
     ]);
   });
 
+  it("reflects reconnect transitions and clears tracked state on disconnect", async () => {
+    const room = new MockRoom();
+    room.remoteParticipants.set("alice", buildRemoteParticipant("alice", ["TRK1"]));
+    const client = createRtcClient({
+      roomFactory: () => room,
+    });
+
+    await client.join({ livekitUrl: validUrl, token: validToken });
+    expect(client.snapshot().connectionStatus).toBe("connected");
+    expect(client.snapshot().participants).toEqual([
+      {
+        identity: "alice",
+        subscribedTrackCount: 1,
+      },
+    ]);
+
+    room.emit(RoomEvent.ConnectionStateChanged, ConnectionState.Reconnecting);
+    expect(client.snapshot().connectionStatus).toBe("reconnecting");
+    expect(client.snapshot().participants).toEqual([
+      {
+        identity: "alice",
+        subscribedTrackCount: 1,
+      },
+    ]);
+
+    room.emit(RoomEvent.ConnectionStateChanged, ConnectionState.Disconnected);
+    expect(client.snapshot().connectionStatus).toBe("disconnected");
+    expect(client.snapshot().participants).toEqual([]);
+  });
+
   it("tracks local and remote camera/screen streams with bounded tile identities", async () => {
     const room = new MockRoom();
     const client = createRtcClient({

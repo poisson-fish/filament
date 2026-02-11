@@ -544,6 +544,33 @@ function mapRtcError(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function isLikelyTokenExpiryMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("token") && normalized.includes("expir");
+}
+
+function mapVoiceJoinError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.code === "invalid_credentials") {
+      return "Voice token request expired with your session. Refresh session or login again, then retry Join Voice.";
+    }
+    if (error.code === "forbidden") {
+      return "Voice join rejected by channel permissions or overrides.";
+    }
+    if (error.code === "rate_limited") {
+      return "Voice token request is rate limited. Wait a moment and retry.";
+    }
+    return mapError(error, "Unable to join voice.");
+  }
+  if (error instanceof RtcClientError && error.code === "join_failed") {
+    if (isLikelyTokenExpiryMessage(error.message)) {
+      return "Voice token expired before signaling completed. Select Join Voice to request a fresh token.";
+    }
+    return "Voice connection failed. Verify LiveKit signaling reachability and retry.";
+  }
+  return mapRtcError(error, "Unable to join voice.");
+}
+
 function voiceConnectionLabel(snapshot: RtcSnapshot): string {
   if (snapshot.connectionStatus === "connecting") {
     return "connecting";
@@ -857,6 +884,8 @@ export function AppShellPage() {
   const [audioDevicesError, setAudioDevicesError] = createSignal("");
   const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
   const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(false);
+  let previousVoiceConnectionStatus: RtcSnapshot["connectionStatus"] =
+    RTC_DISCONNECTED_SNAPSHOT.connectionStatus;
   let rtcClient: RtcClient | null = null;
   let stopRtcSubscription: (() => void) | null = null;
 
@@ -1976,6 +2005,42 @@ export function AppShellPage() {
     }
   });
 
+  createEffect(() => {
+    const snapshot = rtcSnapshot();
+    const connectedChannelKey = voiceSessionChannelKey();
+    const isJoining = isJoiningVoice();
+    const isLeaving = isLeavingVoice();
+
+    if (connectedChannelKey && snapshot.connectionStatus === "reconnecting") {
+      setVoiceStatus("Voice reconnecting. Media may recover automatically.");
+      setVoiceError("");
+    }
+
+    if (
+      connectedChannelKey &&
+      snapshot.connectionStatus === "connected" &&
+      previousVoiceConnectionStatus === "reconnecting"
+    ) {
+      setVoiceStatus("Voice reconnected.");
+      setVoiceError("");
+    }
+
+    if (
+      connectedChannelKey &&
+      snapshot.connectionStatus === "disconnected" &&
+      previousVoiceConnectionStatus !== "disconnected" &&
+      !isJoining &&
+      !isLeaving
+    ) {
+      setVoiceSessionChannelKey(null);
+      setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
+      setVoiceStatus("");
+      setVoiceError("Voice connection dropped. Select Join Voice to reconnect.");
+    }
+
+    previousVoiceConnectionStatus = snapshot.connectionStatus;
+  });
+
   onCleanup(() => {
     void releaseRtcClient();
   });
@@ -2668,11 +2733,7 @@ export function AppShellPage() {
 
       setVoiceStatus("Voice connected in listen-only mode.");
     } catch (error) {
-      setVoiceError(
-        error instanceof ApiError
-          ? mapError(error, "Unable to join voice.")
-          : mapRtcError(error, "Unable to join voice."),
-      );
+      setVoiceError(mapVoiceJoinError(error));
     } finally {
       setJoiningVoice(false);
     }

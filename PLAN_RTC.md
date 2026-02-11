@@ -12,7 +12,7 @@ Ship production-safe Discord-style RTC in the web client: voice channels with op
 - Gateway protocol/client has no RTC events beyond text/presence.
 - Create-channel UX currently captures only name; no channel-type selector exists.
 - Web client has no dedicated settings panel (no left-rail categories, no voice settings surface yet).
-- Local compose default `FILAMENT_LIVEKIT_URL=ws://livekit:7880` is internal-network oriented; client reachability must be validated per environment.
+- Local compose now defaults `FILAMENT_LIVEKIT_URL=ws://localhost:7880`, and deployment docs define browser-reachable `ws://`/`wss://` patterns for local/dev/prod.
 
 ## Phase Rules
 - Every phase must be finishable in one LLM context session.
@@ -281,15 +281,15 @@ Enable camera and screen share controls within voice channels, with permission-a
 Close operational/security gaps and ship with clear runbook + verification.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Verify `FILAMENT_LIVEKIT_URL` guidance and defaults so clients receive a reachable signaling URL in local/dev/prod.
-- [ ] Add explicit troubleshooting UX for token expiry, connection failure, and permission rejection.
-- [ ] Add/extend docs (`docs/API.md`, `docs/DEPLOY.md`, `README.md`) for channel kinds and RTC UX behavior.
-- [ ] Add regression tests for reconnect/disconnect flows and permission edge-cases.
-- [ ] Run and record required gates for touched areas (web tests, relevant Rust tests, fmt/lint as applicable).
-- [ ] Update `PLAN_UX.md` and this file with completion notes.
+- [x] Verify `FILAMENT_LIVEKIT_URL` guidance and defaults so clients receive a reachable signaling URL in local/dev/prod.
+- [x] Add explicit troubleshooting UX for token expiry, connection failure, and permission rejection.
+- [x] Add/extend docs (`docs/API.md`, `docs/DEPLOY.md`, `README.md`) for channel kinds and RTC UX behavior.
+- [x] Add regression tests for reconnect/disconnect flows and permission edge-cases.
+- [x] Run and record required gates for touched areas (web tests, relevant Rust tests, fmt/lint as applicable).
+- [x] Update `PLAN_UX.md` and this file with completion notes.
 
 ### Exit Criteria
 - Local/dev environment can perform a full voice+video call flow with documented setup.
@@ -297,12 +297,28 @@ Close operational/security gaps and ship with clear runbook + verification.
 - Documentation reflects final behavior and known limitations.
 
 ### Implementation Notes (Fill After Completion)
-- Date completed:
-- PR/commit:
+- Date completed: 2026-02-11
+- PR/commit: local changes pending commit
 - Files changed:
+  - `apps/filament-client-web/src/pages/AppShellPage.tsx`
+  - `apps/filament-client-web/tests/app-shell-voice-controls.test.tsx`
+  - `apps/filament-client-web/tests/rtc.test.ts`
+  - `infra/docker-compose.yml`
+  - `docs/API.md`
+  - `docs/DEPLOY.md`
+  - `README.md`
+  - `PLAN_RTC.md`
+  - `PLAN_UX.md`
 - Security-impact notes:
+  - Voice join failures now surface explicit, fail-closed operator messages for permission rejection (`forbidden`), session/token expiry (`invalid_credentials` and token-expired join failures), and signaling failures, reducing ambiguous retry behavior.
+  - Runtime reconnect/disconnect handling now reports reconnect attempts and clears stale active-call capability state when transport drops, preventing stale grant assumptions after unclean disconnects.
+  - Compose/deploy defaults now document browser-reachable LiveKit signaling URLs, reducing a common misconfiguration where tokens are valid but clients cannot resolve/connect to signaling hosts.
 - Tests run:
+  - `npm --prefix apps/filament-client-web test -- rtc.test.ts app-shell-voice-controls.test.tsx`
+  - `npm --prefix apps/filament-client-web test`
+  - `npm --prefix apps/filament-client-web run build`
 - Follow-ups/debt:
+  - Add optional runtime health surface to preflight LiveKit signaling reachability before first join attempt in large deployments with split DNS.
 
 ### Handoff / Next Backlog (Post-Plan)
 - Server-driven cross-client RTC occupancy indicators in channel list.

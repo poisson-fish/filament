@@ -306,6 +306,15 @@ Permission enum values:
   - Response `200`:
     - `{ "token", "livekit_url", "room", "identity", "can_publish", "can_subscribe", "publish_sources", "expires_in_secs" }`
 
+### RTC Client UX Behavior (Web)
+- Voice controls are only shown for channels with `kind: "voice"` and effective `create_message` access.
+- Web client call states are surfaced as `connecting`, `connected`, `reconnecting`, and `error`.
+- Troubleshooting states are explicit:
+  - token/session expiry (`invalid_credentials`) prompts refresh/login before rejoin
+  - permission rejection (`forbidden`) reports channel permission/override denial
+  - signaling/connect failures prompt verification of `livekit_url` reachability from the browser
+- Camera/screen controls remain capability-based on top of voice (`publish_video`, `publish_screen_share`); no separate video-channel mode exists.
+
 ## Gateway WebSocket API
 
 ### Connect

@@ -52,7 +52,7 @@ services:
       FILAMENT_ATTACHMENT_ROOT: /var/lib/filament/attachments
       FILAMENT_LIVEKIT_API_KEY: devkey
       FILAMENT_LIVEKIT_API_SECRET: devsecret
-      FILAMENT_LIVEKIT_URL: ws://livekit:7880
+      FILAMENT_LIVEKIT_URL: ws://localhost:7880
       # Optional signup captcha:
       # FILAMENT_HCAPTCHA_SITE_KEY: "10000000-ffff-ffff-ffff-000000000001"
       # FILAMENT_HCAPTCHA_SECRET: "0x0000000000000000000000000000000000000000"
