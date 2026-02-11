@@ -1297,10 +1297,11 @@ struct MessageResponse {
     content: String,
     markdown_tokens: Vec<MarkdownToken>,
     attachments: Vec<AttachmentResponse>,
+    reactions: Vec<ReactionResponse>,
     created_at_unix: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct ReactionResponse {
     emoji: String,
     count: usize,
@@ -3093,6 +3094,7 @@ async fn get_messages(
                 content: content.clone(),
                 markdown_tokens: tokenize_markdown(&content),
                 attachments: Vec::new(),
+                reactions: Vec::new(),
                 created_at_unix,
             });
         }
@@ -3107,7 +3109,15 @@ async fn get_messages(
             &message_ids,
         )
         .await?;
+        let reaction_map = reaction_map_for_messages_db(
+            pool,
+            &path.guild_id,
+            Some(&path.channel_id),
+            &message_ids,
+        )
+        .await?;
         attach_message_media(&mut messages, &attachment_map);
+        attach_message_reactions(&mut messages, &reaction_map);
         let next_before = messages.last().map(|message| message.message_id.clone());
         return Ok(Json(MessageHistoryResponse {
             messages,
@@ -3145,6 +3155,7 @@ async fn get_messages(
             content: message.content.clone(),
             markdown_tokens: message.markdown_tokens.clone(),
             attachments: Vec::new(),
+            reactions: reaction_summaries_from_users(&message.reactions),
             created_at_unix: message.created_at_unix,
         });
     }
@@ -3309,6 +3320,13 @@ async fn edit_message(
             std::slice::from_ref(&path.message_id),
         )
         .await?;
+        let reaction_map = reaction_map_for_messages_db(
+            pool,
+            &path.guild_id,
+            Some(&path.channel_id),
+            std::slice::from_ref(&path.message_id),
+        )
+        .await?;
         let response = MessageResponse {
             message_id: path.message_id.clone(),
             guild_id: path.guild_id.clone(),
@@ -3317,6 +3335,10 @@ async fn edit_message(
             content: payload.content,
             markdown_tokens,
             attachments: attachment_map
+                .get(&path.message_id)
+                .cloned()
+                .unwrap_or_default(),
+            reactions: reaction_map
                 .get(&path.message_id)
                 .cloned()
                 .unwrap_or_default(),
@@ -3369,6 +3391,7 @@ async fn edit_message(
         content: message.content.clone(),
         markdown_tokens,
         attachments: attachments_for_message_in_memory(&state, &message.attachment_ids).await?,
+        reactions: reaction_summaries_from_users(&message.reactions),
         created_at_unix: message.created_at_unix,
     };
     enqueue_search_operation(
@@ -4598,6 +4621,7 @@ async fn create_message_internal(
             content,
             markdown_tokens,
             attachments,
+            reactions: Vec::new(),
             created_at_unix,
         };
 
@@ -4611,6 +4635,7 @@ async fn create_message_internal(
                 "content": response.content,
                 "markdown_tokens": response.markdown_tokens,
                 "attachments": response.attachments,
+                "reactions": response.reactions,
                 "created_at_unix": response.created_at_unix,
             }),
         );
@@ -4670,19 +4695,21 @@ async fn create_message_internal(
         content: record.content,
         markdown_tokens: record.markdown_tokens,
         attachments,
+        reactions: reaction_summaries_from_users(&record.reactions),
         created_at_unix: record.created_at_unix,
     };
 
     let event = outbound_event(
         "message_create",
         serde_json::json!({
-            "message_id": response.message_id,
-            "guild_id": response.guild_id,
-            "channel_id": response.channel_id,
-            "author_id": response.author_id,
+        "message_id": response.message_id,
+        "guild_id": response.guild_id,
+        "channel_id": response.channel_id,
+        "author_id": response.author_id,
             "content": response.content,
             "markdown_tokens": response.markdown_tokens,
             "attachments": response.attachments,
+            "reactions": response.reactions,
             "created_at_unix": response.created_at_unix,
         }),
     );
@@ -5247,6 +5274,7 @@ async fn hydrate_messages_by_id(
                     markdown_tokens: tokenize_markdown(&content),
                     content,
                     attachments: Vec::new(),
+                    reactions: Vec::new(),
                     created_at_unix,
                 },
             );
@@ -5256,8 +5284,11 @@ async fn hydrate_messages_by_id(
         let attachment_map =
             attachment_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered)
                 .await?;
+        let reaction_map =
+            reaction_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered).await?;
         for (id, message) in &mut by_id {
             message.attachments = attachment_map.get(id).cloned().unwrap_or_default();
+            message.reactions = reaction_map.get(id).cloned().unwrap_or_default();
         }
 
         let mut hydrated = Vec::with_capacity(message_ids.len());
@@ -5288,6 +5319,7 @@ async fn hydrate_messages_by_id(
                     content: message.content.clone(),
                     markdown_tokens: message.markdown_tokens.clone(),
                     attachments: Vec::new(),
+                    reactions: reaction_summaries_from_users(&message.reactions),
                     created_at_unix: message.created_at_unix,
                 },
             );
@@ -5305,6 +5337,7 @@ async fn hydrate_messages_by_id(
                         content: message.content.clone(),
                         markdown_tokens: message.markdown_tokens.clone(),
                         attachments: Vec::new(),
+                        reactions: reaction_summaries_from_users(&message.reactions),
                         created_at_unix: message.created_at_unix,
                     },
                 );
@@ -6018,6 +6051,89 @@ fn attach_message_media(
             .cloned()
             .unwrap_or_default();
     }
+}
+
+fn attach_message_reactions(
+    messages: &mut [MessageResponse],
+    reaction_map: &HashMap<String, Vec<ReactionResponse>>,
+) {
+    for message in messages {
+        message.reactions = reaction_map
+            .get(&message.message_id)
+            .cloned()
+            .unwrap_or_default();
+    }
+}
+
+fn reaction_summaries_from_users(
+    reactions: &HashMap<String, HashSet<UserId>>,
+) -> Vec<ReactionResponse> {
+    let mut summaries = Vec::with_capacity(reactions.len());
+    for (emoji, users) in reactions {
+        summaries.push(ReactionResponse {
+            emoji: emoji.clone(),
+            count: users.len(),
+        });
+    }
+    summaries.sort_by(|left, right| left.emoji.cmp(&right.emoji));
+    summaries
+}
+
+async fn reaction_map_for_messages_db(
+    pool: &PgPool,
+    guild_id: &str,
+    channel_id: Option<&str>,
+    message_ids: &[String],
+) -> Result<HashMap<String, Vec<ReactionResponse>>, AuthFailure> {
+    if message_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = if let Some(channel_id) = channel_id {
+        sqlx::query(
+            "SELECT message_id, emoji, COUNT(*) AS count
+             FROM message_reactions
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = ANY($3::text[])
+             GROUP BY message_id, emoji",
+        )
+        .bind(guild_id)
+        .bind(channel_id)
+        .bind(message_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    } else {
+        sqlx::query(
+            "SELECT message_id, emoji, COUNT(*) AS count
+             FROM message_reactions
+             WHERE guild_id = $1 AND message_id = ANY($2::text[])
+             GROUP BY message_id, emoji",
+        )
+        .bind(guild_id)
+        .bind(message_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    };
+
+    let mut by_message: HashMap<String, Vec<ReactionResponse>> = HashMap::new();
+    for row in rows {
+        let message_id: String = row
+            .try_get("message_id")
+            .map_err(|_| AuthFailure::Internal)?;
+        let emoji: String = row.try_get("emoji").map_err(|_| AuthFailure::Internal)?;
+        let count: i64 = row.try_get("count").map_err(|_| AuthFailure::Internal)?;
+        by_message
+            .entry(message_id)
+            .or_default()
+            .push(ReactionResponse {
+                emoji,
+                count: usize::try_from(count).map_err(|_| AuthFailure::Internal)?,
+            });
+    }
+    for reactions in by_message.values_mut() {
+        reactions.sort_by(|left, right| left.emoji.cmp(&right.emoji));
+    }
+    Ok(by_message)
 }
 
 fn validate_attachment_filename(value: String) -> Result<String, AuthFailure> {

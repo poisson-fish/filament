@@ -344,6 +344,94 @@ async fn assert_message_pagination(
     assert_eq!(page_two_json["messages"][0]["content"], "pg-one");
 }
 
+async fn assert_reaction_persists_in_message_history(
+    app: &axum::Router,
+    auth: &AuthResponse,
+    ip: &str,
+    channel_ref: &ChannelRef,
+) {
+    let create_message = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages",
+            channel_ref.guild_id, channel_ref.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", ip)
+        .body(Body::from(
+            json!({"content":"emoji persistence"}).to_string(),
+        ))
+        .expect("create message request should build");
+    let create_message_response = app
+        .clone()
+        .oneshot(create_message)
+        .await
+        .expect("create message request should execute");
+    assert_eq!(create_message_response.status(), StatusCode::OK);
+    let create_json: Value = parse_json_body(create_message_response).await;
+    let message_id = create_json["message_id"]
+        .as_str()
+        .expect("message id should exist")
+        .to_owned();
+
+    let add_reaction = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages/{}/reactions/%F0%9F%94%A5",
+            channel_ref.guild_id, channel_ref.channel_id, message_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", ip)
+        .body(Body::empty())
+        .expect("reaction request should build");
+    let add_reaction_response = app
+        .clone()
+        .oneshot(add_reaction)
+        .await
+        .expect("reaction request should execute");
+    assert_eq!(add_reaction_response.status(), StatusCode::OK);
+    let reaction_json: Value = parse_json_body(add_reaction_response).await;
+    assert_eq!(reaction_json["emoji"], "🔥");
+    assert_eq!(reaction_json["count"], 1);
+
+    for _ in 0..2 {
+        let history_request = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/guilds/{}/channels/{}/messages?limit=20",
+                channel_ref.guild_id, channel_ref.channel_id
+            ))
+            .header("authorization", format!("Bearer {}", auth.access_token))
+            .header("x-forwarded-for", ip)
+            .body(Body::empty())
+            .expect("history request should build");
+        let history_response = app
+            .clone()
+            .oneshot(history_request)
+            .await
+            .expect("history request should execute");
+        assert_eq!(history_response.status(), StatusCode::OK);
+        let history_json: Value = parse_json_body(history_response).await;
+        let messages = history_json["messages"]
+            .as_array()
+            .expect("messages should be an array");
+        let target = messages
+            .iter()
+            .find(|entry| entry["message_id"] == message_id)
+            .expect("target message should be in history");
+        let reactions = target["reactions"]
+            .as_array()
+            .expect("message reactions should be an array");
+        assert!(
+            reactions
+                .iter()
+                .any(|reaction| reaction["emoji"] == "🔥" && reaction["count"] == 1),
+            "expected fire reaction with count 1 on persisted message"
+        );
+    }
+}
+
 #[tokio::test]
 async fn postgres_backed_phase1_auth_and_realtime_text_flow() {
     let Some(database_url) = postgres_url() else {
@@ -380,6 +468,7 @@ async fn postgres_backed_phase1_auth_and_realtime_text_flow() {
     let guild_name = format!("PG Guild {suffix}");
     let channel_ref = create_channel_context(&app, &auth, client_ip, &guild_name).await;
     assert_message_pagination(&app, &auth, client_ip, &channel_ref).await;
+    assert_reaction_persists_in_message_history(&app, &auth, client_ip, &channel_ref).await;
 }
 
 #[tokio::test]
