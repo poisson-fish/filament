@@ -806,6 +806,7 @@ describe("app shell voice controls", () => {
     expect(screen.getByText("u.local (you)")).toBeInTheDocument();
     expect(screen.getByText("u.remote.1")).toBeInTheDocument();
     expect(screen.getByText("u.remote.2")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Voice stream tiles")).not.toBeInTheDocument();
   });
 
   it("highlights active speakers and clears highlight after returning to idle", async () => {
@@ -821,50 +822,59 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
 
-    expect(await screen.findByText("u.remote.1")).not.toHaveClass("voice-roster-name-speaking");
+    expect(await screen.findByText("u.remote.1")).not.toHaveClass("voice-channel-presence-name-speaking");
 
     rtcMock.setActiveSpeakerIdentities(["u.remote.1"]);
     await waitFor(() =>
-      expect(screen.getByText("u.remote.1")).toHaveClass("voice-roster-name-speaking"),
+      expect(screen.getByText("u.remote.1")).toHaveClass("voice-channel-presence-name-speaking"),
     );
 
     rtcMock.setActiveSpeakerIdentities([]);
     await waitFor(() =>
-      expect(screen.getByText("u.remote.1")).not.toHaveClass("voice-roster-name-speaking"),
+      expect(screen.getByText("u.remote.1")).not.toHaveClass("voice-channel-presence-name-speaking"),
     );
   });
 
-  it("renders stream-tile fallback and enforces a bounded visible tile count", async () => {
+  it("shows live video and screen-share badges next to participants in the channel rail", async () => {
     seedAuthenticatedWorkspace();
     const fixture = createVoiceFixtureFetch();
     vi.stubGlobal("fetch", fixture.fetchMock);
     vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    rtcMock.setJoinParticipants([{ identity: "u.remote.1", subscribedTrackCount: 1 }]);
 
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
-    expect(
-      await screen.findByText("No active camera or screen streams yet."),
-    ).toBeInTheDocument();
 
     rtcMock.setVideoTracks(
-      Array.from({ length: 14 }).map((_, index) => ({
-        trackSid: `R-${index}`,
-        participantIdentity: `u.remote.${index}`,
-        source: "camera",
-        isLocal: false,
-      })),
+      [
+        {
+          trackSid: "L-CAMERA",
+          participantIdentity: "u.local",
+          source: "camera",
+          isLocal: true,
+        },
+        {
+          trackSid: "R-CAMERA",
+          participantIdentity: "u.remote.1",
+          source: "camera",
+          isLocal: false,
+        },
+        {
+          trackSid: "R-SCREEN",
+          participantIdentity: "u.remote.1",
+          source: "screen_share",
+          isLocal: false,
+        },
+      ],
     );
 
-    await waitFor(() =>
-      expect(
-        screen.getByText("Showing first 12 of 14 streams."),
-      ).toBeInTheDocument(),
-    );
-    expect(screen.getByText("u.remote.0")).toBeInTheDocument();
-    expect(screen.queryByText("u.remote.12")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("u.remote.1")).toBeInTheDocument());
+    expect(screen.getAllByText("Video").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Share").length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("Voice stream tiles")).not.toBeInTheDocument();
   });
 
   it("leaves the voice room and clears in-call state when switching channels", async () => {

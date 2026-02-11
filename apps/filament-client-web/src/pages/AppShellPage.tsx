@@ -135,7 +135,6 @@ const RTC_DISCONNECTED_SNAPSHOT: RtcSnapshot = {
   lastErrorCode: null,
   lastErrorMessage: null,
 };
-const MAX_VISIBLE_STREAM_TILES = 12;
 const DEFAULT_VOICE_SESSION_CAPABILITIES: VoiceSessionCapabilities = {
   canSubscribe: false,
   publishSources: [],
@@ -154,9 +153,10 @@ interface MessageReactionView extends ReactionView {
 
 interface VoiceRosterEntry {
   identity: string;
-  subscribedTrackCount: number;
   isLocal: boolean;
   isSpeaking: boolean;
+  hasCamera: boolean;
+  hasScreenShare: boolean;
 }
 
 interface VoiceSessionCapabilities {
@@ -949,6 +949,13 @@ export function AppShellPage() {
     const key = activeChannelKey();
     return Boolean(key) && key === voiceSessionChannelKey() && isVoiceSessionActive();
   });
+  const isVoiceSessionForChannel = (channelId: ChannelId): boolean => {
+    const guildId = activeGuildId();
+    if (!guildId || !isVoiceSessionActive()) {
+      return false;
+    }
+    return voiceSessionChannelKey() === channelKey(guildId, channelId);
+  };
   const hasVoicePublishGrant = (source: MediaPublishSource): boolean =>
     voiceSessionCapabilities().publishSources.includes(source);
   const canToggleVoiceCamera = createMemo(
@@ -971,13 +978,23 @@ export function AppShellPage() {
     const entries: VoiceRosterEntry[] = [];
     const seenIdentities = new Set<string>();
     const activeSpeakers = new Set(snapshot.activeSpeakerIdentities);
+    const identitiesWithCamera = new Set<string>();
+    const identitiesWithScreenShare = new Set<string>();
+    for (const track of snapshot.videoTracks) {
+      if (track.source === "camera") {
+        identitiesWithCamera.add(track.participantIdentity);
+      } else if (track.source === "screen_share") {
+        identitiesWithScreenShare.add(track.participantIdentity);
+      }
+    }
     const localIdentity = snapshot.localParticipantIdentity;
     if (localIdentity) {
       entries.push({
         identity: localIdentity,
-        subscribedTrackCount: 0,
         isLocal: true,
         isSpeaking: activeSpeakers.has(localIdentity),
+        hasCamera: identitiesWithCamera.has(localIdentity),
+        hasScreenShare: identitiesWithScreenShare.has(localIdentity),
       });
       seenIdentities.add(localIdentity);
     }
@@ -987,30 +1004,14 @@ export function AppShellPage() {
       }
       entries.push({
         identity: participant.identity,
-        subscribedTrackCount: participant.subscribedTrackCount,
         isLocal: false,
         isSpeaking: activeSpeakers.has(participant.identity),
+        hasCamera: identitiesWithCamera.has(participant.identity),
+        hasScreenShare: identitiesWithScreenShare.has(participant.identity),
       });
       seenIdentities.add(participant.identity);
     }
     return entries;
-  });
-  const visibleVoiceVideoTiles = createMemo(() => {
-    if (!isVoiceSessionForActiveChannel()) {
-      return [];
-    }
-    const canShowRemote = voiceSessionCapabilities().canSubscribe && canSubscribeVoiceStreams();
-    return rtcSnapshot()
-      .videoTracks.filter((track) => track.isLocal || canShowRemote)
-      .slice(0, MAX_VISIBLE_STREAM_TILES);
-  });
-  const hiddenVoiceVideoTileCount = createMemo(() => {
-    if (!isVoiceSessionForActiveChannel()) {
-      return 0;
-    }
-    const canShowRemote = voiceSessionCapabilities().canSubscribe && canSubscribeVoiceStreams();
-    const total = rtcSnapshot().videoTracks.filter((track) => track.isLocal || canShowRemote).length;
-    return Math.max(0, total - visibleVoiceVideoTiles().length);
   });
   const voiceStreamPermissionHints = createMemo(() => {
     if (!isVoiceSessionForActiveChannel()) {
@@ -1243,7 +1244,12 @@ export function AppShellPage() {
     setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
   };
 
-  const displayUserLabel = (userId: string): string => resolvedUsernames()[userId] ?? shortActor(userId);
+  const actorLabel = (actorId: string): string => resolvedUsernames()[actorId] ?? shortActor(actorId);
+  const displayUserLabel = (userId: string): string => actorLabel(userId);
+  const voiceParticipantLabel = (identity: string, isLocal: boolean): string => {
+    const label = actorLabel(identity);
+    return isLocal ? `${label} (you)` : label;
+  };
 
   const setReactionPending = (key: string, pending: boolean) => {
     setPendingReactionByKey((existing) => {
@@ -1473,6 +1479,13 @@ export function AppShellPage() {
     for (const memberId of onlineMembers()) {
       try {
         lookupIds.add(userIdFromInput(memberId));
+      } catch {
+        continue;
+      }
+    }
+    for (const participant of voiceRosterEntries()) {
+      try {
+        lookupIds.add(userIdFromInput(participant.identity));
       } catch {
         continue;
       }
@@ -3052,12 +3065,68 @@ export function AppShellPage() {
                   <p class="group-label">VOICE CHANNELS</p>
                   <For each={activeVoiceChannels()}>
                     {(channel) => (
-                      <button
-                        classList={{ active: activeChannelId() === channel.channelId }}
-                        onClick={() => setActiveChannelId(channel.channelId)}
-                      >
-                        <span>{channelRailLabel({ kind: channel.kind, name: channel.name })}</span>
-                      </button>
+                      <div class="voice-channel-entry">
+                        <button
+                          classList={{ active: activeChannelId() === channel.channelId }}
+                          onClick={() => setActiveChannelId(channel.channelId)}
+                        >
+                          <span>{channelRailLabel({ kind: channel.kind, name: channel.name })}</span>
+                        </button>
+                        <Show when={isVoiceSessionForChannel(channel.channelId)}>
+                          <section class="voice-channel-presence" aria-label="In-call participants">
+                            <p class="voice-channel-presence-title">
+                              In call ({voiceRosterEntries().length})
+                            </p>
+                            <Show
+                              when={voiceRosterEntries().length > 0}
+                              fallback={
+                                <p class="voice-channel-presence-empty">Waiting for participants...</p>
+                              }
+                            >
+                              <ul>
+                                <For each={voiceRosterEntries()}>
+                                  {(entry) => (
+                                    <li
+                                      classList={{
+                                        "voice-channel-presence-participant": true,
+                                        "voice-channel-presence-participant-local": entry.isLocal,
+                                        "voice-channel-presence-participant-speaking": entry.isSpeaking,
+                                      }}
+                                    >
+                                      <span
+                                        classList={{
+                                          "voice-channel-presence-name": true,
+                                          "voice-channel-presence-name-speaking": entry.isSpeaking,
+                                        }}
+                                      >
+                                        {voiceParticipantLabel(entry.identity, entry.isLocal)}
+                                      </span>
+                                      <span class="voice-channel-presence-badges">
+                                        <Show when={entry.hasCamera}>
+                                          <span class="voice-participant-media-badge video">Video</span>
+                                        </Show>
+                                        <Show when={entry.hasScreenShare}>
+                                          <span class="voice-participant-media-badge screen">Share</span>
+                                        </Show>
+                                      </span>
+                                    </li>
+                                  )}
+                                </For>
+                              </ul>
+                            </Show>
+                            <Show when={voiceStreamPermissionHints().length > 0}>
+                              <div
+                                class="voice-channel-stream-hints"
+                                aria-label="Voice stream permission status"
+                              >
+                                <For each={voiceStreamPermissionHints()}>
+                                  {(hint) => <p>{hint}</p>}
+                                </For>
+                              </div>
+                            </Show>
+                          </section>
+                        </Show>
+                      </div>
                     )}
                   </For>
 
@@ -3220,89 +3289,6 @@ export function AppShellPage() {
                 </Show>
                 <Show when={voiceError() && canShowVoiceHeaderControls()}>
                   <p class="status error panel-note">{voiceError()}</p>
-                </Show>
-                <Show when={canShowVoiceHeaderControls() && isVoiceSessionForActiveChannel()}>
-                  <section class="voice-roster" aria-label="In-call participants">
-                    <p class="voice-roster-title">In call ({voiceRosterEntries().length})</p>
-                    <Show
-                      when={voiceRosterEntries().length > 0}
-                      fallback={<p class="voice-roster-empty">Waiting for participants...</p>}
-                    >
-                      <ul>
-                        <For each={voiceRosterEntries()}>
-                          {(entry) => (
-                            <li
-                              classList={{
-                                "voice-roster-local": entry.isLocal,
-                                "voice-roster-speaking": entry.isSpeaking,
-                              }}
-                            >
-                              <span
-                                classList={{
-                                  "voice-roster-name": true,
-                                  "voice-roster-name-speaking": entry.isSpeaking,
-                                }}
-                              >
-                                {entry.isLocal
-                                  ? `${shortActor(entry.identity)} (you)`
-                                  : shortActor(entry.identity)}
-                              </span>
-                              <span>{entry.subscribedTrackCount} tracks</span>
-                            </li>
-                          )}
-                        </For>
-                      </ul>
-                    </Show>
-                  </section>
-                </Show>
-                <Show when={canShowVoiceHeaderControls() && isVoiceSessionForActiveChannel()}>
-                  <Show when={voiceStreamPermissionHints().length > 0}>
-                    <div class="voice-stream-hints" aria-label="Voice stream permission status">
-                      <For each={voiceStreamPermissionHints()}>
-                        {(hint) => <p>{hint}</p>}
-                      </For>
-                    </div>
-                  </Show>
-                  <section class="voice-video-grid" aria-label="Voice stream tiles">
-                    <p class="voice-video-grid-title">Streams ({visibleVoiceVideoTiles().length})</p>
-                    <Show
-                      when={visibleVoiceVideoTiles().length > 0}
-                      fallback={
-                        <p class="voice-video-grid-empty">
-                          No active camera or screen streams yet.
-                        </p>
-                      }
-                    >
-                      <div class="voice-video-grid-tiles">
-                        <For each={visibleVoiceVideoTiles()}>
-                          {(tile) => (
-                            <article
-                              classList={{
-                                "voice-video-tile": true,
-                                "voice-video-tile-local": tile.isLocal,
-                                "voice-video-tile-screen": tile.source === "screen_share",
-                              }}
-                            >
-                              <p class="voice-video-tile-identity">
-                                {tile.isLocal
-                                  ? `${shortActor(tile.participantIdentity)} (you)`
-                                  : shortActor(tile.participantIdentity)}
-                              </p>
-                              <p class="voice-video-tile-meta">
-                                {tile.source === "screen_share" ? "Screen share" : "Camera"} stream
-                              </p>
-                            </article>
-                          )}
-                        </For>
-                      </div>
-                      <Show when={hiddenVoiceVideoTileCount() > 0}>
-                        <p class="voice-video-grid-overflow">
-                          Showing first {MAX_VISIBLE_STREAM_TILES} of{" "}
-                          {visibleVoiceVideoTiles().length + hiddenVoiceVideoTileCount()} streams.
-                        </p>
-                      </Show>
-                    </Show>
-                  </section>
                 </Show>
                 <Show when={activeChannel() && !canAccessActiveChannel()}>
                   <p class="status error panel-note">
