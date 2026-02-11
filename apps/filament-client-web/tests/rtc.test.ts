@@ -1,4 +1,4 @@
-import { ConnectionState, type MediaDeviceKind, RoomEvent } from "livekit-client";
+import { ConnectionState, RoomEvent } from "livekit-client";
 import type { LivekitToken, LivekitUrl } from "../src/domain/chat";
 import {
   RTC_DEFAULT_ACTIVE_SPEAKER_DEBOUNCE_MS,

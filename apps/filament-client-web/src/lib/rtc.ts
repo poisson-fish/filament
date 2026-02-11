@@ -1,6 +1,5 @@
 import {
   ConnectionState,
-  type MediaDeviceKind,
   Room,
   RoomEvent,
   type RoomConnectOptions,

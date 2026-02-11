@@ -14,7 +14,6 @@ import {
   channelNameFromInput,
   guildVisibilityFromInput,
   guildNameFromInput,
-  messageContentFromInput,
   reactionEmojiFromInput,
   roleFromInput,
   searchQueryFromInput,
@@ -30,7 +29,6 @@ import {
   type GuildId,
   type MessageId,
   type MessageRecord,
-  type ReactionEmoji,
   type GuildRecord,
   type MediaPublishSource,
   type PermissionName,
@@ -42,17 +40,13 @@ import {
 import {
   addGuildMember,
   acceptFriendRequest,
-  addMessageReaction,
   banGuildMember,
   createChannel,
-  createChannelMessage,
   createFriendRequest,
   createGuild,
   deleteFriendRequest,
   deleteChannelAttachment,
-  deleteChannelMessage,
   downloadChannelAttachment,
-  editChannelMessage,
   echoMessage,
   fetchChannelMessages,
   fetchFriendRequests,
@@ -66,7 +60,6 @@ import {
   rebuildGuildSearchIndex,
   reconcileGuildSearchIndex,
   refreshAuthSession,
-  removeMessageReaction,
   removeFriend,
   searchGuildMessages,
   setChannelRoleOverride,
@@ -78,7 +71,6 @@ import {
   canDiscoverWorkspaceOperation,
   channelHeaderLabel,
   channelKey,
-  clearKeysByPrefix,
   createObjectUrl,
   formatBytes,
   formatVoiceDuration,
@@ -91,10 +83,8 @@ import {
   parseChannelKey,
   parsePermissionCsv,
   profileErrorMessage,
-  reactionKey,
   revokeObjectUrl,
   shortActor,
-  upsertReactionEntry,
   upsertWorkspace,
   userIdFromVoiceIdentity,
   voiceConnectionLabel,
@@ -109,6 +99,7 @@ import { ReactionPickerPortal } from "../features/app-shell/components/messages/
 import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
 import { ServerRail } from "../features/app-shell/components/ServerRail";
 import {
+  createMessageActionsController,
   createMessageMediaPreviewController,
 } from "../features/app-shell/controllers/message-controller";
 import {
@@ -169,7 +160,6 @@ const DELETE_MESSAGE_ICON_URL = new URL(
   "../../resource/coolicons.v4.1/cooliocns SVG/Interface/Trash_Full.svg",
   import.meta.url,
 ).href;
-const MAX_COMPOSER_ATTACHMENTS = 5;
 const MESSAGE_AUTOLOAD_TOP_THRESHOLD_PX = 120;
 const MESSAGE_LOAD_OLDER_BUTTON_TOP_THRESHOLD_PX = 340;
 const MESSAGE_STICKY_BOTTOM_THRESHOLD_PX = 140;
@@ -972,31 +962,52 @@ export function AppShellPage() {
     return isLocal ? `${label} (you)` : label;
   };
 
-  const setReactionPending = (key: string, pending: boolean) => {
-    setPendingReactionByKey((existing) => {
-      if (pending) {
-        if (existing[key]) {
-          return existing;
-        }
-        return { ...existing, [key]: true };
-      }
-      if (!existing[key]) {
-        return existing;
-      }
-      const next = { ...existing };
-      delete next[key];
-      return next;
-    });
-  };
-
-  const clearReactionStateForMessage = (messageId: MessageId) => {
-    const prefix = `${messageId}|`;
-    setReactionState((existing) => clearKeysByPrefix(existing, prefix));
-    setPendingReactionByKey((existing) => clearKeysByPrefix(existing, prefix));
-    if (openReactionPickerMessageId() === messageId) {
-      setOpenReactionPickerMessageId(null);
-    }
-  };
+  const {
+    sendMessage,
+    openComposerAttachmentPicker,
+    onComposerAttachmentInput,
+    removeComposerAttachment,
+    beginEditMessage,
+    cancelEditMessage,
+    saveEditMessage,
+    removeMessage,
+    toggleReactionPicker,
+    toggleMessageReaction,
+    addReactionFromPicker,
+  } = createMessageActionsController({
+    session: auth.session,
+    activeGuildId,
+    activeChannelId,
+    activeChannel,
+    canAccessActiveChannel,
+    composer,
+    setComposer,
+    composerAttachments,
+    setComposerAttachments,
+    composerAttachmentInputElement: () => composerAttachmentInputRef,
+    isSendingMessage,
+    setSendingMessage,
+    setMessageStatus,
+    setMessageError,
+    setMessages,
+    setAttachmentByChannel,
+    isMessageListNearBottom,
+    scrollMessageListToBottom,
+    editingMessageId,
+    setEditingMessageId,
+    editingDraft,
+    setEditingDraft,
+    isSavingEdit,
+    setSavingEdit,
+    deletingMessageId,
+    setDeletingMessageId,
+    reactionState,
+    setReactionState,
+    pendingReactionByKey,
+    setPendingReactionByKey,
+    openReactionPickerMessageId,
+    setOpenReactionPickerMessageId,
+  });
 
   const loadPublicGuildDirectory = async (query?: string) => {
     const session = auth.session();
@@ -1492,274 +1503,6 @@ export function AppShellPage() {
       setChannelCreateError(mapError(error, "Unable to create channel."));
     } finally {
       setCreatingChannel(false);
-    }
-  };
-
-  const sendMessage = async (event: SubmitEvent) => {
-    event.preventDefault();
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId) {
-      setMessageError("Select a channel first.");
-      return;
-    }
-
-    if (isSendingMessage()) {
-      return;
-    }
-
-    setMessageError("");
-    setMessageStatus("");
-    setSendingMessage(true);
-    let uploadedForMessage: AttachmentRecord[] = [];
-    try {
-      const draft = composer().trim();
-      const selectedFiles = composerAttachments();
-      if (draft.length === 0 && selectedFiles.length === 0) {
-        setMessageError("Message must include text or at least one attachment.");
-        return;
-      }
-      for (const file of selectedFiles) {
-        const filename = attachmentFilenameFromInput(file.name);
-        const uploaded = await uploadChannelAttachment(session, guildId, channelId, file, filename);
-        uploadedForMessage.push(uploaded);
-      }
-
-      const created = await createChannelMessage(session, guildId, channelId, {
-        content: messageContentFromInput(draft),
-        attachmentIds:
-          uploadedForMessage.length > 0
-            ? uploadedForMessage.map((record) => record.attachmentId)
-            : undefined,
-      });
-      const shouldStickToBottom = isMessageListNearBottom();
-      setMessages((existing) => mergeMessage(existing, created));
-      if (shouldStickToBottom) {
-        scrollMessageListToBottom();
-      }
-      setComposer("");
-      setComposerAttachments([]);
-      if (composerAttachmentInputRef) {
-        composerAttachmentInputRef.value = "";
-      }
-      if (uploadedForMessage.length > 0) {
-        const key = channelKey(guildId, channelId);
-        setAttachmentByChannel((existing) => {
-          const current = existing[key] ?? [];
-          const uploadedIds = new Set(uploadedForMessage.map((record) => record.attachmentId));
-          const deduped = current.filter((entry) => !uploadedIds.has(entry.attachmentId));
-          return {
-            ...existing,
-            [key]: [...uploadedForMessage, ...deduped],
-          };
-        });
-        setMessageStatus(
-          `Sent with ${uploadedForMessage.length} attachment${uploadedForMessage.length === 1 ? "" : "s"}.`,
-        );
-      }
-    } catch (error) {
-      if (uploadedForMessage.length > 0) {
-        await Promise.allSettled(
-          uploadedForMessage.map((record) =>
-            deleteChannelAttachment(session, guildId, channelId, record.attachmentId),
-          ),
-        );
-      }
-      setMessageError(mapError(error, "Unable to send message."));
-    } finally {
-      setSendingMessage(false);
-    }
-  };
-
-  const openComposerAttachmentPicker = () => {
-    if (!activeChannel() || !canAccessActiveChannel()) {
-      setMessageError("Select a channel first.");
-      return;
-    }
-    composerAttachmentInputRef?.click();
-  };
-
-  const onComposerAttachmentInput = (event: InputEvent & { currentTarget: HTMLInputElement }) => {
-    const incomingFiles = [...(event.currentTarget.files ?? [])];
-    if (incomingFiles.length === 0) {
-      return;
-    }
-
-    setMessageError("");
-    const existing = composerAttachments();
-    const existingKeys = new Set(
-      existing.map((file) => `${file.name}:${file.size}:${file.lastModified}:${file.type}`),
-    );
-    const next = [...existing];
-    let reachedCap = existing.length >= MAX_COMPOSER_ATTACHMENTS;
-    for (const file of incomingFiles) {
-      const dedupeKey = `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
-      if (existingKeys.has(dedupeKey)) {
-        continue;
-      }
-      if (next.length >= MAX_COMPOSER_ATTACHMENTS) {
-        reachedCap = true;
-        break;
-      }
-      next.push(file);
-      existingKeys.add(dedupeKey);
-    }
-    setComposerAttachments(next);
-
-    if (composerAttachmentInputRef) {
-      composerAttachmentInputRef.value = "";
-    }
-    if (reachedCap) {
-      setMessageError(`Maximum ${MAX_COMPOSER_ATTACHMENTS} attachments per message.`);
-    }
-  };
-
-  const removeComposerAttachment = (target: File) => {
-    setComposerAttachments((existing) =>
-      existing.filter(
-        (file) =>
-          !(
-            file.name === target.name &&
-            file.size === target.size &&
-            file.lastModified === target.lastModified &&
-            file.type === target.type
-          ),
-      ),
-    );
-  };
-
-  const beginEditMessage = (message: MessageRecord) => {
-    setEditingMessageId(message.messageId);
-    setEditingDraft(message.content);
-  };
-
-  const cancelEditMessage = () => {
-    setEditingMessageId(null);
-    setEditingDraft("");
-  };
-
-  const saveEditMessage = async (messageId: MessageId) => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId || isSavingEdit()) {
-      return;
-    }
-
-    setSavingEdit(true);
-    setMessageError("");
-    try {
-      const updated = await editChannelMessage(session, guildId, channelId, messageId, {
-        content: messageContentFromInput(editingDraft()),
-      });
-      setMessages((existing) => mergeMessage(existing, updated));
-      setEditingMessageId(null);
-      setEditingDraft("");
-      setMessageStatus("Message updated.");
-    } catch (error) {
-      setMessageError(mapError(error, "Unable to edit message."));
-    } finally {
-      setSavingEdit(false);
-    }
-  };
-
-  const removeMessage = async (messageId: MessageId) => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId || deletingMessageId()) {
-      return;
-    }
-
-    setDeletingMessageId(messageId);
-    setMessageError("");
-    try {
-      await deleteChannelMessage(session, guildId, channelId, messageId);
-      setMessages((existing) => existing.filter((entry) => entry.messageId !== messageId));
-      if (editingMessageId() === messageId) {
-        cancelEditMessage();
-      }
-      clearReactionStateForMessage(messageId);
-      setMessageStatus("Message deleted.");
-    } catch (error) {
-      setMessageError(mapError(error, "Unable to delete message."));
-    } finally {
-      setDeletingMessageId(null);
-    }
-  };
-
-  const toggleReactionPicker = (messageId: MessageId) => {
-    setOpenReactionPickerMessageId((existing) => (existing === messageId ? null : messageId));
-  };
-
-  const toggleMessageReaction = async (messageId: MessageId, emoji: ReactionEmoji) => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId) {
-      return;
-    }
-
-    const key = reactionKey(messageId, emoji);
-    if (pendingReactionByKey()[key]) {
-      return;
-    }
-    setReactionPending(key, true);
-    const state = reactionState()[key] ?? { count: 0, reacted: false };
-
-    try {
-      if (state.reacted) {
-        const response = await removeMessageReaction(session, guildId, channelId, messageId, emoji);
-        setReactionState((existing) =>
-          upsertReactionEntry(existing, key, {
-            count: response.count,
-            reacted: false,
-          }),
-        );
-      } else {
-        const response = await addMessageReaction(session, guildId, channelId, messageId, emoji);
-        setReactionState((existing) =>
-          upsertReactionEntry(existing, key, {
-            count: response.count,
-            reacted: true,
-          }),
-        );
-      }
-    } catch (error) {
-      setMessageError(mapError(error, "Unable to update reaction."));
-    } finally {
-      setReactionPending(key, false);
-    }
-  };
-
-  const addReactionFromPicker = async (messageId: MessageId, emoji: ReactionEmoji) => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId) {
-      return;
-    }
-
-    const key = reactionKey(messageId, emoji);
-    if (pendingReactionByKey()[key]) {
-      return;
-    }
-    setReactionPending(key, true);
-    setOpenReactionPickerMessageId(null);
-
-    try {
-      const response = await addMessageReaction(session, guildId, channelId, messageId, emoji);
-      setReactionState((existing) =>
-        upsertReactionEntry(existing, key, {
-          count: response.count,
-          reacted: true,
-        }),
-      );
-    } catch (error) {
-      setMessageError(mapError(error, "Unable to update reaction."));
-    } finally {
-      setReactionPending(key, false);
     }
   };
 

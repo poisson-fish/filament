@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { messageFromResponse } from "../src/domain/chat";
+import { messageFromResponse, messageIdFromInput } from "../src/domain/chat";
 import {
+  clearReactionRecordsForMessage,
   collectMediaPreviewTargets,
   mediaPreviewRetryDelayMs,
+  mergeComposerAttachmentSelection,
   nextMediaPreviewAttempt,
   retainRecordByAllowedIds,
   shouldRetryMediaPreview,
@@ -101,5 +103,46 @@ describe("app shell message controller", () => {
     );
 
     expect(retained).toEqual({ beta: true });
+  });
+
+  it("deduplicates and caps composer attachment selection", () => {
+    const fileA = new File(["a"], "one.txt", {
+      type: "text/plain",
+      lastModified: 1,
+    });
+    const fileADupe = new File(["a"], "one.txt", {
+      type: "text/plain",
+      lastModified: 1,
+    });
+    const fileB = new File(["b"], "two.txt", {
+      type: "text/plain",
+      lastModified: 2,
+    });
+    const fileC = new File(["c"], "three.txt", {
+      type: "text/plain",
+      lastModified: 3,
+    });
+
+    const merged = mergeComposerAttachmentSelection([fileA], [fileADupe, fileB, fileC], 2);
+
+    expect(merged.files).toEqual([fileA, fileB]);
+    expect(merged.reachedCap).toBe(true);
+  });
+
+  it("clears reaction records for one message prefix only", () => {
+    const firstMessageId = messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB4");
+    const secondMessageId = messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB5");
+    const cleared = clearReactionRecordsForMessage(
+      {
+        [`${firstMessageId}|👍`]: { count: 1, reacted: true },
+        [`${firstMessageId}|🔥`]: { count: 2, reacted: false },
+        [`${secondMessageId}|👍`]: { count: 3, reacted: true },
+      },
+      firstMessageId,
+    );
+
+    expect(cleared).toEqual({
+      [`${secondMessageId}|👍`]: { count: 3, reacted: true },
+    });
   });
 });
