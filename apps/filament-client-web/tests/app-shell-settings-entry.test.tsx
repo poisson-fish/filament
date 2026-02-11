@@ -153,7 +153,12 @@ describe("app shell settings entry point", () => {
       "page",
     );
     expect(screen.getByRole("button", { name: "Open Profile settings category" })).toBeInTheDocument();
-    expect(screen.getByText(/Voice settings baseline is active/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Voice settings submenu")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Voice Audio Devices submenu" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByText(/Audio Devices page is active/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() =>
@@ -198,5 +203,12 @@ describe("app shell settings entry point", () => {
     expect(screen.getByRole("button", { name: "Open Voice settings category" })).not.toHaveAttribute(
       "aria-current",
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Voice settings category" }));
+    expect(screen.getByRole("button", { name: "Open Voice Audio Devices submenu" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByText(/Audio Devices page is active/i)).toBeInTheDocument();
   });
 });

@@ -658,9 +658,16 @@ type OverlayPanel =
   | "utility";
 
 type SettingsCategory = "voice" | "profile";
+type VoiceSettingsSubmenu = "audio-devices";
 
 interface SettingsCategoryItem {
   id: SettingsCategory;
+  label: string;
+  summary: string;
+}
+
+interface VoiceSettingsSubmenuItem {
+  id: VoiceSettingsSubmenu;
   label: string;
   summary: string;
 }
@@ -675,6 +682,14 @@ const SETTINGS_CATEGORIES: SettingsCategoryItem[] = [
     id: "profile",
     label: "Profile",
     summary: "Account and identity placeholder.",
+  },
+];
+
+const VOICE_SETTINGS_SUBMENU: VoiceSettingsSubmenuItem[] = [
+  {
+    id: "audio-devices",
+    label: "Audio Devices",
+    summary: "Select microphone and speaker devices.",
   },
 ];
 
@@ -790,6 +805,8 @@ export function AppShellPage() {
   const [isEchoing, setEchoing] = createSignal(false);
   const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<OverlayPanel | null>(null);
   const [activeSettingsCategory, setActiveSettingsCategory] = createSignal<SettingsCategory>("voice");
+  const [activeVoiceSettingsSubmenu, setActiveVoiceSettingsSubmenu] =
+    createSignal<VoiceSettingsSubmenu>("audio-devices");
   const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
   const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(false);
   let rtcClient: RtcClient | null = null;
@@ -892,6 +909,13 @@ export function AppShellPage() {
     return canDismissWorkspaceCreateForm();
   });
 
+  const openSettingsCategory = (category: SettingsCategory): void => {
+    setActiveSettingsCategory(category);
+    if (category === "voice") {
+      setActiveVoiceSettingsSubmenu("audio-devices");
+    }
+  };
+
   const openOverlayPanel = (panel: OverlayPanel) => {
     if (panel === "workspace-create") {
       setWorkspaceError("");
@@ -900,7 +924,7 @@ export function AppShellPage() {
       setChannelCreateError("");
     }
     if (panel === "settings") {
-      setActiveSettingsCategory("voice");
+      openSettingsCategory("voice");
     }
     setActiveOverlayPanel(panel);
   };
@@ -3433,7 +3457,7 @@ export function AppShellPage() {
                                     type="button"
                                     class="settings-category-button"
                                     classList={{ "settings-category-button-active": isActive() }}
-                                    onClick={() => setActiveSettingsCategory(category.id)}
+                                    onClick={() => openSettingsCategory(category.id)}
                                     aria-label={`Open ${category.label} settings category`}
                                     aria-current={isActive() ? "page" : undefined}
                                   >
@@ -3449,11 +3473,51 @@ export function AppShellPage() {
                       <section class="settings-panel-content" aria-label="Settings content pane">
                         <Switch>
                           <Match when={activeSettingsCategory() === "voice"}>
-                            <p class="group-label">VOICE</p>
-                            <p class="muted">
-                              Voice settings baseline is active. Audio Devices submenu is next in
-                              Phase 4.
-                            </p>
+                            <section class="settings-submenu-layout" aria-label="Voice settings submenu">
+                              <aside class="settings-submenu-rail" aria-label="Voice settings submenu rail">
+                                <p class="group-label">VOICE</p>
+                                <ul class="settings-submenu-list">
+                                  <For each={VOICE_SETTINGS_SUBMENU}>
+                                    {(submenu) => {
+                                      const isActive = () => activeVoiceSettingsSubmenu() === submenu.id;
+                                      return (
+                                        <li>
+                                          <button
+                                            type="button"
+                                            class="settings-submenu-button"
+                                            classList={{
+                                              "settings-submenu-button-active": isActive(),
+                                            }}
+                                            onClick={() => setActiveVoiceSettingsSubmenu(submenu.id)}
+                                            aria-label={`Open Voice ${submenu.label} submenu`}
+                                            aria-current={isActive() ? "page" : undefined}
+                                          >
+                                            <span class="settings-category-name">{submenu.label}</span>
+                                            <span class="settings-category-summary muted">
+                                              {submenu.summary}
+                                            </span>
+                                          </button>
+                                        </li>
+                                      );
+                                    }}
+                                  </For>
+                                </ul>
+                              </aside>
+                              <section
+                                class="settings-submenu-content"
+                                aria-label="Voice settings submenu content"
+                              >
+                                <Switch>
+                                  <Match when={activeVoiceSettingsSubmenu() === "audio-devices"}>
+                                    <p class="group-label">AUDIO DEVICES</p>
+                                    <p class="muted">
+                                      Audio Devices page is active. Microphone and speaker selectors
+                                      are implemented in the next Phase 4 step.
+                                    </p>
+                                  </Match>
+                                </Switch>
+                              </section>
+                            </section>
                           </Match>
                           <Match when={activeSettingsCategory() === "profile"}>
                             <p class="group-label">PROFILE</p>
