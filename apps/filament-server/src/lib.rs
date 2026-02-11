@@ -33,9 +33,9 @@ use axum::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use filament_core::{
     apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
-    has_permission, tokenize_markdown, ChannelName, ChannelPermissionOverwrite, GuildName,
-    LiveKitIdentity, LiveKitRoomName, MarkdownToken, Permission, PermissionSet, Role, UserId,
-    Username,
+    has_permission, tokenize_markdown, ChannelKind, ChannelName, ChannelPermissionOverwrite,
+    GuildName, LiveKitIdentity, LiveKitRoomName, MarkdownToken, Permission, PermissionSet, Role,
+    UserId, Username,
 };
 use filament_protocol::{parse_envelope, Envelope, EventType, PROTOCOL_VERSION};
 use futures_util::{SinkExt, StreamExt};
@@ -417,6 +417,7 @@ struct GuildRecord {
 #[derive(Debug, Clone)]
 struct ChannelRecord {
     name: String,
+    kind: ChannelKind,
     messages: Vec<MessageRecord>,
     role_overrides: HashMap<Role, ChannelPermissionOverwrite>,
 }
@@ -574,11 +575,28 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
                     channel_id TEXT PRIMARY KEY,
                     guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
                     name TEXT NOT NULL,
+                    kind SMALLINT NOT NULL DEFAULT 0,
                     created_at_unix BIGINT NOT NULL
                 )",
             )
             .execute(&mut *tx)
             .await?;
+
+            sqlx::query("ALTER TABLE channels ADD COLUMN IF NOT EXISTS kind SMALLINT")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE channels SET kind = $1 WHERE kind IS NULL")
+                .bind(channel_kind_to_i16(ChannelKind::Text))
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "ALTER TABLE channels ALTER COLUMN kind SET DEFAULT 0",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("ALTER TABLE channels ALTER COLUMN kind SET NOT NULL")
+                .execute(&mut *tx)
+                .await?;
 
             sqlx::query(
                 "CREATE TABLE IF NOT EXISTS messages (
@@ -804,6 +822,21 @@ fn visibility_from_i16(value: i16) -> Option<GuildVisibility> {
     match value {
         0 => Some(GuildVisibility::Private),
         1 => Some(GuildVisibility::Public),
+        _ => None,
+    }
+}
+
+fn channel_kind_to_i16(kind: ChannelKind) -> i16 {
+    match kind {
+        ChannelKind::Text => 0,
+        ChannelKind::Voice => 1,
+    }
+}
+
+fn channel_kind_from_i16(value: i16) -> Option<ChannelKind> {
+    match value {
+        0 => Some(ChannelKind::Text),
+        1 => Some(ChannelKind::Voice),
         _ => None,
     }
 }
@@ -1243,12 +1276,14 @@ struct GuildListResponse {
 #[serde(deny_unknown_fields)]
 struct CreateChannelRequest {
     name: String,
+    kind: Option<ChannelKind>,
 }
 
 #[derive(Debug, Serialize)]
 struct ChannelResponse {
     channel_id: String,
     name: String,
+    kind: ChannelKind,
 }
 
 #[derive(Debug, Serialize)]
@@ -2834,7 +2869,7 @@ async fn list_guild_channels(
 
     if let Some(pool) = &state.db_pool {
         let rows = sqlx::query(
-            "SELECT c.channel_id, c.name, gm.role, co.allow_mask, co.deny_mask
+            "SELECT c.channel_id, c.name, c.kind, gm.role, co.allow_mask, co.deny_mask
              FROM guild_members gm
              JOIN channels c ON c.guild_id = gm.guild_id
              LEFT JOIN channel_role_overrides co
@@ -2880,11 +2915,14 @@ async fn list_guild_channels(
             if !permissions.contains(Permission::CreateMessage) {
                 continue;
             }
+            let channel_kind_raw: i16 = row.try_get("kind").map_err(|_| AuthFailure::Internal)?;
+            let kind = channel_kind_from_i16(channel_kind_raw).ok_or(AuthFailure::Internal)?;
             channels.push(ChannelResponse {
                 channel_id: row
                     .try_get("channel_id")
                     .map_err(|_| AuthFailure::Internal)?,
                 name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
+                kind,
             });
         }
         return Ok(Json(ChannelListResponse { channels }));
@@ -2913,6 +2951,7 @@ async fn list_guild_channels(
             Some(ChannelResponse {
                 channel_id: channel_id.clone(),
                 name: channel.name.clone(),
+                kind: channel.kind,
             })
         })
         .collect::<Vec<_>>();
@@ -2930,6 +2969,7 @@ async fn create_channel(
     ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let name = ChannelName::try_from(payload.name).map_err(|_| AuthFailure::InvalidRequest)?;
+    let kind = payload.kind.unwrap_or(ChannelKind::Text);
 
     if let Some(pool) = &state.db_pool {
         let role_row =
@@ -2950,11 +2990,12 @@ async fn create_channel(
 
         let channel_id = Ulid::new().to_string();
         sqlx::query(
-            "INSERT INTO channels (channel_id, guild_id, name, created_at_unix) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO channels (channel_id, guild_id, name, kind, created_at_unix) VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(&channel_id)
         .bind(&path.guild_id)
         .bind(name.as_str())
+        .bind(channel_kind_to_i16(kind))
         .bind(now_unix())
         .execute(pool)
         .await
@@ -2969,6 +3010,7 @@ async fn create_channel(
         return Ok(Json(ChannelResponse {
             channel_id,
             name: name.as_str().to_owned(),
+            kind,
         }));
     }
 
@@ -2990,6 +3032,7 @@ async fn create_channel(
         channel_id.clone(),
         ChannelRecord {
             name: name.as_str().to_owned(),
+            kind,
             messages: Vec::new(),
             role_overrides: HashMap::new(),
         },
@@ -2998,6 +3041,7 @@ async fn create_channel(
     Ok(Json(ChannelResponse {
         channel_id,
         name: name.as_str().to_owned(),
+        kind,
     }))
 }
 
@@ -7767,6 +7811,7 @@ mod tests {
             channel_id.clone(),
             super::ChannelRecord {
                 name: String::from("gateway-room"),
+                kind: super::ChannelKind::Text,
                 messages: Vec::new(),
                 role_overrides: HashMap::new(),
             },

@@ -38,17 +38,17 @@ Ship production-safe Discord-style RTC in the web client: voice channels with op
 Add explicit channel kinds so text and voice channels exist as first-class entities in API, storage, and UI.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add `ChannelKind` domain type on server (`text`, `voice`) with invariant conversions and tests.
-- [ ] Extend channel persistence schema to store channel kind (safe default: `text` for existing rows).
-- [ ] Update create/list channel APIs to accept/return `kind` with strict DTO parsing.
-- [ ] Update web domain models/cache parsing to include `kind` with backward-compatible fallback only for old cache entries.
-- [ ] Update app shell channel rail grouping (`TEXT CHANNELS`, `VOICE CHANNELS`) without RTC call behavior yet.
-- [ ] Update create-channel UX to include channel type selection (`text` or `voice`) with safe default (`text`) and strict client-side validation.
-- [ ] Add/adjust integration tests (server) and domain/UI tests (web) for channel kind flows.
-- [ ] Update `docs/API.md` for channel kind request/response shape.
+- [x] Add `ChannelKind` domain type on server (`text`, `voice`) with invariant conversions and tests.
+- [x] Extend channel persistence schema to store channel kind (safe default: `text` for existing rows).
+- [x] Update create/list channel APIs to accept/return `kind` with strict DTO parsing.
+- [x] Update web domain models/cache parsing to include `kind` with backward-compatible fallback only for old cache entries.
+- [x] Update app shell channel rail grouping (`TEXT CHANNELS`, `VOICE CHANNELS`) without RTC call behavior yet.
+- [x] Update create-channel UX to include channel type selection (`text` or `voice`) with safe default (`text`) and strict client-side validation.
+- [x] Add/adjust integration tests (server) and domain/UI tests (web) for channel kind flows.
+- [x] Update `docs/API.md` for channel kind request/response shape.
 
 ### Exit Criteria
 - Channel create/list endpoints round-trip channel kind correctly.
@@ -59,12 +59,36 @@ Add explicit channel kinds so text and voice channels exist as first-class entit
 - All touched test suites pass.
 
 ### Implementation Notes (Fill After Completion)
-- Date completed:
-- PR/commit:
+- Date completed: 2026-02-11
+- PR/commit: local changes pending commit
 - Files changed:
+  - `crates/filament-core/src/lib.rs`
+  - `apps/filament-server/src/lib.rs`
+  - `apps/filament-server/tests/postgres_phase1_flow.rs`
+  - `apps/filament-client-web/src/domain/chat.ts`
+  - `apps/filament-client-web/src/lib/api.ts`
+  - `apps/filament-client-web/src/pages/AppShellPage.tsx`
+  - `apps/filament-client-web/tests/domain-chat.test.ts`
+  - `apps/filament-client-web/tests/app-shell-channel-kinds.test.tsx`
+  - `apps/filament-client-web/tests/app-shell-workspace-visibility.test.tsx`
+  - `apps/filament-client-web/tests/app-shell-reactions.test.tsx`
+  - `apps/filament-client-web/tests/app-shell-public-discovery.test.tsx`
+  - `apps/filament-client-web/tests/app-shell-operator-permissions.test.tsx`
+  - `apps/filament-client-web/tests/app-shell-guild-creation-limits.test.tsx`
+  - `apps/filament-client-web/tests/app-shell-friendships.test.tsx`
+  - `apps/filament-client-web/tests/app-shell-composer-attachments.test.tsx`
+  - `docs/API.md`
 - Security-impact notes:
+  - Channel kind is now validated at the domain boundary (`text`/`voice` only) and persisted with server-side numeric enum mapping.
+  - Schema migration backfills legacy rows to `text` and enforces `NOT NULL` to avoid ambiguous channel type behavior.
+  - Web cache fallback defaults only missing legacy `kind` fields to `text`; API payload parsing remains strict for malformed kinds.
 - Tests run:
+  - `cargo test -p filament-core`
+  - `cargo test -p filament-server`
+  - `cargo clippy -p filament-core -p filament-server --all-targets`
+  - `npm --prefix apps/filament-client-web test`
 - Follow-ups/debt:
+  - Phase 2 can consume `channel.kind` directly from `activeChannel()` and workspace cache without additional schema work.
 
 ### Handoff To Next Phase
 - Confirm channel kind is available in `activeChannel()` state and persisted workspace cache.

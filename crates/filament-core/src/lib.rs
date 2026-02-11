@@ -14,6 +14,8 @@ pub const fn project_name() -> &'static str {
 pub enum DomainError {
     #[error("name is invalid")]
     InvalidName,
+    #[error("channel kind is invalid")]
+    InvalidChannelKind,
     #[error("username is invalid")]
     InvalidUsername,
     #[error("user id is invalid")]
@@ -130,6 +132,35 @@ impl TryFrom<String> for ChannelName {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         validate_name(&value, 1, 64)?;
         Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelKind {
+    Text,
+    Voice,
+}
+
+impl ChannelKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Voice => "voice",
+        }
+    }
+}
+
+impl TryFrom<String> for ChannelKind {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "text" => Ok(Self::Text),
+            "voice" => Ok(Self::Voice),
+            _ => Err(DomainError::InvalidChannelKind),
+        }
     }
 }
 
@@ -434,7 +465,7 @@ fn validate_livekit_identifier(value: &str) -> Result<(), DomainError> {
 mod tests {
     use super::{
         apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
-        has_permission, project_name, role_rank, tokenize_markdown, ChannelName,
+        has_permission, project_name, role_rank, tokenize_markdown, ChannelKind, ChannelName,
         ChannelPermissionOverwrite, DomainError, GuildName, LiveKitIdentity, LiveKitRoomName,
         MarkdownToken, Permission, PermissionSet, Role, UserId, Username,
     };
@@ -464,6 +495,18 @@ mod tests {
         let channel = ChannelName::try_from(String::from("general-chat")).unwrap();
         assert_eq!(guild.as_str(), "General Guild");
         assert_eq!(channel.as_str(), "general-chat");
+    }
+
+    #[test]
+    fn channel_kind_enforces_allowed_values() {
+        let text = ChannelKind::try_from(String::from("text")).unwrap();
+        let voice = ChannelKind::try_from(String::from("voice")).unwrap();
+        assert_eq!(text.as_str(), "text");
+        assert_eq!(voice.as_str(), "voice");
+        assert_eq!(
+            ChannelKind::try_from(String::from("video")).unwrap_err(),
+            DomainError::InvalidChannelKind
+        );
     }
 
     #[test]

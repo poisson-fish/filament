@@ -108,7 +108,7 @@ function createOperatorFixtureFetch(role: FixtureRole) {
 
     if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
       return jsonResponse({
-        channels: [{ channel_id: CHANNEL_ID, name: "incident-room" }],
+        channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
       });
     }
 

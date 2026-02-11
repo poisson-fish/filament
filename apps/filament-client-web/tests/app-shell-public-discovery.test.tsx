@@ -104,7 +104,7 @@ describe("app shell public discovery", () => {
       }
       if (url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
         return jsonResponse({
-          channels: [{ channel_id: CHANNEL_ID, name: "incident-room" }],
+          channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
         });
       }
       if (

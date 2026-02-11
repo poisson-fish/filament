@@ -251,6 +251,7 @@ async fn create_channel_context(
         .as_str()
         .expect("channel id should exist")
         .to_owned();
+    assert_eq!(channel_json["kind"], "text");
 
     ChannelRef {
         guild_id,
@@ -469,6 +470,110 @@ async fn postgres_backed_phase1_auth_and_realtime_text_flow() {
     let channel_ref = create_channel_context(&app, &auth, client_ip, &guild_name).await;
     assert_message_pagination(&app, &auth, client_ip, &channel_ref).await;
     assert_reaction_persists_in_message_history(&app, &auth, client_ip, &channel_ref).await;
+}
+
+#[tokio::test]
+async fn postgres_backed_channel_kind_round_trips_and_defaults_to_text() {
+    let Some(database_url) = postgres_url() else {
+        eprintln!("skipping postgres-backed test: FILAMENT_TEST_DATABASE_URL is unset");
+        return;
+    };
+
+    let app = test_app(database_url);
+    let suffix = Ulid::new().to_string().to_lowercase();
+    let username = format!("kind_{}", &suffix[..20]);
+    let password = "super-secure-password";
+    let client_ip = "203.0.113.64";
+
+    assert_eq!(
+        register_user(&app, client_ip, &username, password).await,
+        StatusCode::OK
+    );
+    let login_response = login_user(&app, client_ip, &username, password).await;
+    assert_eq!(login_response.status(), StatusCode::OK);
+    let auth: AuthResponse = parse_json_body(login_response).await;
+
+    let create_guild = Request::builder()
+        .method("POST")
+        .uri("/guilds")
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", client_ip)
+        .body(Body::from(
+            json!({"name":format!("Kind Guild {suffix}")}).to_string(),
+        ))
+        .expect("create guild request should build");
+    let guild_response = app
+        .clone()
+        .oneshot(create_guild)
+        .await
+        .expect("create guild request should execute");
+    assert_eq!(guild_response.status(), StatusCode::OK);
+    let guild_json: Value = parse_json_body(guild_response).await;
+    let guild_id = guild_json["guild_id"]
+        .as_str()
+        .expect("guild id should exist")
+        .to_owned();
+
+    let create_text = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{guild_id}/channels"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", client_ip)
+        .body(Body::from(json!({"name":"incident-chat"}).to_string()))
+        .expect("create text channel request should build");
+    let text_response = app
+        .clone()
+        .oneshot(create_text)
+        .await
+        .expect("create text channel request should execute");
+    assert_eq!(text_response.status(), StatusCode::OK);
+    let text_json: Value = parse_json_body(text_response).await;
+    assert_eq!(text_json["kind"], "text");
+
+    let create_voice = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{guild_id}/channels"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", client_ip)
+        .body(Body::from(
+            json!({"name":"bridge-call","kind":"voice"}).to_string(),
+        ))
+        .expect("create voice channel request should build");
+    let voice_response = app
+        .clone()
+        .oneshot(create_voice)
+        .await
+        .expect("create voice channel request should execute");
+    assert_eq!(voice_response.status(), StatusCode::OK);
+    let voice_json: Value = parse_json_body(voice_response).await;
+    assert_eq!(voice_json["kind"], "voice");
+
+    let list_request = Request::builder()
+        .method("GET")
+        .uri(format!("/guilds/{guild_id}/channels"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", client_ip)
+        .body(Body::empty())
+        .expect("list channels request should build");
+    let list_response = app
+        .clone()
+        .oneshot(list_request)
+        .await
+        .expect("list channels request should execute");
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let list_json: Value = parse_json_body(list_response).await;
+    let channels = list_json["channels"]
+        .as_array()
+        .expect("channels should be an array");
+    assert!(channels
+        .iter()
+        .any(|entry| { entry["name"] == "incident-chat" && entry["kind"] == "text" }));
+    assert!(channels
+        .iter()
+        .any(|entry| { entry["name"] == "bridge-call" && entry["kind"] == "voice" }));
 }
 
 #[tokio::test]

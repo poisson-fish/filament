@@ -13,6 +13,7 @@ import {
 import { DomainValidationError } from "../domain/auth";
 import {
   attachmentFilenameFromInput,
+  channelKindFromInput,
   channelNameFromInput,
   guildVisibilityFromInput,
   guildNameFromInput,
@@ -25,6 +26,7 @@ import {
   type AttachmentId,
   type AttachmentRecord,
   type ChannelId,
+  type ChannelKindName,
   type ChannelPermissionSnapshot,
   type FriendRecord,
   type FriendRequestList,
@@ -570,6 +572,20 @@ function canDiscoverWorkspaceOperation(
   return role === "owner" || role === "moderator";
 }
 
+function channelRailLabel(input: { kind: ChannelKindName; name: string }): string {
+  if (input.kind === "voice") {
+    return input.name;
+  }
+  return `#${input.name}`;
+}
+
+function channelHeaderLabel(input: { kind: ChannelKindName; name: string }): string {
+  if (input.kind === "voice") {
+    return `Voice: ${input.name}`;
+  }
+  return `#${input.name}`;
+}
+
 type OverlayPanel =
   | "workspace-create"
   | "channel-create"
@@ -621,6 +637,7 @@ export function AppShellPage() {
   const [createGuildName, setCreateGuildName] = createSignal("Security Ops");
   const [createGuildVisibility, setCreateGuildVisibility] = createSignal<GuildVisibility>("private");
   const [createChannelName, setCreateChannelName] = createSignal("incident-room");
+  const [createChannelKind, setCreateChannelKind] = createSignal<ChannelKindName>("text");
   const [isCreatingWorkspace, setCreatingWorkspace] = createSignal(false);
   const [workspaceError, setWorkspaceError] = createSignal("");
   const [publicGuildSearchQuery, setPublicGuildSearchQuery] = createSignal("");
@@ -638,6 +655,7 @@ export function AppShellPage() {
   const [friendError, setFriendError] = createSignal("");
 
   const [newChannelName, setNewChannelName] = createSignal("backend");
+  const [newChannelKind, setNewChannelKind] = createSignal<ChannelKindName>("text");
   const [isCreatingChannel, setCreatingChannel] = createSignal(false);
   const [channelCreateError, setChannelCreateError] = createSignal("");
 
@@ -703,6 +721,12 @@ export function AppShellPage() {
     () =>
       activeWorkspace()?.channels.find((channel) => channel.channelId === activeChannelId()) ??
       null,
+  );
+  const activeTextChannels = createMemo(() =>
+    (activeWorkspace()?.channels ?? []).filter((channel) => channel.kind === "text"),
+  );
+  const activeVoiceChannels = createMemo(() =>
+    (activeWorkspace()?.channels ?? []).filter((channel) => channel.kind === "voice"),
   );
 
   const hasPermission = (permission: PermissionName): boolean =>
@@ -1551,6 +1575,7 @@ export function AppShellPage() {
       });
       const channel = await createChannel(session, guild.guildId, {
         name: channelNameFromInput(createChannelName()),
+        kind: channelKindFromInput(createChannelKind()),
       });
       const createdWorkspace: WorkspaceRecord = {
         guildId: guild.guildId,
@@ -1561,6 +1586,7 @@ export function AppShellPage() {
       setWorkspaces((existing) => [...existing, createdWorkspace]);
       setActiveGuildId(createdWorkspace.guildId);
       setActiveChannelId(channel.channelId);
+      setCreateChannelKind("text");
       setMessageStatus("Workspace created.");
       setActiveOverlayPanel(null);
     } catch (error) {
@@ -1587,6 +1613,7 @@ export function AppShellPage() {
     try {
       const created = await createChannel(session, guildId, {
         name: channelNameFromInput(newChannelName()),
+        kind: channelKindFromInput(newChannelKind()),
       });
       setWorkspaces((existing) =>
         upsertWorkspace(existing, guildId, (workspace) => {
@@ -1602,6 +1629,7 @@ export function AppShellPage() {
       setActiveChannelId(created.channelId);
       setActiveOverlayPanel(null);
       setNewChannelName("backend");
+      setNewChannelKind("text");
       setMessageStatus("Channel created.");
     } catch (error) {
       setChannelCreateError(mapError(error, "Unable to create channel."));
@@ -2404,13 +2432,25 @@ export function AppShellPage() {
               <Match when={activeWorkspace()}>
                 <nav aria-label="channels">
                   <p class="group-label">TEXT CHANNELS</p>
-                  <For each={activeWorkspace()?.channels ?? []}>
+                  <For each={activeTextChannels()}>
                     {(channel) => (
                       <button
                         classList={{ active: activeChannelId() === channel.channelId }}
                         onClick={() => setActiveChannelId(channel.channelId)}
                       >
-                        <span>#{channel.name}</span>
+                        <span>{channelRailLabel({ kind: channel.kind, name: channel.name })}</span>
+                      </button>
+                    )}
+                  </For>
+
+                  <p class="group-label">VOICE CHANNELS</p>
+                  <For each={activeVoiceChannels()}>
+                    {(channel) => (
+                      <button
+                        classList={{ active: activeChannelId() === channel.channelId }}
+                        onClick={() => setActiveChannelId(channel.channelId)}
+                      >
+                        <span>{channelRailLabel({ kind: channel.kind, name: channel.name })}</span>
                       </button>
                     )}
                   </For>
@@ -2433,7 +2473,11 @@ export function AppShellPage() {
         <main class="chat-panel">
         <header class="chat-header">
           <div>
-            <h3>{activeChannel() ? `#${activeChannel()!.name}` : "#no-channel"}</h3>
+            <h3>
+              {activeChannel()
+                ? channelHeaderLabel({ kind: activeChannel()!.kind, name: activeChannel()!.name })
+                : "#no-channel"}
+            </h3>
             <p>Gateway {gatewayOnline() ? "connected" : "disconnected"}</p>
           </div>
           <div class="header-actions">
@@ -2763,7 +2807,11 @@ export function AppShellPage() {
                       value={composer()}
                       onInput={(event) => setComposer(event.currentTarget.value)}
                       maxlength="2000"
-                      placeholder={activeChannel() ? `Message #${activeChannel()!.name}` : "Select channel"}
+                      placeholder={
+                        activeChannel()
+                          ? `Message ${channelRailLabel({ kind: activeChannel()!.kind, name: activeChannel()!.name })}`
+                          : "Select channel"
+                      }
                       disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
                     />
                     <button
@@ -2945,6 +2993,18 @@ export function AppShellPage() {
                             maxlength="64"
                           />
                         </label>
+                        <label>
+                          Channel type
+                          <select
+                            value={createChannelKind()}
+                            onChange={(event) =>
+                              setCreateChannelKind(channelKindFromInput(event.currentTarget.value))
+                            }
+                          >
+                            <option value="text">text</option>
+                            <option value="voice">voice</option>
+                          </select>
+                        </label>
                         <div class="button-row">
                           <button type="submit" disabled={isCreatingWorkspace()}>
                             {isCreatingWorkspace() ? "Creating..." : "Create workspace"}
@@ -2972,6 +3032,18 @@ export function AppShellPage() {
                             onInput={(event) => setNewChannelName(event.currentTarget.value)}
                             maxlength="64"
                           />
+                        </label>
+                        <label>
+                          Channel type
+                          <select
+                            value={newChannelKind()}
+                            onChange={(event) =>
+                              setNewChannelKind(channelKindFromInput(event.currentTarget.value))
+                            }
+                          >
+                            <option value="text">text</option>
+                            <option value="voice">voice</option>
+                          </select>
                         </label>
                         <div class="button-row">
                           <button type="submit" disabled={isCreatingChannel()}>
