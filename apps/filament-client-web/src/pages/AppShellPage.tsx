@@ -7,16 +7,13 @@ import {
   onCleanup,
   untrack,
 } from "solid-js";
-import { DomainValidationError } from "../domain/auth";
 import {
-  attachmentFilenameFromInput,
   channelKindFromInput,
   channelNameFromInput,
   guildVisibilityFromInput,
   guildNameFromInput,
   reactionEmojiFromInput,
   roleFromInput,
-  searchQueryFromInput,
   userIdFromInput,
   type AttachmentId,
   type AttachmentRecord,
@@ -38,15 +35,11 @@ import {
   type WorkspaceRecord,
 } from "../domain/chat";
 import {
-  addGuildMember,
   acceptFriendRequest,
-  banGuildMember,
   createChannel,
   createFriendRequest,
   createGuild,
   deleteFriendRequest,
-  deleteChannelAttachment,
-  downloadChannelAttachment,
   echoMessage,
   fetchChannelMessages,
   fetchFriendRequests,
@@ -55,24 +48,15 @@ import {
   fetchMe,
   fetchPublicGuildDirectory,
   issueVoiceToken,
-  kickGuildMember,
   logoutAuthSession,
-  rebuildGuildSearchIndex,
-  reconcileGuildSearchIndex,
   refreshAuthSession,
   removeFriend,
-  searchGuildMessages,
-  setChannelRoleOverride,
-  updateGuildMemberRole,
-  uploadChannelAttachment,
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import {
   canDiscoverWorkspaceOperation,
   channelHeaderLabel,
   channelKey,
-  createObjectUrl,
-  formatBytes,
   formatVoiceDuration,
   mapError,
   mapRtcError,
@@ -81,9 +65,7 @@ import {
   mergeMessageHistory,
   normalizeMessageOrder,
   parseChannelKey,
-  parsePermissionCsv,
   profileErrorMessage,
-  revokeObjectUrl,
   shortActor,
   upsertWorkspace,
   userIdFromVoiceIdentity,
@@ -98,6 +80,8 @@ import { MessageList } from "../features/app-shell/components/messages/MessageLi
 import { ReactionPickerPortal } from "../features/app-shell/components/messages/ReactionPickerPortal";
 import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
 import { ServerRail } from "../features/app-shell/components/ServerRail";
+import { createAttachmentController } from "../features/app-shell/controllers/attachment-controller";
+import { createModerationController } from "../features/app-shell/controllers/moderation-controller";
 import {
   createMessageActionsController,
   createMessageMediaPreviewController,
@@ -114,6 +98,7 @@ import {
   resolveVoiceDevicePreferenceStatus,
   unavailableVoiceDeviceError,
 } from "../features/app-shell/controllers/voice-controller";
+import { createSearchController } from "../features/app-shell/controllers/search-controller";
 import {
   createChannelPermissionsController,
   createWorkspaceBootstrapController,
@@ -1009,6 +994,55 @@ export function AppShellPage() {
     setOpenReactionPickerMessageId,
   });
 
+  const { runSearch, rebuildSearch, reconcileSearch } = createSearchController({
+    session: auth.session,
+    activeGuildId,
+    activeChannelId,
+    searchQuery,
+    isSearching,
+    setSearching,
+    setSearchError,
+    setSearchResults,
+    isRunningSearchOps,
+    setRunningSearchOps,
+    setSearchOpsStatus,
+  });
+
+  const { uploadAttachment, downloadAttachment, removeAttachment } =
+    createAttachmentController({
+      session: auth.session,
+      activeGuildId,
+      activeChannelId,
+      selectedAttachment,
+      attachmentFilename,
+      isUploadingAttachment,
+      downloadingAttachmentId,
+      deletingAttachmentId,
+      setAttachmentStatus,
+      setAttachmentError,
+      setUploadingAttachment,
+      setDownloadingAttachmentId,
+      setDeletingAttachmentId,
+      setSelectedAttachment,
+      setAttachmentFilename,
+      setAttachmentByChannel,
+    });
+
+  const { runMemberAction, applyOverride } = createModerationController({
+    session: auth.session,
+    activeGuildId,
+    activeChannelId,
+    moderationUserIdInput,
+    moderationRoleInput,
+    overrideRoleInput,
+    overrideAllowCsv,
+    overrideDenyCsv,
+    isModerating,
+    setModerating,
+    setModerationError,
+    setModerationStatus,
+  });
+
   const loadPublicGuildDirectory = async (query?: string) => {
     const session = auth.session();
     if (!session) {
@@ -1506,36 +1540,6 @@ export function AppShellPage() {
     }
   };
 
-  const runSearch = async (event: SubmitEvent) => {
-    event.preventDefault();
-    const session = auth.session();
-    const guildId = activeGuildId();
-    if (!session || !guildId) {
-      setSearchError("Select a workspace first.");
-      return;
-    }
-
-    if (isSearching()) {
-      return;
-    }
-
-    setSearching(true);
-    setSearchError("");
-    try {
-      const results = await searchGuildMessages(session, guildId, {
-        query: searchQueryFromInput(searchQuery()),
-        limit: 20,
-        channelId: activeChannelId() ?? undefined,
-      });
-      setSearchResults(results);
-    } catch (error) {
-      setSearchError(mapError(error, "Search request failed."));
-      setSearchResults(null);
-    } finally {
-      setSearching(false);
-    }
-  };
-
   const runPublicGuildSearch = async (event: SubmitEvent) => {
     event.preventDefault();
     await loadPublicGuildDirectory(publicGuildSearchQuery());
@@ -1617,149 +1621,6 @@ export function AppShellPage() {
       setFriendError(mapError(error, "Unable to remove friend."));
     } finally {
       setRunningFriendAction(false);
-    }
-  };
-
-  const rebuildSearch = async () => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    if (!session || !guildId || isRunningSearchOps()) {
-      return;
-    }
-
-    setRunningSearchOps(true);
-    setSearchError("");
-    setSearchOpsStatus("");
-    try {
-      await rebuildGuildSearchIndex(session, guildId);
-      setSearchOpsStatus("Search index rebuild queued.");
-    } catch (error) {
-      setSearchError(mapError(error, "Unable to rebuild search index."));
-    } finally {
-      setRunningSearchOps(false);
-    }
-  };
-
-  const reconcileSearch = async () => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    if (!session || !guildId || isRunningSearchOps()) {
-      return;
-    }
-
-    setRunningSearchOps(true);
-    setSearchError("");
-    setSearchOpsStatus("");
-    try {
-      const result = await reconcileGuildSearchIndex(session, guildId);
-      setSearchOpsStatus(`Reconciled search index (upserted ${result.upserted}, deleted ${result.deleted}).`);
-    } catch (error) {
-      setSearchError(mapError(error, "Unable to reconcile search index."));
-    } finally {
-      setRunningSearchOps(false);
-    }
-  };
-
-  const uploadAttachment = async (event: SubmitEvent) => {
-    event.preventDefault();
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    const file = selectedAttachment();
-    if (!session || !guildId || !channelId) {
-      setAttachmentError("Select a channel first.");
-      return;
-    }
-    if (!file) {
-      setAttachmentError("Select a file to upload.");
-      return;
-    }
-    if (isUploadingAttachment()) {
-      return;
-    }
-
-    setAttachmentStatus("");
-    setAttachmentError("");
-    setUploadingAttachment(true);
-
-    try {
-      const filename = attachmentFilenameFromInput(
-        attachmentFilename().trim().length > 0 ? attachmentFilename().trim() : file.name,
-      );
-      const uploaded = await uploadChannelAttachment(session, guildId, channelId, file, filename);
-      const key = channelKey(guildId, channelId);
-      setAttachmentByChannel((existing) => {
-        const current = existing[key] ?? [];
-        const deduped = current.filter((entry) => entry.attachmentId !== uploaded.attachmentId);
-        return {
-          ...existing,
-          [key]: [uploaded, ...deduped],
-        };
-      });
-      setAttachmentStatus(`Uploaded ${uploaded.filename} (${formatBytes(uploaded.sizeBytes)}).`);
-      setSelectedAttachment(null);
-      setAttachmentFilename("");
-    } catch (error) {
-      setAttachmentError(mapError(error, "Unable to upload attachment."));
-    } finally {
-      setUploadingAttachment(false);
-    }
-  };
-
-  const downloadAttachment = async (record: AttachmentRecord) => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId || downloadingAttachmentId()) {
-      return;
-    }
-
-    setDownloadingAttachmentId(record.attachmentId);
-    setAttachmentError("");
-    try {
-      const payload = await downloadChannelAttachment(session, guildId, channelId, record.attachmentId);
-      const blob = new Blob([payload.bytes.buffer as ArrayBuffer], {
-        type: payload.mimeType ?? record.mimeType,
-      });
-      const objectUrl = createObjectUrl(blob);
-      if (!objectUrl) {
-        throw new Error("missing_object_url");
-      }
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = record.filename;
-      anchor.rel = "noopener";
-      anchor.click();
-      window.setTimeout(() => revokeObjectUrl(objectUrl), 0);
-    } catch (error) {
-      setAttachmentError(mapError(error, "Unable to download attachment."));
-    } finally {
-      setDownloadingAttachmentId(null);
-    }
-  };
-
-  const removeAttachment = async (record: AttachmentRecord) => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId || deletingAttachmentId()) {
-      return;
-    }
-
-    setDeletingAttachmentId(record.attachmentId);
-    setAttachmentError("");
-    try {
-      await deleteChannelAttachment(session, guildId, channelId, record.attachmentId);
-      const key = channelKey(guildId, channelId);
-      setAttachmentByChannel((existing) => ({
-        ...existing,
-        [key]: (existing[key] ?? []).filter((entry) => entry.attachmentId !== record.attachmentId),
-      }));
-      setAttachmentStatus(`Deleted ${record.filename}.`);
-    } catch (error) {
-      setAttachmentError(mapError(error, "Unable to delete attachment."));
-    } finally {
-      setDeletingAttachmentId(null);
     }
   };
 
@@ -1928,96 +1789,6 @@ export function AppShellPage() {
       setVoiceError(mapRtcError(error, "Unable to update screen share."));
     } finally {
       setTogglingVoiceScreenShare(false);
-    }
-  };
-
-  const runModerationAction = async (
-    action: (sessionUserId: UserId, sessionUsername: string) => Promise<void>,
-  ) => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    if (!session || !guildId || isModerating()) {
-      return;
-    }
-
-    setModerationError("");
-    setModerationStatus("");
-    setModerating(true);
-    try {
-      const me = await fetchMe(session);
-      await action(me.userId, me.username);
-    } catch (error) {
-      setModerationError(mapError(error, "Moderation action failed."));
-    } finally {
-      setModerating(false);
-    }
-  };
-
-  const runMemberAction = async (action: "add" | "role" | "kick" | "ban") => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    if (!session || !guildId) {
-      setModerationError("Select a workspace first.");
-      return;
-    }
-
-    let targetUserId: UserId;
-    try {
-      targetUserId = userIdFromInput(moderationUserIdInput().trim());
-    } catch (error) {
-      setModerationError(mapError(error, "Target user ID is invalid."));
-      return;
-    }
-    await runModerationAction(async () => {
-      if (action === "add") {
-        await addGuildMember(session, guildId, targetUserId);
-        setModerationStatus("Member add request accepted.");
-        return;
-      }
-      if (action === "role") {
-        const role = roleFromInput(moderationRoleInput());
-        await updateGuildMemberRole(session, guildId, targetUserId, role);
-        setModerationStatus(`Member role updated to ${role}.`);
-        return;
-      }
-      if (action === "kick") {
-        await kickGuildMember(session, guildId, targetUserId);
-        setModerationStatus("Member kicked.");
-        return;
-      }
-      await banGuildMember(session, guildId, targetUserId);
-      setModerationStatus("Member banned.");
-    });
-  };
-
-  const applyOverride = async (event: SubmitEvent) => {
-    event.preventDefault();
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId || isModerating()) {
-      return;
-    }
-
-    try {
-      const allow = parsePermissionCsv(overrideAllowCsv());
-      const deny = parsePermissionCsv(overrideDenyCsv());
-      if (allow.some((permission) => deny.includes(permission))) {
-        throw new DomainValidationError("Allow and deny permission sets cannot overlap.");
-      }
-
-      setModerating(true);
-      setModerationError("");
-      setModerationStatus("");
-      await setChannelRoleOverride(session, guildId, channelId, roleFromInput(overrideRoleInput()), {
-        allow,
-        deny,
-      });
-      setModerationStatus("Channel role override updated.");
-    } catch (error) {
-      setModerationError(mapError(error, "Unable to set channel override."));
-    } finally {
-      setModerating(false);
     }
   };
 
