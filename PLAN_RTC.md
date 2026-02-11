@@ -98,15 +98,15 @@ Add explicit channel kinds so text and voice channels exist as first-class entit
 Add a hardened RTC client layer in web app that can connect/disconnect safely using issued tokens.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add `livekit-client` dependency to web app.
-- [ ] Introduce `apps/filament-client-web/src/lib/rtc.ts` abstraction (join, leave, toggle mic, subscribe hooks) so SDK usage is centralized.
-- [ ] Validate `livekit_url` before connect (`ws://` or `wss://` only); reject invalid/empty values.
-- [ ] Bound in-memory RTC state (participants/tracks) to avoid unbounded growth from hostile/malformed event streams.
-- [ ] Add deterministic teardown on logout/channel switch/page unmount.
-- [ ] Add unit tests for URL/token validation and lifecycle transitions using mocks.
+- [x] Add `livekit-client` dependency to web app.
+- [x] Introduce `apps/filament-client-web/src/lib/rtc.ts` abstraction (join, leave, toggle mic, subscribe hooks) so SDK usage is centralized.
+- [x] Validate `livekit_url` before connect (`ws://` or `wss://` only); reject invalid/empty values.
+- [x] Bound in-memory RTC state (participants/tracks) to avoid unbounded growth from hostile/malformed event streams.
+- [x] Add deterministic teardown on logout/channel switch/page unmount.
+- [x] Add unit tests for URL/token validation and lifecycle transitions using mocks.
 
 ### Exit Criteria
 - RTC wrapper can join and leave a room with no leaked listeners/tracks.
@@ -114,12 +114,22 @@ Add a hardened RTC client layer in web app that can connect/disconnect safely us
 - Wrapper behavior is covered by tests.
 
 ### Implementation Notes (Fill After Completion)
-- Date completed:
-- PR/commit:
+- Date completed: 2026-02-11
+- PR/commit: local changes pending commit
 - Files changed:
+  - `apps/filament-client-web/package.json`
+  - `apps/filament-client-web/package-lock.json`
+  - `apps/filament-client-web/src/lib/rtc.ts`
+  - `apps/filament-client-web/tests/rtc.test.ts`
+  - `PLAN_RTC.md`
 - Security-impact notes:
+  - RTC join path now fail-closes with strict `ws://`/`wss://` URL parsing, credential/fragment rejection, and printable bounded token validation.
+  - In-memory RTC participant and track state is explicitly bounded (default 256 participants, 32 tracks per participant), dropping overflow events to reduce hostile stream amplification risk.
+  - `join`, `leave`, and `destroy` use serialized operations and deterministic listener unbinding/disconnect to avoid leaked subscriptions during logout/channel switches/unmount.
 - Tests run:
+  - `npm --prefix apps/filament-client-web test -- rtc.test.ts`
 - Follow-ups/debt:
+  - Phase 3 should wire `rtc.ts` lifecycle into `AppShellPage` channel switching and auth/session teardown paths as voice join UI replaces the temporary operator token flow.
 
 ### Handoff To Next Phase
 - Expose stable UI-facing API from `rtc.ts` for connection status, local mute state, and participant list.
