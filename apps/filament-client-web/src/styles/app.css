@@ -377,6 +377,34 @@ select {
   background: rgba(25, 106, 74, 0.24);
 }
 
+.voice-badge {
+  border: 1px solid #566072;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  padding: 0.24rem 0.48rem;
+  color: #d0d7e5;
+  background: rgba(67, 76, 94, 0.32);
+}
+
+.voice-badge.connecting,
+.voice-badge.reconnecting {
+  border-color: #7c6f49;
+  color: #ffe6b0;
+  background: rgba(110, 88, 31, 0.28);
+}
+
+.voice-badge.connected {
+  border-color: #2f755b;
+  color: #b9ffd7;
+  background: rgba(25, 106, 74, 0.24);
+}
+
+.voice-badge.error {
+  border-color: #7c4343;
+  color: #ffcece;
+  background: rgba(116, 35, 35, 0.3);
+}
+
 .message-list {
   padding: 0.88rem 1.03rem;
   display: grid;
@@ -1208,6 +1236,34 @@ select {
   border-color: #457360;
   color: #c8f9db;
   background: rgba(39, 97, 72, 0.3);
+}
+
+.voice-badge {
+  border: 1px solid #616b7c;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.45rem;
+  color: #dde4f2;
+  background: rgba(73, 82, 99, 0.32);
+}
+
+.voice-badge.connecting,
+.voice-badge.reconnecting {
+  border-color: #8a7744;
+  color: #ffe3a1;
+  background: rgba(120, 98, 39, 0.28);
+}
+
+.voice-badge.connected {
+  border-color: #457360;
+  color: #c8f9db;
+  background: rgba(39, 97, 72, 0.3);
+}
+
+.voice-badge.error {
+  border-color: #7b4a4a;
+  color: #ffd2d2;
+  background: rgba(120, 43, 43, 0.31);
 }
 
 .message-list {

@@ -139,10 +139,10 @@ Add a hardened RTC client layer in web app that can connect/disconnect safely us
 Make voice channels usable end-to-end (join, talk, leave) in app shell.
 
 ### Completion Status
-`NOT STARTED`
+`IN PROGRESS`
 
 ### Tasks
-- [ ] Replace operator-style "Issue token" flow with channel-centric voice controls for `voice` channels.
+- [x] Replace operator-style "Issue token" flow with channel-centric voice controls for `voice` channels.
 - [ ] Add header actions for `Join Voice`, `Leave`, `Mute/Unmute Mic`.
 - [ ] On join, request token from backend with voice-first sources (`microphone`) and connect via RTC wrapper.
 - [ ] Show call connection state (`connecting`, `connected`, `reconnecting`, `error`) and actionable error messages.

@@ -237,15 +237,11 @@ describe("operator console permission fixtures", () => {
     expect(screen.getByRole("button", { name: "Reconcile Index" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open voice panel" }));
-    expect(screen.getByRole("button", { name: "Issue token" })).toBeEnabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Open moderation panel" }));
     expect(screen.getByRole("button", { name: "Apply channel override" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(screen.queryByRole("button", { name: "Issue token" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open voice panel" })).not.toBeInTheDocument();
   });
 
   it("hides privileged operator controls for restricted member fixtures", async () => {
@@ -258,13 +254,7 @@ describe("operator console permission fixtures", () => {
 
     expect(await screen.findByRole("heading", { name: "Workspace Tools" })).toBeInTheDocument();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open voice panel" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Issue token" })).toBeEnabled(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-
-    fireEvent.click(screen.getByRole("button", { name: "Open search panel" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open search panel" }));
     expect(screen.queryByRole("button", { name: "Rebuild Index" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 

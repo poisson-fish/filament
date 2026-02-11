@@ -84,6 +84,12 @@ import {
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { connectGateway } from "../lib/gateway";
+import {
+  RtcClientError,
+  createRtcClient,
+  type RtcClient,
+  type RtcSnapshot,
+} from "../lib/rtc";
 import { clearWorkspaceCache, saveWorkspaceCache } from "../lib/workspace-cache";
 import {
   clearUsernameLookupCache,
@@ -107,6 +113,14 @@ const MAX_COMPOSER_ATTACHMENTS = 5;
 const MAX_EMBED_PREVIEW_BYTES = 25 * 1024 * 1024;
 const MAX_MEDIA_PREVIEW_RETRIES = 2;
 const INITIAL_MEDIA_PREVIEW_DELAY_MS = 75;
+const RTC_DISCONNECTED_SNAPSHOT: RtcSnapshot = {
+  connectionStatus: "disconnected",
+  localParticipantIdentity: null,
+  isMicrophoneEnabled: false,
+  participants: [],
+  lastErrorCode: null,
+  lastErrorMessage: null,
+};
 
 interface ReactionView {
   count: number;
@@ -429,7 +443,7 @@ function mapError(error: unknown, fallback: string): string {
   if (error instanceof DomainValidationError) {
     return error.message;
   }
-    if (error instanceof ApiError) {
+  if (error instanceof ApiError) {
     if (error.code === "rate_limited") {
       return "Rate limited. Please wait and retry.";
     }
@@ -463,6 +477,44 @@ function mapError(error: unknown, fallback: string): string {
     return `Request failed (${error.code}).`;
   }
   return fallback;
+}
+
+function mapRtcError(error: unknown, fallback: string): string {
+  if (error instanceof RtcClientError) {
+    if (error.code === "invalid_livekit_url") {
+      return "Voice signaling URL is invalid for this environment.";
+    }
+    if (error.code === "invalid_livekit_token") {
+      return "Voice token was rejected by local validation.";
+    }
+    if (error.code === "join_failed") {
+      return "Unable to connect to voice right now.";
+    }
+    if (error.code === "not_connected") {
+      return "Voice is not connected.";
+    }
+    if (error.code === "microphone_toggle_failed") {
+      return "Unable to change microphone state.";
+    }
+    return error.message;
+  }
+  return fallback;
+}
+
+function voiceConnectionLabel(snapshot: RtcSnapshot): string {
+  if (snapshot.connectionStatus === "connecting") {
+    return "connecting";
+  }
+  if (snapshot.connectionStatus === "connected") {
+    return "connected";
+  }
+  if (snapshot.connectionStatus === "reconnecting") {
+    return "reconnecting";
+  }
+  if (snapshot.connectionStatus === "error") {
+    return "error";
+  }
+  return "disconnected";
 }
 
 function profileErrorMessage(error: unknown): string {
@@ -593,7 +645,6 @@ type OverlayPanel =
   | "friendships"
   | "search"
   | "attachments"
-  | "voice"
   | "moderation"
   | "utility";
 
@@ -679,15 +730,13 @@ export function AppShellPage() {
   const [downloadingAttachmentId, setDownloadingAttachmentId] = createSignal<AttachmentId | null>(null);
   const [deletingAttachmentId, setDeletingAttachmentId] = createSignal<AttachmentId | null>(null);
 
-  const [voiceCanPublish, setVoiceCanPublish] = createSignal(true);
-  const [voiceCanSubscribe, setVoiceCanSubscribe] = createSignal(false);
-  const [voiceMicrophone, setVoiceMicrophone] = createSignal(true);
-  const [voiceCamera, setVoiceCamera] = createSignal(false);
-  const [voiceScreenShare, setVoiceScreenShare] = createSignal(false);
-  const [isIssuingVoiceToken, setIssuingVoiceToken] = createSignal(false);
-  const [voiceTokenStatus, setVoiceTokenStatus] = createSignal("");
-  const [voiceTokenError, setVoiceTokenError] = createSignal("");
-  const [voiceTokenPreview, setVoiceTokenPreview] = createSignal<string | null>(null);
+  const [rtcSnapshot, setRtcSnapshot] = createSignal<RtcSnapshot>(RTC_DISCONNECTED_SNAPSHOT);
+  const [voiceStatus, setVoiceStatus] = createSignal("");
+  const [voiceError, setVoiceError] = createSignal("");
+  const [isJoiningVoice, setJoiningVoice] = createSignal(false);
+  const [isLeavingVoice, setLeavingVoice] = createSignal(false);
+  const [isTogglingVoiceMic, setTogglingVoiceMic] = createSignal(false);
+  const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(null);
 
   const [moderationUserIdInput, setModerationUserIdInput] = createSignal("");
   const [moderationRoleInput, setModerationRoleInput] = createSignal<RoleName>("member");
@@ -712,6 +761,8 @@ export function AppShellPage() {
   const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<OverlayPanel | null>(null);
   const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
   const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(false);
+  let rtcClient: RtcClient | null = null;
+  let stopRtcSubscription: (() => void) | null = null;
 
   const activeWorkspace = createMemo(
     () => workspaces().find((workspace) => workspace.guildId === activeGuildId()) ?? null,
@@ -728,6 +779,7 @@ export function AppShellPage() {
   const activeVoiceChannels = createMemo(() =>
     (activeWorkspace()?.channels ?? []).filter((channel) => channel.kind === "voice"),
   );
+  const isActiveVoiceChannel = createMemo(() => activeChannel()?.kind === "voice");
 
   const hasPermission = (permission: PermissionName): boolean =>
     channelPermissions()?.permissions.includes(permission) ?? false;
@@ -760,6 +812,18 @@ export function AppShellPage() {
     }
     return attachmentByChannel()[key] ?? [];
   });
+  const voiceConnectionState = createMemo(() => voiceConnectionLabel(rtcSnapshot()));
+  const isVoiceSessionActive = createMemo(() => {
+    const state = rtcSnapshot().connectionStatus;
+    return state === "connecting" || state === "connected" || state === "reconnecting";
+  });
+  const isVoiceSessionForActiveChannel = createMemo(() => {
+    const key = activeChannelKey();
+    return Boolean(key) && key === voiceSessionChannelKey() && isVoiceSessionActive();
+  });
+  const canShowVoiceHeaderControls = createMemo(
+    () => isActiveVoiceChannel() && canAccessActiveChannel(),
+  );
 
   const canCloseActivePanel = createMemo(() => {
     if (activeOverlayPanel() !== "workspace-create") {
@@ -799,8 +863,6 @@ export function AppShellPage() {
         return "Search";
       case "attachments":
         return "Attachments";
-      case "voice":
-        return "Voice token";
       case "moderation":
         return "Moderation";
       case "utility":
@@ -816,6 +878,30 @@ export function AppShellPage() {
       return "panel-window panel-window-medium";
     }
     return "panel-window";
+  };
+
+  const ensureRtcClient = (): RtcClient => {
+    if (rtcClient) {
+      return rtcClient;
+    }
+    rtcClient = createRtcClient();
+    stopRtcSubscription = rtcClient.subscribe((snapshot) => {
+      setRtcSnapshot(snapshot);
+    });
+    return rtcClient;
+  };
+
+  const releaseRtcClient = async (): Promise<void> => {
+    if (stopRtcSubscription) {
+      stopRtcSubscription();
+      stopRtcSubscription = null;
+    }
+    if (rtcClient) {
+      await rtcClient.destroy();
+      rtcClient = null;
+    }
+    setRtcSnapshot(RTC_DISCONNECTED_SNAPSHOT);
+    setVoiceSessionChannelKey(null);
   };
 
   const displayUserLabel = (userId: string): string => resolvedUsernames()[userId] ?? shortActor(userId);
@@ -1226,9 +1312,8 @@ export function AppShellPage() {
     setSearchOpsStatus("");
     setAttachmentStatus("");
     setAttachmentError("");
-    setVoiceTokenStatus("");
-    setVoiceTokenError("");
-    setVoiceTokenPreview(null);
+    setVoiceStatus("");
+    setVoiceError("");
     if (canRead) {
       void refreshMessages();
     } else {
@@ -1483,7 +1568,6 @@ export function AppShellPage() {
       panel === "channel-create" ||
       panel === "search" ||
       panel === "attachments" ||
-      panel === "voice" ||
       panel === "moderation";
     if (needsChannelAccess && !canAccessActiveChannel()) {
       setActiveOverlayPanel(null);
@@ -1553,6 +1637,26 @@ export function AppShellPage() {
     });
 
     onCleanup(() => gateway.close());
+  });
+
+  createEffect(() => {
+    const session = auth.session();
+    const connectedChannelKey = voiceSessionChannelKey();
+    const selectedChannelKey = activeChannelKey();
+    if (!connectedChannelKey || isLeavingVoice()) {
+      return;
+    }
+    if (!session) {
+      void leaveVoiceChannel();
+      return;
+    }
+    if (!selectedChannelKey || selectedChannelKey !== connectedChannelKey) {
+      void leaveVoiceChannel();
+    }
+  });
+
+  onCleanup(() => {
+    void releaseRtcClient();
   });
 
   const createWorkspace = async (event: SubmitEvent) => {
@@ -2159,44 +2263,93 @@ export function AppShellPage() {
     }
   };
 
-  const requestVoiceToken = async (event: SubmitEvent) => {
-    event.preventDefault();
+  const leaveVoiceChannel = async (statusMessage?: string) => {
+    if (isLeavingVoice()) {
+      return;
+    }
+    setLeavingVoice(true);
+    try {
+      if (rtcClient) {
+        await rtcClient.leave();
+      }
+    } catch {
+      // Leave should still clear local voice state even if transport teardown fails.
+    } finally {
+      setVoiceSessionChannelKey(null);
+      setRtcSnapshot(RTC_DISCONNECTED_SNAPSHOT);
+      if (statusMessage) {
+        setVoiceStatus(statusMessage);
+      }
+      setLeavingVoice(false);
+    }
+  };
+
+  const joinVoiceChannel = async () => {
     const session = auth.session();
     const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId || isIssuingVoiceToken()) {
+    const channel = activeChannel();
+    if (
+      !session ||
+      !guildId ||
+      !channel ||
+      channel.kind !== "voice" ||
+      isJoiningVoice() ||
+      isLeavingVoice()
+    ) {
       return;
     }
 
-    const publishSources = [] as Array<"microphone" | "camera" | "screen_share">;
-    if (voiceMicrophone()) {
-      publishSources.push("microphone");
-    }
-    if (voiceCamera()) {
-      publishSources.push("camera");
-    }
-    if (voiceScreenShare()) {
-      publishSources.push("screen_share");
-    }
-
-    setIssuingVoiceToken(true);
-    setVoiceTokenError("");
-    setVoiceTokenStatus("");
+    setJoiningVoice(true);
+    setVoiceError("");
+    setVoiceStatus("");
     try {
-      const token = await issueVoiceToken(session, guildId, channelId, {
-        canPublish: voiceCanPublish(),
-        canSubscribe: voiceCanSubscribe(),
-        publishSources,
+      const token = await issueVoiceToken(session, guildId, channel.channelId, {
+        canSubscribe: true,
+        publishSources: ["microphone"],
       });
-      setVoiceTokenPreview(token.token.slice(0, 18));
-      setVoiceTokenStatus(
-        `Voice token issued (${token.expiresInSecs}s, publish=${token.canPublish}, subscribe=${token.canSubscribe}).`,
-      );
+      const client = ensureRtcClient();
+      await client.join({
+        livekitUrl: token.livekitUrl,
+        token: token.token,
+      });
+      setVoiceSessionChannelKey(channelKey(guildId, channel.channelId));
+
+      if (token.canPublish && token.publishSources.includes("microphone")) {
+        try {
+          await client.setMicrophoneEnabled(true);
+          setVoiceStatus("Voice connected. Microphone enabled.");
+        } catch (error) {
+          setVoiceStatus("Voice connected.");
+          setVoiceError(mapRtcError(error, "Connected, but microphone activation failed."));
+        }
+        return;
+      }
+
+      setVoiceStatus("Voice connected in listen-only mode.");
     } catch (error) {
-      setVoiceTokenError(mapError(error, "Unable to issue voice token."));
-      setVoiceTokenPreview(null);
+      setVoiceError(
+        error instanceof ApiError
+          ? mapError(error, "Unable to join voice.")
+          : mapRtcError(error, "Unable to join voice."),
+      );
     } finally {
-      setIssuingVoiceToken(false);
+      setJoiningVoice(false);
+    }
+  };
+
+  const toggleVoiceMicrophone = async () => {
+    if (!rtcClient || isTogglingVoiceMic()) {
+      return;
+    }
+    setTogglingVoiceMic(true);
+    setVoiceError("");
+    try {
+      const enabled = await rtcClient.toggleMicrophone();
+      setVoiceStatus(enabled ? "Microphone unmuted." : "Microphone muted.");
+    } catch (error) {
+      setVoiceError(mapRtcError(error, "Unable to update microphone."));
+    } finally {
+      setTogglingVoiceMic(false);
     }
   };
 
@@ -2311,6 +2464,8 @@ export function AppShellPage() {
   };
 
   const logout = async () => {
+    await leaveVoiceChannel();
+    await releaseRtcClient();
     const session = auth.session();
     if (session) {
       try {
@@ -2484,6 +2639,53 @@ export function AppShellPage() {
             <span classList={{ "gateway-badge": true, online: gatewayOnline() }}>
               {gatewayOnline() ? "Live" : "Offline"}
             </span>
+            <Show when={canShowVoiceHeaderControls()}>
+              <span
+                classList={{
+                  "voice-badge": true,
+                  connected: voiceConnectionState() === "connected",
+                  connecting: voiceConnectionState() === "connecting",
+                  reconnecting: voiceConnectionState() === "reconnecting",
+                  error: voiceConnectionState() === "error",
+                }}
+              >
+                Voice {voiceConnectionState()}
+              </span>
+            </Show>
+            <Show when={canShowVoiceHeaderControls() && !isVoiceSessionForActiveChannel()}>
+              <button
+                type="button"
+                onClick={() => void joinVoiceChannel()}
+                disabled={isJoiningVoice() || isLeavingVoice()}
+              >
+                {isJoiningVoice() ? "Joining..." : "Join Voice"}
+              </button>
+            </Show>
+            <Show when={canShowVoiceHeaderControls() && isVoiceSessionForActiveChannel()}>
+              <button
+                type="button"
+                onClick={() => void leaveVoiceChannel("Voice session ended.")}
+                disabled={isLeavingVoice() || isJoiningVoice()}
+              >
+                {isLeavingVoice() ? "Leaving..." : "Leave"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void toggleVoiceMicrophone()}
+                disabled={
+                  isTogglingVoiceMic() ||
+                  rtcSnapshot().connectionStatus !== "connected" ||
+                  isJoiningVoice() ||
+                  isLeavingVoice()
+                }
+              >
+                {isTogglingVoiceMic()
+                  ? "Updating..."
+                  : rtcSnapshot().isMicrophoneEnabled
+                    ? "Mute Mic"
+                    : "Unmute Mic"}
+              </button>
+            </Show>
             <button type="button" onClick={() => setChannelRailCollapsed((value) => !value)}>
               {isChannelRailCollapsed() ? "Show channels" : "Hide channels"}
             </button>
@@ -2527,6 +2729,12 @@ export function AppShellPage() {
                 </Show>
                 <Show when={sessionError()}>
                   <p class="status error panel-note">{sessionError()}</p>
+                </Show>
+                <Show when={voiceStatus() && canShowVoiceHeaderControls()}>
+                  <p class="status ok panel-note">{voiceStatus()}</p>
+                </Show>
+                <Show when={voiceError() && canShowVoiceHeaderControls()}>
+                  <p class="status error panel-note">{voiceError()}</p>
                 </Show>
                 <Show when={activeChannel() && !canAccessActiveChannel()}>
                   <p class="status error panel-note">
@@ -2918,9 +3126,6 @@ export function AppShellPage() {
                   </button>
                   <button type="button" onClick={() => openOverlayPanel("attachments")}>
                     Open attachments panel
-                  </button>
-                  <button type="button" onClick={() => openOverlayPanel("voice")}>
-                    Open voice panel
                   </button>
                 </Show>
                 <Show when={hasModerationAccess()}>
@@ -3333,65 +3538,6 @@ export function AppShellPage() {
                           </li>
                         </Show>
                       </ul>
-                    </section>
-                  </Match>
-
-                  <Match when={panel() === "voice" && canAccessActiveChannel()}>
-                    <section class="member-group">
-                      <form class="inline-form" onSubmit={requestVoiceToken}>
-                        <label class="checkbox-row">
-                          <input
-                            type="checkbox"
-                            checked={voiceCanPublish()}
-                            onChange={(event) => setVoiceCanPublish(event.currentTarget.checked)}
-                          />
-                          can_publish
-                        </label>
-                        <label class="checkbox-row">
-                          <input
-                            type="checkbox"
-                            checked={voiceCanSubscribe()}
-                            onChange={(event) => setVoiceCanSubscribe(event.currentTarget.checked)}
-                          />
-                          can_subscribe
-                        </label>
-                        <label class="checkbox-row">
-                          <input
-                            type="checkbox"
-                            checked={voiceMicrophone()}
-                            onChange={(event) => setVoiceMicrophone(event.currentTarget.checked)}
-                          />
-                          microphone
-                        </label>
-                        <label class="checkbox-row">
-                          <input
-                            type="checkbox"
-                            checked={voiceCamera()}
-                            onChange={(event) => setVoiceCamera(event.currentTarget.checked)}
-                          />
-                          camera
-                        </label>
-                        <label class="checkbox-row">
-                          <input
-                            type="checkbox"
-                            checked={voiceScreenShare()}
-                            onChange={(event) => setVoiceScreenShare(event.currentTarget.checked)}
-                          />
-                          screen_share
-                        </label>
-                        <button type="submit" disabled={isIssuingVoiceToken() || !activeChannel()}>
-                          {isIssuingVoiceToken() ? "Issuing..." : "Issue token"}
-                        </button>
-                      </form>
-                      <Show when={voiceTokenPreview()}>
-                        {(prefix) => <p class="mono">token_prefix: {prefix()}...</p>}
-                      </Show>
-                      <Show when={voiceTokenStatus()}>
-                        <p class="status ok">{voiceTokenStatus()}</p>
-                      </Show>
-                      <Show when={voiceTokenError()}>
-                        <p class="status error">{voiceTokenError()}</p>
-                      </Show>
                     </section>
                   </Match>
 
