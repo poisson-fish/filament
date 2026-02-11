@@ -33,6 +33,7 @@ import {
   type MarkdownToken,
   type MessageId,
   type MessageRecord,
+  type ReactionEmoji,
   type GuildRecord,
   type PermissionName,
   type RoleName,
@@ -88,7 +89,18 @@ import {
   resolveUsernames,
 } from "../lib/username-cache";
 
-const THUMBS_UP = reactionEmojiFromInput("👍");
+const ADD_REACTION_ICON_URL = new URL(
+  "../../resource/coolicons.v4.1/cooliocns SVG/Edit/Add_Plus_Circle.svg",
+  import.meta.url,
+).href;
+const EDIT_MESSAGE_ICON_URL = new URL(
+  "../../resource/coolicons.v4.1/cooliocns SVG/Edit/Edit_Pencil_Line_01.svg",
+  import.meta.url,
+).href;
+const DELETE_MESSAGE_ICON_URL = new URL(
+  "../../resource/coolicons.v4.1/cooliocns SVG/Interface/Trash_Full.svg",
+  import.meta.url,
+).href;
 const MAX_COMPOSER_ATTACHMENTS = 5;
 const MAX_EMBED_PREVIEW_BYTES = 25 * 1024 * 1024;
 const MAX_MEDIA_PREVIEW_RETRIES = 2;
@@ -99,6 +111,141 @@ interface ReactionView {
   reacted: boolean;
 }
 
+interface MessageReactionView extends ReactionView {
+  key: string;
+  emoji: ReactionEmoji;
+  pending: boolean;
+}
+
+interface ReactionPickerOption {
+  emoji: ReactionEmoji;
+  label: string;
+  iconUrl: string;
+}
+
+const OPENMOJI_REACTION_OPTIONS: ReactionPickerOption[] = [
+  {
+    emoji: reactionEmojiFromInput("👍"),
+    label: "Thumbs up",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F44D.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("👎"),
+    label: "Thumbs down",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F44E.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("😂"),
+    label: "Tears of joy",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F602.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🤣"),
+    label: "Rolling on the floor laughing",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F923.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("😮"),
+    label: "Surprised",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F62E.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("😢"),
+    label: "Crying",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F622.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("😱"),
+    label: "Screaming",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F631.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("👏"),
+    label: "Clapping",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F44F.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🔥"),
+    label: "Fire",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F525.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🎉"),
+    label: "Party popper",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F389.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🤔"),
+    label: "Thinking",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F914.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🙌"),
+    label: "Raised hands",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F64C.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🚀"),
+    label: "Rocket",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F680.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("💯"),
+    label: "Hundred points",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F4AF.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🏆"),
+    label: "Trophy",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F3C6.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🤝"),
+    label: "Handshake",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F91D.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🙏"),
+    label: "Folded hands",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F64F.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("👌"),
+    label: "Ok hand",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F44C.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("✅"),
+    label: "Check mark",
+    iconUrl: new URL("../../resource/openmoji-svg-color/2705.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("❌"),
+    label: "Cross mark",
+    iconUrl: new URL("../../resource/openmoji-svg-color/274C.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("❤"),
+    label: "Heart",
+    iconUrl: new URL("../../resource/openmoji-svg-color/2764.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("💜"),
+    label: "Purple heart",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F49C.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("🧠"),
+    label: "Brain",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F9E0.svg", import.meta.url).href,
+  },
+  {
+    emoji: reactionEmojiFromInput("💡"),
+    label: "Light bulb",
+    iconUrl: new URL("../../resource/openmoji-svg-color/1F4A1.svg", import.meta.url).href,
+  },
+];
+
 type MediaKind = "image" | "video" | "file";
 
 interface MessageMediaPreview {
@@ -107,8 +254,70 @@ interface MessageMediaPreview {
   mimeType: string;
 }
 
-function reactionKey(messageId: MessageId, emoji: string): string {
+function reactionKey(messageId: MessageId, emoji: ReactionEmoji): string {
   return `${messageId}|${emoji}`;
+}
+
+function reactionPrefix(messageId: MessageId): string {
+  return `${messageId}|`;
+}
+
+function upsertReactionEntry(
+  existing: Record<string, ReactionView>,
+  key: string,
+  nextReaction: ReactionView,
+): Record<string, ReactionView> {
+  const next = { ...existing };
+  if (nextReaction.count <= 0 && !nextReaction.reacted) {
+    delete next[key];
+  } else {
+    next[key] = nextReaction;
+  }
+  return next;
+}
+
+function clearKeysByPrefix<T>(existing: Record<string, T>, prefix: string): Record<string, T> {
+  const next = { ...existing };
+  let changed = false;
+  for (const key of Object.keys(next)) {
+    if (!key.startsWith(prefix)) {
+      continue;
+    }
+    delete next[key];
+    changed = true;
+  }
+  return changed ? next : existing;
+}
+
+function reactionViewsForMessage(
+  messageId: MessageId,
+  reactions: Record<string, ReactionView>,
+  pendingByKey: Record<string, true>,
+): MessageReactionView[] {
+  const prefix = reactionPrefix(messageId);
+  const list: MessageReactionView[] = [];
+  for (const [key, state] of Object.entries(reactions)) {
+    if (!key.startsWith(prefix)) {
+      continue;
+    }
+    if (state.count < 1 && !state.reacted) {
+      continue;
+    }
+    list.push({
+      key,
+      emoji: key.slice(prefix.length) as ReactionEmoji,
+      count: state.count,
+      reacted: state.reacted,
+      pending: Boolean(pendingByKey[key]),
+    });
+  }
+  list.sort((left, right) => {
+    if (left.count !== right.count) {
+      return right.count - left.count;
+    }
+    return left.emoji.localeCompare(right.emoji);
+  });
+  return list;
 }
 
 function channelKey(guildId: GuildId, channelId: ChannelId): string {
@@ -401,6 +610,8 @@ export function AppShellPage() {
   const [mediaPreviewRetryTick, setMediaPreviewRetryTick] = createSignal(0);
   const [nextBefore, setNextBefore] = createSignal<MessageId | null>(null);
   const [reactionState, setReactionState] = createSignal<Record<string, ReactionView>>({});
+  const [pendingReactionByKey, setPendingReactionByKey] = createSignal<Record<string, true>>({});
+  const [openReactionPickerMessageId, setOpenReactionPickerMessageId] = createSignal<MessageId | null>(null);
   const [editingMessageId, setEditingMessageId] = createSignal<MessageId | null>(null);
   const [editingDraft, setEditingDraft] = createSignal("");
   const [isSavingEdit, setSavingEdit] = createSignal(false);
@@ -584,6 +795,32 @@ export function AppShellPage() {
   };
 
   const displayUserLabel = (userId: string): string => resolvedUsernames()[userId] ?? shortActor(userId);
+
+  const setReactionPending = (key: string, pending: boolean) => {
+    setPendingReactionByKey((existing) => {
+      if (pending) {
+        if (existing[key]) {
+          return existing;
+        }
+        return { ...existing, [key]: true };
+      }
+      if (!existing[key]) {
+        return existing;
+      }
+      const next = { ...existing };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const clearReactionStateForMessage = (messageId: MessageId) => {
+    const prefix = reactionPrefix(messageId);
+    setReactionState((existing) => clearKeysByPrefix(existing, prefix));
+    setPendingReactionByKey((existing) => clearKeysByPrefix(existing, prefix));
+    if (openReactionPickerMessageId() === messageId) {
+      setOpenReactionPickerMessageId(null);
+    }
+  };
 
   const loadPublicGuildDirectory = async (query?: string) => {
     const session = auth.session();
@@ -958,6 +1195,8 @@ export function AppShellPage() {
     void activeChannelId();
     const canRead = canAccessActiveChannel();
     setReactionState({});
+    setPendingReactionByKey({});
+    setOpenReactionPickerMessageId(null);
     setSearchResults(null);
     setSearchError("");
     setSearchOpsStatus("");
@@ -1552,6 +1791,7 @@ export function AppShellPage() {
       if (editingMessageId() === messageId) {
         cancelEditMessage();
       }
+      clearReactionStateForMessage(messageId);
       setMessageStatus("Message deleted.");
     } catch (error) {
       setMessageError(mapError(error, "Unable to delete message."));
@@ -1560,7 +1800,11 @@ export function AppShellPage() {
     }
   };
 
-  const toggleThumbsUp = async (messageId: MessageId) => {
+  const toggleReactionPicker = (messageId: MessageId) => {
+    setOpenReactionPickerMessageId((existing) => (existing === messageId ? null : messageId));
+  };
+
+  const toggleMessageReaction = async (messageId: MessageId, emoji: ReactionEmoji) => {
     const session = auth.session();
     const guildId = activeGuildId();
     const channelId = activeChannelId();
@@ -1568,25 +1812,65 @@ export function AppShellPage() {
       return;
     }
 
-    const key = reactionKey(messageId, THUMBS_UP);
+    const key = reactionKey(messageId, emoji);
+    if (pendingReactionByKey()[key]) {
+      return;
+    }
+    setReactionPending(key, true);
     const state = reactionState()[key] ?? { count: 0, reacted: false };
 
     try {
       if (state.reacted) {
-        const response = await removeMessageReaction(session, guildId, channelId, messageId, THUMBS_UP);
-        setReactionState((existing) => ({
-          ...existing,
-          [key]: { count: response.count, reacted: false },
-        }));
+        const response = await removeMessageReaction(session, guildId, channelId, messageId, emoji);
+        setReactionState((existing) =>
+          upsertReactionEntry(existing, key, {
+            count: response.count,
+            reacted: false,
+          }),
+        );
       } else {
-        const response = await addMessageReaction(session, guildId, channelId, messageId, THUMBS_UP);
-        setReactionState((existing) => ({
-          ...existing,
-          [key]: { count: response.count, reacted: true },
-        }));
+        const response = await addMessageReaction(session, guildId, channelId, messageId, emoji);
+        setReactionState((existing) =>
+          upsertReactionEntry(existing, key, {
+            count: response.count,
+            reacted: true,
+          }),
+        );
       }
     } catch (error) {
       setMessageError(mapError(error, "Unable to update reaction."));
+    } finally {
+      setReactionPending(key, false);
+    }
+  };
+
+  const addReactionFromPicker = async (messageId: MessageId, emoji: ReactionEmoji) => {
+    const session = auth.session();
+    const guildId = activeGuildId();
+    const channelId = activeChannelId();
+    if (!session || !guildId || !channelId) {
+      return;
+    }
+
+    const key = reactionKey(messageId, emoji);
+    if (pendingReactionByKey()[key]) {
+      return;
+    }
+    setReactionPending(key, true);
+    setOpenReactionPickerMessageId(null);
+
+    try {
+      const response = await addMessageReaction(session, guildId, channelId, messageId, emoji);
+      setReactionState((existing) =>
+        upsertReactionEntry(existing, key, {
+          count: response.count,
+          reacted: true,
+        }),
+      );
+    } catch (error) {
+      setMessageError(mapError(error, "Unable to update reaction."));
+    } finally {
+      setReactionPending(key, false);
     }
   };
 
@@ -2216,9 +2500,17 @@ export function AppShellPage() {
 
                   <For each={messages()}>
                     {(message) => {
-                      const state =
-                        () => reactionState()[reactionKey(message.messageId, THUMBS_UP)] ?? { count: 0, reacted: false };
+                      const reactions = createMemo(() =>
+                        reactionViewsForMessage(
+                          message.messageId,
+                          reactionState(),
+                          pendingReactionByKey(),
+                        ),
+                      );
                       const isEditing = () => editingMessageId() === message.messageId;
+                      const isDeleting = () => deletingMessageId() === message.messageId;
+                      const isReactionPickerOpen =
+                        () => openReactionPickerMessageId() === message.messageId;
                       const canEditOrDelete =
                         () => profile()?.userId === message.authorId || canDeleteMessages();
                       return (
@@ -2337,26 +2629,104 @@ export function AppShellPage() {
                           </Show>
                           <Show when={canEditOrDelete()}>
                             <div class="message-actions compact">
-                              <button type="button" onClick={() => beginEditMessage(message)}>
-                                Edit
+                              <button
+                                type="button"
+                                class="icon-button"
+                                onClick={() => beginEditMessage(message)}
+                                aria-label="Edit message"
+                                title="Edit message"
+                              >
+                                <span
+                                  class="icon-mask"
+                                  style={`--icon-url: url("${EDIT_MESSAGE_ICON_URL}")`}
+                                  aria-hidden="true"
+                                />
                               </button>
                               <button
                                 type="button"
+                                classList={{ "icon-button": true, "is-busy": isDeleting(), danger: true }}
                                 onClick={() => void removeMessage(message.messageId)}
-                                disabled={deletingMessageId() === message.messageId}
+                                disabled={isDeleting()}
+                                aria-label="Delete message"
+                                title={isDeleting() ? "Deleting message..." : "Delete message"}
                               >
-                                {deletingMessageId() === message.messageId ? "Deleting..." : "Delete"}
+                                <span
+                                  class="icon-mask"
+                                  style={`--icon-url: url("${DELETE_MESSAGE_ICON_URL}")`}
+                                  aria-hidden="true"
+                                />
                               </button>
                             </div>
                           </Show>
                           <div class="reaction-row">
-                            <button
-                              type="button"
-                              classList={{ reacted: state().reacted }}
-                              onClick={() => void toggleThumbsUp(message.messageId)}
-                            >
-                              {THUMBS_UP} {state().count}
-                            </button>
+                            <div class="reaction-controls">
+                              <div class="reaction-list">
+                                <For each={reactions()}>
+                                  {(reaction) => (
+                                    <button
+                                      type="button"
+                                      classList={{ "reaction-chip": true, reacted: reaction.reacted }}
+                                      onClick={() =>
+                                        void toggleMessageReaction(message.messageId, reaction.emoji)}
+                                      disabled={reaction.pending}
+                                      aria-label={`${reaction.emoji} reaction (${reaction.count})`}
+                                    >
+                                      <span class="reaction-chip-emoji">{reaction.emoji}</span>
+                                      <span class="reaction-chip-count">{reaction.count}</span>
+                                    </button>
+                                  )}
+                                </For>
+                              </div>
+                              <button
+                                type="button"
+                                class="icon-button reaction-add-trigger"
+                                onClick={() => toggleReactionPicker(message.messageId)}
+                                aria-label="Add reaction"
+                                title="Add reaction"
+                              >
+                                <span
+                                  class="icon-mask"
+                                  style={`--icon-url: url("${ADD_REACTION_ICON_URL}")`}
+                                  aria-hidden="true"
+                                />
+                              </button>
+                            </div>
+                            <Show when={isReactionPickerOpen()}>
+                              <div class="reaction-picker" role="dialog" aria-label="Choose reaction">
+                                <div class="reaction-picker-header">
+                                  <p class="reaction-picker-title">React</p>
+                                  <button
+                                    type="button"
+                                    class="reaction-picker-close"
+                                    onClick={() => setOpenReactionPickerMessageId(null)}
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+                                <div class="reaction-picker-grid">
+                                  <For each={OPENMOJI_REACTION_OPTIONS}>
+                                    {(option) => (
+                                      <button
+                                        type="button"
+                                        class="reaction-picker-option"
+                                        onClick={() =>
+                                          void addReactionFromPicker(message.messageId, option.emoji)}
+                                        aria-label={`Add ${option.label} reaction`}
+                                        title={option.label}
+                                      >
+                                        <img
+                                          src={option.iconUrl}
+                                          alt=""
+                                          loading="lazy"
+                                          decoding="async"
+                                          referrerPolicy="no-referrer"
+                                        />
+                                      </button>
+                                    )}
+                                  </For>
+                                </div>
+                              </div>
+                            </Show>
                           </div>
                         </article>
                       );

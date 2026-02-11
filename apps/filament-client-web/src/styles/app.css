@@ -417,20 +417,55 @@ select {
 
 .reaction-row {
   margin-top: 0.5rem;
+  display: grid;
+  gap: 0.4rem;
 }
 
-.reaction-row button {
+.reaction-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.reaction-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.reaction-chip {
   border: 1px solid var(--line-soft);
   border-radius: 999px;
   background: rgba(20, 33, 57, 0.72);
   color: var(--ink-1);
-  padding: 0.2rem 0.5rem;
+  padding: 0.18rem 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
 }
 
-.reaction-row button.reacted {
+.reaction-chip.reacted {
   border-color: rgba(98, 167, 255, 0.6);
   background: rgba(34, 74, 134, 0.48);
   color: #d0e7ff;
+}
+
+.reaction-chip:disabled {
+  opacity: 0.66;
+  cursor: default;
+}
+
+.reaction-chip-emoji {
+  color: inherit;
+  font-size: 0.92rem;
+}
+
+.reaction-chip-count {
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .message-actions {
@@ -449,6 +484,156 @@ select {
   background: rgba(20, 33, 57, 0.82);
   color: var(--ink-1);
   padding: 0.25rem 0.55rem;
+}
+
+.icon-button {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.55rem;
+  background: rgba(20, 33, 57, 0.82);
+  color: var(--ink-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.icon-mask {
+  width: 1rem;
+  height: 1rem;
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask-image: var(--icon-url);
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  mask-image: var(--icon-url);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+
+.message-row .icon-mask {
+  color: inherit;
+  font-size: 1rem;
+}
+
+.message-actions.compact .icon-button {
+  width: 1.9rem;
+  min-height: 1.9rem;
+  padding: 0;
+  color: #aeb3be;
+}
+
+.message-actions.compact .icon-button:hover {
+  color: #d5d8df;
+}
+
+.message-actions.compact .icon-button.danger {
+  color: #f4a9b3;
+}
+
+.message-actions.compact .icon-button.danger:hover {
+  color: #ffc8cf;
+}
+
+.message-actions.compact .icon-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.message-actions.compact .icon-button.is-busy .icon-mask {
+  animation: message-action-pulse 950ms ease-in-out infinite;
+}
+
+.reaction-add-trigger {
+  width: 1.6rem;
+  min-height: 1.6rem;
+  padding: 0;
+  border-style: dashed;
+  border-color: rgba(118, 126, 142, 0.58);
+  background: transparent;
+  color: #8d94a3;
+}
+
+.reaction-add-trigger:hover {
+  border-color: rgba(162, 170, 184, 0.75);
+  background: rgba(122, 130, 148, 0.12);
+  color: #c6ccd8;
+}
+
+.reaction-picker {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.62rem;
+  background: rgba(10, 20, 39, 0.96);
+  padding: 0.5rem;
+  width: min(100%, 23rem);
+}
+
+.reaction-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.reaction-picker-title {
+  margin: 0;
+  color: #d9dfeb;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.reaction-picker-close {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.5rem;
+  background: rgba(20, 33, 57, 0.82);
+  color: var(--ink-1);
+  padding: 0.16rem 0.45rem;
+  font-size: 0.74rem;
+}
+
+.reaction-picker-grid {
+  margin-top: 0.45rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2rem, 1fr));
+  gap: 0.3rem;
+  max-height: 11.5rem;
+  overflow: auto;
+}
+
+.reaction-picker-option {
+  border: 1px solid rgba(92, 101, 120, 0.65);
+  border-radius: 0.42rem;
+  background: rgba(21, 35, 63, 0.86);
+  width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.reaction-picker-option:hover {
+  border-color: rgba(131, 169, 226, 0.8);
+  background: rgba(38, 72, 128, 0.52);
+}
+
+.reaction-picker-option img {
+  width: 1.3rem;
+  height: 1.3rem;
+  display: block;
+}
+
+@keyframes message-action-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .message-attachments {
