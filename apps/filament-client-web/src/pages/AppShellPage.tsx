@@ -1352,7 +1352,7 @@ export function AppShellPage() {
             });
             return;
           }
-          const blob = new Blob([payload.bytes], { type: mimeType });
+          const blob = new Blob([payload.bytes.buffer as ArrayBuffer], { type: mimeType });
           const url = createObjectUrl(blob);
           if (!url) {
             setLoadingMediaPreviewIds((existing) => {
@@ -2086,8 +2086,7 @@ export function AppShellPage() {
     setAttachmentError("");
     try {
       const payload = await downloadChannelAttachment(session, guildId, channelId, record.attachmentId);
-      const bytes = new Uint8Array(payload.bytes);
-      const blob = new Blob([bytes], {
+      const blob = new Blob([payload.bytes.buffer as ArrayBuffer], {
         type: payload.mimeType ?? record.mimeType,
       });
       const objectUrl = createObjectUrl(blob);
@@ -2604,7 +2603,7 @@ export function AppShellPage() {
                                               src={preview()!.url}
                                               controls
                                               preload="metadata"
-                                              playsInline
+                                              playsinline
                                             />
                                           </Show>
                                         }
