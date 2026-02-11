@@ -133,6 +133,12 @@ interface MessageReactionView extends ReactionView {
   pending: boolean;
 }
 
+interface VoiceRosterEntry {
+  identity: string;
+  subscribedTrackCount: number;
+  isLocal: boolean;
+}
+
 interface ReactionPickerOption {
   emoji: ReactionEmoji;
   label: string;
@@ -824,6 +830,32 @@ export function AppShellPage() {
   const canShowVoiceHeaderControls = createMemo(
     () => isActiveVoiceChannel() && canAccessActiveChannel(),
   );
+  const voiceRosterEntries = createMemo<VoiceRosterEntry[]>(() => {
+    const snapshot = rtcSnapshot();
+    const entries: VoiceRosterEntry[] = [];
+    const seenIdentities = new Set<string>();
+    const localIdentity = snapshot.localParticipantIdentity;
+    if (localIdentity) {
+      entries.push({
+        identity: localIdentity,
+        subscribedTrackCount: 0,
+        isLocal: true,
+      });
+      seenIdentities.add(localIdentity);
+    }
+    for (const participant of snapshot.participants) {
+      if (seenIdentities.has(participant.identity)) {
+        continue;
+      }
+      entries.push({
+        identity: participant.identity,
+        subscribedTrackCount: participant.subscribedTrackCount,
+        isLocal: false,
+      });
+      seenIdentities.add(participant.identity);
+    }
+    return entries;
+  });
 
   const canCloseActivePanel = createMemo(() => {
     if (activeOverlayPanel() !== "workspace-create") {
@@ -2735,6 +2767,30 @@ export function AppShellPage() {
                 </Show>
                 <Show when={voiceError() && canShowVoiceHeaderControls()}>
                   <p class="status error panel-note">{voiceError()}</p>
+                </Show>
+                <Show when={canShowVoiceHeaderControls() && isVoiceSessionForActiveChannel()}>
+                  <section class="voice-roster" aria-label="In-call participants">
+                    <p class="voice-roster-title">In call ({voiceRosterEntries().length})</p>
+                    <Show
+                      when={voiceRosterEntries().length > 0}
+                      fallback={<p class="voice-roster-empty">Waiting for participants...</p>}
+                    >
+                      <ul>
+                        <For each={voiceRosterEntries()}>
+                          {(entry) => (
+                            <li classList={{ "voice-roster-local": entry.isLocal }}>
+                              <span>
+                                {entry.isLocal
+                                  ? `${shortActor(entry.identity)} (you)`
+                                  : shortActor(entry.identity)}
+                              </span>
+                              <span>{entry.subscribedTrackCount} tracks</span>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                    </Show>
+                  </section>
                 </Show>
                 <Show when={activeChannel() && !canAccessActiveChannel()}>
                   <p class="status error panel-note">

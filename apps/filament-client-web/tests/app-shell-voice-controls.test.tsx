@@ -13,11 +13,12 @@ const CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 
 const rtcMock = vi.hoisted(() => {
+  type MockParticipant = { identity: string; subscribedTrackCount: number };
   type MockSnapshot = {
     connectionStatus: "disconnected" | "connecting" | "connected" | "reconnecting" | "error";
     localParticipantIdentity: string | null;
     isMicrophoneEnabled: boolean;
-    participants: Array<{ identity: string; subscribedTrackCount: number }>;
+    participants: MockParticipant[];
     lastErrorCode: string | null;
     lastErrorMessage: string | null;
   };
@@ -33,11 +34,18 @@ const rtcMock = vi.hoisted(() => {
 
   const listeners = new Set<(snapshot: MockSnapshot) => void>();
   let snapshot = createDisconnectedSnapshot();
+  let joinParticipants: MockParticipant[] = [];
+
+  const cloneParticipants = (participants: MockParticipant[]): MockParticipant[] =>
+    participants.map((entry) => ({
+      identity: entry.identity,
+      subscribedTrackCount: entry.subscribedTrackCount,
+    }));
 
   const emit = () => {
     const next = {
       ...snapshot,
-      participants: [...snapshot.participants],
+      participants: cloneParticipants(snapshot.participants),
     };
     for (const listener of listeners) {
       listener(next);
@@ -49,6 +57,7 @@ const rtcMock = vi.hoisted(() => {
       ...snapshot,
       connectionStatus: "connected",
       localParticipantIdentity: "u.local",
+      participants: cloneParticipants(joinParticipants),
       lastErrorCode: null,
       lastErrorMessage: null,
     };
@@ -88,7 +97,7 @@ const rtcMock = vi.hoisted(() => {
       listeners.add(listener);
       listener({
         ...snapshot,
-        participants: [...snapshot.participants],
+        participants: cloneParticipants(snapshot.participants),
       });
       return () => {
         listeners.delete(listener);
@@ -103,9 +112,14 @@ const rtcMock = vi.hoisted(() => {
 
   const createRtcClient = vi.fn(() => client);
 
+  const setJoinParticipants = (participants: MockParticipant[]) => {
+    joinParticipants = cloneParticipants(participants);
+  };
+
   const reset = () => {
     listeners.clear();
     snapshot = createDisconnectedSnapshot();
+    joinParticipants = [];
     createRtcClient.mockClear();
     join.mockClear();
     leave.mockClear();
@@ -121,6 +135,7 @@ const rtcMock = vi.hoisted(() => {
     setMicrophoneEnabled,
     toggleMicrophone,
     destroy,
+    setJoinParticipants,
     reset,
   };
 });
@@ -340,5 +355,27 @@ describe("app shell voice controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Leave" }));
     await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: "Join Voice" })).toBeInTheDocument();
+  });
+
+  it("renders in-call participant roster while voice session is active", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    rtcMock.setJoinParticipants([
+      { identity: "u.remote.1", subscribedTrackCount: 2 },
+      { identity: "u.remote.2", subscribedTrackCount: 1 },
+    ]);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByText("In call (3)")).toBeInTheDocument();
+    expect(screen.getByText("u.local (you)")).toBeInTheDocument();
+    expect(screen.getByText("u.remote.1")).toBeInTheDocument();
+    expect(screen.getByText("u.remote.2")).toBeInTheDocument();
   });
 });

@@ -405,6 +405,60 @@ select {
   background: rgba(116, 35, 35, 0.3);
 }
 
+.voice-roster {
+  margin: 0.1rem 1.03rem 0.2rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.72rem;
+  background: rgba(16, 30, 54, 0.72);
+  padding: 0.58rem 0.72rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.voice-roster-title {
+  margin: 0;
+  color: var(--ink-1);
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.voice-roster-empty {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 0.82rem;
+}
+
+.voice-roster ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.voice-roster li {
+  border: 1px solid rgba(71, 85, 109, 0.65);
+  border-radius: 0.55rem;
+  background: rgba(19, 33, 57, 0.62);
+  padding: 0.36rem 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--ink-1);
+}
+
+.voice-roster li span:last-child {
+  color: var(--ink-2);
+}
+
+.voice-roster-local {
+  border-color: rgba(132, 175, 255, 0.66);
+  background: rgba(30, 57, 99, 0.54);
+}
+
 .message-list {
   padding: 0.88rem 1.03rem;
   display: grid;
