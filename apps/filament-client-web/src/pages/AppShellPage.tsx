@@ -2378,26 +2378,33 @@ export function AppShellPage() {
                     class="composer-file-input"
                     onInput={onComposerAttachmentInput}
                   />
-                  <button
-                    type="button"
-                    class="composer-attach-button"
-                    onClick={openComposerAttachmentPicker}
-                    disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
-                    aria-label="Attach files"
-                    title="Attach files"
-                  >
-                    +
-                  </button>
-                  <input
-                    value={composer()}
-                    onInput={(event) => setComposer(event.currentTarget.value)}
-                    maxlength="2000"
-                    placeholder={activeChannel() ? `Message #${activeChannel()!.name}` : "Select channel"}
-                    disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
-                  />
-                  <button type="submit" disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}>
-                    {isSendingMessage() ? "Sending..." : "Send"}
-                  </button>
+                  <div class="composer-input-shell">
+                    <button
+                      type="button"
+                      class="composer-attach-button"
+                      onClick={openComposerAttachmentPicker}
+                      disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
+                      aria-label="Attach files"
+                      title="Attach files"
+                    >
+                      +
+                    </button>
+                    <input
+                      class="composer-text-input"
+                      value={composer()}
+                      onInput={(event) => setComposer(event.currentTarget.value)}
+                      maxlength="2000"
+                      placeholder={activeChannel() ? `Message #${activeChannel()!.name}` : "Select channel"}
+                      disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
+                    />
+                    <button
+                      type="submit"
+                      class="composer-send-button"
+                      disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
+                    >
+                      {isSendingMessage() ? "Sending..." : "Send"}
+                    </button>
+                  </div>
                   <Show when={composerAttachments().length > 0}>
                     <div class="composer-attachments">
                       <For each={composerAttachments()}>
