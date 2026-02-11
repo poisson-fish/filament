@@ -1,8 +1,5 @@
 import {
-  For,
-  Match,
   Show,
-  Switch,
   createEffect,
   createMemo,
   createResource,
@@ -10,7 +7,6 @@ import {
   onCleanup,
   untrack,
 } from "solid-js";
-import { Portal } from "solid-js/web";
 import { DomainValidationError } from "../domain/auth";
 import {
   attachmentFilenameFromInput,
@@ -84,15 +80,11 @@ import {
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import {
-  actorAvatarGlyph,
   canDiscoverWorkspaceOperation,
   channelHeaderLabel,
   channelKey,
-  channelRailLabel,
   clearKeysByPrefix,
   createObjectUrl,
-  formatBytes,
-  formatMessageTime,
   formatVoiceDuration,
   mapError,
   mapRtcError,
@@ -104,11 +96,9 @@ import {
   parsePermissionCsv,
   profileErrorMessage,
   reactionKey,
-  reactionViewsForMessage,
   resolveAttachmentPreviewType,
   revokeObjectUrl,
   shortActor,
-  tokenizeToDisplayText,
   upsertReactionEntry,
   upsertWorkspace,
   userIdFromVoiceIdentity,
@@ -119,7 +109,32 @@ import {
 import { ChannelRail } from "../features/app-shell/components/ChannelRail";
 import { ChatHeader } from "../features/app-shell/components/ChatHeader";
 import { MemberRail } from "../features/app-shell/components/MemberRail";
+import { MessageComposer } from "../features/app-shell/components/messages/MessageComposer";
+import { MessageList } from "../features/app-shell/components/messages/MessageList";
+import { ReactionPickerPortal } from "../features/app-shell/components/messages/ReactionPickerPortal";
+import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
 import { ServerRail } from "../features/app-shell/components/ServerRail";
+import {
+  collectMediaPreviewTargets,
+  mediaPreviewRetryDelayMs,
+  nextMediaPreviewAttempt,
+  retainRecordByAllowedIds,
+  shouldRetryMediaPreview,
+} from "../features/app-shell/controllers/message-controller";
+import {
+  overlayPanelClassName,
+  overlayPanelTitle,
+  sanitizeOverlayPanel,
+} from "../features/app-shell/controllers/overlay-controller";
+import {
+  resolveVoiceConnectionTransition,
+  resolveVoiceDevicePreferenceStatus,
+  unavailableVoiceDeviceError,
+} from "../features/app-shell/controllers/voice-controller";
+import {
+  filterAccessibleWorkspaces,
+  resolveWorkspaceSelection,
+} from "../features/app-shell/controllers/workspace-controller";
 import {
   type OverlayPanel,
   type ReactionPickerOption,
@@ -821,11 +836,7 @@ export function AppShellPage() {
   ): Promise<void> => {
     const options = kind === "audioinput" ? audioInputDevices() : audioOutputDevices();
     if (nextValue.length > 0 && !options.some((entry) => entry.deviceId === nextValue)) {
-      setAudioDevicesError(
-        kind === "audioinput"
-          ? "Selected microphone is not available."
-          : "Selected speaker is not available.",
-      );
+      setAudioDevicesError(unavailableVoiceDeviceError(kind));
       return;
     }
 
@@ -845,9 +856,7 @@ export function AppShellPage() {
 
     if (!rtcClient || !isVoiceSessionActive()) {
       setAudioDevicesStatus(
-        kind === "audioinput"
-          ? "Microphone preference saved for the next voice join."
-          : "Speaker preference saved for the next voice join.",
+        resolveVoiceDevicePreferenceStatus(kind, false, nextDeviceId),
       );
       return;
     }
@@ -858,19 +867,9 @@ export function AppShellPage() {
       } else {
         await rtcClient.setAudioOutputDevice(next.audioOutputDeviceId);
       }
-      if (nextDeviceId) {
-        setAudioDevicesStatus(
-          kind === "audioinput"
-            ? "Microphone updated for the active voice session."
-            : "Speaker updated for the active voice session.",
-        );
-      } else {
-        setAudioDevicesStatus(
-          kind === "audioinput"
-            ? "Microphone preference cleared. Current session keeps its current device."
-            : "Speaker preference cleared. Current session keeps its current device.",
-        );
-      }
+      setAudioDevicesStatus(
+        resolveVoiceDevicePreferenceStatus(kind, true, nextDeviceId),
+      );
     } catch (error) {
       setAudioDevicesError(
         mapRtcError(
@@ -901,39 +900,6 @@ export function AppShellPage() {
       return;
     }
     setActiveOverlayPanel(null);
-  };
-
-  const overlayPanelTitle = (panel: OverlayPanel): string => {
-    switch (panel) {
-      case "workspace-create":
-        return "Create workspace";
-      case "channel-create":
-        return "Create channel";
-      case "settings":
-        return "Settings";
-      case "public-directory":
-        return "Public workspace directory";
-      case "friendships":
-        return "Friendships";
-      case "search":
-        return "Search";
-      case "attachments":
-        return "Attachments";
-      case "moderation":
-        return "Moderation";
-      case "utility":
-        return "Utility";
-    }
-  };
-
-  const overlayPanelClassName = (panel: OverlayPanel): string => {
-    if (panel === "workspace-create" || panel === "channel-create") {
-      return "panel-window panel-window-compact";
-    }
-    if (panel === "settings" || panel === "public-directory" || panel === "friendships") {
-      return "panel-window panel-window-medium";
-    }
-    return "panel-window";
   };
 
   const ensureRtcClient = (): RtcClient => {
@@ -1092,24 +1058,15 @@ export function AppShellPage() {
         if (cancelled) {
           return;
         }
-        const filtered = workspacesWithChannels.filter(
-          (workspace): workspace is WorkspaceRecord =>
-            workspace !== null && workspace.channels.length > 0,
-        );
+        const filtered = filterAccessibleWorkspaces(workspacesWithChannels);
         setWorkspaces(filtered);
-        const selectedGuild = activeGuildId();
-        const selectedWorkspace =
-          (selectedGuild && filtered.find((workspace) => workspace.guildId === selectedGuild)) ??
-          filtered[0] ??
-          null;
-        setActiveGuildId(selectedWorkspace?.guildId ?? null);
-        const selectedChannel = activeChannelId();
-        const nextChannel =
-          (selectedChannel &&
-            selectedWorkspace?.channels.find((channel) => channel.channelId === selectedChannel)) ??
-          selectedWorkspace?.channels[0] ??
-          null;
-        setActiveChannelId(nextChannel?.channelId ?? null);
+        const nextSelection = resolveWorkspaceSelection(
+          filtered,
+          activeGuildId(),
+          activeChannelId(),
+        );
+        setActiveGuildId(nextSelection.guildId);
+        setActiveChannelId(nextSelection.channelId);
       } catch {
         if (!cancelled) {
           setWorkspaces([]);
@@ -1265,19 +1222,16 @@ export function AppShellPage() {
   });
 
   createEffect(() => {
-    const selectedGuild = activeGuildId();
-    if (!selectedGuild || !workspaces().some((workspace) => workspace.guildId === selectedGuild)) {
-      setActiveGuildId(workspaces()[0]?.guildId ?? null);
-      return;
+    const nextSelection = resolveWorkspaceSelection(
+      workspaces(),
+      activeGuildId(),
+      activeChannelId(),
+    );
+    if (nextSelection.guildId !== activeGuildId()) {
+      setActiveGuildId(nextSelection.guildId);
     }
-
-    const channel = activeChannelId();
-    const workspace = workspaces().find((entry) => entry.guildId === selectedGuild);
-    if (!workspace) {
-      return;
-    }
-    if (!channel || !workspace.channels.some((entry) => entry.channelId === channel)) {
-      setActiveChannelId(workspace.channels[0]?.channelId ?? null);
+    if (nextSelection.channelId !== activeChannelId()) {
+      setActiveChannelId(nextSelection.channelId);
     }
   });
 
@@ -1301,19 +1255,18 @@ export function AppShellPage() {
         if (!cancelled) {
           setChannelPermissions(null);
           if (error instanceof ApiError && (error.code === "forbidden" || error.code === "not_found")) {
-            setWorkspaces((existing) =>
-              existing
-                .map((workspace) => {
-                  if (workspace.guildId !== guildId) {
-                    return workspace;
-                  }
-                  return {
-                    ...workspace,
-                    channels: workspace.channels.filter((channel) => channel.channelId !== channelId),
-                  };
-                })
-                .filter((workspace) => workspace.channels.length > 0),
-            );
+            setWorkspaces((existing) => {
+              const updated = existing.map((workspace) => {
+                if (workspace.guildId !== guildId) {
+                  return workspace;
+                }
+                return {
+                  ...workspace,
+                  channels: workspace.channels.filter((channel) => channel.channelId !== channelId),
+                };
+              });
+              return filterAccessibleWorkspaces(updated);
+            });
           }
         }
       }
@@ -1512,16 +1465,10 @@ export function AppShellPage() {
       return;
     }
 
-    const previewTargets = new Map<AttachmentId, AttachmentRecord>();
-    for (const message of messageList) {
-      for (const attachment of message.attachments) {
-        const { kind } = resolveAttachmentPreviewType(null, attachment.mimeType, attachment.filename);
-        if (kind === "file" || attachment.sizeBytes > MAX_EMBED_PREVIEW_BYTES) {
-          continue;
-        }
-        previewTargets.set(attachment.attachmentId, attachment);
-      }
-    }
+    const previewTargets = collectMediaPreviewTargets(
+      messageList,
+      MAX_EMBED_PREVIEW_BYTES,
+    );
 
     const existingPreviews = untrack(() => messageMediaByAttachmentId());
     const targetIds = new Set<string>([...previewTargets.keys()]);
@@ -1538,14 +1485,10 @@ export function AppShellPage() {
       return next;
     });
     setLoadingMediaPreviewIds((existing) =>
-      Object.fromEntries(
-        Object.entries(existing).filter(([attachmentId]) => targetIds.has(attachmentId)),
-      ) as Record<string, true>,
+      retainRecordByAllowedIds(existing, targetIds),
     );
     setFailedMediaPreviewIds((existing) =>
-      Object.fromEntries(
-        Object.entries(existing).filter(([attachmentId]) => targetIds.has(attachmentId)),
-      ) as Record<string, true>,
+      retainRecordByAllowedIds(existing, targetIds),
     );
 
     let cancelled = false;
@@ -1671,12 +1614,15 @@ export function AppShellPage() {
           if (cancelled) {
             return;
           }
-          const nextAttempt = (previewRetryAttempts.get(attachmentId) ?? 0) + 1;
+          const nextAttempt = nextMediaPreviewAttempt(
+            previewRetryAttempts,
+            attachmentId,
+          );
           previewRetryAttempts.set(attachmentId, nextAttempt);
-          if (nextAttempt <= MAX_MEDIA_PREVIEW_RETRIES) {
+          if (shouldRetryMediaPreview(nextAttempt, MAX_MEDIA_PREVIEW_RETRIES)) {
             window.setTimeout(() => {
               setMediaPreviewRetryTick((value) => value + 1);
-            }, 600 * nextAttempt);
+            }, mediaPreviewRetryDelayMs(nextAttempt));
             return;
           }
           setLoadingMediaPreviewIds((existing) => {
@@ -1731,27 +1677,13 @@ export function AppShellPage() {
 
   createEffect(() => {
     const panel = activeOverlayPanel();
-    if (!panel) {
-      return;
-    }
-
-    const needsChannelAccess =
-      panel === "channel-create" ||
-      panel === "search" ||
-      panel === "attachments" ||
-      panel === "moderation";
-    if (needsChannelAccess && !canAccessActiveChannel()) {
-      setActiveOverlayPanel(null);
-      return;
-    }
-
-    if (panel === "channel-create" && !canManageWorkspaceChannels()) {
-      setActiveOverlayPanel(null);
-      return;
-    }
-
-    if (panel === "moderation" && !hasModerationAccess()) {
-      setActiveOverlayPanel(null);
+    const sanitized = sanitizeOverlayPanel(panel, {
+      canAccessActiveChannel: canAccessActiveChannel(),
+      canManageWorkspaceChannels: canManageWorkspaceChannels(),
+      hasModerationAccess: hasModerationAccess(),
+    });
+    if (sanitized !== panel) {
+      setActiveOverlayPanel(sanitized);
     }
   });
 
@@ -1862,36 +1794,26 @@ export function AppShellPage() {
 
   createEffect(() => {
     const snapshot = rtcSnapshot();
-    const connectedChannelKey = voiceSessionChannelKey();
-    const isJoining = isJoiningVoice();
-    const isLeaving = isLeavingVoice();
+    const transition = resolveVoiceConnectionTransition({
+      previousStatus: previousVoiceConnectionStatus,
+      currentStatus: snapshot.connectionStatus,
+      hasConnectedChannel: Boolean(voiceSessionChannelKey()),
+      isJoining: isJoiningVoice(),
+      isLeaving: isLeavingVoice(),
+    });
 
-    if (connectedChannelKey && snapshot.connectionStatus === "reconnecting") {
-      setVoiceStatus("Voice reconnecting. Media may recover automatically.");
-      setVoiceError("");
-    }
-
-    if (
-      connectedChannelKey &&
-      snapshot.connectionStatus === "connected" &&
-      previousVoiceConnectionStatus === "reconnecting"
-    ) {
-      setVoiceStatus("Voice reconnected.");
-      setVoiceError("");
-    }
-
-    if (
-      connectedChannelKey &&
-      snapshot.connectionStatus === "disconnected" &&
-      previousVoiceConnectionStatus !== "disconnected" &&
-      !isJoining &&
-      !isLeaving
-    ) {
+    if (transition.shouldClearSession) {
       setVoiceSessionChannelKey(null);
       setVoiceSessionStartedAtUnixMs(null);
       setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
+    }
+    if (transition.statusMessage) {
+      setVoiceStatus(transition.statusMessage);
+      setVoiceError("");
+    }
+    if (transition.errorMessage) {
       setVoiceStatus("");
-      setVoiceError("Voice connection dropped. Select Join Voice to reconnect.");
+      setVoiceError(transition.errorMessage);
     }
 
     previousVoiceConnectionStatus = snapshot.connectionStatus;
@@ -2930,343 +2852,76 @@ export function AppShellPage() {
                   </p>
                 </Show>
 
-                <section
-                  ref={(element) => {
+                <MessageList
+                  onListRef={(element) => {
                     messageListRef = element;
                     updateLoadOlderButtonVisibility();
                   }}
-                  class="message-list"
-                  aria-live="polite"
-                  onScroll={onMessageListScroll}
-                >
-                  <Show when={nextBefore() && showLoadOlderButton()}>
-                    <button type="button" class="load-older" onClick={() => void loadOlderMessages()} disabled={isLoadingOlder()}>
-                      {isLoadingOlder() ? "Loading older..." : "Load older messages"}
-                    </button>
-                  </Show>
+                  onListScroll={onMessageListScroll}
+                  nextBefore={nextBefore()}
+                  showLoadOlderButton={showLoadOlderButton()}
+                  isLoadingOlder={isLoadingOlder()}
+                  isLoadingMessages={isLoadingMessages()}
+                  messageError={messageError()}
+                  messages={messages()}
+                  onLoadOlderMessages={() => loadOlderMessages()}
+                  currentUserId={profile()?.userId ?? null}
+                  canDeleteMessages={canDeleteMessages()}
+                  displayUserLabel={displayUserLabel}
+                  editingMessageId={editingMessageId()}
+                  editingDraft={editingDraft()}
+                  isSavingEdit={isSavingEdit()}
+                  deletingMessageId={deletingMessageId()}
+                  openReactionPickerMessageId={openReactionPickerMessageId()}
+                  reactionState={reactionState()}
+                  pendingReactionByKey={pendingReactionByKey()}
+                  messageMediaByAttachmentId={messageMediaByAttachmentId()}
+                  loadingMediaPreviewIds={loadingMediaPreviewIds()}
+                  failedMediaPreviewIds={failedMediaPreviewIds()}
+                  downloadingAttachmentId={downloadingAttachmentId()}
+                  addReactionIconUrl={ADD_REACTION_ICON_URL}
+                  editMessageIconUrl={EDIT_MESSAGE_ICON_URL}
+                  deleteMessageIconUrl={DELETE_MESSAGE_ICON_URL}
+                  onEditingDraftInput={setEditingDraft}
+                  onSaveEditMessage={(messageId) => saveEditMessage(messageId)}
+                  onCancelEditMessage={cancelEditMessage}
+                  onDownloadAttachment={(record) => downloadAttachment(record)}
+                  onRetryMediaPreview={retryMediaPreview}
+                  onToggleMessageReaction={(messageId, emoji) =>
+                    toggleMessageReaction(messageId, emoji)}
+                  onToggleReactionPicker={toggleReactionPicker}
+                  onBeginEditMessage={beginEditMessage}
+                  onRemoveMessage={(messageId) => removeMessage(messageId)}
+                />
 
-                  <For each={messages()}>
-                    {(message) => {
-                      const reactions = createMemo(() =>
-                        reactionViewsForMessage(
-                          message.messageId,
-                          reactionState(),
-                          pendingReactionByKey(),
-                        ),
-                      );
-                      const isEditing = () => editingMessageId() === message.messageId;
-                      const isDeleting = () => deletingMessageId() === message.messageId;
-                      const isReactionPickerOpen =
-                        () => openReactionPickerMessageId() === message.messageId;
-                      const canEditOrDelete =
-                        () => profile()?.userId === message.authorId || canDeleteMessages();
-                      return (
-                        <article class="message-row">
-                          <div class="message-avatar" aria-hidden="true">
-                            {actorAvatarGlyph(displayUserLabel(message.authorId))}
-                          </div>
-                          <div class="message-main">
-                            <p class="message-meta">
-                              <strong>{displayUserLabel(message.authorId)}</strong>
-                              <span>{formatMessageTime(message.createdAtUnix)}</span>
-                            </p>
-                            <Show
-                              when={isEditing()}
-                              fallback={
-                                <Show when={tokenizeToDisplayText(message.markdownTokens) || message.content}>
-                                  <p class="message-tokenized">
-                                    {tokenizeToDisplayText(message.markdownTokens) || message.content}
-                                  </p>
-                                </Show>
-                              }
-                            >
-                              <form
-                                class="inline-form message-edit"
-                                onSubmit={(event) => {
-                                  event.preventDefault();
-                                  void saveEditMessage(message.messageId);
-                                }}
-                              >
-                                <input
-                                  value={editingDraft()}
-                                  onInput={(event) => setEditingDraft(event.currentTarget.value)}
-                                  maxlength="2000"
-                                />
-                                <div class="message-actions">
-                                  <button type="submit" disabled={isSavingEdit()}>
-                                    {isSavingEdit() ? "Saving..." : "Save"}
-                                  </button>
-                                  <button type="button" onClick={cancelEditMessage}>
-                                    Cancel
-                                  </button>
-                                </div>
-                              </form>
-                            </Show>
-                            <Show when={message.attachments.length > 0}>
-                              <div class="message-attachments">
-                                <For each={message.attachments}>
-                                  {(record) => {
-                                    const preview = () => messageMediaByAttachmentId()[record.attachmentId];
-                                    return (
-                                      <div class="message-attachment-card">
-                                        <Show
-                                          when={preview() && preview()!.kind === "image"}
-                                          fallback={
-                                            <Show
-                                              when={preview() && preview()!.kind === "video"}
-                                              fallback={
-                                                <Show
-                                                  when={loadingMediaPreviewIds()[record.attachmentId]}
-                                                  fallback={
-                                                    <Show
-                                                      when={failedMediaPreviewIds()[record.attachmentId]}
-                                                      fallback={
-                                                        <button
-                                                          type="button"
-                                                          class="message-attachment-download"
-                                                          onClick={() => void downloadAttachment(record)}
-                                                          disabled={downloadingAttachmentId() === record.attachmentId}
-                                                        >
-                                                          {downloadingAttachmentId() === record.attachmentId
-                                                            ? "Fetching..."
-                                                            : `Download ${record.filename}`}
-                                                        </button>
-                                                      }
-                                                    >
-                                                      <div class="message-attachment-failed">
-                                                        <span>Preview unavailable.</span>
-                                                        <button
-                                                          type="button"
-                                                          class="message-attachment-retry"
-                                                          onClick={() => retryMediaPreview(record.attachmentId)}
-                                                        >
-                                                          Retry preview
-                                                        </button>
-                                                      </div>
-                                                    </Show>
-                                                  }
-                                                >
-                                                  <p class="message-attachment-loading">Loading preview...</p>
-                                                </Show>
-                                              }
-                                            >
-                                              <video
-                                                class="message-attachment-video"
-                                                src={preview()!.url}
-                                                controls
-                                                preload="metadata"
-                                                playsinline
-                                              />
-                                            </Show>
-                                          }
-                                        >
-                                          <img
-                                            class="message-attachment-image"
-                                            src={preview()!.url}
-                                            alt={record.filename}
-                                            loading="lazy"
-                                            decoding="async"
-                                            referrerPolicy="no-referrer"
-                                          />
-                                        </Show>
-                                        <p class="message-attachment-meta">
-                                          {record.filename} ({formatBytes(record.sizeBytes)})
-                                        </p>
-                                      </div>
-                                    );
-                                  }}
-                                </For>
-                              </div>
-                            </Show>
-                            <Show when={reactions().length > 0 || isReactionPickerOpen()}>
-                              <div class="reaction-row">
-                                <div class="reaction-controls">
-                                  <div class="reaction-list">
-                                    <For each={reactions()}>
-                                      {(reaction) => (
-                                        <button
-                                          type="button"
-                                          classList={{ "reaction-chip": true, reacted: reaction.reacted }}
-                                          onClick={() =>
-                                            void toggleMessageReaction(message.messageId, reaction.emoji)}
-                                          disabled={reaction.pending}
-                                          aria-label={`${reaction.emoji} reaction (${reaction.count})`}
-                                        >
-                                          <span class="reaction-chip-emoji">{reaction.emoji}</span>
-                                          <span class="reaction-chip-count">{reaction.count}</span>
-                                        </button>
-                                      )}
-                                    </For>
-                                  </div>
-                                </div>
-                              </div>
-                            </Show>
-                          </div>
-                          <div class="message-hover-actions">
-                            <button
-                              type="button"
-                              class="icon-button"
-                              onClick={() => toggleReactionPicker(message.messageId)}
-                              data-reaction-anchor-for={message.messageId}
-                              aria-label="Add reaction"
-                              title="Add reaction"
-                            >
-                              <span
-                                class="icon-mask"
-                                style={`--icon-url: url("${ADD_REACTION_ICON_URL}")`}
-                                aria-hidden="true"
-                              />
-                            </button>
-                            <Show when={canEditOrDelete()}>
-                              <>
-                                <button
-                                  type="button"
-                                  class="icon-button"
-                                  onClick={() => beginEditMessage(message)}
-                                  aria-label="Edit message"
-                                  title="Edit message"
-                                >
-                                  <span
-                                    class="icon-mask"
-                                    style={`--icon-url: url("${EDIT_MESSAGE_ICON_URL}")`}
-                                    aria-hidden="true"
-                                  />
-                                </button>
-                                <button
-                                  type="button"
-                                  classList={{ "icon-button": true, "is-busy": isDeleting(), danger: true }}
-                                  onClick={() => void removeMessage(message.messageId)}
-                                  disabled={isDeleting()}
-                                  aria-label="Delete message"
-                                  title={isDeleting() ? "Deleting message..." : "Delete message"}
-                                >
-                                  <span
-                                    class="icon-mask"
-                                    style={`--icon-url: url("${DELETE_MESSAGE_ICON_URL}")`}
-                                    aria-hidden="true"
-                                  />
-                                </button>
-                              </>
-                            </Show>
-                          </div>
-                        </article>
-                      );
-                    }}
-                  </For>
+                <MessageComposer
+                  attachmentInputRef={(value) => {
+                    composerAttachmentInputRef = value;
+                  }}
+                  activeChannel={activeChannel()}
+                  canAccessActiveChannel={canAccessActiveChannel()}
+                  isSendingMessage={isSendingMessage()}
+                  composerValue={composer()}
+                  composerAttachments={composerAttachments()}
+                  onSubmit={sendMessage}
+                  onComposerInput={setComposer}
+                  onOpenAttachmentPicker={openComposerAttachmentPicker}
+                  onAttachmentInput={(event) =>
+                    onComposerAttachmentInput(
+                      event as InputEvent & { currentTarget: HTMLInputElement },
+                    )
+                  }
+                  onRemoveAttachment={removeComposerAttachment}
+                />
 
-                  <Show when={!isLoadingMessages() && messages().length === 0 && !messageError()}>
-                    <p class="muted">No messages yet in this channel.</p>
-                  </Show>
-                </section>
-
-                <form class="composer" onSubmit={sendMessage}>
-                  <input
-                    ref={(value) => {
-                      composerAttachmentInputRef = value;
-                    }}
-                    type="file"
-                    multiple
-                    class="composer-file-input"
-                    onInput={onComposerAttachmentInput}
-                  />
-                  <div class="composer-input-shell">
-                    <button
-                      type="button"
-                      class="composer-attach-button"
-                      onClick={openComposerAttachmentPicker}
-                      disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
-                      aria-label="Attach files"
-                      title="Attach files"
-                    >
-                      +
-                    </button>
-                    <input
-                      class="composer-text-input"
-                      value={composer()}
-                      onInput={(event) => setComposer(event.currentTarget.value)}
-                      maxlength="2000"
-                      placeholder={
-                        activeChannel()
-                          ? `Message ${channelRailLabel({ kind: activeChannel()!.kind, name: activeChannel()!.name })}`
-                          : "Select channel"
-                      }
-                      disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
-                    />
-                    <button
-                      type="submit"
-                      class="composer-send-button"
-                      disabled={!activeChannel() || isSendingMessage() || !canAccessActiveChannel()}
-                    >
-                      {isSendingMessage() ? "Sending..." : "Send"}
-                    </button>
-                  </div>
-                  <Show when={composerAttachments().length > 0}>
-                    <div class="composer-attachments">
-                      <For each={composerAttachments()}>
-                        {(file) => (
-                          <button
-                            type="button"
-                            class="composer-attachment-pill"
-                            onClick={() => removeComposerAttachment(file)}
-                            title={`Remove ${file.name}`}
-                          >
-                            {file.name} ({formatBytes(file.size)}) x
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-                </form>
-
-                <Show when={openReactionPickerMessageId()}>
-                  {(messageIdAccessor) => (
-                    <Show when={reactionPickerOverlayPosition()}>
-                      {(positionAccessor) => (
-                        <Portal>
-                          <div
-                            class="reaction-picker reaction-picker-floating"
-                            role="dialog"
-                            aria-label="Choose reaction"
-                            style={`top: ${positionAccessor().top}px; left: ${positionAccessor().left}px;`}
-                          >
-                            <div class="reaction-picker-header">
-                              <p class="reaction-picker-title">React</p>
-                              <button
-                                type="button"
-                                class="reaction-picker-close"
-                                onClick={() => setOpenReactionPickerMessageId(null)}
-                              >
-                                Close
-                              </button>
-                            </div>
-                            <div class="reaction-picker-grid">
-                              <For each={OPENMOJI_REACTION_OPTIONS}>
-                                {(option) => (
-                                  <button
-                                    type="button"
-                                    class="reaction-picker-option"
-                                    onClick={() =>
-                                      void addReactionFromPicker(messageIdAccessor(), option.emoji)}
-                                    aria-label={`Add ${option.label} reaction`}
-                                    title={option.label}
-                                  >
-                                    <img
-                                      src={option.iconUrl}
-                                      alt=""
-                                      loading="lazy"
-                                      decoding="async"
-                                      referrerPolicy="no-referrer"
-                                    />
-                                  </button>
-                                )}
-                              </For>
-                            </div>
-                          </div>
-                        </Portal>
-                      )}
-                    </Show>
-                  )}
-                </Show>
+                <ReactionPickerPortal
+                  openMessageId={openReactionPickerMessageId()}
+                  position={reactionPickerOverlayPosition()}
+                  options={OPENMOJI_REACTION_OPTIONS}
+                  onClose={() => setOpenReactionPickerMessageId(null)}
+                  onAddReaction={(messageId, emoji) =>
+                    addReactionFromPicker(messageId, emoji)}
+                />
               </Show>
             </>
           }
@@ -3299,694 +2954,150 @@ export function AppShellPage() {
         </Show>
       </div>
 
-      <Show when={activeOverlayPanel()}>
-        {(panel) => (
-          <div
-            class="panel-backdrop"
-            role="presentation"
-            onClick={(event) => {
-              if (event.target === event.currentTarget) {
-                closeOverlayPanel();
-              }
-            }}
-          >
-            <section
-              class={overlayPanelClassName(panel())}
-              role="dialog"
-              aria-modal="true"
-              aria-label={`${overlayPanelTitle(panel())} panel`}
-            >
-              <header class="panel-window-header">
-                <h4>{overlayPanelTitle(panel())}</h4>
-                <button type="button" onClick={closeOverlayPanel} disabled={!canCloseActivePanel()}>
-                  Close
-                </button>
-              </header>
-              <div class="panel-window-body">
-                <Switch>
-                  <Match when={panel() === "workspace-create"}>
-                    <section class="member-group">
-                      <form class="inline-form" onSubmit={createWorkspace}>
-                        <label>
-                          Workspace name
-                          <input
-                            value={createGuildName()}
-                            onInput={(event) => setCreateGuildName(event.currentTarget.value)}
-                            maxlength="64"
-                          />
-                        </label>
-                        <label>
-                          Visibility
-                          <select
-                            value={createGuildVisibility()}
-                            onChange={(event) =>
-                              setCreateGuildVisibility(guildVisibilityFromInput(event.currentTarget.value))
-                            }
-                          >
-                            <option value="private">private</option>
-                            <option value="public">public</option>
-                          </select>
-                        </label>
-                        <label>
-                          First channel
-                          <input
-                            value={createChannelName()}
-                            onInput={(event) => setCreateChannelName(event.currentTarget.value)}
-                            maxlength="64"
-                          />
-                        </label>
-                        <label>
-                          Channel type
-                          <select
-                            value={createChannelKind()}
-                            onChange={(event) =>
-                              setCreateChannelKind(channelKindFromInput(event.currentTarget.value))
-                            }
-                          >
-                            <option value="text">text</option>
-                            <option value="voice">voice</option>
-                          </select>
-                        </label>
-                        <div class="button-row">
-                          <button type="submit" disabled={isCreatingWorkspace()}>
-                            {isCreatingWorkspace() ? "Creating..." : "Create workspace"}
-                          </button>
-                          <Show when={canDismissWorkspaceCreateForm()}>
-                            <button type="button" onClick={closeOverlayPanel}>
-                              Cancel
-                            </button>
-                          </Show>
-                        </div>
-                      </form>
-                      <Show when={workspaceError()}>
-                        <p class="status error">{workspaceError()}</p>
-                      </Show>
-                    </section>
-                  </Match>
-
-                  <Match when={panel() === "channel-create" && canManageWorkspaceChannels()}>
-                    <section class="member-group">
-                      <form class="inline-form" onSubmit={createNewChannel}>
-                        <label>
-                          Channel name
-                          <input
-                            value={newChannelName()}
-                            onInput={(event) => setNewChannelName(event.currentTarget.value)}
-                            maxlength="64"
-                          />
-                        </label>
-                        <label>
-                          Channel type
-                          <select
-                            value={newChannelKind()}
-                            onChange={(event) =>
-                              setNewChannelKind(channelKindFromInput(event.currentTarget.value))
-                            }
-                          >
-                            <option value="text">text</option>
-                            <option value="voice">voice</option>
-                          </select>
-                        </label>
-                        <div class="button-row">
-                          <button type="submit" disabled={isCreatingChannel()}>
-                            {isCreatingChannel() ? "Creating..." : "Create channel"}
-                          </button>
-                          <button type="button" onClick={closeOverlayPanel}>
-                            Cancel
-                          </button>
-                        </div>
-                      </form>
-                      <Show when={channelCreateError()}>
-                        <p class="status error">{channelCreateError()}</p>
-                      </Show>
-                    </section>
-                  </Match>
-
-                  <Match when={panel() === "public-directory"}>
-                    <section class="public-directory" aria-label="public-workspace-directory">
-                      <form class="inline-form" onSubmit={runPublicGuildSearch}>
-                        <label>
-                          Search
-                          <input
-                            value={publicGuildSearchQuery()}
-                            onInput={(event) => setPublicGuildSearchQuery(event.currentTarget.value)}
-                            maxlength="64"
-                            placeholder="workspace name"
-                          />
-                        </label>
-                        <button type="submit" disabled={isSearchingPublicGuilds()}>
-                          {isSearchingPublicGuilds() ? "Searching..." : "Find public"}
-                        </button>
-                      </form>
-                      <Show when={publicGuildSearchError()}>
-                        <p class="status error">{publicGuildSearchError()}</p>
-                      </Show>
-                      <ul>
-                        <For each={publicGuildDirectory()}>
-                          {(guild) => (
-                            <li>
-                              <span class="presence online" />
-                              <div class="stacked-meta">
-                                <span>{guild.name}</span>
-                                <span class="muted mono">{guild.visibility}</span>
-                              </div>
-                            </li>
-                          )}
-                        </For>
-                        <Show when={!isSearchingPublicGuilds() && publicGuildDirectory().length === 0}>
-                          <li>
-                            <span class="presence idle" />
-                            no-public-workspaces
-                          </li>
-                        </Show>
-                      </ul>
-                    </section>
-                  </Match>
-
-                  <Match when={panel() === "settings"}>
-                    <section class="settings-panel-layout" aria-label="settings">
-                      <aside class="settings-panel-rail" aria-label="Settings category rail">
-                        <p class="group-label">CATEGORIES</p>
-                        <ul class="settings-category-list">
-                          <For each={SETTINGS_CATEGORIES}>
-                            {(category) => {
-                              const isActive = () => activeSettingsCategory() === category.id;
-                              return (
-                                <li>
-                                  <button
-                                    type="button"
-                                    class="settings-category-button"
-                                    classList={{ "settings-category-button-active": isActive() }}
-                                    onClick={() => openSettingsCategory(category.id)}
-                                    aria-label={`Open ${category.label} settings category`}
-                                    aria-current={isActive() ? "page" : undefined}
-                                  >
-                                    <span class="settings-category-name">{category.label}</span>
-                                    <span class="settings-category-summary muted">{category.summary}</span>
-                                  </button>
-                                </li>
-                              );
-                            }}
-                          </For>
-                        </ul>
-                      </aside>
-                      <section class="settings-panel-content" aria-label="Settings content pane">
-                        <Switch>
-                          <Match when={activeSettingsCategory() === "voice"}>
-                            <section class="settings-submenu-layout" aria-label="Voice settings submenu">
-                              <aside class="settings-submenu-rail" aria-label="Voice settings submenu rail">
-                                <p class="group-label">VOICE</p>
-                                <ul class="settings-submenu-list">
-                                  <For each={VOICE_SETTINGS_SUBMENU}>
-                                    {(submenu) => {
-                                      const isActive = () => activeVoiceSettingsSubmenu() === submenu.id;
-                                      return (
-                                        <li>
-                                          <button
-                                            type="button"
-                                            class="settings-submenu-button"
-                                            classList={{
-                                              "settings-submenu-button-active": isActive(),
-                                            }}
-                                            onClick={() => setActiveVoiceSettingsSubmenu(submenu.id)}
-                                            aria-label={`Open Voice ${submenu.label} submenu`}
-                                            aria-current={isActive() ? "page" : undefined}
-                                          >
-                                            <span class="settings-category-name">{submenu.label}</span>
-                                            <span class="settings-category-summary muted">
-                                              {submenu.summary}
-                                            </span>
-                                          </button>
-                                        </li>
-                                      );
-                                    }}
-                                  </For>
-                                </ul>
-                              </aside>
-                              <section
-                                class="settings-submenu-content"
-                                aria-label="Voice settings submenu content"
-                              >
-                                <Switch>
-                                  <Match when={activeVoiceSettingsSubmenu() === "audio-devices"}>
-                                    <p class="group-label">AUDIO DEVICES</p>
-                                    <form class="inline-form" onSubmit={(event) => event.preventDefault()}>
-                                      <label>
-                                        Microphone
-                                        <select
-                                          aria-label="Select microphone device"
-                                          value={voiceDevicePreferences().audioInputDeviceId ?? ""}
-                                          onChange={(event) =>
-                                            void setVoiceDevicePreference(
-                                              "audioinput",
-                                              event.currentTarget.value,
-                                            )
-                                          }
-                                          disabled={isRefreshingAudioDevices()}
-                                        >
-                                          <option value="">System default</option>
-                                          <For each={audioInputDevices()}>
-                                            {(device) => (
-                                              <option value={device.deviceId}>{device.label}</option>
-                                            )}
-                                          </For>
-                                        </select>
-                                      </label>
-                                      <label>
-                                        Speaker
-                                        <select
-                                          aria-label="Select speaker device"
-                                          value={voiceDevicePreferences().audioOutputDeviceId ?? ""}
-                                          onChange={(event) =>
-                                            void setVoiceDevicePreference(
-                                              "audiooutput",
-                                              event.currentTarget.value,
-                                            )
-                                          }
-                                          disabled={isRefreshingAudioDevices()}
-                                        >
-                                          <option value="">System default</option>
-                                          <For each={audioOutputDevices()}>
-                                            {(device) => (
-                                              <option value={device.deviceId}>{device.label}</option>
-                                            )}
-                                          </For>
-                                        </select>
-                                      </label>
-                                      <button
-                                        type="button"
-                                        onClick={() => void refreshAudioDeviceInventory()}
-                                        disabled={isRefreshingAudioDevices()}
-                                      >
-                                        {isRefreshingAudioDevices() ? "Refreshing..." : "Refresh devices"}
-                                      </button>
-                                    </form>
-                                    <Show when={audioDevicesStatus()}>
-                                      <p class="status ok">{audioDevicesStatus()}</p>
-                                    </Show>
-                                    <Show when={audioDevicesError()}>
-                                      <p class="status error">{audioDevicesError()}</p>
-                                    </Show>
-                                    <Show
-                                      when={
-                                        !isRefreshingAudioDevices() &&
-                                        audioInputDevices().length === 0 &&
-                                        audioOutputDevices().length === 0 &&
-                                        !audioDevicesError()
-                                      }
-                                    >
-                                      <p class="muted">
-                                        No audio devices were detected yet. Refresh after granting
-                                        media permissions.
-                                      </p>
-                                    </Show>
-                                  </Match>
-                                </Switch>
-                              </section>
-                            </section>
-                          </Match>
-                          <Match when={activeSettingsCategory() === "profile"}>
-                            <p class="group-label">PROFILE</p>
-                            <p class="muted">
-                              Profile settings remain a non-functional placeholder for a future
-                              plan phase.
-                            </p>
-                          </Match>
-                        </Switch>
-                      </section>
-                    </section>
-                  </Match>
-
-                  <Match when={panel() === "friendships"}>
-                    <section class="public-directory" aria-label="friendships">
-                      <form class="inline-form" onSubmit={submitFriendRequest}>
-                        <label>
-                          User ID
-                          <input
-                            value={friendRecipientUserIdInput()}
-                            onInput={(event) => setFriendRecipientUserIdInput(event.currentTarget.value)}
-                            maxlength="26"
-                            placeholder="01ARZ3NDEKTSV4RRFFQ69G5FAV"
-                          />
-                        </label>
-                        <button type="submit" disabled={isRunningFriendAction()}>
-                          {isRunningFriendAction() ? "Submitting..." : "Send request"}
-                        </button>
-                      </form>
-                      <Show when={friendStatus()}>
-                        <p class="status ok">{friendStatus()}</p>
-                      </Show>
-                      <Show when={friendError()}>
-                        <p class="status error">{friendError()}</p>
-                      </Show>
-
-                      <p class="group-label">INCOMING</p>
-                      <ul>
-                        <For each={friendRequests().incoming}>
-                          {(request) => (
-                            <li>
-                              <div class="stacked-meta">
-                                <span>{request.senderUsername}</span>
-                                <span class="muted mono">{request.senderUserId}</span>
-                              </div>
-                              <div class="button-row">
-                                <button
-                                  type="button"
-                                  onClick={() => void acceptIncomingFriendRequest(request.requestId)}
-                                  disabled={isRunningFriendAction()}
-                                >
-                                  Accept
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void dismissFriendRequest(request.requestId)}
-                                  disabled={isRunningFriendAction()}
-                                >
-                                  Ignore
-                                </button>
-                              </div>
-                            </li>
-                          )}
-                        </For>
-                        <Show when={friendRequests().incoming.length === 0}>
-                          <li class="muted">no-incoming-requests</li>
-                        </Show>
-                      </ul>
-
-                      <p class="group-label">OUTGOING</p>
-                      <ul>
-                        <For each={friendRequests().outgoing}>
-                          {(request) => (
-                            <li>
-                              <div class="stacked-meta">
-                                <span>{request.recipientUsername}</span>
-                                <span class="muted mono">{request.recipientUserId}</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => void dismissFriendRequest(request.requestId)}
-                                disabled={isRunningFriendAction()}
-                              >
-                                Cancel
-                              </button>
-                            </li>
-                          )}
-                        </For>
-                        <Show when={friendRequests().outgoing.length === 0}>
-                          <li class="muted">no-outgoing-requests</li>
-                        </Show>
-                      </ul>
-
-                      <p class="group-label">FRIEND LIST</p>
-                      <ul>
-                        <For each={friends()}>
-                          {(friend) => (
-                            <li>
-                              <div class="stacked-meta">
-                                <span>{friend.username}</span>
-                                <span class="muted mono">{friend.userId}</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => void removeFriendship(friend.userId)}
-                                disabled={isRunningFriendAction()}
-                              >
-                                Remove
-                              </button>
-                            </li>
-                          )}
-                        </For>
-                        <Show when={friends().length === 0}>
-                          <li class="muted">no-friends</li>
-                        </Show>
-                      </ul>
-                    </section>
-                  </Match>
-
-                  <Match when={panel() === "search" && canAccessActiveChannel()}>
-                    <section class="member-group">
-                      <form class="inline-form" onSubmit={runSearch}>
-                        <label>
-                          Query
-                          <input
-                            value={searchQuery()}
-                            onInput={(event) => setSearchQuery(event.currentTarget.value)}
-                            maxlength="256"
-                            placeholder="needle"
-                          />
-                        </label>
-                        <button type="submit" disabled={isSearching() || !activeWorkspace()}>
-                          {isSearching() ? "Searching..." : "Search"}
-                        </button>
-                      </form>
-                      <Show when={canManageSearchMaintenance()}>
-                        <div class="button-row">
-                          <button
-                            type="button"
-                            onClick={() => void rebuildSearch()}
-                            disabled={isRunningSearchOps() || !activeWorkspace()}
-                          >
-                            Rebuild Index
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void reconcileSearch()}
-                            disabled={isRunningSearchOps() || !activeWorkspace()}
-                          >
-                            Reconcile Index
-                          </button>
-                        </div>
-                      </Show>
-                      <Show when={searchOpsStatus()}>
-                        <p class="status ok">{searchOpsStatus()}</p>
-                      </Show>
-                      <Show when={searchError()}>
-                        <p class="status error">{searchError()}</p>
-                      </Show>
-                      <Show when={searchResults()}>
-                        {(results) => (
-                          <ul>
-                            <For each={results().messages}>
-                              {(message) => (
-                                <li>
-                                  <span class="presence online" />
-                                  {displayUserLabel(message.authorId)}:{" "}
-                                  {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
-                                </li>
-                              )}
-                            </For>
-                          </ul>
-                        )}
-                      </Show>
-                    </section>
-                  </Match>
-
-                  <Match when={panel() === "attachments" && canAccessActiveChannel()}>
-                    <section class="member-group">
-                      <form class="inline-form" onSubmit={uploadAttachment}>
-                        <label>
-                          File
-                          <input
-                            type="file"
-                            onInput={(event) => {
-                              const file = event.currentTarget.files?.[0] ?? null;
-                              setSelectedAttachment(file);
-                              setAttachmentFilename(file?.name ?? "");
-                            }}
-                          />
-                        </label>
-                        <label>
-                          Filename
-                          <input
-                            value={attachmentFilename()}
-                            onInput={(event) => setAttachmentFilename(event.currentTarget.value)}
-                            maxlength="128"
-                            placeholder="upload.bin"
-                          />
-                        </label>
-                        <button type="submit" disabled={isUploadingAttachment() || !activeChannel()}>
-                          {isUploadingAttachment() ? "Uploading..." : "Upload"}
-                        </button>
-                      </form>
-                      <Show when={attachmentStatus()}>
-                        <p class="status ok">{attachmentStatus()}</p>
-                      </Show>
-                      <Show when={attachmentError()}>
-                        <p class="status error">{attachmentError()}</p>
-                      </Show>
-                      <ul>
-                        <For each={activeAttachments()}>
-                          {(record) => (
-                            <li>
-                              <span class="presence online" />
-                              <div class="stacked-meta">
-                                <span>{record.filename}</span>
-                                <span class="muted mono">
-                                  {record.mimeType} · {formatBytes(record.sizeBytes)}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => void downloadAttachment(record)}
-                                disabled={downloadingAttachmentId() === record.attachmentId}
-                              >
-                                {downloadingAttachmentId() === record.attachmentId ? "..." : "Get"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void removeAttachment(record)}
-                                disabled={deletingAttachmentId() === record.attachmentId}
-                              >
-                                {deletingAttachmentId() === record.attachmentId ? "..." : "Del"}
-                              </button>
-                            </li>
-                          )}
-                        </For>
-                        <Show when={activeAttachments().length === 0}>
-                          <li>
-                            <span class="presence idle" />
-                            no-local-attachments
-                          </li>
-                        </Show>
-                      </ul>
-                    </section>
-                  </Match>
-
-                  <Match when={panel() === "moderation" && hasModerationAccess()}>
-                    <section class="member-group">
-                      <form class="inline-form">
-                        <label>
-                          Target user ULID
-                          <input
-                            value={moderationUserIdInput()}
-                            onInput={(event) => setModerationUserIdInput(event.currentTarget.value)}
-                            maxlength="26"
-                            placeholder="01ARZ..."
-                          />
-                        </label>
-                        <label>
-                          Role
-                          <select
-                            value={moderationRoleInput()}
-                            onChange={(event) => setModerationRoleInput(roleFromInput(event.currentTarget.value))}
-                          >
-                            <option value="member">member</option>
-                            <option value="moderator">moderator</option>
-                            <option value="owner">owner</option>
-                          </select>
-                        </label>
-                        <div class="button-row">
-                          <Show when={canManageRoles()}>
-                            <button
-                              type="button"
-                              disabled={isModerating() || !activeWorkspace()}
-                              onClick={() => void runMemberAction("add")}
-                            >
-                              Add
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isModerating() || !activeWorkspace()}
-                              onClick={() => void runMemberAction("role")}
-                            >
-                              Set Role
-                            </button>
-                          </Show>
-                          <Show when={canBanMembers()}>
-                            <button
-                              type="button"
-                              disabled={isModerating() || !activeWorkspace()}
-                              onClick={() => void runMemberAction("kick")}
-                            >
-                              Kick
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isModerating() || !activeWorkspace()}
-                              onClick={() => void runMemberAction("ban")}
-                            >
-                              Ban
-                            </button>
-                          </Show>
-                        </div>
-                      </form>
-                      <Show when={canManageChannelOverrides()}>
-                        <form class="inline-form" onSubmit={applyOverride}>
-                          <label>
-                            Override role
-                            <select
-                              value={overrideRoleInput()}
-                              onChange={(event) => setOverrideRoleInput(roleFromInput(event.currentTarget.value))}
-                            >
-                              <option value="member">member</option>
-                              <option value="moderator">moderator</option>
-                              <option value="owner">owner</option>
-                            </select>
-                          </label>
-                          <label>
-                            Allow permissions (csv)
-                            <input
-                              value={overrideAllowCsv()}
-                              onInput={(event) => setOverrideAllowCsv(event.currentTarget.value)}
-                              placeholder="create_message,subscribe_streams"
-                            />
-                          </label>
-                          <label>
-                            Deny permissions (csv)
-                            <input
-                              value={overrideDenyCsv()}
-                              onInput={(event) => setOverrideDenyCsv(event.currentTarget.value)}
-                              placeholder="delete_message"
-                            />
-                          </label>
-                          <button type="submit" disabled={isModerating() || !activeChannel()}>
-                            Apply channel override
-                          </button>
-                        </form>
-                      </Show>
-                      <Show when={moderationStatus()}>
-                        <p class="status ok">{moderationStatus()}</p>
-                      </Show>
-                      <Show when={moderationError()}>
-                        <p class="status error">{moderationError()}</p>
-                      </Show>
-                    </section>
-                  </Match>
-
-                  <Match when={panel() === "utility"}>
-                    <section class="member-group">
-                      <div class="button-row">
-                        <button type="button" onClick={() => void runHealthCheck()} disabled={isCheckingHealth()}>
-                          {isCheckingHealth() ? "Checking..." : "Health"}
-                        </button>
-                      </div>
-                      <form class="inline-form" onSubmit={runEcho}>
-                        <label>
-                          Echo
-                          <input
-                            value={echoInput()}
-                            onInput={(event) => setEchoInput(event.currentTarget.value)}
-                            maxlength="128"
-                          />
-                        </label>
-                        <button type="submit" disabled={isEchoing()}>
-                          {isEchoing() ? "Sending..." : "Echo"}
-                        </button>
-                      </form>
-                      <Show when={healthStatus()}>
-                        <p class="status ok">{healthStatus()}</p>
-                      </Show>
-                      <Show when={diagError()}>
-                        <p class="status error">{diagError()}</p>
-                      </Show>
-                    </section>
-                  </Match>
-                </Switch>
-              </div>
-            </section>
-          </div>
-        )}
-      </Show>
+      <PanelHost
+        panel={activeOverlayPanel()}
+        canCloseActivePanel={canCloseActivePanel()}
+        canManageWorkspaceChannels={canManageWorkspaceChannels()}
+        canAccessActiveChannel={canAccessActiveChannel()}
+        hasModerationAccess={hasModerationAccess()}
+        panelTitle={overlayPanelTitle}
+        panelClassName={overlayPanelClassName}
+        onClose={closeOverlayPanel}
+        workspaceCreatePanelProps={{
+          createGuildName: createGuildName(),
+          createGuildVisibility: createGuildVisibility(),
+          createChannelName: createChannelName(),
+          createChannelKind: createChannelKind(),
+          isCreatingWorkspace: isCreatingWorkspace(),
+          canDismissWorkspaceCreateForm: canDismissWorkspaceCreateForm(),
+          workspaceError: workspaceError(),
+          onSubmit: createWorkspace,
+          onCreateGuildNameInput: setCreateGuildName,
+          onCreateGuildVisibilityChange: (value) =>
+            setCreateGuildVisibility(guildVisibilityFromInput(value)),
+          onCreateChannelNameInput: setCreateChannelName,
+          onCreateChannelKindChange: (value) =>
+            setCreateChannelKind(channelKindFromInput(value)),
+          onCancel: closeOverlayPanel,
+        }}
+        channelCreatePanelProps={{
+          newChannelName: newChannelName(),
+          newChannelKind: newChannelKind(),
+          isCreatingChannel: isCreatingChannel(),
+          channelCreateError: channelCreateError(),
+          onSubmit: createNewChannel,
+          onNewChannelNameInput: setNewChannelName,
+          onNewChannelKindChange: (value) =>
+            setNewChannelKind(channelKindFromInput(value)),
+          onCancel: closeOverlayPanel,
+        }}
+        publicDirectoryPanelProps={{
+          searchQuery: publicGuildSearchQuery(),
+          isSearching: isSearchingPublicGuilds(),
+          searchError: publicGuildSearchError(),
+          guilds: publicGuildDirectory(),
+          onSubmitSearch: runPublicGuildSearch,
+          onSearchInput: setPublicGuildSearchQuery,
+        }}
+        settingsPanelProps={{
+          settingsCategories: SETTINGS_CATEGORIES,
+          voiceSettingsSubmenu: VOICE_SETTINGS_SUBMENU,
+          activeSettingsCategory: activeSettingsCategory(),
+          activeVoiceSettingsSubmenu: activeVoiceSettingsSubmenu(),
+          voiceDevicePreferences: voiceDevicePreferences(),
+          audioInputDevices: audioInputDevices(),
+          audioOutputDevices: audioOutputDevices(),
+          isRefreshingAudioDevices: isRefreshingAudioDevices(),
+          audioDevicesStatus: audioDevicesStatus(),
+          audioDevicesError: audioDevicesError(),
+          onOpenSettingsCategory: openSettingsCategory,
+          onOpenVoiceSettingsSubmenu: setActiveVoiceSettingsSubmenu,
+          onSetVoiceDevicePreference: (kind, value) =>
+            setVoiceDevicePreference(kind, value),
+          onRefreshAudioDeviceInventory: refreshAudioDeviceInventory,
+        }}
+        friendshipsPanelProps={{
+          friendRecipientUserIdInput: friendRecipientUserIdInput(),
+          friendRequests: friendRequests(),
+          friends: friends(),
+          isRunningFriendAction: isRunningFriendAction(),
+          friendStatus: friendStatus(),
+          friendError: friendError(),
+          onSubmitFriendRequest: submitFriendRequest,
+          onFriendRecipientInput: setFriendRecipientUserIdInput,
+          onAcceptIncomingFriendRequest: (requestId) =>
+            acceptIncomingFriendRequest(requestId),
+          onDismissFriendRequest: (requestId) => dismissFriendRequest(requestId),
+          onRemoveFriendship: (friendUserId) => removeFriendship(friendUserId),
+        }}
+        searchPanelProps={{
+          searchQuery: searchQuery(),
+          isSearching: isSearching(),
+          hasActiveWorkspace: Boolean(activeWorkspace()),
+          canManageSearchMaintenance: canManageSearchMaintenance(),
+          isRunningSearchOps: isRunningSearchOps(),
+          searchOpsStatus: searchOpsStatus(),
+          searchError: searchError(),
+          searchResults: searchResults(),
+          onSubmitSearch: runSearch,
+          onSearchQueryInput: setSearchQuery,
+          onRebuildSearch: rebuildSearch,
+          onReconcileSearch: reconcileSearch,
+          displayUserLabel,
+        }}
+        attachmentsPanelProps={{
+          attachmentFilename: attachmentFilename(),
+          activeAttachments: activeAttachments(),
+          isUploadingAttachment: isUploadingAttachment(),
+          hasActiveChannel: Boolean(activeChannel()),
+          attachmentStatus: attachmentStatus(),
+          attachmentError: attachmentError(),
+          downloadingAttachmentId: downloadingAttachmentId(),
+          deletingAttachmentId: deletingAttachmentId(),
+          onSubmitUpload: uploadAttachment,
+          onAttachmentFileInput: (file) => {
+            setSelectedAttachment(file);
+            setAttachmentFilename(file?.name ?? "");
+          },
+          onAttachmentFilenameInput: setAttachmentFilename,
+          onDownloadAttachment: (record) => downloadAttachment(record),
+          onRemoveAttachment: (record) => removeAttachment(record),
+        }}
+        moderationPanelProps={{
+          moderationUserIdInput: moderationUserIdInput(),
+          moderationRoleInput: moderationRoleInput(),
+          overrideRoleInput: overrideRoleInput(),
+          overrideAllowCsv: overrideAllowCsv(),
+          overrideDenyCsv: overrideDenyCsv(),
+          isModerating: isModerating(),
+          hasActiveWorkspace: Boolean(activeWorkspace()),
+          hasActiveChannel: Boolean(activeChannel()),
+          canManageRoles: canManageRoles(),
+          canBanMembers: canBanMembers(),
+          canManageChannelOverrides: canManageChannelOverrides(),
+          moderationStatus: moderationStatus(),
+          moderationError: moderationError(),
+          onModerationUserIdInput: setModerationUserIdInput,
+          onModerationRoleChange: (value) =>
+            setModerationRoleInput(roleFromInput(value)),
+          onRunMemberAction: (action) => runMemberAction(action),
+          onOverrideRoleChange: (value) =>
+            setOverrideRoleInput(roleFromInput(value)),
+          onOverrideAllowInput: setOverrideAllowCsv,
+          onOverrideDenyInput: setOverrideDenyCsv,
+          onApplyOverride: applyOverride,
+        }}
+        utilityPanelProps={{
+          echoInput: echoInput(),
+          healthStatus: healthStatus(),
+          diagError: diagError(),
+          isCheckingHealth: isCheckingHealth(),
+          isEchoing: isEchoing(),
+          onEchoInput: setEchoInput,
+          onRunHealthCheck: runHealthCheck,
+          onRunEcho: runEcho,
+        }}
+      />
     </div>
   );
 }
