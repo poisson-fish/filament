@@ -186,17 +186,17 @@ Make voice channels usable end-to-end (join, talk, leave) in app shell.
 Add a baseline settings panel with left-rail categories and a `Voice` submenu containing audio device settings.
 
 ### Completion Status
-`IN PROGRESS`
+`DONE`
 
 ### Tasks
 - [x] Add a global Settings entry point in app shell (gear/action) with open/close behavior.
 - [x] Build settings panel layout with left rail for categories and right content pane.
 - [x] Add baseline categories structure in rail, including `Voice` and `Profile` (profile as placeholder only in this plan).
 - [x] Implement `Voice -> Audio Devices` submenu page.
-- [ ] Add audio input/output device selectors (microphone, speaker) using browser media-device enumeration with strict error handling.
-- [ ] Add safe defaults and persistence for selected device IDs in local client state/storage.
-- [ ] Wire selected devices into RTC flow state (without changing backend permission model).
-- [ ] Add UI tests for panel navigation, `Voice` submenu selection, and device selector behavior with mocked media devices.
+- [x] Add audio input/output device selectors (microphone, speaker) using browser media-device enumeration with strict error handling.
+- [x] Add safe defaults and persistence for selected device IDs in local client state/storage.
+- [x] Wire selected devices into RTC flow state (without changing backend permission model).
+- [x] Add UI tests for panel navigation, `Voice` submenu selection, and device selector behavior with mocked media devices.
 
 ### Exit Criteria
 - Settings panel opens from app shell and renders category rail + content pane.
@@ -206,12 +206,26 @@ Add a baseline settings panel with left-rail categories and a `Voice` submenu co
 - Tests cover settings navigation and audio-device selection flows.
 
 ### Implementation Notes (Fill After Completion)
-- Date completed:
-- PR/commit:
+- Date completed: 2026-02-11
+- PR/commit: local changes pending commit
 - Files changed:
+  - `apps/filament-client-web/src/pages/AppShellPage.tsx`
+  - `apps/filament-client-web/src/lib/rtc.ts`
+  - `apps/filament-client-web/src/lib/voice-device-settings.ts`
+  - `apps/filament-client-web/tests/app-shell-settings-entry.test.tsx`
+  - `apps/filament-client-web/tests/app-shell-voice-controls.test.tsx`
+  - `apps/filament-client-web/tests/rtc.test.ts`
+  - `apps/filament-client-web/tests/voice-device-settings.test.ts`
+  - `PLAN_RTC.md`
 - Security-impact notes:
+  - Added strict local validation for audio device IDs and bounded browser device enumeration (kind-filtered, deduped, capped) to reduce malformed-device state propagation.
+  - Device preferences are now persisted with bounded local-storage parsing and fail-safe defaults (`system default`) when storage payloads or saved IDs are invalid/unavailable.
+  - RTC wrapper now applies/stages preferred audio input/output device IDs through controlled `switchActiveDevice` calls and surfaces bounded errors without dropping active room state.
 - Tests run:
+  - `npm --prefix apps/filament-client-web test`
+  - `npm --prefix apps/filament-client-web run build`
 - Follow-ups/debt:
+  - Stream-oriented Phase 5 controls should reuse the same preference/state persistence model for camera and screen-source selection semantics.
 
 ### Handoff To Next Phase
 - Reuse settings-managed audio device preferences for stream publish UX.
