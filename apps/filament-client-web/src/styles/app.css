@@ -2248,6 +2248,10 @@ select {
   min-height: 1.7rem;
   padding: 0.14rem 0.08rem 0.14rem 0;
   border-radius: 0.42rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.36rem;
 }
 
 .voice-channel-presence-participant::before {
@@ -2284,6 +2288,15 @@ select {
 
 .voice-channel-presence-participant-speaking {
   background: rgba(56, 163, 108, 0.12);
+}
+
+.voice-channel-presence-name {
+  flex: 1;
+  text-align: left;
+}
+
+.voice-channel-presence-badges {
+  margin-left: auto;
 }
 
 .voice-channel-presence-tree {

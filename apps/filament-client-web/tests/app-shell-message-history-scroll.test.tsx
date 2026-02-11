@@ -10,6 +10,7 @@ const REFRESH_TOKEN = "B".repeat(64);
 
 const GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const VOICE_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
 const USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const LATEST_MESSAGE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 const OLDER_MESSAGE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
@@ -61,7 +62,20 @@ function requestMethod(init?: RequestInit): string {
   return (init?.method ?? "GET").toUpperCase();
 }
 
-function seedAuthenticatedWorkspace(): void {
+type FixtureChannel = {
+  channelId: string;
+  name: string;
+  kind: "text" | "voice";
+};
+
+function extractChannelId(url: string): string | null {
+  const match = url.match(new RegExp(`/guilds/${GUILD_ID}/channels/([^/?]+)`));
+  return match?.[1] ?? null;
+}
+
+function seedAuthenticatedWorkspace(
+  channels: FixtureChannel[] = [{ channelId: CHANNEL_ID, name: "incident-room", kind: "text" }],
+): void {
   window.sessionStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
@@ -77,10 +91,20 @@ function seedAuthenticatedWorkspace(): void {
       {
         guildId: GUILD_ID,
         guildName: "Security Ops",
-        channels: [{ channelId: CHANNEL_ID, name: "incident-room" }],
+        channels: channels.map((channel) => ({
+          channelId: channel.channelId,
+          name: channel.name,
+          kind: channel.kind,
+        })),
       },
     ]),
   );
+}
+
+function renderedMessageTexts(): string[] {
+  return [...document.querySelectorAll(".message-row .message-tokenized")]
+    .map((node) => node.textContent?.trim() ?? "")
+    .filter((text) => text.length > 0);
 }
 
 function installMessageListScrollMetrics(element: HTMLElement): {
@@ -226,5 +250,133 @@ describe("app shell message history scrolling", () => {
 
     await waitFor(() => expect(olderPageRequests).toBe(1));
     await screen.findByText("older message");
+  });
+
+  it("keeps chronological order stable when server history ordering changes across refreshes", async () => {
+    seedAuthenticatedWorkspace([
+      { channelId: CHANNEL_ID, name: "incident-room", kind: "text" },
+      { channelId: VOICE_CHANNEL_ID, name: "backend", kind: "voice" },
+    ]);
+
+    let textHistoryRequests = 0;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(init);
+
+      if (method === "GET" && url.includes("/auth/me")) {
+        return jsonResponse({ user_id: USER_ID, username: "alice" });
+      }
+      if (method === "GET" && url.endsWith("/guilds")) {
+        return jsonResponse({
+          guilds: [{ guild_id: GUILD_ID, name: "Security Ops", visibility: "private" }],
+        });
+      }
+      if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [
+            { channel_id: CHANNEL_ID, name: "incident-room", kind: "text" },
+            { channel_id: VOICE_CHANNEL_ID, name: "backend", kind: "voice" },
+          ],
+        });
+      }
+
+      const channelId = extractChannelId(url);
+      if (
+        method === "GET" &&
+        channelId &&
+        url.includes(`/guilds/${GUILD_ID}/channels/${channelId}/permissions/self`)
+      ) {
+        return jsonResponse({ role: "member", permissions: ["create_message"] });
+      }
+
+      if (method === "GET" && channelId === CHANNEL_ID && url.includes(`/messages`)) {
+        const parsed = new URL(url, "https://filament.test");
+        if (parsed.searchParams.get("before")) {
+          return jsonResponse({ messages: [], next_before: null });
+        }
+        textHistoryRequests += 1;
+        if (textHistoryRequests === 1) {
+          return jsonResponse({
+            messages: [
+              {
+                message_id: LATEST_MESSAGE_ID,
+                guild_id: GUILD_ID,
+                channel_id: CHANNEL_ID,
+                author_id: USER_ID,
+                content: "latest message",
+                markdown_tokens: [{ type: "text", text: "latest message" }],
+                attachments: [],
+                created_at_unix: 2,
+              },
+              {
+                message_id: OLDER_MESSAGE_ID,
+                guild_id: GUILD_ID,
+                channel_id: CHANNEL_ID,
+                author_id: USER_ID,
+                content: "older message",
+                markdown_tokens: [{ type: "text", text: "older message" }],
+                attachments: [],
+                created_at_unix: 1,
+              },
+            ],
+            next_before: null,
+          });
+        }
+        return jsonResponse({
+          messages: [
+            {
+              message_id: OLDER_MESSAGE_ID,
+              guild_id: GUILD_ID,
+              channel_id: CHANNEL_ID,
+              author_id: USER_ID,
+              content: "older message",
+              markdown_tokens: [{ type: "text", text: "older message" }],
+              attachments: [],
+              created_at_unix: 1,
+            },
+            {
+              message_id: LATEST_MESSAGE_ID,
+              guild_id: GUILD_ID,
+              channel_id: CHANNEL_ID,
+              author_id: USER_ID,
+              content: "latest message",
+              markdown_tokens: [{ type: "text", text: "latest message" }],
+              attachments: [],
+              created_at_unix: 2,
+            },
+          ],
+          next_before: null,
+        });
+      }
+
+      if (method === "GET" && channelId === VOICE_CHANNEL_ID && url.includes(`/messages`)) {
+        return jsonResponse({ messages: [], next_before: null });
+      }
+      if (method === "GET" && url.includes("/guilds/public")) {
+        return jsonResponse({ guilds: [] });
+      }
+
+      return jsonResponse({ error: "not_found" }, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Workspace Tools" });
+    await screen.findByText("latest message");
+    await screen.findByText("older message");
+    expect(renderedMessageTexts()).toEqual(["older message", "latest message"]);
+
+    await fireEvent.click(screen.getByRole("button", { name: "backend" }));
+    await screen.findByText("No messages yet in this channel.");
+
+    await fireEvent.click(screen.getByRole("button", { name: "#incident-room" }));
+    await waitFor(() => expect(textHistoryRequests).toBe(2));
+    await screen.findByText("latest message");
+    expect(renderedMessageTexts()).toEqual(["older message", "latest message"]);
   });
 });

@@ -672,23 +672,42 @@ function upsertWorkspace(
   return existing.map((workspace) => (workspace.guildId === guildId ? updater(workspace) : workspace));
 }
 
-function mergeMessage(existing: MessageRecord[], incoming: MessageRecord): MessageRecord[] {
-  const index = existing.findIndex((entry) => entry.messageId === incoming.messageId);
-  if (index >= 0) {
-    const next = [...existing];
-    next[index] = incoming;
-    return next;
+function compareMessageChronology(left: MessageRecord, right: MessageRecord): number {
+  if (left.createdAtUnix !== right.createdAtUnix) {
+    return left.createdAtUnix - right.createdAtUnix;
   }
-  return [...existing, incoming];
+  if (left.messageId === right.messageId) {
+    return 0;
+  }
+  return left.messageId < right.messageId ? -1 : 1;
 }
 
-function prependOlderMessages(
+function normalizeMessageOrder(messages: MessageRecord[]): MessageRecord[] {
+  return [...messages].sort(compareMessageChronology);
+}
+
+function mergeMessage(existing: MessageRecord[], incoming: MessageRecord): MessageRecord[] {
+  const index = existing.findIndex((entry) => entry.messageId === incoming.messageId);
+  const next = [...existing];
+  if (index >= 0) {
+    next[index] = incoming;
+    return normalizeMessageOrder(next);
+  }
+  next.push(incoming);
+  return normalizeMessageOrder(next);
+}
+
+function mergeMessageHistory(
   existing: MessageRecord[],
-  olderAscending: MessageRecord[],
+  incoming: MessageRecord[],
 ): MessageRecord[] {
-  const known = new Set(existing.map((entry) => entry.messageId));
-  const prepend = olderAscending.filter((entry) => !known.has(entry.messageId));
-  return [...prepend, ...existing];
+  const byId = new Map(existing.map((entry) => [entry.messageId, entry]));
+  for (const entry of incoming) {
+    if (!byId.has(entry.messageId)) {
+      byId.set(entry.messageId, entry);
+    }
+  }
+  return normalizeMessageOrder([...byId.values()]);
 }
 
 function tokenizeToDisplayText(tokens: MarkdownToken[]): string {
@@ -1820,7 +1839,7 @@ export function AppShellPage() {
     setLoadingMessages(true);
     try {
       const history = await fetchChannelMessages(session, guildId, channelId, { limit: 50 });
-      setMessages([...history.messages].reverse());
+      setMessages(normalizeMessageOrder(history.messages));
       setNextBefore(history.nextBefore);
       setEditingMessageId(null);
       setEditingDraft("");
@@ -1853,8 +1872,7 @@ export function AppShellPage() {
         limit: 50,
         before,
       });
-      const olderAscending = [...history.messages].reverse();
-      setMessages((existing) => prependOlderMessages(existing, olderAscending));
+      setMessages((existing) => mergeMessageHistory(existing, history.messages));
       setNextBefore(history.nextBefore);
       if (previousScrollHeight !== null && previousScrollTop !== null) {
         runAfterMessageListPaint((element) => {
@@ -1960,6 +1978,18 @@ export function AppShellPage() {
       window.removeEventListener("keydown", onWindowKeydown);
       window.removeEventListener("pointerdown", onPointerDown);
     });
+  });
+
+  createEffect(() => {
+    const openPickerMessageId = openReactionPickerMessageId();
+    if (!openPickerMessageId) {
+      return;
+    }
+    void messages();
+    void voiceStatus();
+    void voiceError();
+    void voiceRosterEntries().length;
+    runAfterPaint(() => updateReactionPickerOverlayPosition(openPickerMessageId));
   });
 
   createEffect(() => {
