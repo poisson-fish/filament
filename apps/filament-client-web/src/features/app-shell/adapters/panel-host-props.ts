@@ -16,13 +16,13 @@ import {
   guildVisibilityFromInput,
   roleFromInput,
 } from "../../../domain/chat";
-import { SETTINGS_CATEGORIES, VOICE_SETTINGS_SUBMENU } from "../config/settings-menu";
-import type { PanelHostProps } from "../components/panels/PanelHost";
-import type { SettingsCategory, VoiceSettingsSubmenu } from "../types";
 import type {
   AudioDeviceOption,
   VoiceDevicePreferences,
 } from "../../../lib/voice-device-settings";
+import type { PanelHostProps } from "../components/panels/PanelHost";
+import { SETTINGS_CATEGORIES, VOICE_SETTINGS_SUBMENU } from "../config/settings-menu";
+import type { SettingsCategory, VoiceSettingsSubmenu } from "../types";
 
 export type PanelHostPropGroups = Pick<
   PanelHostProps,
@@ -37,7 +37,7 @@ export type PanelHostPropGroups = Pick<
   | "utilityPanelProps"
 >;
 
-export interface BuildPanelHostPropGroupsOptions {
+export interface WorkspaceCreatePanelBuilderOptions {
   createGuildName: string;
   createGuildVisibility: GuildVisibility;
   createChannelName: string;
@@ -51,7 +51,9 @@ export interface BuildPanelHostPropGroupsOptions {
   setCreateChannelName: (value: string) => void;
   setCreateChannelKind: (value: ChannelKindName) => void;
   onCancelWorkspaceCreate: () => void;
+}
 
+export interface ChannelCreatePanelBuilderOptions {
   newChannelName: string;
   newChannelKind: ChannelKindName;
   isCreatingChannel: boolean;
@@ -60,14 +62,18 @@ export interface BuildPanelHostPropGroupsOptions {
   setNewChannelName: (value: string) => void;
   setNewChannelKind: (value: ChannelKindName) => void;
   onCancelChannelCreate: () => void;
+}
 
+export interface PublicDirectoryPanelBuilderOptions {
   publicGuildSearchQuery: string;
   isSearchingPublicGuilds: boolean;
   publicGuildSearchError: string;
   publicGuildDirectory: GuildRecord[];
   onSubmitPublicGuildSearch: (event: SubmitEvent) => Promise<void> | void;
   setPublicGuildSearchQuery: (value: string) => void;
+}
 
+export interface SettingsPanelBuilderOptions {
   activeSettingsCategory: SettingsCategory;
   activeVoiceSettingsSubmenu: VoiceSettingsSubmenu;
   voiceDevicePreferences: VoiceDevicePreferences;
@@ -97,7 +103,9 @@ export interface BuildPanelHostPropGroupsOptions {
   setSelectedProfileAvatarFile: (file: File | null) => void;
   onSaveProfileSettings: () => Promise<void> | void;
   onUploadProfileAvatar: () => Promise<void> | void;
+}
 
+export interface FriendshipsPanelBuilderOptions {
   friendRecipientUserIdInput: string;
   friendRequests: FriendRequestList;
   friends: FriendRecord[];
@@ -109,7 +117,9 @@ export interface BuildPanelHostPropGroupsOptions {
   onAcceptIncomingFriendRequest: (requestId: string) => Promise<void> | void;
   onDismissFriendRequest: (requestId: string) => Promise<void> | void;
   onRemoveFriendship: (friendUserId: UserId) => Promise<void> | void;
+}
 
+export interface SearchPanelBuilderOptions {
   searchQuery: string;
   isSearching: boolean;
   hasActiveWorkspace: boolean;
@@ -123,7 +133,9 @@ export interface BuildPanelHostPropGroupsOptions {
   onRebuildSearch: () => Promise<void> | void;
   onReconcileSearch: () => Promise<void> | void;
   displayUserLabel: (userId: string) => string;
+}
 
+export interface AttachmentsPanelBuilderOptions {
   attachmentFilename: string;
   activeAttachments: AttachmentRecord[];
   isUploadingAttachment: boolean;
@@ -137,13 +149,17 @@ export interface BuildPanelHostPropGroupsOptions {
   setAttachmentFilename: (value: string) => void;
   onDownloadAttachment: (record: AttachmentRecord) => Promise<void> | void;
   onRemoveAttachment: (record: AttachmentRecord) => Promise<void> | void;
+}
 
+export interface ModerationPanelBuilderOptions {
   moderationUserIdInput: string;
   moderationRoleInput: RoleName;
   overrideRoleInput: RoleName;
   overrideAllowCsv: string;
   overrideDenyCsv: string;
   isModerating: boolean;
+  hasActiveWorkspace: boolean;
+  hasActiveChannel: boolean;
   canManageRoles: boolean;
   canBanMembers: boolean;
   canManageChannelOverrides: boolean;
@@ -156,7 +172,9 @@ export interface BuildPanelHostPropGroupsOptions {
   setOverrideAllowCsv: (value: string) => void;
   setOverrideDenyCsv: (value: string) => void;
   onApplyOverride: (event: SubmitEvent) => Promise<void> | void;
+}
 
+export interface UtilityPanelBuilderOptions {
   echoInput: string;
   healthStatus: string;
   diagError: string;
@@ -167,155 +185,221 @@ export interface BuildPanelHostPropGroupsOptions {
   onRunEcho: (event: SubmitEvent) => Promise<void> | void;
 }
 
+export interface BuildPanelHostPropGroupsOptions {
+  workspaceCreate: WorkspaceCreatePanelBuilderOptions;
+  channelCreate: ChannelCreatePanelBuilderOptions;
+  publicDirectory: PublicDirectoryPanelBuilderOptions;
+  settings: SettingsPanelBuilderOptions;
+  friendships: FriendshipsPanelBuilderOptions;
+  search: SearchPanelBuilderOptions;
+  attachments: AttachmentsPanelBuilderOptions;
+  moderation: ModerationPanelBuilderOptions;
+  utility: UtilityPanelBuilderOptions;
+}
+
+export function buildWorkspaceCreatePanelProps(
+  options: WorkspaceCreatePanelBuilderOptions,
+): PanelHostProps["workspaceCreatePanelProps"] {
+  return {
+    createGuildName: options.createGuildName,
+    createGuildVisibility: options.createGuildVisibility,
+    createChannelName: options.createChannelName,
+    createChannelKind: options.createChannelKind,
+    isCreatingWorkspace: options.isCreatingWorkspace,
+    canDismissWorkspaceCreateForm: options.canDismissWorkspaceCreateForm,
+    workspaceError: options.workspaceError,
+    onSubmit: options.onCreateWorkspaceSubmit,
+    onCreateGuildNameInput: options.setCreateGuildName,
+    onCreateGuildVisibilityChange: (value) =>
+      options.setCreateGuildVisibility(guildVisibilityFromInput(value)),
+    onCreateChannelNameInput: options.setCreateChannelName,
+    onCreateChannelKindChange: (value) =>
+      options.setCreateChannelKind(channelKindFromInput(value)),
+    onCancel: options.onCancelWorkspaceCreate,
+  };
+}
+
+export function buildChannelCreatePanelProps(
+  options: ChannelCreatePanelBuilderOptions,
+): PanelHostProps["channelCreatePanelProps"] {
+  return {
+    newChannelName: options.newChannelName,
+    newChannelKind: options.newChannelKind,
+    isCreatingChannel: options.isCreatingChannel,
+    channelCreateError: options.channelCreateError,
+    onSubmit: options.onCreateChannelSubmit,
+    onNewChannelNameInput: options.setNewChannelName,
+    onNewChannelKindChange: (value) =>
+      options.setNewChannelKind(channelKindFromInput(value)),
+    onCancel: options.onCancelChannelCreate,
+  };
+}
+
+export function buildPublicDirectoryPanelProps(
+  options: PublicDirectoryPanelBuilderOptions,
+): PanelHostProps["publicDirectoryPanelProps"] {
+  return {
+    searchQuery: options.publicGuildSearchQuery,
+    isSearching: options.isSearchingPublicGuilds,
+    searchError: options.publicGuildSearchError,
+    guilds: options.publicGuildDirectory,
+    onSubmitSearch: options.onSubmitPublicGuildSearch,
+    onSearchInput: options.setPublicGuildSearchQuery,
+  };
+}
+
+export function buildSettingsPanelProps(
+  options: SettingsPanelBuilderOptions,
+): PanelHostProps["settingsPanelProps"] {
+  return {
+    settingsCategories: SETTINGS_CATEGORIES,
+    voiceSettingsSubmenu: VOICE_SETTINGS_SUBMENU,
+    activeSettingsCategory: options.activeSettingsCategory,
+    activeVoiceSettingsSubmenu: options.activeVoiceSettingsSubmenu,
+    voiceDevicePreferences: options.voiceDevicePreferences,
+    audioInputDevices: options.audioInputDevices,
+    audioOutputDevices: options.audioOutputDevices,
+    isRefreshingAudioDevices: options.isRefreshingAudioDevices,
+    audioDevicesStatus: options.audioDevicesStatus,
+    audioDevicesError: options.audioDevicesError,
+    profile: options.profile,
+    profileDraftUsername: options.profileDraftUsername,
+    profileDraftAbout: options.profileDraftAbout,
+    profileAvatarUrl: options.profileAvatarUrl,
+    selectedAvatarFilename: options.selectedAvatarFilename,
+    isSavingProfile: options.isSavingProfile,
+    isUploadingProfileAvatar: options.isUploadingProfileAvatar,
+    profileStatus: options.profileSettingsStatus,
+    profileError: options.profileSettingsError,
+    onOpenSettingsCategory: options.onOpenSettingsCategory,
+    onOpenVoiceSettingsSubmenu: options.onOpenVoiceSettingsSubmenu,
+    onSetVoiceDevicePreference: options.onSetVoiceDevicePreference,
+    onRefreshAudioDeviceInventory: options.onRefreshAudioDeviceInventory,
+    onProfileUsernameInput: options.setProfileDraftUsername,
+    onProfileAboutInput: options.setProfileDraftAbout,
+    onSelectProfileAvatarFile: options.setSelectedProfileAvatarFile,
+    onSaveProfile: options.onSaveProfileSettings,
+    onUploadProfileAvatar: options.onUploadProfileAvatar,
+  };
+}
+
+export function buildFriendshipsPanelProps(
+  options: FriendshipsPanelBuilderOptions,
+): PanelHostProps["friendshipsPanelProps"] {
+  return {
+    friendRecipientUserIdInput: options.friendRecipientUserIdInput,
+    friendRequests: options.friendRequests,
+    friends: options.friends,
+    isRunningFriendAction: options.isRunningFriendAction,
+    friendStatus: options.friendStatus,
+    friendError: options.friendError,
+    onSubmitFriendRequest: options.onSubmitFriendRequest,
+    onFriendRecipientInput: options.setFriendRecipientUserIdInput,
+    onAcceptIncomingFriendRequest: options.onAcceptIncomingFriendRequest,
+    onDismissFriendRequest: options.onDismissFriendRequest,
+    onRemoveFriendship: options.onRemoveFriendship,
+  };
+}
+
+export function buildSearchPanelProps(
+  options: SearchPanelBuilderOptions,
+): PanelHostProps["searchPanelProps"] {
+  return {
+    searchQuery: options.searchQuery,
+    isSearching: options.isSearching,
+    hasActiveWorkspace: options.hasActiveWorkspace,
+    canManageSearchMaintenance: options.canManageSearchMaintenance,
+    isRunningSearchOps: options.isRunningSearchOps,
+    searchOpsStatus: options.searchOpsStatus,
+    searchError: options.searchError,
+    searchResults: options.searchResults,
+    onSubmitSearch: options.onSubmitSearch,
+    onSearchQueryInput: options.setSearchQuery,
+    onRebuildSearch: options.onRebuildSearch,
+    onReconcileSearch: options.onReconcileSearch,
+    displayUserLabel: options.displayUserLabel,
+  };
+}
+
+export function buildAttachmentsPanelProps(
+  options: AttachmentsPanelBuilderOptions,
+): PanelHostProps["attachmentsPanelProps"] {
+  return {
+    attachmentFilename: options.attachmentFilename,
+    activeAttachments: options.activeAttachments,
+    isUploadingAttachment: options.isUploadingAttachment,
+    hasActiveChannel: options.hasActiveChannel,
+    attachmentStatus: options.attachmentStatus,
+    attachmentError: options.attachmentError,
+    downloadingAttachmentId: options.downloadingAttachmentId,
+    deletingAttachmentId: options.deletingAttachmentId,
+    onSubmitUpload: options.onSubmitUploadAttachment,
+    onAttachmentFileInput: (file) => {
+      options.setSelectedAttachment(file);
+      options.setAttachmentFilename(file?.name ?? "");
+    },
+    onAttachmentFilenameInput: options.setAttachmentFilename,
+    onDownloadAttachment: options.onDownloadAttachment,
+    onRemoveAttachment: options.onRemoveAttachment,
+  };
+}
+
+export function buildModerationPanelProps(
+  options: ModerationPanelBuilderOptions,
+): PanelHostProps["moderationPanelProps"] {
+  return {
+    moderationUserIdInput: options.moderationUserIdInput,
+    moderationRoleInput: options.moderationRoleInput,
+    overrideRoleInput: options.overrideRoleInput,
+    overrideAllowCsv: options.overrideAllowCsv,
+    overrideDenyCsv: options.overrideDenyCsv,
+    isModerating: options.isModerating,
+    hasActiveWorkspace: options.hasActiveWorkspace,
+    hasActiveChannel: options.hasActiveChannel,
+    canManageRoles: options.canManageRoles,
+    canBanMembers: options.canBanMembers,
+    canManageChannelOverrides: options.canManageChannelOverrides,
+    moderationStatus: options.moderationStatus,
+    moderationError: options.moderationError,
+    onModerationUserIdInput: options.setModerationUserIdInput,
+    onModerationRoleChange: (value) =>
+      options.setModerationRoleInput(roleFromInput(value)),
+    onRunMemberAction: options.onRunMemberAction,
+    onOverrideRoleChange: (value) =>
+      options.setOverrideRoleInput(roleFromInput(value)),
+    onOverrideAllowInput: options.setOverrideAllowCsv,
+    onOverrideDenyInput: options.setOverrideDenyCsv,
+    onApplyOverride: options.onApplyOverride,
+  };
+}
+
+export function buildUtilityPanelProps(
+  options: UtilityPanelBuilderOptions,
+): PanelHostProps["utilityPanelProps"] {
+  return {
+    echoInput: options.echoInput,
+    healthStatus: options.healthStatus,
+    diagError: options.diagError,
+    isCheckingHealth: options.isCheckingHealth,
+    isEchoing: options.isEchoing,
+    onEchoInput: options.setEchoInput,
+    onRunHealthCheck: options.onRunHealthCheck,
+    onRunEcho: options.onRunEcho,
+  };
+}
+
 export function buildPanelHostPropGroups(
   options: BuildPanelHostPropGroupsOptions,
 ): PanelHostPropGroups {
   return {
-    workspaceCreatePanelProps: {
-      createGuildName: options.createGuildName,
-      createGuildVisibility: options.createGuildVisibility,
-      createChannelName: options.createChannelName,
-      createChannelKind: options.createChannelKind,
-      isCreatingWorkspace: options.isCreatingWorkspace,
-      canDismissWorkspaceCreateForm: options.canDismissWorkspaceCreateForm,
-      workspaceError: options.workspaceError,
-      onSubmit: options.onCreateWorkspaceSubmit,
-      onCreateGuildNameInput: options.setCreateGuildName,
-      onCreateGuildVisibilityChange: (value) =>
-        options.setCreateGuildVisibility(guildVisibilityFromInput(value)),
-      onCreateChannelNameInput: options.setCreateChannelName,
-      onCreateChannelKindChange: (value) =>
-        options.setCreateChannelKind(channelKindFromInput(value)),
-      onCancel: options.onCancelWorkspaceCreate,
-    },
-    channelCreatePanelProps: {
-      newChannelName: options.newChannelName,
-      newChannelKind: options.newChannelKind,
-      isCreatingChannel: options.isCreatingChannel,
-      channelCreateError: options.channelCreateError,
-      onSubmit: options.onCreateChannelSubmit,
-      onNewChannelNameInput: options.setNewChannelName,
-      onNewChannelKindChange: (value) =>
-        options.setNewChannelKind(channelKindFromInput(value)),
-      onCancel: options.onCancelChannelCreate,
-    },
-    publicDirectoryPanelProps: {
-      searchQuery: options.publicGuildSearchQuery,
-      isSearching: options.isSearchingPublicGuilds,
-      searchError: options.publicGuildSearchError,
-      guilds: options.publicGuildDirectory,
-      onSubmitSearch: options.onSubmitPublicGuildSearch,
-      onSearchInput: options.setPublicGuildSearchQuery,
-    },
-    settingsPanelProps: {
-      settingsCategories: SETTINGS_CATEGORIES,
-      voiceSettingsSubmenu: VOICE_SETTINGS_SUBMENU,
-      activeSettingsCategory: options.activeSettingsCategory,
-      activeVoiceSettingsSubmenu: options.activeVoiceSettingsSubmenu,
-      voiceDevicePreferences: options.voiceDevicePreferences,
-      audioInputDevices: options.audioInputDevices,
-      audioOutputDevices: options.audioOutputDevices,
-      isRefreshingAudioDevices: options.isRefreshingAudioDevices,
-      audioDevicesStatus: options.audioDevicesStatus,
-      audioDevicesError: options.audioDevicesError,
-      profile: options.profile,
-      profileDraftUsername: options.profileDraftUsername,
-      profileDraftAbout: options.profileDraftAbout,
-      profileAvatarUrl: options.profileAvatarUrl,
-      selectedAvatarFilename: options.selectedAvatarFilename,
-      isSavingProfile: options.isSavingProfile,
-      isUploadingProfileAvatar: options.isUploadingProfileAvatar,
-      profileStatus: options.profileSettingsStatus,
-      profileError: options.profileSettingsError,
-      onOpenSettingsCategory: options.onOpenSettingsCategory,
-      onOpenVoiceSettingsSubmenu: options.onOpenVoiceSettingsSubmenu,
-      onSetVoiceDevicePreference: options.onSetVoiceDevicePreference,
-      onRefreshAudioDeviceInventory: options.onRefreshAudioDeviceInventory,
-      onProfileUsernameInput: options.setProfileDraftUsername,
-      onProfileAboutInput: options.setProfileDraftAbout,
-      onSelectProfileAvatarFile: options.setSelectedProfileAvatarFile,
-      onSaveProfile: options.onSaveProfileSettings,
-      onUploadProfileAvatar: options.onUploadProfileAvatar,
-    },
-    friendshipsPanelProps: {
-      friendRecipientUserIdInput: options.friendRecipientUserIdInput,
-      friendRequests: options.friendRequests,
-      friends: options.friends,
-      isRunningFriendAction: options.isRunningFriendAction,
-      friendStatus: options.friendStatus,
-      friendError: options.friendError,
-      onSubmitFriendRequest: options.onSubmitFriendRequest,
-      onFriendRecipientInput: options.setFriendRecipientUserIdInput,
-      onAcceptIncomingFriendRequest: options.onAcceptIncomingFriendRequest,
-      onDismissFriendRequest: options.onDismissFriendRequest,
-      onRemoveFriendship: options.onRemoveFriendship,
-    },
-    searchPanelProps: {
-      searchQuery: options.searchQuery,
-      isSearching: options.isSearching,
-      hasActiveWorkspace: options.hasActiveWorkspace,
-      canManageSearchMaintenance: options.canManageSearchMaintenance,
-      isRunningSearchOps: options.isRunningSearchOps,
-      searchOpsStatus: options.searchOpsStatus,
-      searchError: options.searchError,
-      searchResults: options.searchResults,
-      onSubmitSearch: options.onSubmitSearch,
-      onSearchQueryInput: options.setSearchQuery,
-      onRebuildSearch: options.onRebuildSearch,
-      onReconcileSearch: options.onReconcileSearch,
-      displayUserLabel: options.displayUserLabel,
-    },
-    attachmentsPanelProps: {
-      attachmentFilename: options.attachmentFilename,
-      activeAttachments: options.activeAttachments,
-      isUploadingAttachment: options.isUploadingAttachment,
-      hasActiveChannel: options.hasActiveChannel,
-      attachmentStatus: options.attachmentStatus,
-      attachmentError: options.attachmentError,
-      downloadingAttachmentId: options.downloadingAttachmentId,
-      deletingAttachmentId: options.deletingAttachmentId,
-      onSubmitUpload: options.onSubmitUploadAttachment,
-      onAttachmentFileInput: (file) => {
-        options.setSelectedAttachment(file);
-        options.setAttachmentFilename(file?.name ?? "");
-      },
-      onAttachmentFilenameInput: options.setAttachmentFilename,
-      onDownloadAttachment: options.onDownloadAttachment,
-      onRemoveAttachment: options.onRemoveAttachment,
-    },
-    moderationPanelProps: {
-      moderationUserIdInput: options.moderationUserIdInput,
-      moderationRoleInput: options.moderationRoleInput,
-      overrideRoleInput: options.overrideRoleInput,
-      overrideAllowCsv: options.overrideAllowCsv,
-      overrideDenyCsv: options.overrideDenyCsv,
-      isModerating: options.isModerating,
-      hasActiveWorkspace: options.hasActiveWorkspace,
-      hasActiveChannel: options.hasActiveChannel,
-      canManageRoles: options.canManageRoles,
-      canBanMembers: options.canBanMembers,
-      canManageChannelOverrides: options.canManageChannelOverrides,
-      moderationStatus: options.moderationStatus,
-      moderationError: options.moderationError,
-      onModerationUserIdInput: options.setModerationUserIdInput,
-      onModerationRoleChange: (value) =>
-        options.setModerationRoleInput(roleFromInput(value)),
-      onRunMemberAction: options.onRunMemberAction,
-      onOverrideRoleChange: (value) =>
-        options.setOverrideRoleInput(roleFromInput(value)),
-      onOverrideAllowInput: options.setOverrideAllowCsv,
-      onOverrideDenyInput: options.setOverrideDenyCsv,
-      onApplyOverride: options.onApplyOverride,
-    },
-    utilityPanelProps: {
-      echoInput: options.echoInput,
-      healthStatus: options.healthStatus,
-      diagError: options.diagError,
-      isCheckingHealth: options.isCheckingHealth,
-      isEchoing: options.isEchoing,
-      onEchoInput: options.setEchoInput,
-      onRunHealthCheck: options.onRunHealthCheck,
-      onRunEcho: options.onRunEcho,
-    },
+    workspaceCreatePanelProps: buildWorkspaceCreatePanelProps(options.workspaceCreate),
+    channelCreatePanelProps: buildChannelCreatePanelProps(options.channelCreate),
+    publicDirectoryPanelProps: buildPublicDirectoryPanelProps(options.publicDirectory),
+    settingsPanelProps: buildSettingsPanelProps(options.settings),
+    friendshipsPanelProps: buildFriendshipsPanelProps(options.friendships),
+    searchPanelProps: buildSearchPanelProps(options.search),
+    attachmentsPanelProps: buildAttachmentsPanelProps(options.attachments),
+    moderationPanelProps: buildModerationPanelProps(options.moderation),
+    utilityPanelProps: buildUtilityPanelProps(options.utility),
   };
 }

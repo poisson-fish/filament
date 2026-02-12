@@ -518,17 +518,40 @@ Convert `AppShellPage.tsx` from orchestration-heavy module into a thin compositi
 Break up large cross-domain state/adapters to improve cohesion and reduce "god object" coupling.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Split `createWorkspaceState()` into feature-cohesive slices (workspace/channel, friendships, search/discovery) with explicit typed composition.
-- [ ] Split `buildPanelHostPropGroups()` into smaller panel-specific builders (workspace/channel/settings/friendships/search/attachments/moderation/utility).
-- [ ] Keep conversion boundaries in adapters (`channelKindFromInput`, `guildVisibilityFromInput`, `roleFromInput`) while shrinking option surface area per builder.
-- [ ] Replace broad option bags with narrower interfaces scoped to each panel/component concern.
+- [x] Split `createWorkspaceState()` into feature-cohesive slices (workspace/channel, friendships, search/discovery) with explicit typed composition.
+- [x] Split `buildPanelHostPropGroups()` into smaller panel-specific builders (workspace/channel/settings/friendships/search/attachments/moderation/utility).
+- [x] Keep conversion boundaries in adapters (`channelKindFromInput`, `guildVisibilityFromInput`, `roleFromInput`) while shrinking option surface area per builder.
+- [x] Replace broad option bags with narrower interfaces scoped to each panel/component concern.
 
 ### Tests
-- [ ] Expand `apps/filament-client-web/tests/app-shell-state.test.ts` for new composed slice invariants.
-- [ ] Expand `apps/filament-client-web/tests/app-shell-panel-host-props.test.tsx` to cover panel-specific builder mapping and regression parity.
+- [x] Expand `apps/filament-client-web/tests/app-shell-state.test.ts` for new composed slice invariants.
+- [x] Expand `apps/filament-client-web/tests/app-shell-panel-host-props.test.tsx` to cover panel-specific builder mapping and regression parity.
+
+### Refactor Notes
+- Decomposed `apps/filament-client-web/src/features/app-shell/state/workspace-state.ts` into explicit composed slices:
+  - `workspaceChannel`
+  - `friendships`
+  - `discovery`
+- Removed flat multi-domain state exports from `createWorkspaceState()` to enforce slice-scoped access and reduce catch-all coupling.
+- Rewired runtime/page consumers to use slice-scoped state paths:
+  - `apps/filament-client-web/src/features/app-shell/runtime/create-app-shell-runtime.ts`
+  - `apps/filament-client-web/src/pages/AppShellPage.tsx`
+- Refactored `apps/filament-client-web/src/features/app-shell/adapters/panel-host-props.ts` from one broad options interface into panel-specific builder interfaces/functions, then composed them in `buildPanelHostPropGroups(...)`.
+- Preserved typed conversion boundaries in adapter builders (`channelKindFromInput`, `guildVisibilityFromInput`, `roleFromInput`) while narrowing each builder's option surface.
+- Expanded tests for the new decomposition:
+  - `apps/filament-client-web/tests/app-shell-state.test.ts`
+  - `apps/filament-client-web/tests/app-shell-panel-host-props.test.tsx`
+- Metrics after Phase 12 (2026-02-12):
+  - `AppShellPage.tsx` line count: `306`
+  - Test command: `pnpm --prefix apps/filament-client-web test`
+  - Pass status: `44` test files passed, `179` tests passed
+  - Typecheck command: `pnpm --prefix apps/filament-client-web typecheck`
+  - Typecheck status: pass
+  - Build command: `pnpm --prefix apps/filament-client-web run build`
+  - Build status: pass
 
 ### Exit Criteria
 - No single app-shell state factory or prop builder acts as a multi-domain catch-all.

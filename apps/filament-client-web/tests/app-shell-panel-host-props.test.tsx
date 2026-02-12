@@ -11,164 +11,233 @@ import {
   userIdFromInput,
 } from "../src/domain/chat";
 import {
+  buildAttachmentsPanelProps,
+  buildModerationPanelProps,
   buildPanelHostPropGroups,
+  type AttachmentsPanelBuilderOptions,
   type BuildPanelHostPropGroupsOptions,
+  type ChannelCreatePanelBuilderOptions,
+  type FriendshipsPanelBuilderOptions,
+  type ModerationPanelBuilderOptions,
+  type PublicDirectoryPanelBuilderOptions,
+  type SearchPanelBuilderOptions,
+  type SettingsPanelBuilderOptions,
+  type UtilityPanelBuilderOptions,
+  type WorkspaceCreatePanelBuilderOptions,
 } from "../src/features/app-shell/adapters/panel-host-props";
 import { PanelHost } from "../src/features/app-shell/components/panels/PanelHost";
 
+interface PanelHostOptionsOverrides {
+  workspaceCreate?: Partial<WorkspaceCreatePanelBuilderOptions>;
+  channelCreate?: Partial<ChannelCreatePanelBuilderOptions>;
+  publicDirectory?: Partial<PublicDirectoryPanelBuilderOptions>;
+  settings?: Partial<SettingsPanelBuilderOptions>;
+  friendships?: Partial<FriendshipsPanelBuilderOptions>;
+  search?: Partial<SearchPanelBuilderOptions>;
+  attachments?: Partial<AttachmentsPanelBuilderOptions>;
+  moderation?: Partial<ModerationPanelBuilderOptions>;
+  utility?: Partial<UtilityPanelBuilderOptions>;
+}
+
 function baseOptions(
-  overrides: Partial<BuildPanelHostPropGroupsOptions> = {},
+  overrides: PanelHostOptionsOverrides = {},
 ): BuildPanelHostPropGroupsOptions {
-  const defaultOptions: BuildPanelHostPropGroupsOptions = {
-    createGuildName: "Security Ops",
-    createGuildVisibility: "private",
-    createChannelName: "incident-room",
-    createChannelKind: channelKindFromInput("text"),
-    isCreatingWorkspace: false,
-    canDismissWorkspaceCreateForm: true,
-    workspaceError: "",
-    onCreateWorkspaceSubmit: vi.fn(),
-    setCreateGuildName: vi.fn(),
-    setCreateGuildVisibility: vi.fn(),
-    setCreateChannelName: vi.fn(),
-    setCreateChannelKind: vi.fn(),
-    onCancelWorkspaceCreate: vi.fn(),
-
-    newChannelName: "alerts",
-    newChannelKind: channelKindFromInput("text"),
-    isCreatingChannel: false,
-    channelCreateError: "",
-    onCreateChannelSubmit: vi.fn(),
-    setNewChannelName: vi.fn(),
-    setNewChannelKind: vi.fn(),
-    onCancelChannelCreate: vi.fn(),
-
-    publicGuildSearchQuery: "",
-    isSearchingPublicGuilds: false,
-    publicGuildSearchError: "",
-    publicGuildDirectory: [
-      {
-        guildId: guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
-        name: guildNameFromInput("Security Ops"),
-        visibility: "public",
-      },
-    ],
-    onSubmitPublicGuildSearch: vi.fn(),
-    setPublicGuildSearchQuery: vi.fn(),
-
-    activeSettingsCategory: "voice",
-    activeVoiceSettingsSubmenu: "audio-devices",
-    voiceDevicePreferences: {
-      audioInputDeviceId: null,
-      audioOutputDeviceId: null,
+  const defaults: BuildPanelHostPropGroupsOptions = {
+    workspaceCreate: {
+      createGuildName: "Security Ops",
+      createGuildVisibility: "private",
+      createChannelName: "incident-room",
+      createChannelKind: channelKindFromInput("text"),
+      isCreatingWorkspace: false,
+      canDismissWorkspaceCreateForm: true,
+      workspaceError: "",
+      onCreateWorkspaceSubmit: vi.fn(),
+      setCreateGuildName: vi.fn(),
+      setCreateGuildVisibility: vi.fn(),
+      setCreateChannelName: vi.fn(),
+      setCreateChannelKind: vi.fn(),
+      onCancelWorkspaceCreate: vi.fn(),
     },
-    audioInputDevices: [],
-    audioOutputDevices: [],
-    isRefreshingAudioDevices: false,
-    audioDevicesStatus: "",
-    audioDevicesError: "",
-    profile: null,
-    profileDraftUsername: "",
-    profileDraftAbout: "",
-    profileAvatarUrl: null,
-    selectedAvatarFilename: "",
-    isSavingProfile: false,
-    isUploadingProfileAvatar: false,
-    profileSettingsStatus: "",
-    profileSettingsError: "",
-    onOpenSettingsCategory: vi.fn(),
-    onOpenVoiceSettingsSubmenu: vi.fn(),
-    onSetVoiceDevicePreference: vi.fn(),
-    onRefreshAudioDeviceInventory: vi.fn(),
-    setProfileDraftUsername: vi.fn(),
-    setProfileDraftAbout: vi.fn(),
-    setSelectedProfileAvatarFile: vi.fn(),
-    onSaveProfileSettings: vi.fn(),
-    onUploadProfileAvatar: vi.fn(),
-
-    friendRecipientUserIdInput: "",
-    friendRequests: { incoming: [], outgoing: [] },
-    friends: [],
-    isRunningFriendAction: false,
-    friendStatus: "",
-    friendError: "",
-    onSubmitFriendRequest: vi.fn(),
-    setFriendRecipientUserIdInput: vi.fn(),
-    onAcceptIncomingFriendRequest: vi.fn(),
-    onDismissFriendRequest: vi.fn(),
-    onRemoveFriendship: vi.fn(),
-
-    searchQuery: "",
-    isSearching: false,
-    hasActiveWorkspace: true,
-    canManageSearchMaintenance: false,
-    isRunningSearchOps: false,
-    searchOpsStatus: "",
-    searchError: "",
-    searchResults: null,
-    onSubmitSearch: vi.fn(),
-    setSearchQuery: vi.fn(),
-    onRebuildSearch: vi.fn(),
-    onReconcileSearch: vi.fn(),
-    displayUserLabel: (userId) => userId,
-
-    attachmentFilename: "",
-    activeAttachments: [
-      {
-        attachmentId: attachmentIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
-        guildId: guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
-        channelId: channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
-        ownerId: userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
-        filename: attachmentFilenameFromInput("upload.png"),
-        mimeType: "image/png",
-        sizeBytes: 7,
-        sha256Hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    channelCreate: {
+      newChannelName: "alerts",
+      newChannelKind: channelKindFromInput("text"),
+      isCreatingChannel: false,
+      channelCreateError: "",
+      onCreateChannelSubmit: vi.fn(),
+      setNewChannelName: vi.fn(),
+      setNewChannelKind: vi.fn(),
+      onCancelChannelCreate: vi.fn(),
+    },
+    publicDirectory: {
+      publicGuildSearchQuery: "",
+      isSearchingPublicGuilds: false,
+      publicGuildSearchError: "",
+      publicGuildDirectory: [
+        {
+          guildId: guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+          name: guildNameFromInput("Security Ops"),
+          visibility: "public",
+        },
+      ],
+      onSubmitPublicGuildSearch: vi.fn(),
+      setPublicGuildSearchQuery: vi.fn(),
+    },
+    settings: {
+      activeSettingsCategory: "voice",
+      activeVoiceSettingsSubmenu: "audio-devices",
+      voiceDevicePreferences: {
+        audioInputDeviceId: null,
+        audioOutputDeviceId: null,
       },
-    ],
-    isUploadingAttachment: false,
-    hasActiveChannel: true,
-    attachmentStatus: "",
-    attachmentError: "",
-    downloadingAttachmentId: null,
-    deletingAttachmentId: null,
-    onSubmitUploadAttachment: vi.fn(),
-    setSelectedAttachment: vi.fn(),
-    setAttachmentFilename: vi.fn(),
-    onDownloadAttachment: vi.fn(),
-    onRemoveAttachment: vi.fn(),
-
-    moderationUserIdInput: "",
-    moderationRoleInput: roleFromInput("member"),
-    overrideRoleInput: roleFromInput("member"),
-    overrideAllowCsv: "",
-    overrideDenyCsv: "",
-    isModerating: false,
-    canManageRoles: true,
-    canBanMembers: true,
-    canManageChannelOverrides: true,
-    moderationStatus: "",
-    moderationError: "",
-    setModerationUserIdInput: vi.fn(),
-    setModerationRoleInput: vi.fn(),
-    onRunMemberAction: vi.fn(),
-    setOverrideRoleInput: vi.fn(),
-    setOverrideAllowCsv: vi.fn(),
-    setOverrideDenyCsv: vi.fn(),
-    onApplyOverride: vi.fn(),
-
-    echoInput: "",
-    healthStatus: "",
-    diagError: "",
-    isCheckingHealth: false,
-    isEchoing: false,
-    setEchoInput: vi.fn(),
-    onRunHealthCheck: vi.fn(),
-    onRunEcho: vi.fn(),
+      audioInputDevices: [],
+      audioOutputDevices: [],
+      isRefreshingAudioDevices: false,
+      audioDevicesStatus: "",
+      audioDevicesError: "",
+      profile: null,
+      profileDraftUsername: "",
+      profileDraftAbout: "",
+      profileAvatarUrl: null,
+      selectedAvatarFilename: "",
+      isSavingProfile: false,
+      isUploadingProfileAvatar: false,
+      profileSettingsStatus: "",
+      profileSettingsError: "",
+      onOpenSettingsCategory: vi.fn(),
+      onOpenVoiceSettingsSubmenu: vi.fn(),
+      onSetVoiceDevicePreference: vi.fn(),
+      onRefreshAudioDeviceInventory: vi.fn(),
+      setProfileDraftUsername: vi.fn(),
+      setProfileDraftAbout: vi.fn(),
+      setSelectedProfileAvatarFile: vi.fn(),
+      onSaveProfileSettings: vi.fn(),
+      onUploadProfileAvatar: vi.fn(),
+    },
+    friendships: {
+      friendRecipientUserIdInput: "",
+      friendRequests: { incoming: [], outgoing: [] },
+      friends: [],
+      isRunningFriendAction: false,
+      friendStatus: "",
+      friendError: "",
+      onSubmitFriendRequest: vi.fn(),
+      setFriendRecipientUserIdInput: vi.fn(),
+      onAcceptIncomingFriendRequest: vi.fn(),
+      onDismissFriendRequest: vi.fn(),
+      onRemoveFriendship: vi.fn(),
+    },
+    search: {
+      searchQuery: "",
+      isSearching: false,
+      hasActiveWorkspace: true,
+      canManageSearchMaintenance: false,
+      isRunningSearchOps: false,
+      searchOpsStatus: "",
+      searchError: "",
+      searchResults: null,
+      onSubmitSearch: vi.fn(),
+      setSearchQuery: vi.fn(),
+      onRebuildSearch: vi.fn(),
+      onReconcileSearch: vi.fn(),
+      displayUserLabel: (userId) => userId,
+    },
+    attachments: {
+      attachmentFilename: "",
+      activeAttachments: [
+        {
+          attachmentId: attachmentIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+          guildId: guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+          channelId: channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+          ownerId: userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+          filename: attachmentFilenameFromInput("upload.png"),
+          mimeType: "image/png",
+          sizeBytes: 7,
+          sha256Hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        },
+      ],
+      isUploadingAttachment: false,
+      hasActiveChannel: true,
+      attachmentStatus: "",
+      attachmentError: "",
+      downloadingAttachmentId: null,
+      deletingAttachmentId: null,
+      onSubmitUploadAttachment: vi.fn(),
+      setSelectedAttachment: vi.fn(),
+      setAttachmentFilename: vi.fn(),
+      onDownloadAttachment: vi.fn(),
+      onRemoveAttachment: vi.fn(),
+    },
+    moderation: {
+      moderationUserIdInput: "",
+      moderationRoleInput: roleFromInput("member"),
+      overrideRoleInput: roleFromInput("member"),
+      overrideAllowCsv: "",
+      overrideDenyCsv: "",
+      isModerating: false,
+      hasActiveWorkspace: true,
+      hasActiveChannel: true,
+      canManageRoles: true,
+      canBanMembers: true,
+      canManageChannelOverrides: true,
+      moderationStatus: "",
+      moderationError: "",
+      setModerationUserIdInput: vi.fn(),
+      setModerationRoleInput: vi.fn(),
+      onRunMemberAction: vi.fn(),
+      setOverrideRoleInput: vi.fn(),
+      setOverrideAllowCsv: vi.fn(),
+      setOverrideDenyCsv: vi.fn(),
+      onApplyOverride: vi.fn(),
+    },
+    utility: {
+      echoInput: "",
+      healthStatus: "",
+      diagError: "",
+      isCheckingHealth: false,
+      isEchoing: false,
+      setEchoInput: vi.fn(),
+      onRunHealthCheck: vi.fn(),
+      onRunEcho: vi.fn(),
+    },
   };
 
   return {
-    ...defaultOptions,
-    ...overrides,
+    workspaceCreate: {
+      ...defaults.workspaceCreate,
+      ...overrides.workspaceCreate,
+    },
+    channelCreate: {
+      ...defaults.channelCreate,
+      ...overrides.channelCreate,
+    },
+    publicDirectory: {
+      ...defaults.publicDirectory,
+      ...overrides.publicDirectory,
+    },
+    settings: {
+      ...defaults.settings,
+      ...overrides.settings,
+    },
+    friendships: {
+      ...defaults.friendships,
+      ...overrides.friendships,
+    },
+    search: {
+      ...defaults.search,
+      ...overrides.search,
+    },
+    attachments: {
+      ...defaults.attachments,
+      ...overrides.attachments,
+    },
+    moderation: {
+      ...defaults.moderation,
+      ...overrides.moderation,
+    },
+    utility: {
+      ...defaults.utility,
+      ...overrides.utility,
+    },
   };
 }
 
@@ -183,12 +252,14 @@ describe("app shell panel host props adapter", () => {
 
     const propGroups = buildPanelHostPropGroups(
       baseOptions({
-        setCreateGuildName,
-        setCreateGuildVisibility,
-        setCreateChannelName,
-        setCreateChannelKind,
-        onCreateWorkspaceSubmit,
-        onCancelWorkspaceCreate,
+        workspaceCreate: {
+          setCreateGuildName,
+          setCreateGuildVisibility,
+          setCreateChannelName,
+          setCreateChannelKind,
+          onCreateWorkspaceSubmit,
+          onCancelWorkspaceCreate,
+        },
       }),
     );
 
@@ -237,21 +308,26 @@ describe("app shell panel host props adapter", () => {
     const setSelectedAttachment = vi.fn();
     const setAttachmentFilename = vi.fn();
 
-    const propGroups = buildPanelHostPropGroups(
-      baseOptions({
+    const options = baseOptions({
+      moderation: {
         setModerationRoleInput,
         setOverrideRoleInput,
+      },
+      attachments: {
         setSelectedAttachment,
         setAttachmentFilename,
-      }),
-    );
+      },
+    });
 
-    propGroups.moderationPanelProps.onModerationRoleChange("moderator");
-    propGroups.moderationPanelProps.onOverrideRoleChange("owner");
+    const moderationPanelProps = buildModerationPanelProps(options.moderation);
+    const attachmentsPanelProps = buildAttachmentsPanelProps(options.attachments);
+
+    moderationPanelProps.onModerationRoleChange("moderator");
+    moderationPanelProps.onOverrideRoleChange("owner");
 
     const proofFile = new File(["proof"], "proof.png", { type: "image/png" });
-    propGroups.attachmentsPanelProps.onAttachmentFileInput(proofFile);
-    propGroups.attachmentsPanelProps.onAttachmentFileInput(null);
+    attachmentsPanelProps.onAttachmentFileInput(proofFile);
+    attachmentsPanelProps.onAttachmentFileInput(null);
 
     expect(setModerationRoleInput).toHaveBeenCalledWith("moderator");
     expect(setOverrideRoleInput).toHaveBeenCalledWith("owner");
@@ -259,5 +335,35 @@ describe("app shell panel host props adapter", () => {
     expect(setSelectedAttachment).toHaveBeenNthCalledWith(2, null);
     expect(setAttachmentFilename).toHaveBeenNthCalledWith(1, "proof.png");
     expect(setAttachmentFilename).toHaveBeenNthCalledWith(2, "");
+  });
+
+  it("composes panel groups from panel-scoped builders without mapping drift", () => {
+    const options = baseOptions();
+
+    const propGroups = buildPanelHostPropGroups(options);
+
+    expect(propGroups.workspaceCreatePanelProps.createGuildName).toBe(
+      options.workspaceCreate.createGuildName,
+    );
+    expect(propGroups.channelCreatePanelProps.newChannelKind).toBe(
+      options.channelCreate.newChannelKind,
+    );
+    expect(propGroups.publicDirectoryPanelProps.guilds).toBe(
+      options.publicDirectory.publicGuildDirectory,
+    );
+    expect(propGroups.settingsPanelProps.activeSettingsCategory).toBe(
+      options.settings.activeSettingsCategory,
+    );
+    expect(propGroups.friendshipsPanelProps.friendRequests).toBe(
+      options.friendships.friendRequests,
+    );
+    expect(propGroups.searchPanelProps.searchResults).toBe(options.search.searchResults);
+    expect(propGroups.attachmentsPanelProps.activeAttachments).toBe(
+      options.attachments.activeAttachments,
+    );
+    expect(propGroups.moderationPanelProps.canManageRoles).toBe(
+      options.moderation.canManageRoles,
+    );
+    expect(propGroups.utilityPanelProps.echoInput).toBe(options.utility.echoInput);
   });
 });

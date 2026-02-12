@@ -92,6 +92,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   };
 
   const workspaceState = createWorkspaceState();
+  const workspaceChannelState = workspaceState.workspaceChannel;
+  const friendshipsState = workspaceState.friendships;
+  const discoveryState = workspaceState.discovery;
   const messageState = createMessageState();
   const profileState = createProfileState();
   const voiceState = createVoiceState();
@@ -99,10 +102,10 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const overlayState = createOverlayState();
 
   const selectors = createAppShellSelectors({
-    workspaces: workspaceState.workspaces,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
-    channelPermissions: workspaceState.channelPermissions,
+    workspaces: workspaceChannelState.workspaces,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
+    channelPermissions: workspaceChannelState.channelPermissions,
     voiceSessionChannelKey: voiceState.voiceSessionChannelKey,
     attachmentByChannel: messageState.attachmentByChannel,
     rtcSnapshot: voiceState.rtcSnapshot,
@@ -142,7 +145,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   const voiceOperationsController = createVoiceOperationsController({
     session: auth.session,
-    activeGuildId: workspaceState.activeGuildId,
+    activeGuildId: workspaceChannelState.activeGuildId,
     activeChannel: selectors.activeChannel,
     canPublishVoiceCamera: selectors.canPublishVoiceCamera,
     canPublishVoiceScreenShare: selectors.canPublishVoiceScreenShare,
@@ -286,8 +289,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const openOverlayPanel = (panel: OverlayPanel): void => {
     openOverlayPanelWithDefaults(panel, {
       setPanel: overlayState.setActiveOverlayPanel,
-      setWorkspaceError: workspaceState.setWorkspaceError,
-      setChannelCreateError: workspaceState.setChannelCreateError,
+      setWorkspaceError: workspaceChannelState.setWorkspaceError,
+      setChannelCreateError: workspaceChannelState.setChannelCreateError,
       setActiveSettingsCategory: overlayState.setActiveSettingsCategory,
       setActiveVoiceSettingsSubmenu: overlayState.setActiveVoiceSettingsSubmenu,
     });
@@ -302,28 +305,28 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   createWorkspaceBootstrapController({
     session: auth.session,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
-    setWorkspaces: workspaceState.setWorkspaces,
-    setActiveGuildId: workspaceState.setActiveGuildId,
-    setActiveChannelId: workspaceState.setActiveChannelId,
-    setWorkspaceBootstrapDone: workspaceState.setWorkspaceBootstrapDone,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
+    setWorkspaces: workspaceChannelState.setWorkspaces,
+    setActiveGuildId: workspaceChannelState.setActiveGuildId,
+    setActiveChannelId: workspaceChannelState.setActiveChannelId,
+    setWorkspaceBootstrapDone: workspaceChannelState.setWorkspaceBootstrapDone,
   });
 
   createWorkspaceSelectionController({
-    workspaces: workspaceState.workspaces,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
-    setActiveGuildId: workspaceState.setActiveGuildId,
-    setActiveChannelId: workspaceState.setActiveChannelId,
+    workspaces: workspaceChannelState.workspaces,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
+    setActiveGuildId: workspaceChannelState.setActiveGuildId,
+    setActiveChannelId: workspaceChannelState.setActiveChannelId,
   });
 
   createChannelPermissionsController({
     session: auth.session,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
-    setWorkspaces: workspaceState.setWorkspaces,
-    setChannelPermissions: workspaceState.setChannelPermissions,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
+    setWorkspaces: workspaceChannelState.setWorkspaces,
+    setChannelPermissions: workspaceChannelState.setChannelPermissions,
   });
 
   createOverlayPanelAuthorizationController({
@@ -349,15 +352,15 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const messageMediaPreviewController = createMessageMediaPreviewController({
     session: auth.session,
     setAuthenticatedSession: auth.setAuthenticatedSession,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
     messages: messageState.messages,
   });
 
   const messageActions = createMessageActionsController({
     session: auth.session,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
     activeChannel: selectors.activeChannel,
     canAccessActiveChannel: selectors.canAccessActiveChannel,
     composer: messageState.composer,
@@ -391,22 +394,22 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   const searchActions = createSearchController({
     session: auth.session,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
-    searchQuery: workspaceState.searchQuery,
-    isSearching: workspaceState.isSearching,
-    setSearching: workspaceState.setSearching,
-    setSearchError: workspaceState.setSearchError,
-    setSearchResults: workspaceState.setSearchResults,
-    isRunningSearchOps: workspaceState.isRunningSearchOps,
-    setRunningSearchOps: workspaceState.setRunningSearchOps,
-    setSearchOpsStatus: workspaceState.setSearchOpsStatus,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
+    searchQuery: discoveryState.searchQuery,
+    isSearching: discoveryState.isSearching,
+    setSearching: discoveryState.setSearching,
+    setSearchError: discoveryState.setSearchError,
+    setSearchResults: discoveryState.setSearchResults,
+    isRunningSearchOps: discoveryState.isRunningSearchOps,
+    setRunningSearchOps: discoveryState.setRunningSearchOps,
+    setSearchOpsStatus: discoveryState.setSearchOpsStatus,
   });
 
   const attachmentActions = createAttachmentController({
     session: auth.session,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
     selectedAttachment: messageState.selectedAttachment,
     attachmentFilename: messageState.attachmentFilename,
     isUploadingAttachment: messageState.isUploadingAttachment,
@@ -424,8 +427,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   const moderationActions = createModerationController({
     session: auth.session,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
     moderationUserIdInput: diagnosticsState.moderationUserIdInput,
     moderationRoleInput: diagnosticsState.moderationRoleInput,
     overrideRoleInput: diagnosticsState.overrideRoleInput,
@@ -459,23 +462,23 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   const publicDirectoryActions = createPublicDirectoryController({
     session: auth.session,
-    publicGuildSearchQuery: workspaceState.publicGuildSearchQuery,
-    isSearchingPublicGuilds: workspaceState.isSearchingPublicGuilds,
-    setSearchingPublicGuilds: workspaceState.setSearchingPublicGuilds,
-    setPublicGuildSearchError: workspaceState.setPublicGuildSearchError,
-    setPublicGuildDirectory: workspaceState.setPublicGuildDirectory,
+    publicGuildSearchQuery: discoveryState.publicGuildSearchQuery,
+    isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds,
+    setSearchingPublicGuilds: discoveryState.setSearchingPublicGuilds,
+    setPublicGuildSearchError: discoveryState.setPublicGuildSearchError,
+    setPublicGuildDirectory: discoveryState.setPublicGuildDirectory,
   });
 
   const friendshipActions = createFriendshipController({
     session: auth.session,
-    friendRecipientUserIdInput: workspaceState.friendRecipientUserIdInput,
-    isRunningFriendAction: workspaceState.isRunningFriendAction,
-    setFriends: workspaceState.setFriends,
-    setFriendRequests: workspaceState.setFriendRequests,
-    setRunningFriendAction: workspaceState.setRunningFriendAction,
-    setFriendStatus: workspaceState.setFriendStatus,
-    setFriendError: workspaceState.setFriendError,
-    setFriendRecipientUserIdInput: workspaceState.setFriendRecipientUserIdInput,
+    friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput,
+    isRunningFriendAction: friendshipsState.isRunningFriendAction,
+    setFriends: friendshipsState.setFriends,
+    setFriendRequests: friendshipsState.setFriendRequests,
+    setRunningFriendAction: friendshipsState.setRunningFriendAction,
+    setFriendStatus: friendshipsState.setFriendStatus,
+    setFriendError: friendshipsState.setFriendError,
+    setFriendRecipientUserIdInput: friendshipsState.setFriendRecipientUserIdInput,
   });
 
   const labels = createAppShellRuntimeLabels({
@@ -487,35 +490,35 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     messages: messageState.messages,
     onlineMembers: profileState.onlineMembers,
     voiceRosterEntries: selectors.voiceRosterEntries,
-    searchResults: workspaceState.searchResults,
+    searchResults: discoveryState.searchResults,
     profile: profileController.profile,
     selectedProfile: profileController.selectedProfile,
-    friends: workspaceState.friends,
-    friendRequests: workspaceState.friendRequests,
+    friends: friendshipsState.friends,
+    friendRequests: friendshipsState.friendRequests,
     setResolvedUsernames: profileState.setResolvedUsernames,
     setAvatarVersionByUserId: profileState.setAvatarVersionByUserId,
   });
 
   createEffect(() => {
-    if (!workspaceState.workspaceBootstrapDone()) {
+    if (!workspaceChannelState.workspaceBootstrapDone()) {
       return;
     }
-    saveWorkspaceCache(workspaceState.workspaces());
+    saveWorkspaceCache(workspaceChannelState.workspaces());
   });
 
   createEffect(() => {
-    if (!workspaceState.workspaceBootstrapDone()) {
+    if (!workspaceChannelState.workspaceBootstrapDone()) {
       return;
     }
-    if (workspaceState.workspaces().length === 0) {
+    if (workspaceChannelState.workspaces().length === 0) {
       overlayState.setActiveOverlayPanel("workspace-create");
     }
   });
 
   const messageHistoryActions = createMessageHistoryController({
     session: auth.session,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
     canAccessActiveChannel: selectors.canAccessActiveChannel,
     nextBefore: messageState.nextBefore,
     isLoadingOlder: messageState.isLoadingOlder,
@@ -530,9 +533,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setReactionState: messageState.setReactionState,
     setPendingReactionByKey: messageState.setPendingReactionByKey,
     setOpenReactionPickerMessageId: messageState.setOpenReactionPickerMessageId,
-    setSearchResults: workspaceState.setSearchResults,
-    setSearchError: workspaceState.setSearchError,
-    setSearchOpsStatus: workspaceState.setSearchOpsStatus,
+    setSearchResults: discoveryState.setSearchResults,
+    setSearchError: discoveryState.setSearchError,
+    setSearchOpsStatus: discoveryState.setSearchOpsStatus,
     setAttachmentStatus: messageState.setAttachmentStatus,
     setAttachmentError: messageState.setAttachmentError,
     setVoiceStatus: voiceState.setVoiceStatus,
@@ -555,8 +558,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   createGatewayController({
     session: auth.session,
-    activeGuildId: workspaceState.activeGuildId,
-    activeChannelId: workspaceState.activeChannelId,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
     canAccessActiveChannel: selectors.canAccessActiveChannel,
     setGatewayOnline: profileState.setGatewayOnline,
     setOnlineMembers: profileState.setOnlineMembers,
@@ -568,32 +571,32 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const workspaceChannelOperations =
     createWorkspaceChannelOperationsController({
       session: auth.session,
-      activeGuildId: workspaceState.activeGuildId,
-      createGuildName: workspaceState.createGuildName,
-      createGuildVisibility: workspaceState.createGuildVisibility,
-      createChannelName: workspaceState.createChannelName,
-      createChannelKind: workspaceState.createChannelKind,
-      isCreatingWorkspace: workspaceState.isCreatingWorkspace,
-      isCreatingChannel: workspaceState.isCreatingChannel,
-      newChannelName: workspaceState.newChannelName,
-      newChannelKind: workspaceState.newChannelKind,
-      setWorkspaces: workspaceState.setWorkspaces,
-      setActiveGuildId: workspaceState.setActiveGuildId,
-      setActiveChannelId: workspaceState.setActiveChannelId,
-      setCreateChannelKind: workspaceState.setCreateChannelKind,
-      setWorkspaceError: workspaceState.setWorkspaceError,
-      setCreatingWorkspace: workspaceState.setCreatingWorkspace,
+      activeGuildId: workspaceChannelState.activeGuildId,
+      createGuildName: workspaceChannelState.createGuildName,
+      createGuildVisibility: workspaceChannelState.createGuildVisibility,
+      createChannelName: workspaceChannelState.createChannelName,
+      createChannelKind: workspaceChannelState.createChannelKind,
+      isCreatingWorkspace: workspaceChannelState.isCreatingWorkspace,
+      isCreatingChannel: workspaceChannelState.isCreatingChannel,
+      newChannelName: workspaceChannelState.newChannelName,
+      newChannelKind: workspaceChannelState.newChannelKind,
+      setWorkspaces: workspaceChannelState.setWorkspaces,
+      setActiveGuildId: workspaceChannelState.setActiveGuildId,
+      setActiveChannelId: workspaceChannelState.setActiveChannelId,
+      setCreateChannelKind: workspaceChannelState.setCreateChannelKind,
+      setWorkspaceError: workspaceChannelState.setWorkspaceError,
+      setCreatingWorkspace: workspaceChannelState.setCreatingWorkspace,
       setMessageStatus: messageState.setMessageStatus,
       setActiveOverlayPanel: overlayState.setActiveOverlayPanel,
-      setChannelCreateError: workspaceState.setChannelCreateError,
-      setCreatingChannel: workspaceState.setCreatingChannel,
-      setNewChannelName: workspaceState.setNewChannelName,
-      setNewChannelKind: workspaceState.setNewChannelKind,
+      setChannelCreateError: workspaceChannelState.setChannelCreateError,
+      setCreatingChannel: workspaceChannelState.setCreatingChannel,
+      setNewChannelName: workspaceChannelState.setNewChannelName,
+      setNewChannelKind: workspaceChannelState.setNewChannelKind,
     });
 
   createVoiceSessionLifecycleController({
     session: auth.session,
-    workspaces: workspaceState.workspaces,
+    workspaces: workspaceChannelState.workspaces,
     rtcSnapshot: voiceState.rtcSnapshot,
     isVoiceSessionActive: selectors.isVoiceSessionActive,
     voiceSessionChannelKey: voiceState.voiceSessionChannelKey,
@@ -635,137 +638,157 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   const panelHostPropGroups = () =>
     buildPanelHostPropGroups({
-      createGuildName: workspaceState.createGuildName(),
-      createGuildVisibility: workspaceState.createGuildVisibility(),
-      createChannelName: workspaceState.createChannelName(),
-      createChannelKind: workspaceState.createChannelKind(),
-      isCreatingWorkspace: workspaceState.isCreatingWorkspace(),
-      canDismissWorkspaceCreateForm: selectors.canDismissWorkspaceCreateForm(),
-      workspaceError: workspaceState.workspaceError(),
-      onCreateWorkspaceSubmit: workspaceChannelOperations.createWorkspace,
-      setCreateGuildName: workspaceState.setCreateGuildName,
-      setCreateGuildVisibility: workspaceState.setCreateGuildVisibility,
-      setCreateChannelName: workspaceState.setCreateChannelName,
-      setCreateChannelKind: workspaceState.setCreateChannelKind,
-      onCancelWorkspaceCreate: closeOverlayPanel,
-      newChannelName: workspaceState.newChannelName(),
-      newChannelKind: workspaceState.newChannelKind(),
-      isCreatingChannel: workspaceState.isCreatingChannel(),
-      channelCreateError: workspaceState.channelCreateError(),
-      onCreateChannelSubmit: workspaceChannelOperations.createNewChannel,
-      setNewChannelName: workspaceState.setNewChannelName,
-      setNewChannelKind: workspaceState.setNewChannelKind,
-      onCancelChannelCreate: closeOverlayPanel,
-      publicGuildSearchQuery: workspaceState.publicGuildSearchQuery(),
-      isSearchingPublicGuilds: workspaceState.isSearchingPublicGuilds(),
-      publicGuildSearchError: workspaceState.publicGuildSearchError(),
-      publicGuildDirectory: workspaceState.publicGuildDirectory(),
-      onSubmitPublicGuildSearch: publicDirectoryActions.runPublicGuildSearch,
-      setPublicGuildSearchQuery: workspaceState.setPublicGuildSearchQuery,
-      activeSettingsCategory: overlayState.activeSettingsCategory(),
-      activeVoiceSettingsSubmenu: overlayState.activeVoiceSettingsSubmenu(),
-      voiceDevicePreferences: voiceState.voiceDevicePreferences(),
-      audioInputDevices: voiceState.audioInputDevices(),
-      audioOutputDevices: voiceState.audioOutputDevices(),
-      isRefreshingAudioDevices: voiceState.isRefreshingAudioDevices(),
-      audioDevicesStatus: voiceState.audioDevicesStatus(),
-      audioDevicesError: voiceState.audioDevicesError(),
-      profile: profileController.profile() ?? null,
-      profileDraftUsername: profileState.profileDraftUsername(),
-      profileDraftAbout: profileState.profileDraftAbout(),
-      profileAvatarUrl: profileController.profile()
-        ? profileController.avatarUrlForUser(profileController.profile()!.userId)
-        : null,
-      selectedAvatarFilename: profileState.selectedProfileAvatarFile()?.name ?? "",
-      isSavingProfile: profileState.isSavingProfile(),
-      isUploadingProfileAvatar: profileState.isUploadingProfileAvatar(),
-      profileSettingsStatus: profileState.profileSettingsStatus(),
-      profileSettingsError: profileState.profileSettingsError(),
-      onOpenSettingsCategory: openSettingsCategory,
-      onOpenVoiceSettingsSubmenu: overlayState.setActiveVoiceSettingsSubmenu,
-      onSetVoiceDevicePreference: (kind, value) =>
-        setVoiceDevicePreference(kind, value),
-      onRefreshAudioDeviceInventory: refreshAudioDeviceInventory,
-      setProfileDraftUsername: profileState.setProfileDraftUsername,
-      setProfileDraftAbout: profileState.setProfileDraftAbout,
-      setSelectedProfileAvatarFile: profileState.setSelectedProfileAvatarFile,
-      onSaveProfileSettings: profileController.saveProfileSettings,
-      onUploadProfileAvatar: profileController.uploadProfileAvatar,
-      friendRecipientUserIdInput: workspaceState.friendRecipientUserIdInput(),
-      friendRequests: workspaceState.friendRequests(),
-      friends: workspaceState.friends(),
-      isRunningFriendAction: workspaceState.isRunningFriendAction(),
-      friendStatus: workspaceState.friendStatus(),
-      friendError: workspaceState.friendError(),
-      onSubmitFriendRequest: friendshipActions.submitFriendRequest,
-      setFriendRecipientUserIdInput: workspaceState.setFriendRecipientUserIdInput,
-      onAcceptIncomingFriendRequest: (requestId) =>
-        friendshipActions.acceptIncomingFriendRequest(requestId),
-      onDismissFriendRequest: (requestId) =>
-        friendshipActions.dismissFriendRequest(requestId),
-      onRemoveFriendship: (friendUserId) =>
-        friendshipActions.removeFriendship(friendUserId),
-      searchQuery: workspaceState.searchQuery(),
-      isSearching: workspaceState.isSearching(),
-      hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
-      canManageSearchMaintenance: selectors.canManageSearchMaintenance(),
-      isRunningSearchOps: workspaceState.isRunningSearchOps(),
-      searchOpsStatus: workspaceState.searchOpsStatus(),
-      searchError: workspaceState.searchError(),
-      searchResults: workspaceState.searchResults(),
-      onSubmitSearch: searchActions.runSearch,
-      setSearchQuery: workspaceState.setSearchQuery,
-      onRebuildSearch: searchActions.rebuildSearch,
-      onReconcileSearch: searchActions.reconcileSearch,
-      displayUserLabel: labels.displayUserLabel,
-      attachmentFilename: messageState.attachmentFilename(),
-      activeAttachments: selectors.activeAttachments(),
-      isUploadingAttachment: messageState.isUploadingAttachment(),
-      hasActiveChannel: Boolean(selectors.activeChannel()),
-      attachmentStatus: messageState.attachmentStatus(),
-      attachmentError: messageState.attachmentError(),
-      downloadingAttachmentId: messageState.downloadingAttachmentId(),
-      deletingAttachmentId: messageState.deletingAttachmentId(),
-      onSubmitUploadAttachment: attachmentActions.uploadAttachment,
-      setSelectedAttachment: messageState.setSelectedAttachment,
-      setAttachmentFilename: messageState.setAttachmentFilename,
-      onDownloadAttachment: (record) => attachmentActions.downloadAttachment(record),
-      onRemoveAttachment: (record) => attachmentActions.removeAttachment(record),
-      moderationUserIdInput: diagnosticsState.moderationUserIdInput(),
-      moderationRoleInput: diagnosticsState.moderationRoleInput(),
-      overrideRoleInput: diagnosticsState.overrideRoleInput(),
-      overrideAllowCsv: diagnosticsState.overrideAllowCsv(),
-      overrideDenyCsv: diagnosticsState.overrideDenyCsv(),
-      isModerating: diagnosticsState.isModerating(),
-      canManageRoles: selectors.canManageRoles(),
-      canBanMembers: selectors.canBanMembers(),
-      canManageChannelOverrides: selectors.canManageChannelOverrides(),
-      moderationStatus: diagnosticsState.moderationStatus(),
-      moderationError: diagnosticsState.moderationError(),
-      setModerationUserIdInput: diagnosticsState.setModerationUserIdInput,
-      setModerationRoleInput: diagnosticsState.setModerationRoleInput,
-      onRunMemberAction: (action) => moderationActions.runMemberAction(action),
-      setOverrideRoleInput: diagnosticsState.setOverrideRoleInput,
-      setOverrideAllowCsv: diagnosticsState.setOverrideAllowCsv,
-      setOverrideDenyCsv: diagnosticsState.setOverrideDenyCsv,
-      onApplyOverride: moderationActions.applyOverride,
-      echoInput: diagnosticsState.echoInput(),
-      healthStatus: diagnosticsState.healthStatus(),
-      diagError: diagnosticsState.diagError(),
-      isCheckingHealth: diagnosticsState.isCheckingHealth(),
-      isEchoing: diagnosticsState.isEchoing(),
-      setEchoInput: diagnosticsState.setEchoInput,
-      onRunHealthCheck: sessionDiagnostics.runHealthCheck,
-      onRunEcho: sessionDiagnostics.runEcho,
+      workspaceCreate: {
+        createGuildName: workspaceChannelState.createGuildName(),
+        createGuildVisibility: workspaceChannelState.createGuildVisibility(),
+        createChannelName: workspaceChannelState.createChannelName(),
+        createChannelKind: workspaceChannelState.createChannelKind(),
+        isCreatingWorkspace: workspaceChannelState.isCreatingWorkspace(),
+        canDismissWorkspaceCreateForm: selectors.canDismissWorkspaceCreateForm(),
+        workspaceError: workspaceChannelState.workspaceError(),
+        onCreateWorkspaceSubmit: workspaceChannelOperations.createWorkspace,
+        setCreateGuildName: workspaceChannelState.setCreateGuildName,
+        setCreateGuildVisibility: workspaceChannelState.setCreateGuildVisibility,
+        setCreateChannelName: workspaceChannelState.setCreateChannelName,
+        setCreateChannelKind: workspaceChannelState.setCreateChannelKind,
+        onCancelWorkspaceCreate: closeOverlayPanel,
+      },
+      channelCreate: {
+        newChannelName: workspaceChannelState.newChannelName(),
+        newChannelKind: workspaceChannelState.newChannelKind(),
+        isCreatingChannel: workspaceChannelState.isCreatingChannel(),
+        channelCreateError: workspaceChannelState.channelCreateError(),
+        onCreateChannelSubmit: workspaceChannelOperations.createNewChannel,
+        setNewChannelName: workspaceChannelState.setNewChannelName,
+        setNewChannelKind: workspaceChannelState.setNewChannelKind,
+        onCancelChannelCreate: closeOverlayPanel,
+      },
+      publicDirectory: {
+        publicGuildSearchQuery: discoveryState.publicGuildSearchQuery(),
+        isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds(),
+        publicGuildSearchError: discoveryState.publicGuildSearchError(),
+        publicGuildDirectory: discoveryState.publicGuildDirectory(),
+        onSubmitPublicGuildSearch: publicDirectoryActions.runPublicGuildSearch,
+        setPublicGuildSearchQuery: discoveryState.setPublicGuildSearchQuery,
+      },
+      settings: {
+        activeSettingsCategory: overlayState.activeSettingsCategory(),
+        activeVoiceSettingsSubmenu: overlayState.activeVoiceSettingsSubmenu(),
+        voiceDevicePreferences: voiceState.voiceDevicePreferences(),
+        audioInputDevices: voiceState.audioInputDevices(),
+        audioOutputDevices: voiceState.audioOutputDevices(),
+        isRefreshingAudioDevices: voiceState.isRefreshingAudioDevices(),
+        audioDevicesStatus: voiceState.audioDevicesStatus(),
+        audioDevicesError: voiceState.audioDevicesError(),
+        profile: profileController.profile() ?? null,
+        profileDraftUsername: profileState.profileDraftUsername(),
+        profileDraftAbout: profileState.profileDraftAbout(),
+        profileAvatarUrl: profileController.profile()
+          ? profileController.avatarUrlForUser(profileController.profile()!.userId)
+          : null,
+        selectedAvatarFilename: profileState.selectedProfileAvatarFile()?.name ?? "",
+        isSavingProfile: profileState.isSavingProfile(),
+        isUploadingProfileAvatar: profileState.isUploadingProfileAvatar(),
+        profileSettingsStatus: profileState.profileSettingsStatus(),
+        profileSettingsError: profileState.profileSettingsError(),
+        onOpenSettingsCategory: openSettingsCategory,
+        onOpenVoiceSettingsSubmenu: overlayState.setActiveVoiceSettingsSubmenu,
+        onSetVoiceDevicePreference: (kind, value) =>
+          setVoiceDevicePreference(kind, value),
+        onRefreshAudioDeviceInventory: refreshAudioDeviceInventory,
+        setProfileDraftUsername: profileState.setProfileDraftUsername,
+        setProfileDraftAbout: profileState.setProfileDraftAbout,
+        setSelectedProfileAvatarFile: profileState.setSelectedProfileAvatarFile,
+        onSaveProfileSettings: profileController.saveProfileSettings,
+        onUploadProfileAvatar: profileController.uploadProfileAvatar,
+      },
+      friendships: {
+        friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput(),
+        friendRequests: friendshipsState.friendRequests(),
+        friends: friendshipsState.friends(),
+        isRunningFriendAction: friendshipsState.isRunningFriendAction(),
+        friendStatus: friendshipsState.friendStatus(),
+        friendError: friendshipsState.friendError(),
+        onSubmitFriendRequest: friendshipActions.submitFriendRequest,
+        setFriendRecipientUserIdInput: friendshipsState.setFriendRecipientUserIdInput,
+        onAcceptIncomingFriendRequest: (requestId) =>
+          friendshipActions.acceptIncomingFriendRequest(requestId),
+        onDismissFriendRequest: (requestId) =>
+          friendshipActions.dismissFriendRequest(requestId),
+        onRemoveFriendship: (friendUserId) =>
+          friendshipActions.removeFriendship(friendUserId),
+      },
+      search: {
+        searchQuery: discoveryState.searchQuery(),
+        isSearching: discoveryState.isSearching(),
+        hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
+        canManageSearchMaintenance: selectors.canManageSearchMaintenance(),
+        isRunningSearchOps: discoveryState.isRunningSearchOps(),
+        searchOpsStatus: discoveryState.searchOpsStatus(),
+        searchError: discoveryState.searchError(),
+        searchResults: discoveryState.searchResults(),
+        onSubmitSearch: searchActions.runSearch,
+        setSearchQuery: discoveryState.setSearchQuery,
+        onRebuildSearch: searchActions.rebuildSearch,
+        onReconcileSearch: searchActions.reconcileSearch,
+        displayUserLabel: labels.displayUserLabel,
+      },
+      attachments: {
+        attachmentFilename: messageState.attachmentFilename(),
+        activeAttachments: selectors.activeAttachments(),
+        isUploadingAttachment: messageState.isUploadingAttachment(),
+        hasActiveChannel: Boolean(selectors.activeChannel()),
+        attachmentStatus: messageState.attachmentStatus(),
+        attachmentError: messageState.attachmentError(),
+        downloadingAttachmentId: messageState.downloadingAttachmentId(),
+        deletingAttachmentId: messageState.deletingAttachmentId(),
+        onSubmitUploadAttachment: attachmentActions.uploadAttachment,
+        setSelectedAttachment: messageState.setSelectedAttachment,
+        setAttachmentFilename: messageState.setAttachmentFilename,
+        onDownloadAttachment: (record) => attachmentActions.downloadAttachment(record),
+        onRemoveAttachment: (record) => attachmentActions.removeAttachment(record),
+      },
+      moderation: {
+        moderationUserIdInput: diagnosticsState.moderationUserIdInput(),
+        moderationRoleInput: diagnosticsState.moderationRoleInput(),
+        overrideRoleInput: diagnosticsState.overrideRoleInput(),
+        overrideAllowCsv: diagnosticsState.overrideAllowCsv(),
+        overrideDenyCsv: diagnosticsState.overrideDenyCsv(),
+        isModerating: diagnosticsState.isModerating(),
+        hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
+        hasActiveChannel: Boolean(selectors.activeChannel()),
+        canManageRoles: selectors.canManageRoles(),
+        canBanMembers: selectors.canBanMembers(),
+        canManageChannelOverrides: selectors.canManageChannelOverrides(),
+        moderationStatus: diagnosticsState.moderationStatus(),
+        moderationError: diagnosticsState.moderationError(),
+        setModerationUserIdInput: diagnosticsState.setModerationUserIdInput,
+        setModerationRoleInput: diagnosticsState.setModerationRoleInput,
+        onRunMemberAction: (action) => moderationActions.runMemberAction(action),
+        setOverrideRoleInput: diagnosticsState.setOverrideRoleInput,
+        setOverrideAllowCsv: diagnosticsState.setOverrideAllowCsv,
+        setOverrideDenyCsv: diagnosticsState.setOverrideDenyCsv,
+        onApplyOverride: moderationActions.applyOverride,
+      },
+      utility: {
+        echoInput: diagnosticsState.echoInput(),
+        healthStatus: diagnosticsState.healthStatus(),
+        diagError: diagnosticsState.diagError(),
+        isCheckingHealth: diagnosticsState.isCheckingHealth(),
+        isEchoing: diagnosticsState.isEchoing(),
+        setEchoInput: diagnosticsState.setEchoInput,
+        onRunHealthCheck: sessionDiagnostics.runHealthCheck,
+        onRunEcho: sessionDiagnostics.runEcho,
+      },
     });
 
   const openTextChannelCreatePanel = (): void => {
-    workspaceState.setNewChannelKind(channelKindFromInput("text"));
+    workspaceChannelState.setNewChannelKind(channelKindFromInput("text"));
     openOverlayPanel("channel-create");
   };
 
   const openVoiceChannelCreatePanel = (): void => {
-    workspaceState.setNewChannelKind(channelKindFromInput("voice"));
+    workspaceChannelState.setNewChannelKind(channelKindFromInput("voice"));
     openOverlayPanel("channel-create");
   };
 
@@ -773,8 +796,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     guildId: GuildId,
     firstChannelId: ChannelId | null,
   ): void => {
-    workspaceState.setActiveGuildId(guildId);
-    workspaceState.setActiveChannelId(firstChannelId);
+    workspaceChannelState.setActiveGuildId(guildId);
+    workspaceChannelState.setActiveChannelId(firstChannelId);
   };
 
   return {

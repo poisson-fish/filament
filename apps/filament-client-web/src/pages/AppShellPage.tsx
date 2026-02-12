@@ -105,9 +105,9 @@ export function AppShellPage() {
       isMemberRailCollapsed={overlayState.isMemberRailCollapsed()}
       serverRail={
         <ServerRail
-          workspaces={workspaceState.workspaces()}
-          activeGuildId={workspaceState.activeGuildId()}
-          isCreatingWorkspace={workspaceState.isCreatingWorkspace()}
+          workspaces={workspaceState.workspaceChannel.workspaces()}
+          activeGuildId={workspaceState.workspaceChannel.activeGuildId()}
+          isCreatingWorkspace={workspaceState.workspaceChannel.isCreatingWorkspace()}
           onSelectWorkspace={onSelectWorkspace}
           onOpenPanel={openOverlayPanel}
         />
@@ -116,7 +116,7 @@ export function AppShellPage() {
         <ChannelRail
           activeWorkspace={activeWorkspace()}
           activeChannel={activeChannel()}
-          activeChannelId={workspaceState.activeChannelId()}
+          activeChannelId={workspaceState.workspaceChannel.activeChannelId()}
           activeTextChannels={activeTextChannels()}
           activeVoiceChannels={activeVoiceChannels()}
           canManageWorkspaceChannels={canManageWorkspaceChannels()}
@@ -146,7 +146,7 @@ export function AppShellPage() {
           onOpenSettings={() => openOverlayPanel("settings")}
           onCreateTextChannel={openTextChannelCreatePanel}
           onCreateVoiceChannel={openVoiceChannelCreatePanel}
-          onSelectChannel={(channelId) => workspaceState.setActiveChannelId(channelId)}
+          onSelectChannel={(channelId) => workspaceState.workspaceChannel.setActiveChannelId(channelId)}
           onJoinVoice={() => void joinVoiceChannel()}
           onToggleVoiceMicrophone={() => void toggleVoiceMicrophone()}
           onToggleVoiceCamera={() => void toggleVoiceCamera()}
@@ -176,8 +176,8 @@ export function AppShellPage() {
               onLogout={() => void logout()}
             />
           }
-          workspaceBootstrapDone={workspaceState.workspaceBootstrapDone()}
-          workspaceCount={workspaceState.workspaces().length}
+          workspaceBootstrapDone={workspaceState.workspaceChannel.workspaceBootstrapDone()}
+          workspaceCount={workspaceState.workspaceChannel.workspaces().length}
           isLoadingMessages={messageState.isLoadingMessages()}
           messageError={messageState.messageError()}
           sessionStatus={diagnosticsState.sessionStatus()}

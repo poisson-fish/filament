@@ -12,7 +12,7 @@ import type {
   WorkspaceRecord,
 } from "../../../domain/chat";
 
-export function createWorkspaceState() {
+function createWorkspaceChannelState() {
   const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>([]);
   const [activeGuildId, setActiveGuildId] = createSignal<GuildId | null>(null);
   const [activeChannelId, setActiveChannelId] = createSignal<ChannelId | null>(null);
@@ -25,34 +25,13 @@ export function createWorkspaceState() {
   const [isCreatingWorkspace, setCreatingWorkspace] = createSignal(false);
   const [workspaceError, setWorkspaceError] = createSignal("");
 
-  const [publicGuildSearchQuery, setPublicGuildSearchQuery] = createSignal("");
-  const [isSearchingPublicGuilds, setSearchingPublicGuilds] = createSignal(false);
-  const [publicGuildSearchError, setPublicGuildSearchError] = createSignal("");
-  const [publicGuildDirectory, setPublicGuildDirectory] = createSignal<GuildRecord[]>([]);
-
-  const [friendRecipientUserIdInput, setFriendRecipientUserIdInput] = createSignal("");
-  const [friends, setFriends] = createSignal<FriendRecord[]>([]);
-  const [friendRequests, setFriendRequests] = createSignal<FriendRequestList>({
-    incoming: [],
-    outgoing: [],
-  });
-  const [isRunningFriendAction, setRunningFriendAction] = createSignal(false);
-  const [friendStatus, setFriendStatus] = createSignal("");
-  const [friendError, setFriendError] = createSignal("");
-
   const [newChannelName, setNewChannelName] = createSignal("backend");
   const [newChannelKind, setNewChannelKind] = createSignal<ChannelKindName>("text");
   const [isCreatingChannel, setCreatingChannel] = createSignal(false);
   const [channelCreateError, setChannelCreateError] = createSignal("");
 
-  const [searchQuery, setSearchQuery] = createSignal("");
-  const [searchError, setSearchError] = createSignal("");
-  const [isSearching, setSearching] = createSignal(false);
-  const [searchResults, setSearchResults] = createSignal<SearchResults | null>(null);
-  const [isRunningSearchOps, setRunningSearchOps] = createSignal(false);
-  const [searchOpsStatus, setSearchOpsStatus] = createSignal("");
-
-  const [channelPermissions, setChannelPermissions] = createSignal<ChannelPermissionSnapshot | null>(null);
+  const [channelPermissions, setChannelPermissions] =
+    createSignal<ChannelPermissionSnapshot | null>(null);
 
   return {
     workspaces,
@@ -75,14 +54,31 @@ export function createWorkspaceState() {
     setCreatingWorkspace,
     workspaceError,
     setWorkspaceError,
-    publicGuildSearchQuery,
-    setPublicGuildSearchQuery,
-    isSearchingPublicGuilds,
-    setSearchingPublicGuilds,
-    publicGuildSearchError,
-    setPublicGuildSearchError,
-    publicGuildDirectory,
-    setPublicGuildDirectory,
+    newChannelName,
+    setNewChannelName,
+    newChannelKind,
+    setNewChannelKind,
+    isCreatingChannel,
+    setCreatingChannel,
+    channelCreateError,
+    setChannelCreateError,
+    channelPermissions,
+    setChannelPermissions,
+  };
+}
+
+function createFriendshipsState() {
+  const [friendRecipientUserIdInput, setFriendRecipientUserIdInput] = createSignal("");
+  const [friends, setFriends] = createSignal<FriendRecord[]>([]);
+  const [friendRequests, setFriendRequests] = createSignal<FriendRequestList>({
+    incoming: [],
+    outgoing: [],
+  });
+  const [isRunningFriendAction, setRunningFriendAction] = createSignal(false);
+  const [friendStatus, setFriendStatus] = createSignal("");
+  const [friendError, setFriendError] = createSignal("");
+
+  return {
     friendRecipientUserIdInput,
     setFriendRecipientUserIdInput,
     friends,
@@ -95,14 +91,31 @@ export function createWorkspaceState() {
     setFriendStatus,
     friendError,
     setFriendError,
-    newChannelName,
-    setNewChannelName,
-    newChannelKind,
-    setNewChannelKind,
-    isCreatingChannel,
-    setCreatingChannel,
-    channelCreateError,
-    setChannelCreateError,
+  };
+}
+
+function createDiscoveryState() {
+  const [publicGuildSearchQuery, setPublicGuildSearchQuery] = createSignal("");
+  const [isSearchingPublicGuilds, setSearchingPublicGuilds] = createSignal(false);
+  const [publicGuildSearchError, setPublicGuildSearchError] = createSignal("");
+  const [publicGuildDirectory, setPublicGuildDirectory] = createSignal<GuildRecord[]>([]);
+
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchError, setSearchError] = createSignal("");
+  const [isSearching, setSearching] = createSignal(false);
+  const [searchResults, setSearchResults] = createSignal<SearchResults | null>(null);
+  const [isRunningSearchOps, setRunningSearchOps] = createSignal(false);
+  const [searchOpsStatus, setSearchOpsStatus] = createSignal("");
+
+  return {
+    publicGuildSearchQuery,
+    setPublicGuildSearchQuery,
+    isSearchingPublicGuilds,
+    setSearchingPublicGuilds,
+    publicGuildSearchError,
+    setPublicGuildSearchError,
+    publicGuildDirectory,
+    setPublicGuildDirectory,
     searchQuery,
     setSearchQuery,
     searchError,
@@ -115,7 +128,23 @@ export function createWorkspaceState() {
     setRunningSearchOps,
     searchOpsStatus,
     setSearchOpsStatus,
-    channelPermissions,
-    setChannelPermissions,
   };
 }
+
+export type WorkspaceChannelState = ReturnType<typeof createWorkspaceChannelState>;
+export type FriendshipsState = ReturnType<typeof createFriendshipsState>;
+export type DiscoveryState = ReturnType<typeof createDiscoveryState>;
+
+export function createWorkspaceState() {
+  const workspaceChannel = createWorkspaceChannelState();
+  const friendships = createFriendshipsState();
+  const discovery = createDiscoveryState();
+
+  return {
+    workspaceChannel,
+    friendships,
+    discovery,
+  };
+}
+
+export type WorkspaceState = ReturnType<typeof createWorkspaceState>;

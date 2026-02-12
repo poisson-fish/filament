@@ -27,14 +27,18 @@ describe("app shell state factories", () => {
     const workspaceState = createWorkspaceState();
     const messageState = createMessageState();
 
-    expect(workspaceState.workspaces()).toEqual([]);
-    expect(workspaceState.activeGuildId()).toBeNull();
-    expect(workspaceState.activeChannelId()).toBeNull();
-    expect(workspaceState.workspaceBootstrapDone()).toBe(false);
-    expect(workspaceState.createGuildName()).toBe("Security Ops");
-    expect(workspaceState.createGuildVisibility()).toBe("private");
-    expect(workspaceState.friendRequests()).toEqual({ incoming: [], outgoing: [] });
-    expect(workspaceState.channelPermissions()).toBeNull();
+    expect(workspaceState.workspaceChannel.workspaces()).toEqual([]);
+    expect(workspaceState.workspaceChannel.activeGuildId()).toBeNull();
+    expect(workspaceState.workspaceChannel.activeChannelId()).toBeNull();
+    expect(workspaceState.workspaceChannel.workspaceBootstrapDone()).toBe(false);
+    expect(workspaceState.workspaceChannel.createGuildName()).toBe("Security Ops");
+    expect(workspaceState.workspaceChannel.createGuildVisibility()).toBe("private");
+    expect(workspaceState.friendships.friendRequests()).toEqual({ incoming: [], outgoing: [] });
+    expect(workspaceState.workspaceChannel.channelPermissions()).toBeNull();
+    expect(workspaceState.workspaceChannel.createChannelName()).toBe("incident-room");
+    expect(workspaceState.friendships.friendRecipientUserIdInput()).toBe("");
+    expect(workspaceState.discovery.publicGuildDirectory()).toEqual([]);
+    expect(workspaceState.discovery.searchResults()).toBeNull();
 
     expect(messageState.composer()).toBe("");
     expect(messageState.messages()).toEqual([]);
@@ -96,10 +100,14 @@ describe("app shell state factories", () => {
     const workspaceState = createWorkspaceState();
     const overlayState = createOverlayState();
 
-    workspaceState.setWorkspaceError("error");
+    workspaceState.workspaceChannel.setWorkspaceError("error");
+    workspaceState.friendships.setFriendStatus("updated");
+    workspaceState.discovery.setSearchQuery("incident");
     overlayState.setChannelRailCollapsed(true);
 
-    expect(workspaceState.workspaceError()).toBe("error");
+    expect(workspaceState.workspaceChannel.workspaceError()).toBe("error");
+    expect(workspaceState.friendships.friendStatus()).toBe("updated");
+    expect(workspaceState.discovery.searchQuery()).toBe("incident");
     expect(overlayState.isChannelRailCollapsed()).toBe(true);
   });
 });
