@@ -105,6 +105,28 @@ function stubMediaDevices(
   return { enumerateDevices };
 }
 
+function stubMediaDevicesWithPermissionFlow(input: {
+  enumerateDevices: () => Promise<Array<{ kind: string; deviceId: string; label: string }>>;
+  getUserMedia: () => Promise<{ getTracks(): Array<{ stop(): void }> }>;
+}): {
+  enumerateDevices: ReturnType<typeof vi.fn>;
+  getUserMedia: ReturnType<typeof vi.fn>;
+} {
+  const enumerateDevices = vi.fn(input.enumerateDevices);
+  const getUserMedia = vi.fn(input.getUserMedia);
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      enumerateDevices,
+      getUserMedia,
+    },
+  });
+  return {
+    enumerateDevices,
+    getUserMedia,
+  };
+}
+
 function createSettingsFixtureFetch(options?: {
   profileDelayMs?: number;
   profileError?: { status: number; code: string };
@@ -316,6 +338,38 @@ describe("app shell settings entry point", () => {
         audioOutputDeviceId: "spk-2",
       });
     });
+  });
+
+  it("requests microphone permission on Refresh devices when inventory is empty", async () => {
+    seedAuthenticatedWorkspace();
+    vi.stubGlobal("fetch", createSettingsFixtureFetch());
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    const stopTrack = vi.fn();
+    const mediaDevices = stubMediaDevicesWithPermissionFlow({
+      enumerateDevices: async () =>
+        mediaDevices.getUserMedia.mock.calls.length > 0
+          ? [{ kind: "audioinput", deviceId: "mic-1", label: "Desk Mic" }]
+          : [],
+      getUserMedia: async () => ({
+        getTracks: () => [{ stop: stopTrack }],
+      }),
+    });
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
+    expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
+
+    const refreshButton = await screen.findByRole("button", { name: "Refresh devices" });
+    fireEvent.click(refreshButton);
+
+    await waitFor(() => {
+      expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+      expect(stopTrack).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText("Desk Mic")).toBeInTheDocument();
   });
 
   it("opens profile panel when clicking avatar controls, renders loading, and closes", async () => {

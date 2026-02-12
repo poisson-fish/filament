@@ -169,8 +169,8 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       }
                     >
                       <p class="muted">
-                        No audio devices were detected yet. Refresh after granting
-                        media permissions.
+                        No audio devices were detected yet. Select Refresh devices to request
+                        microphone access, then retry.
                       </p>
                     </Show>
                   </Match>

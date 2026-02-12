@@ -10,8 +10,10 @@ import {
 } from "../../../domain/chat";
 import { useAuth } from "../../../lib/auth-context";
 import {
+  canRequestAudioCapturePermission,
   enumerateAudioDevices,
   reconcileVoiceDevicePreferences,
+  requestAudioCapturePermission,
   saveVoiceDevicePreferences,
   type MediaDeviceId,
   type VoiceDevicePreferences,
@@ -194,14 +196,24 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     }
   };
 
-  const refreshAudioDeviceInventory = async (): Promise<void> => {
+  const refreshAudioDeviceInventory = async (
+    requestPermissionPrompt = false,
+  ): Promise<void> => {
     if (voiceState.isRefreshingAudioDevices()) {
       return;
     }
     voiceState.setRefreshingAudioDevices(true);
     voiceState.setAudioDevicesError("");
     try {
-      const inventory = await enumerateAudioDevices();
+      let inventory = await enumerateAudioDevices();
+      if (
+        requestPermissionPrompt &&
+        inventory.audioInputs.length === 0 &&
+        canRequestAudioCapturePermission()
+      ) {
+        await requestAudioCapturePermission();
+        inventory = await enumerateAudioDevices();
+      }
       voiceState.setAudioInputDevices(inventory.audioInputs);
       voiceState.setAudioOutputDevices(inventory.audioOutputs);
       voiceState.setAudioDevicesStatus(
@@ -553,7 +565,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     if (!isVoiceAudioSettingsOpen) {
       return;
     }
-    void untrack(() => refreshAudioDeviceInventory());
+    void untrack(() => refreshAudioDeviceInventory(false));
   });
 
   createGatewayController({
@@ -695,7 +707,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         onOpenVoiceSettingsSubmenu: overlayState.setActiveVoiceSettingsSubmenu,
         onSetVoiceDevicePreference: (kind, value) =>
           setVoiceDevicePreference(kind, value),
-        onRefreshAudioDeviceInventory: refreshAudioDeviceInventory,
+        onRefreshAudioDeviceInventory: () => refreshAudioDeviceInventory(true),
         setProfileDraftUsername: profileState.setProfileDraftUsername,
         setProfileDraftAbout: profileState.setProfileDraftAbout,
         setSelectedProfileAvatarFile: profileState.setSelectedProfileAvatarFile,

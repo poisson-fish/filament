@@ -1,9 +1,11 @@
 import { vi } from "vitest";
 import {
+  canRequestAudioCapturePermission,
   VOICE_DEVICE_SETTINGS_STORAGE_KEY,
   defaultVoiceDevicePreferences,
   enumerateAudioDevices,
   loadVoiceDevicePreferences,
+  requestAudioCapturePermission,
   type MediaDeviceId,
   reconcileVoiceDevicePreferences,
   saveVoiceDevicePreferences,
@@ -112,5 +114,45 @@ describe("voice device settings", () => {
       audioInputDeviceId: "mic-a",
       audioOutputDeviceId: null,
     });
+  });
+
+  it("requests microphone permission and releases tracks", async () => {
+    const stopTrack = vi.fn();
+    const getUserMedia = vi.fn(async () => ({
+      getTracks: () => [{ stop: stopTrack }],
+    }));
+
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia,
+        enumerateDevices: vi.fn(async () => []),
+      },
+    });
+
+    expect(canRequestAudioCapturePermission()).toBe(true);
+    await requestAudioCapturePermission();
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true, video: false });
+    expect(stopTrack).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces permission denial for microphone requests", async () => {
+    const deniedError = new Error("Permission denied.");
+    Object.assign(deniedError, { name: "NotAllowedError" });
+    const getUserMedia = vi.fn(async () => {
+      throw deniedError;
+    });
+
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia,
+        enumerateDevices: vi.fn(async () => []),
+      },
+    });
+
+    await expect(requestAudioCapturePermission()).rejects.toThrow(
+      "Microphone permission was denied. Allow access in browser site settings and retry.",
+    );
   });
 });

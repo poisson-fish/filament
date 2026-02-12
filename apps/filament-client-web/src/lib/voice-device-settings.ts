@@ -1,4 +1,8 @@
 import { DomainValidationError } from "../domain/auth";
+import {
+  audioDeviceEnumerationUnavailableMessage,
+  mediaContextHint,
+} from "./browser-context";
 
 export type AudioDeviceKind = "audioinput" | "audiooutput";
 export type MediaDeviceId = string & { readonly __brand: "media_device_id" };
@@ -25,6 +29,20 @@ const MAX_STORAGE_BYTES = 8_192;
 const MAX_DEVICE_ID_CHARS = 512;
 const MAX_DEVICE_LABEL_CHARS = 160;
 const MAX_DEVICES_PER_KIND = 64;
+const AUDIO_PERMISSION_DENIED_ERROR_NAMES = new Set([
+  "notallowederror",
+  "securityerror",
+  "permissiondeniederror",
+]);
+const AUDIO_DEVICE_NOT_FOUND_ERROR_NAMES = new Set([
+  "notfounderror",
+  "devicesnotfounderror",
+]);
+const AUDIO_DEVICE_UNAVAILABLE_ERROR_NAMES = new Set([
+  "notreadableerror",
+  "trackstarterror",
+  "aborterror",
+]);
 
 const DEFAULT_VOICE_DEVICE_PREFERENCES: VoiceDevicePreferences = {
   audioInputDeviceId: null,
@@ -170,13 +188,17 @@ export async function enumerateAudioDevices(): Promise<AudioDeviceInventory> {
     typeof navigator.mediaDevices === "undefined" ||
     typeof navigator.mediaDevices.enumerateDevices !== "function"
   ) {
-    throw new DomainValidationError("Audio device enumeration is unavailable in this browser.");
+    throw new DomainValidationError(audioDeviceEnumerationUnavailableMessage());
   }
 
   let devices: MediaDeviceInfo[];
   try {
     devices = await navigator.mediaDevices.enumerateDevices();
   } catch {
+    const hint = mediaContextHint();
+    if (hint) {
+      throw new DomainValidationError(`Unable to enumerate audio devices. ${hint}`);
+    }
     throw new DomainValidationError("Unable to enumerate audio devices.");
   }
 
@@ -206,6 +228,68 @@ export async function enumerateAudioDevices(): Promise<AudioDeviceInventory> {
   };
 }
 
+export function canRequestAudioCapturePermission(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    typeof navigator.mediaDevices !== "undefined" &&
+    typeof navigator.mediaDevices.getUserMedia === "function"
+  );
+}
+
+function mediaPermissionErrorMessage(error: unknown): string {
+  const rawName =
+    error && typeof error === "object" && typeof (error as { name?: unknown }).name === "string"
+      ? (error as { name: string }).name
+      : "";
+  const normalizedName = rawName.trim().toLowerCase();
+  const hint = mediaContextHint();
+
+  if (AUDIO_PERMISSION_DENIED_ERROR_NAMES.has(normalizedName)) {
+    if (hint) {
+      return `Microphone permission prompt is unavailable in this browser context. ${hint}`;
+    }
+    return "Microphone permission was denied. Allow access in browser site settings and retry.";
+  }
+  if (AUDIO_DEVICE_NOT_FOUND_ERROR_NAMES.has(normalizedName)) {
+    return "No microphone device is available on this system.";
+  }
+  if (AUDIO_DEVICE_UNAVAILABLE_ERROR_NAMES.has(normalizedName)) {
+    return "Microphone is unavailable. It may be in use by another app or blocked by OS privacy settings.";
+  }
+
+  if (hint) {
+    return `Unable to request microphone permission. ${hint}`;
+  }
+  return "Unable to request microphone permission.";
+}
+
+export async function requestAudioCapturePermission(): Promise<void> {
+  if (!canRequestAudioCapturePermission()) {
+    throw new DomainValidationError("Microphone permission request is unavailable in this browser.");
+  }
+
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: false,
+    });
+  } catch (error) {
+    throw new DomainValidationError(mediaPermissionErrorMessage(error));
+  }
+
+  if (!stream || typeof stream.getTracks !== "function") {
+    throw new DomainValidationError("Microphone permission request returned an invalid stream.");
+  }
+
+  const tracks = stream.getTracks();
+  for (const track of tracks) {
+    if (track && typeof track.stop === "function") {
+      track.stop();
+    }
+  }
+}
+
 export function reconcileVoiceDevicePreferences(
   preferences: VoiceDevicePreferences,
   inventory: AudioDeviceInventory,
@@ -224,4 +308,3 @@ export function reconcileVoiceDevicePreferences(
         : null,
   };
 }
-

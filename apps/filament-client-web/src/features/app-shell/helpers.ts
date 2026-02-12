@@ -15,6 +15,7 @@ import {
   type WorkspaceRecord,
 } from "../../domain/chat";
 import { ApiError } from "../../lib/api";
+import { microphoneToggleErrorMessage } from "../../lib/browser-context";
 import { RtcClientError, type RtcSnapshot } from "../../lib/rtc";
 
 export interface ReactionView {
@@ -285,7 +286,7 @@ export function mapRtcError(error: unknown, fallback: string): string {
       return "Voice is not connected.";
     }
     if (error.code === "microphone_toggle_failed") {
-      return "Unable to change microphone state.";
+      return microphoneToggleErrorMessage(error.message);
     }
     if (error.code === "camera_toggle_failed") {
       return "Unable to change camera state.";
