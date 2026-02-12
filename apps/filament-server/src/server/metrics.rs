@@ -36,6 +36,10 @@ pub(crate) fn render_metrics() -> String {
         .gateway_events_parse_rejected
         .lock()
         .map_or_else(|_| HashMap::new(), |guard| guard.clone());
+    let voice_sync_repairs = metrics_state()
+        .voice_sync_repairs
+        .lock()
+        .map_or_else(|_| HashMap::new(), |guard| guard.clone());
 
     let mut output = String::new();
     output
@@ -141,6 +145,19 @@ pub(crate) fn render_metrics() -> String {
         );
     }
 
+    output.push_str(
+        "# HELP filament_voice_sync_repairs_total Count of voice drift-repair snapshots emitted by reason\n",
+    );
+    output.push_str("# TYPE filament_voice_sync_repairs_total counter\n");
+    let mut voice_repair_entries: Vec<_> = voice_sync_repairs.into_iter().collect();
+    voice_repair_entries.sort_by_key(|(reason, _)| reason.clone());
+    for (reason, value) in voice_repair_entries {
+        let _ = writeln!(
+            output,
+            "filament_voice_sync_repairs_total{{reason=\"{reason}\"}} {value}"
+        );
+    }
+
     output
 }
 
@@ -201,6 +218,13 @@ pub(crate) fn record_gateway_event_parse_rejected(scope: &'static str, reason: &
         let entry = counters
             .entry((scope.to_owned(), reason.to_owned()))
             .or_insert(0);
+        *entry += 1;
+    }
+}
+
+pub(crate) fn record_voice_sync_repair(reason: &'static str) {
+    if let Ok(mut counters) = metrics_state().voice_sync_repairs.lock() {
+        let entry = counters.entry(reason.to_owned()).or_insert(0);
         *entry += 1;
     }
 }

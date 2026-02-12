@@ -116,6 +116,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     voiceSessionChannelKey: voiceState.voiceSessionChannelKey,
     attachmentByChannel: messageState.attachmentByChannel,
     rtcSnapshot: voiceState.rtcSnapshot,
+    voiceParticipantsByChannel: voiceState.voiceParticipantsByChannel,
     voiceSessionCapabilities: voiceState.voiceSessionCapabilities,
     voiceSessionStartedAtUnixMs: voiceState.voiceSessionStartedAtUnixMs,
     voiceDurationClockUnixMs: voiceState.voiceDurationClockUnixMs,
@@ -713,6 +714,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setProfileDraftAbout: profileState.setProfileDraftAbout,
     setFriends: friendshipsState.setFriends,
     setFriendRequests: friendshipsState.setFriendRequests,
+    setVoiceParticipantsByChannel: voiceState.setVoiceParticipantsByChannel,
     isMessageListNearBottom: messageListController.isMessageListNearBottom,
     scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
     onWorkspacePermissionsChanged: (guildId) => {

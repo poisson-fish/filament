@@ -35,6 +35,7 @@ pub(crate) type GuildRoleMap = HashMap<String, HashMap<String, WorkspaceRoleReco
 pub(crate) type GuildRoleAssignmentMap = HashMap<String, HashMap<UserId, HashSet<String>>>;
 pub(crate) type GuildChannelPermissionOverrideMap =
     HashMap<String, HashMap<String, ChannelPermissionOverrideRecord>>;
+pub(crate) type VoiceParticipantsByChannel = HashMap<String, HashMap<UserId, VoiceParticipant>>;
 
 pub const DEFAULT_JSON_BODY_LIMIT_BYTES: usize = 1_048_576;
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 10;
@@ -76,6 +77,8 @@ pub(crate) const MAX_USER_LOOKUP_IDS: usize = 64;
 pub(crate) const MAX_ATTACHMENTS_PER_MESSAGE: usize = 5;
 pub(crate) const MAX_PROFILE_AVATAR_MIME_CHARS: usize = 64;
 pub(crate) const MAX_PROFILE_AVATAR_OBJECT_KEY_CHARS: usize = 128;
+pub(crate) const MAX_TRACKED_VOICE_CHANNELS: usize = 1024;
+pub(crate) const MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL: usize = 512;
 pub(crate) const METRICS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
 pub(crate) static METRICS_STATE: OnceLock<MetricsState> = OnceLock::new();
@@ -89,6 +92,7 @@ pub(crate) struct MetricsState {
     pub(crate) gateway_events_dropped: Mutex<HashMap<(String, String, String), u64>>,
     pub(crate) gateway_events_unknown_received: Mutex<HashMap<(String, String), u64>>,
     pub(crate) gateway_events_parse_rejected: Mutex<HashMap<(String, String), u64>>,
+    pub(crate) voice_sync_repairs: Mutex<HashMap<String, u64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -292,6 +296,7 @@ pub struct AppState {
     pub(crate) connection_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>>,
     pub(crate) connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
     pub(crate) connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
+    pub(crate) voice_participants: Arc<RwLock<VoiceParticipantsByChannel>>,
     pub(crate) attachment_store: Arc<LocalFileSystem>,
     pub(crate) attachments: Arc<RwLock<HashMap<String, AttachmentRecord>>>,
     pub(crate) friendship_requests: Arc<RwLock<HashMap<String, FriendshipRequestRecord>>>,
@@ -355,6 +360,7 @@ impl AppState {
             connection_senders: Arc::new(RwLock::new(HashMap::new())),
             connection_controls: Arc::new(RwLock::new(HashMap::new())),
             connection_presence: Arc::new(RwLock::new(HashMap::new())),
+            voice_participants: Arc::new(RwLock::new(HashMap::new())),
             attachment_store: Arc::new(attachment_store),
             attachments: Arc::new(RwLock::new(HashMap::new())),
             friendship_requests: Arc::new(RwLock::new(HashMap::new())),
@@ -522,4 +528,27 @@ pub(crate) enum ConnectionControl {
 pub(crate) struct ConnectionPresence {
     pub(crate) user_id: UserId,
     pub(crate) guild_ids: HashSet<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum VoiceStreamKind {
+    Microphone,
+    Camera,
+    ScreenShare,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct VoiceParticipant {
+    pub(crate) user_id: UserId,
+    pub(crate) identity: String,
+    pub(crate) joined_at_unix: i64,
+    pub(crate) updated_at_unix: i64,
+    pub(crate) expires_at_unix: i64,
+    pub(crate) is_muted: bool,
+    pub(crate) is_deafened: bool,
+    pub(crate) is_speaking: bool,
+    pub(crate) is_video_enabled: bool,
+    pub(crate) is_screen_share_enabled: bool,
+    pub(crate) published_streams: HashSet<VoiceStreamKind>,
 }

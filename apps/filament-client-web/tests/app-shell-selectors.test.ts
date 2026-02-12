@@ -10,6 +10,7 @@ import {
   type WorkspaceRecord,
 } from "../src/domain/chat";
 import type { RtcSnapshot } from "../src/lib/rtc";
+import type { VoiceParticipantPayload } from "../src/lib/gateway";
 import { channelKey } from "../src/features/app-shell/helpers";
 import {
   buildVoiceRosterEntries,
@@ -85,6 +86,9 @@ function createSelectorHarness() {
   const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(null);
   const [attachmentByChannel] = createSignal<Record<string, AttachmentRecord[]>>({});
   const [rtcSnapshot, setRtcSnapshot] = createSignal<RtcSnapshot>(rtcSnapshotFixture());
+  const [voiceParticipantsByChannel, setVoiceParticipantsByChannel] = createSignal<
+    Record<string, VoiceParticipantPayload[]>
+  >({});
   const [voiceSessionCapabilities, setVoiceSessionCapabilities] =
     createSignal<VoiceSessionCapabilities>(voiceCapabilitiesFixture());
   const [voiceSessionStartedAtUnixMs] = createSignal<number | null>(null);
@@ -99,6 +103,7 @@ function createSelectorHarness() {
     voiceSessionChannelKey,
     attachmentByChannel,
     rtcSnapshot,
+    voiceParticipantsByChannel,
     voiceSessionCapabilities,
     voiceSessionStartedAtUnixMs,
     voiceDurationClockUnixMs,
@@ -113,6 +118,7 @@ function createSelectorHarness() {
     setChannelPermissions,
     setVoiceSessionChannelKey,
     setRtcSnapshot,
+    setVoiceParticipantsByChannel,
     setVoiceSessionCapabilities,
     setActiveOverlayPanel,
   };

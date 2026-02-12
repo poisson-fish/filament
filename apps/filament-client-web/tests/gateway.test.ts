@@ -111,6 +111,12 @@ function createOpenGateway() {
   const onFriendRemove = vi.fn();
   const onPresenceSync = vi.fn();
   const onPresenceUpdate = vi.fn();
+  const onVoiceParticipantSync = vi.fn();
+  const onVoiceParticipantJoin = vi.fn();
+  const onVoiceParticipantLeave = vi.fn();
+  const onVoiceParticipantUpdate = vi.fn();
+  const onVoiceStreamPublish = vi.fn();
+  const onVoiceStreamUnpublish = vi.fn();
   const onOpenStateChange = vi.fn();
 
   const client = connectGateway(
@@ -145,6 +151,12 @@ function createOpenGateway() {
       onFriendRemove,
       onPresenceSync,
       onPresenceUpdate,
+      onVoiceParticipantSync,
+      onVoiceParticipantJoin,
+      onVoiceParticipantLeave,
+      onVoiceParticipantUpdate,
+      onVoiceStreamPublish,
+      onVoiceStreamUnpublish,
       onOpenStateChange,
     },
   );
@@ -185,6 +197,12 @@ function createOpenGateway() {
     onFriendRemove,
     onPresenceSync,
     onPresenceUpdate,
+    onVoiceParticipantSync,
+    onVoiceParticipantJoin,
+    onVoiceParticipantLeave,
+    onVoiceParticipantUpdate,
+    onVoiceStreamPublish,
+    onVoiceStreamUnpublish,
     onOpenStateChange,
   };
 }
@@ -258,6 +276,12 @@ describe("gateway payload parsing", () => {
       onFriendRemove,
       onPresenceSync,
       onPresenceUpdate,
+      onVoiceParticipantSync,
+      onVoiceParticipantJoin,
+      onVoiceParticipantLeave,
+      onVoiceParticipantUpdate,
+      onVoiceStreamPublish,
+      onVoiceStreamUnpublish,
     } = createOpenGateway();
     const messageId = ulidFromIndex(80);
     const actorId = ulidFromIndex(81);
@@ -537,6 +561,40 @@ describe("gateway payload parsing", () => {
           status: "idle",
         },
       },
+      {
+        v: 1,
+        t: "voice_participant_sync",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          participants: [{}],
+          synced_at_unix: 1,
+        },
+      },
+      {
+        v: 1,
+        t: "voice_participant_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          user_id: actorId,
+          identity: "u.invalid",
+          updated_fields: {},
+          updated_at_unix: 1,
+        },
+      },
+      {
+        v: 1,
+        t: "voice_stream_publish",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          user_id: actorId,
+          identity: "u.invalid",
+          stream: "invalid",
+          published_at_unix: 1,
+        },
+      },
     ];
     for (const envelope of malformedEnvelopes) {
       socket.emitMessage(JSON.stringify(envelope));
@@ -569,6 +627,12 @@ describe("gateway payload parsing", () => {
     expect(onFriendRemove).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
     expect(onPresenceUpdate).not.toHaveBeenCalled();
+    expect(onVoiceParticipantSync).not.toHaveBeenCalled();
+    expect(onVoiceParticipantJoin).not.toHaveBeenCalled();
+    expect(onVoiceParticipantLeave).not.toHaveBeenCalled();
+    expect(onVoiceParticipantUpdate).not.toHaveBeenCalled();
+    expect(onVoiceStreamPublish).not.toHaveBeenCalled();
+    expect(onVoiceStreamUnpublish).not.toHaveBeenCalled();
   });
 
   it("rejects invalid envelope versions and event types fail-closed", () => {
@@ -595,6 +659,12 @@ describe("gateway payload parsing", () => {
       onWorkspaceIpBanSync,
       onPresenceSync,
       onPresenceUpdate,
+      onVoiceParticipantSync,
+      onVoiceParticipantJoin,
+      onVoiceParticipantLeave,
+      onVoiceParticipantUpdate,
+      onVoiceStreamPublish,
+      onVoiceStreamUnpublish,
     } = createOpenGateway();
     const invalidEnvelopes = [
       { v: 2, t: "ready", d: {} },
@@ -630,6 +700,12 @@ describe("gateway payload parsing", () => {
     expect(onWorkspaceIpBanSync).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
     expect(onPresenceUpdate).not.toHaveBeenCalled();
+    expect(onVoiceParticipantSync).not.toHaveBeenCalled();
+    expect(onVoiceParticipantJoin).not.toHaveBeenCalled();
+    expect(onVoiceParticipantLeave).not.toHaveBeenCalled();
+    expect(onVoiceParticipantUpdate).not.toHaveBeenCalled();
+    expect(onVoiceStreamPublish).not.toHaveBeenCalled();
+    expect(onVoiceStreamUnpublish).not.toHaveBeenCalled();
   });
 
   it("rejects oversized gateway event payloads before dispatch", () => {
@@ -656,6 +732,12 @@ describe("gateway payload parsing", () => {
       onWorkspaceIpBanSync,
       onPresenceSync,
       onPresenceUpdate,
+      onVoiceParticipantSync,
+      onVoiceParticipantJoin,
+      onVoiceParticipantLeave,
+      onVoiceParticipantUpdate,
+      onVoiceStreamPublish,
+      onVoiceStreamUnpublish,
     } = createOpenGateway();
     socket.emitMessage("x".repeat(70 * 1024));
 
@@ -680,6 +762,12 @@ describe("gateway payload parsing", () => {
     expect(onWorkspaceIpBanSync).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
     expect(onPresenceUpdate).not.toHaveBeenCalled();
+    expect(onVoiceParticipantSync).not.toHaveBeenCalled();
+    expect(onVoiceParticipantJoin).not.toHaveBeenCalled();
+    expect(onVoiceParticipantLeave).not.toHaveBeenCalled();
+    expect(onVoiceParticipantUpdate).not.toHaveBeenCalled();
+    expect(onVoiceStreamPublish).not.toHaveBeenCalled();
+    expect(onVoiceStreamUnpublish).not.toHaveBeenCalled();
   });
 
   it("rejects oversized presence_sync user lists", () => {

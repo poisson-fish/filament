@@ -9,6 +9,7 @@ import type {
   WorkspaceRecord,
 } from "../../../domain/chat";
 import type { RtcConnectionStatus, RtcSnapshot } from "../../../lib/rtc";
+import type { VoiceParticipantPayload } from "../../../lib/gateway";
 import {
   canDiscoverWorkspaceOperation,
   channelKey,
@@ -36,6 +37,7 @@ export interface CreateAppShellSelectorsOptions {
   voiceSessionChannelKey: Accessor<string | null>;
   attachmentByChannel: Accessor<Record<string, AttachmentRecord[]>>;
   rtcSnapshot: Accessor<RtcSnapshot>;
+  voiceParticipantsByChannel: Accessor<Record<string, VoiceParticipantPayload[]>>;
   voiceSessionCapabilities: Accessor<VoiceSessionCapabilities>;
   voiceSessionStartedAtUnixMs: Accessor<number | null>;
   voiceDurationClockUnixMs: Accessor<number>;
@@ -338,7 +340,24 @@ export function createAppShellSelectors(
   );
 
   const voiceRosterEntries = createMemo<VoiceRosterEntry[]>(() =>
-    buildVoiceRosterEntries(options.rtcSnapshot()),
+    (() => {
+      const activeGuildId = options.activeGuildId();
+      const activeChannelId = options.activeChannelId();
+      if (activeGuildId && activeChannelId) {
+        const key = channelKey(activeGuildId, activeChannelId);
+        const synced = options.voiceParticipantsByChannel()[key];
+        if (synced && synced.length > 0) {
+          return synced.map((entry) => ({
+            identity: entry.identity,
+            isLocal: entry.identity === options.rtcSnapshot().localParticipantIdentity,
+            isSpeaking: entry.isSpeaking,
+            hasCamera: entry.isVideoEnabled,
+            hasScreenShare: entry.isScreenShareEnabled,
+          }));
+        }
+      }
+      return buildVoiceRosterEntries(options.rtcSnapshot());
+    })(),
   );
 
   const voiceStreamPermissionHints = createMemo(() =>

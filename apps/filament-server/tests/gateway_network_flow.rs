@@ -206,6 +206,66 @@ async fn next_event_of_type(
     panic!("expected event type {event_type}");
 }
 
+async fn maybe_next_event_of_type(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    event_type: &str,
+    timeout: Duration,
+) -> Option<Value> {
+    let result = tokio::time::timeout(timeout, async {
+        for _ in 0..32 {
+            let Some(raw) = socket.next().await else {
+                return None;
+            };
+            let Ok(message) = raw else {
+                return None;
+            };
+            let Ok(text) = message.into_text() else {
+                continue;
+            };
+            let Ok(event) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
+            if event["t"] == event_type {
+                return Some(event);
+            }
+        }
+        None
+    })
+    .await;
+    result.unwrap_or_default()
+}
+
+async fn create_voice_channel(
+    app: &axum::Router,
+    auth: &AuthResponse,
+    ip: &str,
+    guild_id: &str,
+) -> String {
+    let create_channel = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{guild_id}/channels"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", ip)
+        .body(Body::from(
+            json!({"name":"voice-sync","kind":"voice"}).to_string(),
+        ))
+        .expect("create voice channel request should build");
+    let response = app
+        .clone()
+        .oneshot(create_channel)
+        .await
+        .expect("create voice channel request should execute");
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: Value = parse_json_body(response).await;
+    payload["channel_id"]
+        .as_str()
+        .expect("voice channel id should exist")
+        .to_owned()
+}
+
 async fn metrics_text(app: &axum::Router) -> String {
     let metrics_request = Request::builder()
         .method("GET")
@@ -319,7 +379,7 @@ async fn websocket_handshake_and_message_flow_work_over_network() {
         .await
         .expect("message create event should send");
 
-    let broadcast_json = next_text_event(&mut socket).await;
+    let broadcast_json = next_event_of_type(&mut socket, "message_create").await;
     assert_eq!(broadcast_json["t"], "message_create");
     assert_eq!(broadcast_json["d"]["content"], "hello over network");
 
@@ -930,6 +990,212 @@ async fn websocket_subscription_receives_workspace_update_from_rest() {
         .close(None)
         .await
         .expect("member socket close should succeed");
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_voice_participant_sync_repairs_and_disconnect_cleanup() {
+    let app = build_router(&AppConfig {
+        max_body_bytes: 1024 * 32,
+        request_timeout: Duration::from_secs(2),
+        rate_limit_requests_per_minute: 200,
+        auth_route_requests_per_minute: 200,
+        gateway_ingress_events_per_window: 20,
+        gateway_ingress_window: Duration::from_secs(10),
+        gateway_outbound_queue: 256,
+        max_gateway_event_bytes: AppConfig::default().max_gateway_event_bytes,
+        livekit_url: String::from("ws://livekit.test:7880"),
+        livekit_api_key: Some(String::from("phase8-key")),
+        livekit_api_secret: Some(String::from("phase8-secret")),
+        ..AppConfig::default()
+    })
+    .expect("voice test router should build");
+    let owner = register_and_login_as(&app, "phase8_voice_owner", "203.0.113.141").await;
+    let member = register_and_login_as(&app, "phase8_voice_member", "203.0.113.142").await;
+    let outsider = register_and_login_as(&app, "phase8_voice_outsider", "203.0.113.143").await;
+    let channel = create_channel_context(&app, &owner, "203.0.113.141").await;
+    let member_id = user_id_from_me(&app, &member, "203.0.113.142").await;
+    add_member(
+        &app,
+        &owner.access_token,
+        "203.0.113.141",
+        &channel.guild_id,
+        &member_id,
+    )
+    .await;
+    let voice_channel_id =
+        create_voice_channel(&app, &owner, "203.0.113.141", &channel.guild_id).await;
+    let voice_channel = ChannelRef {
+        guild_id: channel.guild_id.clone(),
+        channel_id: voice_channel_id.clone(),
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener addr should be readable");
+    let server_app = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_app)
+            .await
+            .expect("server should run without errors");
+    });
+
+    let ws_url = |token: &str| format!("ws://{addr}/gateway/ws?access_token={token}");
+
+    let mut owner_req = ws_url(&owner.access_token)
+        .into_client_request()
+        .expect("owner ws request should build");
+    owner_req.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.141"),
+    );
+    let (mut owner_socket, _) = connect_async(owner_req)
+        .await
+        .expect("owner ws should connect");
+    let _ = next_event_of_type(&mut owner_socket, "ready").await;
+    subscribe_to_channel(&mut owner_socket, &voice_channel).await;
+    let initial_sync = next_event_of_type(&mut owner_socket, "voice_participant_sync").await;
+    assert_eq!(
+        initial_sync["d"]["participants"]
+            .as_array()
+            .expect("participants array")
+            .len(),
+        0
+    );
+
+    let mut member_req = ws_url(&member.access_token)
+        .into_client_request()
+        .expect("member ws request should build");
+    member_req.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.142"),
+    );
+    let (mut member_socket, _) = connect_async(member_req)
+        .await
+        .expect("member ws should connect");
+    let _ = next_event_of_type(&mut member_socket, "ready").await;
+    subscribe_to_channel(&mut member_socket, &voice_channel).await;
+    let _ = next_event_of_type(&mut member_socket, "voice_participant_sync").await;
+
+    let mut outsider_req = ws_url(&outsider.access_token)
+        .into_client_request()
+        .expect("outsider ws request should build");
+    outsider_req.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.143"),
+    );
+    let (mut outsider_socket, _) = connect_async(outsider_req)
+        .await
+        .expect("outsider ws should connect");
+    let _ = next_event_of_type(&mut outsider_socket, "ready").await;
+    outsider_socket
+        .send(Message::Text(
+            json!({
+                "v": 1,
+                "t": "subscribe",
+                "d": {
+                    "guild_id": voice_channel.guild_id,
+                    "channel_id": voice_channel.channel_id,
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("outsider subscribe should send");
+    let _ = tokio::time::timeout(Duration::from_secs(1), outsider_socket.next()).await;
+
+    let issue_token = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/voice/token",
+            voice_channel.guild_id, voice_channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.141")
+        .body(Body::from(
+            json!({
+                "can_publish": true,
+                "can_subscribe": true,
+                "publish_sources": ["microphone", "camera"]
+            })
+            .to_string(),
+        ))
+        .expect("voice token request should build");
+    let issue_token_response = app
+        .clone()
+        .oneshot(issue_token)
+        .await
+        .expect("voice token request should execute");
+    assert_eq!(issue_token_response.status(), StatusCode::OK);
+
+    let owner_join = next_event_of_type(&mut owner_socket, "voice_participant_join").await;
+    let member_join = next_event_of_type(&mut member_socket, "voice_participant_join").await;
+    assert_eq!(
+        owner_join["d"]["participant"]["identity"],
+        member_join["d"]["participant"]["identity"]
+    );
+    let joined_identity = owner_join["d"]["participant"]["identity"]
+        .as_str()
+        .expect("joined identity should exist")
+        .to_owned();
+
+    let member_publish = next_event_of_type(&mut member_socket, "voice_stream_publish").await;
+    assert_eq!(member_publish["d"]["identity"], joined_identity);
+
+    let mut member_second_req = ws_url(&member.access_token)
+        .into_client_request()
+        .expect("member second ws request should build");
+    member_second_req.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.144"),
+    );
+    let (mut member_second_socket, _) = connect_async(member_second_req)
+        .await
+        .expect("member second ws should connect");
+    let _ = next_event_of_type(&mut member_second_socket, "ready").await;
+    subscribe_to_channel(&mut member_second_socket, &voice_channel).await;
+    let repaired_sync =
+        next_event_of_type(&mut member_second_socket, "voice_participant_sync").await;
+    assert_eq!(
+        repaired_sync["d"]["participants"][0]["identity"],
+        joined_identity
+    );
+
+    owner_socket
+        .close(None)
+        .await
+        .expect("owner close should succeed");
+    let leave_for_member = next_event_of_type(&mut member_socket, "voice_participant_leave").await;
+    assert_eq!(leave_for_member["d"]["identity"], joined_identity);
+    let leave_for_member_second =
+        next_event_of_type(&mut member_second_socket, "voice_participant_leave").await;
+    assert_eq!(leave_for_member_second["d"]["identity"], joined_identity);
+
+    assert!(
+        maybe_next_event_of_type(
+            &mut outsider_socket,
+            "voice_participant_join",
+            Duration::from_millis(250),
+        )
+        .await
+        .is_none(),
+        "outsider must not observe voice participant events",
+    );
+
+    member_socket
+        .close(None)
+        .await
+        .expect("member close should succeed");
+    member_second_socket
+        .close(None)
+        .await
+        .expect("member second close should succeed");
+    let _ = outsider_socket.close(None).await;
     server.abort();
 }
 

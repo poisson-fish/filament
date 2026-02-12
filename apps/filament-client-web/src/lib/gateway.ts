@@ -33,6 +33,7 @@ import {
 const MAX_GATEWAY_EVENT_BYTES = 64 * 1024;
 const MAX_PRESENCE_SYNC_USER_IDS = 1024;
 const MAX_WORKSPACE_ROLE_REORDER_IDS = 64;
+const MAX_VOICE_PARTICIPANT_SYNC_SIZE = 512;
 const EVENT_TYPE_PATTERN = /^[a-z0-9_.]{1,64}$/;
 
 type GatewayEventEnvelope = {
@@ -56,6 +57,74 @@ interface PresenceUpdatePayload {
   guildId: GuildId;
   userId: string;
   status: PresenceStatus;
+}
+
+export type VoiceStreamKind = "microphone" | "camera" | "screen_share";
+
+export interface VoiceParticipantPayload {
+  userId: string;
+  identity: string;
+  joinedAtUnix: number;
+  updatedAtUnix: number;
+  isMuted: boolean;
+  isDeafened: boolean;
+  isSpeaking: boolean;
+  isVideoEnabled: boolean;
+  isScreenShareEnabled: boolean;
+}
+
+export interface VoiceParticipantSyncPayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  participants: VoiceParticipantPayload[];
+  syncedAtUnix: number;
+}
+
+export interface VoiceParticipantJoinPayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  participant: VoiceParticipantPayload;
+}
+
+export interface VoiceParticipantLeavePayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  userId: string;
+  identity: string;
+  leftAtUnix: number;
+}
+
+export interface VoiceParticipantUpdatePayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  userId: string;
+  identity: string;
+  updatedFields: {
+    isMuted?: boolean;
+    isDeafened?: boolean;
+    isSpeaking?: boolean;
+    isVideoEnabled?: boolean;
+    isScreenShareEnabled?: boolean;
+  };
+  updatedAtUnix: number;
+}
+
+export interface VoiceStreamPublishPayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  userId: string;
+  identity: string;
+  stream: VoiceStreamKind;
+  publishedAtUnix: number;
+}
+
+export interface VoiceStreamUnpublishPayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  userId: string;
+  identity: string;
+  stream: VoiceStreamKind;
+  unpublishedAtUnix: number;
 }
 
 interface ChannelCreatePayload {
@@ -276,6 +345,12 @@ interface GatewayHandlers {
   onFriendRemove?: (payload: FriendRemovePayload) => void;
   onPresenceSync?: (payload: PresenceSyncPayload) => void;
   onPresenceUpdate?: (payload: PresenceUpdatePayload) => void;
+  onVoiceParticipantSync?: (payload: VoiceParticipantSyncPayload) => void;
+  onVoiceParticipantJoin?: (payload: VoiceParticipantJoinPayload) => void;
+  onVoiceParticipantLeave?: (payload: VoiceParticipantLeavePayload) => void;
+  onVoiceParticipantUpdate?: (payload: VoiceParticipantUpdatePayload) => void;
+  onVoiceStreamPublish?: (payload: VoiceStreamPublishPayload) => void;
+  onVoiceStreamUnpublish?: (payload: VoiceStreamUnpublishPayload) => void;
   onOpenStateChange?: (isOpen: boolean) => void;
 }
 
@@ -375,6 +450,335 @@ function parsePresenceUpdatePayload(payload: unknown): PresenceUpdatePayload | n
     guildId,
     userId,
     status: value.status,
+  };
+}
+
+function parseVoiceStreamKind(value: unknown): VoiceStreamKind | null {
+  if (value === "microphone" || value === "camera" || value === "screen_share") {
+    return value;
+  }
+  return null;
+}
+
+function parseVoiceParticipant(payload: unknown): VoiceParticipantPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.user_id !== "string" ||
+    typeof value.identity !== "string" ||
+    value.identity.length < 1 ||
+    value.identity.length > 512 ||
+    typeof value.joined_at_unix !== "number" ||
+    !Number.isSafeInteger(value.joined_at_unix) ||
+    value.joined_at_unix < 1 ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1 ||
+    typeof value.is_muted !== "boolean" ||
+    typeof value.is_deafened !== "boolean" ||
+    typeof value.is_speaking !== "boolean" ||
+    typeof value.is_video_enabled !== "boolean" ||
+    typeof value.is_screen_share_enabled !== "boolean"
+  ) {
+    return null;
+  }
+
+  let userId: string;
+  try {
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    userId,
+    identity: value.identity,
+    joinedAtUnix: value.joined_at_unix,
+    updatedAtUnix: value.updated_at_unix,
+    isMuted: value.is_muted,
+    isDeafened: value.is_deafened,
+    isSpeaking: value.is_speaking,
+    isVideoEnabled: value.is_video_enabled,
+    isScreenShareEnabled: value.is_screen_share_enabled,
+  };
+}
+
+function parseVoiceParticipantSyncPayload(payload: unknown): VoiceParticipantSyncPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.channel_id !== "string" ||
+    !Array.isArray(value.participants) ||
+    value.participants.length > MAX_VOICE_PARTICIPANT_SYNC_SIZE ||
+    typeof value.synced_at_unix !== "number" ||
+    !Number.isSafeInteger(value.synced_at_unix) ||
+    value.synced_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+  } catch {
+    return null;
+  }
+
+  const participants: VoiceParticipantPayload[] = [];
+  const seen = new Set<string>();
+  for (const entry of value.participants) {
+    const participant = parseVoiceParticipant(entry);
+    if (!participant) {
+      return null;
+    }
+    if (seen.has(participant.identity)) {
+      continue;
+    }
+    seen.add(participant.identity);
+    participants.push(participant);
+  }
+
+  return {
+    guildId,
+    channelId,
+    participants,
+    syncedAtUnix: value.synced_at_unix,
+  };
+}
+
+function parseVoiceParticipantJoinPayload(payload: unknown): VoiceParticipantJoinPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (typeof value.guild_id !== "string" || typeof value.channel_id !== "string") {
+    return null;
+  }
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+  } catch {
+    return null;
+  }
+  const participant = parseVoiceParticipant(value.participant);
+  if (!participant) {
+    return null;
+  }
+  return { guildId, channelId, participant };
+}
+
+function parseVoiceParticipantLeavePayload(payload: unknown): VoiceParticipantLeavePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.channel_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    typeof value.identity !== "string" ||
+    typeof value.left_at_unix !== "number" ||
+    !Number.isSafeInteger(value.left_at_unix) ||
+    value.left_at_unix < 1
+  ) {
+    return null;
+  }
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  let userId: string;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+  return {
+    guildId,
+    channelId,
+    userId,
+    identity: value.identity,
+    leftAtUnix: value.left_at_unix,
+  };
+}
+
+function parseVoiceParticipantUpdatePayload(payload: unknown): VoiceParticipantUpdatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.channel_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    typeof value.identity !== "string" ||
+    !value.updated_fields ||
+    typeof value.updated_fields !== "object" ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  let userId: string;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+  const fields = value.updated_fields as Record<string, unknown>;
+  let isMuted: boolean | undefined;
+  let isDeafened: boolean | undefined;
+  let isSpeaking: boolean | undefined;
+  let isVideoEnabled: boolean | undefined;
+  let isScreenShareEnabled: boolean | undefined;
+  if (typeof fields.is_muted !== "undefined") {
+    if (typeof fields.is_muted !== "boolean") {
+      return null;
+    }
+    isMuted = fields.is_muted;
+  }
+  if (typeof fields.is_deafened !== "undefined") {
+    if (typeof fields.is_deafened !== "boolean") {
+      return null;
+    }
+    isDeafened = fields.is_deafened;
+  }
+  if (typeof fields.is_speaking !== "undefined") {
+    if (typeof fields.is_speaking !== "boolean") {
+      return null;
+    }
+    isSpeaking = fields.is_speaking;
+  }
+  if (typeof fields.is_video_enabled !== "undefined") {
+    if (typeof fields.is_video_enabled !== "boolean") {
+      return null;
+    }
+    isVideoEnabled = fields.is_video_enabled;
+  }
+  if (typeof fields.is_screen_share_enabled !== "undefined") {
+    if (typeof fields.is_screen_share_enabled !== "boolean") {
+      return null;
+    }
+    isScreenShareEnabled = fields.is_screen_share_enabled;
+  }
+  if (
+    typeof isMuted === "undefined" &&
+    typeof isDeafened === "undefined" &&
+    typeof isSpeaking === "undefined" &&
+    typeof isVideoEnabled === "undefined" &&
+    typeof isScreenShareEnabled === "undefined"
+  ) {
+    return null;
+  }
+
+  return {
+    guildId,
+    channelId,
+    userId,
+    identity: value.identity,
+    updatedFields: {
+      isMuted,
+      isDeafened,
+      isSpeaking,
+      isVideoEnabled,
+      isScreenShareEnabled,
+    },
+    updatedAtUnix: value.updated_at_unix,
+  };
+}
+
+function parseVoiceStreamPublishPayload(payload: unknown): VoiceStreamPublishPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.channel_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    typeof value.identity !== "string" ||
+    typeof value.published_at_unix !== "number" ||
+    !Number.isSafeInteger(value.published_at_unix) ||
+    value.published_at_unix < 1
+  ) {
+    return null;
+  }
+  const stream = parseVoiceStreamKind(value.stream);
+  if (!stream) {
+    return null;
+  }
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  let userId: string;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+  return {
+    guildId,
+    channelId,
+    userId,
+    identity: value.identity,
+    stream,
+    publishedAtUnix: value.published_at_unix,
+  };
+}
+
+function parseVoiceStreamUnpublishPayload(payload: unknown): VoiceStreamUnpublishPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.channel_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    typeof value.identity !== "string" ||
+    typeof value.unpublished_at_unix !== "number" ||
+    !Number.isSafeInteger(value.unpublished_at_unix) ||
+    value.unpublished_at_unix < 1
+  ) {
+    return null;
+  }
+  const stream = parseVoiceStreamKind(value.stream);
+  if (!stream) {
+    return null;
+  }
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  let userId: string;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+  return {
+    guildId,
+    channelId,
+    userId,
+    identity: value.identity,
+    stream,
+    unpublishedAtUnix: value.unpublished_at_unix,
   };
 }
 
@@ -1731,6 +2135,60 @@ export function connectGateway(
         return;
       }
       handlers.onFriendRemove?.(payload);
+      return;
+    }
+
+    if (envelope.t === "voice_participant_sync") {
+      const payload = parseVoiceParticipantSyncPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onVoiceParticipantSync?.(payload);
+      return;
+    }
+
+    if (envelope.t === "voice_participant_join") {
+      const payload = parseVoiceParticipantJoinPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onVoiceParticipantJoin?.(payload);
+      return;
+    }
+
+    if (envelope.t === "voice_participant_leave") {
+      const payload = parseVoiceParticipantLeavePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onVoiceParticipantLeave?.(payload);
+      return;
+    }
+
+    if (envelope.t === "voice_participant_update") {
+      const payload = parseVoiceParticipantUpdatePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onVoiceParticipantUpdate?.(payload);
+      return;
+    }
+
+    if (envelope.t === "voice_stream_publish") {
+      const payload = parseVoiceStreamPublishPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onVoiceStreamPublish?.(payload);
+      return;
+    }
+
+    if (envelope.t === "voice_stream_unpublish") {
+      const payload = parseVoiceStreamUnpublishPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onVoiceStreamUnpublish?.(payload);
       return;
     }
 

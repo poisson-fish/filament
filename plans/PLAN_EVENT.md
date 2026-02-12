@@ -448,6 +448,78 @@ Finalize stability and prevent event regressions.
 ### Exit Criteria
 - Event system has coverage for main mutable state and regression alarms for future changes.
 
+---
+
+## Phase 8 - Voice/Streaming Presence Realtime Sync
+### Goal
+Keep call participant and stream-state UI consistent across all connected clients without manual refresh.
+
+### Completion Status
+`DONE`
+
+### Tasks
+- [x] Define/lock voice gateway event contracts in `docs/GATEWAY_EVENTS.md` with bounded payloads:
+  - `voice_participant_sync` (channel snapshot)
+  - `voice_participant_join`
+  - `voice_participant_leave`
+  - `voice_participant_update` (mute/deafen/speaking/video/screen-share flags)
+  - `voice_stream_publish`
+  - `voice_stream_unpublish`
+- [x] Ensure event payloads are additive + redacted (no privileged token/session secrets, no raw network metadata).
+- [x] Emit voice/stream events from all relevant mutation points:
+  - LiveKit token issuance/join path
+  - explicit leave/disconnect path
+  - server-observed publish/unpublish/state updates (where available)
+- [x] Add channel-scoped/guild-scoped fanout wiring so only authorized viewers receive events.
+- [x] Add reconnect/resubscribe snapshot behavior:
+  - always send `voice_participant_sync` on subscribe/join to repair drift.
+- [x] Web gateway/parser updates:
+  - strict fail-closed validation for all new voice event payloads
+  - reducer/controller updates to reconcile participant list and stream badges incrementally
+  - idempotent handling for duplicate/out-of-order join/leave updates
+- [x] Add stale participant cleanup policy:
+  - bounded timeout/heartbeat-based pruning for orphaned sessions
+  - explicit tests for disconnect cleanup and fast rejoin.
+- [x] Add observability for voice sync health:
+  - emitted/dropped counts for new voice event types
+  - drift-repair counter for snapshot resync events.
+- [x] Add tests:
+  - server integration: multi-client join/leave/publish/unpublish consistency in same channel
+  - server negative tests: unauthorized clients do not receive voice participant/stream events
+  - web tests: reducer correctness for join/leave/update ordering and duplicate suppression
+  - end-to-end network flow test for participant list convergence after reconnect.
+
+### Refactor Notes
+- Added typed voice gateway event contracts in `apps/filament-server/src/server/gateway_events.rs` and `docs/GATEWAY_EVENTS.md` for:
+  - `voice_participant_sync`
+  - `voice_participant_join`
+  - `voice_participant_leave`
+  - `voice_participant_update`
+  - `voice_stream_publish`
+  - `voice_stream_unpublish`
+- Added bounded server-side voice participant session tracking in `apps/filament-server/src/server/core.rs` and `apps/filament-server/src/server/realtime.rs` with:
+  - per-channel and global caps for tracked voice presence state
+  - TTL-based stale participant pruning
+  - disconnect cleanup that emits leave/unpublish events when a user’s final gateway connection closes
+  - subscribe-time `voice_participant_sync` drift repair snapshots
+- Wired LiveKit token issuance to voice presence fanout in `apps/filament-server/src/server/handlers/media.rs` so join/update/publish transitions emit realtime events without exposing secrets.
+- Added voice sync observability in server metrics:
+  - `filament_voice_sync_repairs_total{reason}`
+- Extended web gateway boundary parsing and runtime reconciliation:
+  - strict fail-closed voice payload parsing in `apps/filament-client-web/src/lib/gateway.ts`
+  - incremental/idempotent voice participant reducers in `apps/filament-client-web/src/features/app-shell/controllers/gateway-controller.ts`
+  - voice participant snapshot state in `apps/filament-client-web/src/features/app-shell/state/voice-state.ts`
+  - selector integration for roster/stream badge rendering in `apps/filament-client-web/src/features/app-shell/selectors/create-app-shell-selectors.ts`
+- Added/updated tests:
+  - server end-to-end voice sync flow in `apps/filament-server/tests/gateway_network_flow.rs`
+  - web gateway parser fail-closed coverage in `apps/filament-client-web/tests/gateway.test.ts`
+  - web controller reducer coverage in `apps/filament-client-web/tests/app-shell-gateway-controller.test.ts`
+
+### Exit Criteria
+- Participant list + stream indicators converge across all subscribed clients within one event round-trip.
+- Reconnects/self-healing snapshot path resolves drift without full page reload.
+- Unauthorized clients cannot observe voice participant or stream state.
+
 ## Immediate Order Recommendation
 1. Phase 0
 2. Phase 1
@@ -457,5 +529,6 @@ Finalize stability and prevent event regressions.
 6. Phase 4
 7. Phase 5
 8. Phase 7
+9. Phase 8
 
 Rationale: message and settings UX unblock the current user-facing pain fastest; membership/roles/profile follow once event plumbing is stable.

@@ -43,8 +43,9 @@ use super::{
     core::{
         AppState, AuthContext, ConnectionControl, ConnectionPresence, IndexedMessage,
         MessageRecord, SearchCommand, SearchFields, SearchIndexState, SearchOperation,
-        SearchService, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_FUZZY, MAX_SEARCH_TERMS,
-        MAX_SEARCH_WILDCARDS, SEARCH_INDEX_QUEUE_CAPACITY,
+        SearchService, VoiceParticipant, VoiceStreamKind, DEFAULT_SEARCH_RESULT_LIMIT,
+        MAX_SEARCH_FUZZY, MAX_SEARCH_TERMS, MAX_SEARCH_WILDCARDS, MAX_TRACKED_VOICE_CHANNELS,
+        MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL, SEARCH_INDEX_QUEUE_CAPACITY,
     },
     db::ensure_db_schema,
     domain::{
@@ -59,7 +60,7 @@ use super::{
     metrics::{
         record_gateway_event_dropped, record_gateway_event_emitted,
         record_gateway_event_parse_rejected, record_gateway_event_unknown_received,
-        record_ws_disconnect,
+        record_voice_sync_repair, record_ws_disconnect,
     },
     types::{
         GatewayAuthQuery, GatewayMessageCreate, GatewaySubscribe, MessageResponse, SearchQuery,
@@ -261,6 +262,13 @@ pub(crate) async fn handle_gateway_connection(
                     break;
                 }
                 record_gateway_event_emitted("connection", subscribed_event.event_type);
+                handle_voice_subscribe(
+                    &state,
+                    &subscribe.guild_id,
+                    &subscribe.channel_id,
+                    &outbound_tx,
+                )
+                .await;
             }
             "message_create" => {
                 let Ok(request) = serde_json::from_value::<GatewayMessageCreate>(envelope.d) else {
@@ -1274,6 +1282,294 @@ pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, even
     }
 }
 
+fn voice_channel_key(guild_id: &str, channel_id: &str) -> String {
+    format!("{guild_id}:{channel_id}")
+}
+
+fn voice_snapshot_from_record(
+    participant: &VoiceParticipant,
+) -> gateway_events::VoiceParticipantSnapshot {
+    gateway_events::VoiceParticipantSnapshot {
+        user_id: participant.user_id,
+        identity: participant.identity.clone(),
+        joined_at_unix: participant.joined_at_unix,
+        updated_at_unix: participant.updated_at_unix,
+        is_muted: participant.is_muted,
+        is_deafened: participant.is_deafened,
+        is_speaking: participant.is_speaking,
+        is_video_enabled: participant.is_video_enabled,
+        is_screen_share_enabled: participant.is_screen_share_enabled,
+    }
+}
+
+async fn prune_expired_voice_participants(state: &AppState, now_unix: i64) {
+    let mut removed = Vec::new();
+    {
+        let mut voice = state.voice_participants.write().await;
+        voice.retain(|channel_key, participants| {
+            participants.retain(|_, participant| {
+                if participant.expires_at_unix > now_unix {
+                    return true;
+                }
+                removed.push((channel_key.clone(), participant.clone()));
+                false
+            });
+            !participants.is_empty()
+        });
+    }
+
+    for (key, participant) in removed {
+        let Some((guild_id, channel_id)) = key.split_once(':') else {
+            continue;
+        };
+        for stream in participant.published_streams {
+            let event = gateway_events::voice_stream_unpublish(
+                guild_id,
+                channel_id,
+                participant.user_id,
+                &participant.identity,
+                stream,
+                now_unix,
+            );
+            broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+        }
+        let leave = gateway_events::voice_participant_leave(
+            guild_id,
+            channel_id,
+            participant.user_id,
+            &participant.identity,
+            now_unix,
+        );
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &leave).await;
+    }
+}
+
+pub(crate) async fn register_voice_participant_from_token(
+    state: &AppState,
+    user_id: UserId,
+    guild_id: &str,
+    channel_id: &str,
+    identity: &str,
+    publish_streams: &[VoiceStreamKind],
+    expires_at_unix: i64,
+) -> Result<(), AuthFailure> {
+    prune_expired_voice_participants(state, now_unix()).await;
+    let now = now_unix();
+    let key = voice_channel_key(guild_id, channel_id);
+    let mut removed = Vec::new();
+    let mut joined = None;
+    let mut updated = None;
+    let mut newly_published = Vec::new();
+    let mut unpublished = Vec::new();
+
+    {
+        let mut channels = state.voice_participants.write().await;
+        for (existing_key, participants) in channels.iter_mut() {
+            if existing_key == &key {
+                continue;
+            }
+            if let Some(existing) = participants.remove(&user_id) {
+                removed.push((existing_key.clone(), existing));
+            }
+        }
+        channels.retain(|_, participants| !participants.is_empty());
+        if !channels.contains_key(&key) && channels.len() >= MAX_TRACKED_VOICE_CHANNELS {
+            return Err(AuthFailure::RateLimited);
+        }
+        let channel_participants = channels.entry(key.clone()).or_default();
+        if !channel_participants.contains_key(&user_id)
+            && channel_participants.len() >= MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL
+        {
+            return Err(AuthFailure::RateLimited);
+        }
+
+        let next_streams: HashSet<VoiceStreamKind> = publish_streams.iter().copied().collect();
+        let next_video = next_streams.contains(&VoiceStreamKind::Camera);
+        let next_screen = next_streams.contains(&VoiceStreamKind::ScreenShare);
+        if let Some(existing) = channel_participants.get_mut(&user_id) {
+            let prev_streams = existing.published_streams.clone();
+            for stream in next_streams.difference(&prev_streams) {
+                newly_published.push(*stream);
+            }
+            for stream in prev_streams.difference(&next_streams) {
+                unpublished.push(*stream);
+            }
+            existing.identity = identity.to_owned();
+            existing.updated_at_unix = now;
+            existing.expires_at_unix = expires_at_unix;
+            existing.is_video_enabled = next_video;
+            existing.is_screen_share_enabled = next_screen;
+            existing.published_streams = next_streams;
+            updated = Some(existing.clone());
+        } else {
+            let participant = VoiceParticipant {
+                user_id,
+                identity: identity.to_owned(),
+                joined_at_unix: now,
+                updated_at_unix: now,
+                expires_at_unix,
+                is_muted: false,
+                is_deafened: false,
+                is_speaking: false,
+                is_video_enabled: next_video,
+                is_screen_share_enabled: next_screen,
+                published_streams: next_streams.clone(),
+            };
+            joined = Some(participant.clone());
+            newly_published.extend(next_streams);
+            channel_participants.insert(user_id, participant);
+        }
+    }
+
+    for (old_key, participant) in removed {
+        let Some((old_guild_id, old_channel_id)) = old_key.split_once(':') else {
+            continue;
+        };
+        for stream in participant.published_streams {
+            let event = gateway_events::voice_stream_unpublish(
+                old_guild_id,
+                old_channel_id,
+                participant.user_id,
+                &participant.identity,
+                stream,
+                now,
+            );
+            broadcast_channel_event(state, &channel_key(old_guild_id, old_channel_id), &event)
+                .await;
+        }
+        let leave = gateway_events::voice_participant_leave(
+            old_guild_id,
+            old_channel_id,
+            participant.user_id,
+            &participant.identity,
+            now,
+        );
+        broadcast_channel_event(state, &channel_key(old_guild_id, old_channel_id), &leave).await;
+    }
+
+    if let Some(participant) = joined {
+        let event = gateway_events::voice_participant_join(
+            guild_id,
+            channel_id,
+            voice_snapshot_from_record(&participant),
+        );
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+    }
+    if let Some(participant) = updated {
+        let event = gateway_events::voice_participant_update(
+            guild_id,
+            channel_id,
+            participant.user_id,
+            &participant.identity,
+            None,
+            None,
+            Some(participant.is_speaking),
+            Some(participant.is_video_enabled),
+            Some(participant.is_screen_share_enabled),
+            participant.updated_at_unix,
+        );
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+    }
+    for stream in unpublished {
+        let event = gateway_events::voice_stream_unpublish(
+            guild_id, channel_id, user_id, identity, stream, now,
+        );
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+    }
+    for stream in newly_published {
+        let event = gateway_events::voice_stream_publish(
+            guild_id, channel_id, user_id, identity, stream, now,
+        );
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn handle_voice_subscribe(
+    state: &AppState,
+    guild_id: &str,
+    channel_id: &str,
+    outbound_tx: &mpsc::Sender<String>,
+) {
+    prune_expired_voice_participants(state, now_unix()).await;
+    let key = voice_channel_key(guild_id, channel_id);
+    let participants = {
+        let voice = state.voice_participants.read().await;
+        let mut list = Vec::new();
+        if let Some(channel_participants) = voice.get(&key) {
+            list.extend(
+                channel_participants
+                    .values()
+                    .map(voice_snapshot_from_record),
+            );
+        }
+        list.sort_by(|a, b| {
+            a.joined_at_unix
+                .cmp(&b.joined_at_unix)
+                .then(a.identity.cmp(&b.identity))
+        });
+        list
+    };
+
+    let sync_event =
+        gateway_events::voice_participant_sync(guild_id, channel_id, participants, now_unix());
+    match outbound_tx.try_send(sync_event.payload) {
+        Ok(()) => {
+            record_gateway_event_emitted("connection", sync_event.event_type);
+            record_voice_sync_repair("subscribe");
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            record_gateway_event_dropped("connection", sync_event.event_type, "closed");
+        }
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            record_gateway_event_dropped("connection", sync_event.event_type, "full_queue");
+        }
+    }
+}
+
+async fn remove_disconnected_user_voice_participants(
+    state: &AppState,
+    user_id: UserId,
+    disconnected_at_unix: i64,
+) {
+    let mut removed = Vec::new();
+    {
+        let mut voice = state.voice_participants.write().await;
+        voice.retain(|channel_key, participants| {
+            if let Some(participant) = participants.remove(&user_id) {
+                removed.push((channel_key.clone(), participant));
+            }
+            !participants.is_empty()
+        });
+    }
+
+    for (channel_key_value, participant) in removed {
+        let Some((guild_id, channel_id)) = channel_key_value.split_once(':') else {
+            continue;
+        };
+        for stream in participant.published_streams {
+            let unpublish = gateway_events::voice_stream_unpublish(
+                guild_id,
+                channel_id,
+                participant.user_id,
+                &participant.identity,
+                stream,
+                disconnected_at_unix,
+            );
+            broadcast_channel_event(state, &channel_key(guild_id, channel_id), &unpublish).await;
+        }
+        let leave = gateway_events::voice_participant_leave(
+            guild_id,
+            channel_id,
+            participant.user_id,
+            &participant.identity,
+            disconnected_at_unix,
+        );
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &leave).await;
+    }
+}
+
 pub(crate) async fn handle_presence_subscribe(
     state: &AppState,
     connection_id: Uuid,
@@ -1361,6 +1657,9 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
     };
     let remaining = state.connection_presence.read().await;
     let mut offline_guilds = Vec::new();
+    let user_has_other_connections = remaining
+        .values()
+        .any(|entry| entry.user_id == removed_presence.user_id);
     for guild_id in &removed_presence.guild_ids {
         let still_online = remaining.values().any(|entry| {
             entry.user_id == removed_presence.user_id && entry.guild_ids.contains(guild_id)
@@ -1370,6 +1669,11 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
         }
     }
     drop(remaining);
+
+    if !user_has_other_connections {
+        remove_disconnected_user_voice_participants(state, removed_presence.user_id, now_unix())
+            .await;
+    }
 
     for guild_id in offline_guilds {
         let update =

@@ -899,6 +899,7 @@ mod tests {
         assert!(metrics_text.contains("filament_gateway_events_dropped_total"));
         assert!(metrics_text.contains("filament_gateway_events_unknown_received_total"));
         assert!(metrics_text.contains("filament_gateway_events_parse_rejected_total"));
+        assert!(metrics_text.contains("filament_voice_sync_repairs_total"));
     }
 
     #[tokio::test]

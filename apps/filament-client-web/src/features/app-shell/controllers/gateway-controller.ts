@@ -33,6 +33,13 @@ import {
   type WorkspaceMemberBanPayload,
   type WorkspaceMemberRemovePayload,
   type WorkspaceUpdatePayload,
+  type VoiceParticipantJoinPayload,
+  type VoiceParticipantLeavePayload,
+  type VoiceParticipantPayload,
+  type VoiceParticipantSyncPayload,
+  type VoiceParticipantUpdatePayload,
+  type VoiceStreamPublishPayload,
+  type VoiceStreamUnpublishPayload,
 } from "../../../lib/gateway";
 import {
   clearKeysByPrefix,
@@ -59,6 +66,7 @@ export interface GatewayControllerOptions {
   setProfileDraftAbout: Setter<string>;
   setFriends: Setter<FriendRecord[]>;
   setFriendRequests: Setter<FriendRequestList>;
+  setVoiceParticipantsByChannel: Setter<Record<string, VoiceParticipantPayload[]>>;
   isMessageListNearBottom: () => boolean;
   scrollMessageListToBottom: () => void;
   onWorkspacePermissionsChanged?: (guildId: GuildId) => void;
@@ -105,6 +113,12 @@ interface GatewayHandlers {
     userId: string;
     status: "online" | "offline";
   }) => void;
+  onVoiceParticipantSync: (payload: VoiceParticipantSyncPayload) => void;
+  onVoiceParticipantJoin: (payload: VoiceParticipantJoinPayload) => void;
+  onVoiceParticipantLeave: (payload: VoiceParticipantLeavePayload) => void;
+  onVoiceParticipantUpdate: (payload: VoiceParticipantUpdatePayload) => void;
+  onVoiceStreamPublish: (payload: VoiceStreamPublishPayload) => void;
+  onVoiceStreamUnpublish: (payload: VoiceStreamUnpublishPayload) => void;
 }
 
 export interface GatewayControllerDependencies {
@@ -207,6 +221,167 @@ export function applyWorkspaceUpdate(
     guildName: payload.updatedFields.name ?? workspace.guildName,
     visibility: payload.updatedFields.visibility ?? workspace.visibility,
   }));
+}
+
+function voiceChannelKey(guildId: GuildId, channelId: ChannelId): string {
+  return `${guildId}|${channelId}`;
+}
+
+function mergeVoiceParticipants(
+  existing: VoiceParticipantPayload[],
+  nextParticipant: VoiceParticipantPayload,
+): VoiceParticipantPayload[] {
+  const index = existing.findIndex((entry) => entry.identity === nextParticipant.identity);
+  if (index < 0) {
+    return [...existing, nextParticipant];
+  }
+  const current = existing[index]!;
+  if (nextParticipant.updatedAtUnix < current.updatedAtUnix) {
+    return existing;
+  }
+  const next = existing.slice();
+  next[index] = nextParticipant;
+  return next;
+}
+
+function applyVoiceParticipantSyncState(
+  existing: Record<string, VoiceParticipantPayload[]>,
+  payload: VoiceParticipantSyncPayload,
+): Record<string, VoiceParticipantPayload[]> {
+  return {
+    ...existing,
+    [voiceChannelKey(payload.guildId, payload.channelId)]: payload.participants,
+  };
+}
+
+function applyVoiceParticipantJoinState(
+  existing: Record<string, VoiceParticipantPayload[]>,
+  payload: VoiceParticipantJoinPayload,
+): Record<string, VoiceParticipantPayload[]> {
+  const key = voiceChannelKey(payload.guildId, payload.channelId);
+  const participants = existing[key] ?? [];
+  return {
+    ...existing,
+    [key]: mergeVoiceParticipants(participants, payload.participant),
+  };
+}
+
+function applyVoiceParticipantLeaveState(
+  existing: Record<string, VoiceParticipantPayload[]>,
+  payload: VoiceParticipantLeavePayload,
+): Record<string, VoiceParticipantPayload[]> {
+  const key = voiceChannelKey(payload.guildId, payload.channelId);
+  const participants = existing[key];
+  if (!participants) {
+    return existing;
+  }
+  const next = participants.filter(
+    (entry) =>
+      entry.identity !== payload.identity &&
+      !(entry.userId === payload.userId && entry.identity === payload.identity),
+  );
+  if (next.length === participants.length) {
+    return existing;
+  }
+  return {
+    ...existing,
+    [key]: next,
+  };
+}
+
+function applyVoiceParticipantUpdateState(
+  existing: Record<string, VoiceParticipantPayload[]>,
+  payload: VoiceParticipantUpdatePayload,
+): Record<string, VoiceParticipantPayload[]> {
+  const key = voiceChannelKey(payload.guildId, payload.channelId);
+  const participants = existing[key];
+  if (!participants) {
+    return existing;
+  }
+  const index = participants.findIndex((entry) => entry.identity === payload.identity);
+  if (index < 0) {
+    return existing;
+  }
+  const current = participants[index]!;
+  if (payload.updatedAtUnix < current.updatedAtUnix) {
+    return existing;
+  }
+  const nextParticipant: VoiceParticipantPayload = {
+    ...current,
+    updatedAtUnix: payload.updatedAtUnix,
+    isMuted: payload.updatedFields.isMuted ?? current.isMuted,
+    isDeafened: payload.updatedFields.isDeafened ?? current.isDeafened,
+    isSpeaking: payload.updatedFields.isSpeaking ?? current.isSpeaking,
+    isVideoEnabled: payload.updatedFields.isVideoEnabled ?? current.isVideoEnabled,
+    isScreenShareEnabled:
+      payload.updatedFields.isScreenShareEnabled ?? current.isScreenShareEnabled,
+  };
+  const next = participants.slice();
+  next[index] = nextParticipant;
+  return {
+    ...existing,
+    [key]: next,
+  };
+}
+
+function applyVoiceStreamPublishedState(
+  existing: Record<string, VoiceParticipantPayload[]>,
+  payload: VoiceStreamPublishPayload,
+): Record<string, VoiceParticipantPayload[]> {
+  const key = voiceChannelKey(payload.guildId, payload.channelId);
+  const participants = existing[key];
+  if (!participants) {
+    return existing;
+  }
+  const index = participants.findIndex((entry) => entry.identity === payload.identity);
+  if (index < 0) {
+    return existing;
+  }
+  const current = participants[index]!;
+  const nextParticipant = {
+    ...current,
+    updatedAtUnix: Math.max(current.updatedAtUnix, payload.publishedAtUnix),
+    isVideoEnabled:
+      payload.stream === "camera" ? true : current.isVideoEnabled,
+    isScreenShareEnabled:
+      payload.stream === "screen_share" ? true : current.isScreenShareEnabled,
+  };
+  const next = participants.slice();
+  next[index] = nextParticipant;
+  return {
+    ...existing,
+    [key]: next,
+  };
+}
+
+function applyVoiceStreamUnpublishedState(
+  existing: Record<string, VoiceParticipantPayload[]>,
+  payload: VoiceStreamUnpublishPayload,
+): Record<string, VoiceParticipantPayload[]> {
+  const key = voiceChannelKey(payload.guildId, payload.channelId);
+  const participants = existing[key];
+  if (!participants) {
+    return existing;
+  }
+  const index = participants.findIndex((entry) => entry.identity === payload.identity);
+  if (index < 0) {
+    return existing;
+  }
+  const current = participants[index]!;
+  const nextParticipant = {
+    ...current,
+    updatedAtUnix: Math.max(current.updatedAtUnix, payload.unpublishedAtUnix),
+    isVideoEnabled:
+      payload.stream === "camera" ? false : current.isVideoEnabled,
+    isScreenShareEnabled:
+      payload.stream === "screen_share" ? false : current.isScreenShareEnabled,
+  };
+  const next = participants.slice();
+  next[index] = nextParticipant;
+  return {
+    ...existing,
+    [key]: next,
+  };
 }
 
 function removeWorkspace(existing: WorkspaceRecord[], guildId: GuildId): WorkspaceRecord[] {
@@ -502,6 +677,36 @@ export function createGatewayController(
         }
         options.setOnlineMembers((existing) =>
           applyPresenceUpdate(existing, payload),
+        );
+      },
+      onVoiceParticipantSync: (payload) => {
+        options.setVoiceParticipantsByChannel((existing) =>
+          applyVoiceParticipantSyncState(existing, payload),
+        );
+      },
+      onVoiceParticipantJoin: (payload) => {
+        options.setVoiceParticipantsByChannel((existing) =>
+          applyVoiceParticipantJoinState(existing, payload),
+        );
+      },
+      onVoiceParticipantLeave: (payload) => {
+        options.setVoiceParticipantsByChannel((existing) =>
+          applyVoiceParticipantLeaveState(existing, payload),
+        );
+      },
+      onVoiceParticipantUpdate: (payload) => {
+        options.setVoiceParticipantsByChannel((existing) =>
+          applyVoiceParticipantUpdateState(existing, payload),
+        );
+      },
+      onVoiceStreamPublish: (payload) => {
+        options.setVoiceParticipantsByChannel((existing) =>
+          applyVoiceStreamPublishedState(existing, payload),
+        );
+      },
+      onVoiceStreamUnpublish: (payload) => {
+        options.setVoiceParticipantsByChannel((existing) =>
+          applyVoiceStreamUnpublishedState(existing, payload),
         );
       },
     });

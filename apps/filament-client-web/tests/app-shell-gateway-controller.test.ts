@@ -16,6 +16,7 @@ import {
   type FriendRequestList,
 } from "../src/domain/chat";
 import {
+  type VoiceParticipantPayload,
   applyMessageDelete,
   applyMessageUpdate,
   applyChannelCreate,
@@ -267,6 +268,9 @@ describe("app shell gateway controller", () => {
       incoming: [],
       outgoing: [],
     });
+    const [voiceParticipantsByChannel, setVoiceParticipantsByChannel] = createSignal<
+      Record<string, VoiceParticipantPayload[]>
+    >({});
 
     const scrollMessageListToBottomMock = vi.fn();
     const closeGatewayMock = vi.fn();
@@ -297,6 +301,7 @@ describe("app shell gateway controller", () => {
           setProfileDraftAbout,
           setFriends,
           setFriendRequests,
+          setVoiceParticipantsByChannel,
           isMessageListNearBottom: () => true,
           scrollMessageListToBottom: scrollMessageListToBottomMock,
           onWorkspacePermissionsChanged,
@@ -354,6 +359,57 @@ describe("app shell gateway controller", () => {
       status: "offline",
     });
     expect(onlineMembers()).toEqual(["beta"]);
+
+    handlers.onVoiceParticipantSync({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      participants: [
+        {
+          userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+          identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session",
+          joinedAtUnix: 1,
+          updatedAtUnix: 1,
+          isMuted: false,
+          isDeafened: false,
+          isSpeaking: false,
+          isVideoEnabled: false,
+          isScreenShareEnabled: false,
+        },
+      ],
+      syncedAtUnix: 1,
+    });
+    handlers.onVoiceStreamPublish({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session",
+      stream: "camera",
+      publishedAtUnix: 2,
+    });
+    handlers.onVoiceParticipantUpdate({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session",
+      updatedFields: { isSpeaking: true },
+      updatedAtUnix: 3,
+    });
+    handlers.onVoiceStreamUnpublish({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session",
+      stream: "camera",
+      unpublishedAtUnix: 4,
+    });
+    handlers.onVoiceParticipantLeave({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session",
+      leftAtUnix: 5,
+    });
+    expect(voiceParticipantsByChannel()[`${GUILD_ID}|${CHANNEL_ID}`]).toEqual([]);
 
     handlers.onMessageReaction({
       guildId: GUILD_ID,

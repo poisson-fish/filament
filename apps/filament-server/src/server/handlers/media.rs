@@ -31,6 +31,7 @@ use crate::server::{
         write_audit_log,
     },
     errors::AuthFailure,
+    realtime::register_voice_participant_from_token,
     types::{
         AttachmentPath, AttachmentResponse, ChannelPath, MediaPublishSource, UploadAttachmentQuery,
         VoiceTokenRequest, VoiceTokenResponse,
@@ -422,7 +423,7 @@ pub(crate) async fn issue_voice_token(
 
     write_audit_log(
         &state,
-        Some(path.guild_id),
+        Some(path.guild_id.clone()),
         auth.user_id,
         None,
         "media.token.issue",
@@ -442,6 +443,35 @@ pub(crate) async fn issue_voice_token(
             "client_ip": client_ip.normalized(),
             "client_ip_source": client_ip.source().as_str(),
         }),
+    )
+    .await?;
+
+    let expires_at_unix = now_unix()
+        .checked_add(
+            i64::try_from(state.runtime.livekit_token_ttl.as_secs())
+                .map_err(|_| AuthFailure::Internal)?,
+        )
+        .ok_or(AuthFailure::Internal)?;
+    let publish_streams = effective_sources
+        .iter()
+        .filter_map(|source| match source {
+            MediaPublishSource::Microphone => {
+                Some(crate::server::core::VoiceStreamKind::Microphone)
+            }
+            MediaPublishSource::Camera => Some(crate::server::core::VoiceStreamKind::Camera),
+            MediaPublishSource::ScreenShare => {
+                Some(crate::server::core::VoiceStreamKind::ScreenShare)
+            }
+        })
+        .collect::<Vec<_>>();
+    register_voice_participant_from_token(
+        &state,
+        auth.user_id,
+        &path.guild_id,
+        &path.channel_id,
+        identity.as_str(),
+        &publish_streams,
+        expires_at_unix,
     )
     .await?;
 

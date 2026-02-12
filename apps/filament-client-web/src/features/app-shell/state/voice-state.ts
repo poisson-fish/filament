@@ -3,6 +3,7 @@ import { RTC_DISCONNECTED_SNAPSHOT } from "../config/ui-constants";
 import type { VoiceSessionCapabilities } from "../types";
 import { loadVoiceDevicePreferences, type AudioDeviceOption, type VoiceDevicePreferences } from "../../../lib/voice-device-settings";
 import type { RtcSnapshot } from "../../../lib/rtc";
+import type { VoiceParticipantPayload } from "../../../lib/gateway";
 
 export const DEFAULT_VOICE_SESSION_CAPABILITIES: VoiceSessionCapabilities = {
   canSubscribe: false,
@@ -24,6 +25,9 @@ export function createVoiceState() {
   const [voiceSessionCapabilities, setVoiceSessionCapabilities] = createSignal<VoiceSessionCapabilities>(
     DEFAULT_VOICE_SESSION_CAPABILITIES,
   );
+  const [voiceParticipantsByChannel, setVoiceParticipantsByChannel] = createSignal<
+    Record<string, VoiceParticipantPayload[]>
+  >({});
 
   const [voiceDevicePreferences, setVoiceDevicePreferences] = createSignal<VoiceDevicePreferences>(
     loadVoiceDevicePreferences(),
@@ -59,6 +63,8 @@ export function createVoiceState() {
     setVoiceDurationClockUnixMs,
     voiceSessionCapabilities,
     setVoiceSessionCapabilities,
+    voiceParticipantsByChannel,
+    setVoiceParticipantsByChannel,
     voiceDevicePreferences,
     setVoiceDevicePreferences,
     audioInputDevices,
