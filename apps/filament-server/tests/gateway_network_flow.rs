@@ -157,6 +157,28 @@ async fn next_event_of_type(
     panic!("expected event type {event_type}");
 }
 
+async fn subscribe_to_channel(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    channel: &ChannelRef,
+) {
+    let subscribe = json!({
+        "v": 1,
+        "t": "subscribe",
+        "d": {
+            "guild_id": channel.guild_id,
+            "channel_id": channel.channel_id
+        }
+    });
+    socket
+        .send(Message::Text(subscribe.to_string()))
+        .await
+        .expect("subscribe event should send");
+    let subscribed_json = next_event_of_type(socket, "subscribed").await;
+    assert_eq!(subscribed_json["t"], "subscribed");
+}
+
 #[tokio::test]
 async fn websocket_handshake_and_message_flow_work_over_network() {
     let app = test_app();
@@ -198,21 +220,7 @@ async fn websocket_handshake_and_message_flow_work_over_network() {
     let ready_json: Value = serde_json::from_str(&ready_text).expect("ready event should be json");
     assert_eq!(ready_json["t"], "ready");
 
-    let subscribe = json!({
-        "v": 1,
-        "t": "subscribe",
-        "d": {
-            "guild_id": channel.guild_id,
-            "channel_id": channel.channel_id
-        }
-    });
-    socket
-        .send(Message::Text(subscribe.to_string()))
-        .await
-        .expect("subscribe event should send");
-
-    let subscribed_json = next_event_of_type(&mut socket, "subscribed").await;
-    assert_eq!(subscribed_json["t"], "subscribed");
+    subscribe_to_channel(&mut socket, &channel).await;
 
     let message_create = json!({
         "v": 1,
@@ -274,20 +282,7 @@ async fn websocket_disconnect_does_not_block_rest_message_create() {
     let ready_json = next_text_event(&mut socket).await;
     assert_eq!(ready_json["t"], "ready");
 
-    let subscribe = json!({
-        "v": 1,
-        "t": "subscribe",
-        "d": {
-            "guild_id": channel.guild_id,
-            "channel_id": channel.channel_id
-        }
-    });
-    socket
-        .send(Message::Text(subscribe.to_string()))
-        .await
-        .expect("subscribe event should send");
-    let subscribed_json = next_event_of_type(&mut socket, "subscribed").await;
-    assert_eq!(subscribed_json["t"], "subscribed");
+    subscribe_to_channel(&mut socket, &channel).await;
 
     socket
         .close(None)
@@ -353,20 +348,7 @@ async fn websocket_subscription_receives_reaction_updates_from_rest() {
     let ready_json = next_text_event(&mut socket).await;
     assert_eq!(ready_json["t"], "ready");
 
-    let subscribe = json!({
-        "v": 1,
-        "t": "subscribe",
-        "d": {
-            "guild_id": channel.guild_id,
-            "channel_id": channel.channel_id
-        }
-    });
-    socket
-        .send(Message::Text(subscribe.to_string()))
-        .await
-        .expect("subscribe event should send");
-    let subscribed_json = next_event_of_type(&mut socket, "subscribed").await;
-    assert_eq!(subscribed_json["t"], "subscribed");
+    subscribe_to_channel(&mut socket, &channel).await;
 
     let create_message = Request::builder()
         .method("POST")
@@ -438,6 +420,100 @@ async fn websocket_subscription_receives_reaction_updates_from_rest() {
     assert_eq!(remove_event["d"]["count"], 0);
 
     socket
+        .close(None)
+        .await
+        .expect("socket close should succeed");
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_subscription_receives_channel_create_updates_from_rest() {
+    let app = test_app();
+
+    let auth = register_and_login(&app, "203.0.113.57").await;
+    let channel = create_channel_context(&app, &auth, "203.0.113.57").await;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener addr should be readable");
+    let server_app = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_app)
+            .await
+            .expect("server should run without errors");
+    });
+
+    let ws_url = format!("ws://{addr}/gateway/ws?access_token={}", auth.access_token);
+
+    let mut ws_a_request = ws_url
+        .clone()
+        .into_client_request()
+        .expect("websocket request should build");
+    ws_a_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.57"),
+    );
+    let (mut socket_a, _response) = connect_async(ws_a_request)
+        .await
+        .expect("websocket handshake should succeed");
+    let ready_a = next_text_event(&mut socket_a).await;
+    assert_eq!(ready_a["t"], "ready");
+    subscribe_to_channel(&mut socket_a, &channel).await;
+
+    let mut ws_b_request = ws_url
+        .into_client_request()
+        .expect("websocket request should build");
+    ws_b_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.57"),
+    );
+    let (mut socket_b, _response) = connect_async(ws_b_request)
+        .await
+        .expect("websocket handshake should succeed");
+    let ready_b = next_text_event(&mut socket_b).await;
+    assert_eq!(ready_b["t"], "ready");
+    subscribe_to_channel(&mut socket_b, &channel).await;
+
+    let create_channel = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{}/channels", channel.guild_id))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.57")
+        .body(Body::from(
+            json!({"name":"bridge-call","kind":"voice"}).to_string(),
+        ))
+        .expect("create channel request should build");
+    let create_channel_response = app
+        .clone()
+        .oneshot(create_channel)
+        .await
+        .expect("create channel request should execute");
+    assert_eq!(create_channel_response.status(), StatusCode::OK);
+    let created_json: Value = parse_json_body(create_channel_response).await;
+    let created_channel_id = created_json["channel_id"]
+        .as_str()
+        .expect("channel id should be present")
+        .to_owned();
+
+    let event_a = next_event_of_type(&mut socket_a, "channel_create").await;
+    assert_eq!(event_a["d"]["guild_id"], channel.guild_id);
+    assert_eq!(event_a["d"]["channel"]["channel_id"], created_channel_id);
+    assert_eq!(event_a["d"]["channel"]["kind"], "voice");
+
+    let event_b = next_event_of_type(&mut socket_b, "channel_create").await;
+    assert_eq!(event_b["d"]["guild_id"], channel.guild_id);
+    assert_eq!(event_b["d"]["channel"]["channel_id"], created_channel_id);
+    assert_eq!(event_b["d"]["channel"]["kind"], "voice");
+
+    socket_a
+        .close(None)
+        .await
+        .expect("socket close should succeed");
+    socket_b
         .close(None)
         .await
         .expect("socket close should succeed");

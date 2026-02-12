@@ -1,16 +1,19 @@
 import { createEffect, onCleanup, type Accessor, type Setter } from "solid-js";
 import type { AccessToken, AuthSession } from "../../../domain/auth";
 import type {
+  ChannelRecord,
   ChannelId,
   GuildId,
   MessageId,
   MessageRecord,
   ReactionEmoji,
+  WorkspaceRecord,
 } from "../../../domain/chat";
 import { connectGateway, type MessageReactionPayload } from "../../../lib/gateway";
 import {
   mergeMessage,
   reactionKey,
+  upsertWorkspace,
   upsertReactionEntry,
   type ReactionView,
 } from "../helpers";
@@ -22,6 +25,7 @@ export interface GatewayControllerOptions {
   canAccessActiveChannel: Accessor<boolean>;
   setGatewayOnline: Setter<boolean>;
   setOnlineMembers: Setter<string[]>;
+  setWorkspaces: Setter<WorkspaceRecord[]>;
   setMessages: Setter<MessageRecord[]>;
   setReactionState: Setter<Record<string, ReactionView>>;
   isMessageListNearBottom: () => boolean;
@@ -36,6 +40,10 @@ interface GatewayHandlers {
   onOpenStateChange: (isOpen: boolean) => void;
   onMessageCreate: (message: MessageRecord) => void;
   onMessageReaction: (payload: MessageReactionPayload) => void;
+  onChannelCreate: (payload: {
+    guildId: GuildId;
+    channel: ChannelRecord;
+  }) => void;
   onPresenceSync: (payload: { guildId: GuildId; userIds: string[] }) => void;
   onPresenceUpdate: (payload: {
     guildId: GuildId;
@@ -89,6 +97,28 @@ export function applyPresenceUpdate(
   return existing.filter((entry) => entry !== payload.userId);
 }
 
+export function applyChannelCreate(
+  existing: WorkspaceRecord[],
+  payload: {
+    guildId: GuildId;
+    channel: ChannelRecord;
+  },
+): WorkspaceRecord[] {
+  return upsertWorkspace(existing, payload.guildId, (workspace) => {
+    if (
+      workspace.channels.some(
+        (channel) => channel.channelId === payload.channel.channelId,
+      )
+    ) {
+      return workspace;
+    }
+    return {
+      ...workspace,
+      channels: [...workspace.channels, payload.channel],
+    };
+  });
+}
+
 export function createGatewayController(
   options: GatewayControllerOptions,
   dependencies: Partial<GatewayControllerDependencies> = {},
@@ -127,6 +157,12 @@ export function createGatewayController(
         options.setReactionState((existing) =>
           applyMessageReactionUpdate(existing, payload),
         );
+      },
+      onChannelCreate: (payload) => {
+        if (payload.guildId !== guildId) {
+          return;
+        }
+        options.setWorkspaces((existing) => applyChannelCreate(existing, payload));
       },
       onPresenceSync: (payload) => {
         if (payload.guildId !== guildId) {

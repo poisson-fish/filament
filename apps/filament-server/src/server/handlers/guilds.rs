@@ -17,7 +17,8 @@ use ulid::Ulid;
 
 use crate::server::{
     auth::{
-        authenticate, enforce_directory_join_rate_limit, extract_client_ip, now_unix, ClientIp,
+        authenticate, enforce_directory_join_rate_limit, extract_client_ip, now_unix,
+        outbound_event, ClientIp,
     },
     core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
     db::{
@@ -39,6 +40,7 @@ use crate::server::{
         DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, MAX_GUILD_ROLES, MAX_MEMBER_ROLE_ASSIGNMENTS,
         MAX_ROLE_NAME_CHARS, SYSTEM_ROLE_EVERYONE, SYSTEM_ROLE_WORKSPACE_OWNER,
     },
+    realtime::broadcast_guild_event,
     types::{
         ChannelListResponse, ChannelResponse, ChannelRolePath, CreateChannelRequest,
         CreateGuildRequest, CreateGuildRoleRequest, DirectoryJoinOutcomeResponse,
@@ -2500,8 +2502,8 @@ pub(crate) async fn create_channel(
         return Err(AuthFailure::Forbidden);
     }
 
+    let channel_id = Ulid::new().to_string();
     if let Some(pool) = &state.db_pool {
-        let channel_id = Ulid::new().to_string();
         sqlx::query(
             "INSERT INTO channels (channel_id, guild_id, name, kind, created_at_unix) VALUES ($1, $2, $3, $4, $5)",
         )
@@ -2519,35 +2521,42 @@ pub(crate) async fn create_channel(
                 AuthFailure::Internal
             }
         })?;
+    } else {
+        let mut guilds = state.guilds.write().await;
+        let guild = guilds
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
 
-        return Ok(Json(ChannelResponse {
-            channel_id,
-            name: name.as_str().to_owned(),
-            kind,
-        }));
+        guild.channels.insert(
+            channel_id.clone(),
+            ChannelRecord {
+                name: name.as_str().to_owned(),
+                kind,
+                messages: Vec::new(),
+                role_overrides: HashMap::new(),
+            },
+        );
     }
 
-    let mut guilds = state.guilds.write().await;
-    let guild = guilds
-        .get_mut(&path.guild_id)
-        .ok_or(AuthFailure::NotFound)?;
-
-    let channel_id = Ulid::new().to_string();
-    guild.channels.insert(
-        channel_id.clone(),
-        ChannelRecord {
-            name: name.as_str().to_owned(),
-            kind,
-            messages: Vec::new(),
-            role_overrides: HashMap::new(),
-        },
-    );
-
-    Ok(Json(ChannelResponse {
+    let response = ChannelResponse {
         channel_id,
         name: name.as_str().to_owned(),
         kind,
-    }))
+    };
+    let event = outbound_event(
+        "channel_create",
+        serde_json::json!({
+            "guild_id": path.guild_id,
+            "channel": {
+                "channel_id": response.channel_id.as_str(),
+                "name": response.name.as_str(),
+                "kind": response.kind,
+            },
+        }),
+    );
+    broadcast_guild_event(&state, &path.guild_id, event).await;
+
+    Ok(Json(response))
 }
 
 pub(crate) async fn add_member(

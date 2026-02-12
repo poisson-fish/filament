@@ -1,6 +1,8 @@
 import { type AccessToken } from "../domain/auth";
 import {
+  channelFromResponse,
   channelIdFromInput,
+  type ChannelRecord,
   type ChannelId,
   type GuildId,
   type MessageId,
@@ -36,6 +38,11 @@ interface PresenceUpdatePayload {
   status: PresenceStatus;
 }
 
+interface ChannelCreatePayload {
+  guildId: GuildId;
+  channel: ChannelRecord;
+}
+
 export interface MessageReactionPayload {
   guildId: GuildId;
   channelId: ChannelId;
@@ -48,6 +55,7 @@ interface GatewayHandlers {
   onReady?: () => void;
   onMessageCreate?: (message: MessageRecord) => void;
   onMessageReaction?: (payload: MessageReactionPayload) => void;
+  onChannelCreate?: (payload: ChannelCreatePayload) => void;
   onPresenceSync?: (payload: PresenceSyncPayload) => void;
   onPresenceUpdate?: (payload: PresenceUpdatePayload) => void;
   onOpenStateChange?: (isOpen: boolean) => void;
@@ -172,6 +180,30 @@ function parseMessageReactionPayload(payload: unknown): MessageReactionPayload |
   };
 }
 
+function parseChannelCreatePayload(payload: unknown): ChannelCreatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (typeof value.guild_id !== "string") {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let channel: ChannelRecord;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channel = channelFromResponse(value.channel);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    channel,
+  };
+}
+
 function normalizeGatewayBaseUrl(): string {
   const envGateway = import.meta.env.VITE_FILAMENT_GATEWAY_WS_URL;
   if (typeof envGateway === "string" && envGateway.length > 0) {
@@ -290,6 +322,15 @@ export function connectGateway(
         return;
       }
       handlers.onMessageReaction?.(payload);
+      return;
+    }
+
+    if (envelope.t === "channel_create") {
+      const payload = parseChannelCreatePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onChannelCreate?.(payload);
       return;
     }
 

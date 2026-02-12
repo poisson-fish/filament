@@ -2,13 +2,17 @@ import { createRoot, createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { authSessionFromResponse } from "../src/domain/auth";
 import {
+  channelFromResponse,
   messageIdFromInput,
   channelIdFromInput,
   guildIdFromInput,
+  guildNameFromInput,
   messageFromResponse,
   reactionEmojiFromInput,
+  type WorkspaceRecord,
 } from "../src/domain/chat";
 import {
+  applyChannelCreate,
   applyMessageReactionUpdate,
   applyPresenceUpdate,
   createGatewayController,
@@ -87,6 +91,36 @@ describe("app shell gateway controller", () => {
     ).toEqual({});
   });
 
+  it("applies channel create updates idempotently for a workspace", () => {
+    const existingChannel = channelFromResponse({
+      channel_id: CHANNEL_ID,
+      name: "existing",
+      kind: "text",
+    });
+    const created = channelFromResponse({
+      channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FZZ",
+      name: "bridge-call",
+      kind: "voice",
+    });
+
+    const initial = [
+      {
+        guildId: GUILD_ID,
+        guildName: guildNameFromInput("Ops"),
+        visibility: "private" as const,
+        channels: [existingChannel],
+      },
+    ];
+    const once = applyChannelCreate(initial, { guildId: GUILD_ID, channel: created });
+    const twice = applyChannelCreate(once, { guildId: GUILD_ID, channel: created });
+
+    expect(once[0]?.channels.map((entry) => entry.channelId)).toEqual([
+      CHANNEL_ID,
+      created.channelId,
+    ]);
+    expect(twice).toEqual(once);
+  });
+
   it("wires gateway events and closes subscriptions on channel access loss", async () => {
     const [session] = createSignal(SESSION);
     const [activeGuildId] = createSignal(GUILD_ID);
@@ -94,6 +128,20 @@ describe("app shell gateway controller", () => {
     const [canAccessActiveChannel, setCanAccessActiveChannel] = createSignal(true);
     const [gatewayOnline, setGatewayOnline] = createSignal(false);
     const [onlineMembers, setOnlineMembers] = createSignal<string[]>([]);
+    const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>([
+      {
+        guildId: GUILD_ID,
+        guildName: guildNameFromInput("Ops"),
+        visibility: "private" as const,
+        channels: [
+          channelFromResponse({
+            channel_id: CHANNEL_ID,
+            name: "incident-room",
+            kind: "text",
+          }),
+        ],
+      },
+    ]);
     const [messages, setMessages] = createSignal([
       messageFixture({
         guildId: GUILD_ID,
@@ -126,6 +174,7 @@ describe("app shell gateway controller", () => {
           canAccessActiveChannel,
           setGatewayOnline,
           setOnlineMembers,
+          setWorkspaces,
           setMessages,
           setReactionState,
           isMessageListNearBottom: () => true,
@@ -193,6 +242,19 @@ describe("app shell gateway controller", () => {
       count: 1,
       reacted: false,
     });
+
+    handlers.onChannelCreate({
+      guildId: GUILD_ID,
+      channel: channelFromResponse({
+        channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FZY",
+        name: "voice-bridge",
+        kind: "voice",
+      }),
+    });
+    expect(workspaces()[0]?.channels.map((entry) => entry.name)).toEqual([
+      "incident-room",
+      "voice-bridge",
+    ]);
 
     setCanAccessActiveChannel(false);
     await flush();

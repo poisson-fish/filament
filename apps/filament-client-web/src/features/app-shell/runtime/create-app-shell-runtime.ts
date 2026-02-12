@@ -592,6 +592,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     canAccessActiveChannel: selectors.canAccessActiveChannel,
     setGatewayOnline: profileState.setGatewayOnline,
     setOnlineMembers: profileState.setOnlineMembers,
+    setWorkspaces: workspaceChannelState.setWorkspaces,
     setMessages: messageState.setMessages,
     setReactionState: messageState.setReactionState,
     isMessageListNearBottom: messageListController.isMessageListNearBottom,
