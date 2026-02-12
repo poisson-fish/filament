@@ -4,6 +4,7 @@
 Implement as much of `docs/API.md` as possible in the web client while preserving security constraints and strict client-side validation.
 
 ## Progress Log
+- 2026-02-12: Completed `PLAN_WEB_REFACTOR` Phase 8 cleanup/documentation/enforcement pass: removed stale imports in app-shell/api/tests, added warning-only CI size guardrail for `AppShellPage.tsx` (`npm run check:app-shell-size`), and closed validation gates with `npm --prefix apps/filament-client-web test` (`40` files / `162` tests) plus `npm --prefix apps/filament-client-web run build`.
 - 2026-02-11: Completed app-shell cleanup pass by moving additional workspace/overlay/message-media/voice lifecycle orchestration into typed controller modules, reducing `AppShellPage` orchestration weight; lazy-loaded heavy overlay panel groups (public/friend/settings + operator tools) and split them into dedicated production chunks; added focused controller regressions for workspace pruning/selection and overlay panel default-open behavior.
 - 2026-02-11: Finalized channel-group header ergonomics: made Text/Voice section bars bleed full rail width and added explicit `+` create actions to both headers (with typed defaults for text vs voice channel creation).
 - 2026-02-11: Refined channel rail details to better match Discord ergonomics: section headers now render as full-width bars, channel creation moved to a `+` action at the right edge of the Voice Channels header, and in-call roster presentation shifted from a boxed panel to an indented tree-style participant list.

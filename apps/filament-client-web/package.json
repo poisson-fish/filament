@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "check:app-shell-size": "node scripts/check-app-shell-size.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

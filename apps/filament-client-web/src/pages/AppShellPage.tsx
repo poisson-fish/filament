@@ -8,15 +8,6 @@ import {
   channelNameFromInput,
   guildVisibilityFromInput,
   guildNameFromInput,
-  type AttachmentId,
-  type AttachmentRecord,
-  type ChannelKindName,
-  type GuildVisibility,
-  type GuildId,
-  type MessageRecord,
-  type RoleName,
-  type SearchResults,
-  type UserId,
   type WorkspaceRecord,
 } from "../domain/chat";
 import {

@@ -43,7 +43,7 @@ describe("app shell friendship controller", () => {
     );
     const [isRunningFriendAction, setRunningFriendAction] = createSignal(false);
     const [friends, setFriends] = createSignal<FriendRecord[]>([]);
-    const [friendRequests, setFriendRequests] = createSignal(
+    const [, setFriendRequests] = createSignal(
       friendRequestListFromResponse({ incoming: [], outgoing: [] }),
     );
     const [friendStatus, setFriendStatus] = createSignal("");

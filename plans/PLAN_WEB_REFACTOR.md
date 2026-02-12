@@ -347,17 +347,33 @@ Shrink JSX and giant prop-object wiring by moving composition and adapters to de
 Finalize the refactor with cleanup and guardrails.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Remove dead code and stale imports created during extractions.
-- [ ] Update `plans/PLAN_UX.md` progress log with refactor milestones.
-- [ ] Record final size metrics and compare against target.
-- [ ] Optional: add a lightweight CI check/script to warn if `AppShellPage.tsx` exceeds agreed line threshold.
+- [x] Remove dead code and stale imports created during extractions.
+- [x] Update `plans/PLAN_UX.md` progress log with refactor milestones.
+- [x] Record final size metrics and compare against target.
+- [x] Optional: add a lightweight CI check/script to warn if `AppShellPage.tsx` exceeds agreed line threshold.
+
+### Refactor Notes
+- Removed stale imports created during previous extraction phases in:
+  - `apps/filament-client-web/src/pages/AppShellPage.tsx`
+  - `apps/filament-client-web/src/lib/api.ts`
+  - `apps/filament-client-web/tests/app-shell-friendship-controller.test.ts`
+  - `apps/filament-client-web/tests/app-shell-message-list-controller.test.ts`
+- Added `apps/filament-client-web/scripts/check-app-shell-size.mjs` and wired it via `npm run check:app-shell-size` as a warning-only CI guardrail in `.github/workflows/ci.yml`.
+- Added Phase 8 milestone notes to `plans/PLAN_UX.md`.
+- Final metrics snapshot (2026-02-12):
+  - `AppShellPage.tsx` line count: `1383` (target `<= 650`; currently `733` lines above target)
+  - Net reduction from baseline (`2454 -> 1383`): `1071` lines (`43.6%`)
+  - Test command: `npm --prefix apps/filament-client-web test`
+  - Pass status: `40` test files passed, `162` tests passed
+  - Build command: `npm --prefix apps/filament-client-web run build`
+  - Build status: pass
 
 ### Validation Gate
-- [ ] `npm --prefix apps/filament-client-web test`
-- [ ] `npm --prefix apps/filament-client-web run build`
+- [x] `npm --prefix apps/filament-client-web test`
+- [x] `npm --prefix apps/filament-client-web run build`
 
 ### Exit Criteria
 - Refactor complete, tests green, no functional regressions observed.

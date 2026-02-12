@@ -102,7 +102,7 @@ describe("app shell message list controller", () => {
       const [nextBefore, setNextBefore] = createSignal<MessageId | null>(MESSAGE_ID);
       const [isLoadingOlder, setLoadingOlder] = createSignal(false);
       const [openReactionPickerMessageId] = createSignal<MessageId | null>(null);
-      const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
+      const [, setShowLoadOlderButton] = createSignal(false);
 
       const controller = createMessageListController({
         nextBefore,

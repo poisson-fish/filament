@@ -57,7 +57,6 @@ import {
   searchReconcileFromResponse,
   searchResultsFromResponse,
   userLookupListFromResponse,
-  userIdFromInput,
   voiceTokenFromResponse,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
