@@ -16,7 +16,6 @@ import {
   type GuildVisibility,
   type GuildId,
   type MessageRecord,
-  type MediaPublishSource,
   type RoleName,
   type SearchResults,
   type UserId,
@@ -27,17 +26,14 @@ import {
   createGuild,
   echoMessage,
   fetchHealth,
-  issueVoiceToken,
   logoutAuthSession,
   refreshAuthSession,
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import {
   channelHeaderLabel,
-  channelKey,
   mapError,
   mapRtcError,
-  mapVoiceJoinError,
   profileErrorMessage,
   shortActor,
   upsertWorkspace,
@@ -61,7 +57,6 @@ import {
   ADD_REACTION_ICON_URL,
   DELETE_MESSAGE_ICON_URL,
   EDIT_MESSAGE_ICON_URL,
-  RTC_DISCONNECTED_SNAPSHOT,
 } from "../features/app-shell/config/ui-constants";
 import { createAttachmentController } from "../features/app-shell/controllers/attachment-controller";
 import { createMessageListController } from "../features/app-shell/controllers/message-list-controller";
@@ -92,6 +87,9 @@ import { createProfileOverlayController } from "../features/app-shell/controller
 import { createPublicDirectoryController } from "../features/app-shell/controllers/public-directory-controller";
 import { createReactionPickerController } from "../features/app-shell/controllers/reaction-picker-controller";
 import {
+  createVoiceOperationsController,
+} from "../features/app-shell/controllers/voice-operations-controller";
+import {
   createVoiceSessionLifecycleController,
   resolveVoiceDevicePreferenceStatus,
   unavailableVoiceDeviceError,
@@ -116,7 +114,6 @@ import {
   type OverlayPanel,
   type SettingsCategory,
 } from "../features/app-shell/types";
-import { createRtcClient, type RtcClient } from "../lib/rtc";
 import {
   enumerateAudioDevices,
   reconcileVoiceDevicePreferences,
@@ -360,8 +357,6 @@ export function AppShellPage() {
     isMemberRailCollapsed,
     setMemberRailCollapsed,
   } = createOverlayState();
-  let rtcClient: RtcClient | null = null;
-  let stopRtcSubscription: (() => void) | null = null;
 
   const {
     activeWorkspace,
@@ -501,7 +496,8 @@ export function AppShellPage() {
     setAudioDevicesError("");
     persistVoiceDevicePreferences(next);
 
-    if (!rtcClient || !isVoiceSessionActive()) {
+    const client = voiceOperationsController.peekRtcClient();
+    if (!client || !isVoiceSessionActive()) {
       setAudioDevicesStatus(
         resolveVoiceDevicePreferenceStatus(kind, false, nextDeviceId),
       );
@@ -510,9 +506,9 @@ export function AppShellPage() {
 
     try {
       if (kind === "audioinput") {
-        await rtcClient.setAudioInputDevice(next.audioInputDeviceId);
+        await client.setAudioInputDevice(next.audioInputDeviceId);
       } else {
-        await rtcClient.setAudioOutputDevice(next.audioOutputDeviceId);
+        await client.setAudioOutputDevice(next.audioOutputDeviceId);
       }
       setAudioDevicesStatus(
         resolveVoiceDevicePreferenceStatus(kind, true, nextDeviceId),
@@ -605,36 +601,44 @@ export function AppShellPage() {
     messages,
   });
 
-  const ensureRtcClient = (): RtcClient => {
-    if (rtcClient) {
-      return rtcClient;
-    }
-    rtcClient = createRtcClient();
-    stopRtcSubscription = rtcClient.subscribe((snapshot) => {
-      setRtcSnapshot(snapshot);
-    });
-    return rtcClient;
-  };
-
-  const releaseRtcClient = async (): Promise<void> => {
-    if (stopRtcSubscription) {
-      stopRtcSubscription();
-      stopRtcSubscription = null;
-    }
-    if (rtcClient) {
-      try {
-        await rtcClient.destroy();
-      } catch {
-        // Deterministic local teardown even if remote transport cleanup fails.
-      } finally {
-        rtcClient = null;
-      }
-    }
-    setRtcSnapshot(RTC_DISCONNECTED_SNAPSHOT);
-    setVoiceSessionChannelKey(null);
-    setVoiceSessionStartedAtUnixMs(null);
-    setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
-  };
+  const voiceOperationsController = createVoiceOperationsController({
+    session: auth.session,
+    activeGuildId,
+    activeChannel,
+    canPublishVoiceCamera,
+    canPublishVoiceScreenShare,
+    canSubscribeVoiceStreams,
+    canToggleVoiceCamera,
+    canToggleVoiceScreenShare,
+    isJoiningVoice,
+    isLeavingVoice,
+    isTogglingVoiceMic,
+    isTogglingVoiceCamera,
+    isTogglingVoiceScreenShare,
+    voiceDevicePreferences,
+    setRtcSnapshot,
+    setVoiceStatus,
+    setVoiceError,
+    setJoiningVoice,
+    setLeavingVoice,
+    setTogglingVoiceMic,
+    setTogglingVoiceCamera,
+    setTogglingVoiceScreenShare,
+    setVoiceSessionChannelKey,
+    setVoiceSessionStartedAtUnixMs,
+    setVoiceDurationClockUnixMs,
+    setVoiceSessionCapabilities,
+    setAudioDevicesError,
+    defaultVoiceSessionCapabilities: DEFAULT_VOICE_SESSION_CAPABILITIES,
+  });
+  const {
+    releaseRtcClient,
+    joinVoiceChannel,
+    leaveVoiceChannel,
+    toggleVoiceMicrophone,
+    toggleVoiceCamera,
+    toggleVoiceScreenShare,
+  } = voiceOperationsController;
 
   const actorLookupId = (actorId: string): string => userIdFromVoiceIdentity(actorId) ?? actorId;
   const actorLabel = (actorId: string): string => {
@@ -968,29 +972,6 @@ export function AppShellPage() {
     }
   };
 
-  const leaveVoiceChannel = async (statusMessage?: string) => {
-    if (isLeavingVoice()) {
-      return;
-    }
-    setLeavingVoice(true);
-    try {
-      if (rtcClient) {
-        await rtcClient.leave();
-      }
-    } catch {
-      // Leave should still clear local voice state even if transport teardown fails.
-    } finally {
-      setVoiceSessionChannelKey(null);
-      setVoiceSessionStartedAtUnixMs(null);
-      setRtcSnapshot(RTC_DISCONNECTED_SNAPSHOT);
-      setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
-      if (statusMessage) {
-        setVoiceStatus(statusMessage);
-      }
-      setLeavingVoice(false);
-    }
-  };
-
   createVoiceSessionLifecycleController({
     session: auth.session,
     workspaces,
@@ -1009,132 +990,6 @@ export function AppShellPage() {
     setVoiceStatus,
     setVoiceError,
   });
-
-  const joinVoiceChannel = async () => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channel = activeChannel();
-    if (
-      !session ||
-      !guildId ||
-      !channel ||
-      channel.kind !== "voice" ||
-      isJoiningVoice() ||
-      isLeavingVoice()
-    ) {
-      return;
-    }
-
-    setJoiningVoice(true);
-    setVoiceError("");
-    setVoiceStatus("");
-    setVoiceSessionCapabilities(DEFAULT_VOICE_SESSION_CAPABILITIES);
-    try {
-      const requestedPublishSources: MediaPublishSource[] = ["microphone"];
-      if (canPublishVoiceCamera()) {
-        requestedPublishSources.push("camera");
-      }
-      if (canPublishVoiceScreenShare()) {
-        requestedPublishSources.push("screen_share");
-      }
-      const token = await issueVoiceToken(session, guildId, channel.channelId, {
-        canSubscribe: canSubscribeVoiceStreams(),
-        publishSources: requestedPublishSources,
-      });
-      const client = ensureRtcClient();
-      const preferences = voiceDevicePreferences();
-      await client.setAudioInputDevice(preferences.audioInputDeviceId);
-      await client.setAudioOutputDevice(preferences.audioOutputDeviceId);
-      await client.join({
-        livekitUrl: token.livekitUrl,
-        token: token.token,
-      });
-      setVoiceSessionChannelKey(channelKey(guildId, channel.channelId));
-      setVoiceSessionStartedAtUnixMs(Date.now());
-      setVoiceDurationClockUnixMs(Date.now());
-      setVoiceSessionCapabilities({
-        canSubscribe: token.canSubscribe,
-        publishSources: [...token.publishSources],
-      });
-      const joinSnapshot = client.snapshot();
-      if (joinSnapshot.lastErrorCode === "audio_device_switch_failed" && joinSnapshot.lastErrorMessage) {
-        setAudioDevicesError(joinSnapshot.lastErrorMessage);
-      }
-
-      if (token.canPublish && token.publishSources.includes("microphone")) {
-        try {
-          await client.setMicrophoneEnabled(true);
-          setVoiceStatus("Voice connected. Microphone enabled.");
-        } catch (error) {
-          setVoiceStatus("Voice connected.");
-          setVoiceError(mapRtcError(error, "Connected, but microphone activation failed."));
-        }
-        return;
-      }
-
-      setVoiceStatus("Voice connected in listen-only mode.");
-    } catch (error) {
-      setVoiceError(mapVoiceJoinError(error));
-    } finally {
-      setJoiningVoice(false);
-    }
-  };
-
-  const toggleVoiceMicrophone = async () => {
-    if (!rtcClient || isTogglingVoiceMic()) {
-      return;
-    }
-    setTogglingVoiceMic(true);
-    setVoiceError("");
-    try {
-      const enabled = await rtcClient.toggleMicrophone();
-      setVoiceStatus(enabled ? "Microphone unmuted." : "Microphone muted.");
-    } catch (error) {
-      setVoiceError(mapRtcError(error, "Unable to update microphone."));
-    } finally {
-      setTogglingVoiceMic(false);
-    }
-  };
-
-  const toggleVoiceCamera = async () => {
-    if (!rtcClient || isTogglingVoiceCamera()) {
-      return;
-    }
-    if (!canToggleVoiceCamera()) {
-      setVoiceError("Camera publish is not allowed for this call.");
-      return;
-    }
-    setTogglingVoiceCamera(true);
-    setVoiceError("");
-    try {
-      const enabled = await rtcClient.toggleCamera();
-      setVoiceStatus(enabled ? "Camera enabled." : "Camera disabled.");
-    } catch (error) {
-      setVoiceError(mapRtcError(error, "Unable to update camera."));
-    } finally {
-      setTogglingVoiceCamera(false);
-    }
-  };
-
-  const toggleVoiceScreenShare = async () => {
-    if (!rtcClient || isTogglingVoiceScreenShare()) {
-      return;
-    }
-    if (!canToggleVoiceScreenShare()) {
-      setVoiceError("Screen share publish is not allowed for this call.");
-      return;
-    }
-    setTogglingVoiceScreenShare(true);
-    setVoiceError("");
-    try {
-      const enabled = await rtcClient.toggleScreenShare();
-      setVoiceStatus(enabled ? "Screen share enabled." : "Screen share stopped.");
-    } catch (error) {
-      setVoiceError(mapRtcError(error, "Unable to update screen share."));
-    } finally {
-      setTogglingVoiceScreenShare(false);
-    }
-  };
 
   const refreshSession = async () => {
     const session = auth.session();

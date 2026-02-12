@@ -264,22 +264,36 @@ Move async resource orchestration and boundary fetch flows into domain-specific 
 Fully isolate voice operational handlers from page orchestration.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add `controllers/voice-operations-controller.ts` for:
+- [x] Add `controllers/voice-operations-controller.ts` for:
   - `joinVoiceChannel`
   - `leaveVoiceChannel`
   - mic/camera/screen-share toggles
   - `ensureRtcClient` / `releaseRtcClient` lifecycle
-- [ ] Keep existing lifecycle controller (`createVoiceSessionLifecycleController`) and integrate with the new operations controller.
-- [ ] Preserve permission checks and least-privilege token request construction.
+- [x] Keep existing lifecycle controller (`createVoiceSessionLifecycleController`) and integrate with the new operations controller.
+- [x] Preserve permission checks and least-privilege token request construction.
 
 ### Tests
-- [ ] Extend `apps/filament-client-web/tests/app-shell-voice-controller.test.ts` and `apps/filament-client-web/tests/app-shell-voice-controls.test.tsx` for:
+- [x] Extend `apps/filament-client-web/tests/app-shell-voice-controller.test.ts` and `apps/filament-client-web/tests/app-shell-voice-controls.test.tsx` for:
   - teardown guarantees
   - denied publish-source paths
   - device preference application behavior
+
+### Refactor Notes
+- Added `features/app-shell/controllers/voice-operations-controller.ts` and moved inline voice operations from `AppShellPage.tsx` into a dedicated controller: RTC client lifecycle (`ensureRtcClient`/`releaseRtcClient`), voice join/leave, and mic/camera/screen-share toggles.
+- Preserved existing least-privilege token request behavior by building requested publish sources from effective channel permissions and continuing to scope requests to microphone plus only explicitly-allowed optional sources.
+- Kept lifecycle parity by wiring `createVoiceSessionLifecycleController` to the extracted `leaveVoiceChannel` operation and retaining deterministic local teardown behavior even when RTC leave/destroy transport calls fail.
+- Extended `tests/app-shell-voice-controller.test.ts` with controller-level checks for teardown failure handling, denied publish-source toggle paths, and device-preference application during join.
+- Extended `tests/app-shell-voice-controls.test.tsx` with logout teardown regression coverage when RTC leave/destroy rejects, validating local auth/session cleanup still completes.
+- Metrics after Phase 6 (2026-02-12):
+  - `AppShellPage.tsx` line count: `1510`
+  - `createEffect(...)` count in `AppShellPage.tsx`: `3`
+  - Test command: `pnpm --prefix apps/filament-client-web test`
+  - Pass status: `39` test files passed, `158` tests passed
+  - Typecheck command: `pnpm --prefix apps/filament-client-web typecheck`
+  - Typecheck status: pass
 
 ### Exit Criteria
 - Voice command handlers are no longer implemented inline in `AppShellPage.tsx`.

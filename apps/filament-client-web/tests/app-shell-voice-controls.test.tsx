@@ -60,6 +60,8 @@ const rtcMock = vi.hoisted(() => {
   let snapshot = createDisconnectedSnapshot();
   let joinParticipants: MockParticipant[] = [];
   let joinFailure: Error | null = null;
+  let leaveFailure: Error | null = null;
+  let destroyFailure: Error | null = null;
   let localParticipantIdentity = "u.local";
 
   const cloneParticipants = (participants: MockParticipant[]): MockParticipant[] =>
@@ -122,6 +124,9 @@ const rtcMock = vi.hoisted(() => {
   });
 
   const leave = vi.fn(async () => {
+    if (leaveFailure) {
+      throw leaveFailure;
+    }
     snapshot = createDisconnectedSnapshot();
     emit();
   });
@@ -190,6 +195,9 @@ const rtcMock = vi.hoisted(() => {
   });
 
   const destroy = vi.fn(async () => {
+    if (destroyFailure) {
+      throw destroyFailure;
+    }
     await leave();
     listeners.clear();
   });
@@ -274,6 +282,14 @@ const rtcMock = vi.hoisted(() => {
     joinFailure = error;
   };
 
+  const setLeaveFailure = (error: Error | null) => {
+    leaveFailure = error;
+  };
+
+  const setDestroyFailure = (error: Error | null) => {
+    destroyFailure = error;
+  };
+
   const setLocalParticipantIdentity = (identity: string) => {
     localParticipantIdentity = identity;
   };
@@ -283,6 +299,8 @@ const rtcMock = vi.hoisted(() => {
     snapshot = createDisconnectedSnapshot();
     joinParticipants = [];
     joinFailure = null;
+    leaveFailure = null;
+    destroyFailure = null;
     localParticipantIdentity = "u.local";
     createRtcClient.mockClear();
     join.mockClear();
@@ -316,6 +334,8 @@ const rtcMock = vi.hoisted(() => {
     setVideoTracks,
     setConnectionStatus,
     setJoinFailure,
+    setLeaveFailure,
+    setDestroyFailure,
     setLocalParticipantIdentity,
     reset,
   };
@@ -962,6 +982,28 @@ describe("app shell voice controls", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "bridge" }));
     expect(await screen.findByRole("button", { name: "Leave" })).toBeInTheDocument();
+  });
+
+  it("logs out cleanly even when rtc leave/destroy teardown rejects", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    rtcMock.setLeaveFailure(new Error("leave_failed"));
+    rtcMock.setDestroyFailure(new Error("destroy_failed"));
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(rtcMock.destroy).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Welcome Back")).toBeInTheDocument();
+    expect(window.sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+    expect(window.localStorage.getItem(WORKSPACE_CACHE_KEY)).toBeNull();
   });
 
   it("logs out with deterministic RTC teardown and clears local auth state", async () => {
