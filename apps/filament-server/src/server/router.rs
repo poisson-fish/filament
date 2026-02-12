@@ -37,8 +37,8 @@ use super::{
             create_guild_role, delete_guild_role, join_public_guild, kick_member, list_guild_audit,
             list_guild_channels, list_guild_ip_bans, list_guild_roles, list_guilds,
             list_public_guilds, remove_guild_ip_ban, reorder_guild_roles,
-            set_channel_role_override, unassign_guild_role, update_guild_role, update_member_role,
-            upsert_guild_ip_bans_by_user,
+            set_channel_role_override, unassign_guild_role, update_guild, update_guild_role,
+            update_member_role, upsert_guild_ip_bans_by_user,
         },
         media::{delete_attachment, download_attachment, issue_voice_token, upload_attachment},
         messages::{
@@ -181,6 +181,7 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             delete(delete_friend_request),
         )
         .route("/guilds", post(create_guild).get(list_guilds))
+        .route("/guilds/{guild_id}", patch(update_guild))
         .route("/guilds/public", get(list_public_guilds))
         .route("/guilds/{guild_id}/join", post(join_public_guild))
         .route("/guilds/{guild_id}/audit", get(list_guild_audit))

@@ -90,6 +90,11 @@ function createOpenGateway() {
   const onMessageDelete = vi.fn();
   const onMessageReaction = vi.fn();
   const onChannelCreate = vi.fn();
+  const onWorkspaceUpdate = vi.fn();
+  const onWorkspaceMemberAdd = vi.fn();
+  const onWorkspaceMemberUpdate = vi.fn();
+  const onWorkspaceMemberRemove = vi.fn();
+  const onWorkspaceMemberBan = vi.fn();
   const onPresenceSync = vi.fn();
   const onPresenceUpdate = vi.fn();
   const onOpenStateChange = vi.fn();
@@ -105,6 +110,11 @@ function createOpenGateway() {
       onMessageDelete,
       onMessageReaction,
       onChannelCreate,
+      onWorkspaceUpdate,
+      onWorkspaceMemberAdd,
+      onWorkspaceMemberUpdate,
+      onWorkspaceMemberRemove,
+      onWorkspaceMemberBan,
       onPresenceSync,
       onPresenceUpdate,
       onOpenStateChange,
@@ -126,6 +136,11 @@ function createOpenGateway() {
     onMessageDelete,
     onMessageReaction,
     onChannelCreate,
+    onWorkspaceUpdate,
+    onWorkspaceMemberAdd,
+    onWorkspaceMemberUpdate,
+    onWorkspaceMemberRemove,
+    onWorkspaceMemberBan,
     onPresenceSync,
     onPresenceUpdate,
     onOpenStateChange,
@@ -180,6 +195,11 @@ describe("gateway payload parsing", () => {
       onMessageDelete,
       onMessageReaction,
       onChannelCreate,
+      onWorkspaceUpdate,
+      onWorkspaceMemberAdd,
+      onWorkspaceMemberUpdate,
+      onWorkspaceMemberRemove,
+      onWorkspaceMemberBan,
       onPresenceSync,
       onPresenceUpdate,
     } = createOpenGateway();
@@ -202,6 +222,11 @@ describe("gateway payload parsing", () => {
     expect(onMessageDelete).not.toHaveBeenCalled();
     expect(onMessageReaction).not.toHaveBeenCalled();
     expect(onChannelCreate).not.toHaveBeenCalled();
+    expect(onWorkspaceUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberAdd).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberRemove).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberBan).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
     expect(onPresenceUpdate).not.toHaveBeenCalled();
   });
@@ -215,6 +240,11 @@ describe("gateway payload parsing", () => {
       onMessageDelete,
       onMessageReaction,
       onChannelCreate,
+      onWorkspaceUpdate,
+      onWorkspaceMemberAdd,
+      onWorkspaceMemberUpdate,
+      onWorkspaceMemberRemove,
+      onWorkspaceMemberBan,
       onPresenceSync,
       onPresenceUpdate,
     } = createOpenGateway();
@@ -226,6 +256,11 @@ describe("gateway payload parsing", () => {
     expect(onMessageDelete).not.toHaveBeenCalled();
     expect(onMessageReaction).not.toHaveBeenCalled();
     expect(onChannelCreate).not.toHaveBeenCalled();
+    expect(onWorkspaceUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberAdd).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberRemove).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberBan).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
     expect(onPresenceUpdate).not.toHaveBeenCalled();
   });
@@ -280,6 +315,11 @@ describe("gateway payload parsing", () => {
       onMessageDelete,
       onMessageReaction,
       onChannelCreate,
+      onWorkspaceUpdate,
+      onWorkspaceMemberAdd,
+      onWorkspaceMemberUpdate,
+      onWorkspaceMemberRemove,
+      onWorkspaceMemberBan,
       onPresenceSync,
       onPresenceUpdate,
     } = createOpenGateway();
@@ -287,7 +327,15 @@ describe("gateway payload parsing", () => {
     const authorId = ulidFromIndex(4);
     const presenceUserId = ulidFromIndex(5);
 
-    socket.emitMessage(JSON.stringify({ v: 1, t: "ready", d: {} }));
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "ready",
+        d: {
+          user_id: authorId,
+        },
+      }),
+    );
     socket.emitMessage(
       JSON.stringify({
         v: 1,
@@ -362,6 +410,69 @@ describe("gateway payload parsing", () => {
     socket.emitMessage(
       JSON.stringify({
         v: 1,
+        t: "workspace_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          updated_fields: {
+            name: "Ops Live",
+            visibility: "public",
+          },
+          updated_at_unix: 4,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_member_add",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: presenceUserId,
+          role: "member",
+          joined_at_unix: 5,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_member_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: presenceUserId,
+          updated_fields: {
+            role: "moderator",
+          },
+          updated_at_unix: 6,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_member_remove",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: presenceUserId,
+          reason: "kick",
+          removed_at_unix: 7,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_member_ban",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: presenceUserId,
+          banned_at_unix: 8,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
         t: "presence_sync",
         d: {
           guild_id: DEFAULT_GUILD_ID,
@@ -382,11 +493,17 @@ describe("gateway payload parsing", () => {
     );
 
     expect(onReady).toHaveBeenCalledTimes(1);
+    expect(onReady).toHaveBeenCalledWith({ userId: authorId });
     expect(onMessageCreate).toHaveBeenCalledTimes(1);
     expect(onMessageUpdate).toHaveBeenCalledTimes(1);
     expect(onMessageDelete).toHaveBeenCalledTimes(1);
     expect(onMessageReaction).toHaveBeenCalledTimes(1);
     expect(onChannelCreate).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceUpdate).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceMemberAdd).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceMemberUpdate).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceMemberRemove).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceMemberBan).toHaveBeenCalledTimes(1);
     expect(onMessageReaction).toHaveBeenCalledWith({
       guildId: DEFAULT_GUILD_ID,
       channelId: DEFAULT_CHANNEL_ID,
@@ -417,6 +534,39 @@ describe("gateway payload parsing", () => {
         name: "bridge-call",
         kind: "voice",
       },
+    });
+    expect(onWorkspaceUpdate).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      updatedFields: {
+        name: "Ops Live",
+        visibility: "public",
+      },
+      updatedAtUnix: 4,
+    });
+    expect(onWorkspaceMemberAdd).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      userId: presenceUserId,
+      role: "member",
+      joinedAtUnix: 5,
+    });
+    expect(onWorkspaceMemberUpdate).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      userId: presenceUserId,
+      updatedFields: {
+        role: "moderator",
+      },
+      updatedAtUnix: 6,
+    });
+    expect(onWorkspaceMemberRemove).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      userId: presenceUserId,
+      reason: "kick",
+      removedAtUnix: 7,
+    });
+    expect(onWorkspaceMemberBan).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      userId: presenceUserId,
+      bannedAtUnix: 8,
     });
     expect(onPresenceSync).toHaveBeenCalledWith({
       guildId: DEFAULT_GUILD_ID,

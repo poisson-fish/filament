@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use super::{
     auth::outbound_event,
+    core::GuildVisibility,
     types::{ChannelResponse, MessageResponse},
 };
 
@@ -17,6 +18,11 @@ pub(crate) const MESSAGE_REACTION_EVENT: &str = "message_reaction";
 pub(crate) const CHANNEL_CREATE_EVENT: &str = "channel_create";
 pub(crate) const PRESENCE_SYNC_EVENT: &str = "presence_sync";
 pub(crate) const PRESENCE_UPDATE_EVENT: &str = "presence_update";
+pub(crate) const WORKSPACE_UPDATE_EVENT: &str = "workspace_update";
+pub(crate) const WORKSPACE_MEMBER_ADD_EVENT: &str = "workspace_member_add";
+pub(crate) const WORKSPACE_MEMBER_UPDATE_EVENT: &str = "workspace_member_update";
+pub(crate) const WORKSPACE_MEMBER_REMOVE_EVENT: &str = "workspace_member_remove";
+pub(crate) const WORKSPACE_MEMBER_BAN_EVENT: &str = "workspace_member_ban";
 
 pub(crate) struct GatewayEvent {
     pub(crate) event_type: &'static str,
@@ -90,6 +96,68 @@ struct PresenceUpdatePayload {
     guild_id: String,
     user_id: String,
     status: &'static str,
+}
+
+#[derive(Serialize)]
+struct WorkspaceUpdatePayload<'a> {
+    guild_id: &'a str,
+    updated_fields: WorkspaceUpdateFieldsPayload<'a>,
+    updated_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceUpdateFieldsPayload<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    visibility: Option<GuildVisibility>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceMemberAddPayload {
+    guild_id: String,
+    user_id: String,
+    role: filament_core::Role,
+    joined_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceMemberUpdatePayload {
+    guild_id: String,
+    user_id: String,
+    updated_fields: WorkspaceMemberUpdateFieldsPayload,
+    updated_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceMemberUpdateFieldsPayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<filament_core::Role>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceMemberRemovePayload {
+    guild_id: String,
+    user_id: String,
+    reason: &'static str,
+    removed_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceMemberBanPayload {
+    guild_id: String,
+    user_id: String,
+    banned_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
 }
 
 fn build_event<T: Serialize>(event_type: &'static str, payload: T) -> GatewayEvent {
@@ -216,6 +284,98 @@ pub(crate) fn presence_update(
             guild_id: guild_id.to_owned(),
             user_id: user_id.to_string(),
             status,
+        },
+    )
+}
+
+pub(crate) fn workspace_update(
+    guild_id: &str,
+    name: Option<&str>,
+    visibility: Option<GuildVisibility>,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_UPDATE_EVENT,
+        WorkspaceUpdatePayload {
+            guild_id,
+            updated_fields: WorkspaceUpdateFieldsPayload { name, visibility },
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_member_add(
+    guild_id: &str,
+    user_id: UserId,
+    role: filament_core::Role,
+    joined_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_MEMBER_ADD_EVENT,
+        WorkspaceMemberAddPayload {
+            guild_id: guild_id.to_owned(),
+            user_id: user_id.to_string(),
+            role,
+            joined_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_member_update(
+    guild_id: &str,
+    user_id: UserId,
+    role: Option<filament_core::Role>,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_MEMBER_UPDATE_EVENT,
+        WorkspaceMemberUpdatePayload {
+            guild_id: guild_id.to_owned(),
+            user_id: user_id.to_string(),
+            updated_fields: WorkspaceMemberUpdateFieldsPayload { role },
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_member_remove(
+    guild_id: &str,
+    user_id: UserId,
+    reason: &'static str,
+    removed_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_MEMBER_REMOVE_EVENT,
+        WorkspaceMemberRemovePayload {
+            guild_id: guild_id.to_owned(),
+            user_id: user_id.to_string(),
+            reason,
+            removed_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_member_ban(
+    guild_id: &str,
+    user_id: UserId,
+    banned_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_MEMBER_BAN_EVENT,
+        WorkspaceMemberBanPayload {
+            guild_id: guild_id.to_owned(),
+            user_id: user_id.to_string(),
+            banned_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
         },
     )
 }

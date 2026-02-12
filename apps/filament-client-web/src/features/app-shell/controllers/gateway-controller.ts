@@ -14,6 +14,9 @@ import {
   type MessageDeletePayload,
   type MessageReactionPayload,
   type MessageUpdatePayload,
+  type WorkspaceMemberBanPayload,
+  type WorkspaceMemberRemovePayload,
+  type WorkspaceUpdatePayload,
 } from "../../../lib/gateway";
 import {
   clearKeysByPrefix,
@@ -43,6 +46,7 @@ interface GatewayClient {
 }
 
 interface GatewayHandlers {
+  onReady: (payload: { userId: string }) => void;
   onOpenStateChange: (isOpen: boolean) => void;
   onMessageCreate: (message: MessageRecord) => void;
   onMessageUpdate: (payload: MessageUpdatePayload) => void;
@@ -52,6 +56,11 @@ interface GatewayHandlers {
     guildId: GuildId;
     channel: ChannelRecord;
   }) => void;
+  onWorkspaceUpdate: (payload: WorkspaceUpdatePayload) => void;
+  onWorkspaceMemberAdd: (_payload: unknown) => void;
+  onWorkspaceMemberUpdate: (_payload: unknown) => void;
+  onWorkspaceMemberRemove: (payload: WorkspaceMemberRemovePayload) => void;
+  onWorkspaceMemberBan: (payload: WorkspaceMemberBanPayload) => void;
   onPresenceSync: (payload: { guildId: GuildId; userIds: string[] }) => void;
   onPresenceUpdate: (payload: {
     guildId: GuildId;
@@ -151,6 +160,21 @@ export function applyChannelCreate(
   });
 }
 
+export function applyWorkspaceUpdate(
+  existing: WorkspaceRecord[],
+  payload: WorkspaceUpdatePayload,
+): WorkspaceRecord[] {
+  return upsertWorkspace(existing, payload.guildId, (workspace) => ({
+    ...workspace,
+    guildName: payload.updatedFields.name ?? workspace.guildName,
+    visibility: payload.updatedFields.visibility ?? workspace.visibility,
+  }));
+}
+
+function removeWorkspace(existing: WorkspaceRecord[], guildId: GuildId): WorkspaceRecord[] {
+  return existing.filter((workspace) => workspace.guildId !== guildId);
+}
+
 export function createGatewayController(
   options: GatewayControllerOptions,
   dependencies: Partial<GatewayControllerDependencies> = {},
@@ -159,6 +183,7 @@ export function createGatewayController(
     ...DEFAULT_GATEWAY_CONTROLLER_DEPENDENCIES,
     ...dependencies,
   };
+  let connectedUserId: string | null = null;
 
   createEffect(() => {
     const session = options.session();
@@ -171,6 +196,9 @@ export function createGatewayController(
     }
 
     const gateway = deps.connectGateway(session.accessToken, guildId, channelId, {
+      onReady: (payload) => {
+        connectedUserId = payload.userId;
+      },
       onOpenStateChange: (isOpen) => options.setGatewayOnline(isOpen),
       onMessageCreate: (message) => {
         if (message.guildId !== guildId || message.channelId !== channelId) {
@@ -210,6 +238,23 @@ export function createGatewayController(
           return;
         }
         options.setWorkspaces((existing) => applyChannelCreate(existing, payload));
+      },
+      onWorkspaceUpdate: (payload) => {
+        options.setWorkspaces((existing) => applyWorkspaceUpdate(existing, payload));
+      },
+      onWorkspaceMemberAdd: () => {},
+      onWorkspaceMemberUpdate: () => {},
+      onWorkspaceMemberRemove: (payload) => {
+        if (payload.userId !== connectedUserId) {
+          return;
+        }
+        options.setWorkspaces((existing) => removeWorkspace(existing, payload.guildId));
+      },
+      onWorkspaceMemberBan: (payload) => {
+        if (payload.userId !== connectedUserId) {
+          return;
+        }
+        options.setWorkspaces((existing) => removeWorkspace(existing, payload.guildId));
       },
       onPresenceSync: (payload) => {
         if (payload.guildId !== guildId) {

@@ -5,12 +5,18 @@ import {
   type ChannelRecord,
   type ChannelId,
   type GuildId,
+  guildNameFromInput,
+  type GuildName,
+  type GuildVisibility,
+  guildVisibilityFromInput,
   markdownTokensFromResponse,
   messageContentFromInput,
   type MessageId,
   type MarkdownToken,
   type MessageRecord,
   type ReactionEmoji,
+  roleFromInput,
+  type RoleName,
   guildIdFromInput,
   messageIdFromInput,
   messageFromResponse,
@@ -30,6 +36,10 @@ type GatewayEventEnvelope = {
 
 type PresenceStatus = "online" | "offline";
 
+interface ReadyPayload {
+  userId: string;
+}
+
 interface PresenceSyncPayload {
   guildId: GuildId;
   userIds: string[];
@@ -44,6 +54,46 @@ interface PresenceUpdatePayload {
 interface ChannelCreatePayload {
   guildId: GuildId;
   channel: ChannelRecord;
+}
+
+export interface WorkspaceUpdatePayload {
+  guildId: GuildId;
+  updatedFields: {
+    name?: GuildName;
+    visibility?: GuildVisibility;
+  };
+  updatedAtUnix: number;
+}
+
+export interface WorkspaceMemberAddPayload {
+  guildId: GuildId;
+  userId: string;
+  role: RoleName;
+  joinedAtUnix: number;
+}
+
+export interface WorkspaceMemberUpdatePayload {
+  guildId: GuildId;
+  userId: string;
+  updatedFields: {
+    role?: RoleName;
+  };
+  updatedAtUnix: number;
+}
+
+export type WorkspaceMemberRemoveReason = "kick" | "ban" | "leave";
+
+export interface WorkspaceMemberRemovePayload {
+  guildId: GuildId;
+  userId: string;
+  reason: WorkspaceMemberRemoveReason;
+  removedAtUnix: number;
+}
+
+export interface WorkspaceMemberBanPayload {
+  guildId: GuildId;
+  userId: string;
+  bannedAtUnix: number;
 }
 
 export interface MessageReactionPayload {
@@ -73,12 +123,17 @@ export interface MessageDeletePayload {
 }
 
 interface GatewayHandlers {
-  onReady?: () => void;
+  onReady?: (payload: ReadyPayload) => void;
   onMessageCreate?: (message: MessageRecord) => void;
   onMessageUpdate?: (payload: MessageUpdatePayload) => void;
   onMessageDelete?: (payload: MessageDeletePayload) => void;
   onMessageReaction?: (payload: MessageReactionPayload) => void;
   onChannelCreate?: (payload: ChannelCreatePayload) => void;
+  onWorkspaceUpdate?: (payload: WorkspaceUpdatePayload) => void;
+  onWorkspaceMemberAdd?: (payload: WorkspaceMemberAddPayload) => void;
+  onWorkspaceMemberUpdate?: (payload: WorkspaceMemberUpdatePayload) => void;
+  onWorkspaceMemberRemove?: (payload: WorkspaceMemberRemovePayload) => void;
+  onWorkspaceMemberBan?: (payload: WorkspaceMemberBanPayload) => void;
   onPresenceSync?: (payload: PresenceSyncPayload) => void;
   onPresenceUpdate?: (payload: PresenceUpdatePayload) => void;
   onOpenStateChange?: (isOpen: boolean) => void;
@@ -87,6 +142,25 @@ interface GatewayHandlers {
 interface GatewayClient {
   updateSubscription: (guildId: GuildId, channelId: ChannelId) => void;
   close: () => void;
+}
+
+function parseReadyPayload(payload: unknown): ReadyPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (typeof value.user_id !== "string") {
+    return null;
+  }
+
+  let userId: string;
+  try {
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+
+  return { userId };
 }
 
 function parsePresenceSyncPayload(payload: unknown): PresenceSyncPayload | null {
@@ -327,6 +401,215 @@ function parseChannelCreatePayload(payload: unknown): ChannelCreatePayload | nul
   };
 }
 
+function parseWorkspaceUpdatePayload(payload: unknown): WorkspaceUpdatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    !value.updated_fields ||
+    typeof value.updated_fields !== "object" ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+  } catch {
+    return null;
+  }
+
+  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
+  let name: GuildName | undefined;
+  let visibility: GuildVisibility | undefined;
+  if (typeof updatedFieldsDto.name !== "undefined") {
+    if (typeof updatedFieldsDto.name !== "string") {
+      return null;
+    }
+    try {
+      name = guildNameFromInput(updatedFieldsDto.name);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof updatedFieldsDto.visibility !== "undefined") {
+    if (typeof updatedFieldsDto.visibility !== "string") {
+      return null;
+    }
+    try {
+      visibility = guildVisibilityFromInput(updatedFieldsDto.visibility);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof name === "undefined" && typeof visibility === "undefined") {
+    return null;
+  }
+
+  return {
+    guildId,
+    updatedFields: {
+      name,
+      visibility,
+    },
+    updatedAtUnix: value.updated_at_unix,
+  };
+}
+
+function parseWorkspaceMemberAddPayload(payload: unknown): WorkspaceMemberAddPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    typeof value.role !== "string" ||
+    typeof value.joined_at_unix !== "number" ||
+    !Number.isSafeInteger(value.joined_at_unix) ||
+    value.joined_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let userId: string;
+  let role: RoleName;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    userId = userIdFromInput(value.user_id);
+    role = roleFromInput(value.role);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    userId,
+    role,
+    joinedAtUnix: value.joined_at_unix,
+  };
+}
+
+function parseWorkspaceMemberUpdatePayload(payload: unknown): WorkspaceMemberUpdatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    !value.updated_fields ||
+    typeof value.updated_fields !== "object" ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let userId: string;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+
+  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
+  let role: RoleName | undefined;
+  if (typeof updatedFieldsDto.role !== "undefined") {
+    if (typeof updatedFieldsDto.role !== "string") {
+      return null;
+    }
+    try {
+      role = roleFromInput(updatedFieldsDto.role);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof role === "undefined") {
+    return null;
+  }
+
+  return {
+    guildId,
+    userId,
+    updatedFields: { role },
+    updatedAtUnix: value.updated_at_unix,
+  };
+}
+
+function parseWorkspaceMemberRemovePayload(payload: unknown): WorkspaceMemberRemovePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    (value.reason !== "kick" && value.reason !== "ban" && value.reason !== "leave") ||
+    typeof value.removed_at_unix !== "number" ||
+    !Number.isSafeInteger(value.removed_at_unix) ||
+    value.removed_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let userId: string;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    userId,
+    reason: value.reason,
+    removedAtUnix: value.removed_at_unix,
+  };
+}
+
+function parseWorkspaceMemberBanPayload(payload: unknown): WorkspaceMemberBanPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    typeof value.banned_at_unix !== "number" ||
+    !Number.isSafeInteger(value.banned_at_unix) ||
+    value.banned_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let userId: string;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    userId,
+    bannedAtUnix: value.banned_at_unix,
+  };
+}
+
 function normalizeGatewayBaseUrl(): string {
   const envGateway = import.meta.env.VITE_FILAMENT_GATEWAY_WS_URL;
   if (typeof envGateway === "string" && envGateway.length > 0) {
@@ -426,7 +709,11 @@ export function connectGateway(
     }
 
     if (envelope.t === "ready") {
-      handlers.onReady?.();
+      const payload = parseReadyPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onReady?.(payload);
       return;
     }
 
@@ -472,6 +759,51 @@ export function connectGateway(
         return;
       }
       handlers.onChannelCreate?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_update") {
+      const payload = parseWorkspaceUpdatePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceUpdate?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_member_add") {
+      const payload = parseWorkspaceMemberAddPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceMemberAdd?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_member_update") {
+      const payload = parseWorkspaceMemberUpdatePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceMemberUpdate?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_member_remove") {
+      const payload = parseWorkspaceMemberRemovePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceMemberRemove?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_member_ban") {
+      const payload = parseWorkspaceMemberBanPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceMemberBan?.(payload);
       return;
     }
 

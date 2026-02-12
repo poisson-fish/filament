@@ -142,7 +142,7 @@ All events use the versioned envelope:
   - `user_id`
   - `status` (`online` or `offline`)
 
-#### `workspace_update` (planned)
+#### `workspace_update`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -152,7 +152,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_member_add` (planned)
+#### `workspace_member_add`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -163,7 +163,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_member_update` (planned)
+#### `workspace_member_update`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -174,7 +174,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_member_remove` (planned)
+#### `workspace_member_remove`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -185,7 +185,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_member_ban` (planned)
+#### `workspace_member_ban`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:

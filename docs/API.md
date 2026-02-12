@@ -199,6 +199,12 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Returns only guilds where requester is an active member (banned guilds are excluded)
   - Response `200`:
     - `{ "guilds": [{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }] }`
+- `PATCH /guilds/{guild_id}`
+  - Auth required
+  - Requires effective `manage_roles` permission in the workspace
+  - Request: `{ "name"?: "...", "visibility"?: "private"|"public" }`
+  - At least one field is required
+  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }`
 - `GET /guilds/public?q=<query>&limit=<n>`
   - Auth required
   - Returns only guilds marked `public`

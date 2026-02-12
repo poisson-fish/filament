@@ -191,6 +191,13 @@ pub(crate) struct CreateGuildRequest {
     pub(crate) visibility: Option<GuildVisibility>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateGuildRequest {
+    pub(crate) name: Option<String>,
+    pub(crate) visibility: Option<GuildVisibility>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct GuildResponse {
     pub(crate) guild_id: String,

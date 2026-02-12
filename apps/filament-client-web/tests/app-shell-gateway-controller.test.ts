@@ -16,6 +16,7 @@ import {
   applyMessageDelete,
   applyMessageUpdate,
   applyChannelCreate,
+  applyWorkspaceUpdate,
   applyMessageReactionUpdate,
   applyPresenceUpdate,
   createGatewayController,
@@ -188,6 +189,35 @@ describe("app shell gateway controller", () => {
     expect(twice).toEqual(once);
   });
 
+  it("applies workspace updates to name and visibility in-place", () => {
+    const initial: WorkspaceRecord[] = [
+      {
+        guildId: GUILD_ID,
+        guildName: guildNameFromInput("Ops"),
+        visibility: "private",
+        channels: [],
+      },
+    ];
+
+    expect(
+      applyWorkspaceUpdate(initial, {
+        guildId: GUILD_ID,
+        updatedFields: {
+          name: guildNameFromInput("Ops Prime"),
+          visibility: "public",
+        },
+        updatedAtUnix: 1,
+      }),
+    ).toEqual([
+      {
+        guildId: GUILD_ID,
+        guildName: "Ops Prime",
+        visibility: "public",
+        channels: [],
+      },
+    ]);
+  });
+
   it("wires gateway events and closes subscriptions on channel access loss", async () => {
     const [session] = createSignal(SESSION);
     const [activeGuildId] = createSignal(GUILD_ID);
@@ -260,6 +290,9 @@ describe("app shell gateway controller", () => {
 
     handlers.onOpenStateChange(true);
     expect(gatewayOnline()).toBe(true);
+    handlers.onReady({
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+    });
 
     handlers.onMessageCreate(
       messageFixture({
@@ -341,10 +374,26 @@ describe("app shell gateway controller", () => {
         kind: "voice",
       }),
     });
+    handlers.onWorkspaceUpdate({
+      guildId: GUILD_ID,
+      updatedFields: {
+        name: guildNameFromInput("Ops Oncall"),
+      },
+      updatedAtUnix: 4,
+    });
     expect(workspaces()[0]?.channels.map((entry) => entry.name)).toEqual([
       "incident-room",
       "voice-bridge",
     ]);
+    expect(workspaces()[0]?.guildName).toBe("Ops Oncall");
+
+    handlers.onWorkspaceMemberRemove({
+      guildId: GUILD_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      reason: "kick",
+      removedAtUnix: 5,
+    });
+    expect(workspaces()).toEqual([]);
 
     setCanAccessActiveChannel(false);
     await flush();

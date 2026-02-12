@@ -131,12 +131,12 @@ Freeze event contracts and explicit endpoint-to-event mapping before implementat
 | `POST /guilds/{guild_id}/channels` | `channel_create` | guild | Implemented |
 | `PATCH /guilds/{guild_id}/channels/{channel_id}` | `channel_update` | guild | Planned (future endpoint) |
 | `DELETE /guilds/{guild_id}/channels/{channel_id}` | `channel_delete` | guild | Planned (future endpoint) |
-| `PATCH /guilds/{guild_id}` | `workspace_update` | guild | Planned (Phase 3; endpoint not implemented yet) |
-| `POST /guilds/{guild_id}/join` | `workspace_member_add` | guild | Planned (Phase 3) |
-| `POST /guilds/{guild_id}/members/{user_id}` | `workspace_member_add` | guild | Planned (Phase 3) |
-| `PATCH /guilds/{guild_id}/members/{user_id}` | `workspace_member_update` | guild | Planned (Phase 3) |
-| `POST /guilds/{guild_id}/members/{user_id}/kick` | `workspace_member_remove` | guild | Planned (Phase 3) |
-| `POST /guilds/{guild_id}/members/{user_id}/ban` | `workspace_member_ban`, `workspace_member_remove` | guild | Planned (Phase 3) |
+| `PATCH /guilds/{guild_id}` | `workspace_update` | guild | Implemented |
+| `POST /guilds/{guild_id}/join` | `workspace_member_add` | guild | Implemented |
+| `POST /guilds/{guild_id}/members/{user_id}` | `workspace_member_add` | guild | Implemented |
+| `PATCH /guilds/{guild_id}/members/{user_id}` | `workspace_member_update` | guild | Implemented |
+| `POST /guilds/{guild_id}/members/{user_id}/kick` | `workspace_member_remove` | guild | Implemented |
+| `POST /guilds/{guild_id}/members/{user_id}/ban` | `workspace_member_ban`, `workspace_member_remove` | guild | Implemented |
 | `POST /guilds/{guild_id}/roles` | `workspace_role_create` | guild | Planned (Phase 4) |
 | `PATCH /guilds/{guild_id}/roles/{role_id}` | `workspace_role_update` | guild | Planned (Phase 4) |
 | `DELETE /guilds/{guild_id}/roles/{role_id}` | `workspace_role_delete` | guild | Planned (Phase 4) |
@@ -244,15 +244,43 @@ Cover full message CRUD-driven UI updates.
 Sync workspace-level structural and membership state.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add workspace update API endpoint(s) for rename/visibility (if missing) with strict validation.
-- [ ] Emit `workspace_update` for server name/settings updates.
-- [ ] Emit membership events for join/add/role/kick/ban flows.
-- [ ] Emit `workspace_member_remove` on kick and ban; ensure active-channel safety behavior on web.
-- [ ] Web reducers update workspace list/member rails/permission-sensitive views in-place.
-- [ ] Add integration tests for multi-client workspace rename and membership transitions.
+- [x] Add workspace update API endpoint(s) for rename/visibility (if missing) with strict validation.
+- [x] Emit `workspace_update` for server name/settings updates.
+- [x] Emit membership events for join/add/role/kick/ban flows.
+- [x] Emit `workspace_member_remove` on kick and ban; ensure active-channel safety behavior on web.
+- [x] Web reducers update workspace list/member rails/permission-sensitive views in-place.
+- [x] Add integration tests for multi-client workspace rename and membership transitions.
+
+### Refactor Notes
+- Added `PATCH /guilds/{guild_id}` in `apps/filament-server/src/server/router.rs` and implemented `update_guild` in `apps/filament-server/src/server/handlers/guilds.rs` with:
+  - strict `GuildName`/`GuildVisibility` validation
+  - permission enforcement via `Permission::ManageRoles`
+  - fail-closed empty update rejection
+  - additive `workspace_update` emission only when fields actually changed
+- Expanded typed gateway contracts in `apps/filament-server/src/server/gateway_events.rs` for:
+  - `workspace_update`
+  - `workspace_member_add`
+  - `workspace_member_update`
+  - `workspace_member_remove`
+  - `workspace_member_ban`
+- Wired membership fanout in `apps/filament-server/src/server/handlers/guilds.rs`:
+  - `join_public_guild` emits `workspace_member_add` on accepted join
+  - `add_member` emits `workspace_member_add` on new insertion
+  - `update_member_role` emits `workspace_member_update`
+  - `kick_member` emits `workspace_member_remove` (`reason = kick`)
+  - `ban_member` emits both `workspace_member_ban` and `workspace_member_remove` (`reason = ban`)
+- Extended web gateway boundary validation in `apps/filament-client-web/src/lib/gateway.ts` for all Phase 3 workspace/member events and strict ready payload parsing (`ready.user_id`).
+- Updated web reducers in `apps/filament-client-web/src/features/app-shell/controllers/gateway-controller.ts` to:
+  - apply in-place workspace name/visibility updates
+  - drop the workspace from local state when the authenticated user receives a self-targeted remove/ban event (active-channel safety path via existing selection controller)
+- Added/updated tests:
+  - server integration coverage in `apps/filament-server/tests/gateway_network_flow.rs` for multi-client workspace rename + membership transition fanout
+  - web parser/controller coverage in:
+    - `apps/filament-client-web/tests/gateway.test.ts`
+    - `apps/filament-client-web/tests/app-shell-gateway-controller.test.ts`
 
 ### Exit Criteria
 - Workspace name/settings and membership changes propagate in realtime.

@@ -49,7 +49,8 @@ use crate::server::{
         GuildListResponse, GuildPath, GuildResponse, GuildRoleListResponse, GuildRoleMemberPath,
         GuildRolePath, GuildRoleResponse, MemberPath, ModerationResponse, PublicGuildListItem,
         PublicGuildListQuery, PublicGuildListResponse, ReorderGuildRolesRequest,
-        UpdateChannelRoleOverrideRequest, UpdateGuildRoleRequest, UpdateMemberRoleRequest,
+        UpdateChannelRoleOverrideRequest, UpdateGuildRequest, UpdateGuildRoleRequest,
+        UpdateMemberRoleRequest,
     },
 };
 
@@ -218,6 +219,116 @@ pub(crate) async fn list_guilds(
     response.sort_by(|left, right| right.guild_id.cmp(&left.guild_id));
     response.truncate(MAX_GUILD_LIST_LIMIT);
     Ok(Json(GuildListResponse { guilds: response }))
+}
+
+pub(crate) async fn update_guild(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+    Json(payload): Json<UpdateGuildRequest>,
+) -> Result<Json<GuildResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
+    if !permissions.contains(Permission::ManageRoles) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let name = payload
+        .name
+        .map(|raw| GuildName::try_from(raw).map(|value| value.as_str().to_owned()))
+        .transpose()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let visibility = payload.visibility;
+    if name.is_none() && visibility.is_none() {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    let mut changed_name: Option<String> = None;
+    let mut changed_visibility: Option<GuildVisibility> = None;
+    let updated_at_unix = now_unix();
+    let response = if let Some(pool) = &state.db_pool {
+        let current = sqlx::query("SELECT name, visibility FROM guilds WHERE guild_id = $1")
+            .bind(&path.guild_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?
+            .ok_or(AuthFailure::NotFound)?;
+
+        let current_name: String = current.try_get("name").map_err(|_| AuthFailure::Internal)?;
+        let current_visibility_raw: i16 = current
+            .try_get("visibility")
+            .map_err(|_| AuthFailure::Internal)?;
+        let current_visibility =
+            visibility_from_i16(current_visibility_raw).ok_or(AuthFailure::Internal)?;
+
+        let next_name = name.clone().unwrap_or(current_name.clone());
+        let next_visibility = visibility.unwrap_or(current_visibility);
+        if next_name != current_name {
+            changed_name = Some(next_name.clone());
+        }
+        if next_visibility != current_visibility {
+            changed_visibility = Some(next_visibility);
+        }
+
+        let update = sqlx::query(
+            "UPDATE guilds
+             SET name = $2, visibility = $3
+             WHERE guild_id = $1",
+        )
+        .bind(&path.guild_id)
+        .bind(&next_name)
+        .bind(visibility_to_i16(next_visibility))
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        if update.rows_affected() == 0 {
+            return Err(AuthFailure::NotFound);
+        }
+
+        GuildResponse {
+            guild_id: path.guild_id.clone(),
+            name: next_name,
+            visibility: next_visibility,
+        }
+    } else {
+        let mut guilds = state.guilds.write().await;
+        let guild = guilds
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+
+        if let Some(next_name) = name {
+            if next_name != guild.name {
+                changed_name = Some(next_name.clone());
+                guild.name = next_name;
+            }
+        }
+        if let Some(next_visibility) = visibility {
+            if next_visibility != guild.visibility {
+                changed_visibility = Some(next_visibility);
+                guild.visibility = next_visibility;
+            }
+        }
+
+        GuildResponse {
+            guild_id: path.guild_id.clone(),
+            name: guild.name.clone(),
+            visibility: guild.visibility,
+        }
+    };
+
+    if changed_name.is_some() || changed_visibility.is_some() {
+        let event = gateway_events::workspace_update(
+            &path.guild_id,
+            changed_name.as_deref(),
+            changed_visibility,
+            updated_at_unix,
+            Some(auth.user_id),
+        );
+        broadcast_guild_event(&state, &path.guild_id, &event).await;
+    }
+
+    Ok(Json(response))
 }
 
 pub(crate) const DEFAULT_PUBLIC_GUILD_LIST_LIMIT: usize = 20;
@@ -2381,6 +2492,17 @@ pub(crate) async fn join_public_guild(
     if let Some(failure) = join_failure_from_outcome(outcome) {
         return Err(failure);
     }
+    if outcome == DirectoryJoinOutcome::Accepted {
+        let joined_at_unix = now_unix();
+        let event = gateway_events::workspace_member_add(
+            &path.guild_id,
+            auth.user_id,
+            Role::Member,
+            joined_at_unix,
+            Some(auth.user_id),
+        );
+        broadcast_guild_event(&state, &path.guild_id, &event).await;
+    }
     Ok(Json(DirectoryJoinResponse {
         guild_id: path.guild_id,
         outcome: join_outcome_response(outcome),
@@ -2562,6 +2684,7 @@ pub(crate) async fn add_member(
         return Err(AuthFailure::Forbidden);
     }
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let mut added = false;
 
     if let Some(pool) = &state.db_pool {
         let banned = sqlx::query("SELECT 1 FROM guild_bans WHERE guild_id = $1 AND user_id = $2")
@@ -2574,7 +2697,7 @@ pub(crate) async fn add_member(
             return Err(AuthFailure::Forbidden);
         }
 
-        sqlx::query(
+        let insert = sqlx::query(
             "INSERT INTO guild_members (guild_id, user_id, role)
              VALUES ($1, $2, $3)
              ON CONFLICT (guild_id, user_id) DO NOTHING",
@@ -2591,6 +2714,7 @@ pub(crate) async fn add_member(
                 AuthFailure::Internal
             }
         })?;
+        added = insert.rows_affected() > 0;
     } else {
         let mut guilds = state.guilds.write().await;
         let guild = guilds
@@ -2599,7 +2723,24 @@ pub(crate) async fn add_member(
         if guild.banned_members.contains(&target_user_id) {
             return Err(AuthFailure::Forbidden);
         }
-        guild.members.entry(target_user_id).or_insert(Role::Member);
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            guild.members.entry(target_user_id)
+        {
+            entry.insert(Role::Member);
+            added = true;
+        }
+    }
+
+    if added {
+        let joined_at_unix = now_unix();
+        let event = gateway_events::workspace_member_add(
+            &path.guild_id,
+            target_user_id,
+            Role::Member,
+            joined_at_unix,
+            Some(auth.user_id),
+        );
+        broadcast_guild_event(&state, &path.guild_id, &event).await;
     }
 
     Ok(Json(ModerationResponse { accepted: true }))
@@ -2785,6 +2926,16 @@ pub(crate) async fn update_member_role(
         }
     }
 
+    let updated_at_unix = now_unix();
+    let event = gateway_events::workspace_member_update(
+        &path.guild_id,
+        target_user_id,
+        Some(payload.role),
+        updated_at_unix,
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
+
     write_audit_log(
         &state,
         Some(path.guild_id),
@@ -2936,6 +3087,16 @@ pub(crate) async fn kick_member(
         }
     }
 
+    let removed_at_unix = now_unix();
+    let event = gateway_events::workspace_member_remove(
+        &path.guild_id,
+        target_user_id,
+        "kick",
+        removed_at_unix,
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
+
     write_audit_log(
         &state,
         Some(path.guild_id),
@@ -3009,6 +3170,23 @@ pub(crate) async fn ban_member(
             guild_assignments.remove(&target_user_id);
         }
     }
+
+    let banned_at_unix = now_unix();
+    let ban_event = gateway_events::workspace_member_ban(
+        &path.guild_id,
+        target_user_id,
+        banned_at_unix,
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &ban_event).await;
+    let remove_event = gateway_events::workspace_member_remove(
+        &path.guild_id,
+        target_user_id,
+        "ban",
+        banned_at_unix,
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &remove_event).await;
 
     write_audit_log(
         &state,
