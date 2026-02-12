@@ -12,6 +12,7 @@ import {
   channelNameFromInput,
   guildVisibilityFromInput,
   guildNameFromInput,
+  profileAboutFromInput,
   reactionEmojiFromInput,
   roleFromInput,
   userIdFromInput,
@@ -47,12 +48,17 @@ import {
   fetchHealth,
   fetchMe,
   fetchPublicGuildDirectory,
+  fetchUserProfile,
   issueVoiceToken,
   logoutAuthSession,
+  profileAvatarUrl,
   refreshAuthSession,
   removeFriend,
+  updateMyProfile,
+  uploadMyProfileAvatar,
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
+import { usernameFromInput } from "../domain/auth";
 import {
   canDiscoverWorkspaceOperation,
   channelHeaderLabel,
@@ -80,6 +86,7 @@ import { MessageList } from "../features/app-shell/components/messages/MessageLi
 import { ReactionPickerPortal } from "../features/app-shell/components/messages/ReactionPickerPortal";
 import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
 import { ServerRail } from "../features/app-shell/components/ServerRail";
+import { SafeMarkdown } from "../features/app-shell/components/SafeMarkdown";
 import { createAttachmentController } from "../features/app-shell/controllers/attachment-controller";
 import { createModerationController } from "../features/app-shell/controllers/moderation-controller";
 import {
@@ -302,7 +309,7 @@ const SETTINGS_CATEGORIES: SettingsCategoryItem[] = [
   {
     id: "profile",
     label: "Profile",
-    summary: "Account and identity placeholder.",
+    summary: "Username, about, and avatar.",
   },
 ];
 
@@ -379,6 +386,16 @@ export function AppShellPage() {
   const [gatewayOnline, setGatewayOnline] = createSignal(false);
   const [onlineMembers, setOnlineMembers] = createSignal<string[]>([]);
   const [resolvedUsernames, setResolvedUsernames] = createSignal<Record<string, string>>({});
+  const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<Record<string, number>>({});
+  const [profileDraftUsername, setProfileDraftUsername] = createSignal("");
+  const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
+  const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(null);
+  const [profileSettingsStatus, setProfileSettingsStatus] = createSignal("");
+  const [profileSettingsError, setProfileSettingsError] = createSignal("");
+  const [isSavingProfile, setSavingProfile] = createSignal(false);
+  const [isUploadingProfileAvatar, setUploadingProfileAvatar] = createSignal(false);
+  const [selectedProfileUserId, setSelectedProfileUserId] = createSignal<UserId | null>(null);
+  const [selectedProfileError, setSelectedProfileError] = createSignal("");
 
   const [attachmentByChannel, setAttachmentByChannel] = createSignal<Record<string, AttachmentRecord[]>>({});
   const [selectedAttachment, setSelectedAttachment] = createSignal<File | null>(null);
@@ -892,6 +909,19 @@ export function AppShellPage() {
     onEscape: closeOverlayPanel,
   });
 
+  createEffect(() => {
+    if (!selectedProfileUserId()) {
+      return;
+    }
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedProfileUserId(null);
+      }
+    };
+    window.addEventListener("keydown", onKeydown);
+    onCleanup(() => window.removeEventListener("keydown", onKeydown));
+  });
+
   const {
     messageMediaByAttachmentId,
     loadingMediaPreviewIds,
@@ -1088,21 +1118,107 @@ export function AppShellPage() {
     }
   };
 
-  const [profile] = createResource(async () => {
+  const avatarUrlForUser = (userId: string): string | null => {
+    try {
+      const parsedUserId = userIdFromInput(userId);
+      const avatarVersion = avatarVersionByUserId()[userId] ?? 0;
+      return profileAvatarUrl(parsedUserId, avatarVersion);
+    } catch {
+      return null;
+    }
+  };
+
+  const openUserProfile = (rawUserId: string) => {
+    try {
+      const userId = userIdFromInput(rawUserId);
+      setSelectedProfileError("");
+      setSelectedProfileUserId(userId);
+    } catch {
+      setSelectedProfileError("User profile is unavailable.");
+    }
+  };
+
+  const saveProfileSettings = async () => {
+    const session = auth.session();
+    const currentProfile = profile();
+    if (!session || !currentProfile || isSavingProfile()) {
+      return;
+    }
+
+    setSavingProfile(true);
+    setProfileSettingsStatus("");
+    setProfileSettingsError("");
+    try {
+      const nextUsername = usernameFromInput(profileDraftUsername().trim());
+      const nextAbout = profileAboutFromInput(profileDraftAbout());
+      const updated = await updateMyProfile(session, {
+        username: nextUsername,
+        aboutMarkdown: nextAbout,
+      });
+      mutateProfile(updated);
+      setProfileSettingsStatus("Profile updated.");
+    } catch (error) {
+      setProfileSettingsError(mapError(error, "Unable to save profile settings."));
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const uploadProfileAvatar = async () => {
+    const session = auth.session();
+    const selectedFile = selectedProfileAvatarFile();
+    if (!session || !selectedFile || isUploadingProfileAvatar()) {
+      return;
+    }
+
+    setUploadingProfileAvatar(true);
+    setProfileSettingsStatus("");
+    setProfileSettingsError("");
+    try {
+      const updated = await uploadMyProfileAvatar(session, selectedFile);
+      mutateProfile(updated);
+      setSelectedProfileAvatarFile(null);
+      setProfileSettingsStatus("Profile avatar updated.");
+    } catch (error) {
+      setProfileSettingsError(mapError(error, "Unable to upload profile avatar."));
+    } finally {
+      setUploadingProfileAvatar(false);
+    }
+  };
+
+  const [profile, { mutate: mutateProfile }] = createResource(async () => {
     const session = auth.session();
     if (!session) {
       throw new Error("missing_session");
     }
     return fetchMe(session);
   });
+  const [selectedProfile] = createResource(
+    () => selectedProfileUserId() ?? undefined,
+    async (userId) => {
+      const session = auth.session();
+      if (!session) {
+        throw new Error("missing_session");
+      }
+      return fetchUserProfile(session, userId);
+    },
+  );
 
   createEffect(() => {
     const session = auth.session();
     if (!session) {
       clearUsernameLookupCache();
       setResolvedUsernames({});
+      setAvatarVersionByUserId({});
       setPublicGuildDirectory([]);
       setPublicGuildSearchError("");
+      setProfileDraftUsername("");
+      setProfileDraftAbout("");
+      setSelectedProfileAvatarFile(null);
+      setProfileSettingsStatus("");
+      setProfileSettingsError("");
+      setSelectedProfileUserId(null);
+      setSelectedProfileError("");
       return;
     }
     void untrack(() => loadPublicGuildDirectory());
@@ -1113,6 +1229,7 @@ export function AppShellPage() {
     if (!session) {
       clearUsernameLookupCache();
       setResolvedUsernames({});
+      setAvatarVersionByUserId({});
       setFriends([]);
       setFriendRequests({ incoming: [], outgoing: [] });
       setFriendStatus("");
@@ -1127,11 +1244,35 @@ export function AppShellPage() {
     if (!value) {
       return;
     }
+    setProfileDraftUsername(value.username);
+    setProfileDraftAbout(value.aboutMarkdown);
     primeUsernameCache([{ userId: value.userId, username: value.username }]);
     setResolvedUsernames((existing) => ({
       ...existing,
       [value.userId]: value.username,
     }));
+    setAvatarVersionByUserId((existing) => ({
+      ...existing,
+      [value.userId]: value.avatarVersion,
+    }));
+  });
+
+  createEffect(() => {
+    const value = selectedProfile();
+    if (!value) {
+      return;
+    }
+    setSelectedProfileError("");
+    setAvatarVersionByUserId((existing) => ({
+      ...existing,
+      [value.userId]: value.avatarVersion,
+    }));
+  });
+
+  createEffect(() => {
+    if (selectedProfile.error) {
+      setSelectedProfileError(mapError(selectedProfile.error, "Profile unavailable."));
+    }
   });
 
   createEffect(() => {
@@ -1906,10 +2047,14 @@ export function AppShellPage() {
             isTogglingVoiceMic={isTogglingVoiceMic()}
             isTogglingVoiceCamera={isTogglingVoiceCamera()}
             isTogglingVoiceScreenShare={isTogglingVoiceScreenShare()}
+            currentUserId={profile()?.userId ?? null}
             currentUserLabel={profile()?.username}
             currentUserStatusLabel={gatewayOnline() ? "Online" : "Offline"}
+            resolveAvatarUrl={avatarUrlForUser}
+            userIdFromVoiceIdentity={userIdFromVoiceIdentity}
             actorLabel={actorLabel}
             voiceParticipantLabel={voiceParticipantLabel}
+            onOpenUserProfile={openUserProfile}
             onOpenSettings={() => openOverlayPanel("settings")}
             onCreateTextChannel={() => {
               setNewChannelKind(channelKindFromInput("text"));
@@ -1994,6 +2139,8 @@ export function AppShellPage() {
                   currentUserId={profile()?.userId ?? null}
                   canDeleteMessages={canDeleteMessages()}
                   displayUserLabel={displayUserLabel}
+                  resolveAvatarUrl={avatarUrlForUser}
+                  onOpenAuthorProfile={openUserProfile}
                   editingMessageId={editingMessageId()}
                   editingDraft={editingDraft()}
                   isSavingEdit={isSavingEdit()}
@@ -2136,11 +2283,25 @@ export function AppShellPage() {
           isRefreshingAudioDevices: isRefreshingAudioDevices(),
           audioDevicesStatus: audioDevicesStatus(),
           audioDevicesError: audioDevicesError(),
+          profile: profile() ?? null,
+          profileDraftUsername: profileDraftUsername(),
+          profileDraftAbout: profileDraftAbout(),
+          profileAvatarUrl: profile() ? avatarUrlForUser(profile()!.userId) : null,
+          selectedAvatarFilename: selectedProfileAvatarFile()?.name ?? "",
+          isSavingProfile: isSavingProfile(),
+          isUploadingProfileAvatar: isUploadingProfileAvatar(),
+          profileStatus: profileSettingsStatus(),
+          profileError: profileSettingsError(),
           onOpenSettingsCategory: openSettingsCategory,
           onOpenVoiceSettingsSubmenu: setActiveVoiceSettingsSubmenu,
           onSetVoiceDevicePreference: (kind, value) =>
             setVoiceDevicePreference(kind, value),
           onRefreshAudioDeviceInventory: refreshAudioDeviceInventory,
+          onProfileUsernameInput: setProfileDraftUsername,
+          onProfileAboutInput: setProfileDraftAbout,
+          onSelectProfileAvatarFile: setSelectedProfileAvatarFile,
+          onSaveProfile: saveProfileSettings,
+          onUploadProfileAvatar: uploadProfileAvatar,
         }}
         friendshipsPanelProps={{
           friendRecipientUserIdInput: friendRecipientUserIdInput(),
@@ -2224,6 +2385,71 @@ export function AppShellPage() {
           onRunEcho: runEcho,
         }}
       />
+
+      <Show when={selectedProfileUserId()}>
+        <div
+          class="panel-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedProfileUserId(null);
+            }
+          }}
+        >
+          <section
+            class="panel-window panel-window-compact profile-view-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="User profile panel"
+          >
+            <header class="panel-window-header">
+              <h4>User profile</h4>
+              <button type="button" onClick={() => setSelectedProfileUserId(null)}>
+                Close
+              </button>
+            </header>
+            <div class="panel-window-body">
+              <Show when={selectedProfile.loading}>
+                <p class="panel-note">Loading profile...</p>
+              </Show>
+              <Show when={selectedProfileError()}>
+                <p class="status error">{selectedProfileError()}</p>
+              </Show>
+              <Show when={selectedProfile()}>
+                {(value) => (
+                  <section class="profile-view-body">
+                    <div class="profile-view-header">
+                      <span class="profile-view-avatar" aria-hidden="true">
+                        <span class="profile-view-avatar-fallback">
+                          {value().username.slice(0, 1).toUpperCase()}
+                        </span>
+                        <Show when={avatarUrlForUser(value().userId)}>
+                          <img
+                            class="profile-view-avatar-image"
+                            src={avatarUrlForUser(value().userId)!}
+                            alt={`${value().username} avatar`}
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
+                            onError={(event) => {
+                              event.currentTarget.style.display = "none";
+                            }}
+                          />
+                        </Show>
+                      </span>
+                      <div>
+                        <p class="profile-view-name">{value().username}</p>
+                        <p class="mono">{value().userId}</p>
+                      </div>
+                    </div>
+                    <SafeMarkdown class="profile-view-markdown" tokens={value().aboutMarkdownTokens} />
+                  </section>
+                )}
+              </Show>
+            </div>
+          </section>
+        </div>
+      </Show>
     </div>
   );
 }

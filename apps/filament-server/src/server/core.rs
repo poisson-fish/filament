@@ -38,6 +38,7 @@ pub const DEFAULT_GATEWAY_INGRESS_WINDOW_SECS: u64 = 10;
 pub const DEFAULT_GATEWAY_OUTBOUND_QUEUE: usize = 256;
 pub const DEFAULT_MAX_GATEWAY_EVENT_BYTES: usize = filament_protocol::MAX_EVENT_BYTES;
 pub const DEFAULT_MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
+pub const DEFAULT_MAX_PROFILE_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 pub const DEFAULT_USER_ATTACHMENT_QUOTA_BYTES: u64 = 250 * 1024 * 1024;
 pub const DEFAULT_SEARCH_QUERY_MAX_CHARS: usize = 256;
 pub const DEFAULT_SEARCH_RESULT_LIMIT: usize = 20;
@@ -64,6 +65,8 @@ pub(crate) const MAX_SEARCH_RECONCILE_DOCS: usize = 10_000;
 pub(crate) const MAX_REACTION_EMOJI_CHARS: usize = 32;
 pub(crate) const MAX_USER_LOOKUP_IDS: usize = 64;
 pub(crate) const MAX_ATTACHMENTS_PER_MESSAGE: usize = 5;
+pub(crate) const MAX_PROFILE_AVATAR_MIME_CHARS: usize = 64;
+pub(crate) const MAX_PROFILE_AVATAR_OBJECT_KEY_CHARS: usize = 128;
 pub(crate) const METRICS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
 pub(crate) static METRICS_STATE: OnceLock<MetricsState> = OnceLock::new();
@@ -86,6 +89,7 @@ pub struct AppConfig {
     pub gateway_outbound_queue: usize,
     pub max_gateway_event_bytes: usize,
     pub max_attachment_bytes: usize,
+    pub max_profile_avatar_bytes: usize,
     pub user_attachment_quota_bytes: u64,
     pub search_query_max_chars: usize,
     pub search_result_limit_max: usize,
@@ -118,6 +122,7 @@ impl Default for AppConfig {
             gateway_outbound_queue: DEFAULT_GATEWAY_OUTBOUND_QUEUE,
             max_gateway_event_bytes: DEFAULT_MAX_GATEWAY_EVENT_BYTES,
             max_attachment_bytes: DEFAULT_MAX_ATTACHMENT_BYTES,
+            max_profile_avatar_bytes: DEFAULT_MAX_PROFILE_AVATAR_BYTES,
             user_attachment_quota_bytes: DEFAULT_USER_ATTACHMENT_QUOTA_BYTES,
             search_query_max_chars: DEFAULT_SEARCH_QUERY_MAX_CHARS,
             search_result_limit_max: DEFAULT_SEARCH_RESULT_LIMIT_MAX,
@@ -148,6 +153,7 @@ pub(crate) struct RuntimeSecurityConfig {
     pub(crate) gateway_outbound_queue: usize,
     pub(crate) max_gateway_event_bytes: usize,
     pub(crate) max_attachment_bytes: usize,
+    pub(crate) max_profile_avatar_bytes: usize,
     pub(crate) user_attachment_quota_bytes: u64,
     pub(crate) search_query_max_chars: usize,
     pub(crate) search_result_limit_max: usize,
@@ -312,6 +318,7 @@ impl AppState {
                 gateway_outbound_queue: config.gateway_outbound_queue,
                 max_gateway_event_bytes: config.max_gateway_event_bytes,
                 max_attachment_bytes: config.max_attachment_bytes,
+                max_profile_avatar_bytes: config.max_profile_avatar_bytes,
                 user_attachment_quota_bytes: config.user_attachment_quota_bytes,
                 search_query_max_chars: config.search_query_max_chars,
                 search_result_limit_max: config.search_result_limit_max,
@@ -332,9 +339,20 @@ impl AppState {
 pub(crate) struct UserRecord {
     pub(crate) id: UserId,
     pub(crate) username: Username,
+    pub(crate) about_markdown: String,
+    pub(crate) avatar: Option<ProfileAvatarRecord>,
+    pub(crate) avatar_version: i64,
     pub(crate) password_hash: String,
     pub(crate) failed_logins: u8,
     pub(crate) locked_until_unix: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ProfileAvatarRecord {
+    pub(crate) object_key: String,
+    pub(crate) mime_type: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) sha256_hex: String,
 }
 
 #[derive(Debug, Clone)]

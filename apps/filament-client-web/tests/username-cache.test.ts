@@ -20,8 +20,11 @@ const USER_A = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
 const USER_B = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW");
 const USER_C = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX");
 
-function asLookupRecord(userId: UserId, username: string): { userId: UserId; username: string } {
-  return { userId, username };
+function asLookupRecord(
+  userId: UserId,
+  username: string,
+): { userId: UserId; username: string; avatarVersion: number } {
+  return { userId, username, avatarVersion: 0 };
 }
 
 describe("username cache", () => {

@@ -25,6 +25,12 @@ pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure
                 "CREATE TABLE IF NOT EXISTS users (
                     user_id TEXT PRIMARY KEY,
                     username TEXT UNIQUE NOT NULL,
+                    about_markdown TEXT NOT NULL DEFAULT '',
+                    avatar_object_key TEXT NULL,
+                    avatar_mime_type TEXT NULL,
+                    avatar_size_bytes BIGINT NULL,
+                    avatar_sha256_hex TEXT NULL,
+                    avatar_version BIGINT NOT NULL DEFAULT 0,
                     password_hash TEXT NOT NULL,
                     failed_logins SMALLINT NOT NULL DEFAULT 0,
                     locked_until_unix BIGINT NULL
@@ -32,6 +38,55 @@ pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure
             )
             .execute(&mut *tx)
             .await?;
+
+            sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS about_markdown TEXT")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "UPDATE users
+                 SET about_markdown = ''
+                 WHERE about_markdown IS NULL",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(
+                "ALTER TABLE users ALTER COLUMN about_markdown SET DEFAULT ''",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("ALTER TABLE users ALTER COLUMN about_markdown SET NOT NULL")
+                .execute(&mut *tx)
+                .await?;
+
+            sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_object_key TEXT")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_mime_type TEXT")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_size_bytes BIGINT")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_sha256_hex TEXT")
+                .execute(&mut *tx)
+                .await?;
+
+            sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_version BIGINT")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "UPDATE users
+                 SET avatar_version = 0
+                 WHERE avatar_version IS NULL",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("ALTER TABLE users ALTER COLUMN avatar_version SET DEFAULT 0")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("ALTER TABLE users ALTER COLUMN avatar_version SET NOT NULL")
+                .execute(&mut *tx)
+                .await?;
 
             sqlx::query(
                 "CREATE TABLE IF NOT EXISTS sessions (

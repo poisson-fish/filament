@@ -1099,6 +1099,16 @@ select {
   padding: 0.55rem 0.62rem;
 }
 
+.inline-form textarea {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.62rem;
+  background: #0f1b33;
+  padding: 0.55rem 0.62rem;
+  color: var(--ink-1);
+  resize: vertical;
+  min-height: 6rem;
+}
+
 .inline-form select {
   border: 1px solid var(--line-soft);
   border-radius: 0.62rem;
@@ -1908,9 +1918,143 @@ select {
   cursor: pointer;
 }
 
+.settings-profile-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.settings-profile-preview {
+  border: 1px solid #353b45;
+  border-radius: 0.72rem;
+  background: #1c222c;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.settings-profile-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.settings-avatar-shell {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 999px;
+  border: 1px solid #50586a;
+  background: linear-gradient(140deg, #59657b, #434c5d);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f4f6f9;
+  font-size: 0.78rem;
+  font-weight: 780;
+  position: relative;
+  overflow: hidden;
+}
+
+.settings-avatar-fallback {
+  z-index: 1;
+}
+
+.settings-avatar-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  z-index: 2;
+}
+
+.settings-profile-name {
+  margin: 0;
+  font-weight: 760;
+}
+
+.settings-profile-markdown {
+  color: #d8dbe2;
+  line-height: 1.4;
+}
+
+.settings-profile-markdown p,
+.profile-view-markdown p {
+  margin: 0;
+}
+
+.settings-profile-markdown p + p,
+.profile-view-markdown p + p {
+  margin-top: 0.45rem;
+}
+
+.settings-profile-markdown ul,
+.settings-profile-markdown ol,
+.profile-view-markdown ul,
+.profile-view-markdown ol {
+  margin: 0.4rem 0 0.4rem 1.15rem;
+  padding: 0;
+}
+
 .settings-submenu-button-active {
   border-color: rgba(98, 167, 255, 0.85);
   background: rgba(98, 167, 255, 0.16);
+}
+
+.profile-view-panel {
+  width: min(28rem, 100%);
+}
+
+.profile-view-body {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.profile-view-header {
+  display: flex;
+  align-items: center;
+  gap: 0.68rem;
+}
+
+.profile-view-avatar {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 999px;
+  border: 1px solid #50586a;
+  background: linear-gradient(140deg, #59657b, #434c5d);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f4f6f9;
+  font-size: 0.98rem;
+  font-weight: 780;
+  position: relative;
+  overflow: hidden;
+}
+
+.profile-view-avatar-fallback {
+  z-index: 1;
+}
+
+.profile-view-avatar-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  z-index: 2;
+}
+
+.profile-view-name {
+  margin: 0;
+  font-weight: 780;
+  font-size: 1rem;
+}
+
+.profile-view-markdown {
+  color: #d8dbe2;
+  line-height: 1.44;
 }
 
 @media (max-width: 1200px) {
@@ -2277,6 +2421,30 @@ select {
   justify-content: center;
   flex-shrink: 0;
   text-transform: uppercase;
+  position: relative;
+  overflow: hidden;
+}
+
+.voice-tree-avatar-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.voice-tree-avatar-fallback {
+  z-index: 1;
+}
+
+.voice-tree-avatar-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  z-index: 2;
 }
 
 .voice-channel-presence-participant-local {
@@ -2422,6 +2590,30 @@ select {
   justify-content: center;
   text-transform: uppercase;
   flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.channel-rail-account-avatar-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.channel-rail-account-avatar-fallback {
+  z-index: 1;
+}
+
+.channel-rail-account-avatar-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  z-index: 2;
 }
 
 .channel-rail-account-copy {
@@ -2551,6 +2743,32 @@ select {
   font-weight: 800;
   letter-spacing: 0.03em;
   margin-top: 0.08rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.message-avatar-button {
+  width: 2.1rem;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin-top: 0.08rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.message-avatar-fallback {
+  z-index: 1;
+}
+
+.message-avatar-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  z-index: 2;
 }
 
 .message-main {

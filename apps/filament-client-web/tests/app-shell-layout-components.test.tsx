@@ -101,8 +101,12 @@ describe("app shell extracted layout components", () => {
         isTogglingVoiceMic={false}
         isTogglingVoiceCamera={false}
         isTogglingVoiceScreenShare={false}
+        currentUserId={"01ARZ3NDEKTSV4RRFFQ69G5FAZ"}
+        resolveAvatarUrl={() => null}
+        userIdFromVoiceIdentity={() => null}
         actorLabel={(value) => value}
         voiceParticipantLabel={(identity) => identity}
+        onOpenUserProfile={() => {}}
         onOpenSettings={onOpenSettings}
         onCreateTextChannel={() => {}}
         onCreateVoiceChannel={() => {}}

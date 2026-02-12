@@ -34,6 +34,7 @@ use super::{
             add_reaction, create_message, delete_message, edit_message, get_channel_permissions,
             get_messages, remove_reaction,
         },
+        profile::{download_user_avatar, get_user_profile, update_my_profile, upload_my_avatar},
         search::{rebuild_search_index, reconcile_search_index, search_messages},
     },
     realtime::gateway_ws,
@@ -67,6 +68,9 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             "max created guilds per user must be at least 1 guild"
         ));
     }
+    if config.max_profile_avatar_bytes == 0 {
+        return Err(anyhow!("max profile avatar bytes must be at least 1 byte"));
+    }
     if config.livekit_token_ttl.is_zero()
         || config.livekit_token_ttl > Duration::from_secs(MAX_LIVEKIT_TOKEN_TTL_SECS)
     {
@@ -97,6 +101,9 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route("/auth/refresh", post(refresh))
         .route("/auth/logout", post(logout))
         .route("/auth/me", get(me))
+        .route("/users/me/profile", patch(update_my_profile))
+        .route("/users/{user_id}/profile", get(get_user_profile))
+        .route("/users/{user_id}/avatar", get(download_user_avatar))
         .route("/users/lookup", post(lookup_users))
         .route("/friends", get(list_friends))
         .route("/friends/{friend_user_id}", delete(remove_friend))
@@ -171,6 +178,7 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             "/guilds/{guild_id}/channels/{channel_id}/attachments",
             post(upload_attachment),
         )
+        .route("/users/me/profile/avatar", post(upload_my_avatar))
         .layer(DefaultBodyLimit::disable());
 
     Ok(routes

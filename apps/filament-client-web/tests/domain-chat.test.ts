@@ -14,6 +14,7 @@ import {
   messageContentFromInput,
   messageFromResponse,
   permissionFromInput,
+  profileFromResponse,
   publicGuildDirectoryFromResponse,
   reactionEmojiFromInput,
   reactionFromResponse,
@@ -236,9 +237,30 @@ describe("chat domain invariants", () => {
         {
           user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
           username: "alice",
+          avatar_version: 4,
         },
       ],
     });
     expect(users[0]?.username).toBe("alice");
+    expect(users[0]?.avatarVersion).toBe(4);
+  });
+
+  it("maps profile payloads into validated records", () => {
+    const profile = profileFromResponse({
+      user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      username: "alice",
+      about_markdown: "hello **world**",
+      about_markdown_tokens: [
+        { type: "paragraph_start" },
+        { type: "text", text: "hello " },
+        { type: "strong_start" },
+        { type: "text", text: "world" },
+        { type: "strong_end" },
+        { type: "paragraph_end" },
+      ],
+      avatar_version: 7,
+    });
+    expect(profile.username).toBe("alice");
+    expect(profile.avatarVersion).toBe(7);
   });
 });

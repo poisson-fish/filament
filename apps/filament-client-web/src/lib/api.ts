@@ -37,6 +37,7 @@ import {
   type SearchQuery,
   type SearchReconcileResult,
   type SearchResults,
+  type ProfileRecord,
   type UserLookupRecord,
   type UserId,
   type VoiceTokenRecord,
@@ -52,6 +53,7 @@ import {
   moderationResultFromResponse,
   publicGuildDirectoryFromResponse,
   reactionFromResponse,
+  profileFromResponse,
   searchReconcileFromResponse,
   searchResultsFromResponse,
   userLookupListFromResponse,
@@ -64,6 +66,7 @@ const DEFAULT_API_ORIGIN = "https://api.filament.local";
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const MAX_ATTACHMENT_DOWNLOAD_BYTES = 26 * 1024 * 1024;
+const MAX_PROFILE_AVATAR_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 7_000;
 
 export class ApiError extends Error {
@@ -328,7 +331,7 @@ export async function logoutAuthSession(refreshToken: RefreshToken): Promise<voi
   });
 }
 
-export async function fetchMe(session: AuthSession): Promise<{ userId: UserId; username: string }> {
+export async function fetchMe(session: AuthSession): Promise<ProfileRecord> {
   const dto = await requestJson({
     method: "GET",
     path: "/auth/me",
@@ -344,11 +347,82 @@ export async function fetchMe(session: AuthSession): Promise<{ userId: UserId; u
   if (typeof userId !== "string" || typeof username !== "string") {
     throw new ApiError(500, "invalid_me_shape", "Unexpected profile response.");
   }
-
-  return {
-    userId: userIdFromInput(userId),
-    username,
+  const data = dto as {
+    about_markdown?: unknown;
+    about_markdown_tokens?: unknown;
+    avatar_version?: unknown;
   };
+  return profileFromResponse({
+    user_id: userId,
+    username,
+    about_markdown: typeof data.about_markdown === "string" ? data.about_markdown : "",
+    about_markdown_tokens: Array.isArray(data.about_markdown_tokens)
+      ? data.about_markdown_tokens
+      : [],
+    avatar_version: Number.isInteger(data.avatar_version) ? data.avatar_version : 0,
+  });
+}
+
+export async function fetchUserProfile(
+  session: AuthSession,
+  userId: UserId,
+): Promise<ProfileRecord> {
+  const dto = await requestJson({
+    method: "GET",
+    path: `/users/${userId}/profile`,
+    accessToken: session.accessToken,
+  });
+  return profileFromResponse(dto);
+}
+
+export async function updateMyProfile(
+  session: AuthSession,
+  input: { username?: Username; aboutMarkdown?: string },
+): Promise<ProfileRecord> {
+  const body: Record<string, unknown> = {};
+  if (input.username) {
+    body.username = input.username;
+  }
+  if (typeof input.aboutMarkdown === "string") {
+    body.about_markdown = input.aboutMarkdown;
+  }
+  const dto = await requestJson({
+    method: "PATCH",
+    path: "/users/me/profile",
+    accessToken: session.accessToken,
+    body,
+  });
+  return profileFromResponse(dto);
+}
+
+export async function uploadMyProfileAvatar(
+  session: AuthSession,
+  file: File,
+): Promise<ProfileRecord> {
+  if (file.size < 1 || file.size > MAX_PROFILE_AVATAR_BYTES) {
+    throw new ApiError(
+      400,
+      "invalid_request",
+      "Avatar size must be within server limits.",
+    );
+  }
+  const headers: Record<string, string> = {};
+  if (file.type && file.type.length <= 128) {
+    headers["content-type"] = file.type;
+  }
+  const dto = await requestJsonWithBody({
+    method: "POST",
+    path: "/users/me/profile/avatar",
+    accessToken: session.accessToken,
+    headers,
+    body: file,
+  });
+  return profileFromResponse(dto);
+}
+
+export function profileAvatarUrl(userId: UserId, avatarVersion: number): string {
+  const config = apiConfig();
+  return `${config.baseUrl}/users/${userId}/avatar?v=${Math.max(0, Math.trunc(avatarVersion))}`;
 }
 
 export async function lookupUsersByIds(

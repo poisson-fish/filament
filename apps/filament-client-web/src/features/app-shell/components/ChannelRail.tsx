@@ -59,10 +59,14 @@ interface ChannelRailProps {
   isTogglingVoiceMic: boolean;
   isTogglingVoiceCamera: boolean;
   isTogglingVoiceScreenShare: boolean;
+  currentUserId?: string | null;
   currentUserLabel?: string;
   currentUserStatusLabel?: string;
+  resolveAvatarUrl: (userId: string) => string | null;
+  userIdFromVoiceIdentity: (identity: string) => string | null;
   actorLabel: (actorId: string) => string;
   voiceParticipantLabel: (identity: string, isLocal: boolean) => string;
+  onOpenUserProfile: (userId: string) => void;
   onOpenSettings: () => void;
   onCreateTextChannel: () => void;
   onCreateVoiceChannel: () => void;
@@ -191,9 +195,44 @@ export function ChannelRail(props: ChannelRailProps) {
                                       "voice-channel-presence-participant-speaking": entry.isSpeaking,
                                     }}
                                   >
-                                    <span class="voice-tree-avatar" aria-hidden="true">
-                                      {actorAvatarGlyph(props.actorLabel(entry.identity))}
-                                    </span>
+                                    <Show
+                                      when={props.userIdFromVoiceIdentity(entry.identity)}
+                                      fallback={
+                                        <span class="voice-tree-avatar" aria-hidden="true">
+                                          <span class="voice-tree-avatar-fallback">
+                                            {actorAvatarGlyph(props.actorLabel(entry.identity))}
+                                          </span>
+                                        </span>
+                                      }
+                                    >
+                                      {(participantUserId) => (
+                                        <button
+                                          type="button"
+                                          class="voice-tree-avatar-button"
+                                          aria-label={`Open ${props.voiceParticipantLabel(entry.identity, entry.isLocal)} profile`}
+                                          onClick={() => props.onOpenUserProfile(participantUserId())}
+                                        >
+                                          <span class="voice-tree-avatar">
+                                            <span class="voice-tree-avatar-fallback" aria-hidden="true">
+                                              {actorAvatarGlyph(props.actorLabel(entry.identity))}
+                                            </span>
+                                            <Show when={props.resolveAvatarUrl(participantUserId())}>
+                                              <img
+                                                class="voice-tree-avatar-image"
+                                                src={props.resolveAvatarUrl(participantUserId())!}
+                                                alt={`${props.voiceParticipantLabel(entry.identity, entry.isLocal)} avatar`}
+                                                loading="lazy"
+                                                decoding="async"
+                                                referrerPolicy="no-referrer"
+                                                onError={(event) => {
+                                                  event.currentTarget.style.display = "none";
+                                                }}
+                                              />
+                                            </Show>
+                                          </span>
+                                        </button>
+                                      )}
+                                    </Show>
                                     <span
                                       classList={{
                                         "voice-channel-presence-name": true,
@@ -391,9 +430,44 @@ export function ChannelRail(props: ChannelRailProps) {
 
             <footer class="channel-rail-account-bar" aria-label="Account controls">
               <div class="channel-rail-account-identity">
-                <span class="channel-rail-account-avatar" aria-hidden="true">
-                  {actorAvatarGlyph(currentUserLabel())}
-                </span>
+                <Show
+                  when={props.currentUserId}
+                  fallback={
+                    <span class="channel-rail-account-avatar" aria-hidden="true">
+                      <span class="channel-rail-account-avatar-fallback">
+                        {actorAvatarGlyph(currentUserLabel())}
+                      </span>
+                    </span>
+                  }
+                >
+                  {(currentUserId) => (
+                    <button
+                      type="button"
+                      class="channel-rail-account-avatar-button"
+                      aria-label={`Open ${currentUserLabel()} profile`}
+                      onClick={() => props.onOpenUserProfile(currentUserId())}
+                    >
+                      <span class="channel-rail-account-avatar">
+                        <span class="channel-rail-account-avatar-fallback" aria-hidden="true">
+                          {actorAvatarGlyph(currentUserLabel())}
+                        </span>
+                        <Show when={props.resolveAvatarUrl(currentUserId())}>
+                          <img
+                            class="channel-rail-account-avatar-image"
+                            src={props.resolveAvatarUrl(currentUserId())!}
+                            alt={`${currentUserLabel()} avatar`}
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
+                            onError={(event) => {
+                              event.currentTarget.style.display = "none";
+                            }}
+                          />
+                        </Show>
+                      </span>
+                    </button>
+                  )}
+                </Show>
                 <div class="channel-rail-account-copy">
                   <p class="channel-rail-account-name">{currentUserLabel()}</p>
                   <p class="channel-rail-account-status">{currentUserStatusLabel()}</p>

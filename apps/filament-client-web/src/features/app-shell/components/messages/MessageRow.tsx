@@ -22,6 +22,8 @@ export interface MessageRowProps {
   currentUserId: UserId | null;
   canDeleteMessages: boolean;
   displayUserLabel: (userId: string) => string;
+  resolveAvatarUrl: (userId: string) => string | null;
+  onOpenAuthorProfile: (userId: UserId) => void;
   editingMessageId: MessageId | null;
   editingDraft: string;
   isSavingEdit: boolean;
@@ -60,12 +62,35 @@ export function MessageRow(props: MessageRowProps) {
       props.pendingReactionByKey,
     ),
   );
+  const authorAvatarUrl = createMemo(() => props.resolveAvatarUrl(props.message.authorId));
 
   return (
     <article class="message-row">
-      <div class="message-avatar" aria-hidden="true">
-        {actorAvatarGlyph(props.displayUserLabel(props.message.authorId))}
-      </div>
+      <button
+        type="button"
+        class="message-avatar-button"
+        aria-label={`Open ${props.displayUserLabel(props.message.authorId)} profile`}
+        onClick={() => props.onOpenAuthorProfile(props.message.authorId)}
+      >
+        <span class="message-avatar">
+          <span class="message-avatar-fallback" aria-hidden="true">
+            {actorAvatarGlyph(props.displayUserLabel(props.message.authorId))}
+          </span>
+          <Show when={authorAvatarUrl()}>
+            <img
+              class="message-avatar-image"
+              src={authorAvatarUrl()!}
+              alt={`${props.displayUserLabel(props.message.authorId)} avatar`}
+              loading="lazy"
+              decoding="async"
+              referrerPolicy="no-referrer"
+              onError={(event) => {
+                event.currentTarget.style.display = "none";
+              }}
+            />
+          </Show>
+        </span>
+      </button>
       <div class="message-main">
         <p class="message-meta">
           <strong>{props.displayUserLabel(props.message.authorId)}</strong>

@@ -24,6 +24,8 @@ pub enum DomainError {
     InvalidLiveKitRoomName,
     #[error("livekit identity is invalid")]
     InvalidLiveKitIdentity,
+    #[error("profile about is invalid")]
+    InvalidProfileAbout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +87,25 @@ impl Username {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ProfileAbout(String);
+
+impl ProfileAbout {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for ProfileAbout {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        validate_profile_about(&value)?;
+        Ok(Self(value))
     }
 }
 
@@ -461,13 +482,23 @@ fn validate_livekit_identifier(value: &str) -> Result<(), DomainError> {
     Err(DomainError::InvalidName)
 }
 
+fn validate_profile_about(value: &str) -> Result<(), DomainError> {
+    if value.len() > 2_048 {
+        return Err(DomainError::InvalidProfileAbout);
+    }
+    if value.contains('\0') {
+        return Err(DomainError::InvalidProfileAbout);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
         has_permission, project_name, role_rank, tokenize_markdown, ChannelKind, ChannelName,
         ChannelPermissionOverwrite, DomainError, GuildName, LiveKitIdentity, LiveKitRoomName,
-        MarkdownToken, Permission, PermissionSet, Role, UserId, Username,
+        MarkdownToken, Permission, PermissionSet, ProfileAbout, Role, UserId, Username,
     };
 
     #[test]
@@ -487,6 +518,14 @@ mod tests {
             Username::try_from(String::from("bad-name")).unwrap_err(),
             DomainError::InvalidUsername
         );
+    }
+
+    #[test]
+    fn profile_about_invariants_enforced() {
+        let about = ProfileAbout::try_from(String::from("hello **world**")).unwrap();
+        assert_eq!(about.as_str(), "hello **world**");
+        assert!(ProfileAbout::try_from("\0bad".to_owned()).is_err());
+        assert!(ProfileAbout::try_from("a".repeat(2_049)).is_err());
     }
 
     #[test]

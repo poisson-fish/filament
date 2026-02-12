@@ -9,7 +9,7 @@ use reqwest::Client;
 use sqlx::Row;
 use ulid::Ulid;
 
-use filament_core::{UserId, Username};
+use filament_core::{tokenize_markdown, UserId, Username};
 
 use crate::server::{
     auth::{
@@ -116,6 +116,9 @@ pub(crate) async fn register(
         UserRecord {
             id: user_id,
             username: username.clone(),
+            about_markdown: String::new(),
+            avatar: None,
+            avatar_version: 0,
             password_hash,
             failed_logins: 0,
             locked_until_unix: None,
@@ -542,9 +545,43 @@ pub(crate) async fn me(
 ) -> Result<Json<MeResponse>, AuthFailure> {
     let auth = authenticate(&state, &headers).await?;
 
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "SELECT username, about_markdown, avatar_version
+             FROM users
+             WHERE user_id = $1",
+        )
+        .bind(auth.user_id.to_string())
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .ok_or(AuthFailure::Unauthorized)?;
+        let username: String = row.try_get("username").map_err(|_| AuthFailure::Internal)?;
+        let about_markdown: String = row
+            .try_get("about_markdown")
+            .map_err(|_| AuthFailure::Internal)?;
+        let avatar_version: i64 = row
+            .try_get("avatar_version")
+            .map_err(|_| AuthFailure::Internal)?;
+
+        return Ok(Json(MeResponse {
+            user_id: auth.user_id.to_string(),
+            username,
+            about_markdown: about_markdown.clone(),
+            about_markdown_tokens: tokenize_markdown(&about_markdown),
+            avatar_version,
+        }));
+    }
+
+    let users = state.users.read().await;
+    let user = users.get(&auth.username).ok_or(AuthFailure::Unauthorized)?;
+
     Ok(Json(MeResponse {
         user_id: auth.user_id.to_string(),
-        username: auth.username,
+        username: user.username.as_str().to_owned(),
+        about_markdown: user.about_markdown.clone(),
+        about_markdown_tokens: tokenize_markdown(&user.about_markdown),
+        avatar_version: user.avatar_version,
     }))
 }
 
@@ -572,26 +609,36 @@ pub(crate) async fn lookup_users(
 
     if let Some(pool) = &state.db_pool {
         let user_ids: Vec<String> = deduped.iter().map(ToString::to_string).collect();
-        let rows = sqlx::query("SELECT user_id, username FROM users WHERE user_id = ANY($1)")
-            .bind(&user_ids)
-            .fetch_all(pool)
-            .await
-            .map_err(|_| AuthFailure::Internal)?;
+        let rows = sqlx::query(
+            "SELECT user_id, username, avatar_version
+             FROM users
+             WHERE user_id = ANY($1)",
+        )
+        .bind(&user_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
 
-        let mut usernames_by_id = HashMap::with_capacity(rows.len());
+        let mut users_by_id = HashMap::with_capacity(rows.len());
         for row in rows {
             let user_id: String = row.try_get("user_id").map_err(|_| AuthFailure::Internal)?;
             let username: String = row.try_get("username").map_err(|_| AuthFailure::Internal)?;
-            usernames_by_id.insert(user_id, username);
+            let avatar_version: i64 = row
+                .try_get("avatar_version")
+                .map_err(|_| AuthFailure::Internal)?;
+            users_by_id.insert(user_id, (username, avatar_version));
         }
 
         let users = user_ids
             .iter()
             .filter_map(|user_id| {
-                usernames_by_id.get(user_id).map(|username| UserLookupItem {
-                    user_id: user_id.clone(),
-                    username: username.clone(),
-                })
+                users_by_id
+                    .get(user_id)
+                    .map(|(username, avatar_version)| UserLookupItem {
+                        user_id: user_id.clone(),
+                        username: username.clone(),
+                        avatar_version: *avatar_version,
+                    })
             })
             .collect();
         return Ok(Json(UserLookupResponse { users }));
@@ -608,6 +655,7 @@ pub(crate) async fn lookup_users(
                 .map(|username| UserLookupItem {
                     user_id: user_id_text,
                     username,
+                    avatar_version: 0,
                 })
         })
         .collect();

@@ -36,6 +36,9 @@ describe("app shell moderation controller", () => {
     const fetchMeMock = vi.fn(async () => ({
       userId: SESSION_USER_ID,
       username: "alice",
+      aboutMarkdown: "",
+      aboutMarkdownTokens: [],
+      avatarVersion: 0,
     }));
     const addGuildMemberMock = vi.fn(async () => ({ accepted: true as const }));
     const updateGuildMemberRoleMock = vi.fn(async () => ({ accepted: true as const }));

@@ -51,6 +51,7 @@ export type MarkdownToken =
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const MAX_MARKDOWN_TOKENS = 4096;
 const MAX_MARKDOWN_INLINE_CHARS = 4096;
+const MAX_PROFILE_ABOUT_CHARS = 2048;
 const MAX_LIVEKIT_TEXT_CHARS = 512;
 const MAX_LIVEKIT_TOKEN_CHARS = 8192;
 
@@ -244,6 +245,16 @@ export function mediaPublishSourceFromInput(input: string): MediaPublishSource {
   return input;
 }
 
+export function profileAboutFromInput(input: string): string {
+  if (input.length > MAX_PROFILE_ABOUT_CHARS) {
+    throw new DomainValidationError("About must be 0-2048 characters.");
+  }
+  if (input.includes("\0")) {
+    throw new DomainValidationError("About contains invalid characters.");
+  }
+  return input;
+}
+
 function livekitTextFromInput<
   T extends LivekitUrl | LivekitRoom | LivekitIdentity,
 >(input: string, label: string): T {
@@ -391,13 +402,20 @@ export function publicGuildDirectoryFromResponse(dto: unknown): PublicGuildDirec
 export interface UserLookupRecord {
   userId: UserId;
   username: string;
+  avatarVersion: number;
 }
 
 export function userLookupRecordFromResponse(dto: unknown): UserLookupRecord {
   const data = requireObject(dto, "user lookup record");
+  const avatarVersionRaw = data.avatar_version;
+  const avatarVersion =
+    typeof avatarVersionRaw === "undefined"
+      ? 0
+      : requireNonNegativeInteger(avatarVersionRaw, "avatar_version");
   return {
     userId: userIdFromInput(requireString(data.user_id, "user_id")),
     username: usernameFromInput(requireString(data.username, "username", 64)),
+    avatarVersion,
   };
 }
 
@@ -552,6 +570,25 @@ export interface VoiceTokenRecord {
   canSubscribe: boolean;
   publishSources: MediaPublishSource[];
   expiresInSecs: number;
+}
+
+export interface ProfileRecord {
+  userId: UserId;
+  username: string;
+  aboutMarkdown: string;
+  aboutMarkdownTokens: MarkdownToken[];
+  avatarVersion: number;
+}
+
+export function profileFromResponse(dto: unknown): ProfileRecord {
+  const data = requireObject(dto, "profile");
+  return {
+    userId: userIdFromInput(requireString(data.user_id, "user_id")),
+    username: usernameFromInput(requireString(data.username, "username", 64)),
+    aboutMarkdown: profileAboutFromInput(requireString(data.about_markdown, "about_markdown", MAX_PROFILE_ABOUT_CHARS)),
+    aboutMarkdownTokens: markdownTokensFromResponse(data.about_markdown_tokens),
+    avatarVersion: requireNonNegativeInteger(data.avatar_version, "avatar_version"),
+  };
 }
 
 export function voiceTokenFromResponse(dto: unknown): VoiceTokenRecord {

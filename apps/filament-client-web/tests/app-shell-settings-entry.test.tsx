@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { vi } from "vitest";
 import { App } from "../src/App";
 
@@ -112,6 +112,22 @@ function createSettingsFixtureFetch() {
 
     if (method === "GET" && url.includes("/auth/me")) {
       return jsonResponse({ user_id: USER_ID, username: "owner" });
+    }
+    if (method === "GET" && url.includes(`/users/${USER_ID}/profile`)) {
+      return jsonResponse({
+        user_id: USER_ID,
+        username: "owner",
+        about_markdown: "hello **world**",
+        about_markdown_tokens: [
+          { type: "paragraph_start" },
+          { type: "text", text: "hello " },
+          { type: "strong_start" },
+          { type: "text", text: "world" },
+          { type: "strong_end" },
+          { type: "paragraph_end" },
+        ],
+        avatar_version: 1,
+      });
     }
     if (method === "GET" && url.endsWith("/guilds")) {
       return jsonResponse({
@@ -230,7 +246,9 @@ describe("app shell settings entry point", () => {
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Open Profile settings category" }));
-    expect(screen.getByText(/Profile settings remain a non-functional placeholder/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Profile username")).toBeInTheDocument();
+    expect(screen.getByLabelText("Profile about markdown")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save profile" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Profile settings category" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -287,5 +305,20 @@ describe("app shell settings entry point", () => {
         audioOutputDeviceId: "spk-2",
       });
     });
+  });
+
+  it("opens profile panel when clicking avatar controls", async () => {
+    seedAuthenticatedWorkspace();
+    vi.stubGlobal("fetch", createSettingsFixtureFetch());
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    stubMediaDevices([]);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open owner profile" }));
+    const dialog = await screen.findByRole("dialog", { name: "User profile panel" });
+    expect(dialog).toBeInTheDocument();
+    expect(await within(dialog).findByText("owner")).toBeInTheDocument();
   });
 });

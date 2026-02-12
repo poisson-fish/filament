@@ -103,6 +103,25 @@ pub(crate) struct AuthError {
 pub(crate) struct MeResponse {
     pub(crate) user_id: String,
     pub(crate) username: String,
+    pub(crate) about_markdown: String,
+    pub(crate) about_markdown_tokens: Vec<MarkdownToken>,
+    pub(crate) avatar_version: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateProfileRequest {
+    pub(crate) username: Option<String>,
+    pub(crate) about_markdown: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct UserProfileResponse {
+    pub(crate) user_id: String,
+    pub(crate) username: String,
+    pub(crate) about_markdown: String,
+    pub(crate) about_markdown_tokens: Vec<MarkdownToken>,
+    pub(crate) avatar_version: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +134,7 @@ pub(crate) struct UserLookupRequest {
 pub(crate) struct UserLookupItem {
     pub(crate) user_id: String,
     pub(crate) username: String,
+    pub(crate) avatar_version: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -318,6 +338,11 @@ pub(crate) struct MemberPath {
 #[derive(Debug, Deserialize)]
 pub(crate) struct FriendPath {
     pub(crate) friend_user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UserPath {
+    pub(crate) user_id: String,
 }
 
 #[derive(Debug, Deserialize)]
