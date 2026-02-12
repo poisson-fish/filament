@@ -252,6 +252,95 @@ describe("app shell message history scrolling", () => {
     await screen.findByText("older message");
   });
 
+  it("refreshes channel history from the header action", async () => {
+    seedAuthenticatedWorkspace();
+
+    let historyRequests = 0;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(init);
+
+      if (method === "GET" && url.includes("/auth/me")) {
+        return jsonResponse({ user_id: USER_ID, username: "alice" });
+      }
+      if (method === "GET" && url.endsWith("/guilds")) {
+        return jsonResponse({
+          guilds: [{ guild_id: GUILD_ID, name: "Security Ops", visibility: "private" }],
+        });
+      }
+      if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
+        });
+      }
+      if (
+        method === "GET" &&
+        url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)
+      ) {
+        return jsonResponse({ role: "member", permissions: ["create_message"] });
+      }
+      if (method === "GET" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages`)) {
+        historyRequests += 1;
+        if (historyRequests === 1) {
+          return jsonResponse({
+            messages: [
+              {
+                message_id: OLDER_MESSAGE_ID,
+                guild_id: GUILD_ID,
+                channel_id: CHANNEL_ID,
+                author_id: USER_ID,
+                content: "before refresh",
+                markdown_tokens: [{ type: "text", text: "before refresh" }],
+                attachments: [],
+                created_at_unix: 1,
+              },
+            ],
+            next_before: null,
+          });
+        }
+        return jsonResponse({
+          messages: [
+            {
+              message_id: LATEST_MESSAGE_ID,
+              guild_id: GUILD_ID,
+              channel_id: CHANNEL_ID,
+              author_id: USER_ID,
+              content: "after refresh",
+              markdown_tokens: [{ type: "text", text: "after refresh" }],
+              attachments: [],
+              created_at_unix: 2,
+            },
+          ],
+          next_before: null,
+        });
+      }
+      if (method === "GET" && url.includes("/guilds/public")) {
+        return jsonResponse({ guilds: [] });
+      }
+
+      return jsonResponse({ error: "not_found" }, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Workspace Tools" });
+    await screen.findByText("before refresh");
+    expect(historyRequests).toBe(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => expect(historyRequests).toBe(2));
+    expect(await screen.findByText("after refresh")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText("before refresh")).not.toBeInTheDocument(),
+    );
+  });
+
   it("keeps chronological order stable when server history ordering changes across refreshes", async () => {
     seedAuthenticatedWorkspace([
       { channelId: CHANNEL_ID, name: "incident-room", kind: "text" },

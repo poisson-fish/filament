@@ -42,17 +42,26 @@ Target size after completion: `<= 650` lines for `AppShellPage.tsx`.
 Freeze current behavior so later extraction can move quickly with low regression risk.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add/expand characterization tests for:
+- [x] Add/expand characterization tests for:
   - message list behavior (refresh, pagination, reaction picker open/close)
   - overlay panel open/close and permission-based visibility
   - voice join/leave/toggle flows and teardown on logout
   - profile modal open/close and load/error rendering
-- [ ] Record baseline metrics in this plan:
+- [x] Record baseline metrics in this plan:
   - line count for `AppShellPage.tsx`
   - test command and pass status
+
+### Baseline Metrics (2026-02-12)
+- `AppShellPage.tsx` line count: `2454` (`apps/filament-client-web/src/pages/AppShellPage.tsx`)
+- Test command: `pnpm test` (run from `apps/filament-client-web`)
+- Pass status: `28` test files passed, `127` tests passed
+
+### Refactor Notes
+- Added characterization coverage for refresh/pagination/reaction-picker close, overlay permission gating/open-close, voice lifecycle flows, and profile modal loading/error/close paths.
+- Hardened selected-profile fetch handling in `AppShellPage.tsx` so profile lookup failures are mapped to deterministic UI error state without unhandled promise rejections.
 
 ### Exit Criteria
 - Existing behavior is covered by focused tests before any structural extraction.

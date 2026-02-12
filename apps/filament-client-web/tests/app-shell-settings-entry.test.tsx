@@ -105,7 +105,10 @@ function stubMediaDevices(
   return { enumerateDevices };
 }
 
-function createSettingsFixtureFetch() {
+function createSettingsFixtureFetch(options?: {
+  profileDelayMs?: number;
+  profileError?: { status: number; code: string };
+}) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input);
     const method = requestMethod(init);
@@ -114,6 +117,14 @@ function createSettingsFixtureFetch() {
       return jsonResponse({ user_id: USER_ID, username: "owner" });
     }
     if (method === "GET" && url.includes(`/users/${USER_ID}/profile`)) {
+      if (options?.profileDelayMs && options.profileDelayMs > 0) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, options.profileDelayMs);
+        });
+      }
+      if (options?.profileError) {
+        return jsonResponse({ error: options.profileError.code }, options.profileError.status);
+      }
       return jsonResponse({
         user_id: USER_ID,
         username: "owner",
@@ -307,9 +318,9 @@ describe("app shell settings entry point", () => {
     });
   });
 
-  it("opens profile panel when clicking avatar controls", async () => {
+  it("opens profile panel when clicking avatar controls, renders loading, and closes", async () => {
     seedAuthenticatedWorkspace();
-    vi.stubGlobal("fetch", createSettingsFixtureFetch());
+    vi.stubGlobal("fetch", createSettingsFixtureFetch({ profileDelayMs: 80 }));
     vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
     stubMediaDevices([]);
 
@@ -319,6 +330,35 @@ describe("app shell settings entry point", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open owner profile" }));
     const dialog = await screen.findByRole("dialog", { name: "User profile panel" });
     expect(dialog).toBeInTheDocument();
+    expect(await within(dialog).findByText("Loading profile...")).toBeInTheDocument();
     expect(await within(dialog).findByText("owner")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "User profile panel" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("renders profile error state when profile lookup fails", async () => {
+    seedAuthenticatedWorkspace();
+    vi.stubGlobal(
+      "fetch",
+      createSettingsFixtureFetch({
+        profileError: {
+          status: 404,
+          code: "not_found",
+        },
+      }),
+    );
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    stubMediaDevices([]);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open owner profile" }));
+    const dialog = await screen.findByRole("dialog", { name: "User profile panel" });
+    expect(dialog).toBeInTheDocument();
+    expect(await within(dialog).findByText("Requested resource was not found.")).toBeInTheDocument();
   });
 });

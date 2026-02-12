@@ -81,6 +81,78 @@ function seedAuthenticatedWorkspace(): void {
   );
 }
 
+function createReactionFixtureFetch() {
+  let addReactionCalls = 0;
+  let removeReactionCalls = 0;
+
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(input);
+    const method = requestMethod(init);
+
+    if (method === "GET" && url.includes("/auth/me")) {
+      return jsonResponse({ user_id: USER_ID, username: "alice" });
+    }
+    if (method === "GET" && url.endsWith("/guilds")) {
+      return jsonResponse({
+        guilds: [{ guild_id: GUILD_ID, name: "Security Ops", visibility: "private" }],
+      });
+    }
+    if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
+      return jsonResponse({
+        channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
+      });
+    }
+    if (
+      method === "GET" &&
+      url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)
+    ) {
+      return jsonResponse({ role: "member", permissions: ["create_message"] });
+    }
+    if (method === "GET" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages`)) {
+      return jsonResponse({
+        messages: [
+          {
+            message_id: MESSAGE_ID,
+            guild_id: GUILD_ID,
+            channel_id: CHANNEL_ID,
+            author_id: USER_ID,
+            content: "hello reaction",
+            markdown_tokens: [{ type: "text", text: "hello reaction" }],
+            attachments: [],
+            created_at_unix: 1,
+          },
+        ],
+        next_before: null,
+      });
+    }
+    if (method === "GET" && url.includes("/guilds/public")) {
+      return jsonResponse({ guilds: [] });
+    }
+
+    const reactionPath = `/messages/${MESSAGE_ID}/reactions/`;
+    if (method === "POST" && url.includes(reactionPath)) {
+      addReactionCalls += 1;
+      const encodedEmoji = url.split(reactionPath)[1].split("?")[0];
+      const emoji = decodeURIComponent(encodedEmoji);
+      return jsonResponse({ emoji, count: 1 });
+    }
+    if (method === "DELETE" && url.includes(reactionPath)) {
+      removeReactionCalls += 1;
+      const encodedEmoji = url.split(reactionPath)[1].split("?")[0];
+      const emoji = decodeURIComponent(encodedEmoji);
+      return jsonResponse({ emoji, count: 0 });
+    }
+
+    return jsonResponse({ error: "not_found" }, 404);
+  });
+
+  return {
+    fetchMock,
+    addReactionCalls: () => addReactionCalls,
+    removeReactionCalls: () => removeReactionCalls,
+  };
+}
+
 describe("app shell reactions", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
@@ -98,72 +170,8 @@ describe("app shell reactions", () => {
 
   it("opens the picker, adds a reaction, and toggles it off", async () => {
     seedAuthenticatedWorkspace();
-
-    let addReactionCalls = 0;
-    let removeReactionCalls = 0;
-
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = requestUrl(input);
-      const method = requestMethod(init);
-
-      if (method === "GET" && url.includes("/auth/me")) {
-        return jsonResponse({ user_id: USER_ID, username: "alice" });
-      }
-      if (method === "GET" && url.endsWith("/guilds")) {
-        return jsonResponse({
-          guilds: [{ guild_id: GUILD_ID, name: "Security Ops", visibility: "private" }],
-        });
-      }
-      if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
-        return jsonResponse({
-          channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
-        });
-      }
-      if (
-        method === "GET" &&
-        url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)
-      ) {
-        return jsonResponse({ role: "member", permissions: ["create_message"] });
-      }
-      if (method === "GET" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages`)) {
-        return jsonResponse({
-          messages: [
-            {
-              message_id: MESSAGE_ID,
-              guild_id: GUILD_ID,
-              channel_id: CHANNEL_ID,
-              author_id: USER_ID,
-              content: "hello reaction",
-              markdown_tokens: [{ type: "text", text: "hello reaction" }],
-              attachments: [],
-              created_at_unix: 1,
-            },
-          ],
-          next_before: null,
-        });
-      }
-      if (method === "GET" && url.includes("/guilds/public")) {
-        return jsonResponse({ guilds: [] });
-      }
-
-      const reactionPath = `/messages/${MESSAGE_ID}/reactions/`;
-      if (method === "POST" && url.includes(reactionPath)) {
-        addReactionCalls += 1;
-        const encodedEmoji = url.split(reactionPath)[1].split("?")[0];
-        const emoji = decodeURIComponent(encodedEmoji);
-        return jsonResponse({ emoji, count: 1 });
-      }
-      if (method === "DELETE" && url.includes(reactionPath)) {
-        removeReactionCalls += 1;
-        const encodedEmoji = url.split(reactionPath)[1].split("?")[0];
-        const emoji = decodeURIComponent(encodedEmoji);
-        return jsonResponse({ emoji, count: 0 });
-      }
-
-      return jsonResponse({ error: "not_found" }, 404);
-    });
-
-    vi.stubGlobal("fetch", fetchMock);
+    const fixture = createReactionFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
     vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
 
     window.history.replaceState({}, "", "/app");
@@ -179,7 +187,7 @@ describe("app shell reactions", () => {
     expect(await screen.findByRole("dialog", { name: "Choose reaction" })).toBeInTheDocument();
 
     await fireEvent.click(await screen.findByRole("button", { name: "Add Thumbs up reaction" }));
-    await waitFor(() => expect(addReactionCalls).toBe(1));
+    await waitFor(() => expect(fixture.addReactionCalls()).toBe(1));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Choose reaction" })).not.toBeInTheDocument(),
     );
@@ -188,9 +196,32 @@ describe("app shell reactions", () => {
     );
 
     await fireEvent.click(screen.getByRole("button", { name: "👍 reaction (1)" }));
-    await waitFor(() => expect(removeReactionCalls).toBe(1));
+    await waitFor(() => expect(fixture.removeReactionCalls()).toBe(1));
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /^👍 reaction/ })).not.toBeInTheDocument(),
     );
+  });
+
+  it("closes the picker on Escape without mutating reactions", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createReactionFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Workspace Tools" });
+    await screen.findByText("hello reaction");
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Add reaction" }));
+    expect(await screen.findByRole("dialog", { name: "Choose reaction" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Choose reaction" })).not.toBeInTheDocument(),
+    );
+    expect(fixture.addReactionCalls()).toBe(0);
+    expect(fixture.removeReactionCalls()).toBe(0);
   });
 });

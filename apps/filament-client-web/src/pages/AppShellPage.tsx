@@ -1198,9 +1198,14 @@ export function AppShellPage() {
     async (userId) => {
       const session = auth.session();
       if (!session) {
-        throw new Error("missing_session");
+        return null;
       }
-      return fetchUserProfile(session, userId);
+      try {
+        return await fetchUserProfile(session, userId);
+      } catch (error) {
+        setSelectedProfileError(mapError(error, "Profile unavailable."));
+        return null;
+      }
     },
   );
 
@@ -1267,12 +1272,6 @@ export function AppShellPage() {
       ...existing,
       [value.userId]: value.avatarVersion,
     }));
-  });
-
-  createEffect(() => {
-    if (selectedProfile.error) {
-      setSelectedProfileError(mapError(selectedProfile.error, "Profile unavailable."));
-    }
   });
 
   createEffect(() => {
