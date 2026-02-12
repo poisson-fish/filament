@@ -9,8 +9,14 @@ import type {
   ReactionEmoji,
   WorkspaceRecord,
 } from "../../../domain/chat";
-import { connectGateway, type MessageReactionPayload } from "../../../lib/gateway";
 import {
+  connectGateway,
+  type MessageDeletePayload,
+  type MessageReactionPayload,
+  type MessageUpdatePayload,
+} from "../../../lib/gateway";
+import {
+  clearKeysByPrefix,
   mergeMessage,
   reactionKey,
   upsertWorkspace,
@@ -39,6 +45,8 @@ interface GatewayClient {
 interface GatewayHandlers {
   onOpenStateChange: (isOpen: boolean) => void;
   onMessageCreate: (message: MessageRecord) => void;
+  onMessageUpdate: (payload: MessageUpdatePayload) => void;
+  onMessageDelete: (payload: MessageDeletePayload) => void;
   onMessageReaction: (payload: MessageReactionPayload) => void;
   onChannelCreate: (payload: {
     guildId: GuildId;
@@ -76,6 +84,30 @@ export function applyMessageReactionUpdate(
     count: payload.count,
     reacted: nextReacted,
   });
+}
+
+export function applyMessageUpdate(
+  existing: MessageRecord[],
+  payload: MessageUpdatePayload,
+): MessageRecord[] {
+  const index = existing.findIndex((entry) => entry.messageId === payload.messageId);
+  if (index < 0) {
+    return existing;
+  }
+  const current = existing[index]!;
+  const updated: MessageRecord = {
+    ...current,
+    content: payload.updatedFields.content ?? current.content,
+    markdownTokens: payload.updatedFields.markdownTokens ?? current.markdownTokens,
+  };
+  return mergeMessage(existing, updated);
+}
+
+export function applyMessageDelete(
+  existing: MessageRecord[],
+  payload: MessageDeletePayload,
+): MessageRecord[] {
+  return existing.filter((entry) => entry.messageId !== payload.messageId);
 }
 
 const DEFAULT_GATEWAY_CONTROLLER_DEPENDENCIES: GatewayControllerDependencies = {
@@ -149,6 +181,21 @@ export function createGatewayController(
         if (shouldStickToBottom) {
           options.scrollMessageListToBottom();
         }
+      },
+      onMessageUpdate: (payload) => {
+        if (payload.guildId !== guildId || payload.channelId !== channelId) {
+          return;
+        }
+        options.setMessages((existing) => applyMessageUpdate(existing, payload));
+      },
+      onMessageDelete: (payload) => {
+        if (payload.guildId !== guildId || payload.channelId !== channelId) {
+          return;
+        }
+        options.setMessages((existing) => applyMessageDelete(existing, payload));
+        options.setReactionState((existing) =>
+          clearKeysByPrefix(existing, `${payload.messageId}|`),
+        );
       },
       onMessageReaction: (payload) => {
         if (payload.guildId !== guildId || payload.channelId !== channelId) {

@@ -427,6 +427,149 @@ async fn websocket_subscription_receives_reaction_updates_from_rest() {
 }
 
 #[tokio::test]
+async fn websocket_subscription_receives_message_lifecycle_updates_from_rest() {
+    let app = test_app();
+
+    let auth = register_and_login(&app, "203.0.113.58").await;
+    let channel = create_channel_context(&app, &auth, "203.0.113.58").await;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener addr should be readable");
+    let server_app = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_app)
+            .await
+            .expect("server should run without errors");
+    });
+
+    let ws_url = format!("ws://{addr}/gateway/ws?access_token={}", auth.access_token);
+
+    let mut ws_a_request = ws_url
+        .clone()
+        .into_client_request()
+        .expect("websocket request should build");
+    ws_a_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.58"),
+    );
+    let (mut socket_a, _response) = connect_async(ws_a_request)
+        .await
+        .expect("websocket handshake should succeed");
+    let ready_a = next_text_event(&mut socket_a).await;
+    assert_eq!(ready_a["t"], "ready");
+    subscribe_to_channel(&mut socket_a, &channel).await;
+
+    let mut ws_b_request = ws_url
+        .into_client_request()
+        .expect("websocket request should build");
+    ws_b_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.58"),
+    );
+    let (mut socket_b, _response) = connect_async(ws_b_request)
+        .await
+        .expect("websocket handshake should succeed");
+    let ready_b = next_text_event(&mut socket_b).await;
+    assert_eq!(ready_b["t"], "ready");
+    subscribe_to_channel(&mut socket_b, &channel).await;
+
+    let create_message = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.58")
+        .body(Body::from(json!({"content":"before edit"}).to_string()))
+        .expect("create message request should build");
+    let create_message_response = app
+        .clone()
+        .oneshot(create_message)
+        .await
+        .expect("create message request should execute");
+    assert_eq!(create_message_response.status(), StatusCode::OK);
+    let created_json: Value = parse_json_body(create_message_response).await;
+    let message_id = created_json["message_id"]
+        .as_str()
+        .expect("message id should be present")
+        .to_owned();
+
+    let create_event_a = next_event_of_type(&mut socket_a, "message_create").await;
+    assert_eq!(create_event_a["d"]["message_id"], message_id);
+    let create_event_b = next_event_of_type(&mut socket_b, "message_create").await;
+    assert_eq!(create_event_b["d"]["message_id"], message_id);
+
+    let edit_message = Request::builder()
+        .method("PATCH")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages/{}",
+            channel.guild_id, channel.channel_id, message_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.58")
+        .body(Body::from(json!({"content":"after edit"}).to_string()))
+        .expect("edit message request should build");
+    let edit_message_response = app
+        .clone()
+        .oneshot(edit_message)
+        .await
+        .expect("edit message request should execute");
+    assert_eq!(edit_message_response.status(), StatusCode::OK);
+
+    let update_event_a = next_event_of_type(&mut socket_a, "message_update").await;
+    assert_eq!(update_event_a["d"]["message_id"], message_id);
+    assert_eq!(
+        update_event_a["d"]["updated_fields"]["content"],
+        Value::String("after edit".to_owned())
+    );
+    let update_event_b = next_event_of_type(&mut socket_b, "message_update").await;
+    assert_eq!(update_event_b["d"]["message_id"], message_id);
+    assert_eq!(
+        update_event_b["d"]["updated_fields"]["content"],
+        Value::String("after edit".to_owned())
+    );
+
+    let delete_message = Request::builder()
+        .method("DELETE")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages/{}",
+            channel.guild_id, channel.channel_id, message_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", "203.0.113.58")
+        .body(Body::empty())
+        .expect("delete message request should build");
+    let delete_message_response = app
+        .clone()
+        .oneshot(delete_message)
+        .await
+        .expect("delete message request should execute");
+    assert_eq!(delete_message_response.status(), StatusCode::NO_CONTENT);
+
+    let delete_event_a = next_event_of_type(&mut socket_a, "message_delete").await;
+    assert_eq!(delete_event_a["d"]["message_id"], message_id);
+    let delete_event_b = next_event_of_type(&mut socket_b, "message_delete").await;
+    assert_eq!(delete_event_b["d"]["message_id"], message_id);
+
+    socket_a
+        .close(None)
+        .await
+        .expect("socket close should succeed");
+    socket_b
+        .close(None)
+        .await
+        .expect("socket close should succeed");
+    server.abort();
+}
+
+#[tokio::test]
 async fn websocket_subscription_receives_channel_create_updates_from_rest() {
     let app = test_app();
 

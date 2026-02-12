@@ -86,6 +86,8 @@ function ulidFromIndex(index: number): string {
 function createOpenGateway() {
   const onReady = vi.fn();
   const onMessageCreate = vi.fn();
+  const onMessageUpdate = vi.fn();
+  const onMessageDelete = vi.fn();
   const onMessageReaction = vi.fn();
   const onChannelCreate = vi.fn();
   const onPresenceSync = vi.fn();
@@ -99,6 +101,8 @@ function createOpenGateway() {
     {
       onReady,
       onMessageCreate,
+      onMessageUpdate,
+      onMessageDelete,
       onMessageReaction,
       onChannelCreate,
       onPresenceSync,
@@ -118,6 +122,8 @@ function createOpenGateway() {
     socket,
     onReady,
     onMessageCreate,
+    onMessageUpdate,
+    onMessageDelete,
     onMessageReaction,
     onChannelCreate,
     onPresenceSync,
@@ -166,7 +172,17 @@ describe("gateway payload parsing", () => {
   });
 
   it("rejects invalid envelope versions and event types fail-closed", () => {
-    const { socket, onReady, onMessageCreate, onMessageReaction, onChannelCreate, onPresenceSync, onPresenceUpdate } = createOpenGateway();
+    const {
+      socket,
+      onReady,
+      onMessageCreate,
+      onMessageUpdate,
+      onMessageDelete,
+      onMessageReaction,
+      onChannelCreate,
+      onPresenceSync,
+      onPresenceUpdate,
+    } = createOpenGateway();
     const invalidEnvelopes = [
       { v: 2, t: "ready", d: {} },
       { v: 1, t: "INVALID_TYPE", d: {} },
@@ -182,6 +198,8 @@ describe("gateway payload parsing", () => {
 
     expect(onReady).not.toHaveBeenCalled();
     expect(onMessageCreate).not.toHaveBeenCalled();
+    expect(onMessageUpdate).not.toHaveBeenCalled();
+    expect(onMessageDelete).not.toHaveBeenCalled();
     expect(onMessageReaction).not.toHaveBeenCalled();
     expect(onChannelCreate).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
@@ -189,11 +207,23 @@ describe("gateway payload parsing", () => {
   });
 
   it("rejects oversized gateway event payloads before dispatch", () => {
-    const { socket, onReady, onMessageCreate, onMessageReaction, onChannelCreate, onPresenceSync, onPresenceUpdate } = createOpenGateway();
+    const {
+      socket,
+      onReady,
+      onMessageCreate,
+      onMessageUpdate,
+      onMessageDelete,
+      onMessageReaction,
+      onChannelCreate,
+      onPresenceSync,
+      onPresenceUpdate,
+    } = createOpenGateway();
     socket.emitMessage("x".repeat(70 * 1024));
 
     expect(onReady).not.toHaveBeenCalled();
     expect(onMessageCreate).not.toHaveBeenCalled();
+    expect(onMessageUpdate).not.toHaveBeenCalled();
+    expect(onMessageDelete).not.toHaveBeenCalled();
     expect(onMessageReaction).not.toHaveBeenCalled();
     expect(onChannelCreate).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
@@ -242,7 +272,17 @@ describe("gateway payload parsing", () => {
   });
 
   it("keeps valid gateway payload compatibility", () => {
-    const { socket, onReady, onMessageCreate, onMessageReaction, onChannelCreate, onPresenceSync, onPresenceUpdate } = createOpenGateway();
+    const {
+      socket,
+      onReady,
+      onMessageCreate,
+      onMessageUpdate,
+      onMessageDelete,
+      onMessageReaction,
+      onChannelCreate,
+      onPresenceSync,
+      onPresenceUpdate,
+    } = createOpenGateway();
     const messageId = ulidFromIndex(3);
     const authorId = ulidFromIndex(4);
     const presenceUserId = ulidFromIndex(5);
@@ -261,6 +301,34 @@ describe("gateway payload parsing", () => {
           markdown_tokens: [{ type: "text", text: "hello" }],
           attachments: [],
           created_at_unix: 1,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "message_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          message_id: messageId,
+          updated_fields: {
+            content: "updated",
+            markdown_tokens: [{ type: "text", text: "updated" }],
+          },
+          updated_at_unix: 2,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "message_delete",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          message_id: messageId,
+          deleted_at_unix: 3,
         },
       }),
     );
@@ -315,6 +383,8 @@ describe("gateway payload parsing", () => {
 
     expect(onReady).toHaveBeenCalledTimes(1);
     expect(onMessageCreate).toHaveBeenCalledTimes(1);
+    expect(onMessageUpdate).toHaveBeenCalledTimes(1);
+    expect(onMessageDelete).toHaveBeenCalledTimes(1);
     expect(onMessageReaction).toHaveBeenCalledTimes(1);
     expect(onChannelCreate).toHaveBeenCalledTimes(1);
     expect(onMessageReaction).toHaveBeenCalledWith({
@@ -323,6 +393,22 @@ describe("gateway payload parsing", () => {
       messageId,
       emoji: "👍",
       count: 2,
+    });
+    expect(onMessageUpdate).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      channelId: DEFAULT_CHANNEL_ID,
+      messageId,
+      updatedFields: {
+        content: "updated",
+        markdownTokens: [{ type: "text", text: "updated" }],
+      },
+      updatedAtUnix: 2,
+    });
+    expect(onMessageDelete).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      channelId: DEFAULT_CHANNEL_ID,
+      messageId,
+      deletedAtUnix: 3,
     });
     expect(onChannelCreate).toHaveBeenCalledWith({
       guildId: DEFAULT_GUILD_ID,
@@ -341,6 +427,54 @@ describe("gateway payload parsing", () => {
       userId: presenceUserId,
       status: "offline",
     });
+  });
+
+  it("rejects malformed message_update and message_delete payloads", () => {
+    const { socket, onMessageUpdate, onMessageDelete } = createOpenGateway();
+    const messageId = ulidFromIndex(8);
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "message_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          message_id: messageId,
+          updated_fields: {},
+          updated_at_unix: 2,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "message_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          message_id: messageId,
+          updated_fields: {
+            content: "ok",
+          },
+          updated_at_unix: 0,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "message_delete",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          message_id: messageId,
+          deleted_at_unix: 0,
+        },
+      }),
+    );
+
+    expect(onMessageUpdate).not.toHaveBeenCalled();
+    expect(onMessageDelete).not.toHaveBeenCalled();
   });
 
   it("keeps invalid payload handling fail-closed and allows later valid payloads", () => {

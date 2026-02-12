@@ -7,11 +7,14 @@ import {
   channelIdFromInput,
   guildIdFromInput,
   guildNameFromInput,
+  messageContentFromInput,
   messageFromResponse,
   reactionEmojiFromInput,
   type WorkspaceRecord,
 } from "../src/domain/chat";
 import {
+  applyMessageDelete,
+  applyMessageUpdate,
   applyChannelCreate,
   applyMessageReactionUpdate,
   applyPresenceUpdate,
@@ -89,6 +92,70 @@ describe("app shell gateway controller", () => {
         },
       ),
     ).toEqual({});
+  });
+
+  it("applies message update payload to known messages only", () => {
+    const current = messageFixture({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      messageId: MESSAGE_ID,
+      authorId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      content: "before",
+    });
+    expect(
+      applyMessageUpdate([current], {
+        guildId: GUILD_ID,
+        channelId: CHANNEL_ID,
+        messageId: MESSAGE_ID,
+        updatedFields: {
+          content: messageContentFromInput("after"),
+          markdownTokens: [{ type: "text", text: "after" }],
+        },
+        updatedAtUnix: 2,
+      }),
+    ).toEqual([
+      {
+        ...current,
+        content: "after",
+        markdownTokens: [{ type: "text", text: "after" }],
+      },
+    ]);
+    expect(
+      applyMessageUpdate([current], {
+        guildId: GUILD_ID,
+        channelId: CHANNEL_ID,
+        messageId: messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAF"),
+        updatedFields: {
+          content: messageContentFromInput("ignored"),
+        },
+        updatedAtUnix: 3,
+      }),
+    ).toEqual([current]);
+  });
+
+  it("applies message delete payload by removing the target message", () => {
+    const first = messageFixture({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      messageId: "01ARZ3NDEKTSV4RRFFQ69G5FAA",
+      authorId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      content: "first",
+    });
+    const second = messageFixture({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      messageId: "01ARZ3NDEKTSV4RRFFQ69G5FAC",
+      authorId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      content: "second",
+    });
+    expect(
+      applyMessageDelete([first, second], {
+        guildId: GUILD_ID,
+        channelId: CHANNEL_ID,
+        messageId: first.messageId,
+        deletedAtUnix: 4,
+      }),
+    ).toEqual([second]);
   });
 
   it("applies channel create updates idempotently for a workspace", () => {
@@ -242,6 +309,29 @@ describe("app shell gateway controller", () => {
       count: 1,
       reacted: false,
     });
+
+    handlers.onMessageUpdate({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      messageId: messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAC"),
+      updatedFields: {
+        content: "incoming edited",
+        markdownTokens: [{ type: "text", text: "incoming edited" }],
+      },
+      updatedAtUnix: 2,
+    });
+    expect(messages().map((entry) => entry.content)).toEqual([
+      "existing",
+      "incoming edited",
+    ]);
+
+    handlers.onMessageDelete({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      messageId: messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAC"),
+      deletedAtUnix: 3,
+    });
+    expect(messages().map((entry) => entry.content)).toEqual(["existing"]);
 
     handlers.onChannelCreate({
       guildId: GUILD_ID,

@@ -48,6 +48,38 @@ async fn broadcast_message_reaction_event(state: &AppState, path: &ReactionPath,
     .await;
 }
 
+async fn broadcast_message_update_event(state: &AppState, response: &MessageResponse) {
+    let event = gateway_events::message_update(
+        &response.guild_id,
+        &response.channel_id,
+        &response.message_id,
+        &response.content,
+        &response.markdown_tokens,
+        now_unix(),
+    );
+    broadcast_channel_event(
+        state,
+        &channel_key(&response.guild_id, &response.channel_id),
+        &event,
+    )
+    .await;
+}
+
+async fn broadcast_message_delete_event(state: &AppState, path: &MessagePath) {
+    let event = gateway_events::message_delete(
+        &path.guild_id,
+        &path.channel_id,
+        &path.message_id,
+        now_unix(),
+    );
+    broadcast_channel_event(
+        state,
+        &channel_key(&path.guild_id, &path.channel_id),
+        &event,
+    )
+    .await;
+}
+
 pub(crate) async fn create_message(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -379,6 +411,7 @@ pub(crate) async fn edit_message(
             true,
         )
         .await?;
+        broadcast_message_update_event(&state, &response).await;
         return Ok(Json(response));
     }
 
@@ -418,6 +451,7 @@ pub(crate) async fn edit_message(
         true,
     )
     .await?;
+    broadcast_message_update_event(&state, &response).await;
     Ok(Json(response))
 }
 
@@ -528,6 +562,7 @@ pub(crate) async fn delete_message(
             true,
         )
         .await?;
+        broadcast_message_delete_event(&state, &path).await;
         return Ok(StatusCode::NO_CONTENT);
     }
 
@@ -568,11 +603,12 @@ pub(crate) async fn delete_message(
     enqueue_search_operation(
         &state,
         SearchOperation::Delete {
-            message_id: path.message_id,
+            message_id: path.message_id.clone(),
         },
         true,
     )
     .await?;
+    broadcast_message_delete_event(&state, &path).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -5,7 +5,10 @@ import {
   type ChannelRecord,
   type ChannelId,
   type GuildId,
+  markdownTokensFromResponse,
+  messageContentFromInput,
   type MessageId,
+  type MarkdownToken,
   type MessageRecord,
   type ReactionEmoji,
   guildIdFromInput,
@@ -51,9 +54,29 @@ export interface MessageReactionPayload {
   count: number;
 }
 
+export interface MessageUpdatePayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  messageId: MessageId;
+  updatedFields: {
+    content?: MessageRecord["content"];
+    markdownTokens?: MarkdownToken[];
+  };
+  updatedAtUnix: number;
+}
+
+export interface MessageDeletePayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  messageId: MessageId;
+  deletedAtUnix: number;
+}
+
 interface GatewayHandlers {
   onReady?: () => void;
   onMessageCreate?: (message: MessageRecord) => void;
+  onMessageUpdate?: (payload: MessageUpdatePayload) => void;
+  onMessageDelete?: (payload: MessageDeletePayload) => void;
   onMessageReaction?: (payload: MessageReactionPayload) => void;
   onChannelCreate?: (payload: ChannelCreatePayload) => void;
   onPresenceSync?: (payload: PresenceSyncPayload) => void;
@@ -177,6 +200,106 @@ function parseMessageReactionPayload(payload: unknown): MessageReactionPayload |
     messageId,
     emoji,
     count: value.count,
+  };
+}
+
+function parseMessageUpdatePayload(payload: unknown): MessageUpdatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.channel_id !== "string" ||
+    typeof value.message_id !== "string" ||
+    !value.updated_fields ||
+    typeof value.updated_fields !== "object" ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  let messageId: MessageId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+    messageId = messageIdFromInput(value.message_id);
+  } catch {
+    return null;
+  }
+
+  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
+  let content: MessageRecord["content"] | undefined;
+  let markdownTokens: MarkdownToken[] | undefined;
+  if (typeof updatedFieldsDto.content !== "undefined") {
+    if (typeof updatedFieldsDto.content !== "string") {
+      return null;
+    }
+    try {
+      content = messageContentFromInput(updatedFieldsDto.content);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof updatedFieldsDto.markdown_tokens !== "undefined") {
+    try {
+      markdownTokens = markdownTokensFromResponse(updatedFieldsDto.markdown_tokens);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof content === "undefined" && typeof markdownTokens === "undefined") {
+    return null;
+  }
+
+  return {
+    guildId,
+    channelId,
+    messageId,
+    updatedFields: {
+      content,
+      markdownTokens,
+    },
+    updatedAtUnix: value.updated_at_unix,
+  };
+}
+
+function parseMessageDeletePayload(payload: unknown): MessageDeletePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.channel_id !== "string" ||
+    typeof value.message_id !== "string" ||
+    typeof value.deleted_at_unix !== "number" ||
+    !Number.isSafeInteger(value.deleted_at_unix) ||
+    value.deleted_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  let messageId: MessageId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+    messageId = messageIdFromInput(value.message_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    channelId,
+    messageId,
+    deletedAtUnix: value.deleted_at_unix,
   };
 }
 
@@ -313,6 +436,24 @@ export function connectGateway(
       } catch {
         return;
       }
+      return;
+    }
+
+    if (envelope.t === "message_update") {
+      const payload = parseMessageUpdatePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onMessageUpdate?.(payload);
+      return;
+    }
+
+    if (envelope.t === "message_delete") {
+      const payload = parseMessageDeletePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onMessageDelete?.(payload);
       return;
     }
 

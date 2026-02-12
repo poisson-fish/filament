@@ -125,8 +125,8 @@ Freeze event contracts and explicit endpoint-to-event mapping before implementat
 | Mutation endpoint | Event(s) | Scope | Status |
 | --- | --- | --- | --- |
 | `POST /guilds/{guild_id}/channels/{channel_id}/messages` | `message_create` | channel | Implemented |
-| `PATCH /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}` | `message_update` | channel | Planned (Phase 2) |
-| `DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}` | `message_delete` | channel | Planned (Phase 2) |
+| `PATCH /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}` | `message_update` | channel | Implemented |
+| `DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}` | `message_delete` | channel | Implemented |
 | `POST/DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}` | `message_reaction` | channel | Implemented |
 | `POST /guilds/{guild_id}/channels` | `channel_create` | guild | Implemented |
 | `PATCH /guilds/{guild_id}/channels/{channel_id}` | `channel_update` | guild | Planned (future endpoint) |
@@ -212,14 +212,27 @@ Make event emission consistent and support channel/guild/user fanout targets.
 Cover full message CRUD-driven UI updates.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Emit `message_update` from message edit endpoint.
-- [ ] Emit `message_delete` from message delete endpoint.
-- [ ] Keep `message_reaction` event behavior, add tests for zero-count delete semantics.
-- [ ] Update web gateway parser/controller/state reducers for new message events.
-- [ ] Add server + web tests for edit/delete realtime sync across multiple clients.
+- [x] Emit `message_update` from message edit endpoint.
+- [x] Emit `message_delete` from message delete endpoint.
+- [x] Keep `message_reaction` event behavior, add tests for zero-count delete semantics.
+- [x] Update web gateway parser/controller/state reducers for new message events.
+- [x] Add server + web tests for edit/delete realtime sync across multiple clients.
+
+### Refactor Notes
+- Added typed gateway event constructors in `apps/filament-server/src/server/gateway_events.rs`:
+  - `message_update` with bounded `updated_fields` (`content`, `markdown_tokens`) + `updated_at_unix`
+  - `message_delete` with `deleted_at_unix`
+- Wired message lifecycle broadcasts in `apps/filament-server/src/server/handlers/messages.rs` for both DB and in-memory execution paths, preserving existing fanout scope/size checks.
+- Expanded web gateway boundary parsing in `apps/filament-client-web/src/lib/gateway.ts` for `message_update`/`message_delete` with strict fail-closed payload validation.
+- Added deterministic reducer helpers in `apps/filament-client-web/src/features/app-shell/controllers/gateway-controller.ts` for patching and removing messages plus reaction state cleanup on delete.
+- Added realtime multi-client coverage:
+  - server integration test in `apps/filament-server/tests/gateway_network_flow.rs`
+  - web gateway/controller tests in:
+    - `apps/filament-client-web/tests/gateway.test.ts`
+    - `apps/filament-client-web/tests/app-shell-gateway-controller.test.ts`
 
 ### Exit Criteria
 - Editing/deleting a message on one client updates other subscribed clients without refresh.
