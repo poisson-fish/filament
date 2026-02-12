@@ -5,20 +5,30 @@ use axum::{
     http::HeaderMap,
     Json,
 };
+use filament_core::{
+    apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
+    has_permission, ChannelKind, ChannelName, ChannelPermissionOverwrite, GuildName, Permission,
+    Role, UserId,
+};
 use sqlx::Row;
 use ulid::Ulid;
 
 use crate::server::{
-    apply_channel_overwrite, authenticate, base_permissions, can_assign_role, can_moderate_member,
-    channel_kind_from_i16, channel_kind_to_i16, ensure_db_schema, has_permission,
-    member_role_in_guild, now_unix, permission_set_from_i64, permission_set_from_list,
-    permission_set_to_i64, role_from_i16, role_to_i16, user_role_in_guild, visibility_from_i16,
-    visibility_to_i16, write_audit_log, AppState, AuthFailure, ChannelKind, ChannelListResponse,
-    ChannelName, ChannelPermissionOverwrite, ChannelRecord, ChannelResponse, ChannelRolePath,
-    CreateChannelRequest, CreateGuildRequest, GuildListResponse, GuildName, GuildPath, GuildRecord,
-    GuildResponse, GuildVisibility, MemberPath, ModerationResponse, Permission,
-    PublicGuildListItem, PublicGuildListQuery, PublicGuildListResponse, Role,
-    UpdateChannelRoleOverrideRequest, UpdateMemberRoleRequest, UserId,
+    auth::{authenticate, now_unix},
+    core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
+    db::{
+        channel_kind_from_i16, channel_kind_to_i16, ensure_db_schema, permission_set_from_i64,
+        permission_set_from_list, permission_set_to_i64, role_from_i16, role_to_i16,
+        visibility_from_i16, visibility_to_i16,
+    },
+    domain::{member_role_in_guild, user_role_in_guild, write_audit_log},
+    errors::AuthFailure,
+    types::{
+        ChannelListResponse, ChannelResponse, ChannelRolePath, CreateChannelRequest,
+        CreateGuildRequest, GuildListResponse, GuildPath, GuildResponse, MemberPath,
+        ModerationResponse, PublicGuildListItem, PublicGuildListQuery, PublicGuildListResponse,
+        UpdateChannelRoleOverrideRequest, UpdateMemberRoleRequest,
+    },
 };
 
 pub(crate) async fn create_guild(

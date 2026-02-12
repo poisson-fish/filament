@@ -1,4 +1,6 @@
-use super::*;
+use std::{collections::HashMap, fmt::Write as _};
+
+use super::core::{MetricsState, METRICS_STATE};
 
 pub(crate) fn metrics_state() -> &'static MetricsState {
     METRICS_STATE.get_or_init(MetricsState::default)

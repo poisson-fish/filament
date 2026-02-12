@@ -3,14 +3,20 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use filament_core::UserId;
 use sqlx::Row;
 use ulid::Ulid;
 
 use crate::server::{
-    authenticate, ensure_db_schema, now_unix, AppState, AuthFailure, CreateFriendRequest,
-    FriendListResponse, FriendPath, FriendRecordResponse, FriendRequestPath,
-    FriendshipRequestCreateResponse, FriendshipRequestListResponse, FriendshipRequestRecord,
-    FriendshipRequestResponse, ModerationResponse, UserId,
+    auth::{authenticate, now_unix},
+    core::{AppState, FriendshipRequestRecord},
+    db::ensure_db_schema,
+    errors::AuthFailure,
+    types::{
+        CreateFriendRequest, FriendListResponse, FriendPath, FriendRecordResponse,
+        FriendRequestPath, FriendshipRequestCreateResponse, FriendshipRequestListResponse,
+        FriendshipRequestResponse, ModerationResponse,
+    },
 };
 
 pub(crate) fn canonical_friend_pair(user_a: UserId, user_b: UserId) -> (String, String) {

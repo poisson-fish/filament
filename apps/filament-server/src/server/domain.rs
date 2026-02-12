@@ -1,13 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
+use filament_core::{
+    apply_channel_overwrite, base_permissions, ChannelPermissionOverwrite, Permission,
+    PermissionSet, Role, UserId,
+};
 use sqlx::{PgPool, Row};
 use ulid::Ulid;
 
 use super::{
-    apply_channel_overwrite, base_permissions, ensure_db_schema, now_unix, permission_set_from_i64,
-    role_from_i16, AppState, AttachmentPath, AttachmentRecord, AttachmentResponse, AuthFailure,
-    ChannelPermissionOverwrite, MessageResponse, Permission, PermissionSet, ReactionResponse, Role,
-    UserId, MAX_ATTACHMENTS_PER_MESSAGE, MAX_REACTION_EMOJI_CHARS,
+    auth::now_unix,
+    core::{AppState, AttachmentRecord, MAX_ATTACHMENTS_PER_MESSAGE, MAX_REACTION_EMOJI_CHARS},
+    db::{ensure_db_schema, permission_set_from_i64, role_from_i16},
+    errors::AuthFailure,
+    types::{AttachmentPath, AttachmentResponse, MessageResponse, ReactionResponse},
 };
 
 pub(crate) async fn user_can_write_channel(

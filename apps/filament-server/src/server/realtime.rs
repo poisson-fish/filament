@@ -34,16 +34,28 @@ use ulid::Ulid;
 use uuid::Uuid;
 
 use super::{
-    attachment_map_for_messages_db, attachment_map_for_messages_in_memory,
-    attachments_for_message_in_memory, authenticate_with_token, bearer_token,
-    bind_message_attachments_db, channel_key, channel_permission_snapshot, ensure_db_schema,
-    fetch_attachments_for_message_db, now_unix, outbound_event, parse_attachment_ids,
-    reaction_map_for_messages_db, reaction_summaries_from_users, record_ws_disconnect,
-    user_can_write_channel, validate_message_content, AppState, AuthContext, AuthFailure,
-    ConnectionControl, ConnectionPresence, GatewayAuthQuery, GatewayMessageCreate,
-    GatewaySubscribe, IndexedMessage, MessageRecord, MessageResponse, SearchCommand, SearchFields,
-    SearchIndexState, SearchOperation, SearchQuery, SearchService, DEFAULT_SEARCH_RESULT_LIMIT,
-    MAX_SEARCH_FUZZY, MAX_SEARCH_TERMS, MAX_SEARCH_WILDCARDS, SEARCH_INDEX_QUEUE_CAPACITY,
+    auth::{
+        authenticate_with_token, bearer_token, channel_key, now_unix, outbound_event,
+        validate_message_content,
+    },
+    core::{
+        AppState, AuthContext, ConnectionControl, ConnectionPresence, IndexedMessage,
+        MessageRecord, SearchCommand, SearchFields, SearchIndexState, SearchOperation,
+        SearchService, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_FUZZY, MAX_SEARCH_TERMS,
+        MAX_SEARCH_WILDCARDS, SEARCH_INDEX_QUEUE_CAPACITY,
+    },
+    db::ensure_db_schema,
+    domain::{
+        attachment_map_for_messages_db, attachment_map_for_messages_in_memory,
+        attachments_for_message_in_memory, bind_message_attachments_db,
+        channel_permission_snapshot, fetch_attachments_for_message_db, parse_attachment_ids,
+        reaction_map_for_messages_db, reaction_summaries_from_users, user_can_write_channel,
+    },
+    errors::AuthFailure,
+    metrics::record_ws_disconnect,
+    types::{
+        GatewayAuthQuery, GatewayMessageCreate, GatewaySubscribe, MessageResponse, SearchQuery,
+    },
 };
 
 pub(crate) async fn gateway_ws(

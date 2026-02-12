@@ -18,14 +18,26 @@ use tower_http::{
 };
 
 use super::{
-    accept_friend_request, add_member, add_reaction, ban_member, create_channel,
-    create_friend_request, create_guild, create_message, delete_attachment, delete_friend_request,
-    delete_message, download_attachment, echo, edit_message, gateway_ws, get_channel_permissions,
-    get_messages, health, issue_voice_token, kick_member, list_friend_requests, list_friends,
-    list_guild_channels, list_guilds, list_public_guilds, login, logout, lookup_users, me, metrics,
-    rebuild_search_index, reconcile_search_index, refresh, register, remove_friend,
-    remove_reaction, search_messages, set_channel_role_override, slow, update_member_role,
-    upload_attachment, AppConfig, AppState, MAX_LIVEKIT_TOKEN_TTL_SECS,
+    core::{AppConfig, AppState, MAX_LIVEKIT_TOKEN_TTL_SECS},
+    handlers::{
+        auth::{login, logout, lookup_users, me, refresh, register},
+        friends::{
+            accept_friend_request, create_friend_request, delete_friend_request,
+            list_friend_requests, list_friends, remove_friend,
+        },
+        guilds::{
+            add_member, ban_member, create_channel, create_guild, kick_member, list_guild_channels,
+            list_guilds, list_public_guilds, set_channel_role_override, update_member_role,
+        },
+        media::{delete_attachment, download_attachment, issue_voice_token, upload_attachment},
+        messages::{
+            add_reaction, create_message, delete_message, edit_message, get_channel_permissions,
+            get_messages, remove_reaction,
+        },
+        search::{rebuild_search_index, reconcile_search_index, search_messages},
+    },
+    realtime::gateway_ws,
+    types::{echo, health, metrics, slow},
 };
 
 /// Build the axum router with global security middleware.

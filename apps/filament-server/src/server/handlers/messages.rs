@@ -3,19 +3,27 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use filament_core::{tokenize_markdown, Permission, UserId};
 use object_store::{path::Path as ObjectPath, ObjectStore};
 use sqlx::Row;
 
 use crate::server::{
-    attach_message_media, attach_message_reactions, attachment_map_for_messages_db,
-    attachment_map_for_messages_in_memory, attachments_for_message_in_memory, authenticate,
-    channel_permission_snapshot, create_message_internal, enqueue_search_operation,
-    ensure_db_schema, indexed_message_from_response, now_unix, permission_list_from_set,
-    reaction_map_for_messages_db, reaction_summaries_from_users, tokenize_markdown,
-    user_can_write_channel, validate_message_content, validate_reaction_emoji, write_audit_log,
-    AppState, AuthFailure, ChannelPath, ChannelPermissionsResponse, CreateMessageRequest,
-    EditMessageRequest, HistoryQuery, MessageHistoryResponse, MessagePath, MessageResponse,
-    Permission, ReactionPath, ReactionResponse, SearchOperation, UserId, MAX_HISTORY_LIMIT,
+    auth::{authenticate, now_unix, validate_message_content},
+    core::{AppState, SearchOperation, MAX_HISTORY_LIMIT},
+    db::{ensure_db_schema, permission_list_from_set},
+    domain::{
+        attach_message_media, attach_message_reactions, attachment_map_for_messages_db,
+        attachment_map_for_messages_in_memory, attachments_for_message_in_memory,
+        channel_permission_snapshot, reaction_map_for_messages_db, reaction_summaries_from_users,
+        user_can_write_channel, validate_reaction_emoji, write_audit_log,
+    },
+    errors::AuthFailure,
+    realtime::{create_message_internal, enqueue_search_operation, indexed_message_from_response},
+    types::{
+        ChannelPath, ChannelPermissionsResponse, CreateMessageRequest, EditMessageRequest,
+        HistoryQuery, MessageHistoryResponse, MessagePath, MessageResponse, ReactionPath,
+        ReactionResponse,
+    },
 };
 
 pub(crate) async fn create_message(

@@ -1,4 +1,20 @@
-use super::*;
+use std::time::Duration;
+
+use axum::{
+    http::{header::CONTENT_TYPE, StatusCode},
+    response::{IntoResponse, Response},
+    Json,
+};
+use filament_core::{ChannelKind, MarkdownToken, Permission, Role};
+use serde::{Deserialize, Serialize};
+
+use super::{
+    core::{
+        GuildVisibility, MAX_CAPTCHA_TOKEN_CHARS, METRICS_TEXT_CONTENT_TYPE,
+        MIN_CAPTCHA_TOKEN_CHARS,
+    },
+    metrics::render_metrics,
+};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct HealthResponse {

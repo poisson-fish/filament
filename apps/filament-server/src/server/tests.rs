@@ -1,10 +1,17 @@
 #[cfg(test)]
 mod tests {
     use super::super::{
-        build_router, channel_key, AppConfig, AppState, AuthResponse, ConnectionControl,
-        DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+        auth::{channel_key, hash_password},
+        core::{
+            AppConfig, AppState, AuthContext, ChannelRecord, ConnectionControl, GuildRecord,
+            GuildVisibility, UserRecord, DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+        },
+        realtime::{add_subscription, broadcast_channel_event, create_message_internal},
+        router::build_router,
+        types::AuthResponse,
     };
     use axum::{body::Body, http::Request, http::StatusCode};
+    use filament_core::{ChannelKind, Role, UserId, Username};
     use serde_json::{json, Value};
     use std::{collections::HashMap, time::Duration};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1046,14 +1053,14 @@ mod tests {
     #[tokio::test]
     async fn gateway_broadcasts_message_to_subscribed_connection() {
         let state = AppState::new(&AppConfig::default()).unwrap();
-        let user_id = super::super::UserId::new();
-        let username = super::super::Username::try_from(String::from("alice_1")).unwrap();
+        let user_id = UserId::new();
+        let username = Username::try_from(String::from("alice_1")).unwrap();
         state.users.write().await.insert(
             username.as_str().to_owned(),
-            super::super::UserRecord {
+            UserRecord {
                 id: user_id,
                 username: username.clone(),
-                password_hash: super::super::hash_password("super-secure-password").unwrap(),
+                password_hash: hash_password("super-secure-password").unwrap(),
                 failed_logins: 0,
                 locked_until_unix: None,
             },
@@ -1066,20 +1073,20 @@ mod tests {
 
         let guild_id = String::from("g");
         let channel_id = String::from("c");
-        let mut guild = super::super::GuildRecord {
+        let mut guild = GuildRecord {
             name: String::from("Gateway Test"),
-            visibility: super::super::GuildVisibility::Private,
+            visibility: GuildVisibility::Private,
             created_by_user_id: user_id,
             members: HashMap::new(),
             banned_members: std::collections::HashSet::new(),
             channels: HashMap::new(),
         };
-        guild.members.insert(user_id, super::super::Role::Owner);
+        guild.members.insert(user_id, Role::Owner);
         guild.channels.insert(
             channel_id.clone(),
-            super::super::ChannelRecord {
+            ChannelRecord {
                 name: String::from("gateway-room"),
-                kind: super::super::ChannelKind::Text,
+                kind: ChannelKind::Text,
                 messages: Vec::new(),
                 role_overrides: HashMap::new(),
             },
@@ -1087,13 +1094,13 @@ mod tests {
         state.guilds.write().await.insert(guild_id.clone(), guild);
 
         let (tx, mut rx) = mpsc::channel::<String>(4);
-        super::super::add_subscription(&state, Uuid::new_v4(), channel_key("g", "c"), tx).await;
+        add_subscription(&state, Uuid::new_v4(), channel_key("g", "c"), tx).await;
 
-        let auth = super::super::AuthContext {
+        let auth = AuthContext {
             user_id,
             username: username.as_str().to_owned(),
         };
-        let result = super::super::create_message_internal(
+        let result = create_message_internal(
             &state,
             &auth,
             &guild_id,
@@ -1136,12 +1143,7 @@ mod tests {
             .insert(connection_id, tx.clone());
 
         tx.try_send(String::from("first")).unwrap();
-        super::super::broadcast_channel_event(
-            &state,
-            &channel_key("g", "c"),
-            String::from("second"),
-        )
-        .await;
+        broadcast_channel_event(&state, &channel_key("g", "c"), String::from("second")).await;
 
         assert_eq!(*control_rx.borrow(), ConnectionControl::Close);
     }

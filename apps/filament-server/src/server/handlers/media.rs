@@ -14,15 +14,25 @@ use object_store::{path::Path as ObjectPath, ObjectStore};
 use sha2::{Digest, Sha256};
 use ulid::Ulid;
 
+use filament_core::{has_permission, LiveKitIdentity, LiveKitRoomName, Permission};
+
 use crate::server::{
-    allowed_publish_sources, attachment_usage_for_user, authenticate, channel_permission_snapshot,
-    dedup_publish_sources, enforce_media_publish_rate_limit, enforce_media_subscribe_cap,
-    enforce_media_token_rate_limit, ensure_db_schema, extract_client_ip, find_attachment,
-    has_permission, now_unix, user_can_write_channel, user_role_in_guild,
-    validate_attachment_filename, write_audit_log, AppState, AttachmentPath, AttachmentRecord,
-    AttachmentResponse, AuthFailure, ChannelPath, LiveKitIdentity, LiveKitRoomName,
-    MediaPublishSource, Permission, UploadAttachmentQuery, VoiceTokenRequest, VoiceTokenResponse,
-    MAX_MIME_SNIFF_BYTES,
+    auth::{
+        allowed_publish_sources, authenticate, dedup_publish_sources,
+        enforce_media_publish_rate_limit, enforce_media_subscribe_cap,
+        enforce_media_token_rate_limit, extract_client_ip, now_unix,
+    },
+    core::{AppState, AttachmentRecord, MAX_MIME_SNIFF_BYTES},
+    db::ensure_db_schema,
+    domain::{
+        attachment_usage_for_user, channel_permission_snapshot, find_attachment,
+        user_can_write_channel, user_role_in_guild, validate_attachment_filename, write_audit_log,
+    },
+    errors::AuthFailure,
+    types::{
+        AttachmentPath, AttachmentResponse, ChannelPath, MediaPublishSource, UploadAttachmentQuery,
+        VoiceTokenRequest, VoiceTokenResponse,
+    },
 };
 
 #[allow(clippy::too_many_lines)]

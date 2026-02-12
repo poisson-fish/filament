@@ -3,13 +3,20 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use filament_core::{has_permission, Permission, Role};
 
 use crate::server::{
-    authenticate, collect_all_indexed_messages, enqueue_search_operation, ensure_db_schema,
-    ensure_search_bootstrapped, has_permission, hydrate_messages_by_id, plan_search_reconciliation,
-    run_search_query, user_role_in_guild, validate_search_query, AppState, AuthFailure, GuildPath,
-    Permission, Role, SearchOperation, SearchQuery, SearchReconcileResponse, SearchResponse,
-    DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_RECONCILE_DOCS,
+    auth::authenticate,
+    core::{AppState, SearchOperation, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_RECONCILE_DOCS},
+    db::ensure_db_schema,
+    domain::user_role_in_guild,
+    errors::AuthFailure,
+    realtime::{
+        collect_all_indexed_messages, enqueue_search_operation, ensure_search_bootstrapped,
+        hydrate_messages_by_id, plan_search_reconciliation, run_search_query,
+        validate_search_query,
+    },
+    types::{GuildPath, SearchQuery, SearchReconcileResponse, SearchResponse},
 };
 
 #[allow(clippy::too_many_lines)]

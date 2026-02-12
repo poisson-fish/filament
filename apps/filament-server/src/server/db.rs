@@ -1,4 +1,9 @@
-use super::{AppState, AuthFailure, ChannelKind, GuildVisibility, Permission, PermissionSet, Role};
+use filament_core::{ChannelKind, Permission, PermissionSet, Role};
+
+use super::{
+    core::{AppState, GuildVisibility},
+    errors::AuthFailure,
+};
 
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {

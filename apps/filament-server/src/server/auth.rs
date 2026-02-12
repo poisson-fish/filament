@@ -1,4 +1,32 @@
-use super::*;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::anyhow;
+use argon2::{
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
+use axum::http::{header::AUTHORIZATION, HeaderMap};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use filament_core::{Permission, PermissionSet, UserId};
+use filament_protocol::{Envelope, EventType, PROTOCOL_VERSION};
+use pasetors::{
+    claims::{Claims, ClaimsValidationRules},
+    local,
+    token::UntrustedToken,
+    version4::V4,
+    Local,
+};
+use rand::{rngs::OsRng, RngCore};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use sqlx::Row;
+
+use super::{
+    core::{AppConfig, AppState, AuthContext, CaptchaConfig, LiveKitConfig, ACCESS_TOKEN_TTL_SECS},
+    db::ensure_db_schema,
+    errors::AuthFailure,
+    types::{ChannelPath, MediaPublishSource},
+};
 
 pub(crate) fn validate_password(value: &str) -> Result<(), AuthFailure> {
     let len = value.len();

@@ -1,4 +1,9 @@
-use super::*;
+use axum::{http::StatusCode, response::IntoResponse, Json};
+
+use super::{
+    metrics::{record_auth_failure, record_rate_limit_hit},
+    types::AuthError,
+};
 
 #[derive(Debug)]
 pub(crate) enum AuthFailure {
