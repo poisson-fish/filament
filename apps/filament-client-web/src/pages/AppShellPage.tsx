@@ -20,7 +20,6 @@ import {
   type FriendRequestList,
   type GuildVisibility,
   type GuildId,
-  type MessageId,
   type MessageRecord,
   type GuildRecord,
   type MediaPublishSource,
@@ -86,16 +85,10 @@ import {
   ADD_REACTION_ICON_URL,
   DELETE_MESSAGE_ICON_URL,
   EDIT_MESSAGE_ICON_URL,
-  MESSAGE_AUTOLOAD_TOP_THRESHOLD_PX,
-  MESSAGE_LOAD_OLDER_BUTTON_TOP_THRESHOLD_PX,
-  MESSAGE_STICKY_BOTTOM_THRESHOLD_PX,
-  REACTION_PICKER_OVERLAY_ESTIMATED_HEIGHT_PX,
-  REACTION_PICKER_OVERLAY_GAP_PX,
-  REACTION_PICKER_OVERLAY_MARGIN_PX,
-  REACTION_PICKER_OVERLAY_MAX_WIDTH_PX,
   RTC_DISCONNECTED_SNAPSHOT,
 } from "../features/app-shell/config/ui-constants";
 import { createAttachmentController } from "../features/app-shell/controllers/attachment-controller";
+import { createMessageListController } from "../features/app-shell/controllers/message-list-controller";
 import { createModerationController } from "../features/app-shell/controllers/moderation-controller";
 import {
   createMessageActionsController,
@@ -108,6 +101,8 @@ import {
   overlayPanelClassName,
   overlayPanelTitle,
 } from "../features/app-shell/controllers/overlay-controller";
+import { createProfileOverlayController } from "../features/app-shell/controllers/profile-overlay-controller";
+import { createReactionPickerController } from "../features/app-shell/controllers/reaction-picker-controller";
 import {
   createVoiceSessionLifecycleController,
   resolveVoiceDevicePreferenceStatus,
@@ -152,7 +147,6 @@ import {
 export function AppShellPage() {
   const auth = useAuth();
   let composerAttachmentInputRef: HTMLInputElement | undefined;
-  let messageListRef: HTMLElement | undefined;
 
   const {
     workspaces,
@@ -437,96 +431,26 @@ export function AppShellPage() {
     }
   };
 
-  const runAfterPaint = (callback: () => void): void => {
-    if (typeof window.requestAnimationFrame === "function") {
-      window.requestAnimationFrame(() => callback());
-      return;
-    }
-    window.setTimeout(callback, 0);
-  };
+  const reactionPickerController = createReactionPickerController({
+    openReactionPickerMessageId,
+    setOpenReactionPickerMessageId,
+    setReactionPickerOverlayPosition,
+    trackPositionDependencies: () => {
+      void messages();
+      void voiceStatus();
+      void voiceError();
+      void voiceRosterEntries().length;
+    },
+  });
 
-  const runAfterMessageListPaint = (callback: (element: HTMLElement) => void): void => {
-    runAfterPaint(() => {
-      const element = messageListRef;
-      if (!element) {
-        return;
-      }
-      callback(element);
-    });
-  };
-
-  const isMessageListNearBottom = (): boolean => {
-    const element = messageListRef;
-    if (!element) {
-      return true;
-    }
-    const distanceFromBottom = element.scrollHeight - element.clientHeight - element.scrollTop;
-    return distanceFromBottom <= MESSAGE_STICKY_BOTTOM_THRESHOLD_PX;
-  };
-
-  const updateLoadOlderButtonVisibility = (): void => {
-    const before = nextBefore();
-    const element = messageListRef;
-    if (!before || !element) {
-      setShowLoadOlderButton(false);
-      return;
-    }
-    setShowLoadOlderButton(element.scrollTop <= MESSAGE_LOAD_OLDER_BUTTON_TOP_THRESHOLD_PX);
-  };
-
-  const scrollMessageListToBottom = (): void => {
-    runAfterMessageListPaint((element) => {
-      element.scrollTop = element.scrollHeight;
-      updateLoadOlderButtonVisibility();
-    });
-  };
-
-  const reactionPickerAnchorSelector = (messageId: MessageId): string =>
-    `[data-reaction-anchor-for="${messageId}"]`;
-
-  const updateReactionPickerOverlayPosition = (messageId: MessageId): void => {
-    const anchor = document.querySelector(
-      reactionPickerAnchorSelector(messageId),
-    ) as HTMLElement | null;
-    if (!anchor) {
-      setReactionPickerOverlayPosition(null);
-      return;
-    }
-
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const pickerWidth = Math.min(
-      REACTION_PICKER_OVERLAY_MAX_WIDTH_PX,
-      Math.max(240, viewportWidth - REACTION_PICKER_OVERLAY_MARGIN_PX * 2),
-    );
-    const anchorRect = anchor.getBoundingClientRect();
-    const maxLeft = Math.max(
-      REACTION_PICKER_OVERLAY_MARGIN_PX,
-      viewportWidth - pickerWidth - REACTION_PICKER_OVERLAY_MARGIN_PX,
-    );
-    const left = Math.min(
-      maxLeft,
-      Math.max(
-        REACTION_PICKER_OVERLAY_MARGIN_PX,
-        anchorRect.right - pickerWidth,
-      ),
-    );
-
-    const preferredTop = anchorRect.bottom + REACTION_PICKER_OVERLAY_GAP_PX;
-    const canPlaceBelow =
-      preferredTop + REACTION_PICKER_OVERLAY_ESTIMATED_HEIGHT_PX <=
-      viewportHeight - REACTION_PICKER_OVERLAY_MARGIN_PX;
-    const top = canPlaceBelow
-      ? preferredTop
-      : Math.max(
-          REACTION_PICKER_OVERLAY_MARGIN_PX,
-          anchorRect.top -
-            REACTION_PICKER_OVERLAY_ESTIMATED_HEIGHT_PX -
-            REACTION_PICKER_OVERLAY_GAP_PX,
-        );
-
-    setReactionPickerOverlayPosition({ top, left });
-  };
+  const messageListController = createMessageListController({
+    nextBefore,
+    isLoadingOlder,
+    openReactionPickerMessageId,
+    setShowLoadOlderButton,
+    updateReactionPickerOverlayPosition:
+      reactionPickerController.updateReactionPickerOverlayPosition,
+  });
 
   const persistVoiceDevicePreferences = (next: VoiceDevicePreferences): void => {
     setVoiceDevicePreferences(next);
@@ -681,17 +605,9 @@ export function AppShellPage() {
     onEscape: closeOverlayPanel,
   });
 
-  createEffect(() => {
-    if (!selectedProfileUserId()) {
-      return;
-    }
-    const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSelectedProfileUserId(null);
-      }
-    };
-    window.addEventListener("keydown", onKeydown);
-    onCleanup(() => window.removeEventListener("keydown", onKeydown));
+  createProfileOverlayController({
+    selectedProfileUserId,
+    setSelectedProfileUserId,
   });
 
   const {
@@ -778,8 +694,8 @@ export function AppShellPage() {
     setMessageError,
     setMessages,
     setAttachmentByChannel,
-    isMessageListNearBottom,
-    scrollMessageListToBottom,
+    isMessageListNearBottom: messageListController.isMessageListNearBottom,
+    scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
     editingMessageId,
     setEditingMessageId,
     editingDraft,
@@ -1161,7 +1077,7 @@ export function AppShellPage() {
       setNextBefore(history.nextBefore);
       setEditingMessageId(null);
       setEditingDraft("");
-      scrollMessageListToBottom();
+      messageListController.scrollMessageListToBottom();
     } catch (error) {
       setMessageError(mapError(error, "Unable to load messages."));
       setMessages([]);
@@ -1181,8 +1097,7 @@ export function AppShellPage() {
       return;
     }
 
-    const previousScrollHeight = messageListRef?.scrollHeight ?? null;
-    const previousScrollTop = messageListRef?.scrollTop ?? null;
+    const previousScrollMetrics = messageListController.captureScrollMetrics();
     setLoadingOlder(true);
     setMessageError("");
     try {
@@ -1192,33 +1107,11 @@ export function AppShellPage() {
       });
       setMessages((existing) => mergeMessageHistory(existing, history.messages));
       setNextBefore(history.nextBefore);
-      if (previousScrollHeight !== null && previousScrollTop !== null) {
-        runAfterMessageListPaint((element) => {
-          const delta = element.scrollHeight - previousScrollHeight;
-          element.scrollTop = previousScrollTop + delta;
-          updateLoadOlderButtonVisibility();
-        });
-      }
+      messageListController.restoreScrollAfterPrepend(previousScrollMetrics);
     } catch (error) {
       setMessageError(mapError(error, "Unable to load older messages."));
     } finally {
       setLoadingOlder(false);
-    }
-  };
-
-  const onMessageListScroll = () => {
-    updateLoadOlderButtonVisibility();
-    const openPickerMessageId = openReactionPickerMessageId();
-    if (openPickerMessageId) {
-      updateReactionPickerOverlayPosition(openPickerMessageId);
-    }
-    const before = nextBefore();
-    const element = messageListRef;
-    if (!before || !element || isLoadingOlder()) {
-      return;
-    }
-    if (element.scrollTop <= MESSAGE_AUTOLOAD_TOP_THRESHOLD_PX) {
-      void loadOlderMessages();
     }
   };
 
@@ -1243,71 +1136,6 @@ export function AppShellPage() {
       setNextBefore(null);
       setShowLoadOlderButton(false);
     }
-  });
-
-  createEffect(() => {
-    void nextBefore();
-    updateLoadOlderButtonVisibility();
-  });
-
-  createEffect(() => {
-    const openPickerMessageId = openReactionPickerMessageId();
-    if (!openPickerMessageId) {
-      setReactionPickerOverlayPosition(null);
-      return;
-    }
-
-    const updatePosition = () => updateReactionPickerOverlayPosition(openPickerMessageId);
-    runAfterPaint(updatePosition);
-
-    const onWindowResize = () => updatePosition();
-    const onWindowScroll = () => updatePosition();
-    const onWindowKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpenReactionPickerMessageId(null);
-      }
-    };
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) {
-        return;
-      }
-      const picker = document.querySelector(".reaction-picker-floating") as HTMLElement | null;
-      if (picker?.contains(target)) {
-        return;
-      }
-      if (
-        target instanceof Element &&
-        target.closest(reactionPickerAnchorSelector(openPickerMessageId))
-      ) {
-        return;
-      }
-      setOpenReactionPickerMessageId(null);
-    };
-
-    window.addEventListener("resize", onWindowResize);
-    window.addEventListener("scroll", onWindowScroll, true);
-    window.addEventListener("keydown", onWindowKeydown);
-    window.addEventListener("pointerdown", onPointerDown);
-
-    onCleanup(() => {
-      window.removeEventListener("resize", onWindowResize);
-      window.removeEventListener("scroll", onWindowScroll, true);
-      window.removeEventListener("keydown", onWindowKeydown);
-      window.removeEventListener("pointerdown", onPointerDown);
-    });
-  });
-
-  createEffect(() => {
-    const openPickerMessageId = openReactionPickerMessageId();
-    if (!openPickerMessageId) {
-      return;
-    }
-    void messages();
-    void voiceStatus();
-    void voiceError();
-    void voiceRosterEntries().length;
-    runAfterPaint(() => updateReactionPickerOverlayPosition(openPickerMessageId));
   });
 
   createEffect(() => {
@@ -1339,10 +1167,10 @@ export function AppShellPage() {
         if (message.guildId !== guildId || message.channelId !== channelId) {
           return;
         }
-        const shouldStickToBottom = isMessageListNearBottom();
+        const shouldStickToBottom = messageListController.isMessageListNearBottom();
         setMessages((existing) => mergeMessage(existing, message));
         if (shouldStickToBottom) {
-          scrollMessageListToBottom();
+          messageListController.scrollMessageListToBottom();
         }
       },
       onPresenceSync: (payload) => {
@@ -1895,11 +1723,10 @@ export function AppShellPage() {
                 </Show>
 
                 <MessageList
-                  onListRef={(element) => {
-                    messageListRef = element;
-                    updateLoadOlderButtonVisibility();
+                  onListRef={messageListController.onListRef}
+                  onListScroll={() => {
+                    messageListController.onMessageListScroll(loadOlderMessages);
                   }}
-                  onListScroll={onMessageListScroll}
                   nextBefore={nextBefore()}
                   showLoadOlderButton={showLoadOlderButton()}
                   isLoadingOlder={isLoadingOlder()}

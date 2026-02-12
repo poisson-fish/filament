@@ -172,20 +172,32 @@ Move derived `createMemo` logic and pure derivations out of the page.
 Move DOM/paint/listener mechanics out of page body.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add controllers:
+- [x] Add controllers:
   - `controllers/message-list-controller.ts` (scroll helpers, load-older button visibility, sticky bottom)
   - `controllers/reaction-picker-controller.ts` (overlay positioning + global listeners)
   - `controllers/profile-overlay-controller.ts` (Escape handling)
-- [ ] Keep controller APIs consistent with existing style (`Accessor`/`Setter` options object).
-- [ ] Maintain deterministic cleanup via `onCleanup`.
+- [x] Keep controller APIs consistent with existing style (`Accessor`/`Setter` options object).
+- [x] Maintain deterministic cleanup via `onCleanup`.
 
 ### Tests
-- [ ] Add controller-focused tests:
+- [x] Add controller-focused tests:
   - `apps/filament-client-web/tests/app-shell-message-list-controller.test.ts`
   - `apps/filament-client-web/tests/app-shell-reaction-picker-controller.test.ts`
+
+### Refactor Notes
+- Added `features/app-shell/controllers/message-list-controller.ts` and moved message-list paint scheduling, sticky-bottom detection, load-older visibility, and autoload-on-scroll mechanics behind a typed controller.
+- Added `features/app-shell/controllers/reaction-picker-controller.ts` and moved reaction picker overlay placement + global resize/scroll/keydown/pointer listeners out of `AppShellPage.tsx` with deterministic listener cleanup.
+- Added `features/app-shell/controllers/profile-overlay-controller.ts` and moved selected-profile Escape handling into a dedicated controller.
+- Rewired `AppShellPage.tsx` to consume controller APIs for message list and reaction picker mechanics; removed inline DOM/listener math and related local refs.
+- Added `tests/app-shell-message-list-controller.test.ts` and `tests/app-shell-reaction-picker-controller.test.ts` for controller behavior and positioning/listener parity.
+- Metrics after Phase 4 (2026-02-12):
+  - `AppShellPage.tsx` line count: `2053`
+  - `createEffect(...)` count in `AppShellPage.tsx`: `11`
+  - Test command: `pnpm --prefix apps/filament-client-web test`
+  - Pass status: `33` test files passed, `141` tests passed
 
 ### Exit Criteria
 - Scroll math and reaction-picker positioning/listener logic are no longer inline in the page.
