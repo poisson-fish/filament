@@ -3,7 +3,6 @@ import {
   createEffect,
   createMemo,
   createResource,
-  createSignal,
   onCleanup,
   untrack,
 } from "solid-js";
@@ -88,8 +87,6 @@ import { ServerRail } from "../features/app-shell/components/ServerRail";
 import { SafeMarkdown } from "../features/app-shell/components/SafeMarkdown";
 import { OPENMOJI_REACTION_OPTIONS } from "../features/app-shell/config/reaction-options";
 import {
-  DEFAULT_SETTINGS_CATEGORY,
-  DEFAULT_VOICE_SETTINGS_SUBMENU,
   SETTINGS_CATEGORIES,
   VOICE_SETTINGS_SUBMENU,
 } from "../features/app-shell/config/settings-menu";
@@ -130,22 +127,26 @@ import {
   createWorkspaceBootstrapController,
   createWorkspaceSelectionController,
 } from "../features/app-shell/controllers/workspace-controller";
+import { createDiagnosticsState } from "../features/app-shell/state/diagnostics-state";
+import { createMessageState } from "../features/app-shell/state/message-state";
+import { createOverlayState } from "../features/app-shell/state/overlay-state";
+import { createProfileState } from "../features/app-shell/state/profile-state";
+import {
+  createVoiceState,
+  DEFAULT_VOICE_SESSION_CAPABILITIES,
+} from "../features/app-shell/state/voice-state";
+import { createWorkspaceState } from "../features/app-shell/state/workspace-state";
 import {
   type OverlayPanel,
-  type ReactionPickerOverlayPosition,
   type SettingsCategory,
   type VoiceRosterEntry,
-  type VoiceSessionCapabilities,
-  type VoiceSettingsSubmenu,
 } from "../features/app-shell/types";
 import { connectGateway } from "../lib/gateway";
-import { createRtcClient, type RtcClient, type RtcSnapshot } from "../lib/rtc";
+import { createRtcClient, type RtcClient } from "../lib/rtc";
 import {
   enumerateAudioDevices,
-  loadVoiceDevicePreferences,
   reconcileVoiceDevicePreferences,
   saveVoiceDevicePreferences,
-  type AudioDeviceOption,
   type MediaDeviceId,
   type VoiceDevicePreferences,
 } from "../lib/voice-device-settings";
@@ -156,148 +157,241 @@ import {
   resolveUsernames,
 } from "../lib/username-cache";
 
-const DEFAULT_VOICE_SESSION_CAPABILITIES: VoiceSessionCapabilities = {
-  canSubscribe: false,
-  publishSources: [],
-};
-
 export function AppShellPage() {
   const auth = useAuth();
   let composerAttachmentInputRef: HTMLInputElement | undefined;
   let messageListRef: HTMLElement | undefined;
 
-  const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>([]);
-  const [activeGuildId, setActiveGuildId] = createSignal<GuildId | null>(null);
-  const [activeChannelId, setActiveChannelId] = createSignal<ChannelId | null>(null);
-  const [workspaceBootstrapDone, setWorkspaceBootstrapDone] = createSignal(false);
-
-  const [composer, setComposer] = createSignal("");
-  const [messageStatus, setMessageStatus] = createSignal("");
-  const [messageError, setMessageError] = createSignal("");
-  const [isLoadingMessages, setLoadingMessages] = createSignal(false);
-  const [isLoadingOlder, setLoadingOlder] = createSignal(false);
-  const [isSendingMessage, setSendingMessage] = createSignal(false);
-  const [messages, setMessages] = createSignal<MessageRecord[]>([]);
-  const [nextBefore, setNextBefore] = createSignal<MessageId | null>(null);
-  const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
-  const [reactionState, setReactionState] = createSignal<Record<string, ReactionView>>({});
-  const [pendingReactionByKey, setPendingReactionByKey] = createSignal<Record<string, true>>({});
-  const [openReactionPickerMessageId, setOpenReactionPickerMessageId] = createSignal<MessageId | null>(null);
-  const [reactionPickerOverlayPosition, setReactionPickerOverlayPosition] =
-    createSignal<ReactionPickerOverlayPosition | null>(null);
-  const [editingMessageId, setEditingMessageId] = createSignal<MessageId | null>(null);
-  const [editingDraft, setEditingDraft] = createSignal("");
-  const [isSavingEdit, setSavingEdit] = createSignal(false);
-  const [deletingMessageId, setDeletingMessageId] = createSignal<MessageId | null>(null);
-  const [composerAttachments, setComposerAttachments] = createSignal<File[]>([]);
-
-  const [createGuildName, setCreateGuildName] = createSignal("Security Ops");
-  const [createGuildVisibility, setCreateGuildVisibility] = createSignal<GuildVisibility>("private");
-  const [createChannelName, setCreateChannelName] = createSignal("incident-room");
-  const [createChannelKind, setCreateChannelKind] = createSignal<ChannelKindName>("text");
-  const [isCreatingWorkspace, setCreatingWorkspace] = createSignal(false);
-  const [workspaceError, setWorkspaceError] = createSignal("");
-  const [publicGuildSearchQuery, setPublicGuildSearchQuery] = createSignal("");
-  const [isSearchingPublicGuilds, setSearchingPublicGuilds] = createSignal(false);
-  const [publicGuildSearchError, setPublicGuildSearchError] = createSignal("");
-  const [publicGuildDirectory, setPublicGuildDirectory] = createSignal<GuildRecord[]>([]);
-  const [friendRecipientUserIdInput, setFriendRecipientUserIdInput] = createSignal("");
-  const [friends, setFriends] = createSignal<FriendRecord[]>([]);
-  const [friendRequests, setFriendRequests] = createSignal<FriendRequestList>({
-    incoming: [],
-    outgoing: [],
-  });
-  const [isRunningFriendAction, setRunningFriendAction] = createSignal(false);
-  const [friendStatus, setFriendStatus] = createSignal("");
-  const [friendError, setFriendError] = createSignal("");
-
-  const [newChannelName, setNewChannelName] = createSignal("backend");
-  const [newChannelKind, setNewChannelKind] = createSignal<ChannelKindName>("text");
-  const [isCreatingChannel, setCreatingChannel] = createSignal(false);
-  const [channelCreateError, setChannelCreateError] = createSignal("");
-
-  const [searchQuery, setSearchQuery] = createSignal("");
-  const [searchError, setSearchError] = createSignal("");
-  const [isSearching, setSearching] = createSignal(false);
-  const [searchResults, setSearchResults] = createSignal<SearchResults | null>(null);
-  const [isRunningSearchOps, setRunningSearchOps] = createSignal(false);
-  const [searchOpsStatus, setSearchOpsStatus] = createSignal("");
-
-  const [gatewayOnline, setGatewayOnline] = createSignal(false);
-  const [onlineMembers, setOnlineMembers] = createSignal<string[]>([]);
-  const [resolvedUsernames, setResolvedUsernames] = createSignal<Record<string, string>>({});
-  const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<Record<string, number>>({});
-  const [profileDraftUsername, setProfileDraftUsername] = createSignal("");
-  const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
-  const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(null);
-  const [profileSettingsStatus, setProfileSettingsStatus] = createSignal("");
-  const [profileSettingsError, setProfileSettingsError] = createSignal("");
-  const [isSavingProfile, setSavingProfile] = createSignal(false);
-  const [isUploadingProfileAvatar, setUploadingProfileAvatar] = createSignal(false);
-  const [selectedProfileUserId, setSelectedProfileUserId] = createSignal<UserId | null>(null);
-  const [selectedProfileError, setSelectedProfileError] = createSignal("");
-
-  const [attachmentByChannel, setAttachmentByChannel] = createSignal<Record<string, AttachmentRecord[]>>({});
-  const [selectedAttachment, setSelectedAttachment] = createSignal<File | null>(null);
-  const [attachmentFilename, setAttachmentFilename] = createSignal("");
-  const [attachmentStatus, setAttachmentStatus] = createSignal("");
-  const [attachmentError, setAttachmentError] = createSignal("");
-  const [isUploadingAttachment, setUploadingAttachment] = createSignal(false);
-  const [downloadingAttachmentId, setDownloadingAttachmentId] = createSignal<AttachmentId | null>(null);
-  const [deletingAttachmentId, setDeletingAttachmentId] = createSignal<AttachmentId | null>(null);
-
-  const [rtcSnapshot, setRtcSnapshot] = createSignal<RtcSnapshot>(RTC_DISCONNECTED_SNAPSHOT);
-  const [voiceStatus, setVoiceStatus] = createSignal("");
-  const [voiceError, setVoiceError] = createSignal("");
-  const [isJoiningVoice, setJoiningVoice] = createSignal(false);
-  const [isLeavingVoice, setLeavingVoice] = createSignal(false);
-  const [isTogglingVoiceMic, setTogglingVoiceMic] = createSignal(false);
-  const [isTogglingVoiceCamera, setTogglingVoiceCamera] = createSignal(false);
-  const [isTogglingVoiceScreenShare, setTogglingVoiceScreenShare] = createSignal(false);
-  const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(null);
-  const [voiceSessionStartedAtUnixMs, setVoiceSessionStartedAtUnixMs] = createSignal<number | null>(
-    null,
-  );
-  const [voiceDurationClockUnixMs, setVoiceDurationClockUnixMs] = createSignal(Date.now());
-  const [voiceSessionCapabilities, setVoiceSessionCapabilities] = createSignal<VoiceSessionCapabilities>(
-    DEFAULT_VOICE_SESSION_CAPABILITIES,
-  );
-
-  const [moderationUserIdInput, setModerationUserIdInput] = createSignal("");
-  const [moderationRoleInput, setModerationRoleInput] = createSignal<RoleName>("member");
-  const [isModerating, setModerating] = createSignal(false);
-  const [moderationStatus, setModerationStatus] = createSignal("");
-  const [moderationError, setModerationError] = createSignal("");
-
-  const [overrideRoleInput, setOverrideRoleInput] = createSignal<RoleName>("member");
-  const [overrideAllowCsv, setOverrideAllowCsv] = createSignal("create_message");
-  const [overrideDenyCsv, setOverrideDenyCsv] = createSignal("");
-
-  const [isRefreshingSession, setRefreshingSession] = createSignal(false);
-  const [sessionStatus, setSessionStatus] = createSignal("");
-  const [sessionError, setSessionError] = createSignal("");
-  const [channelPermissions, setChannelPermissions] = createSignal<ChannelPermissionSnapshot | null>(null);
-
-  const [healthStatus, setHealthStatus] = createSignal("");
-  const [echoInput, setEchoInput] = createSignal("hello filament");
-  const [diagError, setDiagError] = createSignal("");
-  const [isCheckingHealth, setCheckingHealth] = createSignal(false);
-  const [isEchoing, setEchoing] = createSignal(false);
-  const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<OverlayPanel | null>(null);
-  const [activeSettingsCategory, setActiveSettingsCategory] =
-    createSignal<SettingsCategory>(DEFAULT_SETTINGS_CATEGORY);
-  const [activeVoiceSettingsSubmenu, setActiveVoiceSettingsSubmenu] =
-    createSignal<VoiceSettingsSubmenu>(DEFAULT_VOICE_SETTINGS_SUBMENU);
-  const [voiceDevicePreferences, setVoiceDevicePreferences] = createSignal<VoiceDevicePreferences>(
-    loadVoiceDevicePreferences(),
-  );
-  const [audioInputDevices, setAudioInputDevices] = createSignal<AudioDeviceOption[]>([]);
-  const [audioOutputDevices, setAudioOutputDevices] = createSignal<AudioDeviceOption[]>([]);
-  const [isRefreshingAudioDevices, setRefreshingAudioDevices] = createSignal(false);
-  const [audioDevicesStatus, setAudioDevicesStatus] = createSignal("");
-  const [audioDevicesError, setAudioDevicesError] = createSignal("");
-  const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
-  const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(false);
+  const {
+    workspaces,
+    setWorkspaces,
+    activeGuildId,
+    setActiveGuildId,
+    activeChannelId,
+    setActiveChannelId,
+    workspaceBootstrapDone,
+    setWorkspaceBootstrapDone,
+    createGuildName,
+    setCreateGuildName,
+    createGuildVisibility,
+    setCreateGuildVisibility,
+    createChannelName,
+    setCreateChannelName,
+    createChannelKind,
+    setCreateChannelKind,
+    isCreatingWorkspace,
+    setCreatingWorkspace,
+    workspaceError,
+    setWorkspaceError,
+    publicGuildSearchQuery,
+    setPublicGuildSearchQuery,
+    isSearchingPublicGuilds,
+    setSearchingPublicGuilds,
+    publicGuildSearchError,
+    setPublicGuildSearchError,
+    publicGuildDirectory,
+    setPublicGuildDirectory,
+    friendRecipientUserIdInput,
+    setFriendRecipientUserIdInput,
+    friends,
+    setFriends,
+    friendRequests,
+    setFriendRequests,
+    isRunningFriendAction,
+    setRunningFriendAction,
+    friendStatus,
+    setFriendStatus,
+    friendError,
+    setFriendError,
+    newChannelName,
+    setNewChannelName,
+    newChannelKind,
+    setNewChannelKind,
+    isCreatingChannel,
+    setCreatingChannel,
+    channelCreateError,
+    setChannelCreateError,
+    searchQuery,
+    setSearchQuery,
+    searchError,
+    setSearchError,
+    isSearching,
+    setSearching,
+    searchResults,
+    setSearchResults,
+    isRunningSearchOps,
+    setRunningSearchOps,
+    searchOpsStatus,
+    setSearchOpsStatus,
+    channelPermissions,
+    setChannelPermissions,
+  } = createWorkspaceState();
+  const {
+    composer,
+    setComposer,
+    messageStatus,
+    setMessageStatus,
+    messageError,
+    setMessageError,
+    isLoadingMessages,
+    setLoadingMessages,
+    isLoadingOlder,
+    setLoadingOlder,
+    isSendingMessage,
+    setSendingMessage,
+    messages,
+    setMessages,
+    nextBefore,
+    setNextBefore,
+    showLoadOlderButton,
+    setShowLoadOlderButton,
+    reactionState,
+    setReactionState,
+    pendingReactionByKey,
+    setPendingReactionByKey,
+    openReactionPickerMessageId,
+    setOpenReactionPickerMessageId,
+    reactionPickerOverlayPosition,
+    setReactionPickerOverlayPosition,
+    editingMessageId,
+    setEditingMessageId,
+    editingDraft,
+    setEditingDraft,
+    isSavingEdit,
+    setSavingEdit,
+    deletingMessageId,
+    setDeletingMessageId,
+    composerAttachments,
+    setComposerAttachments,
+    attachmentByChannel,
+    setAttachmentByChannel,
+    selectedAttachment,
+    setSelectedAttachment,
+    attachmentFilename,
+    setAttachmentFilename,
+    attachmentStatus,
+    setAttachmentStatus,
+    attachmentError,
+    setAttachmentError,
+    isUploadingAttachment,
+    setUploadingAttachment,
+    downloadingAttachmentId,
+    setDownloadingAttachmentId,
+    deletingAttachmentId,
+    setDeletingAttachmentId,
+  } = createMessageState();
+  const {
+    gatewayOnline,
+    setGatewayOnline,
+    onlineMembers,
+    setOnlineMembers,
+    resolvedUsernames,
+    setResolvedUsernames,
+    avatarVersionByUserId,
+    setAvatarVersionByUserId,
+    profileDraftUsername,
+    setProfileDraftUsername,
+    profileDraftAbout,
+    setProfileDraftAbout,
+    selectedProfileAvatarFile,
+    setSelectedProfileAvatarFile,
+    profileSettingsStatus,
+    setProfileSettingsStatus,
+    profileSettingsError,
+    setProfileSettingsError,
+    isSavingProfile,
+    setSavingProfile,
+    isUploadingProfileAvatar,
+    setUploadingProfileAvatar,
+    selectedProfileUserId,
+    setSelectedProfileUserId,
+    selectedProfileError,
+    setSelectedProfileError,
+  } = createProfileState();
+  const {
+    rtcSnapshot,
+    setRtcSnapshot,
+    voiceStatus,
+    setVoiceStatus,
+    voiceError,
+    setVoiceError,
+    isJoiningVoice,
+    setJoiningVoice,
+    isLeavingVoice,
+    setLeavingVoice,
+    isTogglingVoiceMic,
+    setTogglingVoiceMic,
+    isTogglingVoiceCamera,
+    setTogglingVoiceCamera,
+    isTogglingVoiceScreenShare,
+    setTogglingVoiceScreenShare,
+    voiceSessionChannelKey,
+    setVoiceSessionChannelKey,
+    voiceSessionStartedAtUnixMs,
+    setVoiceSessionStartedAtUnixMs,
+    voiceDurationClockUnixMs,
+    setVoiceDurationClockUnixMs,
+    voiceSessionCapabilities,
+    setVoiceSessionCapabilities,
+    voiceDevicePreferences,
+    setVoiceDevicePreferences,
+    audioInputDevices,
+    setAudioInputDevices,
+    audioOutputDevices,
+    setAudioOutputDevices,
+    isRefreshingAudioDevices,
+    setRefreshingAudioDevices,
+    audioDevicesStatus,
+    setAudioDevicesStatus,
+    audioDevicesError,
+    setAudioDevicesError,
+  } = createVoiceState();
+  const {
+    moderationUserIdInput,
+    setModerationUserIdInput,
+    moderationRoleInput,
+    setModerationRoleInput,
+    isModerating,
+    setModerating,
+    moderationStatus,
+    setModerationStatus,
+    moderationError,
+    setModerationError,
+    overrideRoleInput,
+    setOverrideRoleInput,
+    overrideAllowCsv,
+    setOverrideAllowCsv,
+    overrideDenyCsv,
+    setOverrideDenyCsv,
+    isRefreshingSession,
+    setRefreshingSession,
+    sessionStatus,
+    setSessionStatus,
+    sessionError,
+    setSessionError,
+    healthStatus,
+    setHealthStatus,
+    echoInput,
+    setEchoInput,
+    diagError,
+    setDiagError,
+    isCheckingHealth,
+    setCheckingHealth,
+    isEchoing,
+    setEchoing,
+  } = createDiagnosticsState();
+  const {
+    activeOverlayPanel,
+    setActiveOverlayPanel,
+    activeSettingsCategory,
+    setActiveSettingsCategory,
+    activeVoiceSettingsSubmenu,
+    setActiveVoiceSettingsSubmenu,
+    isChannelRailCollapsed,
+    setChannelRailCollapsed,
+    isMemberRailCollapsed,
+    setMemberRailCollapsed,
+  } = createOverlayState();
   let rtcClient: RtcClient | null = null;
   let stopRtcSubscription: (() => void) | null = null;
 

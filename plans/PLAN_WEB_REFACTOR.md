@@ -105,22 +105,27 @@ Move non-reactive constants out of the page.
 Move raw signal initialization into typed state factories.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add `apps/filament-client-web/src/features/app-shell/state/` modules by slice:
+- [x] Add `apps/filament-client-web/src/features/app-shell/state/` modules by slice:
   - `workspace-state.ts`
   - `message-state.ts`
   - `voice-state.ts`
   - `profile-state.ts`
   - `overlay-state.ts`
   - `diagnostics-state.ts`
-- [ ] Each module exports `createXState()` returning grouped accessors/setters.
-- [ ] Keep defaults and invariant-safe initial values unchanged.
-- [ ] Replace flat signal declarations in-page with slice initializers.
+- [x] Each module exports `createXState()` returning grouped accessors/setters.
+- [x] Keep defaults and invariant-safe initial values unchanged.
+- [x] Replace flat signal declarations in-page with slice initializers.
 
 ### Tests
-- [ ] Add `apps/filament-client-web/tests/app-shell-state.test.ts` for default state shape and key defaults.
+- [x] Add `apps/filament-client-web/tests/app-shell-state.test.ts` for default state shape and key defaults.
+
+### Refactor Notes
+- Added six state factories under `features/app-shell/state/` and moved all `createSignal(...)` initialization out of `AppShellPage.tsx`.
+- Centralized `DEFAULT_VOICE_SESSION_CAPABILITIES` in `voice-state.ts` to keep voice defaults co-located with voice signal initialization.
+- Added `tests/app-shell-state.test.ts` to lock key default values and ensure grouped accessor/setter state slices remain stable.
 
 ### Exit Criteria
 - Signal declarations are grouped by domain slice and no longer in one large page block.
