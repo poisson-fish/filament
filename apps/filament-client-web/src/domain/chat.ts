@@ -24,9 +24,13 @@ export type ChannelKindName = "text" | "voice";
 export type RoleName = "owner" | "moderator" | "member";
 export type PermissionName =
   | "manage_roles"
+  | "manage_member_roles"
+  | "manage_workspace_roles"
   | "manage_channel_overrides"
   | "delete_message"
   | "ban_member"
+  | "view_audit_log"
+  | "manage_ip_bans"
   | "create_message"
   | "publish_video"
   | "publish_screen_share"
@@ -444,9 +448,13 @@ export function guildVisibilityFromInput(input: string): GuildVisibility {
 export function permissionFromInput(input: string): PermissionName {
   if (
     input !== "manage_roles" &&
+    input !== "manage_member_roles" &&
+    input !== "manage_workspace_roles" &&
     input !== "manage_channel_overrides" &&
     input !== "delete_message" &&
     input !== "ban_member" &&
+    input !== "view_audit_log" &&
+    input !== "manage_ip_bans" &&
     input !== "create_message" &&
     input !== "publish_video" &&
     input !== "publish_screen_share" &&

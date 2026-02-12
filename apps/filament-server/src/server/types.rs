@@ -249,6 +249,27 @@ pub(crate) struct UpdateMemberRoleRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct CreateGuildRoleRequest {
+    pub(crate) name: String,
+    pub(crate) permissions: Vec<Permission>,
+    pub(crate) position: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateGuildRoleRequest {
+    pub(crate) name: Option<String>,
+    pub(crate) permissions: Option<Vec<Permission>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReorderGuildRolesRequest {
+    pub(crate) role_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct UpdateChannelRoleOverrideRequest {
     pub(crate) allow: Vec<Permission>,
     pub(crate) deny: Vec<Permission>,
@@ -305,6 +326,19 @@ pub(crate) struct MessageHistoryResponse {
 #[derive(Debug, Deserialize)]
 pub(crate) struct GuildPath {
     pub(crate) guild_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GuildRolePath {
+    pub(crate) guild_id: String,
+    pub(crate) role_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GuildRoleMemberPath {
+    pub(crate) guild_id: String,
+    pub(crate) role_id: String,
+    pub(crate) user_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -453,6 +487,20 @@ pub(crate) struct GuildIpBanListResponse {
 pub(crate) struct GuildIpBanApplyResponse {
     pub(crate) created_count: usize,
     pub(crate) ban_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct GuildRoleResponse {
+    pub(crate) role_id: String,
+    pub(crate) name: String,
+    pub(crate) position: i32,
+    pub(crate) is_system: bool,
+    pub(crate) permissions: Vec<Permission>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GuildRoleListResponse {
+    pub(crate) roles: Vec<GuildRoleResponse>,
 }
 
 #[derive(Debug, Serialize)]

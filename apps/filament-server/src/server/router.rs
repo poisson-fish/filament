@@ -33,9 +33,11 @@ use super::{
             list_friend_requests, list_friends, remove_friend,
         },
         guilds::{
-            add_member, ban_member, create_channel, create_guild, join_public_guild, kick_member,
-            list_guild_audit, list_guild_channels, list_guild_ip_bans, list_guilds,
-            list_public_guilds, remove_guild_ip_ban, set_channel_role_override, update_member_role,
+            add_member, assign_guild_role, ban_member, create_channel, create_guild,
+            create_guild_role, delete_guild_role, join_public_guild, kick_member, list_guild_audit,
+            list_guild_channels, list_guild_ip_bans, list_guild_roles, list_guilds,
+            list_public_guilds, remove_guild_ip_ban, reorder_guild_roles,
+            set_channel_role_override, unassign_guild_role, update_guild_role, update_member_role,
             upsert_guild_ip_bans_by_user,
         },
         media::{delete_attachment, download_attachment, issue_voice_token, upload_attachment},
@@ -182,6 +184,22 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route("/guilds/public", get(list_public_guilds))
         .route("/guilds/{guild_id}/join", post(join_public_guild))
         .route("/guilds/{guild_id}/audit", get(list_guild_audit))
+        .route(
+            "/guilds/{guild_id}/roles",
+            get(list_guild_roles).post(create_guild_role),
+        )
+        .route(
+            "/guilds/{guild_id}/roles/reorder",
+            post(reorder_guild_roles),
+        )
+        .route(
+            "/guilds/{guild_id}/roles/{role_id}",
+            patch(update_guild_role).delete(delete_guild_role),
+        )
+        .route(
+            "/guilds/{guild_id}/roles/{role_id}/members/{user_id}",
+            post(assign_guild_role).delete(unassign_guild_role),
+        )
         .route("/guilds/{guild_id}/ip-bans", get(list_guild_ip_bans))
         .route(
             "/guilds/{guild_id}/ip-bans/by-user",

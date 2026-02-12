@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::anyhow;
 use filament_core::{
-    ChannelKind, ChannelPermissionOverwrite, MarkdownToken, Role, UserId, Username,
+    ChannelKind, ChannelPermissionOverwrite, MarkdownToken, PermissionSet, Role, UserId, Username,
 };
 use object_store::local::LocalFileSystem;
 use pasetors::{keys::SymmetricKey, version4::V4};
@@ -31,6 +31,10 @@ use super::{
 pub(crate) type ChannelSubscriptions = HashMap<Uuid, mpsc::Sender<String>>;
 pub(crate) type Subscriptions = HashMap<String, ChannelSubscriptions>;
 pub(crate) type GuildIpBanMap = HashMap<String, Vec<GuildIpBanRecord>>;
+pub(crate) type GuildRoleMap = HashMap<String, HashMap<String, WorkspaceRoleRecord>>;
+pub(crate) type GuildRoleAssignmentMap = HashMap<String, HashMap<UserId, HashSet<String>>>;
+pub(crate) type GuildChannelPermissionOverrideMap =
+    HashMap<String, HashMap<String, ChannelPermissionOverrideRecord>>;
 
 pub const DEFAULT_JSON_BODY_LIMIT_BYTES: usize = 1_048_576;
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 10;
@@ -116,6 +120,7 @@ pub struct AppConfig {
     pub livekit_url: String,
     pub livekit_api_key: Option<String>,
     pub livekit_api_secret: Option<String>,
+    pub server_owner_user_id: Option<UserId>,
     pub attachment_root: PathBuf,
     pub database_url: Option<String>,
 }
@@ -156,6 +161,7 @@ impl Default for AppConfig {
             livekit_url: String::from("ws://127.0.0.1:7880"),
             livekit_api_key: None,
             livekit_api_secret: None,
+            server_owner_user_id: None,
             attachment_root: PathBuf::from("./data/attachments"),
             database_url: None,
         }
@@ -184,6 +190,7 @@ pub(crate) struct RuntimeSecurityConfig {
     pub(crate) media_subscribe_token_cap_per_channel: usize,
     pub(crate) max_created_guilds_per_user: usize,
     pub(crate) trusted_proxy_cidrs: Arc<Vec<IpNetwork>>,
+    pub(crate) server_owner_user_id: Option<UserId>,
     pub(crate) livekit_token_ttl: Duration,
     pub(crate) captcha: Option<Arc<CaptchaConfig>>,
 }
@@ -272,6 +279,9 @@ pub struct AppState {
     pub(crate) media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
+    pub(crate) guild_roles: Arc<RwLock<GuildRoleMap>>,
+    pub(crate) guild_role_assignments: Arc<RwLock<GuildRoleAssignmentMap>>,
+    pub(crate) guild_channel_permission_overrides: Arc<RwLock<GuildChannelPermissionOverrideMap>>,
     pub(crate) user_ip_observations: Arc<RwLock<HashMap<(UserId, IpNetwork), i64>>>,
     pub(crate) guild_ip_bans: Arc<RwLock<GuildIpBanMap>>,
     pub(crate) subscriptions: Arc<RwLock<Subscriptions>>,
@@ -331,6 +341,9 @@ impl AppState {
             media_publish_hits: Arc::new(RwLock::new(HashMap::new())),
             media_subscribe_leases: Arc::new(RwLock::new(HashMap::new())),
             guilds: Arc::new(RwLock::new(HashMap::new())),
+            guild_roles: Arc::new(RwLock::new(HashMap::new())),
+            guild_role_assignments: Arc::new(RwLock::new(HashMap::new())),
+            guild_channel_permission_overrides: Arc::new(RwLock::new(HashMap::new())),
             user_ip_observations: Arc::new(RwLock::new(HashMap::new())),
             guild_ip_bans: Arc::new(RwLock::new(HashMap::new())),
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
@@ -366,6 +379,7 @@ impl AppState {
                 media_subscribe_token_cap_per_channel: config.media_subscribe_token_cap_per_channel,
                 max_created_guilds_per_user: config.max_created_guilds_per_user,
                 trusted_proxy_cidrs: Arc::new(config.trusted_proxy_cidrs.clone()),
+                server_owner_user_id: config.server_owner_user_id,
                 livekit_token_ttl: config.livekit_token_ttl,
                 captcha: captcha.map(Arc::new),
             }),
@@ -425,6 +439,23 @@ pub(crate) struct ChannelRecord {
     pub(crate) kind: ChannelKind,
     pub(crate) messages: Vec<MessageRecord>,
     pub(crate) role_overrides: HashMap<Role, ChannelPermissionOverwrite>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WorkspaceRoleRecord {
+    pub(crate) role_id: String,
+    pub(crate) name: String,
+    pub(crate) position: i32,
+    pub(crate) is_system: bool,
+    pub(crate) system_key: Option<String>,
+    pub(crate) permissions_allow: PermissionSet,
+    pub(crate) created_at_unix: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ChannelPermissionOverrideRecord {
+    pub(crate) role_overrides: HashMap<String, ChannelPermissionOverwrite>,
+    pub(crate) member_overrides: HashMap<UserId, ChannelPermissionOverwrite>,
 }
 
 #[derive(Debug, Clone)]

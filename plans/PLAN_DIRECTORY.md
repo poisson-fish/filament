@@ -481,30 +481,30 @@ Upgrade directory panel from read-only listing to secure, actionable join UX.
 Implement Discord-like permission hierarchy and runtime permission resolution with clear separation between server owner authority and workspace-scoped authority.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add role model storage and invariants:
+- [x] Add role model storage and invariants:
   - workspace role records (ID, name, position, managed/system flags)
   - mandatory workspace system roles: `@everyone`, `workspace_owner`
   - role-permission bindings
   - member-role assignments
   - required base role/default permissions for new members
-- [ ] Introduce three-tier authority model:
+- [x] Introduce three-tier authority model:
   - filament server owner bypass for all workspace permission checks
   - workspace owners are full authority only in their own workspace realm
   - workspace owners cannot assign/escalate to filament server owner authority
-- [ ] Implement permission resolution engine:
+- [x] Implement permission resolution engine:
   - deterministic allow/deny precedence (locked below)
   - channel override interaction rules (locked below)
   - bounded role count and assignment count per member
-- [ ] Add role-management API endpoints:
+- [x] Add role-management API endpoints:
   - list/create/update/delete workspace roles
   - assign/unassign member roles
   - update role permission sets
   - reorder role hierarchy
-- [ ] Migrate existing hardcoded role checks to resolved permission checks where appropriate, preserving least privilege and backward compatibility.
-- [ ] Add audit events:
+- [x] Migrate existing hardcoded role checks to resolved permission checks where appropriate, preserving least privilege and backward compatibility.
+- [x] Add audit events:
   - `role.create`
   - `role.update`
   - `role.delete`
@@ -514,7 +514,7 @@ Implement Discord-like permission hierarchy and runtime permission resolution wi
   - `role.reorder`
 
 ### Locked Resolution Spec (Phase 7)
-- [ ] Lock canonical evaluation order for `resolve_effective_permissions(user_id, guild_id, channel_id?)`:
+- [x] Lock canonical evaluation order for `resolve_effective_permissions(user_id, guild_id, channel_id?)`:
   - step 1: if user is filament server owner, grant all permission bits for the target scope
   - step 2: require active membership in guild (unless step 1 matched); non-members receive no permissions
   - step 3: seed guild permissions from `@everyone` role allow bitset
@@ -529,21 +529,21 @@ Implement Discord-like permission hierarchy and runtime permission resolution wi
     - member-specific deny
     - member-specific allow
   - step 8: if member has `workspace_owner` role (or filament server owner), channel denies do not remove effective permissions
-- [ ] Lock conflict policy:
+- [x] Lock conflict policy:
   - for non-owner paths, deny overrides allow at the same precedence layer
   - unknown permission bits in persisted data are masked out and audited
   - unknown permission strings in API payloads are rejected as `invalid_request`
-- [ ] Lock hierarchy mutation rules:
+- [x] Lock hierarchy mutation rules:
   - role `position` defines manageability boundaries
   - actor may only edit/assign roles strictly below actor's highest manageable role
   - workspace owner may manage all non-system roles in their workspace
   - `workspace_owner` and `@everyone` are system roles and cannot be deleted
   - at least one workspace owner must always exist; transfer flow must be atomic
-- [ ] Lock cross-scope escalation rules:
+- [x] Lock cross-scope escalation rules:
   - only filament server owner can grant/revoke `workspace_owner`
   - workspace owners cannot create roles that imply filament server owner powers
   - permission checks for global/admin endpoints must ignore workspace role grants
-- [ ] Add a migration adapter:
+- [x] Add a migration adapter:
   - map current `owner|moderator|member` model into system/default roles
   - preserve current behavior during rollout with dual-read parity checks
   - remove legacy direct role branching only after parity tests pass
@@ -572,17 +572,45 @@ Matrix guardrails:
 - Any endpoint not mapped above must declare its required bit(s) before Phase 7 exit.
 
 ### Tests
-- [ ] Unit tests:
+- [x] Unit tests:
   - permission resolution precedence and invariants
   - channel override order with explicit golden fixtures
   - anti-escalation rules (workspace owner cannot cross scope)
   - role hierarchy mutation safety (no orphaned ownership)
   - unknown permission bit/input rejection and masking behavior
-- [ ] Integration tests:
+- [x] Integration tests:
   - role CRUD and assignment flows
   - endpoint authorization under resolved permissions
   - regression coverage for existing moderation/channel/search/media gates
   - legacy-role parity tests against pre-Phase-7 behavior for existing fixtures
+
+### Refactor Notes
+- Core permission surface expanded in `crates/filament-core/src/lib.rs`:
+  - added `manage_member_roles`, `manage_workspace_roles`, `view_audit_log`, `manage_ip_bans`
+  - updated default role grants and permission masks to support phase-7 endpoint gates
+- Added Phase 7 permission utilities in `apps/filament-server/src/server/permissions.rs`:
+  - known-bit masking
+  - default system/default role grants
+  - shared role/system constants and bounds (`MAX_GUILD_ROLES`, `MAX_MEMBER_ROLE_ASSIGNMENTS`)
+- Added hierarchical role persistence and migration in `apps/filament-server/src/server/db.rs`:
+  - tables: `guild_roles`, `guild_role_members`, `channel_permission_overrides`
+  - idempotent seed/backfill from legacy `guild_members.role` + `channel_role_overrides`
+- Replaced direct role-branch authorization with resolved permission snapshots in:
+  - `apps/filament-server/src/server/domain.rs`
+  - `apps/filament-server/src/server/handlers/guilds.rs`
+  - `apps/filament-server/src/server/handlers/search.rs`
+  - server-owner bypass is now wired through `AppConfig.server_owner_user_id` (`apps/filament-server/src/server/core.rs`, `apps/filament-server/src/main.rs`)
+- Added role-management HTTP surfaces and DTO contracts:
+  - routes in `apps/filament-server/src/server/router.rs`
+  - request/response types in `apps/filament-server/src/server/types.rs`
+  - workspace-role domain validation in `apps/filament-server/src/server/directory_contract.rs`
+- Web domain parser updated for new permission literals in `apps/filament-client-web/src/domain/chat.ts`.
+- Added explicit Phase 7 tests:
+  - integration: `apps/filament-server/tests/phase7_hierarchical_permissions.rs`
+  - unit: `apps/filament-server/src/server/domain.rs` precedence + server-owner bypass tests
+  - plus regression parity fix coverage via `apps/filament-server/tests/phase4_roles_presence_reactions.rs`
+- Compatibility note:
+  - legacy `guild_members.role` and `channel_role_overrides` are still maintained for compatibility while phase-7 model is the primary authorization path.
 
 ### Security Outlook
 - Reduces privilege confusion and blocks cross-scope escalation with explicit hierarchical policy.

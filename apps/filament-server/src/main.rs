@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use filament_core::UserId;
 use filament_server::{build_router, directory_contract::IpNetwork, init_tracing, AppConfig};
 use tokio::net::TcpListener;
 
@@ -85,6 +86,21 @@ fn parse_trusted_proxy_cidrs_from_env(defaults: &AppConfig) -> anyhow::Result<Ve
     )
 }
 
+fn parse_server_owner_user_id_from_env(defaults: &AppConfig) -> anyhow::Result<Option<UserId>> {
+    std::env::var("FILAMENT_SERVER_OWNER_USER_ID").map_or_else(
+        |_| Ok(defaults.server_owner_user_id),
+        |value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            UserId::try_from(trimmed.to_owned())
+                .map(Some)
+                .map_err(|_| anyhow::anyhow!("invalid FILAMENT_SERVER_OWNER_USER_ID"))
+        },
+    )
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -107,6 +123,7 @@ async fn main() -> anyhow::Result<()> {
         guild_ip_ban_max_entries,
     ) = parse_directory_runtime_limits_from_env(&defaults)?;
     let trusted_proxy_cidrs = parse_trusted_proxy_cidrs_from_env(&defaults)?;
+    let server_owner_user_id = parse_server_owner_user_id_from_env(&defaults)?;
     let captcha_hcaptcha_site_key = std::env::var("FILAMENT_HCAPTCHA_SITE_KEY").ok();
     let captcha_hcaptcha_secret = std::env::var("FILAMENT_HCAPTCHA_SECRET").ok();
     let app_config = AppConfig {
@@ -122,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
         audit_list_limit_max,
         guild_ip_ban_max_entries,
         trusted_proxy_cidrs,
+        server_owner_user_id,
         captcha_hcaptcha_site_key,
         captcha_hcaptcha_secret,
         captcha_verify_url: std::env::var("FILAMENT_HCAPTCHA_VERIFY_URL")
@@ -148,9 +166,10 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_directory_runtime_limits_from_env, parse_trusted_proxy_cidrs_from_env,
-        parse_u32_env_or_default, parse_usize_env_or_default,
+        parse_directory_runtime_limits_from_env, parse_server_owner_user_id_from_env,
+        parse_trusted_proxy_cidrs_from_env, parse_u32_env_or_default, parse_usize_env_or_default,
     };
+    use filament_core::UserId;
     use filament_server::{directory_contract::IpNetwork, AppConfig};
     use std::sync::{Mutex, OnceLock};
 
@@ -244,6 +263,33 @@ mod tests {
         std::env::set_var("FILAMENT_TRUSTED_PROXY_CIDRS", "10.0.0.0/8,bad-cidr");
         let result = parse_trusted_proxy_cidrs_from_env(&AppConfig::default());
         std::env::remove_var("FILAMENT_TRUSTED_PROXY_CIDRS");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn server_owner_user_id_env_override_is_parsed() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_SERVER_OWNER_USER_ID");
+        std::env::set_var(
+            "FILAMENT_SERVER_OWNER_USER_ID",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        );
+        let parsed = parse_server_owner_user_id_from_env(&AppConfig::default())
+            .expect("server owner user id should parse");
+        std::env::remove_var("FILAMENT_SERVER_OWNER_USER_ID");
+        assert_eq!(
+            parsed,
+            Some(UserId::try_from(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV")).expect("valid ulid"))
+        );
+    }
+
+    #[test]
+    fn server_owner_user_id_env_rejects_invalid_values() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_SERVER_OWNER_USER_ID");
+        std::env::set_var("FILAMENT_SERVER_OWNER_USER_ID", "not-ulid");
+        let result = parse_server_owner_user_id_from_env(&AppConfig::default());
+        std::env::remove_var("FILAMENT_SERVER_OWNER_USER_ID");
         assert!(result.is_err());
     }
 }

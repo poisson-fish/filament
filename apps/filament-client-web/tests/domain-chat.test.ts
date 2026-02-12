@@ -168,6 +168,7 @@ describe("chat domain invariants", () => {
     expect(voice.publishSources).toEqual(["microphone", "screen_share"]);
     expect(roleFromInput("member")).toBe("member");
     expect(permissionFromInput("create_message")).toBe("create_message");
+    expect(permissionFromInput("manage_member_roles")).toBe("manage_member_roles");
     expect(() => permissionFromInput("bad_perm")).toThrow();
   });
 

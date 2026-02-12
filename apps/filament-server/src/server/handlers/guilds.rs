@@ -9,9 +9,8 @@ use axum::{
     Json,
 };
 use filament_core::{
-    apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
-    has_permission, ChannelKind, ChannelName, ChannelPermissionOverwrite, GuildName, Permission,
-    Role, UserId,
+    can_assign_role, can_moderate_member, has_permission, ChannelKind, ChannelName,
+    ChannelPermissionOverwrite, GuildName, Permission, Role, UserId,
 };
 use sqlx::Row;
 use ulid::Ulid;
@@ -22,28 +21,32 @@ use crate::server::{
     },
     core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
     db::{
-        channel_kind_from_i16, channel_kind_to_i16, ensure_db_schema, permission_set_from_i64,
-        permission_set_from_list, permission_set_to_i64, role_from_i16, role_to_i16,
-        visibility_from_i16, visibility_to_i16,
+        channel_kind_from_i16, channel_kind_to_i16, ensure_db_schema, permission_set_from_list,
+        permission_set_to_i64, role_to_i16, visibility_from_i16, visibility_to_i16,
     },
     directory_contract::{
-        AuditListQuery, AuditListQueryDto, DirectoryContractError, DirectoryJoinOutcome,
-        GuildIpBanByUserRequest, GuildIpBanByUserRequestDto, GuildIpBanId, GuildIpBanListQuery,
-        GuildIpBanListQueryDto, IpNetwork,
+        validate_workspace_role_name, AuditListQuery, AuditListQueryDto, DirectoryContractError,
+        DirectoryJoinOutcome, GuildIpBanByUserRequest, GuildIpBanByUserRequestDto, GuildIpBanId,
+        GuildIpBanListQuery, GuildIpBanListQueryDto, IpNetwork, WorkspaceRoleId,
     },
     domain::{
-        enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client, member_role_in_guild,
-        user_role_in_guild, write_audit_log,
+        enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client,
+        guild_permission_snapshot, member_role_in_guild, user_role_in_guild, write_audit_log,
     },
     errors::AuthFailure,
+    permissions::{
+        DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, MAX_GUILD_ROLES, MAX_MEMBER_ROLE_ASSIGNMENTS,
+        MAX_ROLE_NAME_CHARS, SYSTEM_ROLE_EVERYONE, SYSTEM_ROLE_WORKSPACE_OWNER,
+    },
     types::{
         ChannelListResponse, ChannelResponse, ChannelRolePath, CreateChannelRequest,
-        CreateGuildRequest, DirectoryJoinOutcomeResponse, DirectoryJoinResponse,
-        GuildAuditEventResponse, GuildAuditListResponse, GuildIpBanApplyResponse,
-        GuildIpBanListResponse, GuildIpBanPath, GuildIpBanRecordResponse, GuildListResponse,
-        GuildPath, GuildResponse, MemberPath, ModerationResponse, PublicGuildListItem,
-        PublicGuildListQuery, PublicGuildListResponse, UpdateChannelRoleOverrideRequest,
-        UpdateMemberRoleRequest,
+        CreateGuildRequest, CreateGuildRoleRequest, DirectoryJoinOutcomeResponse,
+        DirectoryJoinResponse, GuildAuditEventResponse, GuildAuditListResponse,
+        GuildIpBanApplyResponse, GuildIpBanListResponse, GuildIpBanPath, GuildIpBanRecordResponse,
+        GuildListResponse, GuildPath, GuildResponse, GuildRoleListResponse, GuildRoleMemberPath,
+        GuildRolePath, GuildRoleResponse, MemberPath, ModerationResponse, PublicGuildListItem,
+        PublicGuildListQuery, PublicGuildListResponse, ReorderGuildRolesRequest,
+        UpdateChannelRoleOverrideRequest, UpdateGuildRoleRequest, UpdateMemberRoleRequest,
     },
 };
 
@@ -418,50 +421,17 @@ async fn enforce_audit_access(
         if !guild_exists {
             return Err(AuthFailure::NotFound);
         }
-
-        let user_banned =
-            sqlx::query("SELECT 1 FROM guild_bans WHERE guild_id = $1 AND user_id = $2")
-                .bind(guild_id)
-                .bind(user_id.to_string())
-                .fetch_optional(pool)
-                .await
-                .map_err(|_| AuthFailure::Internal)?
-                .is_some();
-        if user_banned {
-            return Err(AuthFailure::AuditAccessDenied);
-        }
-
-        let role_row =
-            sqlx::query("SELECT role FROM guild_members WHERE guild_id = $1 AND user_id = $2")
-                .bind(guild_id)
-                .bind(user_id.to_string())
-                .fetch_optional(pool)
-                .await
-                .map_err(|_| AuthFailure::Internal)?;
-        let Some(role_row) = role_row else {
-            return Err(AuthFailure::AuditAccessDenied);
-        };
-        let role_value: i16 = role_row
-            .try_get("role")
-            .map_err(|_| AuthFailure::Internal)?;
-        let role = role_from_i16(role_value).ok_or(AuthFailure::AuditAccessDenied)?;
-        if !matches!(role, Role::Owner | Role::Moderator) {
-            return Err(AuthFailure::AuditAccessDenied);
-        }
-        return Ok(());
+    } else if !state.guilds.read().await.contains_key(guild_id) {
+        return Err(AuthFailure::NotFound);
     }
 
-    let guilds = state.guilds.read().await;
-    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
-    if guild.banned_members.contains(&user_id) {
-        return Err(AuthFailure::AuditAccessDenied);
-    }
-    let role = guild
-        .members
-        .get(&user_id)
-        .copied()
-        .ok_or(AuthFailure::AuditAccessDenied)?;
-    if !matches!(role, Role::Owner | Role::Moderator) {
+    let (_, permissions) = match guild_permission_snapshot(state, user_id, guild_id).await {
+        Ok(value) => value,
+        Err(AuthFailure::Forbidden) => return Err(AuthFailure::AuditAccessDenied),
+        Err(AuthFailure::NotFound) => return Err(AuthFailure::NotFound),
+        Err(error) => return Err(error),
+    };
+    if !permissions.contains(Permission::ViewAuditLog) {
         return Err(AuthFailure::AuditAccessDenied);
     }
     Ok(())
@@ -472,11 +442,359 @@ async fn enforce_guild_ip_ban_moderation_access(
     guild_id: &str,
     user_id: UserId,
 ) -> Result<(), AuthFailure> {
-    match enforce_audit_access(state, guild_id, user_id).await {
-        Ok(()) => Ok(()),
-        Err(AuthFailure::AuditAccessDenied) => Err(AuthFailure::Forbidden),
-        Err(error) => Err(error),
+    if let Some(pool) = &state.db_pool {
+        let guild_exists = sqlx::query("SELECT 1 FROM guilds WHERE guild_id = $1")
+            .bind(guild_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?
+            .is_some();
+        if !guild_exists {
+            return Err(AuthFailure::NotFound);
+        }
+    } else if !state.guilds.read().await.contains_key(guild_id) {
+        return Err(AuthFailure::NotFound);
     }
+
+    let (_, permissions) = match guild_permission_snapshot(state, user_id, guild_id).await {
+        Ok(value) => value,
+        Err(AuthFailure::Forbidden) => return Err(AuthFailure::Forbidden),
+        Err(AuthFailure::NotFound) => return Err(AuthFailure::NotFound),
+        Err(error) => return Err(error),
+    };
+    if !permissions.contains(Permission::ManageIpBans) {
+        Err(AuthFailure::Forbidden)
+    } else {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GuildRoleModel {
+    role_id: String,
+    name: String,
+    position: i32,
+    is_system: bool,
+    system_key: Option<String>,
+    permissions: filament_core::PermissionSet,
+    created_at_unix: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RoleManageContext {
+    is_server_owner: bool,
+    is_workspace_owner: bool,
+    highest_position: i32,
+}
+
+fn role_model_to_response(model: GuildRoleModel) -> GuildRoleResponse {
+    GuildRoleResponse {
+        role_id: model.role_id,
+        name: model.name,
+        position: model.position,
+        is_system: model.is_system,
+        permissions: crate::server::db::permission_list_from_set(model.permissions),
+    }
+}
+
+fn parse_role_id(value: String) -> Result<String, AuthFailure> {
+    WorkspaceRoleId::try_from(value)
+        .map(|id| id.to_string())
+        .map_err(map_directory_contract_error_to_auth_failure)
+}
+
+fn validate_role_name_input(value: &str) -> Result<String, AuthFailure> {
+    validate_workspace_role_name(value)
+        .map_err(map_directory_contract_error_to_auth_failure)
+        .and_then(|name| {
+            if name == "@everyone" || name.eq_ignore_ascii_case(SYSTEM_ROLE_WORKSPACE_OWNER) {
+                return Err(AuthFailure::InvalidRequest);
+            }
+            if name.len() > MAX_ROLE_NAME_CHARS {
+                return Err(AuthFailure::InvalidRequest);
+            }
+            Ok(name)
+        })
+}
+
+fn can_manage_role(model: &GuildRoleModel, context: RoleManageContext) -> bool {
+    if context.is_server_owner {
+        return true;
+    }
+    if model.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER)
+        || model.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE)
+    {
+        return false;
+    }
+    if context.is_workspace_owner {
+        return true;
+    }
+    model.position < context.highest_position
+}
+
+async fn guild_roles_db(
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+) -> Result<Vec<GuildRoleModel>, AuthFailure> {
+    let rows = sqlx::query(
+        "SELECT role_id, name, position, is_system, system_key, permissions_allow_mask, created_at_unix
+         FROM guild_roles
+         WHERE guild_id = $1
+         ORDER BY position DESC, created_at_unix ASC, role_id ASC",
+    )
+    .bind(guild_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+
+    let mut roles = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mask: i64 = row
+            .try_get("permissions_allow_mask")
+            .map_err(|_| AuthFailure::Internal)?;
+        let bits = u64::try_from(mask).map_err(|_| AuthFailure::Internal)?;
+        let (permissions, _) = crate::server::permissions::mask_permissions(bits);
+        roles.push(GuildRoleModel {
+            role_id: row.try_get("role_id").map_err(|_| AuthFailure::Internal)?,
+            name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
+            position: row.try_get("position").map_err(|_| AuthFailure::Internal)?,
+            is_system: row
+                .try_get("is_system")
+                .map_err(|_| AuthFailure::Internal)?,
+            system_key: row
+                .try_get("system_key")
+                .map_err(|_| AuthFailure::Internal)?,
+            permissions,
+            created_at_unix: row
+                .try_get("created_at_unix")
+                .map_err(|_| AuthFailure::Internal)?,
+        });
+    }
+    Ok(roles)
+}
+
+async fn guild_roles_in_memory(
+    state: &AppState,
+    guild_id: &str,
+) -> Result<Vec<GuildRoleModel>, AuthFailure> {
+    let role_maps = state.guild_roles.read().await;
+    let roles = role_maps.get(guild_id).ok_or(AuthFailure::NotFound)?;
+    let mut list = roles
+        .values()
+        .map(|role| GuildRoleModel {
+            role_id: role.role_id.clone(),
+            name: role.name.clone(),
+            position: role.position,
+            is_system: role.is_system,
+            system_key: role.system_key.clone(),
+            permissions: role.permissions_allow,
+            created_at_unix: role.created_at_unix,
+        })
+        .collect::<Vec<_>>();
+    list.sort_by(|left, right| {
+        right
+            .position
+            .cmp(&left.position)
+            .then_with(|| left.created_at_unix.cmp(&right.created_at_unix))
+            .then_with(|| left.role_id.cmp(&right.role_id))
+    });
+    Ok(list)
+}
+
+async fn load_actor_role_context(
+    state: &AppState,
+    guild_id: &str,
+    user_id: UserId,
+    required_permission: Permission,
+) -> Result<RoleManageContext, AuthFailure> {
+    let is_server_owner = state
+        .runtime
+        .server_owner_user_id
+        .is_some_and(|owner| owner == user_id);
+    let (_, permissions) = guild_permission_snapshot(state, user_id, guild_id).await?;
+    if !permissions.contains(required_permission) && !is_server_owner {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let roles = if let Some(pool) = &state.db_pool {
+        guild_roles_db(pool, guild_id).await?
+    } else {
+        guild_roles_in_memory(state, guild_id).await?
+    };
+
+    if is_server_owner {
+        return Ok(RoleManageContext {
+            is_server_owner: true,
+            is_workspace_owner: true,
+            highest_position: i32::MAX,
+        });
+    }
+
+    let mut assigned_role_ids = if let Some(pool) = &state.db_pool {
+        let rows = sqlx::query(
+            "SELECT role_id
+             FROM guild_role_members
+             WHERE guild_id = $1 AND user_id = $2",
+        )
+        .bind(guild_id)
+        .bind(user_id.to_string())
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        rows.into_iter()
+            .filter_map(|row| row.try_get::<String, _>("role_id").ok())
+            .collect::<HashSet<_>>()
+    } else {
+        let assignments = state.guild_role_assignments.read().await;
+        assignments
+            .get(guild_id)
+            .and_then(|map| map.get(&user_id))
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    let mut highest_position = i32::MIN;
+    let mut is_workspace_owner = false;
+    let workspace_owner_role_id = roles
+        .iter()
+        .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER))
+        .map(|role| role.role_id.clone());
+    let moderator_role_id = roles
+        .iter()
+        .find(|role| {
+            role.system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR)
+                || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MODERATOR)
+        })
+        .map(|role| role.role_id.clone());
+    if let Ok(legacy_role) = user_role_in_guild(state, user_id, guild_id).await {
+        match legacy_role {
+            Role::Owner => {
+                if let Some(role_id) = &workspace_owner_role_id {
+                    assigned_role_ids.insert(role_id.clone());
+                }
+            }
+            Role::Moderator => {
+                if let Some(role_id) = &moderator_role_id {
+                    assigned_role_ids.insert(role_id.clone());
+                }
+            }
+            Role::Member => {}
+        }
+    }
+
+    for role in &roles {
+        if assigned_role_ids.contains(&role.role_id) {
+            highest_position = highest_position.max(role.position);
+            if role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER) {
+                is_workspace_owner = true;
+            }
+        }
+    }
+    Ok(RoleManageContext {
+        is_server_owner: false,
+        is_workspace_owner,
+        highest_position,
+    })
+}
+
+async fn sync_legacy_role_from_assignments_db(
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+    user_id: UserId,
+) -> Result<Role, AuthFailure> {
+    let rows = sqlx::query(
+        "SELECT gr.system_key
+         FROM guild_role_members grm
+         JOIN guild_roles gr ON gr.role_id = grm.role_id
+         WHERE grm.guild_id = $1 AND grm.user_id = $2",
+    )
+    .bind(guild_id)
+    .bind(user_id.to_string())
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let mut has_workspace_owner = false;
+    let mut has_moderator = false;
+    for row in rows {
+        let system_key = row
+            .try_get::<Option<String>, _>("system_key")
+            .ok()
+            .flatten();
+        if system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER) {
+            has_workspace_owner = true;
+        } else if system_key.as_deref() == Some("moderator") {
+            has_moderator = true;
+        }
+    }
+    let legacy = if has_workspace_owner {
+        Role::Owner
+    } else if has_moderator {
+        Role::Moderator
+    } else {
+        Role::Member
+    };
+    sqlx::query(
+        "UPDATE guild_members
+         SET role = $3
+         WHERE guild_id = $1 AND user_id = $2",
+    )
+    .bind(guild_id)
+    .bind(user_id.to_string())
+    .bind(role_to_i16(legacy))
+    .execute(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    Ok(legacy)
+}
+
+async fn sync_legacy_role_from_assignments_in_memory(
+    state: &AppState,
+    guild_id: &str,
+    user_id: UserId,
+) -> Result<Role, AuthFailure> {
+    let role_ids = {
+        let roles = state.guild_roles.read().await;
+        let roles = roles.get(guild_id).ok_or(AuthFailure::NotFound)?;
+        let mut workspace_owner = None;
+        let mut moderator = None;
+        for role in roles.values() {
+            if role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER) {
+                workspace_owner = Some(role.role_id.clone());
+            }
+            if role.system_key.as_deref() == Some("moderator")
+                || role.name.eq_ignore_ascii_case("moderator")
+            {
+                moderator = Some(role.role_id.clone());
+            }
+        }
+        (
+            workspace_owner.ok_or(AuthFailure::Internal)?,
+            moderator.ok_or(AuthFailure::Internal)?,
+        )
+    };
+
+    let assignments = state.guild_role_assignments.read().await;
+    let assigned = assignments
+        .get(guild_id)
+        .and_then(|map| map.get(&user_id))
+        .cloned()
+        .unwrap_or_default();
+    drop(assignments);
+
+    let legacy = if assigned.contains(&role_ids.0) {
+        Role::Owner
+    } else if assigned.contains(&role_ids.1) {
+        Role::Moderator
+    } else {
+        Role::Member
+    };
+
+    let mut guilds = state.guilds.write().await;
+    let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
+    if let Some(role) = guild.members.get_mut(&user_id) {
+        *role = legacy;
+    }
+    Ok(legacy)
 }
 
 fn parse_in_memory_audit_event(
@@ -669,6 +987,658 @@ pub(crate) async fn list_guild_audit(
     };
 
     Ok(Json(response))
+}
+
+fn parse_role_id_list(role_ids: &[String]) -> Result<Vec<String>, AuthFailure> {
+    if role_ids.is_empty() {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let mut parsed = Vec::with_capacity(role_ids.len());
+    let mut seen = HashSet::new();
+    for role_id in role_ids {
+        let parsed_id = parse_role_id(role_id.clone())?;
+        if !seen.insert(parsed_id.clone()) {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        parsed.push(parsed_id);
+    }
+    Ok(parsed)
+}
+
+pub(crate) async fn list_guild_roles(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+) -> Result<Json<GuildRoleListResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
+    if !permissions.contains(Permission::ManageWorkspaceRoles)
+        && !permissions.contains(Permission::ManageMemberRoles)
+    {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let roles = if let Some(pool) = &state.db_pool {
+        guild_roles_db(pool, &path.guild_id).await?
+    } else {
+        guild_roles_in_memory(&state, &path.guild_id).await?
+    };
+
+    Ok(Json(GuildRoleListResponse {
+        roles: roles.into_iter().map(role_model_to_response).collect(),
+    }))
+}
+
+pub(crate) async fn create_guild_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+    Json(payload): Json<CreateGuildRoleRequest>,
+) -> Result<Json<GuildRoleResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let context = load_actor_role_context(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        Permission::ManageWorkspaceRoles,
+    )
+    .await?;
+    let name = validate_role_name_input(&payload.name)?;
+    let permissions = permission_set_from_list(&payload.permissions);
+
+    let position = payload
+        .position
+        .unwrap_or_else(|| context.highest_position.saturating_sub(1).max(1));
+    if !context.is_server_owner
+        && !context.is_workspace_owner
+        && position >= context.highest_position
+    {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let role_id = WorkspaceRoleId::new().to_string();
+    if let Some(pool) = &state.db_pool {
+        let existing_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM guild_roles WHERE guild_id = $1")
+                .bind(&path.guild_id)
+                .fetch_one(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        if usize::try_from(existing_count).map_err(|_| AuthFailure::Internal)? >= MAX_GUILD_ROLES {
+            return Err(AuthFailure::QuotaExceeded);
+        }
+
+        sqlx::query(
+            "INSERT INTO guild_roles
+                (role_id, guild_id, name, position, permissions_allow_mask, is_system, system_key, created_at_unix)
+             VALUES
+                ($1, $2, $3, $4, $5, FALSE, NULL, $6)",
+        )
+        .bind(&role_id)
+        .bind(&path.guild_id)
+        .bind(&name)
+        .bind(position)
+        .bind(permission_set_to_i64(permissions)?)
+        .bind(now_unix())
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    } else {
+        let mut role_maps = state.guild_roles.write().await;
+        let guild_roles = role_maps
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        if guild_roles.len() >= MAX_GUILD_ROLES {
+            return Err(AuthFailure::QuotaExceeded);
+        }
+        guild_roles.insert(
+            role_id.clone(),
+            crate::server::core::WorkspaceRoleRecord {
+                role_id: role_id.clone(),
+                name: name.clone(),
+                position,
+                is_system: false,
+                system_key: None,
+                permissions_allow: permissions,
+                created_at_unix: now_unix(),
+            },
+        );
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        None,
+        "role.create",
+        serde_json::json!({
+            "role_id": role_id,
+            "name": name,
+            "position": position,
+            "permissions": payload.permissions,
+        }),
+    )
+    .await?;
+
+    Ok(Json(GuildRoleResponse {
+        role_id,
+        name,
+        position,
+        is_system: false,
+        permissions: payload.permissions,
+    }))
+}
+
+pub(crate) async fn update_guild_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildRolePath>,
+    Json(payload): Json<UpdateGuildRoleRequest>,
+) -> Result<Json<GuildRoleResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let role_id = parse_role_id(path.role_id)?;
+    if payload.name.is_none() && payload.permissions.is_none() {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let context = load_actor_role_context(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        Permission::ManageWorkspaceRoles,
+    )
+    .await?;
+
+    let roles = if let Some(pool) = &state.db_pool {
+        guild_roles_db(pool, &path.guild_id).await?
+    } else {
+        guild_roles_in_memory(&state, &path.guild_id).await?
+    };
+    let current = roles
+        .iter()
+        .find(|role| role.role_id == role_id)
+        .cloned()
+        .ok_or(AuthFailure::NotFound)?;
+    if !can_manage_role(&current, context) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let next_name = payload
+        .name
+        .as_deref()
+        .map(validate_role_name_input)
+        .transpose()?
+        .unwrap_or_else(|| current.name.clone());
+    let next_permissions = payload
+        .permissions
+        .as_ref()
+        .map(|values| permission_set_from_list(values))
+        .unwrap_or(current.permissions);
+
+    if let Some(pool) = &state.db_pool {
+        sqlx::query(
+            "UPDATE guild_roles
+             SET name = $3, permissions_allow_mask = $4
+             WHERE guild_id = $1 AND role_id = $2",
+        )
+        .bind(&path.guild_id)
+        .bind(&role_id)
+        .bind(&next_name)
+        .bind(permission_set_to_i64(next_permissions)?)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    } else {
+        let mut role_maps = state.guild_roles.write().await;
+        let role = role_maps
+            .get_mut(&path.guild_id)
+            .and_then(|roles| roles.get_mut(&role_id))
+            .ok_or(AuthFailure::NotFound)?;
+        role.name = next_name.clone();
+        role.permissions_allow = next_permissions;
+    }
+
+    if payload.permissions.is_some() {
+        write_audit_log(
+            &state,
+            Some(path.guild_id.clone()),
+            auth.user_id,
+            None,
+            "role.permissions.update",
+            serde_json::json!({
+                "role_id": role_id,
+                "permissions": payload.permissions.clone().unwrap_or_default(),
+            }),
+        )
+        .await?;
+    }
+    if payload.name.is_some() {
+        write_audit_log(
+            &state,
+            Some(path.guild_id.clone()),
+            auth.user_id,
+            None,
+            "role.update",
+            serde_json::json!({
+                "role_id": role_id,
+                "name": next_name,
+            }),
+        )
+        .await?;
+    }
+
+    Ok(Json(GuildRoleResponse {
+        role_id: role_id.clone(),
+        name: next_name,
+        position: current.position,
+        is_system: current.is_system,
+        permissions: crate::server::db::permission_list_from_set(next_permissions),
+    }))
+}
+
+pub(crate) async fn delete_guild_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildRolePath>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let role_id = parse_role_id(path.role_id)?;
+    let context = load_actor_role_context(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        Permission::ManageWorkspaceRoles,
+    )
+    .await?;
+    let roles = if let Some(pool) = &state.db_pool {
+        guild_roles_db(pool, &path.guild_id).await?
+    } else {
+        guild_roles_in_memory(&state, &path.guild_id).await?
+    };
+    let current = roles
+        .iter()
+        .find(|role| role.role_id == role_id)
+        .cloned()
+        .ok_or(AuthFailure::NotFound)?;
+    if current.is_system {
+        return Err(AuthFailure::Forbidden);
+    }
+    if !can_manage_role(&current, context) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let result = sqlx::query(
+            "DELETE FROM guild_roles
+             WHERE guild_id = $1 AND role_id = $2",
+        )
+        .bind(&path.guild_id)
+        .bind(&role_id)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        if result.rows_affected() == 0 {
+            return Err(AuthFailure::NotFound);
+        }
+    } else {
+        let mut role_maps = state.guild_roles.write().await;
+        let roles = role_maps
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        if roles.remove(&role_id).is_none() {
+            return Err(AuthFailure::NotFound);
+        }
+        drop(role_maps);
+        let mut assignments = state.guild_role_assignments.write().await;
+        if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
+            for assigned in guild_assignments.values_mut() {
+                assigned.remove(&role_id);
+            }
+        }
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        None,
+        "role.delete",
+        serde_json::json!({ "role_id": role_id }),
+    )
+    .await?;
+    Ok(Json(ModerationResponse { accepted: true }))
+}
+
+pub(crate) async fn reorder_guild_roles(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+    Json(payload): Json<ReorderGuildRolesRequest>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let context = load_actor_role_context(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        Permission::ManageWorkspaceRoles,
+    )
+    .await?;
+    let requested_ids = parse_role_id_list(&payload.role_ids)?;
+    if requested_ids.len() > MAX_GUILD_ROLES {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    let roles = if let Some(pool) = &state.db_pool {
+        guild_roles_db(pool, &path.guild_id).await?
+    } else {
+        guild_roles_in_memory(&state, &path.guild_id).await?
+    };
+    for role_id in &requested_ids {
+        let role = roles
+            .iter()
+            .find(|value| &value.role_id == role_id)
+            .cloned()
+            .ok_or(AuthFailure::InvalidRequest)?;
+        if role.is_system || !can_manage_role(&role, context) {
+            return Err(AuthFailure::Forbidden);
+        }
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+        for (index, role_id) in requested_ids.iter().enumerate() {
+            let position = i32::try_from(requested_ids.len().saturating_sub(index))
+                .map_err(|_| AuthFailure::Internal)?;
+            sqlx::query(
+                "UPDATE guild_roles
+                 SET position = $3
+                 WHERE guild_id = $1 AND role_id = $2",
+            )
+            .bind(&path.guild_id)
+            .bind(role_id)
+            .bind(position)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        }
+        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+    } else {
+        let mut role_maps = state.guild_roles.write().await;
+        let roles = role_maps
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        for (index, role_id) in requested_ids.iter().enumerate() {
+            let position = i32::try_from(requested_ids.len().saturating_sub(index))
+                .map_err(|_| AuthFailure::Internal)?;
+            let role = roles.get_mut(role_id).ok_or(AuthFailure::InvalidRequest)?;
+            role.position = position;
+        }
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        None,
+        "role.reorder",
+        serde_json::json!({ "role_ids": requested_ids }),
+    )
+    .await?;
+
+    Ok(Json(ModerationResponse { accepted: true }))
+}
+
+fn is_workspace_owner_role(model: &GuildRoleModel) -> bool {
+    model.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER)
+}
+
+async fn workspace_owner_count_db(pool: &sqlx::PgPool, guild_id: &str) -> Result<i64, AuthFailure> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM guild_role_members grm
+         JOIN guild_roles gr ON gr.role_id = grm.role_id
+         WHERE grm.guild_id = $1
+           AND gr.system_key = $2",
+    )
+    .bind(guild_id)
+    .bind(SYSTEM_ROLE_WORKSPACE_OWNER)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)
+}
+
+async fn workspace_owner_count_in_memory(
+    state: &AppState,
+    guild_id: &str,
+) -> Result<usize, AuthFailure> {
+    let workspace_owner_role_id = {
+        let role_maps = state.guild_roles.read().await;
+        let roles = role_maps.get(guild_id).ok_or(AuthFailure::NotFound)?;
+        roles
+            .values()
+            .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER))
+            .map(|role| role.role_id.clone())
+            .ok_or(AuthFailure::Internal)?
+    };
+    let assignments = state.guild_role_assignments.read().await;
+    Ok(assignments
+        .get(guild_id)
+        .into_iter()
+        .flat_map(|value| value.values())
+        .filter(|assigned| assigned.contains(&workspace_owner_role_id))
+        .count())
+}
+
+pub(crate) async fn assign_guild_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildRoleMemberPath>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let role_id = parse_role_id(path.role_id)?;
+    let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let context = load_actor_role_context(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        Permission::ManageMemberRoles,
+    )
+    .await?;
+
+    let roles = if let Some(pool) = &state.db_pool {
+        guild_roles_db(pool, &path.guild_id).await?
+    } else {
+        guild_roles_in_memory(&state, &path.guild_id).await?
+    };
+    let role = roles
+        .iter()
+        .find(|entry| entry.role_id == role_id)
+        .cloned()
+        .ok_or(AuthFailure::NotFound)?;
+    if role.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE) {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if is_workspace_owner_role(&role) && !context.is_server_owner {
+        return Err(AuthFailure::Forbidden);
+    }
+    if !context.is_workspace_owner
+        && !context.is_server_owner
+        && role.position >= context.highest_position
+    {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let target_exists =
+            sqlx::query("SELECT 1 FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+                .bind(&path.guild_id)
+                .bind(target_user_id.to_string())
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?
+                .is_some();
+        if !target_exists {
+            return Err(AuthFailure::NotFound);
+        }
+        let assignment_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*)
+             FROM guild_role_members
+             WHERE guild_id = $1 AND user_id = $2",
+        )
+        .bind(&path.guild_id)
+        .bind(target_user_id.to_string())
+        .fetch_one(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        if usize::try_from(assignment_count).map_err(|_| AuthFailure::Internal)?
+            >= MAX_MEMBER_ROLE_ASSIGNMENTS
+        {
+            return Err(AuthFailure::QuotaExceeded);
+        }
+        sqlx::query(
+            "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (guild_id, role_id, user_id) DO NOTHING",
+        )
+        .bind(&path.guild_id)
+        .bind(&role_id)
+        .bind(target_user_id.to_string())
+        .bind(now_unix())
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let _ = sync_legacy_role_from_assignments_db(pool, &path.guild_id, target_user_id).await?;
+    } else {
+        let mut guilds = state.guilds.write().await;
+        let guild = guilds
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        if !guild.members.contains_key(&target_user_id) {
+            return Err(AuthFailure::NotFound);
+        }
+        drop(guilds);
+
+        let mut assignments = state.guild_role_assignments.write().await;
+        let guild_assignments = assignments
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        let assigned = guild_assignments.entry(target_user_id).or_default();
+        if assigned.len() >= MAX_MEMBER_ROLE_ASSIGNMENTS {
+            return Err(AuthFailure::QuotaExceeded);
+        }
+        assigned.insert(role_id.clone());
+        drop(assignments);
+        let _ = sync_legacy_role_from_assignments_in_memory(&state, &path.guild_id, target_user_id)
+            .await?;
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        Some(target_user_id),
+        "role.assign",
+        serde_json::json!({
+            "role_id": role_id,
+        }),
+    )
+    .await?;
+    Ok(Json(ModerationResponse { accepted: true }))
+}
+
+pub(crate) async fn unassign_guild_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildRoleMemberPath>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let role_id = parse_role_id(path.role_id)?;
+    let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let context = load_actor_role_context(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        Permission::ManageMemberRoles,
+    )
+    .await?;
+
+    let roles = if let Some(pool) = &state.db_pool {
+        guild_roles_db(pool, &path.guild_id).await?
+    } else {
+        guild_roles_in_memory(&state, &path.guild_id).await?
+    };
+    let role = roles
+        .iter()
+        .find(|entry| entry.role_id == role_id)
+        .cloned()
+        .ok_or(AuthFailure::NotFound)?;
+    if role.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE) {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if is_workspace_owner_role(&role) && !context.is_server_owner {
+        return Err(AuthFailure::Forbidden);
+    }
+    if !context.is_workspace_owner
+        && !context.is_server_owner
+        && role.position >= context.highest_position
+    {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        if is_workspace_owner_role(&role) {
+            let owner_count = workspace_owner_count_db(pool, &path.guild_id).await?;
+            if owner_count <= 1 {
+                return Err(AuthFailure::Forbidden);
+            }
+        }
+        sqlx::query(
+            "DELETE FROM guild_role_members
+             WHERE guild_id = $1 AND role_id = $2 AND user_id = $3",
+        )
+        .bind(&path.guild_id)
+        .bind(&role_id)
+        .bind(target_user_id.to_string())
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let _ = sync_legacy_role_from_assignments_db(pool, &path.guild_id, target_user_id).await?;
+    } else {
+        if is_workspace_owner_role(&role)
+            && workspace_owner_count_in_memory(&state, &path.guild_id).await? <= 1
+        {
+            return Err(AuthFailure::Forbidden);
+        }
+        let mut assignments = state.guild_role_assignments.write().await;
+        let guild_assignments = assignments
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        if let Some(assigned) = guild_assignments.get_mut(&target_user_id) {
+            assigned.remove(&role_id);
+        }
+        drop(assignments);
+        let _ = sync_legacy_role_from_assignments_in_memory(&state, &path.guild_id, target_user_id)
+            .await?;
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        Some(target_user_id),
+        "role.unassign",
+        serde_json::json!({
+            "role_id": role_id,
+        }),
+    )
+    .await?;
+    Ok(Json(ModerationResponse { accepted: true }))
 }
 
 #[derive(Debug, Clone)]
@@ -1434,58 +2404,26 @@ pub(crate) async fn list_guild_channels(
         "guild.channels.list",
     )
     .await?;
+    guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
 
-    if let Some(pool) = &state.db_pool {
+    let channel_candidates = if let Some(pool) = &state.db_pool {
         let rows = sqlx::query(
-            "SELECT c.channel_id, c.name, c.kind, gm.role, co.allow_mask, co.deny_mask
-             FROM guild_members gm
-             JOIN channels c ON c.guild_id = gm.guild_id
-             LEFT JOIN channel_role_overrides co
-               ON co.guild_id = c.guild_id
-              AND co.channel_id = c.channel_id
-              AND co.role = gm.role
-             LEFT JOIN guild_bans gb ON gb.guild_id = gm.guild_id AND gb.user_id = gm.user_id
-             WHERE gm.guild_id = $1
-               AND gm.user_id = $2
-               AND gb.user_id IS NULL
-             ORDER BY c.created_at_unix ASC
-             LIMIT $3",
+            "SELECT channel_id, name, kind
+             FROM channels
+             WHERE guild_id = $1
+             ORDER BY created_at_unix ASC
+             LIMIT $2",
         )
         .bind(&path.guild_id)
-        .bind(auth.user_id.to_string())
         .bind(i64::try_from(MAX_CHANNEL_LIST_LIMIT).map_err(|_| AuthFailure::Internal)?)
         .fetch_all(pool)
         .await
         .map_err(|_| AuthFailure::Internal)?;
-
-        if rows.is_empty() {
-            user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
-            return Ok(Json(ChannelListResponse {
-                channels: Vec::new(),
-            }));
-        }
-
-        let mut channels = Vec::new();
+        let mut entries = Vec::with_capacity(rows.len());
         for row in rows {
-            let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
-            let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
-            let allow_mask = row.try_get::<Option<i64>, _>("allow_mask").ok().flatten();
-            let deny_mask = row.try_get::<Option<i64>, _>("deny_mask").ok().flatten();
-            let overwrite = if let (Some(allow), Some(deny)) = (allow_mask, deny_mask) {
-                Some(ChannelPermissionOverwrite {
-                    allow: permission_set_from_i64(allow)?,
-                    deny: permission_set_from_i64(deny)?,
-                })
-            } else {
-                None
-            };
-            let permissions = apply_channel_overwrite(base_permissions(role), overwrite);
-            if !permissions.contains(Permission::CreateMessage) {
-                continue;
-            }
-            let channel_kind_raw: i16 = row.try_get("kind").map_err(|_| AuthFailure::Internal)?;
-            let kind = channel_kind_from_i16(channel_kind_raw).ok_or(AuthFailure::Internal)?;
-            channels.push(ChannelResponse {
+            let kind_raw: i16 = row.try_get("kind").map_err(|_| AuthFailure::Internal)?;
+            let kind = channel_kind_from_i16(kind_raw).ok_or(AuthFailure::Internal)?;
+            entries.push(ChannelResponse {
                 channel_id: row
                     .try_get("channel_id")
                     .map_err(|_| AuthFailure::Internal)?,
@@ -1493,38 +2431,38 @@ pub(crate) async fn list_guild_channels(
                 kind,
             });
         }
-        return Ok(Json(ChannelListResponse { channels }));
-    }
-
-    let guilds = state.guilds.read().await;
-    let guild = guilds.get(&path.guild_id).ok_or(AuthFailure::NotFound)?;
-    let role = guild
-        .members
-        .get(&auth.user_id)
-        .copied()
-        .ok_or(AuthFailure::Forbidden)?;
-    if guild.banned_members.contains(&auth.user_id) {
-        return Err(AuthFailure::Forbidden);
-    }
-
-    let mut channels = guild
-        .channels
-        .iter()
-        .filter_map(|(channel_id, channel)| {
-            let overwrite = channel.role_overrides.get(&role).copied();
-            let permissions = apply_channel_overwrite(base_permissions(role), overwrite);
-            if !permissions.contains(Permission::CreateMessage) {
-                return None;
-            }
-            Some(ChannelResponse {
+        entries
+    } else {
+        let guilds = state.guilds.read().await;
+        let guild = guilds.get(&path.guild_id).ok_or(AuthFailure::NotFound)?;
+        let mut entries = guild
+            .channels
+            .iter()
+            .map(|(channel_id, channel)| ChannelResponse {
                 channel_id: channel_id.clone(),
                 name: channel.name.clone(),
                 kind: channel.kind,
             })
-        })
-        .collect::<Vec<_>>();
-    channels.sort_by(|left, right| left.channel_id.cmp(&right.channel_id));
-    channels.truncate(MAX_CHANNEL_LIST_LIMIT);
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.channel_id.cmp(&right.channel_id));
+        entries.truncate(MAX_CHANNEL_LIST_LIMIT);
+        entries
+    };
+
+    let mut channels = Vec::new();
+    for channel in channel_candidates {
+        let (_, permissions) = crate::server::domain::channel_permission_snapshot(
+            &state,
+            auth.user_id,
+            &path.guild_id,
+            &channel.channel_id,
+        )
+        .await?;
+        if permissions.contains(Permission::CreateMessage) {
+            channels.push(channel);
+        }
+    }
+
     Ok(Json(ChannelListResponse { channels }))
 }
 
@@ -1552,24 +2490,13 @@ pub(crate) async fn create_channel(
     .await?;
     let name = ChannelName::try_from(payload.name).map_err(|_| AuthFailure::InvalidRequest)?;
     let kind = payload.kind.unwrap_or(ChannelKind::Text);
+    let (_, actor_permissions) =
+        guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
+    if !actor_permissions.contains(Permission::ManageChannelOverrides) {
+        return Err(AuthFailure::Forbidden);
+    }
 
     if let Some(pool) = &state.db_pool {
-        let role_row =
-            sqlx::query("SELECT role FROM guild_members WHERE guild_id = $1 AND user_id = $2")
-                .bind(&path.guild_id)
-                .bind(auth.user_id.to_string())
-                .fetch_optional(pool)
-                .await
-                .map_err(|_| AuthFailure::Internal)?;
-        let role_row = role_row.ok_or(AuthFailure::Forbidden)?;
-        let role_value: i16 = role_row
-            .try_get("role")
-            .map_err(|_| AuthFailure::Internal)?;
-        let role = role_from_i16(role_value).ok_or(AuthFailure::Forbidden)?;
-        if !matches!(role, Role::Owner | Role::Moderator) {
-            return Err(AuthFailure::Forbidden);
-        }
-
         let channel_id = Ulid::new().to_string();
         sqlx::query(
             "INSERT INTO channels (channel_id, guild_id, name, kind, created_at_unix) VALUES ($1, $2, $3, $4, $5)",
@@ -1600,14 +2527,6 @@ pub(crate) async fn create_channel(
     let guild = guilds
         .get_mut(&path.guild_id)
         .ok_or(AuthFailure::NotFound)?;
-    let role = guild
-        .members
-        .get(&auth.user_id)
-        .copied()
-        .ok_or(AuthFailure::Forbidden)?;
-    if !matches!(role, Role::Owner | Role::Moderator) {
-        return Err(AuthFailure::Forbidden);
-    }
 
     let channel_id = Ulid::new().to_string();
     guild.channels.insert(
@@ -1634,8 +2553,9 @@ pub(crate) async fn add_member(
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
-    let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
-    if !has_permission(actor_role, Permission::ManageRoles) {
+    let (_, actor_permissions) =
+        guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
+    if !actor_permissions.contains(Permission::ManageMemberRoles) {
         return Err(AuthFailure::Forbidden);
     }
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
@@ -1710,6 +2630,106 @@ pub(crate) async fn update_member_role(
         if result.rows_affected() == 0 {
             return Err(AuthFailure::NotFound);
         }
+
+        let role_rows = sqlx::query(
+            "SELECT role_id, system_key, name
+             FROM guild_roles
+             WHERE guild_id = $1",
+        )
+        .bind(&path.guild_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let mut workspace_owner_role_id = None;
+        let mut moderator_role_id = None;
+        let mut member_role_id = None;
+        for row in role_rows {
+            let role_id: String = row.try_get("role_id").map_err(|_| AuthFailure::Internal)?;
+            let system_key = row
+                .try_get::<Option<String>, _>("system_key")
+                .ok()
+                .flatten();
+            let name = row
+                .try_get::<String, _>("name")
+                .map_err(|_| AuthFailure::Internal)?;
+            if system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER) {
+                workspace_owner_role_id = Some(role_id.clone());
+            }
+            if system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR)
+                || name.eq_ignore_ascii_case(DEFAULT_ROLE_MODERATOR)
+            {
+                moderator_role_id = Some(role_id.clone());
+            }
+            if system_key.as_deref() == Some(DEFAULT_ROLE_MEMBER)
+                || name.eq_ignore_ascii_case(DEFAULT_ROLE_MEMBER)
+            {
+                member_role_id = Some(role_id.clone());
+            }
+        }
+        if let Some(workspace_owner_role_id) = workspace_owner_role_id {
+            sqlx::query(
+                "DELETE FROM guild_role_members
+                 WHERE guild_id = $1 AND user_id = $2 AND role_id = $3",
+            )
+            .bind(&path.guild_id)
+            .bind(target_user_id.to_string())
+            .bind(workspace_owner_role_id)
+            .execute(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        }
+        if let Some(moderator_role_id) = moderator_role_id {
+            sqlx::query(
+                "DELETE FROM guild_role_members
+                 WHERE guild_id = $1 AND user_id = $2 AND role_id = $3",
+            )
+            .bind(&path.guild_id)
+            .bind(target_user_id.to_string())
+            .bind(&moderator_role_id)
+            .execute(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+            if payload.role == Role::Moderator {
+                sqlx::query(
+                    "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (guild_id, role_id, user_id) DO NOTHING",
+                )
+                .bind(&path.guild_id)
+                .bind(moderator_role_id)
+                .bind(target_user_id.to_string())
+                .bind(now_unix())
+                .execute(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+            }
+            if let Some(member_role_id) = member_role_id {
+                sqlx::query(
+                    "DELETE FROM guild_role_members
+                 WHERE guild_id = $1 AND user_id = $2 AND role_id = $3",
+                )
+                .bind(&path.guild_id)
+                .bind(target_user_id.to_string())
+                .bind(&member_role_id)
+                .execute(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+                if payload.role == Role::Member {
+                    sqlx::query(
+                    "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (guild_id, role_id, user_id) DO NOTHING",
+                )
+                .bind(&path.guild_id)
+                .bind(member_role_id)
+                .bind(target_user_id.to_string())
+                .bind(now_unix())
+                .execute(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+                }
+            }
+        }
     } else {
         let mut guilds = state.guilds.write().await;
         let guild = guilds
@@ -1719,6 +2739,47 @@ pub(crate) async fn update_member_role(
             return Err(AuthFailure::NotFound);
         };
         *role = payload.role;
+        drop(guilds);
+        let mut assignments = state.guild_role_assignments.write().await;
+        if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
+            let assigned = guild_assignments.entry(target_user_id).or_default();
+            let role_map = state.guild_roles.read().await;
+            let roles = role_map.get(&path.guild_id).ok_or(AuthFailure::NotFound)?;
+            let workspace_owner_role_id = roles
+                .values()
+                .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER))
+                .map(|role| role.role_id.clone());
+            let moderator_role_id = roles
+                .values()
+                .find(|role| {
+                    role.system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR)
+                        || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MODERATOR)
+                })
+                .map(|role| role.role_id.clone());
+            let member_role_id = roles
+                .values()
+                .find(|role| {
+                    role.system_key.as_deref() == Some(DEFAULT_ROLE_MEMBER)
+                        || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MEMBER)
+                })
+                .map(|role| role.role_id.clone());
+            drop(role_map);
+            if let Some(role_id) = workspace_owner_role_id {
+                assigned.remove(&role_id);
+            }
+            if let Some(role_id) = moderator_role_id {
+                assigned.remove(&role_id);
+                if payload.role == Role::Moderator {
+                    assigned.insert(role_id);
+                }
+            }
+            if let Some(role_id) = member_role_id {
+                assigned.remove(&role_id);
+                if payload.role == Role::Member {
+                    assigned.insert(role_id);
+                }
+            }
+        }
     }
 
     write_audit_log(
@@ -1848,6 +2909,15 @@ pub(crate) async fn kick_member(
         if deleted.rows_affected() == 0 {
             return Err(AuthFailure::NotFound);
         }
+        sqlx::query(
+            "DELETE FROM guild_role_members
+             WHERE guild_id = $1 AND user_id = $2",
+        )
+        .bind(&path.guild_id)
+        .bind(target_user_id.to_string())
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
     } else {
         let mut guilds = state.guilds.write().await;
         let guild = guilds
@@ -1855,6 +2925,11 @@ pub(crate) async fn kick_member(
             .ok_or(AuthFailure::NotFound)?;
         if guild.members.remove(&target_user_id).is_none() {
             return Err(AuthFailure::NotFound);
+        }
+        drop(guilds);
+        let mut assignments = state.guild_role_assignments.write().await;
+        if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
+            guild_assignments.remove(&target_user_id);
         }
     }
 
@@ -1908,6 +2983,15 @@ pub(crate) async fn ban_member(
             .execute(&mut *tx)
             .await
             .map_err(|_| AuthFailure::Internal)?;
+        sqlx::query(
+            "DELETE FROM guild_role_members
+             WHERE guild_id = $1 AND user_id = $2",
+        )
+        .bind(&path.guild_id)
+        .bind(target_user_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
         tx.commit().await.map_err(|_| AuthFailure::Internal)?;
     } else {
         let mut guilds = state.guilds.write().await;
@@ -1916,6 +3000,11 @@ pub(crate) async fn ban_member(
             .ok_or(AuthFailure::NotFound)?;
         guild.members.remove(&target_user_id);
         guild.banned_members.insert(target_user_id);
+        drop(guilds);
+        let mut assignments = state.guild_role_assignments.write().await;
+        if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
+            guild_assignments.remove(&target_user_id);
+        }
     }
 
     write_audit_log(

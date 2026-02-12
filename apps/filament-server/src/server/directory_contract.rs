@@ -19,6 +19,7 @@ pub const MAX_AUDIT_ACTION_PREFIX_CHARS: usize = 64;
 pub const MAX_GUILD_IP_BAN_REASON_CHARS: usize = 240;
 pub const MAX_GUILD_IP_BAN_EXPIRY_SECS: u64 = 60 * 60 * 24 * 180;
 pub const MAX_AUDIT_CURSOR_CHARS: usize = 128;
+pub const MAX_WORKSPACE_ROLE_NAME_CHARS: usize = 32;
 
 pub const DIRECTORY_JOIN_NOT_ALLOWED_ERROR: &str = "directory_join_not_allowed";
 pub const DIRECTORY_JOIN_USER_BANNED_ERROR: &str = "directory_join_user_banned";
@@ -85,6 +86,51 @@ impl std::fmt::Display for GuildIpBanId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WorkspaceRoleId(Ulid);
+
+impl WorkspaceRoleId {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Ulid::new())
+    }
+}
+
+impl Default for WorkspaceRoleId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TryFrom<String> for WorkspaceRoleId {
+    type Error = DirectoryContractError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let parsed = Ulid::from_string(&value).map_err(|_| DirectoryContractError::RoleId)?;
+        Ok(Self(parsed))
+    }
+}
+
+impl std::fmt::Display for WorkspaceRoleId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+pub fn validate_workspace_role_name(value: &str) -> Result<String, DirectoryContractError> {
+    let normalized = value.trim();
+    if normalized.is_empty() || normalized.len() > MAX_WORKSPACE_ROLE_NAME_CHARS {
+        return Err(DirectoryContractError::RoleName);
+    }
+    if normalized
+        .chars()
+        .any(|char| char.is_ascii_control() || char == '\u{7f}')
+    {
+        return Err(DirectoryContractError::RoleName);
+    }
+    Ok(normalized.to_owned())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -344,6 +390,8 @@ impl TryFrom<GuildIpBanByUserRequestDto> for GuildIpBanByUserRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectoryContractError {
     Id,
+    RoleId,
+    RoleName,
     IpNetwork,
     AuditCursor,
     Limit,
@@ -385,11 +433,11 @@ fn canonicalize_ip(ip: IpAddr, prefix: u8) -> Result<IpAddr, DirectoryContractEr
 #[cfg(test)]
 mod tests {
     use super::{
-        AuditCursor, AuditListQuery, AuditListQueryDto, DirectoryContractError,
-        DirectoryJoinOutcome, GuildIpBanByUserRequest, GuildIpBanByUserRequestDto, GuildIpBanId,
-        GuildIpBanListQuery, GuildIpBanListQueryDto, IpNetwork, AUDIT_ACCESS_DENIED_ERROR,
-        DIRECTORY_JOIN_IP_BANNED_ERROR, DIRECTORY_JOIN_NOT_ALLOWED_ERROR,
-        DIRECTORY_JOIN_USER_BANNED_ERROR, MAX_AUDIT_CURSOR_CHARS,
+        validate_workspace_role_name, AuditCursor, AuditListQuery, AuditListQueryDto,
+        DirectoryContractError, DirectoryJoinOutcome, GuildIpBanByUserRequest,
+        GuildIpBanByUserRequestDto, GuildIpBanId, GuildIpBanListQuery, GuildIpBanListQueryDto,
+        IpNetwork, WorkspaceRoleId, AUDIT_ACCESS_DENIED_ERROR, DIRECTORY_JOIN_IP_BANNED_ERROR,
+        DIRECTORY_JOIN_NOT_ALLOWED_ERROR, DIRECTORY_JOIN_USER_BANNED_ERROR, MAX_AUDIT_CURSOR_CHARS,
     };
 
     #[test]
@@ -398,6 +446,25 @@ mod tests {
         assert!(valid.is_ok());
         let invalid = GuildIpBanId::try_from(String::from("ban-123"));
         assert_eq!(invalid, Err(DirectoryContractError::Id));
+    }
+
+    #[test]
+    fn workspace_role_id_requires_ulid() {
+        let valid = WorkspaceRoleId::try_from(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"));
+        assert!(valid.is_ok());
+        let invalid = WorkspaceRoleId::try_from(String::from("role-123"));
+        assert_eq!(invalid, Err(DirectoryContractError::RoleId));
+    }
+
+    #[test]
+    fn workspace_role_name_validation_enforces_bounds_and_charset() {
+        assert_eq!(
+            validate_workspace_role_name(" Moderator ").expect("valid role name"),
+            "Moderator"
+        );
+        assert!(validate_workspace_role_name("").is_err());
+        assert!(validate_workspace_role_name(&"a".repeat(64)).is_err());
+        assert!(validate_workspace_role_name("bad\nname").is_err());
     }
 
     #[test]

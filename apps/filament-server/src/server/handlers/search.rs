@@ -3,14 +3,14 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use filament_core::{has_permission, Permission, Role};
+use filament_core::Permission;
 use std::net::SocketAddr;
 
 use crate::server::{
     auth::{authenticate, extract_client_ip},
     core::{AppState, SearchOperation, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_RECONCILE_DOCS},
     db::ensure_db_schema,
-    domain::{enforce_guild_ip_ban_for_request, user_role_in_guild},
+    domain::{enforce_guild_ip_ban_for_request, guild_permission_snapshot},
     errors::AuthFailure,
     realtime::{
         collect_all_indexed_messages, enqueue_search_operation, ensure_search_bootstrapped,
@@ -43,8 +43,8 @@ pub(crate) async fn search_messages(
         "search.messages",
     )
     .await?;
-    let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
-    if !has_permission(role, Permission::CreateMessage) {
+    let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
+    if !permissions.contains(Permission::CreateMessage) {
         return Err(AuthFailure::Forbidden);
     }
 
@@ -90,8 +90,8 @@ pub(crate) async fn rebuild_search_index(
         "search.rebuild",
     )
     .await?;
-    let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
-    if !matches!(role, Role::Owner | Role::Moderator) {
+    let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
+    if !permissions.contains(Permission::ManageWorkspaceRoles) {
         return Err(AuthFailure::Forbidden);
     }
 
@@ -122,8 +122,8 @@ pub(crate) async fn reconcile_search_index(
         "search.reconcile",
     )
     .await?;
-    let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
-    if !matches!(role, Role::Owner | Role::Moderator) {
+    let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
+    if !permissions.contains(Permission::ManageWorkspaceRoles) {
         return Err(AuthFailure::Forbidden);
     }
 

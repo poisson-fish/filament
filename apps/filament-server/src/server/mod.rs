@@ -6,6 +6,7 @@ pub(crate) mod domain;
 pub(crate) mod errors;
 pub(crate) mod handlers;
 pub(crate) mod metrics;
+pub(crate) mod permissions;
 pub(crate) mod realtime;
 pub(crate) mod router;
 #[cfg(test)]
