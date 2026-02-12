@@ -159,6 +159,37 @@ describe("gateway payload parsing", () => {
     expect(onPresenceUpdate).not.toHaveBeenCalled();
   });
 
+  it("rejects invalid envelope versions and event types fail-closed", () => {
+    const { socket, onReady, onMessageCreate, onPresenceSync, onPresenceUpdate } = createOpenGateway();
+    const invalidEnvelopes = [
+      { v: 2, t: "ready", d: {} },
+      { v: 1, t: "INVALID_TYPE", d: {} },
+      { v: 1, t: "presence-sync", d: {} },
+      { v: 1, t: "x".repeat(65), d: {} },
+      { v: 1, t: 42, d: {} },
+      { v: 1, d: {} },
+    ];
+
+    for (const envelope of invalidEnvelopes) {
+      socket.emitMessage(JSON.stringify(envelope));
+    }
+
+    expect(onReady).not.toHaveBeenCalled();
+    expect(onMessageCreate).not.toHaveBeenCalled();
+    expect(onPresenceSync).not.toHaveBeenCalled();
+    expect(onPresenceUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized gateway event payloads before dispatch", () => {
+    const { socket, onReady, onMessageCreate, onPresenceSync, onPresenceUpdate } = createOpenGateway();
+    socket.emitMessage("x".repeat(70 * 1024));
+
+    expect(onReady).not.toHaveBeenCalled();
+    expect(onMessageCreate).not.toHaveBeenCalled();
+    expect(onPresenceSync).not.toHaveBeenCalled();
+    expect(onPresenceUpdate).not.toHaveBeenCalled();
+  });
+
   it("rejects oversized presence_sync user lists", () => {
     const { socket, onPresenceSync } = createOpenGateway();
     const oversizedUserIds = Array.from({ length: 1025 }, (_, index) => ulidFromIndex(index));
@@ -255,6 +286,38 @@ describe("gateway payload parsing", () => {
       guildId: DEFAULT_GUILD_ID,
       userId: presenceUserId,
       status: "offline",
+    });
+  });
+
+  it("keeps invalid payload handling fail-closed and allows later valid payloads", () => {
+    const { socket, onPresenceSync } = createOpenGateway();
+    const validUserId = ulidFromIndex(6);
+
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "presence_sync",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_ids: ["bad-id", validUserId],
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "presence_sync",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_ids: [validUserId],
+        },
+      }),
+    );
+
+    expect(onPresenceSync).toHaveBeenCalledTimes(1);
+    expect(onPresenceSync).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      userIds: [validUserId],
     });
   });
 

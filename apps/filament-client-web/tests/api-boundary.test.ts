@@ -67,6 +67,27 @@ describe("api boundary hardening", () => {
     expect(probe.emittedChunks()).toBeLessThan(chunks.length);
   });
 
+  it("fast-fails oversized json responses from content-length before reading", async () => {
+    const chunk = new TextEncoder().encode("A".repeat(2048));
+    const probe = createProbeStream([chunk, chunk, chunk]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(probe.stream, {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-length": String(70 * 1024),
+          },
+        }),
+      ),
+    );
+
+    await expect(fetchHealth()).rejects.toMatchObject({ status: 200, code: "oversized_response" });
+    expect(probe.emittedChunks()).toBeLessThan(2);
+    expect(probe.cancelCalls()).toBeGreaterThan(0);
+  });
+
   it("rejects oversized binary responses before consuming full payload", async () => {
     const chunk = new Uint8Array(256 * 1024).fill(0x5a);
     const chunks = Array.from({ length: 64 }, () => chunk);
@@ -103,6 +124,34 @@ describe("api boundary hardening", () => {
     );
 
     await expect(fetchHealth()).rejects.toMatchObject({ status: 200, code: "invalid_json" });
+  });
+
+  it("maps non-ok responses with error code deterministically", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "rate_limited" }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(fetchHealth()).rejects.toMatchObject({ status: 429, code: "rate_limited" });
+  });
+
+  it("maps non-ok responses without string error to unexpected_error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: { code: "nested" } }), {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(fetchHealth()).rejects.toMatchObject({ status: 403, code: "unexpected_error" });
   });
 
   it("maps timeout aborts to network_error", async () => {

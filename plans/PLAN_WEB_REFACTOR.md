@@ -619,24 +619,43 @@ Align guardrails with the declared end-state target and move from warning-only t
 Close remaining boundary-test gaps for API/gateway hostile-input handling and parsing invariants.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add dedicated tests for `apps/filament-client-web/src/lib/api.ts` covering:
+- [x] Add dedicated tests for `apps/filament-client-web/src/lib/api.ts` covering:
   - oversized JSON/binary responses
   - malformed payloads
   - deterministic `ApiError` code mapping
-- [ ] Add dedicated tests for `apps/filament-client-web/src/lib/gateway.ts` covering:
+- [x] Add dedicated tests for `apps/filament-client-web/src/lib/gateway.ts` covering:
   - invalid envelope versions/types
   - oversized message rejection
   - invalid ID payload rejection
   - presence payload size caps
-- [ ] Ensure tests assert fail-closed behavior (no state mutation on invalid input).
+- [x] Ensure tests assert fail-closed behavior (no state mutation on invalid input).
+
+### Refactor Notes
+- Expanded `apps/filament-client-web/tests/api-boundary.test.ts` with additional hostile-response coverage:
+  - oversized JSON fast-fail path using `Content-Length` preflight
+  - deterministic non-OK `ApiError` code mapping from server error payloads
+  - fallback `unexpected_error` mapping when error payload shape is non-string
+- Expanded `apps/filament-client-web/tests/gateway.test.ts` with boundary/fail-closed coverage:
+  - invalid envelope version/event-type rejection
+  - oversized raw gateway message rejection before dispatch
+  - explicit fail-closed behavior assertion where invalid payloads do not dispatch and later valid payloads still dispatch normally
+- Existing Phase 9/10 hostile-input tests remain in place; Phase 14 closes the remaining first-class boundary cases by asserting deterministic rejection behavior for invalid envelopes and API error payload shapes.
+- Metrics after Phase 14 (2026-02-12):
+  - `AppShellPage.tsx` line count: `306`
+  - Test command: `npm --prefix apps/filament-client-web test`
+  - Pass status: `45` test files passed, `189` tests passed
+  - Typecheck command: `npm --prefix apps/filament-client-web run typecheck`
+  - Typecheck status: pass
+  - Build command: `npm --prefix apps/filament-client-web run build`
+  - Build status: pass
 
 ### Validation Gate
-- [ ] `npm --prefix apps/filament-client-web test`
-- [ ] `npm --prefix apps/filament-client-web run typecheck`
-- [ ] `npm --prefix apps/filament-client-web run build`
+- [x] `npm --prefix apps/filament-client-web test`
+- [x] `npm --prefix apps/filament-client-web run typecheck`
+- [x] `npm --prefix apps/filament-client-web run build`
 
 ### Exit Criteria
 - Boundary modules have first-class hostile-input coverage, not only app-shell integration coverage.
