@@ -563,22 +563,51 @@ Break up large cross-domain state/adapters to improve cohesion and reduce "god o
 Align guardrails with the declared end-state target and move from warning-only to enforceable thresholds.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Update `apps/filament-client-web/scripts/check-app-shell-size.mjs` to support explicit modes:
+- [x] Update `apps/filament-client-web/scripts/check-app-shell-size.mjs` to support explicit modes:
   - warning mode (local default)
   - enforcing mode (CI failure above threshold)
-- [ ] Ratchet default thresholds in staged steps tied to landed refactors:
+- [x] Ratchet default thresholds in staged steps tied to landed refactors:
   - Stage A: `1200`
   - Stage B: `1000`
   - Stage C: `850`
   - Stage D: `650` (target)
-- [ ] Update `.github/workflows/ci.yml` to run enforcement mode once staged thresholds are stable.
-- [ ] Record each threshold change and current line count in this plan and `plans/PLAN_UX.md`.
+- [x] Update `.github/workflows/ci.yml` to run enforcement mode once staged thresholds are stable.
+- [x] Record each threshold change and current line count in this plan and `plans/PLAN_UX.md`.
 
 ### Tests
-- [ ] Add script-level tests (or lightweight fixture checks) for threshold parsing and enforce/warn behavior.
+- [x] Add script-level tests (or lightweight fixture checks) for threshold parsing and enforce/warn behavior.
+
+### Refactor Notes
+- Updated `apps/filament-client-web/scripts/check-app-shell-size.mjs` with:
+  - explicit guardrail modes (`warn` default, `enforce`)
+  - staged threshold map (`A=1200`, `B=1000`, `C=850`, `D=650`)
+  - threshold-source precedence (`--max-lines` / `FILAMENT_APP_SHELL_MAX_LINES` override stage values)
+  - testable target-file override (`--file` / `FILAMENT_APP_SHELL_FILE`)
+- Updated `.github/workflows/ci.yml` to enforce the guardrail in CI using Stage `D` (`650` lines) via:
+  - `FILAMENT_APP_SHELL_SIZE_MODE=enforce`
+  - `FILAMENT_APP_SHELL_SIZE_STAGE=D`
+- Added `apps/filament-client-web/tests/check-app-shell-size-script.test.ts` fixture-driven coverage for:
+  - default warn mode with Stage D threshold
+  - enforce-mode failure on threshold breach
+  - explicit max-line override behavior
+  - enforce-mode pass path below threshold
+- Hardened `apps/filament-client-web/tests/setup.ts` with a `window` availability guard so Node-environment script tests run without affecting existing jsdom behavior.
+- Threshold ratchet record (2026-02-12, `AppShellPage.tsx` line count: `306`):
+  - Stage A (`1200`) satisfied
+  - Stage B (`1000`) satisfied
+  - Stage C (`850`) satisfied
+  - Stage D (`650`) satisfied and now enforced in CI
+- Metrics after Phase 13 (2026-02-12):
+  - `AppShellPage.tsx` line count: `306`
+  - Test command: `npm --prefix apps/filament-client-web test`
+  - Pass status: `45` test files passed, `183` tests passed
+  - Typecheck command: `npm --prefix apps/filament-client-web run typecheck`
+  - Typecheck status: pass
+  - Build command: `npm --prefix apps/filament-client-web run build`
+  - Build status: pass
 
 ### Exit Criteria
 - CI enforces an agreed `AppShellPage.tsx` threshold that converges to `<= 650`.

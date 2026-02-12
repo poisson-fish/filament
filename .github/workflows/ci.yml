@@ -72,8 +72,8 @@ jobs:
       - name: Typecheck web client
         run: npm run typecheck
 
-      - name: App shell size guardrail (warning only)
-        run: npm run check:app-shell-size
+      - name: App shell size guardrail (enforced)
+        run: FILAMENT_APP_SHELL_SIZE_MODE=enforce FILAMENT_APP_SHELL_SIZE_STAGE=D npm run check:app-shell-size
 
       - name: Web tests
         run: npm test
