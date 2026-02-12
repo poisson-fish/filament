@@ -1,6 +1,7 @@
 pub(crate) mod auth;
 pub(crate) mod core;
 pub(crate) mod db;
+pub mod directory_contract;
 pub(crate) mod domain;
 pub(crate) mod errors;
 pub(crate) mod handlers;

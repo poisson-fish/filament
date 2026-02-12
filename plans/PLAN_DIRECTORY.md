@@ -67,26 +67,46 @@ Implement a secure, auditable "public workspace directory -> join workspace" flo
 Lock API contracts, trust boundaries, and invariants before implementation.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Define directory join threat model update in `docs/THREAT_MODEL.md`:
+- [x] Define directory join threat model update in `docs/THREAT_MODEL.md`:
   - join spam/DoS
   - workspace enumeration behavior
   - spoofed forwarded-IP headers
   - abusive rejoin loops after moderation
-- [ ] Define new domain invariants/newtypes (server + web):
+- [x] Define new domain invariants/newtypes (server + web):
   - `GuildIpBanId`
   - `IpNetwork` (CIDR or exact IP canonicalized)
   - `AuditCursor` (bounded pagination token)
-- [ ] Specify response/error semantics for:
+- [x] Specify response/error semantics for:
   - private/nonexistent guild join attempts
   - banned-by-user vs banned-by-ip outcomes
   - unauthorized audit access
-- [ ] Document per-route limits for new endpoints (join, audit list, ip-ban CRUD).
+- [x] Document per-route limits for new endpoints (join, audit list, ip-ban CRUD).
 
 ### Tests
-- [ ] Add/extend unit tests for invariant constructors and DTO validation.
+- [x] Add/extend unit tests for invariant constructors and DTO validation.
+
+### Refactor Notes
+- Added `apps/filament-server/src/server/directory_contract.rs` with Phase 0 contract newtypes and invariant constructors:
+  - `GuildIpBanId`
+  - `IpNetwork` (host/CIDR canonicalization for IPv4/IPv6)
+  - `AuditCursor`
+- Added server-side typed DTO contract parsers for upcoming directory moderation endpoints:
+  - audit list query
+  - guild IP-ban list query
+  - guild IP-ban by-user request
+- Added matching web domain invariants and DTO parsers in `apps/filament-client-web/src/domain/chat.ts`:
+  - newtypes: `GuildIpBanId`, `IpNetwork`, `AuditCursor`
+  - typed parsers for directory join result, guild audit pages, and guild IP-ban pages/results
+- Updated docs:
+  - `docs/THREAT_MODEL.md` (directory join + IP moderation abuse cases/mitigations)
+  - `docs/API.md` (locked error semantics + per-route limits for join/audit/ip-ban endpoints)
+- Added/extended tests:
+  - `apps/filament-server/src/server/directory_contract.rs` unit tests
+  - `apps/filament-client-web/tests/domain-chat.test.ts` invariant/DTO tests
+  - `apps/filament-client-web/tests/api-boundary.test.ts` deterministic directory join error mapping
 
 ### Security Outlook
 - Prevents policy drift and ad-hoc JSON/string logic before coding.

@@ -1,15 +1,23 @@
 import {
   attachmentFilenameFromInput,
   attachmentFromResponse,
+  auditCursorFromInput,
   channelFromResponse,
   channelKindFromInput,
   channelPermissionSnapshotFromResponse,
+  directoryJoinErrorCodeFromInput,
+  directoryJoinResultFromResponse,
   channelIdFromInput,
   friendListFromResponse,
   friendRequestCreateFromResponse,
   friendRequestListFromResponse,
+  guildAuditPageFromResponse,
+  guildIpBanApplyResultFromResponse,
+  guildIpBanPageFromResponse,
+  guildIpBanIdFromInput,
   guildVisibilityFromInput,
   guildIdFromInput,
+  ipNetworkFromInput,
   markdownTokensFromResponse,
   messageContentFromInput,
   messageFromResponse,
@@ -262,5 +270,104 @@ describe("chat domain invariants", () => {
     });
     expect(profile.username).toBe("alice");
     expect(profile.avatarVersion).toBe(7);
+  });
+
+  it("validates directory phase newtypes", () => {
+    expect(guildIpBanIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV")).toBe(
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    );
+    expect(() => guildIpBanIdFromInput("not-ulid")).toThrow();
+
+    expect(ipNetworkFromInput("203.0.113.19")).toBe("203.0.113.19/32");
+    expect(ipNetworkFromInput("203.0.113.200/24")).toBe("203.0.113.0/24");
+    expect(ipNetworkFromInput("2001:DB8::F00D/64")).toBe("2001:db8::/64");
+    expect(() => ipNetworkFromInput("203.0.113.9/33")).toThrow();
+
+    expect(auditCursorFromInput("abcDEF_123-xyz")).toBe("abcDEF_123-xyz");
+    expect(() => auditCursorFromInput("bad cursor")).toThrow();
+  });
+
+  it("validates directory join DTO and error-code mapping", () => {
+    const join = directoryJoinResultFromResponse({
+      guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      outcome: "accepted",
+    });
+    expect(join.outcome).toBe("accepted");
+    expect(join.joined).toBe(true);
+
+    const rejected = directoryJoinResultFromResponse({
+      guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      outcome: "rejected_ip_ban",
+    });
+    expect(rejected.joined).toBe(false);
+    expect(directoryJoinErrorCodeFromInput("directory_join_ip_banned")).toBe(
+      "directory_join_ip_banned",
+    );
+    expect(directoryJoinErrorCodeFromInput("something_else")).toBe("unexpected_error");
+  });
+
+  it("validates redacted guild audit and ip-ban DTO payloads", () => {
+    const auditPage = guildAuditPageFromResponse({
+      events: [
+        {
+          audit_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          actor_user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+          target_user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          action: "directory.join.rejected.ip_ban",
+          created_at_unix: 123,
+          ip_ban_match: true,
+          details: { source: "directory_join" },
+        },
+      ],
+      next_cursor: "audit_cursor_1",
+    });
+    expect(auditPage.events[0]?.ipBanMatch).toBe(true);
+    expect(auditPage.nextCursor).toBe("audit_cursor_1");
+    expect(() =>
+      guildAuditPageFromResponse({
+        events: [
+          {
+            audit_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            actor_user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            target_user_id: null,
+            action: "directory.join.accepted",
+            created_at_unix: 123,
+            details: { ip_cidr: "203.0.113.0/24" },
+          },
+        ],
+      }),
+    ).toThrow();
+
+    const ipBanPage = guildIpBanPageFromResponse({
+      bans: [
+        {
+          ban_id: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+          source_user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+          reason: "raid traffic",
+          created_at_unix: 100,
+          expires_at_unix: null,
+        },
+      ],
+      next_cursor: null,
+    });
+    expect(ipBanPage.bans[0]?.reason).toBe("raid traffic");
+    expect(() =>
+      guildIpBanPageFromResponse({
+        bans: [
+          {
+            ban_id: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+            ip_cidr: "203.0.113.0/24",
+            created_at_unix: 100,
+          },
+        ],
+      }),
+    ).toThrow();
+
+    const applyResult = guildIpBanApplyResultFromResponse({
+      created_count: 2,
+      ban_ids: ["01ARZ3NDEKTSV4RRFFQ69G5FAY", "01ARZ3NDEKTSV4RRFFQ69G5FAZ"],
+    });
+    expect(applyResult.createdCount).toBe(2);
+    expect(applyResult.banIds).toHaveLength(2);
   });
 });

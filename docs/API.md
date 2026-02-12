@@ -72,6 +72,42 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
 - Reaction emoji path segment: non-empty, max `32` chars, no whitespace
 - LiveKit token TTL: max/default `300s`
 
+## Directory Moderation Contract (Phase 0 design lock)
+This section locks response semantics and limits for upcoming directory-join/audit/IP-ban endpoints.
+
+### Locked policy semantics
+- `POST /guilds/{guild_id}/join`:
+  - Public + eligible: `200` with typed join outcome.
+  - Private or nonexistent guild ID: `404 {"error":"not_found"}` (no visibility oracle).
+  - User-level guild ban: `403 {"error":"directory_join_user_banned"}`.
+  - Guild IP-ban hit: `403 {"error":"directory_join_ip_banned"}`.
+  - Join not permitted by visibility/policy: `403 {"error":"directory_join_not_allowed"}`.
+  - Rate-limited: `429 {"error":"rate_limited"}`.
+- `GET /guilds/{guild_id}/audit`:
+  - Authorized owner/moderator: `200` typed redacted page payload.
+  - Non-member or unauthorized member: `403 {"error":"audit_access_denied"}`.
+  - Unknown guild: `404 {"error":"not_found"}`.
+- `GET /guilds/{guild_id}/ip-bans`, `POST /guilds/{guild_id}/ip-bans/by-user`,
+  `DELETE /guilds/{guild_id}/ip-bans/{ban_id}`:
+  - owner/moderator only; unauthorized callers receive `403 {"error":"forbidden"}`.
+  - list/create/delete payloads never include raw `ip`/`cidr` fields.
+
+### Locked per-route limits (default contracts)
+- `POST /guilds/{guild_id}/join`:
+  - `20 req/min` per client IP
+  - `10 req/min` per authenticated user
+- `GET /guilds/{guild_id}/audit`:
+  - `limit` default `20`, max `100`
+  - `action_prefix` max `64` chars, charset `[a-z0-9._]`
+  - `cursor` max `128` chars, charset `[A-Za-z0-9_-]`
+- `GET /guilds/{guild_id}/ip-bans`:
+  - `limit` default `20`, max `100`
+  - `cursor` max `128` chars, charset `[A-Za-z0-9_-]`
+- `POST /guilds/{guild_id}/ip-bans/by-user`:
+  - `reason` max `240` chars
+  - `expires_in_secs` max `15_552_000` (180 days)
+  - guild IP-ban total entries cap default `4_096`
+
 ## REST API
 
 ### Public Utility

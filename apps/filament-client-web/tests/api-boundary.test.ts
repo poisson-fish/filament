@@ -154,6 +154,23 @@ describe("api boundary hardening", () => {
     await expect(fetchHealth()).rejects.toMatchObject({ status: 403, code: "unexpected_error" });
   });
 
+  it("preserves directory-join policy error codes for deterministic UI mapping", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "directory_join_ip_banned" }), {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(fetchHealth()).rejects.toMatchObject({
+      status: 403,
+      code: "directory_join_ip_banned",
+    });
+  });
+
   it("maps timeout aborts to network_error", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(

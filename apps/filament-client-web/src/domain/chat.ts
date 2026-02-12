@@ -6,12 +6,15 @@ export type MessageId = string & { readonly __brand: "message_id" };
 export type UserId = string & { readonly __brand: "user_id" };
 export type AttachmentId = string & { readonly __brand: "attachment_id" };
 export type FriendRequestId = string & { readonly __brand: "friend_request_id" };
+export type GuildIpBanId = string & { readonly __brand: "guild_ip_ban_id" };
 export type GuildName = string & { readonly __brand: "guild_name" };
 export type ChannelName = string & { readonly __brand: "channel_name" };
 export type MessageContent = string & { readonly __brand: "message_content" };
 export type SearchQuery = string & { readonly __brand: "search_query" };
 export type ReactionEmoji = string & { readonly __brand: "reaction_emoji" };
 export type AttachmentFilename = string & { readonly __brand: "attachment_filename" };
+export type IpNetwork = string & { readonly __brand: "ip_network" };
+export type AuditCursor = string & { readonly __brand: "audit_cursor" };
 export type LivekitToken = string & { readonly __brand: "livekit_token" };
 export type LivekitUrl = string & { readonly __brand: "livekit_url" };
 export type LivekitRoom = string & { readonly __brand: "livekit_room" };
@@ -54,9 +57,16 @@ const MAX_MARKDOWN_INLINE_CHARS = 4096;
 const MAX_PROFILE_ABOUT_CHARS = 2048;
 const MAX_LIVEKIT_TEXT_CHARS = 512;
 const MAX_LIVEKIT_TOKEN_CHARS = 8192;
+const MAX_AUDIT_CURSOR_CHARS = 128;
+const MAX_AUDIT_EVENT_ACTION_CHARS = 64;
+const MAX_AUDIT_EVENTS_PER_PAGE = 100;
+const MAX_GUILD_IP_BANS_PER_PAGE = 100;
+const MAX_GUILD_IP_BAN_REASON_CHARS = 240;
+const MAX_APPLIED_GUILD_IP_BAN_IDS = 2048;
+const IPV6_MAX_VALUE = (1n << 128n) - 1n;
 
 function idFromInput<
-  T extends GuildId | ChannelId | MessageId | UserId | AttachmentId | FriendRequestId,
+  T extends GuildId | ChannelId | MessageId | UserId | AttachmentId | FriendRequestId | GuildIpBanId,
 >(
   input: string,
   label: string,
@@ -130,6 +140,167 @@ function requireStringArray(value: unknown, label: string, maxLen = 256): string
   return value.map((entry, index) => requireString(entry, `${label}[${index}]`, maxLen));
 }
 
+function parseIpv4Address(value: string): number | null {
+  const parts = value.split(".");
+  if (parts.length !== 4) {
+    return null;
+  }
+  let address = 0;
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) {
+      return null;
+    }
+    const octet = Number.parseInt(part, 10);
+    if (!Number.isInteger(octet) || octet < 0 || octet > 255) {
+      return null;
+    }
+    address = (address << 8) | octet;
+  }
+  return address >>> 0;
+}
+
+function formatIpv4Address(value: number): string {
+  return [
+    (value >>> 24) & 0xff,
+    (value >>> 16) & 0xff,
+    (value >>> 8) & 0xff,
+    value & 0xff,
+  ].join(".");
+}
+
+function canonicalizeIpv4Address(value: number, prefix: number): number {
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return value & mask;
+}
+
+function parseIpv6Address(value: string): bigint | null {
+  if (value.includes(".")) {
+    return null;
+  }
+
+  const collapsed = value.split("::");
+  if (collapsed.length > 2) {
+    return null;
+  }
+
+  const parseSegmentList = (segmentList: string): number[] | null => {
+    if (segmentList.length === 0) {
+      return [];
+    }
+    const segments = segmentList.split(":");
+    const parsed: number[] = [];
+    for (const segment of segments) {
+      if (!/^[0-9a-fA-F]{1,4}$/.test(segment)) {
+        return null;
+      }
+      parsed.push(Number.parseInt(segment, 16));
+    }
+    return parsed;
+  };
+
+  const left = parseSegmentList(collapsed[0] ?? "");
+  const right = collapsed.length === 2 ? parseSegmentList(collapsed[1] ?? "") : [];
+  if (!left || !right) {
+    return null;
+  }
+
+  let hextets: number[];
+  if (collapsed.length === 1) {
+    if (left.length !== 8) {
+      return null;
+    }
+    hextets = left;
+  } else {
+    if (left.length + right.length >= 8) {
+      return null;
+    }
+    const missing = 8 - (left.length + right.length);
+    hextets = [...left, ...Array.from({ length: missing }, () => 0), ...right];
+  }
+
+  if (hextets.length !== 8) {
+    return null;
+  }
+
+  let out = 0n;
+  for (const hextet of hextets) {
+    out = (out << 16n) | BigInt(hextet);
+  }
+  return out;
+}
+
+function formatIpv6Address(value: bigint): string {
+  const hextets = Array.from({ length: 8 }, (_unused, index) => {
+    const shift = BigInt((7 - index) * 16);
+    return Number((value >> shift) & 0xffffn);
+  });
+
+  let bestStart = -1;
+  let bestLength = 0;
+  for (let index = 0; index < hextets.length; index += 1) {
+    if (hextets[index] !== 0) {
+      continue;
+    }
+    let cursor = index;
+    while (cursor < hextets.length && hextets[cursor] === 0) {
+      cursor += 1;
+    }
+    const runLength = cursor - index;
+    if (runLength > bestLength && runLength >= 2) {
+      bestStart = index;
+      bestLength = runLength;
+    }
+    index = cursor - 1;
+  }
+
+  let rendered = "";
+  for (let index = 0; index < hextets.length; index += 1) {
+    if (bestStart >= 0 && index === bestStart) {
+      rendered += "::";
+      index += bestLength - 1;
+      continue;
+    }
+    if (rendered.length > 0 && !rendered.endsWith(":")) {
+      rendered += ":";
+    }
+    rendered += hextets[index]!.toString(16);
+  }
+
+  return rendered.length === 0 ? "::" : rendered;
+}
+
+function canonicalizeIpv6Address(value: bigint, prefix: number): bigint {
+  if (prefix === 0) {
+    return 0n;
+  }
+  const mask = (IPV6_MAX_VALUE << BigInt(128 - prefix)) & IPV6_MAX_VALUE;
+  return value & mask;
+}
+
+function parseNetworkPrefix(value: string, maxBits: number): number {
+  if (!/^\d{1,3}$/.test(value)) {
+    throw new DomainValidationError("IP network prefix must be numeric.");
+  }
+  const prefix = Number.parseInt(value, 10);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > maxBits) {
+    throw new DomainValidationError("IP network prefix is out of range.");
+  }
+  return prefix;
+}
+
+function hasRawIpField(value: Record<string, unknown>): boolean {
+  return Object.keys(value).some((key) => {
+    const normalized = key.toLowerCase();
+    return (
+      normalized === "ip" ||
+      normalized === "cidr" ||
+      normalized.includes("_ip") ||
+      normalized.includes("ip_") ||
+      normalized.includes("cidr")
+    );
+  });
+}
+
 export function guildIdFromInput(input: string): GuildId {
   return idFromInput<GuildId>(input, "Guild ID");
 }
@@ -148,6 +319,54 @@ export function userIdFromInput(input: string): UserId {
 
 export function attachmentIdFromInput(input: string): AttachmentId {
   return idFromInput<AttachmentId>(input, "Attachment ID");
+}
+
+export function guildIpBanIdFromInput(input: string): GuildIpBanId {
+  return idFromInput<GuildIpBanId>(input, "Guild IP ban ID");
+}
+
+export function auditCursorFromInput(input: string): AuditCursor {
+  if (
+    input.length < 1 ||
+    input.length > MAX_AUDIT_CURSOR_CHARS ||
+    !/^[A-Za-z0-9_-]+$/.test(input)
+  ) {
+    throw new DomainValidationError("Audit cursor must be 1-128 chars using [A-Za-z0-9_-].");
+  }
+  return input as AuditCursor;
+}
+
+export function ipNetworkFromInput(input: string): IpNetwork {
+  const value = input.trim();
+  if (value.length === 0) {
+    throw new DomainValidationError("IP network must be non-empty.");
+  }
+  const slashIndex = value.indexOf("/");
+  if (slashIndex >= 0 && value.indexOf("/", slashIndex + 1) >= 0) {
+    throw new DomainValidationError("IP network must include at most one prefix separator.");
+  }
+
+  const addressPart = slashIndex >= 0 ? value.slice(0, slashIndex) : value;
+  const prefixPart = slashIndex >= 0 ? value.slice(slashIndex + 1) : null;
+  if (addressPart.length === 0 || prefixPart === "") {
+    throw new DomainValidationError("IP network must include both address and prefix.");
+  }
+
+  const ipv4 = parseIpv4Address(addressPart);
+  if (ipv4 !== null) {
+    const prefix = prefixPart === null ? 32 : parseNetworkPrefix(prefixPart, 32);
+    const canonicalAddress = canonicalizeIpv4Address(ipv4, prefix);
+    return `${formatIpv4Address(canonicalAddress)}/${prefix}` as IpNetwork;
+  }
+
+  const ipv6 = parseIpv6Address(addressPart);
+  if (ipv6 !== null) {
+    const prefix = prefixPart === null ? 128 : parseNetworkPrefix(prefixPart, 128);
+    const canonicalAddress = canonicalizeIpv6Address(ipv6, prefix);
+    return `${formatIpv6Address(canonicalAddress)}/${prefix}` as IpNetwork;
+  }
+
+  throw new DomainValidationError("IP network must be a valid IPv4/IPv6 address or CIDR.");
 }
 
 export function guildNameFromInput(input: string): GuildName {
@@ -396,6 +615,185 @@ export function publicGuildDirectoryFromResponse(dto: unknown): PublicGuildDirec
   }
   return {
     guilds: data.guilds.map((entry) => guildFromResponse(entry)),
+  };
+}
+
+export type DirectoryJoinOutcome =
+  | "accepted"
+  | "already_member"
+  | "rejected_visibility"
+  | "rejected_user_ban"
+  | "rejected_ip_ban";
+
+export type DirectoryJoinErrorCode =
+  | "directory_join_not_allowed"
+  | "directory_join_user_banned"
+  | "directory_join_ip_banned"
+  | "rate_limited"
+  | "forbidden"
+  | "not_found"
+  | "unexpected_error";
+
+export interface DirectoryJoinResult {
+  guildId: GuildId;
+  outcome: DirectoryJoinOutcome;
+  joined: boolean;
+}
+
+function directoryJoinOutcomeFromInput(input: string): DirectoryJoinOutcome {
+  if (
+    input !== "accepted" &&
+    input !== "already_member" &&
+    input !== "rejected_visibility" &&
+    input !== "rejected_user_ban" &&
+    input !== "rejected_ip_ban"
+  ) {
+    throw new DomainValidationError("Invalid directory join outcome.");
+  }
+  return input;
+}
+
+export function directoryJoinErrorCodeFromInput(input: string): DirectoryJoinErrorCode {
+  if (
+    input === "directory_join_not_allowed" ||
+    input === "directory_join_user_banned" ||
+    input === "directory_join_ip_banned" ||
+    input === "rate_limited" ||
+    input === "forbidden" ||
+    input === "not_found" ||
+    input === "unexpected_error"
+  ) {
+    return input;
+  }
+  return "unexpected_error";
+}
+
+export function directoryJoinResultFromResponse(dto: unknown): DirectoryJoinResult {
+  const data = requireObject(dto, "directory join result");
+  const outcome = directoryJoinOutcomeFromInput(requireString(data.outcome, "outcome", 64));
+  return {
+    guildId: guildIdFromInput(requireString(data.guild_id, "guild_id")),
+    outcome,
+    joined: outcome === "accepted" || outcome === "already_member",
+  };
+}
+
+export interface GuildAuditEventRecord {
+  auditId: string;
+  actorUserId: UserId;
+  targetUserId: UserId | null;
+  action: string;
+  createdAtUnix: number;
+  ipBanMatch: boolean;
+}
+
+export interface GuildAuditPage {
+  events: GuildAuditEventRecord[];
+  nextCursor: AuditCursor | null;
+}
+
+function guildAuditEventFromResponse(dto: unknown): GuildAuditEventRecord {
+  const data = requireObject(dto, "guild audit event");
+  if (typeof data.details === "object" && data.details !== null) {
+    if (hasRawIpField(data.details as Record<string, unknown>)) {
+      throw new DomainValidationError("Guild audit event details must not expose raw IP fields.");
+    }
+  }
+  return {
+    auditId: requireString(data.audit_id, "audit_id", 26),
+    actorUserId: userIdFromInput(requireString(data.actor_user_id, "actor_user_id")),
+    targetUserId:
+      data.target_user_id === null || typeof data.target_user_id === "undefined"
+        ? null
+        : userIdFromInput(requireString(data.target_user_id, "target_user_id")),
+    action: requireString(data.action, "action", MAX_AUDIT_EVENT_ACTION_CHARS),
+    createdAtUnix: requirePositiveInteger(data.created_at_unix, "created_at_unix"),
+    ipBanMatch:
+      typeof data.ip_ban_match === "boolean" ? requireBoolean(data.ip_ban_match, "ip_ban_match") : false,
+  };
+}
+
+export function guildAuditPageFromResponse(dto: unknown): GuildAuditPage {
+  const data = requireObject(dto, "guild audit page");
+  if (!Array.isArray(data.events) || data.events.length > MAX_AUDIT_EVENTS_PER_PAGE) {
+    throw new DomainValidationError("Guild audit page events must be a bounded array.");
+  }
+  const nextCursorRaw = data.next_cursor;
+  return {
+    events: data.events.map((entry) => guildAuditEventFromResponse(entry)),
+    nextCursor:
+      nextCursorRaw === null || typeof nextCursorRaw === "undefined"
+        ? null
+        : auditCursorFromInput(requireString(nextCursorRaw, "next_cursor", MAX_AUDIT_CURSOR_CHARS)),
+  };
+}
+
+export interface GuildIpBanRecord {
+  banId: GuildIpBanId;
+  sourceUserId: UserId | null;
+  reason: string | null;
+  createdAtUnix: number;
+  expiresAtUnix: number | null;
+}
+
+export interface GuildIpBanPage {
+  bans: GuildIpBanRecord[];
+  nextCursor: AuditCursor | null;
+}
+
+export interface GuildIpBanApplyResult {
+  createdCount: number;
+  banIds: GuildIpBanId[];
+}
+
+function guildIpBanRecordFromResponse(dto: unknown): GuildIpBanRecord {
+  const data = requireObject(dto, "guild ip ban");
+  if (hasRawIpField(data)) {
+    throw new DomainValidationError("Guild IP ban payload must not include raw IP fields.");
+  }
+  const reasonRaw = data.reason;
+  const reason =
+    reasonRaw === null || typeof reasonRaw === "undefined"
+      ? null
+      : requireString(reasonRaw, "reason", MAX_GUILD_IP_BAN_REASON_CHARS);
+  return {
+    banId: guildIpBanIdFromInput(requireString(data.ban_id, "ban_id")),
+    sourceUserId:
+      data.source_user_id === null || typeof data.source_user_id === "undefined"
+        ? null
+        : userIdFromInput(requireString(data.source_user_id, "source_user_id")),
+    reason,
+    createdAtUnix: requirePositiveInteger(data.created_at_unix, "created_at_unix"),
+    expiresAtUnix:
+      data.expires_at_unix === null || typeof data.expires_at_unix === "undefined"
+        ? null
+        : requirePositiveInteger(data.expires_at_unix, "expires_at_unix"),
+  };
+}
+
+export function guildIpBanPageFromResponse(dto: unknown): GuildIpBanPage {
+  const data = requireObject(dto, "guild ip ban page");
+  if (!Array.isArray(data.bans) || data.bans.length > MAX_GUILD_IP_BANS_PER_PAGE) {
+    throw new DomainValidationError("Guild IP ban page bans must be a bounded array.");
+  }
+  const nextCursorRaw = data.next_cursor;
+  return {
+    bans: data.bans.map((entry) => guildIpBanRecordFromResponse(entry)),
+    nextCursor:
+      nextCursorRaw === null || typeof nextCursorRaw === "undefined"
+        ? null
+        : auditCursorFromInput(requireString(nextCursorRaw, "next_cursor", MAX_AUDIT_CURSOR_CHARS)),
+  };
+}
+
+export function guildIpBanApplyResultFromResponse(dto: unknown): GuildIpBanApplyResult {
+  const data = requireObject(dto, "guild ip ban apply result");
+  if (!Array.isArray(data.ban_ids) || data.ban_ids.length > MAX_APPLIED_GUILD_IP_BAN_IDS) {
+    throw new DomainValidationError("Guild IP ban apply result ban_ids must be a bounded array.");
+  }
+  return {
+    createdCount: requireNonNegativeInteger(data.created_count, "created_count"),
+    banIds: data.ban_ids.map((entry) => guildIpBanIdFromInput(requireString(entry, "ban_id"))),
   };
 }
 
