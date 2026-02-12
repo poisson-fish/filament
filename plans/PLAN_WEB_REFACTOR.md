@@ -385,26 +385,39 @@ Finalize the refactor with cleanup and guardrails.
 Enforce response/body caps before full payload allocation so hostile servers cannot force excessive client memory usage.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Replace `response.text()` / `response.arrayBuffer()` unbounded reads in `apps/filament-client-web/src/lib/api.ts` with streaming bounded readers that:
+- [x] Replace `response.text()` / `response.arrayBuffer()` unbounded reads in `apps/filament-client-web/src/lib/api.ts` with streaming bounded readers that:
   - stop reading once configured cap is exceeded
   - abort the fetch stream when cap is exceeded
   - return deterministic `ApiError` codes for oversized JSON and binary responses
-- [ ] Keep existing caps and timeouts as minimum guarantees:
+- [x] Keep existing caps and timeouts as minimum guarantees:
   - `MAX_RESPONSE_BYTES`
   - `MAX_ATTACHMENT_DOWNLOAD_BYTES`
   - `REQUEST_TIMEOUT_MS`
-- [ ] Add optional fast-fail checks using `Content-Length` when present, while still enforcing streaming caps for missing/incorrect headers.
-- [ ] Preserve current DTO/domain conversion flow and error mapping behavior.
+- [x] Add optional fast-fail checks using `Content-Length` when present, while still enforcing streaming caps for missing/incorrect headers.
+- [x] Preserve current DTO/domain conversion flow and error mapping behavior.
 
 ### Tests
-- [ ] Add `apps/filament-client-web/tests/api-boundary.test.ts` coverage for:
+- [x] Add `apps/filament-client-web/tests/api-boundary.test.ts` coverage for:
   - oversized JSON response rejection before full payload consumption
   - oversized binary attachment response rejection before full payload consumption
   - malformed JSON handling parity
   - timeout/error mapping parity
+
+### Refactor Notes
+- Replaced unbounded `response.text()` / `response.arrayBuffer()` reads in `apps/filament-client-web/src/lib/api.ts` with `readBoundedResponseBytes(...)`, a streaming reader that enforces byte caps while reading.
+- Added early `Content-Length` fast-fail logic via `parseContentLength(...)` so clearly oversized payloads are rejected before stream consumption, while still enforcing streaming caps when headers are absent/incorrect.
+- Added explicit cancellation (`reader.cancel(...)` / `body.cancel(...)`) on cap violations to fail closed and stop additional data flow from hostile servers.
+- Preserved existing API behavior for DTO conversion and error mapping (`oversized_response`, `invalid_json`, `network_error`) by keeping reader changes internal to boundary helpers.
+- Added `apps/filament-client-web/tests/api-boundary.test.ts` to validate oversized JSON/binary rejection-before-full-consumption, malformed JSON mapping parity, and timeout abort mapping parity.
+- Metrics after Phase 9 (2026-02-12):
+  - `AppShellPage.tsx` line count: `1383`
+  - Test command: `pnpm --prefix apps/filament-client-web test`
+  - Pass status: `41` test files passed, `166` tests passed
+  - Typecheck command: `pnpm --prefix apps/filament-client-web typecheck`
+  - Typecheck status: pass
 
 ### Exit Criteria
 - API client no longer fully buffers untrusted response bodies before cap enforcement.

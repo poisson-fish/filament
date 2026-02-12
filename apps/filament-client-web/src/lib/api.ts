@@ -165,15 +165,96 @@ async function sendRequest(input: {
   }
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (text.length > MAX_RESPONSE_BYTES) {
-    throw new ApiError(response.status, "oversized_response", "Response too large.");
-  }
-
-  if (text.length === 0) {
+function parseContentLength(headers: Headers): number | null {
+  const rawValue = headers.get("content-length");
+  if (!rawValue) {
     return null;
   }
+  const trimmedValue = rawValue.trim();
+  if (!/^\d+$/.test(trimmedValue)) {
+    return null;
+  }
+  const parsed = Number.parseInt(trimmedValue, 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
+async function cancelResponseBody(body: ReadableStream<Uint8Array> | null): Promise<void> {
+  if (!body) {
+    return;
+  }
+  try {
+    await body.cancel("response_limit_exceeded");
+  } catch {
+    // Ignore cancellation errors: limit violation is the primary failure.
+  }
+}
+
+async function readBoundedResponseBytes(input: {
+  response: Response;
+  maxBytes: number;
+  oversizedError: ApiError;
+}): Promise<Uint8Array> {
+  const contentLength = parseContentLength(input.response.headers);
+  if (contentLength !== null && contentLength > input.maxBytes) {
+    await cancelResponseBody(input.response.body);
+    throw input.oversizedError;
+  }
+
+  const body = input.response.body;
+  if (!body) {
+    return new Uint8Array();
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value || value.byteLength === 0) {
+        continue;
+      }
+      totalBytes += value.byteLength;
+      if (totalBytes > input.maxBytes) {
+        try {
+          await reader.cancel("response_limit_exceeded");
+        } catch {
+          // Ignore cancellation errors: limit violation is the primary failure.
+        }
+        throw input.oversizedError;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+async function readBoundedJson(response: Response): Promise<unknown> {
+  const bytes = await readBoundedResponseBytes({
+    response,
+    maxBytes: MAX_RESPONSE_BYTES,
+    oversizedError: new ApiError(response.status, "oversized_response", "Response too large."),
+  });
+  if (bytes.byteLength === 0) {
+    return null;
+  }
+  const text = new TextDecoder().decode(bytes);
 
   try {
     return JSON.parse(text);
@@ -249,12 +330,17 @@ async function requestBinary(input: {
     const data = await readBoundedJson(response);
     throw new ApiError(response.status, readApiError(data), readApiError(data));
   }
-  const arrayBuffer = await response.arrayBuffer();
-  if (arrayBuffer.byteLength > (input.maxBytes ?? MAX_ATTACHMENT_DOWNLOAD_BYTES)) {
-    throw new ApiError(response.status, "oversized_response", "Attachment response too large.");
-  }
+  const bytes = await readBoundedResponseBytes({
+    response,
+    maxBytes: input.maxBytes ?? MAX_ATTACHMENT_DOWNLOAD_BYTES,
+    oversizedError: new ApiError(
+      response.status,
+      "oversized_response",
+      "Attachment response too large.",
+    ),
+  });
   return {
-    bytes: new Uint8Array(arrayBuffer),
+    bytes,
     mimeType: response.headers.get("content-type"),
   };
 }
