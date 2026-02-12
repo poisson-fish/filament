@@ -4,6 +4,7 @@ import type {
   ChannelKindName,
   FriendRecord,
   FriendRequestList,
+  GuildId,
   GuildRecord,
   GuildVisibility,
   ProfileRecord,
@@ -22,7 +23,11 @@ import type {
 } from "../../../lib/voice-device-settings";
 import type { PanelHostProps } from "../components/panels/PanelHost";
 import { SETTINGS_CATEGORIES, VOICE_SETTINGS_SUBMENU } from "../config/settings-menu";
-import type { SettingsCategory, VoiceSettingsSubmenu } from "../types";
+import type {
+  PublicDirectoryJoinStatus,
+  SettingsCategory,
+  VoiceSettingsSubmenu,
+} from "../types";
 
 export type PanelHostPropGroups = Pick<
   PanelHostProps,
@@ -69,7 +74,10 @@ export interface PublicDirectoryPanelBuilderOptions {
   isSearchingPublicGuilds: boolean;
   publicGuildSearchError: string;
   publicGuildDirectory: GuildRecord[];
+  publicGuildJoinStatusByGuildId: Record<string, PublicDirectoryJoinStatus>;
+  publicGuildJoinErrorByGuildId: Record<string, string>;
   onSubmitPublicGuildSearch: (event: SubmitEvent) => Promise<void> | void;
+  onJoinGuildFromDirectory: (guildId: GuildId) => Promise<void> | void;
   setPublicGuildSearchQuery: (value: string) => void;
 }
 
@@ -243,7 +251,10 @@ export function buildPublicDirectoryPanelProps(
     isSearching: options.isSearchingPublicGuilds,
     searchError: options.publicGuildSearchError,
     guilds: options.publicGuildDirectory,
+    joinStatusByGuildId: options.publicGuildJoinStatusByGuildId,
+    joinErrorByGuildId: options.publicGuildJoinErrorByGuildId,
     onSubmitSearch: options.onSubmitPublicGuildSearch,
+    onJoinGuild: options.onJoinGuildFromDirectory,
     onSearchInput: options.setPublicGuildSearchQuery,
   };
 }

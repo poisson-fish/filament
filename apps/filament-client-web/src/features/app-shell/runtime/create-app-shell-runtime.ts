@@ -474,11 +474,19 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   const publicDirectoryActions = createPublicDirectoryController({
     session: auth.session,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
     publicGuildSearchQuery: discoveryState.publicGuildSearchQuery,
     isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds,
+    publicGuildJoinStatusByGuildId: discoveryState.publicGuildJoinStatusByGuildId,
     setSearchingPublicGuilds: discoveryState.setSearchingPublicGuilds,
     setPublicGuildSearchError: discoveryState.setPublicGuildSearchError,
     setPublicGuildDirectory: discoveryState.setPublicGuildDirectory,
+    setPublicGuildJoinStatusByGuildId: discoveryState.setPublicGuildJoinStatusByGuildId,
+    setPublicGuildJoinErrorByGuildId: discoveryState.setPublicGuildJoinErrorByGuildId,
+    setWorkspaces: workspaceChannelState.setWorkspaces,
+    setActiveGuildId: workspaceChannelState.setActiveGuildId,
+    setActiveChannelId: workspaceChannelState.setActiveChannelId,
   });
 
   const friendshipActions = createFriendshipController({
@@ -680,7 +688,11 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds(),
         publicGuildSearchError: discoveryState.publicGuildSearchError(),
         publicGuildDirectory: discoveryState.publicGuildDirectory(),
+        publicGuildJoinStatusByGuildId: discoveryState.publicGuildJoinStatusByGuildId(),
+        publicGuildJoinErrorByGuildId: discoveryState.publicGuildJoinErrorByGuildId(),
         onSubmitPublicGuildSearch: publicDirectoryActions.runPublicGuildSearch,
+        onJoinGuildFromDirectory: (guildId) =>
+          publicDirectoryActions.joinGuildFromDirectory(guildId),
         setPublicGuildSearchQuery: discoveryState.setPublicGuildSearchQuery,
       },
       settings: {

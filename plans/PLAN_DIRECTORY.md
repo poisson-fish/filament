@@ -415,28 +415,58 @@ Allow workspace operators to trigger user-derived guild IP bans without IP visib
 Upgrade directory panel from read-only listing to secure, actionable join UX.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Extend client domain/API types:
+- [x] Extend client domain/API types:
   - join result DTOs + audit DTOs + ip-ban DTOs with strict validation
-- [ ] Update `public-directory-controller`:
+- [x] Update `public-directory-controller`:
   - add join action per workspace
   - per-row pending/loading/error state
   - stale-response cancellation semantics
-- [ ] Update `PublicDirectoryPanel`:
+- [x] Update `PublicDirectoryPanel`:
   - "Join" action button
   - status chips (`joined`, `banned`, `join_failed`, `joining`)
   - deterministic error messaging from API code mapping
-- [ ] On successful join:
+- [x] On successful join:
   - trigger workspace/channel refresh
   - preserve existing selected workspace/channel safely
 
 ### Tests
-- [ ] Add/expand tests:
+- [x] Add/expand tests:
   - `app-shell-public-directory-controller.test.ts`
   - `app-shell-public-discovery.test.tsx`
   - `domain-chat.test.ts` + `api-boundary.test.ts` for new DTOs/error mapping
+
+### Refactor Notes
+- Added typed join API binding in `apps/filament-client-web/src/lib/api.ts`:
+  - `joinPublicGuild(session, guildId)` -> `DirectoryJoinResult`
+  - strict response parsing via `directoryJoinResultFromResponse(...)`
+- Extended discovery state in `apps/filament-client-web/src/features/app-shell/state/workspace-state.ts` with bounded per-guild join state maps:
+  - `publicGuildJoinStatusByGuildId`
+  - `publicGuildJoinErrorByGuildId`
+- Reworked `apps/filament-client-web/src/features/app-shell/controllers/public-directory-controller.ts`:
+  - added `joinGuildFromDirectory(guildId)` action
+  - deterministic API-code -> UI error mapping for directory-join outcomes
+  - per-guild stale-response cancellation guards for join requests
+  - post-join workspace/channel refresh using guild/channel refetch and safe selection preservation
+- Updated panel wiring and UI composition:
+  - `apps/filament-client-web/src/features/app-shell/runtime/create-app-shell-runtime.ts`
+  - `apps/filament-client-web/src/features/app-shell/adapters/panel-host-props.ts`
+  - `apps/filament-client-web/src/features/app-shell/components/panels/PublicDirectoryPanel.tsx`
+  - `apps/filament-client-web/src/styles/app.css`
+  - added join button states and status chips: `joining`, `joined`, `banned`, `join_failed`
+- Expanded regression coverage:
+  - `apps/filament-client-web/tests/app-shell-public-directory-controller.test.ts`
+  - `apps/filament-client-web/tests/app-shell-public-discovery.test.tsx`
+  - `apps/filament-client-web/tests/domain-chat.test.ts`
+  - `apps/filament-client-web/tests/api-boundary.test.ts`
+  - plus state/adapter updates:
+    - `apps/filament-client-web/tests/app-shell-state.test.ts`
+    - `apps/filament-client-web/tests/app-shell-panel-host-props.test.tsx`
+- Verification (2026-02-12):
+  - `pnpm --prefix apps/filament-client-web test` passed
+  - `pnpm --prefix apps/filament-client-web typecheck` passed
 
 ### Security Outlook
 - Keeps hostile-server parsing posture and avoids introducing unsafe rendering paths.

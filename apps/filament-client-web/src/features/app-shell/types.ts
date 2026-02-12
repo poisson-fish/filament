@@ -50,3 +50,10 @@ export interface VoiceSettingsSubmenuItem {
   label: string;
   summary: string;
 }
+
+export type PublicDirectoryJoinStatus =
+  | "idle"
+  | "joining"
+  | "joined"
+  | "banned"
+  | "join_failed";

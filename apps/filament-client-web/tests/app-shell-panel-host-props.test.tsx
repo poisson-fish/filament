@@ -79,7 +79,10 @@ function baseOptions(
           visibility: "public",
         },
       ],
+      publicGuildJoinStatusByGuildId: {},
+      publicGuildJoinErrorByGuildId: {},
       onSubmitPublicGuildSearch: vi.fn(),
+      onJoinGuildFromDirectory: vi.fn(),
       setPublicGuildSearchQuery: vi.fn(),
     },
     settings: {
@@ -350,6 +353,9 @@ describe("app shell panel host props adapter", () => {
     );
     expect(propGroups.publicDirectoryPanelProps.guilds).toBe(
       options.publicDirectory.publicGuildDirectory,
+    );
+    expect(propGroups.publicDirectoryPanelProps.joinStatusByGuildId).toBe(
+      options.publicDirectory.publicGuildJoinStatusByGuildId,
     );
     expect(propGroups.settingsPanelProps.activeSettingsCategory).toBe(
       options.settings.activeSettingsCategory,

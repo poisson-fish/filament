@@ -11,6 +11,7 @@ import type {
   SearchResults,
   WorkspaceRecord,
 } from "../../../domain/chat";
+import type { PublicDirectoryJoinStatus } from "../types";
 
 function createWorkspaceChannelState() {
   const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>([]);
@@ -99,6 +100,12 @@ function createDiscoveryState() {
   const [isSearchingPublicGuilds, setSearchingPublicGuilds] = createSignal(false);
   const [publicGuildSearchError, setPublicGuildSearchError] = createSignal("");
   const [publicGuildDirectory, setPublicGuildDirectory] = createSignal<GuildRecord[]>([]);
+  const [publicGuildJoinStatusByGuildId, setPublicGuildJoinStatusByGuildId] = createSignal<
+    Record<string, PublicDirectoryJoinStatus>
+  >({});
+  const [publicGuildJoinErrorByGuildId, setPublicGuildJoinErrorByGuildId] = createSignal<
+    Record<string, string>
+  >({});
 
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchError, setSearchError] = createSignal("");
@@ -116,6 +123,10 @@ function createDiscoveryState() {
     setPublicGuildSearchError,
     publicGuildDirectory,
     setPublicGuildDirectory,
+    publicGuildJoinStatusByGuildId,
+    setPublicGuildJoinStatusByGuildId,
+    publicGuildJoinErrorByGuildId,
+    setPublicGuildJoinErrorByGuildId,
     searchQuery,
     setSearchQuery,
     searchError,

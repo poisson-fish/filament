@@ -288,22 +288,46 @@ describe("chat domain invariants", () => {
   });
 
   it("validates directory join DTO and error-code mapping", () => {
-    const join = directoryJoinResultFromResponse({
+    const accepted = directoryJoinResultFromResponse({
       guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       outcome: "accepted",
     });
-    expect(join.outcome).toBe("accepted");
-    expect(join.joined).toBe(true);
+    expect(accepted.outcome).toBe("accepted");
+    expect(accepted.joined).toBe(true);
+
+    const alreadyMember = directoryJoinResultFromResponse({
+      guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      outcome: "already_member",
+    });
+    expect(alreadyMember.joined).toBe(true);
 
     const rejected = directoryJoinResultFromResponse({
       guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       outcome: "rejected_ip_ban",
     });
     expect(rejected.joined).toBe(false);
+    expect(
+      directoryJoinResultFromResponse({
+        guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        outcome: "rejected_user_ban",
+      }).joined,
+    ).toBe(false);
+    expect(
+      directoryJoinResultFromResponse({
+        guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        outcome: "rejected_visibility",
+      }).joined,
+    ).toBe(false);
     expect(directoryJoinErrorCodeFromInput("directory_join_ip_banned")).toBe(
       "directory_join_ip_banned",
     );
     expect(directoryJoinErrorCodeFromInput("something_else")).toBe("unexpected_error");
+    expect(() =>
+      directoryJoinResultFromResponse({
+        guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        outcome: "invalid_outcome",
+      }),
+    ).toThrow();
   });
 
   it("validates redacted guild audit and ip-ban DTO payloads", () => {

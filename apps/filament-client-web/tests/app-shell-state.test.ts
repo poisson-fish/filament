@@ -38,6 +38,8 @@ describe("app shell state factories", () => {
     expect(workspaceState.workspaceChannel.createChannelName()).toBe("incident-room");
     expect(workspaceState.friendships.friendRecipientUserIdInput()).toBe("");
     expect(workspaceState.discovery.publicGuildDirectory()).toEqual([]);
+    expect(workspaceState.discovery.publicGuildJoinStatusByGuildId()).toEqual({});
+    expect(workspaceState.discovery.publicGuildJoinErrorByGuildId()).toEqual({});
     expect(workspaceState.discovery.searchResults()).toBeNull();
 
     expect(messageState.composer()).toBe("");

@@ -1,6 +1,6 @@
 import { accessTokenFromInput, refreshTokenFromInput } from "../src/domain/auth";
 import { attachmentIdFromInput, channelIdFromInput, guildIdFromInput } from "../src/domain/chat";
-import { downloadChannelAttachmentPreview, fetchHealth } from "../src/lib/api";
+import { downloadChannelAttachmentPreview, fetchHealth, joinPublicGuild } from "../src/lib/api";
 
 function createProbeStream(chunks: Uint8Array[]): {
   stream: ReadableStream<Uint8Array>;
@@ -165,9 +165,33 @@ describe("api boundary hardening", () => {
       ),
     );
 
-    await expect(fetchHealth()).rejects.toMatchObject({
+    await expect(joinPublicGuild(session, guildId)).rejects.toMatchObject({
       status: 403,
       code: "directory_join_ip_banned",
+    });
+  });
+
+  it("maps successful directory join responses through strict DTO parsing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            guild_id: guildId,
+            outcome: "already_member",
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      ),
+    );
+
+    await expect(joinPublicGuild(session, guildId)).resolves.toMatchObject({
+      guildId,
+      outcome: "already_member",
+      joined: true,
     });
   });
 

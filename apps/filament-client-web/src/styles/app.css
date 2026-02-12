@@ -281,8 +281,53 @@ select {
   background: rgba(20, 33, 57, 0.85);
   padding: 0.42rem 0.5rem;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.45rem;
+}
+
+.public-directory-row-main {
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.public-directory-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.directory-status-chip {
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  padding: 0.08rem 0.5rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: #b9d8ff;
+  background: rgba(65, 102, 156, 0.24);
+}
+
+.directory-status-chip.joined {
+  border-color: rgba(86, 186, 116, 0.8);
+  color: #b6f4c8;
+  background: rgba(51, 124, 72, 0.38);
+}
+
+.directory-status-chip.banned,
+.directory-status-chip.failed {
+  border-color: rgba(238, 127, 127, 0.8);
+  color: #ffd1d1;
+  background: rgba(136, 43, 43, 0.34);
+}
+
+.directory-status-chip.pending {
+  border-color: rgba(122, 170, 232, 0.8);
+}
+
+.public-directory-row-error {
+  margin: 0;
 }
 
 .channel-rail nav button {

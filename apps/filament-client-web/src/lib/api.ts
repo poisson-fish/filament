@@ -15,6 +15,7 @@ import {
   type ChannelKindName,
   type ChannelRecord,
   type ChannelPermissionSnapshot,
+  type DirectoryJoinResult,
   type ChannelName,
   type GuildRecord,
   type GuildId,
@@ -44,6 +45,7 @@ import {
   attachmentFromResponse,
   channelFromResponse,
   channelPermissionSnapshotFromResponse,
+  directoryJoinResultFromResponse,
   friendListFromResponse,
   friendRequestCreateFromResponse,
   friendRequestListFromResponse,
@@ -664,6 +666,18 @@ export async function fetchPublicGuildDirectory(
     accessToken: session.accessToken,
   });
   return publicGuildDirectoryFromResponse(dto);
+}
+
+export async function joinPublicGuild(
+  session: AuthSession,
+  guildId: GuildId,
+): Promise<DirectoryJoinResult> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/join`,
+    accessToken: session.accessToken,
+  });
+  return directoryJoinResultFromResponse(dto);
 }
 
 export async function fetchGuildChannels(

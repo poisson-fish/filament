@@ -12,6 +12,8 @@ const USERNAME = "alice";
 
 const GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+const PUBLIC_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
+const PUBLIC_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -92,12 +94,21 @@ describe("app shell public discovery", () => {
 
   it("loads and searches the authenticated public guild directory", async () => {
     seedSessionAndWorkspaceCache();
+    let directoryJoinAccepted = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = requestUrl(input);
       if (url.includes("/auth/me")) {
         return jsonResponse({ user_id: USER_ID, username: USERNAME });
       }
       if (url.endsWith("/guilds")) {
+        if (directoryJoinAccepted) {
+          return jsonResponse({
+            guilds: [
+              { guild_id: GUILD_ID, name: "Member Guild", visibility: "private" },
+              { guild_id: PUBLIC_GUILD_ID, name: "Public Lobby", visibility: "public" },
+            ],
+          });
+        }
         return jsonResponse({
           guilds: [{ guild_id: GUILD_ID, name: "Member Guild", visibility: "private" }],
         });
@@ -105,6 +116,11 @@ describe("app shell public discovery", () => {
       if (url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
         return jsonResponse({
           channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
+        });
+      }
+      if (url.endsWith(`/guilds/${PUBLIC_GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [{ channel_id: PUBLIC_CHANNEL_ID, name: "lobby", kind: "text" }],
         });
       }
       if (
@@ -123,7 +139,7 @@ describe("app shell public discovery", () => {
         return jsonResponse({
           guilds: [
             {
-              guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+              guild_id: PUBLIC_GUILD_ID,
               name: "Public Lobby",
               visibility: "public",
             },
@@ -139,6 +155,13 @@ describe("app shell public discovery", () => {
               visibility: "public",
             },
           ],
+        });
+      }
+      if (url.endsWith(`/guilds/${PUBLIC_GUILD_ID}/join`)) {
+        directoryJoinAccepted = true;
+        return jsonResponse({
+          guild_id: PUBLIC_GUILD_ID,
+          outcome: "accepted",
         });
       }
       return jsonResponse({ error: "not_found" }, 404);
@@ -159,5 +182,16 @@ describe("app shell public discovery", () => {
     await fireEvent.click(searchButton);
 
     await waitFor(() => expect(screen.getByText("Public Lobby")).toBeInTheDocument());
+    await fireEvent.click(screen.getByRole("button", { name: "Join" }));
+
+    await waitFor(() => expect(screen.getByText("joined")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestUrl(input).includes(`/guilds/${PUBLIC_GUILD_ID}/join`),
+        ),
+      ).toBe(true),
+    );
+    expect(screen.getByText("incident-room")).toBeInTheDocument();
   });
 });
