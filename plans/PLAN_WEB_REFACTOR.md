@@ -380,6 +380,172 @@ Finalize the refactor with cleanup and guardrails.
 
 ---
 
+## Phase 9 - API Boundary Hardening (High Severity)
+### Goal
+Enforce response/body caps before full payload allocation so hostile servers cannot force excessive client memory usage.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Replace `response.text()` / `response.arrayBuffer()` unbounded reads in `apps/filament-client-web/src/lib/api.ts` with streaming bounded readers that:
+  - stop reading once configured cap is exceeded
+  - abort the fetch stream when cap is exceeded
+  - return deterministic `ApiError` codes for oversized JSON and binary responses
+- [ ] Keep existing caps and timeouts as minimum guarantees:
+  - `MAX_RESPONSE_BYTES`
+  - `MAX_ATTACHMENT_DOWNLOAD_BYTES`
+  - `REQUEST_TIMEOUT_MS`
+- [ ] Add optional fast-fail checks using `Content-Length` when present, while still enforcing streaming caps for missing/incorrect headers.
+- [ ] Preserve current DTO/domain conversion flow and error mapping behavior.
+
+### Tests
+- [ ] Add `apps/filament-client-web/tests/api-boundary.test.ts` coverage for:
+  - oversized JSON response rejection before full payload consumption
+  - oversized binary attachment response rejection before full payload consumption
+  - malformed JSON handling parity
+  - timeout/error mapping parity
+
+### Exit Criteria
+- API client no longer fully buffers untrusted response bodies before cap enforcement.
+
+---
+
+## Phase 10 - Gateway Payload Invariants and Fanout Caps (Medium Severity)
+### Goal
+Harden gateway presence/message parsing to enforce domain invariants and bounded payload fanout.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Update `apps/filament-client-web/src/lib/gateway.ts` to validate IDs through domain constructors (`guildIdFromInput`, `userIdFromInput`) instead of unchecked branded casts.
+- [ ] Add explicit bounded caps for presence payloads (for example max `user_ids` count) and reject oversized lists.
+- [ ] Normalize/dedupe accepted presence user IDs before dispatch.
+- [ ] Keep version/event-type envelope constraints intact (`{ v, t, d }`, pattern checks, max event bytes).
+- [ ] Ensure invalid/oversized gateway payloads fail closed without mutating UI state.
+
+### Tests
+- [ ] Expand `apps/filament-client-web/tests/gateway.test.ts` for:
+  - invalid ULID IDs in presence payloads
+  - oversized `presence_sync.user_ids` rejection
+  - dedupe behavior for repeated presence IDs
+  - existing valid payload compatibility
+
+### Exit Criteria
+- Gateway handlers only receive bounded, domain-valid IDs from parsed events.
+
+---
+
+## Phase 11 - Runtime Composition Extraction (Medium Severity)
+### Goal
+Convert `AppShellPage.tsx` from orchestration-heavy module into a thin composition root.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Introduce a top-level runtime module (for example `features/app-shell/runtime/create-app-shell-runtime.ts`) that owns:
+  - state slice creation
+  - selector/controller wiring
+  - async app-shell handlers (workspace/channel/session/diagnostics)
+- [ ] Keep `AppShellPage.tsx` limited to:
+  - auth/context access
+  - runtime instantiation
+  - layout/component composition
+- [ ] Move helper label/lookup closures (`actorLabel`, `displayUserLabel`, `voiceParticipantLabel`) and panel-open utility wiring into runtime-level modules where possible.
+- [ ] Preserve behavior and permissions exactly while reducing top-level page cognitive load.
+
+### Tests
+- [ ] Update `app-shell-*.test.ts(x)` suites that mount page composition to assert wiring parity.
+- [ ] Add focused runtime-level unit tests for extracted handlers previously owned by `AppShellPage.tsx`.
+
+### Metrics Target
+- Intermediate target: reduce `AppShellPage.tsx` to `<= 950` lines without behavioral regressions.
+
+### Exit Criteria
+- `AppShellPage.tsx` is primarily declarative composition and no longer the main orchestration owner.
+
+---
+
+## Phase 12 - State and Adapter Decomposition (Medium to Low Severity)
+### Goal
+Break up large cross-domain state/adapters to improve cohesion and reduce "god object" coupling.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Split `createWorkspaceState()` into feature-cohesive slices (workspace/channel, friendships, search/discovery) with explicit typed composition.
+- [ ] Split `buildPanelHostPropGroups()` into smaller panel-specific builders (workspace/channel/settings/friendships/search/attachments/moderation/utility).
+- [ ] Keep conversion boundaries in adapters (`channelKindFromInput`, `guildVisibilityFromInput`, `roleFromInput`) while shrinking option surface area per builder.
+- [ ] Replace broad option bags with narrower interfaces scoped to each panel/component concern.
+
+### Tests
+- [ ] Expand `apps/filament-client-web/tests/app-shell-state.test.ts` for new composed slice invariants.
+- [ ] Expand `apps/filament-client-web/tests/app-shell-panel-host-props.test.tsx` to cover panel-specific builder mapping and regression parity.
+
+### Exit Criteria
+- No single app-shell state factory or prop builder acts as a multi-domain catch-all.
+
+---
+
+## Phase 13 - Guardrail Ratchet and Enforcement (Low Severity)
+### Goal
+Align guardrails with the declared end-state target and move from warning-only to enforceable thresholds.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Update `apps/filament-client-web/scripts/check-app-shell-size.mjs` to support explicit modes:
+  - warning mode (local default)
+  - enforcing mode (CI failure above threshold)
+- [ ] Ratchet default thresholds in staged steps tied to landed refactors:
+  - Stage A: `1200`
+  - Stage B: `1000`
+  - Stage C: `850`
+  - Stage D: `650` (target)
+- [ ] Update `.github/workflows/ci.yml` to run enforcement mode once staged thresholds are stable.
+- [ ] Record each threshold change and current line count in this plan and `plans/PLAN_UX.md`.
+
+### Tests
+- [ ] Add script-level tests (or lightweight fixture checks) for threshold parsing and enforce/warn behavior.
+
+### Exit Criteria
+- CI enforces an agreed `AppShellPage.tsx` threshold that converges to `<= 650`.
+
+---
+
+## Phase 14 - Boundary Test Coverage Expansion (Low Severity)
+### Goal
+Close remaining boundary-test gaps for API/gateway hostile-input handling and parsing invariants.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Add dedicated tests for `apps/filament-client-web/src/lib/api.ts` covering:
+  - oversized JSON/binary responses
+  - malformed payloads
+  - deterministic `ApiError` code mapping
+- [ ] Add dedicated tests for `apps/filament-client-web/src/lib/gateway.ts` covering:
+  - invalid envelope versions/types
+  - oversized message rejection
+  - invalid ID payload rejection
+  - presence payload size caps
+- [ ] Ensure tests assert fail-closed behavior (no state mutation on invalid input).
+
+### Validation Gate
+- [ ] `npm --prefix apps/filament-client-web test`
+- [ ] `npm --prefix apps/filament-client-web run typecheck`
+- [ ] `npm --prefix apps/filament-client-web run build`
+
+### Exit Criteria
+- Boundary modules have first-class hostile-input coverage, not only app-shell integration coverage.
+
+---
+
 ## Suggested Execution Cadence
 - Land phases in small PRs (1 phase per PR).
 - Prefer extraction-only commits first, behavior-adjustment commits second (if needed).
