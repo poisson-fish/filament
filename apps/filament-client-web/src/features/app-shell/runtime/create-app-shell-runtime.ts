@@ -9,6 +9,7 @@ import {
   type GuildId,
 } from "../../../domain/chat";
 import { useAuth } from "../../../lib/auth-context";
+import { ApiError, fetchChannelPermissionSnapshot } from "../../../lib/api";
 import {
   canRequestAudioCapturePermission,
   enumerateAudioDevices,
@@ -59,6 +60,7 @@ import {
 import {
   createChannelPermissionsController,
   createWorkspaceBootstrapController,
+  pruneWorkspaceChannel,
   createWorkspaceSelectionController,
 } from "../controllers/workspace-controller";
 import {
@@ -461,6 +463,41 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setChannelPermissions: workspaceChannelState.setChannelPermissions,
   });
 
+  const refreshWorkspacePermissionStateFromGateway = async (
+    guildId: GuildId,
+  ): Promise<void> => {
+    const session = auth.session();
+    const activeGuildId = workspaceChannelState.activeGuildId();
+    const activeChannelId = workspaceChannelState.activeChannelId();
+    if (!session || !activeGuildId || activeGuildId !== guildId) {
+      return;
+    }
+
+    void roleManagementActions.refreshRoles();
+    if (!activeChannelId) {
+      return;
+    }
+
+    try {
+      const snapshot = await fetchChannelPermissionSnapshot(
+        session,
+        activeGuildId,
+        activeChannelId,
+      );
+      workspaceChannelState.setChannelPermissions(snapshot);
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        (error.code === "forbidden" || error.code === "not_found")
+      ) {
+        workspaceChannelState.setChannelPermissions(null);
+        workspaceChannelState.setWorkspaces((existing) =>
+          pruneWorkspaceChannel(existing, activeGuildId, activeChannelId),
+        );
+      }
+    }
+  };
+
   const profileController = createProfileController({
     session: auth.session,
     selectedProfileUserId: profileState.selectedProfileUserId,
@@ -597,6 +634,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setReactionState: messageState.setReactionState,
     isMessageListNearBottom: messageListController.isMessageListNearBottom,
     scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
+    onWorkspacePermissionsChanged: (guildId) => {
+      void refreshWorkspacePermissionStateFromGateway(guildId);
+    },
   });
 
   const workspaceChannelOperations =

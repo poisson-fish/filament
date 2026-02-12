@@ -23,6 +23,15 @@ pub(crate) const WORKSPACE_MEMBER_ADD_EVENT: &str = "workspace_member_add";
 pub(crate) const WORKSPACE_MEMBER_UPDATE_EVENT: &str = "workspace_member_update";
 pub(crate) const WORKSPACE_MEMBER_REMOVE_EVENT: &str = "workspace_member_remove";
 pub(crate) const WORKSPACE_MEMBER_BAN_EVENT: &str = "workspace_member_ban";
+pub(crate) const WORKSPACE_ROLE_CREATE_EVENT: &str = "workspace_role_create";
+pub(crate) const WORKSPACE_ROLE_UPDATE_EVENT: &str = "workspace_role_update";
+pub(crate) const WORKSPACE_ROLE_DELETE_EVENT: &str = "workspace_role_delete";
+pub(crate) const WORKSPACE_ROLE_REORDER_EVENT: &str = "workspace_role_reorder";
+pub(crate) const WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT: &str = "workspace_role_assignment_add";
+pub(crate) const WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT: &str = "workspace_role_assignment_remove";
+pub(crate) const WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT: &str =
+    "workspace_channel_override_update";
+pub(crate) const WORKSPACE_IP_BAN_SYNC_EVENT: &str = "workspace_ip_ban_sync";
 
 pub(crate) struct GatewayEvent {
     pub(crate) event_type: &'static str,
@@ -158,6 +167,111 @@ struct WorkspaceMemberBanPayload {
     banned_at_unix: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceRolePayload {
+    role_id: String,
+    name: String,
+    position: i32,
+    is_system: bool,
+    permissions: Vec<filament_core::Permission>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceRoleCreatePayload {
+    guild_id: String,
+    role: WorkspaceRolePayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceRoleUpdatePayload {
+    guild_id: String,
+    role_id: String,
+    updated_fields: WorkspaceRoleUpdateFieldsPayload,
+    updated_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceRoleUpdateFieldsPayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    permissions: Option<Vec<filament_core::Permission>>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceRoleDeletePayload {
+    guild_id: String,
+    role_id: String,
+    deleted_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceRoleReorderPayload {
+    guild_id: String,
+    role_ids: Vec<String>,
+    updated_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceRoleAssignmentPayload {
+    guild_id: String,
+    user_id: String,
+    role_id: String,
+    assigned_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceRoleAssignmentRemovePayload {
+    guild_id: String,
+    user_id: String,
+    role_id: String,
+    removed_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceChannelOverrideUpdatePayload {
+    guild_id: String,
+    channel_id: String,
+    role: filament_core::Role,
+    updated_fields: WorkspaceChannelOverrideFieldsPayload,
+    updated_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceChannelOverrideFieldsPayload {
+    allow: Vec<filament_core::Permission>,
+    deny: Vec<filament_core::Permission>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceIpBanSyncPayload {
+    guild_id: String,
+    summary: WorkspaceIpBanSyncSummaryPayload,
+    updated_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceIpBanSyncSummaryPayload {
+    action: &'static str,
+    changed_count: usize,
 }
 
 fn build_event<T: Serialize>(event_type: &'static str, payload: T) -> GatewayEvent {
@@ -375,6 +489,170 @@ pub(crate) fn workspace_member_ban(
             guild_id: guild_id.to_owned(),
             user_id: user_id.to_string(),
             banned_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn workspace_role_create(
+    guild_id: &str,
+    role_id: &str,
+    name: &str,
+    position: i32,
+    is_system: bool,
+    permissions: Vec<filament_core::Permission>,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_ROLE_CREATE_EVENT,
+        WorkspaceRoleCreatePayload {
+            guild_id: guild_id.to_owned(),
+            role: WorkspaceRolePayload {
+                role_id: role_id.to_owned(),
+                name: name.to_owned(),
+                position,
+                is_system,
+                permissions,
+            },
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_role_update(
+    guild_id: &str,
+    role_id: &str,
+    name: Option<&str>,
+    permissions: Option<Vec<filament_core::Permission>>,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_ROLE_UPDATE_EVENT,
+        WorkspaceRoleUpdatePayload {
+            guild_id: guild_id.to_owned(),
+            role_id: role_id.to_owned(),
+            updated_fields: WorkspaceRoleUpdateFieldsPayload {
+                name: name.map(ToOwned::to_owned),
+                permissions,
+            },
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_role_delete(
+    guild_id: &str,
+    role_id: &str,
+    deleted_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_ROLE_DELETE_EVENT,
+        WorkspaceRoleDeletePayload {
+            guild_id: guild_id.to_owned(),
+            role_id: role_id.to_owned(),
+            deleted_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_role_reorder(
+    guild_id: &str,
+    role_ids: Vec<String>,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_ROLE_REORDER_EVENT,
+        WorkspaceRoleReorderPayload {
+            guild_id: guild_id.to_owned(),
+            role_ids,
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_role_assignment_add(
+    guild_id: &str,
+    user_id: UserId,
+    role_id: &str,
+    assigned_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT,
+        WorkspaceRoleAssignmentPayload {
+            guild_id: guild_id.to_owned(),
+            user_id: user_id.to_string(),
+            role_id: role_id.to_owned(),
+            assigned_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_role_assignment_remove(
+    guild_id: &str,
+    user_id: UserId,
+    role_id: &str,
+    removed_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT,
+        WorkspaceRoleAssignmentRemovePayload {
+            guild_id: guild_id.to_owned(),
+            user_id: user_id.to_string(),
+            role_id: role_id.to_owned(),
+            removed_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_channel_override_update(
+    guild_id: &str,
+    channel_id: &str,
+    role: filament_core::Role,
+    allow: Vec<filament_core::Permission>,
+    deny: Vec<filament_core::Permission>,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT,
+        WorkspaceChannelOverrideUpdatePayload {
+            guild_id: guild_id.to_owned(),
+            channel_id: channel_id.to_owned(),
+            role,
+            updated_fields: WorkspaceChannelOverrideFieldsPayload { allow, deny },
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_ip_ban_sync(
+    guild_id: &str,
+    action: &'static str,
+    changed_count: usize,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_IP_BAN_SYNC_EVENT,
+        WorkspaceIpBanSyncPayload {
+            guild_id: guild_id.to_owned(),
+            summary: WorkspaceIpBanSyncSummaryPayload {
+                action,
+                changed_count,
+            },
+            updated_at_unix,
             actor_user_id: actor_user_id.map(|id| id.to_string()),
         },
     )

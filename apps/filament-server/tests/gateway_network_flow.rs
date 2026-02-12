@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
-use axum::{body::Body, http::Request, http::StatusCode};
+use axum::{body::Body, extract::connect_info::ConnectInfo, http::Request, http::StatusCode};
 use filament_server::{build_router, AppConfig};
 use futures_util::{SinkExt, StreamExt};
 use serde::de::DeserializeOwned;
@@ -195,13 +195,30 @@ async fn next_event_of_type(
     >,
     event_type: &str,
 ) -> Value {
-    for _ in 0..8 {
-        let event = next_text_event(socket).await;
+    for _ in 0..32 {
+        let event = tokio::time::timeout(Duration::from_secs(1), next_text_event(socket))
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for event type {event_type}"));
         if event["t"] == event_type {
             return event;
         }
     }
     panic!("expected event type {event_type}");
+}
+
+fn contains_ip_field(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => map.iter().any(|(key, value)| {
+            key == "ip"
+                || key == "ip_cidr"
+                || key == "ip_network"
+                || key == "source_ip"
+                || key == "address"
+                || contains_ip_field(value)
+        }),
+        Value::Array(values) => values.iter().any(contains_ip_field),
+        _ => false,
+    }
 }
 
 async fn subscribe_to_channel(
@@ -981,5 +998,367 @@ async fn websocket_subscription_receives_workspace_membership_transitions() {
         .close(None)
         .await
         .expect("moderator socket close should succeed");
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_subscription_receives_phase4_permission_and_moderation_events() {
+    let app = test_app();
+
+    let owner = register_and_login_as(&app, "workspace_owner_phase4", "203.0.113.91").await;
+    let moderator = register_and_login_as(&app, "workspace_moderator_phase4", "203.0.113.92").await;
+    let member = register_and_login_as(&app, "workspace_member_phase4", "203.0.113.93").await;
+    let target = register_and_login_as(&app, "workspace_target_phase4", "203.0.113.94").await;
+
+    let channel = create_channel_context(&app, &owner, "203.0.113.91").await;
+    let moderator_id = user_id_from_me(&app, &moderator, "203.0.113.92").await;
+    let member_id = user_id_from_me(&app, &member, "203.0.113.93").await;
+    let target_id = user_id_from_me(&app, &target, "203.0.113.94").await;
+    add_member(
+        &app,
+        &owner.access_token,
+        "203.0.113.91",
+        &channel.guild_id,
+        &moderator_id,
+    )
+    .await;
+    add_member(
+        &app,
+        &owner.access_token,
+        "203.0.113.91",
+        &channel.guild_id,
+        &member_id,
+    )
+    .await;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener addr should be readable");
+    let server_app = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_app)
+            .await
+            .expect("server should run without errors");
+    });
+
+    let owner_ws_url = format!("ws://{addr}/gateway/ws?access_token={}", owner.access_token);
+    let mut owner_request = owner_ws_url
+        .into_client_request()
+        .expect("owner websocket request should build");
+    owner_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.91"),
+    );
+    let (mut owner_socket, _response) = connect_async(owner_request)
+        .await
+        .expect("owner websocket handshake should succeed");
+    let owner_ready = next_text_event(&mut owner_socket).await;
+    assert_eq!(owner_ready["t"], "ready");
+    subscribe_to_channel(&mut owner_socket, &channel).await;
+
+    let moderator_ws_url = format!(
+        "ws://{addr}/gateway/ws?access_token={}",
+        moderator.access_token
+    );
+    let mut moderator_request = moderator_ws_url
+        .into_client_request()
+        .expect("moderator websocket request should build");
+    moderator_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.92"),
+    );
+    let (mut moderator_socket, _response) = connect_async(moderator_request)
+        .await
+        .expect("moderator websocket handshake should succeed");
+    let moderator_ready = next_text_event(&mut moderator_socket).await;
+    assert_eq!(moderator_ready["t"], "ready");
+    subscribe_to_channel(&mut moderator_socket, &channel).await;
+
+    let member_ws_url = format!(
+        "ws://{addr}/gateway/ws?access_token={}",
+        member.access_token
+    );
+    let mut member_request = member_ws_url
+        .into_client_request()
+        .expect("member websocket request should build");
+    member_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.93"),
+    );
+    let (mut member_socket, _response) = connect_async(member_request)
+        .await
+        .expect("member websocket handshake should succeed");
+    let member_ready = next_text_event(&mut member_socket).await;
+    assert_eq!(member_ready["t"], "ready");
+    subscribe_to_channel(&mut member_socket, &channel).await;
+
+    let create_role = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{}/roles", channel.guild_id))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::from(
+            json!({"name":"ops_admin","permissions":["manage_roles"],"position":90}).to_string(),
+        ))
+        .expect("create role request should build");
+    let create_role_response = app
+        .clone()
+        .oneshot(create_role)
+        .await
+        .expect("create role request should execute");
+    assert_eq!(create_role_response.status(), StatusCode::OK);
+    let created_role: Value = parse_json_body(create_role_response).await;
+    let role_id = created_role["role_id"]
+        .as_str()
+        .expect("role id should exist")
+        .to_owned();
+
+    let create_event_owner = next_event_of_type(&mut owner_socket, "workspace_role_create").await;
+    assert_eq!(create_event_owner["d"]["guild_id"], channel.guild_id);
+    assert_eq!(create_event_owner["d"]["role"]["role_id"], role_id);
+    let create_event_member = next_event_of_type(&mut member_socket, "workspace_role_create").await;
+    assert_eq!(create_event_member["d"]["role"]["role_id"], role_id);
+    let create_event_moderator =
+        next_event_of_type(&mut moderator_socket, "workspace_role_create").await;
+    assert_eq!(create_event_moderator["d"]["role"]["role_id"], role_id);
+
+    let update_role = Request::builder()
+        .method("PATCH")
+        .uri(format!("/guilds/{}/roles/{role_id}", channel.guild_id))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::from(json!({"name":"ops_admin_v2"}).to_string()))
+        .expect("update role request should build");
+    let update_role_response = app
+        .clone()
+        .oneshot(update_role)
+        .await
+        .expect("update role request should execute");
+    assert_eq!(update_role_response.status(), StatusCode::OK);
+    let update_event = next_event_of_type(&mut owner_socket, "workspace_role_update").await;
+    assert_eq!(update_event["d"]["role_id"], role_id);
+
+    let assign_role = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/roles/{role_id}/members/{member_id}",
+            channel.guild_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::empty())
+        .expect("assign role request should build");
+    let assign_role_response = app
+        .clone()
+        .oneshot(assign_role)
+        .await
+        .expect("assign role request should execute");
+    assert_eq!(assign_role_response.status(), StatusCode::OK);
+    let assignment_add_event =
+        next_event_of_type(&mut owner_socket, "workspace_role_assignment_add").await;
+    assert_eq!(assignment_add_event["d"]["role_id"], role_id);
+    assert_eq!(assignment_add_event["d"]["user_id"], member_id);
+
+    let unassign_role = Request::builder()
+        .method("DELETE")
+        .uri(format!(
+            "/guilds/{}/roles/{role_id}/members/{member_id}",
+            channel.guild_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::empty())
+        .expect("unassign role request should build");
+    let unassign_role_response = app
+        .clone()
+        .oneshot(unassign_role)
+        .await
+        .expect("unassign role request should execute");
+    assert_eq!(unassign_role_response.status(), StatusCode::OK);
+    let assignment_remove_event =
+        next_event_of_type(&mut owner_socket, "workspace_role_assignment_remove").await;
+    assert_eq!(assignment_remove_event["d"]["role_id"], role_id);
+
+    let reorder_roles = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{}/roles/reorder", channel.guild_id))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::from(json!({"role_ids":[role_id]}).to_string()))
+        .expect("reorder roles request should build");
+    let reorder_roles_response = app
+        .clone()
+        .oneshot(reorder_roles)
+        .await
+        .expect("reorder roles request should execute");
+    assert_eq!(reorder_roles_response.status(), StatusCode::OK);
+    let reorder_event = next_event_of_type(&mut owner_socket, "workspace_role_reorder").await;
+    assert_eq!(reorder_event["d"]["role_ids"], json!([role_id]));
+
+    let override_update = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/overrides/moderator",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::from(
+            json!({"allow":["create_message"],"deny":["ban_member"]}).to_string(),
+        ))
+        .expect("override update request should build");
+    let override_update_response = app
+        .clone()
+        .oneshot(override_update)
+        .await
+        .expect("override update request should execute");
+    assert_eq!(override_update_response.status(), StatusCode::OK);
+    let override_event =
+        next_event_of_type(&mut owner_socket, "workspace_channel_override_update").await;
+    assert_eq!(override_event["d"]["channel_id"], channel.channel_id);
+    assert_eq!(
+        override_event["d"]["updated_fields"]["allow"],
+        json!(["create_message"])
+    );
+    assert_eq!(
+        override_event["d"]["updated_fields"]["deny"],
+        json!(["ban_member"])
+    );
+
+    let delete_role = Request::builder()
+        .method("DELETE")
+        .uri(format!("/guilds/{}/roles/{role_id}", channel.guild_id))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::empty())
+        .expect("delete role request should build");
+    let delete_role_response = app
+        .clone()
+        .oneshot(delete_role)
+        .await
+        .expect("delete role request should execute");
+    assert_eq!(delete_role_response.status(), StatusCode::OK);
+    let delete_event = next_event_of_type(&mut owner_socket, "workspace_role_delete").await;
+    assert_eq!(delete_event["d"]["role_id"], role_id);
+
+    let make_public = Request::builder()
+        .method("PATCH")
+        .uri(format!("/guilds/{}", channel.guild_id))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::from(json!({"visibility":"public"}).to_string()))
+        .expect("workspace update request should build");
+    let make_public_response = app
+        .clone()
+        .oneshot(make_public)
+        .await
+        .expect("workspace update request should execute");
+    assert_eq!(make_public_response.status(), StatusCode::OK);
+
+    let mut join_public = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{}/join", channel.guild_id))
+        .header("authorization", format!("Bearer {}", target.access_token))
+        .header("x-forwarded-for", "203.0.113.94")
+        .body(Body::empty())
+        .expect("join request should build");
+    join_public
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([203, 0, 113, 94], 40_194))));
+    let join_public_response = app
+        .clone()
+        .oneshot(join_public)
+        .await
+        .expect("join request should execute");
+    assert_eq!(join_public_response.status(), StatusCode::OK);
+
+    let add_ip_bans = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{}/ip-bans/by-user", channel.guild_id))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::from(
+            json!({"target_user_id":target_id,"reason":"abuse"}).to_string(),
+        ))
+        .expect("add ip bans request should build");
+    let add_ip_bans_response = app
+        .clone()
+        .oneshot(add_ip_bans)
+        .await
+        .expect("add ip bans request should execute");
+    assert_eq!(add_ip_bans_response.status(), StatusCode::OK);
+    let add_ip_bans_json: Value = parse_json_body(add_ip_bans_response).await;
+    assert_eq!(add_ip_bans_json["created_count"], json!(1));
+    let created_ban_id = add_ip_bans_json["ban_ids"][0]
+        .as_str()
+        .expect("ban id should exist")
+        .to_owned();
+
+    let ip_ban_sync_owner = next_event_of_type(&mut owner_socket, "workspace_ip_ban_sync").await;
+    assert_eq!(ip_ban_sync_owner["d"]["summary"]["action"], "upsert");
+    assert_eq!(ip_ban_sync_owner["d"]["summary"]["changed_count"], json!(1));
+    assert!(!contains_ip_field(&ip_ban_sync_owner["d"]));
+    let ip_ban_sync_moderator =
+        next_event_of_type(&mut moderator_socket, "workspace_ip_ban_sync").await;
+    assert_eq!(ip_ban_sync_moderator["d"]["summary"]["action"], "upsert");
+    assert!(!contains_ip_field(&ip_ban_sync_moderator["d"]));
+    let ip_ban_sync_member = next_event_of_type(&mut member_socket, "workspace_ip_ban_sync").await;
+    assert_eq!(ip_ban_sync_member["d"]["summary"]["action"], "upsert");
+    assert!(!contains_ip_field(&ip_ban_sync_member["d"]));
+
+    let remove_ip_ban = Request::builder()
+        .method("DELETE")
+        .uri(format!(
+            "/guilds/{}/ip-bans/{created_ban_id}",
+            channel.guild_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::empty())
+        .expect("remove ip ban request should build");
+    let remove_ip_ban_response = app
+        .clone()
+        .oneshot(remove_ip_ban)
+        .await
+        .expect("remove ip ban request should execute");
+    assert_eq!(remove_ip_ban_response.status(), StatusCode::OK);
+
+    let ip_ban_remove_owner = next_event_of_type(&mut owner_socket, "workspace_ip_ban_sync").await;
+    assert_eq!(ip_ban_remove_owner["d"]["summary"]["action"], "remove");
+    assert_eq!(
+        ip_ban_remove_owner["d"]["summary"]["changed_count"],
+        json!(1)
+    );
+    assert!(!contains_ip_field(&ip_ban_remove_owner["d"]));
+    let ip_ban_remove_moderator =
+        next_event_of_type(&mut moderator_socket, "workspace_ip_ban_sync").await;
+    assert_eq!(ip_ban_remove_moderator["d"]["summary"]["action"], "remove");
+    assert!(!contains_ip_field(&ip_ban_remove_moderator["d"]));
+    let ip_ban_remove_member =
+        next_event_of_type(&mut member_socket, "workspace_ip_ban_sync").await;
+    assert_eq!(ip_ban_remove_member["d"]["summary"]["action"], "remove");
+    assert!(!contains_ip_field(&ip_ban_remove_member["d"]));
+
+    owner_socket
+        .close(None)
+        .await
+        .expect("owner socket close should succeed");
+    moderator_socket
+        .close(None)
+        .await
+        .expect("moderator socket close should succeed");
+    member_socket
+        .close(None)
+        .await
+        .expect("member socket close should succeed");
     server.abort();
 }

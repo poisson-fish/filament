@@ -254,6 +254,7 @@ describe("app shell gateway controller", () => {
 
     const scrollMessageListToBottomMock = vi.fn();
     const closeGatewayMock = vi.fn();
+    const onWorkspacePermissionsChanged = vi.fn();
     let handlers: any = null;
     const connectGatewayMock = vi.fn((_token, _guildId, _channelId, nextHandlers) => {
       handlers = nextHandlers;
@@ -276,6 +277,7 @@ describe("app shell gateway controller", () => {
           setReactionState,
           isMessageListNearBottom: () => true,
           scrollMessageListToBottom: scrollMessageListToBottomMock,
+          onWorkspacePermissionsChanged,
         },
         {
           connectGateway: connectGatewayMock,
@@ -381,11 +383,20 @@ describe("app shell gateway controller", () => {
       },
       updatedAtUnix: 4,
     });
+    handlers.onWorkspaceRoleUpdate({
+      guildId: GUILD_ID,
+      roleId: "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      updatedFields: {
+        name: "ops_admin",
+      },
+      updatedAtUnix: 5,
+    });
     expect(workspaces()[0]?.channels.map((entry) => entry.name)).toEqual([
       "incident-room",
       "voice-bridge",
     ]);
     expect(workspaces()[0]?.guildName).toBe("Ops Oncall");
+    expect(onWorkspacePermissionsChanged).toHaveBeenCalledWith(GUILD_ID);
 
     handlers.onWorkspaceMemberRemove({
       guildId: GUILD_ID,

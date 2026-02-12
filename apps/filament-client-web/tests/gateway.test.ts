@@ -95,6 +95,14 @@ function createOpenGateway() {
   const onWorkspaceMemberUpdate = vi.fn();
   const onWorkspaceMemberRemove = vi.fn();
   const onWorkspaceMemberBan = vi.fn();
+  const onWorkspaceRoleCreate = vi.fn();
+  const onWorkspaceRoleUpdate = vi.fn();
+  const onWorkspaceRoleDelete = vi.fn();
+  const onWorkspaceRoleReorder = vi.fn();
+  const onWorkspaceRoleAssignmentAdd = vi.fn();
+  const onWorkspaceRoleAssignmentRemove = vi.fn();
+  const onWorkspaceChannelOverrideUpdate = vi.fn();
+  const onWorkspaceIpBanSync = vi.fn();
   const onPresenceSync = vi.fn();
   const onPresenceUpdate = vi.fn();
   const onOpenStateChange = vi.fn();
@@ -115,6 +123,14 @@ function createOpenGateway() {
       onWorkspaceMemberUpdate,
       onWorkspaceMemberRemove,
       onWorkspaceMemberBan,
+      onWorkspaceRoleCreate,
+      onWorkspaceRoleUpdate,
+      onWorkspaceRoleDelete,
+      onWorkspaceRoleReorder,
+      onWorkspaceRoleAssignmentAdd,
+      onWorkspaceRoleAssignmentRemove,
+      onWorkspaceChannelOverrideUpdate,
+      onWorkspaceIpBanSync,
       onPresenceSync,
       onPresenceUpdate,
       onOpenStateChange,
@@ -141,6 +157,14 @@ function createOpenGateway() {
     onWorkspaceMemberUpdate,
     onWorkspaceMemberRemove,
     onWorkspaceMemberBan,
+    onWorkspaceRoleCreate,
+    onWorkspaceRoleUpdate,
+    onWorkspaceRoleDelete,
+    onWorkspaceRoleReorder,
+    onWorkspaceRoleAssignmentAdd,
+    onWorkspaceRoleAssignmentRemove,
+    onWorkspaceChannelOverrideUpdate,
+    onWorkspaceIpBanSync,
     onPresenceSync,
     onPresenceUpdate,
     onOpenStateChange,
@@ -200,6 +224,14 @@ describe("gateway payload parsing", () => {
       onWorkspaceMemberUpdate,
       onWorkspaceMemberRemove,
       onWorkspaceMemberBan,
+      onWorkspaceRoleCreate,
+      onWorkspaceRoleUpdate,
+      onWorkspaceRoleDelete,
+      onWorkspaceRoleReorder,
+      onWorkspaceRoleAssignmentAdd,
+      onWorkspaceRoleAssignmentRemove,
+      onWorkspaceChannelOverrideUpdate,
+      onWorkspaceIpBanSync,
       onPresenceSync,
       onPresenceUpdate,
     } = createOpenGateway();
@@ -227,6 +259,14 @@ describe("gateway payload parsing", () => {
     expect(onWorkspaceMemberUpdate).not.toHaveBeenCalled();
     expect(onWorkspaceMemberRemove).not.toHaveBeenCalled();
     expect(onWorkspaceMemberBan).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleCreate).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleDelete).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleReorder).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleAssignmentAdd).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleAssignmentRemove).not.toHaveBeenCalled();
+    expect(onWorkspaceChannelOverrideUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceIpBanSync).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
     expect(onPresenceUpdate).not.toHaveBeenCalled();
   });
@@ -245,6 +285,14 @@ describe("gateway payload parsing", () => {
       onWorkspaceMemberUpdate,
       onWorkspaceMemberRemove,
       onWorkspaceMemberBan,
+      onWorkspaceRoleCreate,
+      onWorkspaceRoleUpdate,
+      onWorkspaceRoleDelete,
+      onWorkspaceRoleReorder,
+      onWorkspaceRoleAssignmentAdd,
+      onWorkspaceRoleAssignmentRemove,
+      onWorkspaceChannelOverrideUpdate,
+      onWorkspaceIpBanSync,
       onPresenceSync,
       onPresenceUpdate,
     } = createOpenGateway();
@@ -261,6 +309,14 @@ describe("gateway payload parsing", () => {
     expect(onWorkspaceMemberUpdate).not.toHaveBeenCalled();
     expect(onWorkspaceMemberRemove).not.toHaveBeenCalled();
     expect(onWorkspaceMemberBan).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleCreate).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleDelete).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleReorder).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleAssignmentAdd).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleAssignmentRemove).not.toHaveBeenCalled();
+    expect(onWorkspaceChannelOverrideUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceIpBanSync).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
     expect(onPresenceUpdate).not.toHaveBeenCalled();
   });
@@ -320,6 +376,14 @@ describe("gateway payload parsing", () => {
       onWorkspaceMemberUpdate,
       onWorkspaceMemberRemove,
       onWorkspaceMemberBan,
+      onWorkspaceRoleCreate,
+      onWorkspaceRoleUpdate,
+      onWorkspaceRoleDelete,
+      onWorkspaceRoleReorder,
+      onWorkspaceRoleAssignmentAdd,
+      onWorkspaceRoleAssignmentRemove,
+      onWorkspaceChannelOverrideUpdate,
+      onWorkspaceIpBanSync,
       onPresenceSync,
       onPresenceUpdate,
     } = createOpenGateway();
@@ -473,6 +537,112 @@ describe("gateway payload parsing", () => {
     socket.emitMessage(
       JSON.stringify({
         v: 1,
+        t: "workspace_role_create",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          role: {
+            role_id: ulidFromIndex(30),
+            name: "ops_admin",
+            position: 90,
+            is_system: false,
+            permissions: ["manage_roles"],
+          },
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_role_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          role_id: ulidFromIndex(30),
+          updated_fields: {
+            name: "ops_admin_v2",
+          },
+          updated_at_unix: 9,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_role_delete",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          role_id: ulidFromIndex(30),
+          deleted_at_unix: 10,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_role_reorder",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          role_ids: [ulidFromIndex(31), ulidFromIndex(32)],
+          updated_at_unix: 11,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_role_assignment_add",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: presenceUserId,
+          role_id: ulidFromIndex(31),
+          assigned_at_unix: 12,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_role_assignment_remove",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: presenceUserId,
+          role_id: ulidFromIndex(31),
+          removed_at_unix: 13,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_channel_override_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          role: "moderator",
+          updated_fields: {
+            allow: ["create_message"],
+            deny: ["ban_member"],
+          },
+          updated_at_unix: 14,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "workspace_ip_ban_sync",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          summary: {
+            action: "upsert",
+            changed_count: 2,
+          },
+          updated_at_unix: 15,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
         t: "presence_sync",
         d: {
           guild_id: DEFAULT_GUILD_ID,
@@ -504,6 +674,14 @@ describe("gateway payload parsing", () => {
     expect(onWorkspaceMemberUpdate).toHaveBeenCalledTimes(1);
     expect(onWorkspaceMemberRemove).toHaveBeenCalledTimes(1);
     expect(onWorkspaceMemberBan).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceRoleCreate).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceRoleUpdate).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceRoleDelete).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceRoleReorder).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceRoleAssignmentAdd).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceRoleAssignmentRemove).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceChannelOverrideUpdate).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceIpBanSync).toHaveBeenCalledTimes(1);
     expect(onMessageReaction).toHaveBeenCalledWith({
       guildId: DEFAULT_GUILD_ID,
       channelId: DEFAULT_CHANNEL_ID,
@@ -567,6 +745,64 @@ describe("gateway payload parsing", () => {
       guildId: DEFAULT_GUILD_ID,
       userId: presenceUserId,
       bannedAtUnix: 8,
+    });
+    expect(onWorkspaceRoleCreate).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      role: {
+        roleId: ulidFromIndex(30),
+        name: "ops_admin",
+        position: 90,
+        isSystem: false,
+        permissions: ["manage_roles"],
+      },
+    });
+    expect(onWorkspaceRoleUpdate).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      roleId: ulidFromIndex(30),
+      updatedFields: {
+        name: "ops_admin_v2",
+      },
+      updatedAtUnix: 9,
+    });
+    expect(onWorkspaceRoleDelete).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      roleId: ulidFromIndex(30),
+      deletedAtUnix: 10,
+    });
+    expect(onWorkspaceRoleReorder).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      roleIds: [ulidFromIndex(31), ulidFromIndex(32)],
+      updatedAtUnix: 11,
+    });
+    expect(onWorkspaceRoleAssignmentAdd).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      userId: presenceUserId,
+      roleId: ulidFromIndex(31),
+      assignedAtUnix: 12,
+    });
+    expect(onWorkspaceRoleAssignmentRemove).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      userId: presenceUserId,
+      roleId: ulidFromIndex(31),
+      removedAtUnix: 13,
+    });
+    expect(onWorkspaceChannelOverrideUpdate).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      channelId: DEFAULT_CHANNEL_ID,
+      role: "moderator",
+      updatedFields: {
+        allow: ["create_message"],
+        deny: ["ban_member"],
+      },
+      updatedAtUnix: 14,
+    });
+    expect(onWorkspaceIpBanSync).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      summary: {
+        action: "upsert",
+        changedCount: 2,
+      },
+      updatedAtUnix: 15,
     });
     expect(onPresenceSync).toHaveBeenCalledWith({
       guildId: DEFAULT_GUILD_ID,

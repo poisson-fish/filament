@@ -292,15 +292,40 @@ Sync workspace-level structural and membership state.
 Realtime sync for permission graph changes that alter visible capabilities.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Emit role lifecycle events (`workspace_role_create|update|delete|reorder`).
-- [ ] Emit role assignment events per member.
-- [ ] Emit channel override update events.
-- [ ] Emit redacted IP-ban sync event for moderation views (no raw IP fields).
-- [ ] Web applies permission-impacting events by refreshing snapshots where needed and pruning inaccessible channels.
-- [ ] Add tests proving no privileged data leakage in event payloads.
+- [x] Emit role lifecycle events (`workspace_role_create|update|delete|reorder`).
+- [x] Emit role assignment events per member.
+- [x] Emit channel override update events.
+- [x] Emit redacted IP-ban sync event for moderation views (no raw IP fields).
+- [x] Web applies permission-impacting events by refreshing snapshots where needed and pruning inaccessible channels.
+- [x] Add tests proving no privileged data leakage in event payloads.
+
+### Refactor Notes
+- Expanded typed gateway contracts in `apps/filament-server/src/server/gateway_events.rs` for:
+  - `workspace_role_create`
+  - `workspace_role_update`
+  - `workspace_role_delete`
+  - `workspace_role_reorder`
+  - `workspace_role_assignment_add`
+  - `workspace_role_assignment_remove`
+  - `workspace_channel_override_update`
+  - `workspace_ip_ban_sync` (redacted summary only)
+- Wired role/override/moderation event emission in `apps/filament-server/src/server/handlers/guilds.rs` across:
+  - role create/update/delete/reorder endpoints
+  - role assign/unassign endpoints
+  - channel override update endpoint
+  - guild IP-ban add/remove endpoints
+- Extended web gateway validation and dispatch in `apps/filament-client-web/src/lib/gateway.ts` for all Phase 4 event payloads with strict fail-closed parsing.
+- Updated app-shell realtime behavior in:
+  - `apps/filament-client-web/src/features/app-shell/controllers/gateway-controller.ts`
+  - `apps/filament-client-web/src/features/app-shell/runtime/create-app-shell-runtime.ts`
+  so permission-impacting events trigger role/permission refresh and channel pruning on access loss.
+- Added/updated tests:
+  - server integration coverage in `apps/filament-server/tests/gateway_network_flow.rs` for role lifecycle/assignment, channel override, and redacted IP-ban sync fanout
+  - web parser coverage in `apps/filament-client-web/tests/gateway.test.ts`
+  - web controller coverage in `apps/filament-client-web/tests/app-shell-gateway-controller.test.ts`
 
 ### Exit Criteria
 - Permission and moderation UI reflects role/override/ban changes without manual reload.

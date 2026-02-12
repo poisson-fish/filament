@@ -11,6 +11,14 @@ import type {
 } from "../../../domain/chat";
 import {
   connectGateway,
+  type WorkspaceChannelOverrideUpdatePayload,
+  type WorkspaceIpBanSyncPayload,
+  type WorkspaceRoleAssignmentAddPayload,
+  type WorkspaceRoleAssignmentRemovePayload,
+  type WorkspaceRoleCreatePayload,
+  type WorkspaceRoleDeletePayload,
+  type WorkspaceRoleReorderPayload,
+  type WorkspaceRoleUpdatePayload,
   type MessageDeletePayload,
   type MessageReactionPayload,
   type MessageUpdatePayload,
@@ -39,6 +47,8 @@ export interface GatewayControllerOptions {
   setReactionState: Setter<Record<string, ReactionView>>;
   isMessageListNearBottom: () => boolean;
   scrollMessageListToBottom: () => void;
+  onWorkspacePermissionsChanged?: (guildId: GuildId) => void;
+  onWorkspaceModerationChanged?: (payload: WorkspaceIpBanSyncPayload) => void;
 }
 
 interface GatewayClient {
@@ -61,6 +71,14 @@ interface GatewayHandlers {
   onWorkspaceMemberUpdate: (_payload: unknown) => void;
   onWorkspaceMemberRemove: (payload: WorkspaceMemberRemovePayload) => void;
   onWorkspaceMemberBan: (payload: WorkspaceMemberBanPayload) => void;
+  onWorkspaceRoleCreate: (payload: WorkspaceRoleCreatePayload) => void;
+  onWorkspaceRoleUpdate: (payload: WorkspaceRoleUpdatePayload) => void;
+  onWorkspaceRoleDelete: (payload: WorkspaceRoleDeletePayload) => void;
+  onWorkspaceRoleReorder: (payload: WorkspaceRoleReorderPayload) => void;
+  onWorkspaceRoleAssignmentAdd: (payload: WorkspaceRoleAssignmentAddPayload) => void;
+  onWorkspaceRoleAssignmentRemove: (payload: WorkspaceRoleAssignmentRemovePayload) => void;
+  onWorkspaceChannelOverrideUpdate: (payload: WorkspaceChannelOverrideUpdatePayload) => void;
+  onWorkspaceIpBanSync: (payload: WorkspaceIpBanSyncPayload) => void;
   onPresenceSync: (payload: { guildId: GuildId; userIds: string[] }) => void;
   onPresenceUpdate: (payload: {
     guildId: GuildId;
@@ -255,6 +273,30 @@ export function createGatewayController(
           return;
         }
         options.setWorkspaces((existing) => removeWorkspace(existing, payload.guildId));
+      },
+      onWorkspaceRoleCreate: (payload) => {
+        options.onWorkspacePermissionsChanged?.(payload.guildId);
+      },
+      onWorkspaceRoleUpdate: (payload) => {
+        options.onWorkspacePermissionsChanged?.(payload.guildId);
+      },
+      onWorkspaceRoleDelete: (payload) => {
+        options.onWorkspacePermissionsChanged?.(payload.guildId);
+      },
+      onWorkspaceRoleReorder: (payload) => {
+        options.onWorkspacePermissionsChanged?.(payload.guildId);
+      },
+      onWorkspaceRoleAssignmentAdd: (payload) => {
+        options.onWorkspacePermissionsChanged?.(payload.guildId);
+      },
+      onWorkspaceRoleAssignmentRemove: (payload) => {
+        options.onWorkspacePermissionsChanged?.(payload.guildId);
+      },
+      onWorkspaceChannelOverrideUpdate: (payload) => {
+        options.onWorkspacePermissionsChanged?.(payload.guildId);
+      },
+      onWorkspaceIpBanSync: (payload) => {
+        options.onWorkspaceModerationChanged?.(payload);
       },
       onPresenceSync: (payload) => {
         if (payload.guildId !== guildId) {

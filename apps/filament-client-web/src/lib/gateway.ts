@@ -16,16 +16,21 @@ import {
   type MessageRecord,
   type ReactionEmoji,
   roleFromInput,
+  permissionFromInput,
   type RoleName,
+  type PermissionName,
+  type WorkspaceRoleId,
   guildIdFromInput,
   messageIdFromInput,
   messageFromResponse,
   reactionEmojiFromInput,
   userIdFromInput,
+  workspaceRoleIdFromInput,
 } from "../domain/chat";
 
 const MAX_GATEWAY_EVENT_BYTES = 64 * 1024;
 const MAX_PRESENCE_SYNC_USER_IDS = 1024;
+const MAX_WORKSPACE_ROLE_REORDER_IDS = 64;
 const EVENT_TYPE_PATTERN = /^[a-z0-9_.]{1,64}$/;
 
 type GatewayEventEnvelope = {
@@ -96,6 +101,75 @@ export interface WorkspaceMemberBanPayload {
   bannedAtUnix: number;
 }
 
+export interface WorkspaceRoleRecordPayload {
+  roleId: WorkspaceRoleId;
+  name: string;
+  position: number;
+  isSystem: boolean;
+  permissions: PermissionName[];
+}
+
+export interface WorkspaceRoleCreatePayload {
+  guildId: GuildId;
+  role: WorkspaceRoleRecordPayload;
+}
+
+export interface WorkspaceRoleUpdatePayload {
+  guildId: GuildId;
+  roleId: WorkspaceRoleId;
+  updatedFields: {
+    name?: string;
+    permissions?: PermissionName[];
+  };
+  updatedAtUnix: number;
+}
+
+export interface WorkspaceRoleDeletePayload {
+  guildId: GuildId;
+  roleId: WorkspaceRoleId;
+  deletedAtUnix: number;
+}
+
+export interface WorkspaceRoleReorderPayload {
+  guildId: GuildId;
+  roleIds: WorkspaceRoleId[];
+  updatedAtUnix: number;
+}
+
+export interface WorkspaceRoleAssignmentAddPayload {
+  guildId: GuildId;
+  userId: string;
+  roleId: WorkspaceRoleId;
+  assignedAtUnix: number;
+}
+
+export interface WorkspaceRoleAssignmentRemovePayload {
+  guildId: GuildId;
+  userId: string;
+  roleId: WorkspaceRoleId;
+  removedAtUnix: number;
+}
+
+export interface WorkspaceChannelOverrideUpdatePayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  role: RoleName;
+  updatedFields: {
+    allow: PermissionName[];
+    deny: PermissionName[];
+  };
+  updatedAtUnix: number;
+}
+
+export interface WorkspaceIpBanSyncPayload {
+  guildId: GuildId;
+  summary: {
+    action: "upsert" | "remove";
+    changedCount: number;
+  };
+  updatedAtUnix: number;
+}
+
 export interface MessageReactionPayload {
   guildId: GuildId;
   channelId: ChannelId;
@@ -134,6 +208,18 @@ interface GatewayHandlers {
   onWorkspaceMemberUpdate?: (payload: WorkspaceMemberUpdatePayload) => void;
   onWorkspaceMemberRemove?: (payload: WorkspaceMemberRemovePayload) => void;
   onWorkspaceMemberBan?: (payload: WorkspaceMemberBanPayload) => void;
+  onWorkspaceRoleCreate?: (payload: WorkspaceRoleCreatePayload) => void;
+  onWorkspaceRoleUpdate?: (payload: WorkspaceRoleUpdatePayload) => void;
+  onWorkspaceRoleDelete?: (payload: WorkspaceRoleDeletePayload) => void;
+  onWorkspaceRoleReorder?: (payload: WorkspaceRoleReorderPayload) => void;
+  onWorkspaceRoleAssignmentAdd?: (payload: WorkspaceRoleAssignmentAddPayload) => void;
+  onWorkspaceRoleAssignmentRemove?: (
+    payload: WorkspaceRoleAssignmentRemovePayload,
+  ) => void;
+  onWorkspaceChannelOverrideUpdate?: (
+    payload: WorkspaceChannelOverrideUpdatePayload,
+  ) => void;
+  onWorkspaceIpBanSync?: (payload: WorkspaceIpBanSyncPayload) => void;
   onPresenceSync?: (payload: PresenceSyncPayload) => void;
   onPresenceUpdate?: (payload: PresenceUpdatePayload) => void;
   onOpenStateChange?: (isOpen: boolean) => void;
@@ -610,6 +696,396 @@ function parseWorkspaceMemberBanPayload(payload: unknown): WorkspaceMemberBanPay
   };
 }
 
+function parseWorkspaceRolePayload(payload: unknown): WorkspaceRoleRecordPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.role_id !== "string" ||
+    typeof value.name !== "string" ||
+    typeof value.position !== "number" ||
+    !Number.isSafeInteger(value.position) ||
+    value.position < 1 ||
+    typeof value.is_system !== "boolean" ||
+    !Array.isArray(value.permissions)
+  ) {
+    return null;
+  }
+
+  let roleId: WorkspaceRoleId;
+  try {
+    roleId = workspaceRoleIdFromInput(value.role_id);
+  } catch {
+    return null;
+  }
+
+  const permissions: PermissionName[] = [];
+  for (const entry of value.permissions) {
+    if (typeof entry !== "string") {
+      return null;
+    }
+    try {
+      permissions.push(permissionFromInput(entry));
+    } catch {
+      return null;
+    }
+  }
+
+  return {
+    roleId,
+    name: value.name,
+    position: value.position,
+    isSystem: value.is_system,
+    permissions,
+  };
+}
+
+function parseWorkspaceRoleCreatePayload(payload: unknown): WorkspaceRoleCreatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (typeof value.guild_id !== "string") {
+    return null;
+  }
+
+  let guildId: GuildId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+  } catch {
+    return null;
+  }
+  const role = parseWorkspaceRolePayload(value.role);
+  if (!role) {
+    return null;
+  }
+
+  return { guildId, role };
+}
+
+function parseWorkspaceRoleUpdatePayload(payload: unknown): WorkspaceRoleUpdatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.role_id !== "string" ||
+    !value.updated_fields ||
+    typeof value.updated_fields !== "object" ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let roleId: WorkspaceRoleId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    roleId = workspaceRoleIdFromInput(value.role_id);
+  } catch {
+    return null;
+  }
+
+  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
+  let name: string | undefined;
+  let permissions: PermissionName[] | undefined;
+  if (typeof updatedFieldsDto.name !== "undefined") {
+    if (typeof updatedFieldsDto.name !== "string") {
+      return null;
+    }
+    name = updatedFieldsDto.name;
+  }
+  if (typeof updatedFieldsDto.permissions !== "undefined") {
+    if (!Array.isArray(updatedFieldsDto.permissions)) {
+      return null;
+    }
+    permissions = [];
+    for (const entry of updatedFieldsDto.permissions) {
+      if (typeof entry !== "string") {
+        return null;
+      }
+      try {
+        permissions.push(permissionFromInput(entry));
+      } catch {
+        return null;
+      }
+    }
+  }
+  if (typeof name === "undefined" && typeof permissions === "undefined") {
+    return null;
+  }
+
+  return {
+    guildId,
+    roleId,
+    updatedFields: {
+      name,
+      permissions,
+    },
+    updatedAtUnix: value.updated_at_unix,
+  };
+}
+
+function parseWorkspaceRoleDeletePayload(payload: unknown): WorkspaceRoleDeletePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.role_id !== "string" ||
+    typeof value.deleted_at_unix !== "number" ||
+    !Number.isSafeInteger(value.deleted_at_unix) ||
+    value.deleted_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let roleId: WorkspaceRoleId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    roleId = workspaceRoleIdFromInput(value.role_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    roleId,
+    deletedAtUnix: value.deleted_at_unix,
+  };
+}
+
+function parseWorkspaceRoleReorderPayload(payload: unknown): WorkspaceRoleReorderPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    !Array.isArray(value.role_ids) ||
+    value.role_ids.length > MAX_WORKSPACE_ROLE_REORDER_IDS ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+  } catch {
+    return null;
+  }
+
+  const roleIds: WorkspaceRoleId[] = [];
+  for (const entry of value.role_ids) {
+    if (typeof entry !== "string") {
+      return null;
+    }
+    try {
+      roleIds.push(workspaceRoleIdFromInput(entry));
+    } catch {
+      return null;
+    }
+  }
+
+  return {
+    guildId,
+    roleIds,
+    updatedAtUnix: value.updated_at_unix,
+  };
+}
+
+function parseWorkspaceRoleAssignmentAddPayload(
+  payload: unknown,
+): WorkspaceRoleAssignmentAddPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    typeof value.role_id !== "string" ||
+    typeof value.assigned_at_unix !== "number" ||
+    !Number.isSafeInteger(value.assigned_at_unix) ||
+    value.assigned_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let userId: string;
+  let roleId: WorkspaceRoleId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    userId = userIdFromInput(value.user_id);
+    roleId = workspaceRoleIdFromInput(value.role_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    userId,
+    roleId,
+    assignedAtUnix: value.assigned_at_unix,
+  };
+}
+
+function parseWorkspaceRoleAssignmentRemovePayload(
+  payload: unknown,
+): WorkspaceRoleAssignmentRemovePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    typeof value.role_id !== "string" ||
+    typeof value.removed_at_unix !== "number" ||
+    !Number.isSafeInteger(value.removed_at_unix) ||
+    value.removed_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let userId: string;
+  let roleId: WorkspaceRoleId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    userId = userIdFromInput(value.user_id);
+    roleId = workspaceRoleIdFromInput(value.role_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    userId,
+    roleId,
+    removedAtUnix: value.removed_at_unix,
+  };
+}
+
+function parseWorkspaceChannelOverrideUpdatePayload(
+  payload: unknown,
+): WorkspaceChannelOverrideUpdatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.channel_id !== "string" ||
+    typeof value.role !== "string" ||
+    !value.updated_fields ||
+    typeof value.updated_fields !== "object" ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  let role: RoleName;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+    role = roleFromInput(value.role);
+  } catch {
+    return null;
+  }
+
+  const updatedFields = value.updated_fields as Record<string, unknown>;
+  if (!Array.isArray(updatedFields.allow) || !Array.isArray(updatedFields.deny)) {
+    return null;
+  }
+  const allow: PermissionName[] = [];
+  for (const entry of updatedFields.allow) {
+    if (typeof entry !== "string") {
+      return null;
+    }
+    try {
+      allow.push(permissionFromInput(entry));
+    } catch {
+      return null;
+    }
+  }
+  const deny: PermissionName[] = [];
+  for (const entry of updatedFields.deny) {
+    if (typeof entry !== "string") {
+      return null;
+    }
+    try {
+      deny.push(permissionFromInput(entry));
+    } catch {
+      return null;
+    }
+  }
+
+  return {
+    guildId,
+    channelId,
+    role,
+    updatedFields: { allow, deny },
+    updatedAtUnix: value.updated_at_unix,
+  };
+}
+
+function parseWorkspaceIpBanSyncPayload(payload: unknown): WorkspaceIpBanSyncPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    !value.summary ||
+    typeof value.summary !== "object" ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1
+  ) {
+    return null;
+  }
+  const summaryDto = value.summary as Record<string, unknown>;
+  if (
+    (summaryDto.action !== "upsert" && summaryDto.action !== "remove") ||
+    typeof summaryDto.changed_count !== "number" ||
+    !Number.isSafeInteger(summaryDto.changed_count) ||
+    summaryDto.changed_count < 0
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    summary: {
+      action: summaryDto.action,
+      changedCount: summaryDto.changed_count,
+    },
+    updatedAtUnix: value.updated_at_unix,
+  };
+}
+
 function normalizeGatewayBaseUrl(): string {
   const envGateway = import.meta.env.VITE_FILAMENT_GATEWAY_WS_URL;
   if (typeof envGateway === "string" && envGateway.length > 0) {
@@ -804,6 +1280,78 @@ export function connectGateway(
         return;
       }
       handlers.onWorkspaceMemberBan?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_role_create") {
+      const payload = parseWorkspaceRoleCreatePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceRoleCreate?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_role_update") {
+      const payload = parseWorkspaceRoleUpdatePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceRoleUpdate?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_role_delete") {
+      const payload = parseWorkspaceRoleDeletePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceRoleDelete?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_role_reorder") {
+      const payload = parseWorkspaceRoleReorderPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceRoleReorder?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_role_assignment_add") {
+      const payload = parseWorkspaceRoleAssignmentAddPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceRoleAssignmentAdd?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_role_assignment_remove") {
+      const payload = parseWorkspaceRoleAssignmentRemovePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceRoleAssignmentRemove?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_channel_override_update") {
+      const payload = parseWorkspaceChannelOverrideUpdatePayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceChannelOverrideUpdate?.(payload);
+      return;
+    }
+
+    if (envelope.t === "workspace_ip_ban_sync") {
+      const payload = parseWorkspaceIpBanSyncPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onWorkspaceIpBanSync?.(payload);
       return;
     }
 

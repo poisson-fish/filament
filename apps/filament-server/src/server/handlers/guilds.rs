@@ -1226,7 +1226,7 @@ pub(crate) async fn create_guild_role(
 
     write_audit_log(
         &state,
-        Some(path.guild_id),
+        Some(path.guild_id.clone()),
         auth.user_id,
         None,
         "role.create",
@@ -1238,6 +1238,17 @@ pub(crate) async fn create_guild_role(
         }),
     )
     .await?;
+
+    let event = gateway_events::workspace_role_create(
+        &path.guild_id,
+        &role_id,
+        &name,
+        position,
+        false,
+        payload.permissions.clone(),
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     Ok(Json(GuildRoleResponse {
         role_id,
@@ -1346,6 +1357,17 @@ pub(crate) async fn update_guild_role(
         .await?;
     }
 
+    let updated_at_unix = now_unix();
+    let event = gateway_events::workspace_role_update(
+        &path.guild_id,
+        &role_id,
+        payload.name.as_deref(),
+        payload.permissions.clone(),
+        updated_at_unix,
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
+
     Ok(Json(GuildRoleResponse {
         role_id: role_id.clone(),
         name: next_name,
@@ -1419,13 +1441,22 @@ pub(crate) async fn delete_guild_role(
 
     write_audit_log(
         &state,
-        Some(path.guild_id),
+        Some(path.guild_id.clone()),
         auth.user_id,
         None,
         "role.delete",
         serde_json::json!({ "role_id": role_id }),
     )
     .await?;
+
+    let event = gateway_events::workspace_role_delete(
+        &path.guild_id,
+        &role_id,
+        now_unix(),
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
+
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
@@ -1498,13 +1529,21 @@ pub(crate) async fn reorder_guild_roles(
 
     write_audit_log(
         &state,
-        Some(path.guild_id),
+        Some(path.guild_id.clone()),
         auth.user_id,
         None,
         "role.reorder",
         serde_json::json!({ "role_ids": requested_ids }),
     )
     .await?;
+
+    let event = gateway_events::workspace_role_reorder(
+        &path.guild_id,
+        requested_ids.clone(),
+        now_unix(),
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     Ok(Json(ModerationResponse { accepted: true }))
 }
@@ -1656,7 +1695,7 @@ pub(crate) async fn assign_guild_role(
 
     write_audit_log(
         &state,
-        Some(path.guild_id),
+        Some(path.guild_id.clone()),
         auth.user_id,
         Some(target_user_id),
         "role.assign",
@@ -1665,6 +1704,16 @@ pub(crate) async fn assign_guild_role(
         }),
     )
     .await?;
+
+    let event = gateway_events::workspace_role_assignment_add(
+        &path.guild_id,
+        target_user_id,
+        &role_id,
+        now_unix(),
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
+
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
@@ -1746,7 +1795,7 @@ pub(crate) async fn unassign_guild_role(
 
     write_audit_log(
         &state,
-        Some(path.guild_id),
+        Some(path.guild_id.clone()),
         auth.user_id,
         Some(target_user_id),
         "role.unassign",
@@ -1755,6 +1804,16 @@ pub(crate) async fn unassign_guild_role(
         }),
     )
     .await?;
+
+    let event = gateway_events::workspace_role_assignment_remove(
+        &path.guild_id,
+        target_user_id,
+        &role_id,
+        now_unix(),
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
+
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
@@ -2166,6 +2225,15 @@ pub(crate) async fn upsert_guild_ip_bans_by_user(
             }),
         )
         .await?;
+
+        let event = gateway_events::workspace_ip_ban_sync(
+            &path.guild_id,
+            "upsert",
+            ban_ids.len(),
+            now,
+            Some(auth.user_id),
+        );
+        broadcast_guild_event(&state, &path.guild_id, &event).await;
     }
 
     Ok(Json(GuildIpBanApplyResponse {
@@ -2223,7 +2291,7 @@ pub(crate) async fn remove_guild_ip_ban(
 
     write_audit_log(
         &state,
-        Some(path.guild_id),
+        Some(path.guild_id.clone()),
         auth.user_id,
         target_user_id,
         "moderation.ip_ban.remove",
@@ -2232,6 +2300,15 @@ pub(crate) async fn remove_guild_ip_ban(
         }),
     )
     .await?;
+
+    let event = gateway_events::workspace_ip_ban_sync(
+        &path.guild_id,
+        "remove",
+        1,
+        now_unix(),
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     Ok(Json(ModerationResponse { accepted: true }))
 }
@@ -3021,7 +3098,7 @@ pub(crate) async fn set_channel_role_override(
 
     write_audit_log(
         &state,
-        Some(path.guild_id),
+        Some(path.guild_id.clone()),
         auth.user_id,
         None,
         "channel.override.update",
@@ -3033,6 +3110,18 @@ pub(crate) async fn set_channel_role_override(
         }),
     )
     .await?;
+
+    let event = gateway_events::workspace_channel_override_update(
+        &path.guild_id,
+        &path.channel_id,
+        path.role,
+        payload.allow.clone(),
+        payload.deny.clone(),
+        now_unix(),
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
+
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
