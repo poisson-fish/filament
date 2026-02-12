@@ -363,6 +363,51 @@ pub(crate) async fn enforce_auth_route_rate_limit(
     Ok(())
 }
 
+pub(crate) async fn enforce_directory_join_rate_limit(
+    state: &AppState,
+    client_ip: ClientIp,
+    user_id: UserId,
+) -> Result<(), AuthFailure> {
+    let ip = client_ip.normalized();
+    let now = now_unix();
+    {
+        let mut ip_hits = state.directory_join_ip_hits.write().await;
+        let route_hits = ip_hits.entry(ip.clone()).or_default();
+        route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < 60);
+        let max_hits = usize::try_from(state.runtime.directory_join_requests_per_minute_per_ip)
+            .unwrap_or(usize::MAX);
+        if route_hits.len() >= max_hits {
+            tracing::warn!(
+                event = "directory.join.rate_limit",
+                limiter = "ip",
+                client_ip = %ip,
+                client_ip_source = client_ip.source().as_str()
+            );
+            return Err(AuthFailure::RateLimited);
+        }
+        route_hits.push(now);
+    }
+
+    let user_key = user_id.to_string();
+    let mut user_hits = state.directory_join_user_hits.write().await;
+    let route_hits = user_hits.entry(user_key.clone()).or_default();
+    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < 60);
+    let max_hits = usize::try_from(state.runtime.directory_join_requests_per_minute_per_user)
+        .unwrap_or(usize::MAX);
+    if route_hits.len() >= max_hits {
+        tracing::warn!(
+            event = "directory.join.rate_limit",
+            limiter = "user",
+            user_id = %user_id,
+            client_ip = %ip,
+            client_ip_source = client_ip.source().as_str()
+        );
+        return Err(AuthFailure::RateLimited);
+    }
+    route_hits.push(now);
+    Ok(())
+}
+
 pub(crate) async fn enforce_media_token_rate_limit(
     state: &AppState,
     client_ip: ClientIp,

@@ -396,6 +396,22 @@ pub(crate) struct PublicGuildListResponse {
     pub(crate) guilds: Vec<PublicGuildListItem>,
 }
 
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DirectoryJoinOutcomeResponse {
+    Accepted,
+    AlreadyMember,
+    RejectedVisibility,
+    RejectedUserBan,
+    RejectedIpBan,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct DirectoryJoinResponse {
+    pub(crate) guild_id: String,
+    pub(crate) outcome: DirectoryJoinOutcomeResponse,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct SearchResponse {
     pub(crate) message_ids: Vec<String>,

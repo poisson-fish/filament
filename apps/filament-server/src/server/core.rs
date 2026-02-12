@@ -30,6 +30,7 @@ use super::{
 
 pub(crate) type ChannelSubscriptions = HashMap<Uuid, mpsc::Sender<String>>;
 pub(crate) type Subscriptions = HashMap<String, ChannelSubscriptions>;
+pub(crate) type GuildIpBanMap = HashMap<String, Vec<(IpNetwork, Option<i64>)>>;
 
 pub const DEFAULT_JSON_BODY_LIMIT_BYTES: usize = 1_048_576;
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 10;
@@ -164,6 +165,9 @@ impl Default for AppConfig {
 #[derive(Clone)]
 pub(crate) struct RuntimeSecurityConfig {
     pub(crate) auth_route_requests_per_minute: u32,
+    pub(crate) directory_join_requests_per_minute_per_ip: u32,
+    pub(crate) directory_join_requests_per_minute_per_user: u32,
+    pub(crate) guild_ip_ban_max_entries: usize,
     pub(crate) gateway_ingress_events_per_window: u32,
     pub(crate) gateway_ingress_window: Duration,
     pub(crate) gateway_outbound_queue: usize,
@@ -260,10 +264,15 @@ pub struct AppState {
     pub(crate) token_key: Arc<SymmetricKey<V4>>,
     pub(crate) dummy_password_hash: Arc<String>,
     pub(crate) auth_route_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) directory_join_ip_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) directory_join_user_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) user_ip_observation_writes: Arc<RwLock<HashMap<String, i64>>>,
     pub(crate) media_token_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
+    pub(crate) user_ip_observations: Arc<RwLock<HashMap<(UserId, IpNetwork), i64>>>,
+    pub(crate) guild_ip_bans: Arc<RwLock<GuildIpBanMap>>,
     pub(crate) subscriptions: Arc<RwLock<Subscriptions>>,
     pub(crate) connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
     pub(crate) connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
@@ -314,10 +323,15 @@ impl AppState {
             token_key: Arc::new(token_key),
             dummy_password_hash: Arc::new(dummy_password_hash),
             auth_route_hits: Arc::new(RwLock::new(HashMap::new())),
+            directory_join_ip_hits: Arc::new(RwLock::new(HashMap::new())),
+            directory_join_user_hits: Arc::new(RwLock::new(HashMap::new())),
+            user_ip_observation_writes: Arc::new(RwLock::new(HashMap::new())),
             media_token_hits: Arc::new(RwLock::new(HashMap::new())),
             media_publish_hits: Arc::new(RwLock::new(HashMap::new())),
             media_subscribe_leases: Arc::new(RwLock::new(HashMap::new())),
             guilds: Arc::new(RwLock::new(HashMap::new())),
+            user_ip_observations: Arc::new(RwLock::new(HashMap::new())),
+            guild_ip_bans: Arc::new(RwLock::new(HashMap::new())),
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
             connection_controls: Arc::new(RwLock::new(HashMap::new())),
             connection_presence: Arc::new(RwLock::new(HashMap::new())),
@@ -330,6 +344,11 @@ impl AppState {
             search_bootstrapped: Arc::new(OnceCell::new()),
             runtime: Arc::new(RuntimeSecurityConfig {
                 auth_route_requests_per_minute: config.auth_route_requests_per_minute,
+                directory_join_requests_per_minute_per_ip: config
+                    .directory_join_requests_per_minute_per_ip,
+                directory_join_requests_per_minute_per_user: config
+                    .directory_join_requests_per_minute_per_user,
+                guild_ip_ban_max_entries: config.guild_ip_ban_max_entries,
                 gateway_ingress_events_per_window: config.gateway_ingress_events_per_window,
                 gateway_ingress_window: config.gateway_ingress_window,
                 gateway_outbound_queue: config.gateway_outbound_queue,

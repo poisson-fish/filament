@@ -216,33 +216,55 @@ Harden client-IP derivation so IP bans are enforceable and non-spoofable.
 Enable authenticated self-join for public workspaces with strict policy checks and audit events.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add endpoint:
+- [x] Add endpoint:
   - `POST /guilds/{guild_id}/join` (auth required)
-- [ ] Join behavior:
+- [x] Join behavior:
   - allow only if guild visibility is `public`
   - deny if requester is user-banned or IP-banned
   - idempotent for already-member state
   - no leakage beyond policy-approved response shapes
-- [ ] Upsert user IP observation on authenticated join attempt (success or policy rejection) with bounded write rate.
-- [ ] Write audit events for all join outcomes:
+- [x] Upsert user IP observation on authenticated join attempt (success or policy rejection) with bounded write rate.
+- [x] Write audit events for all join outcomes:
   - `directory.join.accepted`
   - `directory.join.rejected.user_ban`
   - `directory.join.rejected.ip_ban`
   - `directory.join.rejected.visibility`
-- [ ] Add explicit route-local rate limiting for join endpoint (user + IP).
-- [ ] Ensure in-memory fallback mirrors DB behavior.
+- [x] Add explicit route-local rate limiting for join endpoint (user + IP).
+- [x] Ensure in-memory fallback mirrors DB behavior.
 
 ### Tests
-- [ ] Integration tests:
+- [x] Integration tests:
   - public join success
   - private workspace join rejection
   - idempotent repeat join
   - user-banned rejection
   - rate-limit rejection
-- [ ] Unit tests for join DTO parsing and state transitions.
+- [x] Unit tests for join DTO parsing and state transitions.
+
+### Refactor Notes
+- Added `POST /guilds/{guild_id}/join` to the router in `apps/filament-server/src/server/router.rs` and implemented join flow orchestration in `apps/filament-server/src/server/handlers/guilds.rs` with:
+  - public-visibility gating
+  - user-ban and guild-IP-ban checks
+  - idempotent member insert behavior (`accepted` vs `already_member`)
+  - policy-consistent rejection shaping (`not_found`, `directory_join_user_banned`, `directory_join_ip_banned`)
+- Added route-local join limiter in `apps/filament-server/src/server/auth.rs` (`enforce_directory_join_rate_limit`) using both:
+  - per-IP runtime cap
+  - per-user runtime cap
+- Added bounded user IP observation upsert logic for join attempts in `apps/filament-server/src/server/handlers/guilds.rs`:
+  - write interval cap (`60s`) for repeated `(user, host-ip)` observations
+  - DB upsert into `user_ip_observations`
+  - mirrored in-memory observation map behavior
+- Extended server runtime state in `apps/filament-server/src/server/core.rs` for:
+  - directory-join rate-limit hit tracking
+  - IP observation write throttling
+  - in-memory user IP observation and guild IP-ban lookup surfaces
+- Added typed join DTO response shape in `apps/filament-server/src/server/types.rs` (`DirectoryJoinResponse`, `DirectoryJoinOutcomeResponse`).
+- Added tests:
+  - handler unit tests in `apps/filament-server/src/server/handlers/guilds.rs` for join outcome state transitions and bounded in-memory IP observation upsert
+  - integration tests in `apps/filament-server/src/server/tests.rs` for public join success, private rejection, idempotent rejoin, user-ban rejection, and user rate-limit rejection
 
 ### Security Outlook
 - Adds join capability without broadening visibility or bypassing moderation controls.

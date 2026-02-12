@@ -1,6 +1,7 @@
 use axum::{http::StatusCode, response::IntoResponse, Json};
 
 use super::{
+    directory_contract::{DIRECTORY_JOIN_IP_BANNED_ERROR, DIRECTORY_JOIN_USER_BANNED_ERROR},
     metrics::{record_auth_failure, record_rate_limit_hit},
     types::AuthError,
 };
@@ -11,6 +12,8 @@ pub(crate) enum AuthFailure {
     CaptchaFailed,
     Unauthorized,
     Forbidden,
+    DirectoryJoinUserBanned,
+    DirectoryJoinIpBanned,
     GuildCreationLimitReached,
     NotFound,
     RateLimited,
@@ -29,7 +32,9 @@ impl IntoResponse for AuthFailure {
     fn into_response(self) -> axum::response::Response {
         match self {
             Self::Unauthorized => record_auth_failure("unauthorized"),
-            Self::Forbidden => record_auth_failure("forbidden"),
+            Self::Forbidden | Self::DirectoryJoinUserBanned | Self::DirectoryJoinIpBanned => {
+                record_auth_failure("forbidden");
+            }
             Self::RateLimited => record_rate_limit_hit("http", "auth_failure"),
             Self::InvalidRequest
             | Self::CaptchaFailed
@@ -65,6 +70,20 @@ impl IntoResponse for AuthFailure {
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
                 Json(AuthError { error: "forbidden" }),
+            )
+                .into_response(),
+            Self::DirectoryJoinUserBanned => (
+                StatusCode::FORBIDDEN,
+                Json(AuthError {
+                    error: DIRECTORY_JOIN_USER_BANNED_ERROR,
+                }),
+            )
+                .into_response(),
+            Self::DirectoryJoinIpBanned => (
+                StatusCode::FORBIDDEN,
+                Json(AuthError {
+                    error: DIRECTORY_JOIN_IP_BANNED_ERROR,
+                }),
             )
                 .into_response(),
             Self::GuildCreationLimitReached => (

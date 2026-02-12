@@ -1,7 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+};
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{connect_info::ConnectInfo, Extension, Path, Query, State},
     http::HeaderMap,
     Json,
 };
@@ -14,20 +17,24 @@ use sqlx::Row;
 use ulid::Ulid;
 
 use crate::server::{
-    auth::{authenticate, now_unix},
+    auth::{
+        authenticate, enforce_directory_join_rate_limit, extract_client_ip, now_unix, ClientIp,
+    },
     core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
     db::{
         channel_kind_from_i16, channel_kind_to_i16, ensure_db_schema, permission_set_from_i64,
         permission_set_from_list, permission_set_to_i64, role_from_i16, role_to_i16,
         visibility_from_i16, visibility_to_i16,
     },
+    directory_contract::{DirectoryJoinOutcome, IpNetwork},
     domain::{member_role_in_guild, user_role_in_guild, write_audit_log},
     errors::AuthFailure,
     types::{
         ChannelListResponse, ChannelResponse, ChannelRolePath, CreateChannelRequest,
-        CreateGuildRequest, GuildListResponse, GuildPath, GuildResponse, MemberPath,
-        ModerationResponse, PublicGuildListItem, PublicGuildListQuery, PublicGuildListResponse,
-        UpdateChannelRoleOverrideRequest, UpdateMemberRoleRequest,
+        CreateGuildRequest, DirectoryJoinOutcomeResponse, DirectoryJoinResponse, GuildListResponse,
+        GuildPath, GuildResponse, MemberPath, ModerationResponse, PublicGuildListItem,
+        PublicGuildListQuery, PublicGuildListResponse, UpdateChannelRoleOverrideRequest,
+        UpdateMemberRoleRequest,
     },
 };
 
@@ -198,6 +205,179 @@ pub(crate) async fn list_guilds(
 pub(crate) const DEFAULT_PUBLIC_GUILD_LIST_LIMIT: usize = 20;
 pub(crate) const MAX_PUBLIC_GUILD_LIST_LIMIT: usize = 50;
 pub(crate) const MAX_PUBLIC_GUILD_QUERY_CHARS: usize = 64;
+const DIRECTORY_JOIN_OBSERVATION_WRITE_MIN_SECS: i64 = 60;
+
+const fn join_outcome_response(outcome: DirectoryJoinOutcome) -> DirectoryJoinOutcomeResponse {
+    match outcome {
+        DirectoryJoinOutcome::Accepted => DirectoryJoinOutcomeResponse::Accepted,
+        DirectoryJoinOutcome::AlreadyMember => DirectoryJoinOutcomeResponse::AlreadyMember,
+        DirectoryJoinOutcome::RejectedVisibility => {
+            DirectoryJoinOutcomeResponse::RejectedVisibility
+        }
+        DirectoryJoinOutcome::RejectedUserBan => DirectoryJoinOutcomeResponse::RejectedUserBan,
+        DirectoryJoinOutcome::RejectedIpBan => DirectoryJoinOutcomeResponse::RejectedIpBan,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DirectoryJoinPolicyInput {
+    visibility: DirectoryJoinVisibilityStatus,
+    user_ban: DirectoryJoinBanStatus,
+    ip_ban: DirectoryJoinBanStatus,
+    membership: DirectoryJoinMembershipStatus,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirectoryJoinVisibilityStatus {
+    Public,
+    NonPublic,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirectoryJoinBanStatus {
+    Banned,
+    NotBanned,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirectoryJoinMembershipStatus {
+    AlreadyMember,
+    NotMember,
+}
+
+const fn classify_directory_join_outcome(input: DirectoryJoinPolicyInput) -> DirectoryJoinOutcome {
+    if matches!(input.visibility, DirectoryJoinVisibilityStatus::NonPublic) {
+        return DirectoryJoinOutcome::RejectedVisibility;
+    }
+    if matches!(input.user_ban, DirectoryJoinBanStatus::Banned) {
+        return DirectoryJoinOutcome::RejectedUserBan;
+    }
+    if matches!(input.ip_ban, DirectoryJoinBanStatus::Banned) {
+        return DirectoryJoinOutcome::RejectedIpBan;
+    }
+    if matches!(
+        input.membership,
+        DirectoryJoinMembershipStatus::AlreadyMember
+    ) {
+        return DirectoryJoinOutcome::AlreadyMember;
+    }
+    DirectoryJoinOutcome::Accepted
+}
+
+async fn maybe_record_join_ip_observation(
+    state: &AppState,
+    user_id: UserId,
+    client_ip: ClientIp,
+) -> Result<(), AuthFailure> {
+    let Some(ip) = client_ip.ip() else {
+        return Ok(());
+    };
+    let network = IpNetwork::host(ip);
+    let canonical = network.canonical_cidr();
+    let now = now_unix();
+    let key = format!("{user_id}:{canonical}");
+
+    {
+        let mut write_guard = state.user_ip_observation_writes.write().await;
+        if write_guard.get(&key).is_some_and(|last_write| {
+            now.saturating_sub(*last_write) < DIRECTORY_JOIN_OBSERVATION_WRITE_MIN_SECS
+        }) {
+            return Ok(());
+        }
+        write_guard.insert(key, now);
+    }
+
+    if let Some(pool) = &state.db_pool {
+        sqlx::query(
+            "INSERT INTO user_ip_observations (observation_id, user_id, ip_cidr, first_seen_at_unix, last_seen_at_unix)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (user_id, ip_cidr)
+             DO UPDATE SET last_seen_at_unix = EXCLUDED.last_seen_at_unix",
+        )
+        .bind(Ulid::new().to_string())
+        .bind(user_id.to_string())
+        .bind(canonical)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        return Ok(());
+    }
+
+    let mut observations = state.user_ip_observations.write().await;
+    observations.insert((user_id, network), now);
+    Ok(())
+}
+
+async fn guild_has_active_ip_ban(
+    state: &AppState,
+    guild_id: &str,
+    client_ip: ClientIp,
+) -> Result<bool, AuthFailure> {
+    let Some(ip) = client_ip.ip() else {
+        return Ok(false);
+    };
+    let now = now_unix();
+    if let Some(pool) = &state.db_pool {
+        let rows = sqlx::query(
+            "SELECT ip_cidr
+             FROM guild_ip_bans
+             WHERE guild_id = $1
+               AND (expires_at_unix IS NULL OR expires_at_unix > $2)
+             ORDER BY created_at_unix DESC
+             LIMIT $3",
+        )
+        .bind(guild_id)
+        .bind(now)
+        .bind(
+            i64::try_from(state.runtime.guild_ip_ban_max_entries)
+                .map_err(|_| AuthFailure::Internal)?,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        for row in rows {
+            let cidr: String = row.try_get("ip_cidr").map_err(|_| AuthFailure::Internal)?;
+            let Ok(network) = IpNetwork::try_from(cidr) else {
+                continue;
+            };
+            if network.contains(ip) {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+
+    let bans = state.guild_ip_bans.read().await;
+    let Some(guild_bans) = bans.get(guild_id) else {
+        return Ok(false);
+    };
+    Ok(guild_bans.iter().any(|(network, expires_at_unix)| {
+        expires_at_unix.is_none_or(|value| value > now) && network.contains(ip)
+    }))
+}
+
+async fn write_directory_join_audit(
+    state: &AppState,
+    guild_id: &str,
+    actor_user_id: UserId,
+    outcome: DirectoryJoinOutcome,
+    client_ip: ClientIp,
+) -> Result<(), AuthFailure> {
+    write_audit_log(
+        state,
+        Some(guild_id.to_owned()),
+        actor_user_id,
+        Some(actor_user_id),
+        outcome.audit_action(),
+        serde_json::json!({
+            "outcome": join_outcome_response(outcome),
+            "client_ip_source": client_ip.source().as_str(),
+        }),
+    )
+    .await
+}
 
 pub(crate) async fn list_public_guilds(
     State(state): State<AppState>,
@@ -285,6 +465,180 @@ pub(crate) async fn list_public_guilds(
     results.sort_by(|left, right| right.guild_id.cmp(&left.guild_id));
     results.truncate(limit);
     Ok(Json(PublicGuildListResponse { guilds: results }))
+}
+
+fn join_failure_from_outcome(outcome: DirectoryJoinOutcome) -> Option<AuthFailure> {
+    match outcome {
+        DirectoryJoinOutcome::RejectedVisibility => Some(AuthFailure::NotFound),
+        DirectoryJoinOutcome::RejectedUserBan => Some(AuthFailure::DirectoryJoinUserBanned),
+        DirectoryJoinOutcome::RejectedIpBan => Some(AuthFailure::DirectoryJoinIpBanned),
+        DirectoryJoinOutcome::Accepted | DirectoryJoinOutcome::AlreadyMember => None,
+    }
+}
+
+async fn resolve_directory_join_outcome_db(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+    user_id: UserId,
+    client_ip: ClientIp,
+) -> Result<DirectoryJoinOutcome, AuthFailure> {
+    let guild_row = sqlx::query("SELECT visibility FROM guilds WHERE guild_id = $1")
+        .bind(guild_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    let Some(guild_row) = guild_row else {
+        return Err(AuthFailure::NotFound);
+    };
+    let visibility_raw: i16 = guild_row
+        .try_get("visibility")
+        .map_err(|_| AuthFailure::Internal)?;
+    let visibility = visibility_from_i16(visibility_raw).ok_or(AuthFailure::Internal)?;
+    let user_banned = sqlx::query("SELECT 1 FROM guild_bans WHERE guild_id = $1 AND user_id = $2")
+        .bind(guild_id)
+        .bind(user_id.to_string())
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .is_some();
+    let ip_banned = guild_has_active_ip_ban(state, guild_id, client_ip).await?;
+    let already_member =
+        sqlx::query("SELECT 1 FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+            .bind(guild_id)
+            .bind(user_id.to_string())
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?
+            .is_some();
+    let mut outcome = classify_directory_join_outcome(DirectoryJoinPolicyInput {
+        visibility: if visibility == GuildVisibility::Public {
+            DirectoryJoinVisibilityStatus::Public
+        } else {
+            DirectoryJoinVisibilityStatus::NonPublic
+        },
+        user_ban: if user_banned {
+            DirectoryJoinBanStatus::Banned
+        } else {
+            DirectoryJoinBanStatus::NotBanned
+        },
+        ip_ban: if ip_banned {
+            DirectoryJoinBanStatus::Banned
+        } else {
+            DirectoryJoinBanStatus::NotBanned
+        },
+        membership: if already_member {
+            DirectoryJoinMembershipStatus::AlreadyMember
+        } else {
+            DirectoryJoinMembershipStatus::NotMember
+        },
+    });
+    if outcome != DirectoryJoinOutcome::Accepted {
+        return Ok(outcome);
+    }
+
+    let insert = sqlx::query(
+        "INSERT INTO guild_members (guild_id, user_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (guild_id, user_id) DO NOTHING",
+    )
+    .bind(guild_id)
+    .bind(user_id.to_string())
+    .bind(role_to_i16(Role::Member))
+    .execute(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if insert.rows_affected() == 0 {
+        outcome = DirectoryJoinOutcome::AlreadyMember;
+    }
+    Ok(outcome)
+}
+
+async fn resolve_directory_join_outcome_in_memory(
+    state: &AppState,
+    guild_id: &str,
+    user_id: UserId,
+    client_ip: ClientIp,
+) -> Result<DirectoryJoinOutcome, AuthFailure> {
+    let ip_banned = guild_has_active_ip_ban(state, guild_id, client_ip).await?;
+    let (visibility, user_banned, already_member) = {
+        let guilds = state.guilds.read().await;
+        let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+        (
+            guild.visibility,
+            guild.banned_members.contains(&user_id),
+            guild.members.contains_key(&user_id),
+        )
+    };
+
+    let mut outcome = classify_directory_join_outcome(DirectoryJoinPolicyInput {
+        visibility: if visibility == GuildVisibility::Public {
+            DirectoryJoinVisibilityStatus::Public
+        } else {
+            DirectoryJoinVisibilityStatus::NonPublic
+        },
+        user_ban: if user_banned {
+            DirectoryJoinBanStatus::Banned
+        } else {
+            DirectoryJoinBanStatus::NotBanned
+        },
+        ip_ban: if ip_banned {
+            DirectoryJoinBanStatus::Banned
+        } else {
+            DirectoryJoinBanStatus::NotBanned
+        },
+        membership: if already_member {
+            DirectoryJoinMembershipStatus::AlreadyMember
+        } else {
+            DirectoryJoinMembershipStatus::NotMember
+        },
+    });
+    if outcome != DirectoryJoinOutcome::Accepted {
+        return Ok(outcome);
+    }
+
+    let mut guilds = state.guilds.write().await;
+    let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
+    if let std::collections::hash_map::Entry::Vacant(entry) = guild.members.entry(user_id) {
+        entry.insert(Role::Member);
+    } else {
+        outcome = DirectoryJoinOutcome::AlreadyMember;
+    }
+    Ok(outcome)
+}
+
+pub(crate) async fn join_public_guild(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(path): Path<GuildPath>,
+) -> Result<Json<DirectoryJoinResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    enforce_directory_join_rate_limit(&state, client_ip, auth.user_id).await?;
+    maybe_record_join_ip_observation(&state, auth.user_id, client_ip).await?;
+
+    let outcome = if let Some(pool) = &state.db_pool {
+        resolve_directory_join_outcome_db(&state, pool, &path.guild_id, auth.user_id, client_ip)
+            .await?
+    } else {
+        resolve_directory_join_outcome_in_memory(&state, &path.guild_id, auth.user_id, client_ip)
+            .await?
+    };
+
+    write_directory_join_audit(&state, &path.guild_id, auth.user_id, outcome, client_ip).await?;
+    if let Some(failure) = join_failure_from_outcome(outcome) {
+        return Err(failure);
+    }
+    Ok(Json(DirectoryJoinResponse {
+        guild_id: path.guild_id,
+        outcome: join_outcome_response(outcome),
+    }))
 }
 
 pub(crate) const MAX_CHANNEL_LIST_LIMIT: usize = 500;
@@ -762,4 +1116,120 @@ pub(crate) async fn ban_member(
     )
     .await?;
     Ok(Json(ModerationResponse { accepted: true }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        classify_directory_join_outcome, join_outcome_response, maybe_record_join_ip_observation,
+        DirectoryJoinBanStatus, DirectoryJoinMembershipStatus, DirectoryJoinPolicyInput,
+        DirectoryJoinVisibilityStatus,
+    };
+    use crate::server::{
+        auth::resolve_client_ip,
+        core::{AppConfig, AppState},
+        directory_contract::DirectoryJoinOutcome,
+        types::DirectoryJoinOutcomeResponse,
+    };
+    use axum::http::HeaderMap;
+    use filament_core::UserId;
+
+    #[test]
+    fn directory_join_state_transition_precedence_is_stable() {
+        assert_eq!(
+            classify_directory_join_outcome(DirectoryJoinPolicyInput {
+                visibility: DirectoryJoinVisibilityStatus::NonPublic,
+                user_ban: DirectoryJoinBanStatus::NotBanned,
+                ip_ban: DirectoryJoinBanStatus::NotBanned,
+                membership: DirectoryJoinMembershipStatus::NotMember,
+            }),
+            DirectoryJoinOutcome::RejectedVisibility
+        );
+        assert_eq!(
+            classify_directory_join_outcome(DirectoryJoinPolicyInput {
+                visibility: DirectoryJoinVisibilityStatus::Public,
+                user_ban: DirectoryJoinBanStatus::Banned,
+                ip_ban: DirectoryJoinBanStatus::NotBanned,
+                membership: DirectoryJoinMembershipStatus::NotMember,
+            }),
+            DirectoryJoinOutcome::RejectedUserBan
+        );
+        assert_eq!(
+            classify_directory_join_outcome(DirectoryJoinPolicyInput {
+                visibility: DirectoryJoinVisibilityStatus::Public,
+                user_ban: DirectoryJoinBanStatus::NotBanned,
+                ip_ban: DirectoryJoinBanStatus::Banned,
+                membership: DirectoryJoinMembershipStatus::NotMember,
+            }),
+            DirectoryJoinOutcome::RejectedIpBan
+        );
+        assert_eq!(
+            classify_directory_join_outcome(DirectoryJoinPolicyInput {
+                visibility: DirectoryJoinVisibilityStatus::Public,
+                user_ban: DirectoryJoinBanStatus::NotBanned,
+                ip_ban: DirectoryJoinBanStatus::NotBanned,
+                membership: DirectoryJoinMembershipStatus::AlreadyMember,
+            }),
+            DirectoryJoinOutcome::AlreadyMember
+        );
+        assert_eq!(
+            classify_directory_join_outcome(DirectoryJoinPolicyInput {
+                visibility: DirectoryJoinVisibilityStatus::Public,
+                user_ban: DirectoryJoinBanStatus::NotBanned,
+                ip_ban: DirectoryJoinBanStatus::NotBanned,
+                membership: DirectoryJoinMembershipStatus::NotMember,
+            }),
+            DirectoryJoinOutcome::Accepted
+        );
+    }
+
+    #[test]
+    fn directory_join_outcome_response_mapping_is_typed() {
+        assert_eq!(
+            join_outcome_response(DirectoryJoinOutcome::Accepted),
+            DirectoryJoinOutcomeResponse::Accepted
+        );
+        assert_eq!(
+            join_outcome_response(DirectoryJoinOutcome::AlreadyMember),
+            DirectoryJoinOutcomeResponse::AlreadyMember
+        );
+        assert_eq!(
+            join_outcome_response(DirectoryJoinOutcome::RejectedVisibility),
+            DirectoryJoinOutcomeResponse::RejectedVisibility
+        );
+        assert_eq!(
+            join_outcome_response(DirectoryJoinOutcome::RejectedUserBan),
+            DirectoryJoinOutcomeResponse::RejectedUserBan
+        );
+        assert_eq!(
+            join_outcome_response(DirectoryJoinOutcome::RejectedIpBan),
+            DirectoryJoinOutcomeResponse::RejectedIpBan
+        );
+    }
+
+    #[tokio::test]
+    async fn join_ip_observation_upsert_is_write_bounded_in_memory_mode() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        let user_id = UserId::new();
+        let headers = HeaderMap::new();
+        let client_ip = resolve_client_ip(
+            &headers,
+            Some("203.0.113.44".parse().expect("valid ip")),
+            &[],
+        );
+
+        maybe_record_join_ip_observation(&state, user_id, client_ip)
+            .await
+            .expect("first observation write should succeed");
+        maybe_record_join_ip_observation(&state, user_id, client_ip)
+            .await
+            .expect("second observation write should be bounded");
+
+        let observations = state.user_ip_observations.read().await;
+        assert_eq!(observations.len(), 1);
+        let last_seen = observations.values().next().expect("observation record");
+        assert!(*last_seen > 0);
+        let writes = state.user_ip_observation_writes.read().await;
+        assert_eq!(writes.len(), 1);
+    }
 }
