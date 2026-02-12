@@ -1,5 +1,50 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
+
+use anyhow::anyhow;
+use axum::{
+    extract::{
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
+        Query, State,
+    },
+    http::HeaderMap,
+    response::IntoResponse,
+};
+use filament_core::{tokenize_markdown, Permission, UserId};
+use filament_protocol::parse_envelope;
+use futures_util::{SinkExt, StreamExt};
+use sqlx::Row;
+use tantivy::{
+    collector::{Count, TopDocs},
+    query::{BooleanQuery, Occur, QueryParser, TermQuery},
+    schema::{
+        IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions, Value, STORED,
+        STRING,
+    },
+    TantivyDocument, Term,
+};
+use tokio::sync::{mpsc, oneshot, watch};
+use ulid::Ulid;
+use uuid::Uuid;
+
+use super::{
+    attachment_map_for_messages_db, attachment_map_for_messages_in_memory,
+    attachments_for_message_in_memory, authenticate_with_token, bearer_token,
+    bind_message_attachments_db, channel_key, channel_permission_snapshot, ensure_db_schema,
+    fetch_attachments_for_message_db, now_unix, outbound_event, parse_attachment_ids,
+    reaction_map_for_messages_db, reaction_summaries_from_users, record_ws_disconnect,
+    user_can_write_channel, validate_message_content, AppState, AuthContext, AuthFailure,
+    ConnectionControl, ConnectionPresence, GatewayAuthQuery, GatewayMessageCreate,
+    GatewaySubscribe, IndexedMessage, MessageRecord, MessageResponse, SearchCommand, SearchFields,
+    SearchIndexState, SearchOperation, SearchQuery, SearchService, DEFAULT_SEARCH_RESULT_LIMIT,
+    MAX_SEARCH_FUZZY, MAX_SEARCH_TERMS, MAX_SEARCH_WILDCARDS, SEARCH_INDEX_QUEUE_CAPACITY,
+};
 
 pub(crate) async fn gateway_ws(
     State(state): State<AppState>,

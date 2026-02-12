@@ -1,5 +1,4 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use super::{AppState, AuthFailure, ChannelKind, GuildVisibility, Permission, PermissionSet, Role};
 
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {

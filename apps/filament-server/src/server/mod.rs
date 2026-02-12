@@ -1,12 +1,9 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     fmt::Write as _,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, OnceLock,
-    },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::anyhow;
@@ -15,18 +12,9 @@ use argon2::{
     Argon2,
 };
 use axum::{
-    body::Body,
-    extract::{
-        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
-        DefaultBodyLimit, Json, Path, Query, State,
-    },
-    http::{
-        header::AUTHORIZATION, header::CONTENT_LENGTH, header::CONTENT_TYPE, HeaderMap, HeaderName,
-        HeaderValue, StatusCode,
-    },
+    extract::Json,
+    http::{header::AUTHORIZATION, header::CONTENT_TYPE, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post},
-    Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use filament_core::{
@@ -35,10 +23,8 @@ use filament_core::{
     GuildName, LiveKitIdentity, LiveKitRoomName, MarkdownToken, Permission, PermissionSet, Role,
     UserId, Username,
 };
-use filament_protocol::{parse_envelope, Envelope, EventType, PROTOCOL_VERSION};
-use futures_util::{SinkExt, StreamExt};
-use livekit_api::access_token::{AccessToken as LiveKitAccessToken, VideoGrants};
-use object_store::{local::LocalFileSystem, path::Path as ObjectPath, ObjectStore};
+use filament_protocol::{Envelope, EventType, PROTOCOL_VERSION};
+use object_store::local::LocalFileSystem;
 use pasetors::{
     claims::{Claims, ClaimsValidationRules},
     keys::SymmetricKey,
@@ -48,30 +34,11 @@ use pasetors::{
     Local,
 };
 use rand::{rngs::OsRng, RngCore};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
-use tantivy::{
-    collector::{Count, TopDocs},
-    query::{BooleanQuery, Occur, QueryParser, TermQuery},
-    schema::{
-        Field, IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions, Value,
-        STORED, STRING,
-    },
-    TantivyDocument, Term,
-};
+use tantivy::schema::Field;
 use tokio::sync::{mpsc, oneshot, watch, OnceCell, RwLock};
-use tower::ServiceBuilder;
-use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
-};
-use tower_http::{
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    timeout::TimeoutLayer,
-    trace::TraceLayer,
-};
-use ulid::Ulid;
 use uuid::Uuid;
 
 pub(crate) mod auth;
