@@ -19,6 +19,14 @@ pub(crate) fn render_metrics() -> String {
         .ws_disconnects
         .lock()
         .map_or_else(|_| HashMap::new(), |guard| guard.clone());
+    let gateway_events_emitted = metrics_state()
+        .gateway_events_emitted
+        .lock()
+        .map_or_else(|_| HashMap::new(), |guard| guard.clone());
+    let gateway_events_dropped = metrics_state()
+        .gateway_events_dropped
+        .lock()
+        .map_or_else(|_| HashMap::new(), |guard| guard.clone());
 
     let mut output = String::new();
     output
@@ -59,6 +67,41 @@ pub(crate) fn render_metrics() -> String {
         );
     }
 
+    output.push_str(
+        "# HELP filament_gateway_events_emitted_total Count of emitted gateway events by scope and type\n",
+    );
+    output.push_str("# TYPE filament_gateway_events_emitted_total counter\n");
+    let mut emitted_entries: Vec<_> = gateway_events_emitted.into_iter().collect();
+    emitted_entries.sort_by(|((a_scope, a_event), _), ((b_scope, b_event), _)| {
+        a_scope.cmp(b_scope).then(a_event.cmp(b_event))
+    });
+    for ((scope, event_type), value) in emitted_entries {
+        let _ = writeln!(
+            output,
+            "filament_gateway_events_emitted_total{{scope=\"{scope}\",event_type=\"{event_type}\"}} {value}"
+        );
+    }
+
+    output.push_str(
+        "# HELP filament_gateway_events_dropped_total Count of dropped gateway events by scope, type, and reason\n",
+    );
+    output.push_str("# TYPE filament_gateway_events_dropped_total counter\n");
+    let mut dropped_entries: Vec<_> = gateway_events_dropped.into_iter().collect();
+    dropped_entries.sort_by(
+        |((a_scope, a_event, a_reason), _), ((b_scope, b_event, b_reason), _)| {
+            a_scope
+                .cmp(b_scope)
+                .then(a_event.cmp(b_event))
+                .then(a_reason.cmp(b_reason))
+        },
+    );
+    for ((scope, event_type, reason), value) in dropped_entries {
+        let _ = writeln!(
+            output,
+            "filament_gateway_events_dropped_total{{scope=\"{scope}\",event_type=\"{event_type}\",reason=\"{reason}\"}} {value}"
+        );
+    }
+
     output
 }
 
@@ -79,6 +122,28 @@ pub(crate) fn record_rate_limit_hit(surface: &'static str, reason: &'static str)
 pub(crate) fn record_ws_disconnect(reason: &'static str) {
     if let Ok(mut counters) = metrics_state().ws_disconnects.lock() {
         let entry = counters.entry(reason).or_insert(0);
+        *entry += 1;
+    }
+}
+
+pub(crate) fn record_gateway_event_emitted(scope: &'static str, event_type: &str) {
+    if let Ok(mut counters) = metrics_state().gateway_events_emitted.lock() {
+        let entry = counters
+            .entry((scope.to_owned(), event_type.to_owned()))
+            .or_insert(0);
+        *entry += 1;
+    }
+}
+
+pub(crate) fn record_gateway_event_dropped(
+    scope: &'static str,
+    event_type: &str,
+    reason: &'static str,
+) {
+    if let Ok(mut counters) = metrics_state().gateway_events_dropped.lock() {
+        let entry = counters
+            .entry((scope.to_owned(), event_type.to_owned(), reason.to_owned()))
+            .or_insert(0);
         *entry += 1;
     }
 }

@@ -38,7 +38,7 @@ use uuid::Uuid;
 use super::{
     auth::{
         authenticate_with_token, bearer_token, channel_key, extract_client_ip, now_unix,
-        outbound_event, validate_message_content, ClientIp,
+        validate_message_content, ClientIp,
     },
     core::{
         AppState, AuthContext, ConnectionControl, ConnectionPresence, IndexedMessage,
@@ -55,7 +55,8 @@ use super::{
         reaction_summaries_from_users, user_can_write_channel,
     },
     errors::AuthFailure,
-    metrics::record_ws_disconnect,
+    gateway_events::{self, GatewayEvent},
+    metrics::{record_gateway_event_dropped, record_gateway_event_emitted, record_ws_disconnect},
     types::{
         GatewayAuthQuery, GatewayMessageCreate, GatewaySubscribe, MessageResponse, SearchQuery,
     },
@@ -97,6 +98,11 @@ pub(crate) async fn handle_gateway_connection(
 
     let (outbound_tx, mut outbound_rx) =
         mpsc::channel::<String>(state.runtime.gateway_outbound_queue);
+    state
+        .connection_senders
+        .write()
+        .await
+        .insert(connection_id, outbound_tx.clone());
     let (control_tx, mut control_rx) = watch::channel(ConnectionControl::Open);
     state
         .connection_controls
@@ -111,11 +117,9 @@ pub(crate) async fn handle_gateway_connection(
         },
     );
 
-    let ready_payload = outbound_event(
-        "ready",
-        serde_json::json!({"user_id": auth.user_id.to_string()}),
-    );
-    let _ = outbound_tx.send(ready_payload).await;
+    let ready_event = gateway_events::ready(auth.user_id);
+    let _ = outbound_tx.send(ready_event.payload).await;
+    record_gateway_event_emitted("connection", ready_event.event_type);
 
     let slow_consumer_disconnect_send = Arc::clone(&slow_consumer_disconnect);
     let send_task = tokio::spawn(async move {
@@ -238,17 +242,18 @@ pub(crate) async fn handle_gateway_connection(
                 )
                 .await;
 
-                let subscribed = outbound_event(
-                    "subscribed",
-                    serde_json::json!({
-                        "guild_id": subscribe.guild_id,
-                        "channel_id": subscribe.channel_id,
-                    }),
-                );
-                if outbound_tx.try_send(subscribed).is_err() {
+                let subscribed_event =
+                    gateway_events::subscribed(&subscribe.guild_id, &subscribe.channel_id);
+                if outbound_tx.try_send(subscribed_event.payload).is_err() {
+                    record_gateway_event_dropped(
+                        "connection",
+                        subscribed_event.event_type,
+                        "full_queue",
+                    );
                     disconnect_reason = "outbound_queue_full";
                     break;
                 }
+                record_gateway_event_emitted("connection", subscribed_event.event_type);
             }
             "message_create" => {
                 let Ok(request) = serde_json::from_value::<GatewayMessageCreate>(envelope.d) else {
@@ -374,22 +379,8 @@ pub(crate) async fn create_message_internal(
             created_at_unix,
         };
 
-        let event = outbound_event(
-            "message_create",
-            serde_json::json!({
-                "message_id": response.message_id,
-                "guild_id": response.guild_id,
-                "channel_id": response.channel_id,
-                "author_id": response.author_id,
-                "content": response.content,
-                "markdown_tokens": response.markdown_tokens,
-                "attachments": response.attachments,
-                "reactions": response.reactions,
-                "created_at_unix": response.created_at_unix,
-            }),
-        );
-
-        broadcast_channel_event(state, &channel_key(guild_id, channel_id), event).await;
+        let event = gateway_events::message_create(&response);
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
         enqueue_search_operation(
             state,
             SearchOperation::Upsert(indexed_message_from_response(&response)),
@@ -448,22 +439,8 @@ pub(crate) async fn create_message_internal(
         created_at_unix: record.created_at_unix,
     };
 
-    let event = outbound_event(
-        "message_create",
-        serde_json::json!({
-        "message_id": response.message_id,
-        "guild_id": response.guild_id,
-        "channel_id": response.channel_id,
-        "author_id": response.author_id,
-            "content": response.content,
-            "markdown_tokens": response.markdown_tokens,
-            "attachments": response.attachments,
-            "reactions": response.reactions,
-            "created_at_unix": response.created_at_unix,
-        }),
-    );
-
-    broadcast_channel_event(state, &channel_key(guild_id, channel_id), event).await;
+    let event = gateway_events::message_create(&response);
+    broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
     enqueue_search_operation(
         state,
         SearchOperation::Upsert(indexed_message_from_response(&response)),
@@ -1112,69 +1089,174 @@ pub(crate) async fn hydrate_messages_by_id(
     Ok(hydrated)
 }
 
-pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, payload: String) {
-    let mut slow_connections = Vec::new();
+fn dispatch_gateway_payload(
+    listeners: &mut HashMap<Uuid, mpsc::Sender<String>>,
+    payload: &str,
+    event_type: &'static str,
+    scope: &'static str,
+    slow_connections: &mut Vec<Uuid>,
+) -> usize {
+    let mut delivered = 0usize;
+    listeners.retain(
+        |connection_id, sender| match sender.try_send(payload.to_owned()) {
+            Ok(()) => {
+                delivered += 1;
+                true
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                record_gateway_event_dropped(scope, event_type, "closed");
+                false
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                record_gateway_event_dropped(scope, event_type, "full_queue");
+                slow_connections.push(*connection_id);
+                false
+            }
+        },
+    );
+    delivered
+}
 
+async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
+    if slow_connections.is_empty() {
+        return;
+    }
+
+    let controls = state.connection_controls.read().await;
+    for connection_id in slow_connections {
+        if let Some(control) = controls.get(&connection_id) {
+            let _ = control.send(ConnectionControl::Close);
+        }
+    }
+}
+
+pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: &GatewayEvent) {
+    let mut slow_connections = Vec::new();
+    let mut delivered = 0usize;
     let mut subscriptions = state.subscriptions.write().await;
     if let Some(listeners) = subscriptions.get_mut(key) {
-        listeners.retain(
-            |connection_id, sender| match sender.try_send(payload.clone()) {
-                Ok(()) => true,
-                Err(mpsc::error::TrySendError::Closed(_)) => false,
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    slow_connections.push(*connection_id);
-                    false
-                }
-            },
+        delivered = dispatch_gateway_payload(
+            listeners,
+            &event.payload,
+            event.event_type,
+            "channel",
+            &mut slow_connections,
         );
-
         if listeners.is_empty() {
             subscriptions.remove(key);
         }
     }
     drop(subscriptions);
 
-    if !slow_connections.is_empty() {
-        let controls = state.connection_controls.read().await;
-        for connection_id in slow_connections {
-            if let Some(control) = controls.get(&connection_id) {
-                let _ = control.send(ConnectionControl::Close);
-            }
+    close_slow_connections(state, slow_connections).await;
+    if delivered > 0 {
+        tracing::debug!(
+            event = "gateway.event.emit",
+            scope = "channel",
+            event_type = event.event_type,
+            delivered
+        );
+        for _ in 0..delivered {
+            record_gateway_event_emitted("channel", event.event_type);
         }
     }
 }
 
-pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, payload: String) {
+pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, event: &GatewayEvent) {
     let mut slow_connections = Vec::new();
     let mut seen_connections = HashSet::new();
+    let mut delivered = 0usize;
     let mut subscriptions = state.subscriptions.write().await;
     for (key, listeners) in subscriptions.iter_mut() {
         if !key.starts_with(guild_id) || !key[guild_id.len()..].starts_with(':') {
             continue;
         }
-        listeners.retain(|connection_id, sender| {
+        let mut stale_connections = Vec::new();
+        for (connection_id, sender) in listeners.iter() {
             if !seen_connections.insert(*connection_id) {
-                return true;
+                continue;
             }
-            match sender.try_send(payload.clone()) {
-                Ok(()) => true,
-                Err(mpsc::error::TrySendError::Closed(_)) => false,
+            match sender.try_send(event.payload.clone()) {
+                Ok(()) => delivered += 1,
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    record_gateway_event_dropped("guild", event.event_type, "closed");
+                    stale_connections.push(*connection_id);
+                }
                 Err(mpsc::error::TrySendError::Full(_)) => {
+                    record_gateway_event_dropped("guild", event.event_type, "full_queue");
                     slow_connections.push(*connection_id);
-                    false
+                    stale_connections.push(*connection_id);
                 }
             }
-        });
+        }
+        for connection_id in stale_connections {
+            listeners.remove(&connection_id);
+        }
     }
     subscriptions.retain(|_, listeners| !listeners.is_empty());
     drop(subscriptions);
 
-    if !slow_connections.is_empty() {
-        let controls = state.connection_controls.read().await;
-        for connection_id in slow_connections {
-            if let Some(control) = controls.get(&connection_id) {
-                let _ = control.send(ConnectionControl::Close);
+    close_slow_connections(state, slow_connections).await;
+    if delivered > 0 {
+        tracing::debug!(
+            event = "gateway.event.emit",
+            scope = "guild",
+            event_type = event.event_type,
+            delivered
+        );
+        for _ in 0..delivered {
+            record_gateway_event_emitted("guild", event.event_type);
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, event: &GatewayEvent) {
+    let connection_ids: Vec<Uuid> = state
+        .connection_presence
+        .read()
+        .await
+        .iter()
+        .filter_map(|(connection_id, presence)| {
+            (presence.user_id == user_id).then_some(*connection_id)
+        })
+        .collect();
+    if connection_ids.is_empty() {
+        return;
+    }
+
+    let mut slow_connections = Vec::new();
+    let mut delivered = 0usize;
+    let mut senders = state.connection_senders.write().await;
+    for connection_id in connection_ids {
+        let Some(sender) = senders.get(&connection_id) else {
+            continue;
+        };
+        match sender.try_send(event.payload.clone()) {
+            Ok(()) => delivered += 1,
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                record_gateway_event_dropped("user", event.event_type, "closed");
+                senders.remove(&connection_id);
             }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                record_gateway_event_dropped("user", event.event_type, "full_queue");
+                slow_connections.push(connection_id);
+                senders.remove(&connection_id);
+            }
+        }
+    }
+    drop(senders);
+
+    close_slow_connections(state, slow_connections).await;
+    if delivered > 0 {
+        tracing::debug!(
+            event = "gateway.event.emit",
+            scope = "user",
+            event_type = event.event_type,
+            delivered
+        );
+        for _ in 0..delivered {
+            record_gateway_event_emitted("user", event.event_type);
         }
     }
 }
@@ -1207,25 +1289,20 @@ pub(crate) async fn handle_presence_subscribe(
         (snapshot, !was_online && !already_subscribed)
     };
 
-    let snapshot_event = outbound_event(
-        "presence_sync",
-        serde_json::json!({
-            "guild_id": guild_id,
-            "user_ids": snapshot_user_ids,
-        }),
-    );
-    let _ = outbound_tx.try_send(snapshot_event);
+    let snapshot_event = gateway_events::presence_sync(guild_id, snapshot_user_ids);
+    match outbound_tx.try_send(snapshot_event.payload) {
+        Ok(()) => record_gateway_event_emitted("connection", snapshot_event.event_type),
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            record_gateway_event_dropped("connection", snapshot_event.event_type, "closed");
+        }
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            record_gateway_event_dropped("connection", snapshot_event.event_type, "full_queue");
+        }
+    }
 
     if became_online {
-        let update = outbound_event(
-            "presence_update",
-            serde_json::json!({
-                "guild_id": guild_id,
-                "user_id": user_id.to_string(),
-                "status": "online",
-            }),
-        );
-        broadcast_guild_event(state, guild_id, update).await;
+        let update = gateway_events::presence_update(guild_id, user_id, "online");
+        broadcast_guild_event(state, guild_id, &update).await;
     }
 }
 
@@ -1253,6 +1330,11 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
         .write()
         .await
         .remove(&connection_id);
+    state
+        .connection_senders
+        .write()
+        .await
+        .remove(&connection_id);
 
     let mut subscriptions = state.subscriptions.write().await;
     subscriptions.retain(|_, listeners| {
@@ -1277,15 +1359,9 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
     drop(remaining);
 
     for guild_id in offline_guilds {
-        let update = outbound_event(
-            "presence_update",
-            serde_json::json!({
-                "guild_id": guild_id,
-                "user_id": removed_presence.user_id.to_string(),
-                "status": "offline",
-            }),
-        );
-        broadcast_guild_event(state, &guild_id, update).await;
+        let update =
+            gateway_events::presence_update(&guild_id, removed_presence.user_id, "offline");
+        broadcast_guild_event(state, &guild_id, &update).await;
     }
 }
 

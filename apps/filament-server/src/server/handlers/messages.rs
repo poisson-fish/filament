@@ -9,10 +9,7 @@ use sqlx::Row;
 use std::net::SocketAddr;
 
 use crate::server::{
-    auth::{
-        authenticate, channel_key, extract_client_ip, now_unix, outbound_event,
-        validate_message_content,
-    },
+    auth::{authenticate, channel_key, extract_client_ip, now_unix, validate_message_content},
     core::{AppState, SearchOperation, MAX_HISTORY_LIMIT},
     db::{ensure_db_schema, permission_list_from_set},
     domain::{
@@ -23,6 +20,7 @@ use crate::server::{
         validate_reaction_emoji, write_audit_log,
     },
     errors::AuthFailure,
+    gateway_events,
     realtime::{
         broadcast_channel_event, create_message_internal, enqueue_search_operation,
         indexed_message_from_response,
@@ -35,17 +33,19 @@ use crate::server::{
 };
 
 async fn broadcast_message_reaction_event(state: &AppState, path: &ReactionPath, count: usize) {
-    let event = outbound_event(
-        "message_reaction",
-        serde_json::json!({
-            "guild_id": &path.guild_id,
-            "channel_id": &path.channel_id,
-            "message_id": &path.message_id,
-            "emoji": &path.emoji,
-            "count": count,
-        }),
+    let event = gateway_events::message_reaction(
+        &path.guild_id,
+        &path.channel_id,
+        &path.message_id,
+        &path.emoji,
+        count,
     );
-    broadcast_channel_event(state, &channel_key(&path.guild_id, &path.channel_id), event).await;
+    broadcast_channel_event(
+        state,
+        &channel_key(&path.guild_id, &path.channel_id),
+        &event,
+    )
+    .await;
 }
 
 pub(crate) async fn create_message(

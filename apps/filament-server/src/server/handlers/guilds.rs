@@ -17,8 +17,7 @@ use ulid::Ulid;
 
 use crate::server::{
     auth::{
-        authenticate, enforce_directory_join_rate_limit, extract_client_ip, now_unix,
-        outbound_event, ClientIp,
+        authenticate, enforce_directory_join_rate_limit, extract_client_ip, now_unix, ClientIp,
     },
     core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
     db::{
@@ -36,6 +35,7 @@ use crate::server::{
         guild_permission_snapshot, member_role_in_guild, user_role_in_guild, write_audit_log,
     },
     errors::AuthFailure,
+    gateway_events,
     permissions::{
         DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, MAX_GUILD_ROLES, MAX_MEMBER_ROLE_ASSIGNMENTS,
         MAX_ROLE_NAME_CHARS, SYSTEM_ROLE_EVERYONE, SYSTEM_ROLE_WORKSPACE_OWNER,
@@ -2543,18 +2543,8 @@ pub(crate) async fn create_channel(
         name: name.as_str().to_owned(),
         kind,
     };
-    let event = outbound_event(
-        "channel_create",
-        serde_json::json!({
-            "guild_id": path.guild_id,
-            "channel": {
-                "channel_id": response.channel_id.as_str(),
-                "name": response.name.as_str(),
-                "kind": response.kind,
-            },
-        }),
-    );
-    broadcast_guild_event(&state, &path.guild_id, event).await;
+    let event = gateway_events::channel_create(&path.guild_id, &response);
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     Ok(Json(response))
 }

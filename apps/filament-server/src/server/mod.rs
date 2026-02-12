@@ -4,6 +4,7 @@ pub(crate) mod db;
 pub mod directory_contract;
 pub(crate) mod domain;
 pub(crate) mod errors;
+pub(crate) mod gateway_events;
 pub(crate) mod handlers;
 pub(crate) mod metrics;
 pub(crate) mod permissions;

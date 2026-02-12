@@ -169,14 +169,38 @@ Freeze event contracts and explicit endpoint-to-event mapping before implementat
 Make event emission consistent and support channel/guild/user fanout targets.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add typed helper constructors for common event payloads (avoid ad-hoc JSON blobs).
-- [ ] Add `broadcast_user_event` path keyed by authenticated user connections.
-- [ ] Keep strict event-size checks and queue bounds unchanged.
-- [ ] Add tracing/metrics for emitted event type and dropped events (slow consumer/full queue).
-- [ ] Add server tests for channel/guild/user fanout correctness and unauthorized non-delivery.
+- [x] Add typed helper constructors for common event payloads (avoid ad-hoc JSON blobs).
+- [x] Add `broadcast_user_event` path keyed by authenticated user connections.
+- [x] Keep strict event-size checks and queue bounds unchanged.
+- [x] Add tracing/metrics for emitted event type and dropped events (slow consumer/full queue).
+- [x] Add server tests for channel/guild/user fanout correctness and unauthorized non-delivery.
+
+### Refactor Notes
+- Added `apps/filament-server/src/server/gateway_events.rs` with typed gateway payload constructors and event-name constants for:
+  - `ready`, `subscribed`
+  - `message_create`, `message_reaction`
+  - `channel_create`
+  - `presence_sync`, `presence_update`
+- Replaced ad-hoc JSON event construction in:
+  - `apps/filament-server/src/server/realtime.rs`
+  - `apps/filament-server/src/server/handlers/messages.rs`
+  - `apps/filament-server/src/server/handlers/guilds.rs`
+- Added user-targeted fanout plumbing in realtime state:
+  - new `connection_senders` map in `AppState`
+  - new `broadcast_user_event` function keyed by authenticated `user_id`
+  - `handle_gateway_connection` now registers/removes per-connection outbound senders
+- Added gateway emission/drop observability:
+  - new metrics counters in `MetricsState` and `metrics.rs`:
+    - `filament_gateway_events_emitted_total{scope,event_type}`
+    - `filament_gateway_events_dropped_total{scope,event_type,reason}`
+  - tracing events on successful fanout with scope/type/delivered count
+- Added server fanout correctness tests in `apps/filament-server/src/server/tests.rs`:
+  - channel fanout only reaches the targeted channel key
+  - guild fanout deduplicates per connection and does not cross guild boundaries
+  - user fanout reaches all target user sessions and does not leak to other users
 
 ### Exit Criteria
 - Server can publish safely to all required scopes with tests.

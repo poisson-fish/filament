@@ -85,6 +85,8 @@ pub(crate) struct MetricsState {
     pub(crate) auth_failures: Mutex<HashMap<&'static str, u64>>,
     pub(crate) rate_limit_hits: Mutex<HashMap<(&'static str, &'static str), u64>>,
     pub(crate) ws_disconnects: Mutex<HashMap<&'static str, u64>>,
+    pub(crate) gateway_events_emitted: Mutex<HashMap<(String, String), u64>>,
+    pub(crate) gateway_events_dropped: Mutex<HashMap<(String, String, String), u64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -285,6 +287,7 @@ pub struct AppState {
     pub(crate) user_ip_observations: Arc<RwLock<HashMap<(UserId, IpNetwork), i64>>>,
     pub(crate) guild_ip_bans: Arc<RwLock<GuildIpBanMap>>,
     pub(crate) subscriptions: Arc<RwLock<Subscriptions>>,
+    pub(crate) connection_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>>,
     pub(crate) connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
     pub(crate) connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
     pub(crate) attachment_store: Arc<LocalFileSystem>,
@@ -347,6 +350,7 @@ impl AppState {
             user_ip_observations: Arc::new(RwLock::new(HashMap::new())),
             guild_ip_bans: Arc::new(RwLock::new(HashMap::new())),
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
+            connection_senders: Arc::new(RwLock::new(HashMap::new())),
             connection_controls: Arc::new(RwLock::new(HashMap::new())),
             connection_presence: Arc::new(RwLock::new(HashMap::new())),
             attachment_store: Arc::new(attachment_store),

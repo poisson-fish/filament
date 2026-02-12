@@ -3,11 +3,15 @@ mod tests {
     use super::super::{
         auth::{channel_key, hash_password},
         core::{
-            AppConfig, AppState, AuthContext, ChannelRecord, ConnectionControl, GuildRecord,
-            GuildVisibility, UserRecord, DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+            AppConfig, AppState, AuthContext, ChannelRecord, ConnectionControl, ConnectionPresence,
+            GuildRecord, GuildVisibility, UserRecord, DEFAULT_MAX_GATEWAY_EVENT_BYTES,
         },
         directory_contract::IpNetwork,
-        realtime::{add_subscription, broadcast_channel_event, create_message_internal},
+        gateway_events,
+        realtime::{
+            add_subscription, broadcast_channel_event, broadcast_guild_event, broadcast_user_event,
+            create_message_internal,
+        },
         router::build_router,
         types::AuthResponse,
     };
@@ -2162,6 +2166,144 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn channel_broadcast_targets_only_matching_subscription_key() {
+        let state = AppState::new(&AppConfig::default()).unwrap();
+        let (tx_target, mut rx_target) = mpsc::channel::<String>(2);
+        let (tx_other, mut rx_other) = mpsc::channel::<String>(2);
+        add_subscription(
+            &state,
+            Uuid::new_v4(),
+            channel_key("g", "c-target"),
+            tx_target,
+        )
+        .await;
+        add_subscription(
+            &state,
+            Uuid::new_v4(),
+            channel_key("g", "c-other"),
+            tx_other,
+        )
+        .await;
+
+        let event = gateway_events::subscribed("g", "c-target");
+        broadcast_channel_event(&state, &channel_key("g", "c-target"), &event).await;
+
+        let target_payload = rx_target.recv().await.expect("target payload");
+        let target_value: Value = serde_json::from_str(&target_payload).unwrap();
+        assert_eq!(target_value["d"]["channel_id"], "c-target");
+        let other_result = tokio::time::timeout(Duration::from_millis(25), rx_other.recv()).await;
+        assert!(
+            other_result.is_err(),
+            "unexpected event on non-target channel"
+        );
+    }
+
+    #[tokio::test]
+    async fn guild_broadcast_delivers_once_per_connection_and_skips_other_guilds() {
+        let state = AppState::new(&AppConfig::default()).unwrap();
+        let connection_id = Uuid::new_v4();
+        let (tx_target, mut rx_target) = mpsc::channel::<String>(4);
+        let (tx_other, mut rx_other) = mpsc::channel::<String>(4);
+        add_subscription(
+            &state,
+            connection_id,
+            channel_key("g-main", "c-1"),
+            tx_target.clone(),
+        )
+        .await;
+        add_subscription(
+            &state,
+            connection_id,
+            channel_key("g-main", "c-2"),
+            tx_target,
+        )
+        .await;
+        add_subscription(
+            &state,
+            Uuid::new_v4(),
+            channel_key("g-other", "c-1"),
+            tx_other,
+        )
+        .await;
+
+        let event = gateway_events::presence_update("g-main", UserId::new(), "online");
+        broadcast_guild_event(&state, "g-main", &event).await;
+
+        let first = rx_target.recv().await.expect("guild event");
+        let value: Value = serde_json::from_str(&first).unwrap();
+        assert_eq!(value["d"]["guild_id"], "g-main");
+        let duplicate = tokio::time::timeout(Duration::from_millis(25), rx_target.recv()).await;
+        assert!(
+            duplicate.is_err(),
+            "duplicate event delivered for same connection"
+        );
+        let other = tokio::time::timeout(Duration::from_millis(25), rx_other.recv()).await;
+        assert!(other.is_err(), "event delivered to unrelated guild");
+    }
+
+    #[tokio::test]
+    async fn user_broadcast_targets_only_requested_authenticated_user() {
+        let state = AppState::new(&AppConfig::default()).unwrap();
+        let user_a = UserId::new();
+        let user_b = UserId::new();
+        let connection_a1 = Uuid::new_v4();
+        let connection_a2 = Uuid::new_v4();
+        let connection_b = Uuid::new_v4();
+        let (tx_a1, mut rx_a1) = mpsc::channel::<String>(2);
+        let (tx_a2, mut rx_a2) = mpsc::channel::<String>(2);
+        let (tx_b, mut rx_b) = mpsc::channel::<String>(2);
+
+        state
+            .connection_senders
+            .write()
+            .await
+            .insert(connection_a1, tx_a1);
+        state
+            .connection_senders
+            .write()
+            .await
+            .insert(connection_a2, tx_a2);
+        state
+            .connection_senders
+            .write()
+            .await
+            .insert(connection_b, tx_b);
+        state.connection_presence.write().await.insert(
+            connection_a1,
+            ConnectionPresence {
+                user_id: user_a,
+                guild_ids: std::collections::HashSet::new(),
+            },
+        );
+        state.connection_presence.write().await.insert(
+            connection_a2,
+            ConnectionPresence {
+                user_id: user_a,
+                guild_ids: std::collections::HashSet::new(),
+            },
+        );
+        state.connection_presence.write().await.insert(
+            connection_b,
+            ConnectionPresence {
+                user_id: user_b,
+                guild_ids: std::collections::HashSet::new(),
+            },
+        );
+
+        let event = gateway_events::ready(user_a);
+        broadcast_user_event(&state, user_a, &event).await;
+
+        let payload_a1 = rx_a1.recv().await.expect("first session");
+        let payload_a2 = rx_a2.recv().await.expect("second session");
+        let value_a1: Value = serde_json::from_str(&payload_a1).unwrap();
+        let value_a2: Value = serde_json::from_str(&payload_a2).unwrap();
+        assert_eq!(value_a1["d"]["user_id"], user_a.to_string());
+        assert_eq!(value_a2["d"]["user_id"], user_a.to_string());
+        let other = tokio::time::timeout(Duration::from_millis(25), rx_b.recv()).await;
+        assert!(other.is_err(), "user-scoped event leaked to another user");
+    }
+
+    #[tokio::test]
     async fn slow_consumer_signal_is_sent_when_outbound_queue_is_full() {
         let state = AppState::new(&AppConfig {
             gateway_outbound_queue: 1,
@@ -2186,7 +2328,8 @@ mod tests {
             .insert(connection_id, tx.clone());
 
         tx.try_send(String::from("first")).unwrap();
-        broadcast_channel_event(&state, &channel_key("g", "c"), String::from("second")).await;
+        let event = gateway_events::subscribed("g", "c");
+        broadcast_channel_event(&state, &channel_key("g", "c"), &event).await;
 
         assert_eq!(*control_rx.borrow(), ConnectionControl::Close);
     }
