@@ -3,10 +3,13 @@ import {
   type ChannelId,
   type GuildId,
   type MessageRecord,
+  guildIdFromInput,
   messageFromResponse,
+  userIdFromInput,
 } from "../domain/chat";
 
 const MAX_GATEWAY_EVENT_BYTES = 64 * 1024;
+const MAX_PRESENCE_SYNC_USER_IDS = 1024;
 const EVENT_TYPE_PATTERN = /^[a-z0-9_.]{1,64}$/;
 
 type GatewayEventEnvelope = {
@@ -39,6 +42,81 @@ interface GatewayHandlers {
 interface GatewayClient {
   updateSubscription: (guildId: GuildId, channelId: ChannelId) => void;
   close: () => void;
+}
+
+function parsePresenceSyncPayload(payload: unknown): PresenceSyncPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (typeof value.guild_id !== "string" || !Array.isArray(value.user_ids)) {
+    return null;
+  }
+  if (value.user_ids.length > MAX_PRESENCE_SYNC_USER_IDS) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+  } catch {
+    return null;
+  }
+
+  const seen = new Set<string>();
+  const userIds: string[] = [];
+  for (const entry of value.user_ids) {
+    if (typeof entry !== "string") {
+      return null;
+    }
+
+    let userId: string;
+    try {
+      userId = userIdFromInput(entry);
+    } catch {
+      return null;
+    }
+
+    if (seen.has(userId)) {
+      continue;
+    }
+    seen.add(userId);
+    userIds.push(userId);
+  }
+
+  return {
+    guildId,
+    userIds,
+  };
+}
+
+function parsePresenceUpdatePayload(payload: unknown): PresenceUpdatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.user_id !== "string" ||
+    (value.status !== "online" && value.status !== "offline")
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let userId: string;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    userId,
+    status: value.status,
+  };
 }
 
 function normalizeGatewayBaseUrl(): string {
@@ -154,38 +232,20 @@ export function connectGateway(
     }
 
     if (envelope.t === "presence_sync") {
-      const payload = envelope.d as { guild_id?: unknown; user_ids?: unknown };
-      if (typeof payload?.guild_id !== "string" || !Array.isArray(payload.user_ids)) {
+      const payload = parsePresenceSyncPayload(envelope.d);
+      if (!payload) {
         return;
       }
-      if (!payload.user_ids.every((entry) => typeof entry === "string")) {
-        return;
-      }
-      handlers.onPresenceSync?.({
-        guildId: payload.guild_id as GuildId,
-        userIds: payload.user_ids,
-      });
+      handlers.onPresenceSync?.(payload);
       return;
     }
 
     if (envelope.t === "presence_update") {
-      const payload = envelope.d as {
-        guild_id?: unknown;
-        user_id?: unknown;
-        status?: unknown;
-      };
-      if (
-        typeof payload?.guild_id !== "string" ||
-        typeof payload?.user_id !== "string" ||
-        (payload.status !== "online" && payload.status !== "offline")
-      ) {
+      const payload = parsePresenceUpdatePayload(envelope.d);
+      if (!payload) {
         return;
       }
-      handlers.onPresenceUpdate?.({
-        guildId: payload.guild_id as GuildId,
-        userId: payload.user_id,
-        status: payload.status,
-      });
+      handlers.onPresenceUpdate?.(payload);
     }
   };
 

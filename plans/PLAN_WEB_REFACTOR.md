@@ -429,21 +429,34 @@ Enforce response/body caps before full payload allocation so hostile servers can
 Harden gateway presence/message parsing to enforce domain invariants and bounded payload fanout.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Update `apps/filament-client-web/src/lib/gateway.ts` to validate IDs through domain constructors (`guildIdFromInput`, `userIdFromInput`) instead of unchecked branded casts.
-- [ ] Add explicit bounded caps for presence payloads (for example max `user_ids` count) and reject oversized lists.
-- [ ] Normalize/dedupe accepted presence user IDs before dispatch.
-- [ ] Keep version/event-type envelope constraints intact (`{ v, t, d }`, pattern checks, max event bytes).
-- [ ] Ensure invalid/oversized gateway payloads fail closed without mutating UI state.
+- [x] Update `apps/filament-client-web/src/lib/gateway.ts` to validate IDs through domain constructors (`guildIdFromInput`, `userIdFromInput`) instead of unchecked branded casts.
+- [x] Add explicit bounded caps for presence payloads (for example max `user_ids` count) and reject oversized lists.
+- [x] Normalize/dedupe accepted presence user IDs before dispatch.
+- [x] Keep version/event-type envelope constraints intact (`{ v, t, d }`, pattern checks, max event bytes).
+- [x] Ensure invalid/oversized gateway payloads fail closed without mutating UI state.
 
 ### Tests
-- [ ] Expand `apps/filament-client-web/tests/gateway.test.ts` for:
+- [x] Expand `apps/filament-client-web/tests/gateway.test.ts` for:
   - invalid ULID IDs in presence payloads
   - oversized `presence_sync.user_ids` rejection
   - dedupe behavior for repeated presence IDs
   - existing valid payload compatibility
+
+### Refactor Notes
+- Updated `apps/filament-client-web/src/lib/gateway.ts` to parse `presence_sync` and `presence_update` via dedicated boundary helpers that validate IDs with `guildIdFromInput(...)` and `userIdFromInput(...)` instead of unchecked casts.
+- Added explicit `presence_sync.user_ids` fanout cap (`1024`) and fail-closed rejection for oversized lists before dispatch to app-shell handlers.
+- Added deterministic normalization for `presence_sync.user_ids` by validating each ID and deduplicating while preserving first-seen order.
+- Preserved existing gateway envelope constraints (`{ v, t, d }`, protocol version, event-type pattern, max event bytes) and existing `ready` / `message_create` behavior.
+- Expanded `apps/filament-client-web/tests/gateway.test.ts` with websocket-level coverage for invalid ULID payload rejection, oversized presence list rejection, dedupe behavior, and valid event compatibility checks.
+- Metrics after Phase 10 (2026-02-12):
+  - `AppShellPage.tsx` line count: `1383`
+  - Test command: `pnpm --prefix apps/filament-client-web test`
+  - Pass status: `41` test files passed, `171` tests passed
+  - Typecheck command: `pnpm --prefix apps/filament-client-web typecheck`
+  - Typecheck status: pass
 
 ### Exit Criteria
 - Gateway handlers only receive bounded, domain-valid IDs from parsed events.
