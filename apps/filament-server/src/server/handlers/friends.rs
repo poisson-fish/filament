@@ -12,6 +12,8 @@ use crate::server::{
     core::{AppState, FriendshipRequestRecord},
     db::ensure_db_schema,
     errors::AuthFailure,
+    gateway_events,
+    realtime::broadcast_user_event,
     types::{
         CreateFriendRequest, FriendListResponse, FriendPath, FriendRecordResponse,
         FriendRequestPath, FriendshipRequestCreateResponse, FriendshipRequestListResponse,
@@ -29,6 +31,7 @@ pub(crate) fn canonical_friend_pair(user_a: UserId, user_b: UserId) -> (String, 
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn create_friend_request(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -46,17 +49,22 @@ pub(crate) async fn create_friend_request(
     let created_at_unix = now_unix();
     let sender_id = auth.user_id.to_string();
     let recipient_id = recipient_user_id.to_string();
+    let sender_username = auth.username.clone();
+    let recipient_username: String;
     let (pair_a, pair_b) = canonical_friend_pair(auth.user_id, recipient_user_id);
 
     if let Some(pool) = &state.db_pool {
-        let recipient_exists = sqlx::query("SELECT 1 FROM users WHERE user_id = $1")
+        let recipient_exists = sqlx::query("SELECT username FROM users WHERE user_id = $1")
             .bind(&recipient_id)
             .fetch_optional(pool)
             .await
             .map_err(|_| AuthFailure::Internal)?;
-        if recipient_exists.is_none() {
+        let Some(recipient_row) = recipient_exists else {
             return Err(AuthFailure::InvalidRequest);
-        }
+        };
+        recipient_username = recipient_row
+            .try_get("username")
+            .map_err(|_| AuthFailure::Internal)?;
 
         let existing_friendship =
             sqlx::query("SELECT 1 FROM friendships WHERE user_a_id = $1 AND user_b_id = $2")
@@ -97,9 +105,10 @@ pub(crate) async fn create_friend_request(
         .map_err(|_| AuthFailure::Internal)?;
     } else {
         let users = state.user_ids.read().await;
-        if !users.contains_key(&recipient_id) {
+        let Some(username) = users.get(&recipient_id) else {
             return Err(AuthFailure::InvalidRequest);
-        }
+        };
+        recipient_username = username.clone();
         drop(users);
 
         let friendships = state.friendships.read().await;
@@ -130,12 +139,24 @@ pub(crate) async fn create_friend_request(
         );
     }
 
-    Ok(Json(FriendshipRequestCreateResponse {
+    let response = FriendshipRequestCreateResponse {
         request_id,
         sender_user_id: sender_id,
         recipient_user_id: recipient_id,
         created_at_unix,
-    }))
+    };
+    let event = gateway_events::friend_request_create(
+        &response.request_id,
+        &response.sender_user_id,
+        &sender_username,
+        &response.recipient_user_id,
+        &recipient_username,
+        response.created_at_unix,
+    );
+    broadcast_user_event(&state, auth.user_id, &event).await;
+    broadcast_user_event(&state, recipient_user_id, &event).await;
+
+    Ok(Json(response))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -264,6 +285,7 @@ pub(crate) async fn list_friend_requests(
     Ok(Json(FriendshipRequestListResponse { incoming, outgoing }))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn accept_friend_request(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -274,9 +296,12 @@ pub(crate) async fn accept_friend_request(
 
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query(
-            "SELECT sender_user_id, recipient_user_id
-             FROM friendship_requests
-             WHERE request_id = $1",
+            "SELECT fr.sender_user_id, su.username AS sender_username,
+                    fr.recipient_user_id, ru.username AS recipient_username
+             FROM friendship_requests fr
+             JOIN users su ON su.user_id = fr.sender_user_id
+             JOIN users ru ON ru.user_id = fr.recipient_user_id
+             WHERE fr.request_id = $1",
         )
         .bind(&path.request_id)
         .fetch_optional(pool)
@@ -286,14 +311,21 @@ pub(crate) async fn accept_friend_request(
         let sender_user_id: String = row
             .try_get("sender_user_id")
             .map_err(|_| AuthFailure::Internal)?;
+        let sender_username: String = row
+            .try_get("sender_username")
+            .map_err(|_| AuthFailure::Internal)?;
         let recipient_user_id: String = row
             .try_get("recipient_user_id")
+            .map_err(|_| AuthFailure::Internal)?;
+        let recipient_username: String = row
+            .try_get("recipient_username")
             .map_err(|_| AuthFailure::Internal)?;
         if recipient_user_id != auth.user_id.to_string() {
             return Err(AuthFailure::NotFound);
         }
         let sender_user_id = UserId::try_from(sender_user_id).map_err(|_| AuthFailure::Internal)?;
         let (pair_a, pair_b) = canonical_friend_pair(sender_user_id, auth.user_id);
+        let friendship_created_at_unix = now_unix();
         let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
         sqlx::query(
             "INSERT INTO friendships (user_a_id, user_b_id, created_at_unix)
@@ -302,7 +334,7 @@ pub(crate) async fn accept_friend_request(
         )
         .bind(&pair_a)
         .bind(&pair_b)
-        .bind(now_unix())
+        .bind(friendship_created_at_unix)
         .execute(&mut *tx)
         .await
         .map_err(|_| AuthFailure::Internal)?;
@@ -312,6 +344,29 @@ pub(crate) async fn accept_friend_request(
             .await
             .map_err(|_| AuthFailure::Internal)?;
         tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+
+        let updated_at_unix = now_unix();
+        let recipient_event = gateway_events::friend_request_update(
+            &path.request_id,
+            &auth.user_id.to_string(),
+            &sender_user_id.to_string(),
+            &sender_username,
+            friendship_created_at_unix,
+            updated_at_unix,
+            Some(auth.user_id),
+        );
+        broadcast_user_event(&state, auth.user_id, &recipient_event).await;
+        let sender_event = gateway_events::friend_request_update(
+            &path.request_id,
+            &sender_user_id.to_string(),
+            &auth.user_id.to_string(),
+            &recipient_username,
+            friendship_created_at_unix,
+            updated_at_unix,
+            Some(auth.user_id),
+        );
+        broadcast_user_event(&state, sender_user_id, &sender_event).await;
+
         return Ok(Json(ModerationResponse { accepted: true }));
     }
 
@@ -326,7 +381,41 @@ pub(crate) async fn accept_friend_request(
     let (pair_a, pair_b) = canonical_friend_pair(request.sender_user_id, request.recipient_user_id);
     requests.remove(&path.request_id);
     drop(requests);
+    let sender_user_id = request.sender_user_id;
+    let recipient_user_id = request.recipient_user_id;
+    let user_ids = state.user_ids.read().await;
+    let sender_username = user_ids
+        .get(&sender_user_id.to_string())
+        .cloned()
+        .ok_or(AuthFailure::Internal)?;
+    let recipient_username = user_ids
+        .get(&recipient_user_id.to_string())
+        .cloned()
+        .ok_or(AuthFailure::Internal)?;
+    drop(user_ids);
+    let friendship_created_at_unix = now_unix();
     state.friendships.write().await.insert((pair_a, pair_b));
+    let updated_at_unix = now_unix();
+    let recipient_event = gateway_events::friend_request_update(
+        &path.request_id,
+        &recipient_user_id.to_string(),
+        &sender_user_id.to_string(),
+        &sender_username,
+        friendship_created_at_unix,
+        updated_at_unix,
+        Some(auth.user_id),
+    );
+    broadcast_user_event(&state, recipient_user_id, &recipient_event).await;
+    let sender_event = gateway_events::friend_request_update(
+        &path.request_id,
+        &sender_user_id.to_string(),
+        &recipient_user_id.to_string(),
+        &recipient_username,
+        friendship_created_at_unix,
+        updated_at_unix,
+        Some(auth.user_id),
+    );
+    broadcast_user_event(&state, sender_user_id, &sender_event).await;
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
@@ -365,6 +454,13 @@ pub(crate) async fn delete_friend_request(
             .execute(pool)
             .await
             .map_err(|_| AuthFailure::Internal)?;
+        let sender_user_id = UserId::try_from(sender_user_id).map_err(|_| AuthFailure::Internal)?;
+        let recipient_user_id =
+            UserId::try_from(recipient_user_id).map_err(|_| AuthFailure::Internal)?;
+        let event =
+            gateway_events::friend_request_delete(&path.request_id, now_unix(), Some(auth.user_id));
+        broadcast_user_event(&state, sender_user_id, &event).await;
+        broadcast_user_event(&state, recipient_user_id, &event).await;
         return Ok(StatusCode::NO_CONTENT);
     }
 
@@ -376,7 +472,13 @@ pub(crate) async fn delete_friend_request(
     if request.sender_user_id != auth.user_id && request.recipient_user_id != auth.user_id {
         return Err(AuthFailure::NotFound);
     }
+    let sender_user_id = request.sender_user_id;
+    let recipient_user_id = request.recipient_user_id;
     requests.remove(&path.request_id);
+    let event =
+        gateway_events::friend_request_delete(&path.request_id, now_unix(), Some(auth.user_id));
+    broadcast_user_event(&state, sender_user_id, &event).await;
+    broadcast_user_event(&state, recipient_user_id, &event).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -457,17 +559,36 @@ pub(crate) async fn remove_friend(
         return Err(AuthFailure::InvalidRequest);
     }
     let (pair_a, pair_b) = canonical_friend_pair(auth.user_id, friend_user_id);
+    let removed = if let Some(pool) = &state.db_pool {
+        let delete_result =
+            sqlx::query("DELETE FROM friendships WHERE user_a_id = $1 AND user_b_id = $2")
+                .bind(&pair_a)
+                .bind(&pair_b)
+                .execute(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        delete_result.rows_affected() > 0
+    } else {
+        state.friendships.write().await.remove(&(pair_a, pair_b))
+    };
 
-    if let Some(pool) = &state.db_pool {
-        sqlx::query("DELETE FROM friendships WHERE user_a_id = $1 AND user_b_id = $2")
-            .bind(&pair_a)
-            .bind(&pair_b)
-            .execute(pool)
-            .await
-            .map_err(|_| AuthFailure::Internal)?;
-        return Ok(StatusCode::NO_CONTENT);
+    if removed {
+        let removed_at_unix = now_unix();
+        let actor_event = gateway_events::friend_remove(
+            &auth.user_id.to_string(),
+            &friend_user_id.to_string(),
+            removed_at_unix,
+            Some(auth.user_id),
+        );
+        broadcast_user_event(&state, auth.user_id, &actor_event).await;
+        let friend_event = gateway_events::friend_remove(
+            &friend_user_id.to_string(),
+            &auth.user_id.to_string(),
+            removed_at_unix,
+            Some(auth.user_id),
+        );
+        broadcast_user_event(&state, friend_user_id, &friend_event).await;
     }
 
-    state.friendships.write().await.remove(&(pair_a, pair_b));
     Ok(StatusCode::NO_CONTENT)
 }

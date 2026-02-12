@@ -281,27 +281,27 @@ All events use the versioned envelope:
 
 ### User-Scoped Events
 
-#### `profile_update` (planned)
+#### `profile_update`
 - Scope: user (plus permitted observers)
 - Visibility:
   - user-scoped payload to acting user
-  - observer payload to viewers permitted to see profile
+  - observer payload to friendship participants connected on gateway
 - Minimum payload:
   - `user_id`
   - `updated_fields`
   - `updated_at_unix`
 
-#### `profile_avatar_update` (planned)
+#### `profile_avatar_update`
 - Scope: user (plus permitted observers)
 - Visibility:
   - user-scoped payload to acting user
-  - observer payload to viewers permitted to see avatar
+  - observer payload to friendship participants connected on gateway
 - Minimum payload:
   - `user_id`
-  - `avatar_version` or `avatar_url`
+  - `avatar_version`
   - `updated_at_unix`
 
-#### `friend_request_create` (planned)
+#### `friend_request_create`
 - Scope: user
 - Visibility: sender + recipient only
 - Minimum payload:
@@ -310,7 +310,7 @@ All events use the versioned envelope:
   - `recipient_user_id`
   - `created_at_unix`
 
-#### `friend_request_update` (planned)
+#### `friend_request_update`
 - Scope: user
 - Visibility: sender + recipient only
 - Minimum payload:
@@ -320,7 +320,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `friend_request_delete` (planned)
+#### `friend_request_delete`
 - Scope: user
 - Visibility: sender + recipient only
 - Minimum payload:
@@ -329,7 +329,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `friend_remove` (planned)
+#### `friend_remove`
 - Scope: user
 - Visibility: both friendship participants only
 - Minimum payload:

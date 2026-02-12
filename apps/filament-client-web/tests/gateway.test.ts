@@ -103,6 +103,12 @@ function createOpenGateway() {
   const onWorkspaceRoleAssignmentRemove = vi.fn();
   const onWorkspaceChannelOverrideUpdate = vi.fn();
   const onWorkspaceIpBanSync = vi.fn();
+  const onProfileUpdate = vi.fn();
+  const onProfileAvatarUpdate = vi.fn();
+  const onFriendRequestCreate = vi.fn();
+  const onFriendRequestUpdate = vi.fn();
+  const onFriendRequestDelete = vi.fn();
+  const onFriendRemove = vi.fn();
   const onPresenceSync = vi.fn();
   const onPresenceUpdate = vi.fn();
   const onOpenStateChange = vi.fn();
@@ -131,6 +137,12 @@ function createOpenGateway() {
       onWorkspaceRoleAssignmentRemove,
       onWorkspaceChannelOverrideUpdate,
       onWorkspaceIpBanSync,
+      onProfileUpdate,
+      onProfileAvatarUpdate,
+      onFriendRequestCreate,
+      onFriendRequestUpdate,
+      onFriendRequestDelete,
+      onFriendRemove,
       onPresenceSync,
       onPresenceUpdate,
       onOpenStateChange,
@@ -165,6 +177,12 @@ function createOpenGateway() {
     onWorkspaceRoleAssignmentRemove,
     onWorkspaceChannelOverrideUpdate,
     onWorkspaceIpBanSync,
+    onProfileUpdate,
+    onProfileAvatarUpdate,
+    onFriendRequestCreate,
+    onFriendRequestUpdate,
+    onFriendRequestDelete,
+    onFriendRemove,
     onPresenceSync,
     onPresenceUpdate,
     onOpenStateChange,
@@ -893,6 +911,142 @@ describe("gateway payload parsing", () => {
       guildId: DEFAULT_GUILD_ID,
       userIds: [validUserId],
     });
+  });
+
+  it("parses profile and friendship events with strict payload validation", () => {
+    const {
+      socket,
+      onProfileUpdate,
+      onProfileAvatarUpdate,
+      onFriendRequestCreate,
+      onFriendRequestUpdate,
+      onFriendRequestDelete,
+      onFriendRemove,
+    } = createOpenGateway();
+    const alice = ulidFromIndex(7);
+    const bob = ulidFromIndex(9);
+
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "profile_update",
+        d: {
+          user_id: alice,
+          updated_fields: {
+            username: "alice-updated",
+            about_markdown: "about",
+            about_markdown_tokens: [{ type: "text", text: "about" }],
+          },
+          updated_at_unix: 3,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "profile_avatar_update",
+        d: {
+          user_id: alice,
+          avatar_version: 5,
+          updated_at_unix: 4,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "friend_request_create",
+        d: {
+          request_id: ulidFromIndex(10),
+          sender_user_id: alice,
+          sender_username: "alice",
+          recipient_user_id: bob,
+          recipient_username: "bob",
+          created_at_unix: 5,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "friend_request_update",
+        d: {
+          request_id: ulidFromIndex(10),
+          state: "accepted",
+          user_id: alice,
+          friend_user_id: bob,
+          friend_username: "bob",
+          friendship_created_at_unix: 6,
+          updated_at_unix: 7,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "friend_request_delete",
+        d: {
+          request_id: ulidFromIndex(11),
+          deleted_at_unix: 8,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "friend_remove",
+        d: {
+          user_id: alice,
+          friend_user_id: bob,
+          removed_at_unix: 9,
+        },
+      }),
+    );
+
+    expect(onProfileUpdate).toHaveBeenCalledTimes(1);
+    expect(onProfileAvatarUpdate).toHaveBeenCalledTimes(1);
+    expect(onFriendRequestCreate).toHaveBeenCalledTimes(1);
+    expect(onFriendRequestUpdate).toHaveBeenCalledTimes(1);
+    expect(onFriendRequestDelete).toHaveBeenCalledTimes(1);
+    expect(onFriendRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed profile and friendship payloads", () => {
+    const { socket, onProfileUpdate, onFriendRequestUpdate } = createOpenGateway();
+    const alice = ulidFromIndex(12);
+    const bob = ulidFromIndex(13);
+
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "profile_update",
+        d: {
+          user_id: alice,
+          updated_fields: {
+            about_markdown_tokens: [{ type: "text", text: "missing markdown text" }],
+          },
+          updated_at_unix: 3,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "friend_request_update",
+        d: {
+          request_id: ulidFromIndex(14),
+          state: "accepted",
+          user_id: alice,
+          friend_user_id: bob,
+          friend_username: "",
+          friendship_created_at_unix: 6,
+          updated_at_unix: 7,
+        },
+      }),
+    );
+
+    expect(onProfileUpdate).not.toHaveBeenCalled();
+    expect(onFriendRequestUpdate).not.toHaveBeenCalled();
   });
 
   it("sends subscribe events on open and updateSubscription", () => {

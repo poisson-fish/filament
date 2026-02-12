@@ -94,7 +94,7 @@ function idFromInput<
   return input as T;
 }
 
-function friendRequestIdFromInput(input: string): FriendRequestId {
+export function friendRequestIdFromInput(input: string): FriendRequestId {
   return idFromInput<FriendRequestId>(input, "Friend request ID");
 }
 

@@ -632,6 +632,12 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setWorkspaces: workspaceChannelState.setWorkspaces,
     setMessages: messageState.setMessages,
     setReactionState: messageState.setReactionState,
+    setResolvedUsernames: profileState.setResolvedUsernames,
+    setAvatarVersionByUserId: profileState.setAvatarVersionByUserId,
+    setProfileDraftUsername: profileState.setProfileDraftUsername,
+    setProfileDraftAbout: profileState.setProfileDraftAbout,
+    setFriends: friendshipsState.setFriends,
+    setFriendRequests: friendshipsState.setFriendRequests,
     isMessageListNearBottom: messageListController.isMessageListNearBottom,
     scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
     onWorkspacePermissionsChanged: (guildId) => {

@@ -840,6 +840,250 @@ async fn websocket_subscription_receives_workspace_update_from_rest() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn websocket_profile_and_friendship_events_sync_across_sessions() {
+    let app = test_app();
+    let app_http = app.clone();
+
+    let alice = register_and_login_as(&app_http, "phase5_alice", "203.0.113.120").await;
+    let bob = register_and_login_as(&app_http, "phase5_bob", "203.0.113.121").await;
+    let outsider = register_and_login_as(&app_http, "phase5_outsider", "203.0.113.122").await;
+    let bob_id = user_id_from_me(&app_http, &bob, "203.0.113.121").await;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener addr should be readable");
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("server should run without errors");
+    });
+
+    let build_ws_request = |token: &str, ip: &'static str| {
+        let ws_url = format!("ws://{addr}/gateway/ws?access_token={token}");
+        let mut request = ws_url
+            .into_client_request()
+            .expect("websocket request should build");
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", http::HeaderValue::from_static(ip));
+        request
+    };
+
+    let (mut alice_socket_a, _response) =
+        connect_async(build_ws_request(&alice.access_token, "203.0.113.120"))
+            .await
+            .expect("alice socket a should connect");
+    let (mut alice_socket_b, _response) =
+        connect_async(build_ws_request(&alice.access_token, "203.0.113.123"))
+            .await
+            .expect("alice socket b should connect");
+    let (mut bob_socket, _response) =
+        connect_async(build_ws_request(&bob.access_token, "203.0.113.121"))
+            .await
+            .expect("bob socket should connect");
+    let (mut outsider_socket, _response) =
+        connect_async(build_ws_request(&outsider.access_token, "203.0.113.122"))
+            .await
+            .expect("outsider socket should connect");
+
+    let _ = next_event_of_type(&mut alice_socket_a, "ready").await;
+    let _ = next_event_of_type(&mut alice_socket_b, "ready").await;
+    let _ = next_event_of_type(&mut bob_socket, "ready").await;
+    let _ = next_event_of_type(&mut outsider_socket, "ready").await;
+
+    let update_profile = Request::builder()
+        .method("PATCH")
+        .uri("/users/me/profile")
+        .header("authorization", format!("Bearer {}", alice.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.120")
+        .body(Body::from(
+            json!({"username":"phase5_alice_renamed","about_markdown":"phase5-about"}).to_string(),
+        ))
+        .expect("profile update request should build");
+    let update_profile_response = app_http
+        .clone()
+        .oneshot(update_profile)
+        .await
+        .expect("profile update request should execute");
+    assert_eq!(update_profile_response.status(), StatusCode::OK);
+
+    let profile_update_a = next_event_of_type(&mut alice_socket_a, "profile_update").await;
+    let profile_update_b = next_event_of_type(&mut alice_socket_b, "profile_update").await;
+    assert_eq!(
+        profile_update_a["d"]["updated_fields"]["username"],
+        Value::String("phase5_alice_renamed".to_owned())
+    );
+    assert_eq!(profile_update_b["d"], profile_update_a["d"]);
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            next_event_of_type(&mut bob_socket, "profile_update"),
+        )
+        .await
+        .is_err(),
+        "non-friend should not receive profile update before friendship"
+    );
+
+    let create_request = Request::builder()
+        .method("POST")
+        .uri("/friends/requests")
+        .header("authorization", format!("Bearer {}", alice.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.120")
+        .body(Body::from(json!({"recipient_user_id":bob_id}).to_string()))
+        .expect("friend request create should build");
+    let create_response = app_http
+        .clone()
+        .oneshot(create_request)
+        .await
+        .expect("friend request create should execute");
+    assert_eq!(create_response.status(), StatusCode::OK);
+    let create_json: Value = parse_json_body(create_response).await;
+    let request_id = create_json["request_id"]
+        .as_str()
+        .expect("request id should exist")
+        .to_owned();
+
+    let friend_create_alice =
+        next_event_of_type(&mut alice_socket_a, "friend_request_create").await;
+    let friend_create_bob = next_event_of_type(&mut bob_socket, "friend_request_create").await;
+    assert_eq!(
+        friend_create_alice["d"]["request_id"],
+        Value::String(request_id.clone())
+    );
+    assert_eq!(
+        friend_create_bob["d"]["request_id"],
+        Value::String(request_id.clone())
+    );
+
+    let accept_request = Request::builder()
+        .method("POST")
+        .uri(format!("/friends/requests/{request_id}/accept"))
+        .header("authorization", format!("Bearer {}", bob.access_token))
+        .header("x-forwarded-for", "203.0.113.121")
+        .body(Body::empty())
+        .expect("friend request accept should build");
+    let accept_response = app_http
+        .clone()
+        .oneshot(accept_request)
+        .await
+        .expect("friend request accept should execute");
+    assert_eq!(accept_response.status(), StatusCode::OK);
+
+    let friend_update_alice =
+        next_event_of_type(&mut alice_socket_a, "friend_request_update").await;
+    let friend_update_bob = next_event_of_type(&mut bob_socket, "friend_request_update").await;
+    assert_eq!(
+        friend_update_alice["d"]["state"],
+        Value::String("accepted".to_owned())
+    );
+    assert_eq!(
+        friend_update_bob["d"]["state"],
+        Value::String("accepted".to_owned())
+    );
+
+    let second_profile_update = Request::builder()
+        .method("PATCH")
+        .uri("/users/me/profile")
+        .header("authorization", format!("Bearer {}", alice.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.120")
+        .body(Body::from(
+            json!({"about_markdown":"phase5-about-updated"}).to_string(),
+        ))
+        .expect("second profile update request should build");
+    let second_profile_response = app_http
+        .clone()
+        .oneshot(second_profile_update)
+        .await
+        .expect("second profile update should execute");
+    assert_eq!(second_profile_response.status(), StatusCode::OK);
+
+    let friend_profile_update_bob = next_event_of_type(&mut bob_socket, "profile_update").await;
+    assert_eq!(
+        friend_profile_update_bob["d"]["updated_fields"]["about_markdown"],
+        Value::String("phase5-about-updated".to_owned())
+    );
+
+    let upload_avatar = Request::builder()
+        .method("POST")
+        .uri("/users/me/profile/avatar")
+        .header("authorization", format!("Bearer {}", alice.access_token))
+        .header("content-type", "image/png")
+        .header("x-forwarded-for", "203.0.113.120")
+        .body(Body::from(vec![137, 80, 78, 71, 13, 10, 26, 10]))
+        .expect("avatar upload should build");
+    let upload_avatar_response = app_http
+        .clone()
+        .oneshot(upload_avatar)
+        .await
+        .expect("avatar upload should execute");
+    assert_eq!(upload_avatar_response.status(), StatusCode::OK);
+
+    let avatar_update_alice =
+        next_event_of_type(&mut alice_socket_b, "profile_avatar_update").await;
+    let avatar_update_bob = next_event_of_type(&mut bob_socket, "profile_avatar_update").await;
+    assert_eq!(
+        avatar_update_alice["d"]["avatar_version"].as_i64(),
+        avatar_update_bob["d"]["avatar_version"].as_i64()
+    );
+
+    let remove_friend = Request::builder()
+        .method("DELETE")
+        .uri(format!("/friends/{bob_id}"))
+        .header("authorization", format!("Bearer {}", alice.access_token))
+        .header("x-forwarded-for", "203.0.113.120")
+        .body(Body::empty())
+        .expect("remove friend request should build");
+    let remove_friend_response = app_http
+        .clone()
+        .oneshot(remove_friend)
+        .await
+        .expect("remove friend request should execute");
+    assert_eq!(remove_friend_response.status(), StatusCode::NO_CONTENT);
+
+    let friend_remove_alice = next_event_of_type(&mut alice_socket_a, "friend_remove").await;
+    let friend_remove_bob = next_event_of_type(&mut bob_socket, "friend_remove").await;
+    assert_eq!(
+        friend_remove_alice["d"]["friend_user_id"],
+        friend_remove_bob["d"]["user_id"]
+    );
+
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            next_event_of_type(&mut outsider_socket, "friend_request_create"),
+        )
+        .await
+        .is_err(),
+        "outsider should not receive friendship events"
+    );
+
+    alice_socket_a
+        .close(None)
+        .await
+        .expect("alice socket a close should succeed");
+    alice_socket_b
+        .close(None)
+        .await
+        .expect("alice socket b close should succeed");
+    bob_socket
+        .close(None)
+        .await
+        .expect("bob socket close should succeed");
+    outsider_socket
+        .close(None)
+        .await
+        .expect("outsider socket close should succeed");
+    server.abort();
+}
+
+#[tokio::test]
 async fn websocket_subscription_receives_workspace_membership_transitions() {
     let app = test_app();
 

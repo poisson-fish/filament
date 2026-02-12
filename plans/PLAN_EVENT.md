@@ -145,12 +145,12 @@ Freeze event contracts and explicit endpoint-to-event mapping before implementat
 | `DELETE /guilds/{guild_id}/roles/{role_id}/members/{user_id}` | `workspace_role_assignment_remove` | guild | Planned (Phase 4) |
 | `POST /guilds/{guild_id}/channels/{channel_id}/overrides/{role}` | `workspace_channel_override_update` | guild | Planned (Phase 4) |
 | `GET/POST/DELETE /guilds/{guild_id}/ip-bans...` | `workspace_ip_ban_sync` | guild | Planned (Phase 4, redacted payload only) |
-| `PATCH /users/me/profile` | `profile_update` | user | Planned (Phase 5) |
-| `POST /users/me/profile/avatar` | `profile_avatar_update` | user | Planned (Phase 5) |
-| `POST /friends/requests` | `friend_request_create` | user | Planned (Phase 5) |
-| `POST /friends/requests/{request_id}/accept` | `friend_request_update` | user | Planned (Phase 5) |
-| `DELETE /friends/requests/{request_id}` | `friend_request_delete` | user | Planned (Phase 5) |
-| `DELETE /friends/{friend_user_id}` | `friend_remove` | user | Planned (Phase 5) |
+| `PATCH /users/me/profile` | `profile_update` | user | Implemented |
+| `POST /users/me/profile/avatar` | `profile_avatar_update` | user | Implemented |
+| `POST /friends/requests` | `friend_request_create` | user | Implemented |
+| `POST /friends/requests/{request_id}/accept` | `friend_request_update` | user | Implemented |
+| `DELETE /friends/requests/{request_id}` | `friend_request_delete` | user | Implemented |
+| `DELETE /friends/{friend_user_id}` | `friend_remove` | user | Implemented |
 
 ### Refactor Notes
 - Added `docs/GATEWAY_EVENTS.md` as the contract source for:
@@ -337,13 +337,34 @@ Realtime sync for permission graph changes that alter visible capabilities.
 Keep client profile/social panels synchronized across sessions/devices.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Emit `profile_update` and `profile_avatar_update` to the acting user and relevant observers where permitted.
-- [ ] Emit friendship request/friendship state events as user-scoped updates.
-- [ ] Add web handlers to update profile cache, avatar versions, and friendship panel state incrementally.
-- [ ] Add tests for multi-session profile update propagation and friend request lifecycle sync.
+- [x] Emit `profile_update` and `profile_avatar_update` to the acting user and relevant observers where permitted.
+- [x] Emit friendship request/friendship state events as user-scoped updates.
+- [x] Add web handlers to update profile cache, avatar versions, and friendship panel state incrementally.
+- [x] Add tests for multi-session profile update propagation and friend request lifecycle sync.
+
+### Refactor Notes
+- Expanded typed gateway contracts in `apps/filament-server/src/server/gateway_events.rs` for:
+  - `profile_update`
+  - `profile_avatar_update`
+  - `friend_request_create`
+  - `friend_request_update`
+  - `friend_request_delete`
+  - `friend_remove`
+- Wired user-scoped event fanout in:
+  - `apps/filament-server/src/server/handlers/profile.rs` to emit profile/avatar updates to the acting user and confirmed friendship observers
+  - `apps/filament-server/src/server/handlers/friends.rs` to emit request lifecycle and friendship removal events to affected participants
+- Extended web gateway boundary parsing and dispatch in `apps/filament-client-web/src/lib/gateway.ts` for all Phase 5 payloads with strict fail-closed validation.
+- Updated app-shell realtime reducers in:
+  - `apps/filament-client-web/src/features/app-shell/controllers/gateway-controller.ts`
+  - `apps/filament-client-web/src/features/app-shell/runtime/create-app-shell-runtime.ts`
+  so profile drafts, avatar version cache, friendship requests, and friend list state update incrementally from gateway events.
+- Added/updated tests:
+  - server integration coverage in `apps/filament-server/tests/gateway_network_flow.rs` for multi-session profile/friendship event fanout and observer scoping
+  - web parser coverage in `apps/filament-client-web/tests/gateway.test.ts`
+  - web controller coverage in `apps/filament-client-web/tests/app-shell-gateway-controller.test.ts`
 
 ### Exit Criteria
 - Profile and friendship state stays fresh across concurrent sessions.

@@ -3,6 +3,8 @@ import type { AccessToken, AuthSession } from "../../../domain/auth";
 import type {
   ChannelRecord,
   ChannelId,
+  FriendRecord,
+  FriendRequestList,
   GuildId,
   MessageId,
   MessageRecord,
@@ -19,9 +21,15 @@ import {
   type WorkspaceRoleDeletePayload,
   type WorkspaceRoleReorderPayload,
   type WorkspaceRoleUpdatePayload,
+  type FriendRemovePayload,
+  type FriendRequestCreatePayload,
+  type FriendRequestDeletePayload,
+  type FriendRequestUpdatePayload,
   type MessageDeletePayload,
   type MessageReactionPayload,
   type MessageUpdatePayload,
+  type ProfileAvatarUpdatePayload,
+  type ProfileUpdatePayload,
   type WorkspaceMemberBanPayload,
   type WorkspaceMemberRemovePayload,
   type WorkspaceUpdatePayload,
@@ -45,6 +53,12 @@ export interface GatewayControllerOptions {
   setWorkspaces: Setter<WorkspaceRecord[]>;
   setMessages: Setter<MessageRecord[]>;
   setReactionState: Setter<Record<string, ReactionView>>;
+  setResolvedUsernames: Setter<Record<string, string>>;
+  setAvatarVersionByUserId: Setter<Record<string, number>>;
+  setProfileDraftUsername: Setter<string>;
+  setProfileDraftAbout: Setter<string>;
+  setFriends: Setter<FriendRecord[]>;
+  setFriendRequests: Setter<FriendRequestList>;
   isMessageListNearBottom: () => boolean;
   scrollMessageListToBottom: () => void;
   onWorkspacePermissionsChanged?: (guildId: GuildId) => void;
@@ -79,6 +93,12 @@ interface GatewayHandlers {
   onWorkspaceRoleAssignmentRemove: (payload: WorkspaceRoleAssignmentRemovePayload) => void;
   onWorkspaceChannelOverrideUpdate: (payload: WorkspaceChannelOverrideUpdatePayload) => void;
   onWorkspaceIpBanSync: (payload: WorkspaceIpBanSyncPayload) => void;
+  onProfileUpdate: (payload: ProfileUpdatePayload) => void;
+  onProfileAvatarUpdate: (payload: ProfileAvatarUpdatePayload) => void;
+  onFriendRequestCreate: (payload: FriendRequestCreatePayload) => void;
+  onFriendRequestUpdate: (payload: FriendRequestUpdatePayload) => void;
+  onFriendRequestDelete: (payload: FriendRequestDeletePayload) => void;
+  onFriendRemove: (payload: FriendRemovePayload) => void;
   onPresenceSync: (payload: { guildId: GuildId; userIds: string[] }) => void;
   onPresenceUpdate: (payload: {
     guildId: GuildId;
@@ -193,6 +213,105 @@ function removeWorkspace(existing: WorkspaceRecord[], guildId: GuildId): Workspa
   return existing.filter((workspace) => workspace.guildId !== guildId);
 }
 
+function mergeResolvedUsername(
+  existing: Record<string, string>,
+  userId: string,
+  username: string,
+): Record<string, string> {
+  if (existing[userId] === username) {
+    return existing;
+  }
+  return {
+    ...existing,
+    [userId]: username,
+  };
+}
+
+function mergeAvatarVersion(
+  existing: Record<string, number>,
+  userId: string,
+  avatarVersion: number,
+): Record<string, number> {
+  if (existing[userId] === avatarVersion) {
+    return existing;
+  }
+  return {
+    ...existing,
+    [userId]: avatarVersion,
+  };
+}
+
+function upsertFriend(
+  existing: FriendRecord[],
+  friend: FriendRecord,
+): FriendRecord[] {
+  const index = existing.findIndex((entry) => entry.userId === friend.userId);
+  if (index < 0) {
+    return [friend, ...existing];
+  }
+  const current = existing[index]!;
+  if (
+    current.username === friend.username &&
+    current.createdAtUnix === friend.createdAtUnix
+  ) {
+    return existing;
+  }
+  const next = existing.slice();
+  next[index] = friend;
+  return next;
+}
+
+function removeFriend(
+  existing: FriendRecord[],
+  friendUserId: string,
+): FriendRecord[] {
+  return existing.filter((entry) => entry.userId !== friendUserId);
+}
+
+function upsertFriendRequestList(
+  existing: FriendRequestList,
+  payload: FriendRequestCreatePayload,
+  connectedUserId: string,
+): FriendRequestList {
+  const request = {
+    requestId: payload.requestId as FriendRequestList["incoming"][number]["requestId"],
+    senderUserId: payload.senderUserId as FriendRequestList["incoming"][number]["senderUserId"],
+    senderUsername: payload.senderUsername,
+    recipientUserId: payload.recipientUserId as FriendRequestList["incoming"][number]["recipientUserId"],
+    recipientUsername: payload.recipientUsername,
+    createdAtUnix: payload.createdAtUnix,
+  };
+  if (payload.recipientUserId === connectedUserId) {
+    const incoming = existing.incoming.filter(
+      (entry) => entry.requestId !== request.requestId,
+    );
+    return {
+      ...existing,
+      incoming: [request, ...incoming],
+    };
+  }
+  if (payload.senderUserId === connectedUserId) {
+    const outgoing = existing.outgoing.filter(
+      (entry) => entry.requestId !== request.requestId,
+    );
+    return {
+      ...existing,
+      outgoing: [request, ...outgoing],
+    };
+  }
+  return existing;
+}
+
+function removeFriendRequest(
+  existing: FriendRequestList,
+  requestId: string,
+): FriendRequestList {
+  return {
+    incoming: existing.incoming.filter((entry) => entry.requestId !== requestId),
+    outgoing: existing.outgoing.filter((entry) => entry.requestId !== requestId),
+  };
+}
+
 export function createGatewayController(
   options: GatewayControllerOptions,
   dependencies: Partial<GatewayControllerDependencies> = {},
@@ -297,6 +416,78 @@ export function createGatewayController(
       },
       onWorkspaceIpBanSync: (payload) => {
         options.onWorkspaceModerationChanged?.(payload);
+      },
+      onProfileUpdate: (payload) => {
+        options.setResolvedUsernames((existing) => {
+          if (!payload.updatedFields.username) {
+            return existing;
+          }
+          return mergeResolvedUsername(existing, payload.userId, payload.updatedFields.username);
+        });
+        if (payload.userId !== connectedUserId) {
+          return;
+        }
+        if (payload.updatedFields.username) {
+          options.setProfileDraftUsername(payload.updatedFields.username);
+        }
+        if (payload.updatedFields.aboutMarkdown) {
+          options.setProfileDraftAbout(payload.updatedFields.aboutMarkdown);
+        }
+      },
+      onProfileAvatarUpdate: (payload) => {
+        options.setAvatarVersionByUserId((existing) =>
+          mergeAvatarVersion(existing, payload.userId, payload.avatarVersion),
+        );
+      },
+      onFriendRequestCreate: (payload) => {
+        options.setResolvedUsernames((existing) => {
+          let next = mergeResolvedUsername(
+            existing,
+            payload.senderUserId,
+            payload.senderUsername,
+          );
+          next = mergeResolvedUsername(
+            next,
+            payload.recipientUserId,
+            payload.recipientUsername,
+          );
+          return next;
+        });
+        if (!connectedUserId) {
+          return;
+        }
+        options.setFriendRequests((existing) =>
+          upsertFriendRequestList(existing, payload, connectedUserId),
+        );
+      },
+      onFriendRequestUpdate: (payload) => {
+        if (payload.userId !== connectedUserId) {
+          return;
+        }
+        options.setResolvedUsernames((existing) =>
+          mergeResolvedUsername(existing, payload.friendUserId, payload.friendUsername),
+        );
+        options.setFriendRequests((existing) =>
+          removeFriendRequest(existing, payload.requestId),
+        );
+        options.setFriends((existing) =>
+          upsertFriend(existing, {
+            userId: payload.friendUserId as FriendRecord["userId"],
+            username: payload.friendUsername,
+            createdAtUnix: payload.friendshipCreatedAtUnix,
+          }),
+        );
+      },
+      onFriendRequestDelete: (payload) => {
+        options.setFriendRequests((existing) =>
+          removeFriendRequest(existing, payload.requestId),
+        );
+      },
+      onFriendRemove: (payload) => {
+        if (payload.userId !== connectedUserId) {
+          return;
+        }
+        options.setFriends((existing) => removeFriend(existing, payload.friendUserId));
       },
       onPresenceSync: (payload) => {
         if (payload.guildId !== guildId) {

@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use object_store::{path::Path as ObjectPath, ObjectStore};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use std::net::SocketAddr;
+use std::{collections::HashSet, net::SocketAddr};
 
 use filament_core::{tokenize_markdown, ProfileAbout, UserId, Username};
 
@@ -21,6 +21,8 @@ use crate::server::{
     },
     db::ensure_db_schema,
     errors::AuthFailure,
+    gateway_events,
+    realtime::broadcast_user_event,
     types::{UpdateProfileRequest, UserPath, UserProfileResponse},
 };
 
@@ -106,7 +108,21 @@ pub(crate) async fn update_my_profile(
             (None, None) => None,
         };
         let row = row.ok_or(AuthFailure::Unauthorized)?;
-        return Ok(Json(profile_response_from_row(&row)?));
+        let response = profile_response_from_row(&row)?;
+        broadcast_profile_update(
+            &state,
+            auth.user_id,
+            &response,
+            next_username.as_ref().map(filament_core::Username::as_str),
+            next_about
+                .as_ref()
+                .map(|_| response.about_markdown.as_str()),
+            next_about
+                .as_ref()
+                .map(|_| response.about_markdown_tokens.as_slice()),
+        )
+        .await?;
+        return Ok(Json(response));
     }
 
     let current_username = auth.username;
@@ -114,15 +130,15 @@ pub(crate) async fn update_my_profile(
     let mut user = users
         .remove(&current_username)
         .ok_or(AuthFailure::Unauthorized)?;
-    if let Some(about) = next_about {
+    if let Some(about) = next_about.as_ref() {
         about.as_str().clone_into(&mut user.about_markdown);
     }
-    if let Some(username) = next_username {
-        if username != user.username && users.contains_key(username.as_str()) {
+    if let Some(username) = next_username.as_ref() {
+        if username.as_str() != user.username.as_str() && users.contains_key(username.as_str()) {
             users.insert(current_username, user);
             return Err(AuthFailure::InvalidRequest);
         }
-        user.username = username;
+        user.username = username.clone();
     }
     let user_id_text = user.id.to_string();
     let final_username = user.username.as_str().to_owned();
@@ -140,6 +156,20 @@ pub(crate) async fn update_my_profile(
         .write()
         .await
         .insert(user_id_text, final_username);
+
+    broadcast_profile_update(
+        &state,
+        auth.user_id,
+        &response,
+        next_username.as_ref().map(filament_core::Username::as_str),
+        next_about
+            .as_ref()
+            .map(|_| response.about_markdown.as_str()),
+        next_about
+            .as_ref()
+            .map(|_| response.about_markdown_tokens.as_slice()),
+    )
+    .await?;
 
     Ok(Json(response))
 }
@@ -297,7 +327,9 @@ pub(crate) async fn upload_my_avatar(
             let _ = state.attachment_store.delete(&object_path).await;
             return Err(AuthFailure::Unauthorized);
         };
-        return Ok(Json(profile_response_from_row(&row)?));
+        let response = profile_response_from_row(&row)?;
+        broadcast_profile_avatar_update(&state, auth.user_id, &response).await?;
+        return Ok(Json(response));
     }
 
     let current_username = auth.username;
@@ -320,6 +352,7 @@ pub(crate) async fn upload_my_avatar(
         user.avatar_version,
     );
     users.insert(current_username, user);
+    broadcast_profile_avatar_update(&state, auth.user_id, &response).await?;
     Ok(Json(response))
 }
 
@@ -504,4 +537,95 @@ fn next_profile_version(current: i64) -> i64 {
     } else {
         current.saturating_add(1)
     }
+}
+
+async fn broadcast_profile_update(
+    state: &AppState,
+    actor_user_id: UserId,
+    response: &UserProfileResponse,
+    username: Option<&str>,
+    about_markdown: Option<&str>,
+    about_markdown_tokens: Option<&[filament_core::MarkdownToken]>,
+) -> Result<(), AuthFailure> {
+    let updated_at_unix = now_unix();
+    let event = gateway_events::profile_update(
+        &response.user_id,
+        username,
+        about_markdown,
+        about_markdown_tokens,
+        updated_at_unix,
+    );
+    broadcast_user_event(state, actor_user_id, &event).await;
+
+    for observer in profile_observer_user_ids(state, actor_user_id).await? {
+        broadcast_user_event(state, observer, &event).await;
+    }
+    Ok(())
+}
+
+async fn broadcast_profile_avatar_update(
+    state: &AppState,
+    actor_user_id: UserId,
+    response: &UserProfileResponse,
+) -> Result<(), AuthFailure> {
+    let updated_at_unix = now_unix();
+    let event = gateway_events::profile_avatar_update(
+        &response.user_id,
+        response.avatar_version,
+        updated_at_unix,
+    );
+    broadcast_user_event(state, actor_user_id, &event).await;
+
+    for observer in profile_observer_user_ids(state, actor_user_id).await? {
+        broadcast_user_event(state, observer, &event).await;
+    }
+    Ok(())
+}
+
+async fn profile_observer_user_ids(
+    state: &AppState,
+    user_id: UserId,
+) -> Result<Vec<UserId>, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let rows = sqlx::query(
+            "SELECT CASE
+                 WHEN user_a_id = $1 THEN user_b_id
+                 ELSE user_a_id
+             END AS friend_user_id
+             FROM friendships
+             WHERE user_a_id = $1 OR user_b_id = $1",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let mut unique = HashSet::new();
+        for row in rows {
+            let friend_user_id: String = row
+                .try_get("friend_user_id")
+                .map_err(|_| AuthFailure::Internal)?;
+            let friend_user_id =
+                UserId::try_from(friend_user_id).map_err(|_| AuthFailure::Internal)?;
+            if friend_user_id != user_id {
+                unique.insert(friend_user_id);
+            }
+        }
+        return Ok(unique.into_iter().collect());
+    }
+
+    let user_id_text = user_id.to_string();
+    let friendships = state.friendships.read().await;
+    let mut unique = HashSet::new();
+    for (user_a, user_b) in &*friendships {
+        if user_a == &user_id_text {
+            if let Ok(friend_id) = UserId::try_from(user_b.clone()) {
+                unique.insert(friend_id);
+            }
+        } else if user_b == &user_id_text {
+            if let Ok(friend_id) = UserId::try_from(user_a.clone()) {
+                unique.insert(friend_id);
+            }
+        }
+    }
+    Ok(unique.into_iter().collect())
 }

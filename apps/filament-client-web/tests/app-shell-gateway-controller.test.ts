@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { authSessionFromResponse } from "../src/domain/auth";
 import {
   channelFromResponse,
+  friendRequestIdFromInput,
   messageIdFromInput,
   channelIdFromInput,
   guildIdFromInput,
@@ -11,6 +12,8 @@ import {
   messageFromResponse,
   reactionEmojiFromInput,
   type WorkspaceRecord,
+  type FriendRecord,
+  type FriendRequestList,
 } from "../src/domain/chat";
 import {
   applyMessageDelete,
@@ -251,6 +254,19 @@ describe("app shell gateway controller", () => {
     const [reactionState, setReactionState] = createSignal<Record<string, ReactionView>>(
       {},
     );
+    const [resolvedUsernames, setResolvedUsernames] = createSignal<Record<string, string>>(
+      {},
+    );
+    const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<Record<string, number>>(
+      {},
+    );
+    const [profileDraftUsername, setProfileDraftUsername] = createSignal("");
+    const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
+    const [friends, setFriends] = createSignal<FriendRecord[]>([]);
+    const [friendRequests, setFriendRequests] = createSignal<FriendRequestList>({
+      incoming: [],
+      outgoing: [],
+    });
 
     const scrollMessageListToBottomMock = vi.fn();
     const closeGatewayMock = vi.fn();
@@ -275,6 +291,12 @@ describe("app shell gateway controller", () => {
           setWorkspaces,
           setMessages,
           setReactionState,
+          setResolvedUsernames,
+          setAvatarVersionByUserId,
+          setProfileDraftUsername,
+          setProfileDraftAbout,
+          setFriends,
+          setFriendRequests,
           isMessageListNearBottom: () => true,
           scrollMessageListToBottom: scrollMessageListToBottomMock,
           onWorkspacePermissionsChanged,
@@ -405,6 +427,51 @@ describe("app shell gateway controller", () => {
       removedAtUnix: 5,
     });
     expect(workspaces()).toEqual([]);
+
+    handlers.onProfileUpdate({
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      updatedFields: {
+        username: "alice-updated",
+        aboutMarkdown: "updated about",
+        aboutMarkdownTokens: [{ type: "text", text: "updated about" }],
+      },
+      updatedAtUnix: 6,
+    });
+    handlers.onProfileAvatarUpdate({
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      avatarVersion: 8,
+      updatedAtUnix: 7,
+    });
+    handlers.onFriendRequestCreate({
+      requestId: friendRequestIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FC0"),
+      senderUserId: "01ARZ3NDEKTSV4RRFFQ69G5FC1",
+      senderUsername: "bob",
+      recipientUserId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      recipientUsername: "alice-updated",
+      createdAtUnix: 8,
+    });
+    handlers.onFriendRequestUpdate({
+      requestId: friendRequestIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FC0"),
+      state: "accepted",
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      friendUserId: "01ARZ3NDEKTSV4RRFFQ69G5FC1",
+      friendUsername: "bob",
+      friendshipCreatedAtUnix: 9,
+      updatedAtUnix: 9,
+    });
+    handlers.onFriendRemove({
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      friendUserId: "01ARZ3NDEKTSV4RRFFQ69G5FC1",
+      removedAtUnix: 10,
+    });
+
+    expect(resolvedUsernames()["01ARZ3NDEKTSV4RRFFQ69G5FAB"]).toBe("alice-updated");
+    expect(resolvedUsernames()["01ARZ3NDEKTSV4RRFFQ69G5FC1"]).toBe("bob");
+    expect(avatarVersionByUserId()["01ARZ3NDEKTSV4RRFFQ69G5FAB"]).toBe(8);
+    expect(profileDraftUsername()).toBe("alice-updated");
+    expect(profileDraftAbout()).toBe("updated about");
+    expect(friendRequests().incoming).toEqual([]);
+    expect(friends()).toEqual([]);
 
     setCanAccessActiveChannel(false);
     await flush();

@@ -32,6 +32,12 @@ pub(crate) const WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT: &str = "workspace_role_
 pub(crate) const WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT: &str =
     "workspace_channel_override_update";
 pub(crate) const WORKSPACE_IP_BAN_SYNC_EVENT: &str = "workspace_ip_ban_sync";
+pub(crate) const PROFILE_UPDATE_EVENT: &str = "profile_update";
+pub(crate) const PROFILE_AVATAR_UPDATE_EVENT: &str = "profile_avatar_update";
+pub(crate) const FRIEND_REQUEST_CREATE_EVENT: &str = "friend_request_create";
+pub(crate) const FRIEND_REQUEST_UPDATE_EVENT: &str = "friend_request_update";
+pub(crate) const FRIEND_REQUEST_DELETE_EVENT: &str = "friend_request_delete";
+pub(crate) const FRIEND_REMOVE_EVENT: &str = "friend_remove";
 
 pub(crate) struct GatewayEvent {
     pub(crate) event_type: &'static str,
@@ -272,6 +278,70 @@ struct WorkspaceIpBanSyncPayload {
 struct WorkspaceIpBanSyncSummaryPayload {
     action: &'static str,
     changed_count: usize,
+}
+
+#[derive(Serialize)]
+struct ProfileUpdatePayload<'a> {
+    user_id: &'a str,
+    updated_fields: ProfileUpdateFieldsPayload<'a>,
+    updated_at_unix: i64,
+}
+
+#[derive(Serialize)]
+struct ProfileUpdateFieldsPayload<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    about_markdown: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    about_markdown_tokens: Option<&'a [filament_core::MarkdownToken]>,
+}
+
+#[derive(Serialize)]
+struct ProfileAvatarUpdatePayload<'a> {
+    user_id: &'a str,
+    avatar_version: i64,
+    updated_at_unix: i64,
+}
+
+#[derive(Serialize)]
+struct FriendRequestCreatePayload<'a> {
+    request_id: &'a str,
+    sender_user_id: &'a str,
+    sender_username: &'a str,
+    recipient_user_id: &'a str,
+    recipient_username: &'a str,
+    created_at_unix: i64,
+}
+
+#[derive(Serialize)]
+struct FriendRequestUpdatePayload<'a> {
+    request_id: &'a str,
+    state: &'static str,
+    user_id: &'a str,
+    friend_user_id: &'a str,
+    friend_username: &'a str,
+    friendship_created_at_unix: i64,
+    updated_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FriendRequestDeletePayload<'a> {
+    request_id: &'a str,
+    deleted_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FriendRemovePayload<'a> {
+    user_id: &'a str,
+    friend_user_id: &'a str,
+    removed_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
 }
 
 fn build_event<T: Serialize>(event_type: &'static str, payload: T) -> GatewayEvent {
@@ -653,6 +723,121 @@ pub(crate) fn workspace_ip_ban_sync(
                 changed_count,
             },
             updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn profile_update(
+    user_id: &str,
+    username: Option<&str>,
+    about_markdown: Option<&str>,
+    about_markdown_tokens: Option<&[filament_core::MarkdownToken]>,
+    updated_at_unix: i64,
+) -> GatewayEvent {
+    build_event(
+        PROFILE_UPDATE_EVENT,
+        ProfileUpdatePayload {
+            user_id,
+            updated_fields: ProfileUpdateFieldsPayload {
+                username,
+                about_markdown,
+                about_markdown_tokens,
+            },
+            updated_at_unix,
+        },
+    )
+}
+
+pub(crate) fn profile_avatar_update(
+    user_id: &str,
+    avatar_version: i64,
+    updated_at_unix: i64,
+) -> GatewayEvent {
+    build_event(
+        PROFILE_AVATAR_UPDATE_EVENT,
+        ProfileAvatarUpdatePayload {
+            user_id,
+            avatar_version,
+            updated_at_unix,
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn friend_request_create(
+    request_id: &str,
+    sender_user_id: &str,
+    sender_username: &str,
+    recipient_user_id: &str,
+    recipient_username: &str,
+    created_at_unix: i64,
+) -> GatewayEvent {
+    build_event(
+        FRIEND_REQUEST_CREATE_EVENT,
+        FriendRequestCreatePayload {
+            request_id,
+            sender_user_id,
+            sender_username,
+            recipient_user_id,
+            recipient_username,
+            created_at_unix,
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn friend_request_update(
+    request_id: &str,
+    user_id: &str,
+    friend_user_id: &str,
+    friend_username: &str,
+    friendship_created_at_unix: i64,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        FRIEND_REQUEST_UPDATE_EVENT,
+        FriendRequestUpdatePayload {
+            request_id,
+            state: "accepted",
+            user_id,
+            friend_user_id,
+            friend_username,
+            friendship_created_at_unix,
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn friend_request_delete(
+    request_id: &str,
+    deleted_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        FRIEND_REQUEST_DELETE_EVENT,
+        FriendRequestDeletePayload {
+            request_id,
+            deleted_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn friend_remove(
+    user_id: &str,
+    friend_user_id: &str,
+    removed_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        FRIEND_REMOVE_EVENT,
+        FriendRemovePayload {
+            user_id,
+            friend_user_id,
+            removed_at_unix,
             actor_user_id: actor_user_id.map(|id| id.to_string()),
         },
     )
