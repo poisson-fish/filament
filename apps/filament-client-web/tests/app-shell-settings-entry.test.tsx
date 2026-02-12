@@ -197,6 +197,13 @@ function createSettingsFixtureFetch(options?: {
   });
 }
 
+async function openSettingsPanelFromWorkspaceMenu(): Promise<void> {
+  const menuButton = await screen.findByRole("button", { name: "Open workspace menu" });
+  await waitFor(() => expect(menuButton).not.toBeDisabled());
+  fireEvent.click(menuButton);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open settings panel" }));
+}
+
 describe("app shell settings entry point", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
@@ -224,7 +231,7 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
+    await openSettingsPanelFromWorkspaceMenu();
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
     expect(await screen.findByLabelText("Settings category rail")).toBeInTheDocument();
     expect(await screen.findByLabelText("Settings content pane")).toBeInTheDocument();
@@ -257,7 +264,7 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
+    await openSettingsPanelFromWorkspaceMenu();
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "Escape" });
@@ -275,7 +282,7 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
+    await openSettingsPanelFromWorkspaceMenu();
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Open Profile settings category" }));
@@ -315,7 +322,7 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
+    await openSettingsPanelFromWorkspaceMenu();
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
 
     const microphoneSelect = await screen.findByLabelText("Select microphone device");
@@ -359,7 +366,7 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open settings panel" }));
+    await openSettingsPanelFromWorkspaceMenu();
     expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
 
     const refreshButton = await screen.findByRole("button", { name: "Refresh devices" });

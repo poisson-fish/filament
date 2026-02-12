@@ -139,8 +139,20 @@ describe("app shell extracted layout components", () => {
     expect(onJoinVoice).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Join Voice")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Open settings panel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open workspace menu" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open settings panel" }));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows workspace menu entries with notification/privacy placeholders", () => {
+    render(() => <ChannelRail {...channelRailPropsFixture()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open workspace menu" }));
+
+    expect(screen.getByRole("menuitem", { name: "Invite to workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Open settings panel" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Notification settings coming soon" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Privacy settings coming soon" })).toBeDisabled();
   });
 
   it("keeps member rail panel actions and chat header toggles wired", () => {

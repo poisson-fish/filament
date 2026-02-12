@@ -2345,16 +2345,127 @@ select {
 }
 
 .channel-rail-header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
 }
 
+.workspace-menu-trigger {
+  width: 100%;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #f3f4f7;
+  padding: 0.08rem 0.12rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.48rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-menu-trigger:disabled {
+  cursor: default;
+}
+
+.workspace-menu-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.workspace-menu-trigger:focus-visible {
+  outline: 2px solid #5965f3;
+  outline-offset: 1px;
+}
+
 .channel-rail-header h2 {
   font-size: 1.05rem;
   font-weight: 780;
   letter-spacing: 0.01em;
+}
+
+.workspace-menu-chevron {
+  width: 0.52rem;
+  height: 0.52rem;
+  border-right: 2px solid #cfd4de;
+  border-bottom: 2px solid #cfd4de;
+  transform: rotate(45deg);
+  transition: transform 140ms ease;
+  flex-shrink: 0;
+}
+
+.workspace-menu-chevron.open {
+  transform: rotate(-135deg);
+}
+
+.workspace-menu {
+  position: absolute;
+  top: calc(100% + 0.44rem);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  border: 1px solid #3e4350;
+  border-radius: 0.76rem;
+  background: #2a2d36;
+  box-shadow: 0 0.8rem 1.9rem rgba(0, 0, 0, 0.45);
+  padding: 0.4rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.workspace-menu-item {
+  width: 100%;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #d6dae1;
+  min-height: 2rem;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.44rem;
+  cursor: pointer;
+}
+
+.workspace-menu-item:hover {
+  background: #3c4250;
+  color: #f5f7fb;
+}
+
+.workspace-menu-item:focus-visible {
+  outline: 2px solid #5965f3;
+  outline-offset: 1px;
+}
+
+.workspace-menu-divider {
+  height: 1px;
+  background: #3f4452;
+  margin: 0.22rem 0.06rem;
+}
+
+.workspace-menu-item-placeholder {
+  color: #979ead;
+}
+
+.workspace-menu-item-placeholder:disabled {
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.workspace-menu-item-placeholder:hover {
+  background: transparent;
+  color: #979ead;
+}
+
+.workspace-menu-item-meta {
+  font-size: 0.67rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8b93a3;
 }
 
 .channel-rail-subtitle {
@@ -2686,7 +2797,7 @@ select {
   padding: 0.48rem 0.52rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 0.5rem;
 }
 

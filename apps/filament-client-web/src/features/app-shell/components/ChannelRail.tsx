@@ -1,4 +1,13 @@
-import { For, Match, Show, Switch } from "solid-js";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import type { ChannelId, ChannelRecord, WorkspaceRecord } from "../../../domain/chat";
 import type { RtcSnapshot } from "../../../lib/rtc";
 import { actorAvatarGlyph, channelHeaderLabel, channelRailLabel } from "../helpers";
@@ -32,11 +41,6 @@ const LEAVE_VOICE_ICON_URL = new URL(
   "../../../../resource/coolicons.v4.1/cooliocns SVG/Interface/Log_Out.svg",
   import.meta.url,
 ).href;
-const SETTINGS_ICON_URL = new URL(
-  "../../../../resource/coolicons.v4.1/cooliocns SVG/Interface/Settings.svg",
-  import.meta.url,
-).href;
-
 interface ChannelRailProps {
   activeWorkspace: WorkspaceRecord | null;
   activeChannel: ChannelRecord | null;
@@ -79,6 +83,9 @@ interface ChannelRailProps {
 }
 
 export function ChannelRail(props: ChannelRailProps) {
+  const [isWorkspaceMenuOpen, setWorkspaceMenuOpen] = createSignal(false);
+  let workspaceMenuTriggerElement: HTMLButtonElement | undefined;
+  let workspaceMenuElement: HTMLDivElement | undefined;
   const currentUserLabel = () => props.currentUserLabel ?? "unknown-user";
   const currentUserStatusLabel = () => props.currentUserStatusLabel ?? "Online";
   const activeChannelLabel = () => {
@@ -90,11 +97,128 @@ export function ChannelRail(props: ChannelRailProps) {
       name: props.activeChannel.name,
     });
   };
+  const closeWorkspaceMenu = () => {
+    setWorkspaceMenuOpen(false);
+  };
+  const toggleWorkspaceMenu = () => {
+    if (!props.activeWorkspace) {
+      return;
+    }
+    setWorkspaceMenuOpen((open) => !open);
+  };
+  const openSettingsPanel = () => {
+    closeWorkspaceMenu();
+    props.onOpenSettings();
+  };
+
+  createEffect(() => {
+    void props.activeWorkspace?.guildId;
+    closeWorkspaceMenu();
+  });
+
+  onMount(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!isWorkspaceMenuOpen() || !workspaceMenuElement) {
+        return;
+      }
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+      if (workspaceMenuTriggerElement?.contains(event.target)) {
+        return;
+      }
+      if (!workspaceMenuElement.contains(event.target)) {
+        closeWorkspaceMenu();
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeWorkspaceMenu();
+      }
+    };
+
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    });
+  });
 
   return (
     <aside class="channel-rail">
       <header class="channel-rail-header">
-        <h2>{props.activeWorkspace?.guildName ?? "No Workspace"}</h2>
+        <button
+          type="button"
+          class="workspace-menu-trigger"
+          aria-label="Open workspace menu"
+          aria-haspopup="menu"
+          aria-expanded={isWorkspaceMenuOpen()}
+          onClick={toggleWorkspaceMenu}
+          disabled={!props.activeWorkspace}
+          ref={(element) => {
+            workspaceMenuTriggerElement = element;
+          }}
+        >
+          <h2>{props.activeWorkspace?.guildName ?? "No Workspace"}</h2>
+          <span
+            classList={{
+              "workspace-menu-chevron": true,
+              open: isWorkspaceMenuOpen(),
+            }}
+            aria-hidden="true"
+          />
+        </button>
+        <Show when={props.activeWorkspace && isWorkspaceMenuOpen()}>
+          <div
+            class="workspace-menu"
+            role="menu"
+            aria-label="Workspace menu"
+            ref={(element) => {
+              workspaceMenuElement = element;
+            }}
+          >
+            <button
+              type="button"
+              class="workspace-menu-item"
+              role="menuitem"
+              aria-label="Invite to workspace"
+              onClick={closeWorkspaceMenu}
+            >
+              Invite to Workspace
+            </button>
+            <button
+              type="button"
+              class="workspace-menu-item"
+              role="menuitem"
+              aria-label="Open settings panel"
+              onClick={openSettingsPanel}
+            >
+              Server Settings
+            </button>
+            <div class="workspace-menu-divider" role="separator" aria-hidden="true" />
+            <button
+              type="button"
+              class="workspace-menu-item workspace-menu-item-placeholder"
+              role="menuitem"
+              disabled
+              aria-label="Notification settings coming soon"
+            >
+              <span>Notification Settings</span>
+              <span class="workspace-menu-item-meta">Soon</span>
+            </button>
+            <button
+              type="button"
+              class="workspace-menu-item workspace-menu-item-placeholder"
+              role="menuitem"
+              disabled
+              aria-label="Privacy settings coming soon"
+            >
+              <span>Privacy Settings</span>
+              <span class="workspace-menu-item-meta">Soon</span>
+            </button>
+          </div>
+        </Show>
       </header>
       <span class="channel-rail-subtitle">
         {props.activeWorkspace ? `${props.activeWorkspace.visibility} workspace` : "Hardened workspace"}
@@ -473,15 +597,6 @@ export function ChannelRail(props: ChannelRailProps) {
                   <p class="channel-rail-account-status">{currentUserStatusLabel()}</p>
                 </div>
               </div>
-              <button
-                type="button"
-                class="channel-rail-account-action"
-                aria-label="Open settings panel"
-                title="Settings"
-                onClick={props.onOpenSettings}
-              >
-                <span class="icon-mask" style={`--icon-url: url("${SETTINGS_ICON_URL}")`} aria-hidden="true" />
-              </button>
             </footer>
           </div>
         </Match>
