@@ -305,22 +305,37 @@ Fully isolate voice operational handlers from page orchestration.
 Shrink JSX and giant prop-object wiring by moving composition and adapters to dedicated modules.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add composition components:
+- [x] Add composition components:
   - `components/layout/AppShellLayout.tsx`
   - `components/layout/ChatColumn.tsx`
   - `components/overlays/UserProfileOverlay.tsx`
-- [ ] Add typed panel prop adapter module:
+- [x] Add typed panel prop adapter module:
   - `adapters/panel-host-props.ts` to build `PanelHost` prop groups from state/actions.
-- [ ] Keep `AppShellPage.tsx` responsible only for wiring composed modules.
+- [x] Keep `AppShellPage.tsx` responsible only for wiring composed modules.
 
 ### Tests
-- [ ] Add/update UI tests validating:
+- [x] Add/update UI tests validating:
   - panel wiring still triggers correct handlers
   - profile overlay interaction parity
   - rail collapse and chat rendering parity
+
+### Refactor Notes
+- Added `features/app-shell/components/layout/AppShellLayout.tsx` as a scaffold composition component that owns rail-collapse layout framing while accepting composed child sections.
+- Added `features/app-shell/components/layout/ChatColumn.tsx` to encapsulate chat-column structure/status rendering while keeping message list/composer/reaction rendering composed from `AppShellPage.tsx`.
+- Added `features/app-shell/components/overlays/UserProfileOverlay.tsx` and moved selected-profile overlay rendering out of `AppShellPage.tsx`.
+- Added `features/app-shell/adapters/panel-host-props.ts` and moved `PanelHost` panel-prop group assembly (including typed domain conversions for guild visibility/channel kind/roles) out of inline JSX.
+- Rewired `AppShellPage.tsx` to compose `AppShellLayout`/`ChatColumn`/`UserProfileOverlay` and spread adapter-built `PanelHost` groups while preserving reactive behavior via live signal reads at render time.
+- Added `tests/app-shell-panel-host-props.test.tsx` for panel-host adapter mapping/wiring and expanded `tests/app-shell-layout-components.test.tsx` to cover layout collapse parity plus profile overlay interaction parity.
+- Metrics after Phase 7 (2026-02-12):
+  - `AppShellPage.tsx` line count: `1392`
+  - `createEffect(...)` count in `AppShellPage.tsx`: `3`
+  - Test command: `pnpm --prefix apps/filament-client-web test`
+  - Pass status: `40` test files passed, `162` tests passed
+  - Typecheck command: `pnpm --prefix apps/filament-client-web typecheck`
+  - Typecheck status: pass
 
 ### Exit Criteria
 - Return JSX in `AppShellPage.tsx` is substantially reduced and no longer contains huge inline prop-object definitions.

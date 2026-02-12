@@ -1,5 +1,4 @@
 import {
-  Show,
   createEffect,
   onCleanup,
   untrack,
@@ -9,7 +8,6 @@ import {
   channelNameFromInput,
   guildVisibilityFromInput,
   guildNameFromInput,
-  roleFromInput,
   type AttachmentId,
   type AttachmentRecord,
   type ChannelKindName,
@@ -31,7 +29,6 @@ import {
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import {
-  channelHeaderLabel,
   mapError,
   mapRtcError,
   profileErrorMessage,
@@ -39,20 +36,19 @@ import {
   upsertWorkspace,
   userIdFromVoiceIdentity,
 } from "../features/app-shell/helpers";
+import { AppShellLayout } from "../features/app-shell/components/layout/AppShellLayout";
+import { ChatColumn } from "../features/app-shell/components/layout/ChatColumn";
 import { ChannelRail } from "../features/app-shell/components/ChannelRail";
 import { ChatHeader } from "../features/app-shell/components/ChatHeader";
 import { MemberRail } from "../features/app-shell/components/MemberRail";
 import { MessageComposer } from "../features/app-shell/components/messages/MessageComposer";
 import { MessageList } from "../features/app-shell/components/messages/MessageList";
 import { ReactionPickerPortal } from "../features/app-shell/components/messages/ReactionPickerPortal";
-import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
 import { ServerRail } from "../features/app-shell/components/ServerRail";
-import { SafeMarkdown } from "../features/app-shell/components/SafeMarkdown";
+import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
+import { UserProfileOverlay } from "../features/app-shell/components/overlays/UserProfileOverlay";
+import { buildPanelHostPropGroups } from "../features/app-shell/adapters/panel-host-props";
 import { OPENMOJI_REACTION_OPTIONS } from "../features/app-shell/config/reaction-options";
-import {
-  SETTINGS_CATEGORIES,
-  VOICE_SETTINGS_SUBMENU,
-} from "../features/app-shell/config/settings-menu";
 import {
   ADD_REACTION_ICON_URL,
   DELETE_MESSAGE_ICON_URL,
@@ -1060,15 +1056,133 @@ export function AppShellPage() {
     }
   };
 
+  const panelHostPropGroups = () =>
+    buildPanelHostPropGroups({
+      createGuildName: createGuildName(),
+      createGuildVisibility: createGuildVisibility(),
+      createChannelName: createChannelName(),
+      createChannelKind: createChannelKind(),
+      isCreatingWorkspace: isCreatingWorkspace(),
+      canDismissWorkspaceCreateForm: canDismissWorkspaceCreateForm(),
+      workspaceError: workspaceError(),
+      onCreateWorkspaceSubmit: createWorkspace,
+      setCreateGuildName,
+      setCreateGuildVisibility,
+      setCreateChannelName,
+      setCreateChannelKind,
+      onCancelWorkspaceCreate: closeOverlayPanel,
+      newChannelName: newChannelName(),
+      newChannelKind: newChannelKind(),
+      isCreatingChannel: isCreatingChannel(),
+      channelCreateError: channelCreateError(),
+      onCreateChannelSubmit: createNewChannel,
+      setNewChannelName,
+      setNewChannelKind,
+      onCancelChannelCreate: closeOverlayPanel,
+      publicGuildSearchQuery: publicGuildSearchQuery(),
+      isSearchingPublicGuilds: isSearchingPublicGuilds(),
+      publicGuildSearchError: publicGuildSearchError(),
+      publicGuildDirectory: publicGuildDirectory(),
+      onSubmitPublicGuildSearch: runPublicGuildSearch,
+      setPublicGuildSearchQuery,
+      activeSettingsCategory: activeSettingsCategory(),
+      activeVoiceSettingsSubmenu: activeVoiceSettingsSubmenu(),
+      voiceDevicePreferences: voiceDevicePreferences(),
+      audioInputDevices: audioInputDevices(),
+      audioOutputDevices: audioOutputDevices(),
+      isRefreshingAudioDevices: isRefreshingAudioDevices(),
+      audioDevicesStatus: audioDevicesStatus(),
+      audioDevicesError: audioDevicesError(),
+      profile: profile() ?? null,
+      profileDraftUsername: profileDraftUsername(),
+      profileDraftAbout: profileDraftAbout(),
+      profileAvatarUrl: profile() ? avatarUrlForUser(profile()!.userId) : null,
+      selectedAvatarFilename: selectedProfileAvatarFile()?.name ?? "",
+      isSavingProfile: isSavingProfile(),
+      isUploadingProfileAvatar: isUploadingProfileAvatar(),
+      profileSettingsStatus: profileSettingsStatus(),
+      profileSettingsError: profileSettingsError(),
+      onOpenSettingsCategory: openSettingsCategory,
+      onOpenVoiceSettingsSubmenu: setActiveVoiceSettingsSubmenu,
+      onSetVoiceDevicePreference: (kind, value) =>
+        setVoiceDevicePreference(kind, value),
+      onRefreshAudioDeviceInventory: refreshAudioDeviceInventory,
+      setProfileDraftUsername,
+      setProfileDraftAbout,
+      setSelectedProfileAvatarFile,
+      onSaveProfileSettings: saveProfileSettings,
+      onUploadProfileAvatar: uploadProfileAvatar,
+      friendRecipientUserIdInput: friendRecipientUserIdInput(),
+      friendRequests: friendRequests(),
+      friends: friends(),
+      isRunningFriendAction: isRunningFriendAction(),
+      friendStatus: friendStatus(),
+      friendError: friendError(),
+      onSubmitFriendRequest: submitFriendRequest,
+      setFriendRecipientUserIdInput,
+      onAcceptIncomingFriendRequest: (requestId) =>
+        acceptIncomingFriendRequest(requestId),
+      onDismissFriendRequest: (requestId) => dismissFriendRequest(requestId),
+      onRemoveFriendship: (friendUserId) => removeFriendship(friendUserId),
+      searchQuery: searchQuery(),
+      isSearching: isSearching(),
+      hasActiveWorkspace: Boolean(activeWorkspace()),
+      canManageSearchMaintenance: canManageSearchMaintenance(),
+      isRunningSearchOps: isRunningSearchOps(),
+      searchOpsStatus: searchOpsStatus(),
+      searchError: searchError(),
+      searchResults: searchResults(),
+      onSubmitSearch: runSearch,
+      setSearchQuery,
+      onRebuildSearch: rebuildSearch,
+      onReconcileSearch: reconcileSearch,
+      displayUserLabel,
+      attachmentFilename: attachmentFilename(),
+      activeAttachments: activeAttachments(),
+      isUploadingAttachment: isUploadingAttachment(),
+      hasActiveChannel: Boolean(activeChannel()),
+      attachmentStatus: attachmentStatus(),
+      attachmentError: attachmentError(),
+      downloadingAttachmentId: downloadingAttachmentId(),
+      deletingAttachmentId: deletingAttachmentId(),
+      onSubmitUploadAttachment: uploadAttachment,
+      setSelectedAttachment,
+      setAttachmentFilename,
+      onDownloadAttachment: (record) => downloadAttachment(record),
+      onRemoveAttachment: (record) => removeAttachment(record),
+      moderationUserIdInput: moderationUserIdInput(),
+      moderationRoleInput: moderationRoleInput(),
+      overrideRoleInput: overrideRoleInput(),
+      overrideAllowCsv: overrideAllowCsv(),
+      overrideDenyCsv: overrideDenyCsv(),
+      isModerating: isModerating(),
+      canManageRoles: canManageRoles(),
+      canBanMembers: canBanMembers(),
+      canManageChannelOverrides: canManageChannelOverrides(),
+      moderationStatus: moderationStatus(),
+      moderationError: moderationError(),
+      setModerationUserIdInput,
+      setModerationRoleInput,
+      onRunMemberAction: (action) => runMemberAction(action),
+      setOverrideRoleInput,
+      setOverrideAllowCsv,
+      setOverrideDenyCsv,
+      onApplyOverride: applyOverride,
+      echoInput: echoInput(),
+      healthStatus: healthStatus(),
+      diagError: diagError(),
+      isCheckingHealth: isCheckingHealth(),
+      isEchoing: isEchoing(),
+      setEchoInput,
+      onRunHealthCheck: runHealthCheck,
+      onRunEcho: runEcho,
+    });
+
   return (
-    <div class="app-shell-scaffold">
-      <div
-        classList={{
-          "app-shell": true,
-          "channel-rail-collapsed": isChannelRailCollapsed(),
-          "member-rail-collapsed": isMemberRailCollapsed(),
-        }}
-      >
+    <AppShellLayout
+      isChannelRailCollapsed={isChannelRailCollapsed()}
+      isMemberRailCollapsed={isMemberRailCollapsed()}
+      serverRail={
         <ServerRail
           workspaces={workspaces()}
           activeGuildId={activeGuildId()}
@@ -1079,209 +1193,181 @@ export function AppShellPage() {
           }}
           onOpenPanel={openOverlayPanel}
         />
-
-        <Show when={!isChannelRailCollapsed()}>
-          <ChannelRail
-            activeWorkspace={activeWorkspace()}
-            activeChannel={activeChannel()}
-            activeChannelId={activeChannelId()}
-            activeTextChannels={activeTextChannels()}
-            activeVoiceChannels={activeVoiceChannels()}
-            canManageWorkspaceChannels={canManageWorkspaceChannels()}
-            canShowVoiceHeaderControls={canShowVoiceHeaderControls()}
-            isVoiceSessionActive={isVoiceSessionActive()}
-            isVoiceSessionForChannel={isVoiceSessionForChannel}
-            voiceSessionDurationLabel={voiceSessionDurationLabel()}
-            voiceRosterEntries={voiceRosterEntries()}
-            voiceStreamPermissionHints={voiceStreamPermissionHints()}
-            activeVoiceSessionLabel={activeVoiceSessionLabel()}
-            rtcSnapshot={rtcSnapshot()}
-            canToggleVoiceCamera={canToggleVoiceCamera()}
-            canToggleVoiceScreenShare={canToggleVoiceScreenShare()}
-            isJoiningVoice={isJoiningVoice()}
-            isLeavingVoice={isLeavingVoice()}
-            isTogglingVoiceMic={isTogglingVoiceMic()}
-            isTogglingVoiceCamera={isTogglingVoiceCamera()}
-            isTogglingVoiceScreenShare={isTogglingVoiceScreenShare()}
-            currentUserId={profile()?.userId ?? null}
-            currentUserLabel={profile()?.username}
-            currentUserStatusLabel={gatewayOnline() ? "Online" : "Offline"}
-            resolveAvatarUrl={avatarUrlForUser}
-            userIdFromVoiceIdentity={userIdFromVoiceIdentity}
-            actorLabel={actorLabel}
-            voiceParticipantLabel={voiceParticipantLabel}
-            onOpenUserProfile={openUserProfile}
-            onOpenSettings={() => openOverlayPanel("settings")}
-            onCreateTextChannel={() => {
-              setNewChannelKind(channelKindFromInput("text"));
-              openOverlayPanel("channel-create");
-            }}
-            onCreateVoiceChannel={() => {
-              setNewChannelKind(channelKindFromInput("voice"));
-              openOverlayPanel("channel-create");
-            }}
-            onSelectChannel={(channelId) => setActiveChannelId(channelId)}
-            onJoinVoice={() => void joinVoiceChannel()}
-            onToggleVoiceMicrophone={() => void toggleVoiceMicrophone()}
-            onToggleVoiceCamera={() => void toggleVoiceCamera()}
-            onToggleVoiceScreenShare={() => void toggleVoiceScreenShare()}
-            onLeaveVoice={() => void leaveVoiceChannel("Voice session ended.")}
-          />
-        </Show>
-
-        <main class="chat-panel">
-          <ChatHeader
-            activeChannel={activeChannel()}
-            gatewayOnline={gatewayOnline()}
-            canShowVoiceHeaderControls={canShowVoiceHeaderControls()}
-            isVoiceSessionActive={isVoiceSessionActive()}
-            voiceConnectionState={voiceConnectionState()}
-            isChannelRailCollapsed={isChannelRailCollapsed()}
-            isMemberRailCollapsed={isMemberRailCollapsed()}
-            isRefreshingSession={isRefreshingSession()}
-            onToggleChannelRail={() => setChannelRailCollapsed((value) => !value)}
-            onToggleMemberRail={() => setMemberRailCollapsed((value) => !value)}
-            onOpenPanel={openOverlayPanel}
-            onRefreshMessages={() => void refreshMessages()}
-            onRefreshSession={() => void refreshSession()}
-            onLogout={() => void logout()}
-          />
-
-        <Show
-          when={workspaceBootstrapDone() && workspaces().length === 0}
-          fallback={
-            <>
-              <Show when={!workspaceBootstrapDone()}>
-                <p class="panel-note">Validating workspace access...</p>
-              </Show>
-              <Show when={workspaceBootstrapDone()}>
-                <Show when={isLoadingMessages()}>
-                  <p class="panel-note">Loading messages...</p>
-                </Show>
-                <Show when={messageError()}>
-                  <p class="status error panel-note">{messageError()}</p>
-                </Show>
-                <Show when={sessionStatus()}>
-                  <p class="status ok panel-note">{sessionStatus()}</p>
-                </Show>
-                <Show when={sessionError()}>
-                  <p class="status error panel-note">{sessionError()}</p>
-                </Show>
-                <Show when={voiceStatus() && (canShowVoiceHeaderControls() || isVoiceSessionActive())}>
-                  <p class="status ok panel-note">{voiceStatus()}</p>
-                </Show>
-                <Show when={voiceError() && (canShowVoiceHeaderControls() || isVoiceSessionActive())}>
-                  <p class="status error panel-note">{voiceError()}</p>
-                </Show>
-                <Show when={activeChannel() && !canAccessActiveChannel()}>
-                  <p class="status error panel-note">
-                    Channel is not visible with your current default permissions.
-                  </p>
-                </Show>
-
-                <MessageList
-                  onListRef={messageListController.onListRef}
-                  onListScroll={() => {
-                    messageListController.onMessageListScroll(loadOlderMessages);
-                  }}
-                  nextBefore={nextBefore()}
-                  showLoadOlderButton={showLoadOlderButton()}
-                  isLoadingOlder={isLoadingOlder()}
-                  isLoadingMessages={isLoadingMessages()}
-                  messageError={messageError()}
-                  messages={messages()}
-                  onLoadOlderMessages={() => loadOlderMessages()}
-                  currentUserId={profile()?.userId ?? null}
-                  canDeleteMessages={canDeleteMessages()}
-                  displayUserLabel={displayUserLabel}
-                  resolveAvatarUrl={avatarUrlForUser}
-                  onOpenAuthorProfile={openUserProfile}
-                  editingMessageId={editingMessageId()}
-                  editingDraft={editingDraft()}
-                  isSavingEdit={isSavingEdit()}
-                  deletingMessageId={deletingMessageId()}
-                  openReactionPickerMessageId={openReactionPickerMessageId()}
-                  reactionState={reactionState()}
-                  pendingReactionByKey={pendingReactionByKey()}
-                  messageMediaByAttachmentId={messageMediaByAttachmentId()}
-                  loadingMediaPreviewIds={loadingMediaPreviewIds()}
-                  failedMediaPreviewIds={failedMediaPreviewIds()}
-                  downloadingAttachmentId={downloadingAttachmentId()}
-                  addReactionIconUrl={ADD_REACTION_ICON_URL}
-                  editMessageIconUrl={EDIT_MESSAGE_ICON_URL}
-                  deleteMessageIconUrl={DELETE_MESSAGE_ICON_URL}
-                  onEditingDraftInput={setEditingDraft}
-                  onSaveEditMessage={(messageId) => saveEditMessage(messageId)}
-                  onCancelEditMessage={cancelEditMessage}
-                  onDownloadAttachment={(record) => downloadAttachment(record)}
-                  onRetryMediaPreview={retryMediaPreview}
-                  onToggleMessageReaction={(messageId, emoji) =>
-                    toggleMessageReaction(messageId, emoji)}
-                  onToggleReactionPicker={toggleReactionPicker}
-                  onBeginEditMessage={beginEditMessage}
-                  onRemoveMessage={(messageId) => removeMessage(messageId)}
-                />
-
-                <MessageComposer
-                  attachmentInputRef={(value) => {
-                    composerAttachmentInputRef = value;
-                  }}
-                  activeChannel={activeChannel()}
-                  canAccessActiveChannel={canAccessActiveChannel()}
-                  isSendingMessage={isSendingMessage()}
-                  composerValue={composer()}
-                  composerAttachments={composerAttachments()}
-                  onSubmit={sendMessage}
-                  onComposerInput={setComposer}
-                  onOpenAttachmentPicker={openComposerAttachmentPicker}
-                  onAttachmentInput={(event) =>
-                    onComposerAttachmentInput(
-                      event as InputEvent & { currentTarget: HTMLInputElement },
-                    )
-                  }
-                  onRemoveAttachment={removeComposerAttachment}
-                />
-
-                <ReactionPickerPortal
-                  openMessageId={openReactionPickerMessageId()}
-                  position={reactionPickerOverlayPosition()}
-                  options={OPENMOJI_REACTION_OPTIONS}
-                  onClose={() => setOpenReactionPickerMessageId(null)}
-                  onAddReaction={(messageId, emoji) =>
-                    addReactionFromPicker(messageId, emoji)}
-                />
-              </Show>
-            </>
+      }
+      channelRail={
+        <ChannelRail
+          activeWorkspace={activeWorkspace()}
+          activeChannel={activeChannel()}
+          activeChannelId={activeChannelId()}
+          activeTextChannels={activeTextChannels()}
+          activeVoiceChannels={activeVoiceChannels()}
+          canManageWorkspaceChannels={canManageWorkspaceChannels()}
+          canShowVoiceHeaderControls={canShowVoiceHeaderControls()}
+          isVoiceSessionActive={isVoiceSessionActive()}
+          isVoiceSessionForChannel={isVoiceSessionForChannel}
+          voiceSessionDurationLabel={voiceSessionDurationLabel()}
+          voiceRosterEntries={voiceRosterEntries()}
+          voiceStreamPermissionHints={voiceStreamPermissionHints()}
+          activeVoiceSessionLabel={activeVoiceSessionLabel()}
+          rtcSnapshot={rtcSnapshot()}
+          canToggleVoiceCamera={canToggleVoiceCamera()}
+          canToggleVoiceScreenShare={canToggleVoiceScreenShare()}
+          isJoiningVoice={isJoiningVoice()}
+          isLeavingVoice={isLeavingVoice()}
+          isTogglingVoiceMic={isTogglingVoiceMic()}
+          isTogglingVoiceCamera={isTogglingVoiceCamera()}
+          isTogglingVoiceScreenShare={isTogglingVoiceScreenShare()}
+          currentUserId={profile()?.userId ?? null}
+          currentUserLabel={profile()?.username}
+          currentUserStatusLabel={gatewayOnline() ? "Online" : "Offline"}
+          resolveAvatarUrl={avatarUrlForUser}
+          userIdFromVoiceIdentity={userIdFromVoiceIdentity}
+          actorLabel={actorLabel}
+          voiceParticipantLabel={voiceParticipantLabel}
+          onOpenUserProfile={openUserProfile}
+          onOpenSettings={() => openOverlayPanel("settings")}
+          onCreateTextChannel={() => {
+            setNewChannelKind(channelKindFromInput("text"));
+            openOverlayPanel("channel-create");
+          }}
+          onCreateVoiceChannel={() => {
+            setNewChannelKind(channelKindFromInput("voice"));
+            openOverlayPanel("channel-create");
+          }}
+          onSelectChannel={(channelId) => setActiveChannelId(channelId)}
+          onJoinVoice={() => void joinVoiceChannel()}
+          onToggleVoiceMicrophone={() => void toggleVoiceMicrophone()}
+          onToggleVoiceCamera={() => void toggleVoiceCamera()}
+          onToggleVoiceScreenShare={() => void toggleVoiceScreenShare()}
+          onLeaveVoice={() => void leaveVoiceChannel("Voice session ended.")}
+        />
+      }
+      chatColumn={
+        <ChatColumn
+          chatHeader={
+            <ChatHeader
+              activeChannel={activeChannel()}
+              gatewayOnline={gatewayOnline()}
+              canShowVoiceHeaderControls={canShowVoiceHeaderControls()}
+              isVoiceSessionActive={isVoiceSessionActive()}
+              voiceConnectionState={voiceConnectionState()}
+              isChannelRailCollapsed={isChannelRailCollapsed()}
+              isMemberRailCollapsed={isMemberRailCollapsed()}
+              isRefreshingSession={isRefreshingSession()}
+              onToggleChannelRail={() => setChannelRailCollapsed((value) => !value)}
+              onToggleMemberRail={() => setMemberRailCollapsed((value) => !value)}
+              onOpenPanel={openOverlayPanel}
+              onRefreshMessages={() => void refreshMessages()}
+              onRefreshSession={() => void refreshSession()}
+              onLogout={() => void logout()}
+            />
           }
-        >
-          <section class="empty-workspace">
-            <h3>Create your first workspace</h3>
-            <p class="muted">Use the + button in the workspace rail to create your first guild and channel.</p>
-          </section>
-        </Show>
-
-        <Show when={messageStatus()}>
-          <p class="status ok panel-note">{messageStatus()}</p>
-        </Show>
-      </main>
-
-        <Show when={!isMemberRailCollapsed()}>
-          <MemberRail
-            profileLoading={profile.loading}
-            profileErrorText={profile.error ? profileErrorMessage(profile.error) : ""}
-            profile={profile() ?? null}
-            showUnauthorizedWorkspaceNote={Boolean(
-              activeWorkspace() && activeChannel() && !canAccessActiveChannel(),
-            )}
-            canAccessActiveChannel={canAccessActiveChannel()}
-            onlineMembers={onlineMembers()}
-            hasModerationAccess={hasModerationAccess()}
-            displayUserLabel={displayUserLabel}
-            onOpenPanel={openOverlayPanel}
-          />
-        </Show>
-      </div>
-
+          workspaceBootstrapDone={workspaceBootstrapDone()}
+          workspaceCount={workspaces().length}
+          isLoadingMessages={isLoadingMessages()}
+          messageError={messageError()}
+          sessionStatus={sessionStatus()}
+          sessionError={sessionError()}
+          voiceStatus={voiceStatus()}
+          voiceError={voiceError()}
+          canShowVoiceHeaderControls={canShowVoiceHeaderControls()}
+          isVoiceSessionActive={isVoiceSessionActive()}
+          activeChannel={activeChannel()}
+          canAccessActiveChannel={canAccessActiveChannel()}
+          messageList={
+            <MessageList
+              onListRef={messageListController.onListRef}
+              onListScroll={() => {
+                messageListController.onMessageListScroll(loadOlderMessages);
+              }}
+              nextBefore={nextBefore()}
+              showLoadOlderButton={showLoadOlderButton()}
+              isLoadingOlder={isLoadingOlder()}
+              isLoadingMessages={isLoadingMessages()}
+              messageError={messageError()}
+              messages={messages()}
+              onLoadOlderMessages={() => loadOlderMessages()}
+              currentUserId={profile()?.userId ?? null}
+              canDeleteMessages={canDeleteMessages()}
+              displayUserLabel={displayUserLabel}
+              resolveAvatarUrl={avatarUrlForUser}
+              onOpenAuthorProfile={openUserProfile}
+              editingMessageId={editingMessageId()}
+              editingDraft={editingDraft()}
+              isSavingEdit={isSavingEdit()}
+              deletingMessageId={deletingMessageId()}
+              openReactionPickerMessageId={openReactionPickerMessageId()}
+              reactionState={reactionState()}
+              pendingReactionByKey={pendingReactionByKey()}
+              messageMediaByAttachmentId={messageMediaByAttachmentId()}
+              loadingMediaPreviewIds={loadingMediaPreviewIds()}
+              failedMediaPreviewIds={failedMediaPreviewIds()}
+              downloadingAttachmentId={downloadingAttachmentId()}
+              addReactionIconUrl={ADD_REACTION_ICON_URL}
+              editMessageIconUrl={EDIT_MESSAGE_ICON_URL}
+              deleteMessageIconUrl={DELETE_MESSAGE_ICON_URL}
+              onEditingDraftInput={setEditingDraft}
+              onSaveEditMessage={(messageId) => saveEditMessage(messageId)}
+              onCancelEditMessage={cancelEditMessage}
+              onDownloadAttachment={(record) => downloadAttachment(record)}
+              onRetryMediaPreview={retryMediaPreview}
+              onToggleMessageReaction={(messageId, emoji) =>
+                toggleMessageReaction(messageId, emoji)}
+              onToggleReactionPicker={toggleReactionPicker}
+              onBeginEditMessage={beginEditMessage}
+              onRemoveMessage={(messageId) => removeMessage(messageId)}
+            />
+          }
+          messageComposer={
+            <MessageComposer
+              attachmentInputRef={(value) => {
+                composerAttachmentInputRef = value;
+              }}
+              activeChannel={activeChannel()}
+              canAccessActiveChannel={canAccessActiveChannel()}
+              isSendingMessage={isSendingMessage()}
+              composerValue={composer()}
+              composerAttachments={composerAttachments()}
+              onSubmit={sendMessage}
+              onComposerInput={setComposer}
+              onOpenAttachmentPicker={openComposerAttachmentPicker}
+              onAttachmentInput={(event) =>
+                onComposerAttachmentInput(
+                  event as InputEvent & { currentTarget: HTMLInputElement },
+                )
+              }
+              onRemoveAttachment={removeComposerAttachment}
+            />
+          }
+          reactionPicker={
+            <ReactionPickerPortal
+              openMessageId={openReactionPickerMessageId()}
+              position={reactionPickerOverlayPosition()}
+              options={OPENMOJI_REACTION_OPTIONS}
+              onClose={() => setOpenReactionPickerMessageId(null)}
+              onAddReaction={(messageId, emoji) =>
+                addReactionFromPicker(messageId, emoji)}
+            />
+          }
+          messageStatus={messageStatus()}
+        />
+      }
+      memberRail={
+        <MemberRail
+          profileLoading={profile.loading}
+          profileErrorText={profile.error ? profileErrorMessage(profile.error) : ""}
+          profile={profile() ?? null}
+          showUnauthorizedWorkspaceNote={Boolean(
+            activeWorkspace() && activeChannel() && !canAccessActiveChannel(),
+          )}
+          canAccessActiveChannel={canAccessActiveChannel()}
+          onlineMembers={onlineMembers()}
+          hasModerationAccess={hasModerationAccess()}
+          displayUserLabel={displayUserLabel}
+          onOpenPanel={openOverlayPanel}
+        />
+      }
+    >
       <PanelHost
         panel={activeOverlayPanel()}
         canCloseActivePanel={canCloseActivePanel()}
@@ -1291,220 +1377,16 @@ export function AppShellPage() {
         panelTitle={overlayPanelTitle}
         panelClassName={overlayPanelClassName}
         onClose={closeOverlayPanel}
-        workspaceCreatePanelProps={{
-          createGuildName: createGuildName(),
-          createGuildVisibility: createGuildVisibility(),
-          createChannelName: createChannelName(),
-          createChannelKind: createChannelKind(),
-          isCreatingWorkspace: isCreatingWorkspace(),
-          canDismissWorkspaceCreateForm: canDismissWorkspaceCreateForm(),
-          workspaceError: workspaceError(),
-          onSubmit: createWorkspace,
-          onCreateGuildNameInput: setCreateGuildName,
-          onCreateGuildVisibilityChange: (value) =>
-            setCreateGuildVisibility(guildVisibilityFromInput(value)),
-          onCreateChannelNameInput: setCreateChannelName,
-          onCreateChannelKindChange: (value) =>
-            setCreateChannelKind(channelKindFromInput(value)),
-          onCancel: closeOverlayPanel,
-        }}
-        channelCreatePanelProps={{
-          newChannelName: newChannelName(),
-          newChannelKind: newChannelKind(),
-          isCreatingChannel: isCreatingChannel(),
-          channelCreateError: channelCreateError(),
-          onSubmit: createNewChannel,
-          onNewChannelNameInput: setNewChannelName,
-          onNewChannelKindChange: (value) =>
-            setNewChannelKind(channelKindFromInput(value)),
-          onCancel: closeOverlayPanel,
-        }}
-        publicDirectoryPanelProps={{
-          searchQuery: publicGuildSearchQuery(),
-          isSearching: isSearchingPublicGuilds(),
-          searchError: publicGuildSearchError(),
-          guilds: publicGuildDirectory(),
-          onSubmitSearch: runPublicGuildSearch,
-          onSearchInput: setPublicGuildSearchQuery,
-        }}
-        settingsPanelProps={{
-          settingsCategories: SETTINGS_CATEGORIES,
-          voiceSettingsSubmenu: VOICE_SETTINGS_SUBMENU,
-          activeSettingsCategory: activeSettingsCategory(),
-          activeVoiceSettingsSubmenu: activeVoiceSettingsSubmenu(),
-          voiceDevicePreferences: voiceDevicePreferences(),
-          audioInputDevices: audioInputDevices(),
-          audioOutputDevices: audioOutputDevices(),
-          isRefreshingAudioDevices: isRefreshingAudioDevices(),
-          audioDevicesStatus: audioDevicesStatus(),
-          audioDevicesError: audioDevicesError(),
-          profile: profile() ?? null,
-          profileDraftUsername: profileDraftUsername(),
-          profileDraftAbout: profileDraftAbout(),
-          profileAvatarUrl: profile() ? avatarUrlForUser(profile()!.userId) : null,
-          selectedAvatarFilename: selectedProfileAvatarFile()?.name ?? "",
-          isSavingProfile: isSavingProfile(),
-          isUploadingProfileAvatar: isUploadingProfileAvatar(),
-          profileStatus: profileSettingsStatus(),
-          profileError: profileSettingsError(),
-          onOpenSettingsCategory: openSettingsCategory,
-          onOpenVoiceSettingsSubmenu: setActiveVoiceSettingsSubmenu,
-          onSetVoiceDevicePreference: (kind, value) =>
-            setVoiceDevicePreference(kind, value),
-          onRefreshAudioDeviceInventory: refreshAudioDeviceInventory,
-          onProfileUsernameInput: setProfileDraftUsername,
-          onProfileAboutInput: setProfileDraftAbout,
-          onSelectProfileAvatarFile: setSelectedProfileAvatarFile,
-          onSaveProfile: saveProfileSettings,
-          onUploadProfileAvatar: uploadProfileAvatar,
-        }}
-        friendshipsPanelProps={{
-          friendRecipientUserIdInput: friendRecipientUserIdInput(),
-          friendRequests: friendRequests(),
-          friends: friends(),
-          isRunningFriendAction: isRunningFriendAction(),
-          friendStatus: friendStatus(),
-          friendError: friendError(),
-          onSubmitFriendRequest: submitFriendRequest,
-          onFriendRecipientInput: setFriendRecipientUserIdInput,
-          onAcceptIncomingFriendRequest: (requestId) =>
-            acceptIncomingFriendRequest(requestId),
-          onDismissFriendRequest: (requestId) => dismissFriendRequest(requestId),
-          onRemoveFriendship: (friendUserId) => removeFriendship(friendUserId),
-        }}
-        searchPanelProps={{
-          searchQuery: searchQuery(),
-          isSearching: isSearching(),
-          hasActiveWorkspace: Boolean(activeWorkspace()),
-          canManageSearchMaintenance: canManageSearchMaintenance(),
-          isRunningSearchOps: isRunningSearchOps(),
-          searchOpsStatus: searchOpsStatus(),
-          searchError: searchError(),
-          searchResults: searchResults(),
-          onSubmitSearch: runSearch,
-          onSearchQueryInput: setSearchQuery,
-          onRebuildSearch: rebuildSearch,
-          onReconcileSearch: reconcileSearch,
-          displayUserLabel,
-        }}
-        attachmentsPanelProps={{
-          attachmentFilename: attachmentFilename(),
-          activeAttachments: activeAttachments(),
-          isUploadingAttachment: isUploadingAttachment(),
-          hasActiveChannel: Boolean(activeChannel()),
-          attachmentStatus: attachmentStatus(),
-          attachmentError: attachmentError(),
-          downloadingAttachmentId: downloadingAttachmentId(),
-          deletingAttachmentId: deletingAttachmentId(),
-          onSubmitUpload: uploadAttachment,
-          onAttachmentFileInput: (file) => {
-            setSelectedAttachment(file);
-            setAttachmentFilename(file?.name ?? "");
-          },
-          onAttachmentFilenameInput: setAttachmentFilename,
-          onDownloadAttachment: (record) => downloadAttachment(record),
-          onRemoveAttachment: (record) => removeAttachment(record),
-        }}
-        moderationPanelProps={{
-          moderationUserIdInput: moderationUserIdInput(),
-          moderationRoleInput: moderationRoleInput(),
-          overrideRoleInput: overrideRoleInput(),
-          overrideAllowCsv: overrideAllowCsv(),
-          overrideDenyCsv: overrideDenyCsv(),
-          isModerating: isModerating(),
-          hasActiveWorkspace: Boolean(activeWorkspace()),
-          hasActiveChannel: Boolean(activeChannel()),
-          canManageRoles: canManageRoles(),
-          canBanMembers: canBanMembers(),
-          canManageChannelOverrides: canManageChannelOverrides(),
-          moderationStatus: moderationStatus(),
-          moderationError: moderationError(),
-          onModerationUserIdInput: setModerationUserIdInput,
-          onModerationRoleChange: (value) =>
-            setModerationRoleInput(roleFromInput(value)),
-          onRunMemberAction: (action) => runMemberAction(action),
-          onOverrideRoleChange: (value) =>
-            setOverrideRoleInput(roleFromInput(value)),
-          onOverrideAllowInput: setOverrideAllowCsv,
-          onOverrideDenyInput: setOverrideDenyCsv,
-          onApplyOverride: applyOverride,
-        }}
-        utilityPanelProps={{
-          echoInput: echoInput(),
-          healthStatus: healthStatus(),
-          diagError: diagError(),
-          isCheckingHealth: isCheckingHealth(),
-          isEchoing: isEchoing(),
-          onEchoInput: setEchoInput,
-          onRunHealthCheck: runHealthCheck,
-          onRunEcho: runEcho,
-        }}
+        {...panelHostPropGroups()}
       />
-
-      <Show when={selectedProfileUserId()}>
-        <div
-          class="panel-backdrop"
-          role="presentation"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              setSelectedProfileUserId(null);
-            }
-          }}
-        >
-          <section
-            class="panel-window panel-window-compact profile-view-panel"
-            role="dialog"
-            aria-modal="true"
-            aria-label="User profile panel"
-          >
-            <header class="panel-window-header">
-              <h4>User profile</h4>
-              <button type="button" onClick={() => setSelectedProfileUserId(null)}>
-                Close
-              </button>
-            </header>
-            <div class="panel-window-body">
-              <Show when={selectedProfile.loading}>
-                <p class="panel-note">Loading profile...</p>
-              </Show>
-              <Show when={selectedProfileError()}>
-                <p class="status error">{selectedProfileError()}</p>
-              </Show>
-              <Show when={selectedProfile()}>
-                {(value) => (
-                  <section class="profile-view-body">
-                    <div class="profile-view-header">
-                      <span class="profile-view-avatar" aria-hidden="true">
-                        <span class="profile-view-avatar-fallback">
-                          {value().username.slice(0, 1).toUpperCase()}
-                        </span>
-                        <Show when={avatarUrlForUser(value().userId)}>
-                          <img
-                            class="profile-view-avatar-image"
-                            src={avatarUrlForUser(value().userId)!}
-                            alt={`${value().username} avatar`}
-                            loading="lazy"
-                            decoding="async"
-                            referrerPolicy="no-referrer"
-                            onError={(event) => {
-                              event.currentTarget.style.display = "none";
-                            }}
-                          />
-                        </Show>
-                      </span>
-                      <div>
-                        <p class="profile-view-name">{value().username}</p>
-                        <p class="mono">{value().userId}</p>
-                      </div>
-                    </div>
-                    <SafeMarkdown class="profile-view-markdown" tokens={value().aboutMarkdownTokens} />
-                  </section>
-                )}
-              </Show>
-            </div>
-          </section>
-        </div>
-      </Show>
-    </div>
+      <UserProfileOverlay
+        selectedProfileUserId={selectedProfileUserId()}
+        selectedProfileLoading={selectedProfile.loading}
+        selectedProfileError={selectedProfileError()}
+        selectedProfile={selectedProfile() ?? null}
+        avatarUrlForUser={avatarUrlForUser}
+        onClose={() => setSelectedProfileUserId(null)}
+      />
+    </AppShellLayout>
   );
 }
