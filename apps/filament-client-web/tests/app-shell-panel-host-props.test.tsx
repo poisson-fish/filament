@@ -28,6 +28,7 @@ import {
   type SearchPanelBuilderOptions,
   type SettingsPanelBuilderOptions,
   type UtilityPanelBuilderOptions,
+  type WorkspaceSettingsPanelBuilderOptions,
   type WorkspaceCreatePanelBuilderOptions,
 } from "../src/features/app-shell/adapters/panel-host-props";
 import { PanelHost } from "../src/features/app-shell/components/panels/PanelHost";
@@ -37,6 +38,7 @@ interface PanelHostOptionsOverrides {
   channelCreate?: Partial<ChannelCreatePanelBuilderOptions>;
   publicDirectory?: Partial<PublicDirectoryPanelBuilderOptions>;
   settings?: Partial<SettingsPanelBuilderOptions>;
+  workspaceSettings?: Partial<WorkspaceSettingsPanelBuilderOptions>;
   friendships?: Partial<FriendshipsPanelBuilderOptions>;
   search?: Partial<SearchPanelBuilderOptions>;
   attachments?: Partial<AttachmentsPanelBuilderOptions>;
@@ -121,6 +123,18 @@ function baseOptions(
       setSelectedProfileAvatarFile: vi.fn(),
       onSaveProfileSettings: vi.fn(),
       onUploadProfileAvatar: vi.fn(),
+    },
+    workspaceSettings: {
+      hasActiveWorkspace: true,
+      canManageWorkspaceSettings: true,
+      workspaceName: "Security Ops",
+      workspaceVisibility: "private",
+      isSavingWorkspaceSettings: false,
+      workspaceSettingsStatus: "",
+      workspaceSettingsError: "",
+      setWorkspaceSettingsName: vi.fn(),
+      setWorkspaceSettingsVisibility: vi.fn(),
+      onSaveWorkspaceSettings: vi.fn(),
     },
     friendships: {
       friendRecipientUserIdInput: "",
@@ -258,6 +272,10 @@ function baseOptions(
     settings: {
       ...defaults.settings,
       ...overrides.settings,
+    },
+    workspaceSettings: {
+      ...defaults.workspaceSettings,
+      ...overrides.workspaceSettings,
     },
     friendships: {
       ...defaults.friendships,
@@ -416,6 +434,9 @@ describe("app shell panel host props adapter", () => {
     );
     expect(propGroups.friendshipsPanelProps.friendRequests).toBe(
       options.friendships.friendRequests,
+    );
+    expect(propGroups.workspaceSettingsPanelProps.workspaceName).toBe(
+      options.workspaceSettings.workspaceName,
     );
     expect(propGroups.searchPanelProps.searchResults).toBe(options.search.searchResults);
     expect(propGroups.attachmentsPanelProps.activeAttachments).toBe(

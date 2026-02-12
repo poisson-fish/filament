@@ -41,8 +41,10 @@ export function overlayPanelTitle(panel: OverlayPanel): string {
       return "Create workspace";
     case "channel-create":
       return "Create channel";
-    case "settings":
-      return "Settings";
+    case "client-settings":
+      return "Client settings";
+    case "workspace-settings":
+      return "Workspace settings";
     case "public-directory":
       return "Public workspace directory";
     case "friendships":
@@ -64,7 +66,12 @@ export function overlayPanelClassName(panel: OverlayPanel): string {
   if (panel === "workspace-create" || panel === "channel-create") {
     return "panel-window panel-window-compact";
   }
-  if (panel === "settings" || panel === "public-directory" || panel === "friendships") {
+  if (
+    panel === "client-settings" ||
+    panel === "workspace-settings" ||
+    panel === "public-directory" ||
+    panel === "friendships"
+  ) {
     return "panel-window panel-window-medium";
   }
   return "panel-window";
@@ -112,7 +119,7 @@ export function openOverlayPanelWithDefaults(
   if (panel === "channel-create") {
     options.setChannelCreateError("");
   }
-  if (panel === "settings") {
+  if (panel === "client-settings") {
     options.setActiveSettingsCategory(DEFAULT_SETTINGS_CATEGORY);
     options.setActiveVoiceSettingsSubmenu(DEFAULT_VOICE_SETTINGS_SUBMENU);
   }

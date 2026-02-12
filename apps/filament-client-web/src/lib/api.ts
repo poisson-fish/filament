@@ -719,6 +719,20 @@ export async function fetchGuilds(session: AuthSession): Promise<GuildRecord[]> 
   return (dto as { guilds: unknown[] }).guilds.map((entry) => guildFromResponse(entry));
 }
 
+export async function updateGuild(
+  session: AuthSession,
+  guildId: GuildId,
+  input: { name: GuildName; visibility?: GuildVisibility },
+): Promise<GuildRecord> {
+  const dto = await requestJson({
+    method: "PATCH",
+    path: `/guilds/${guildId}`,
+    accessToken: session.accessToken,
+    body: { name: input.name, visibility: input.visibility },
+  });
+  return guildFromResponse(dto);
+}
+
 export async function fetchPublicGuildDirectory(
   session: AuthSession,
   input?: { query?: string; limit?: number },

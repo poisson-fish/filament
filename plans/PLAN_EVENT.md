@@ -376,19 +376,37 @@ Keep client profile/social panels synchronized across sessions/devices.
 Fix settings information architecture and restore expected entry points.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add separate overlay panels/types:
+- [x] Add separate overlay panels/types:
   - `client-settings` (existing Voice/Profile content)
   - `workspace-settings` (workspace/server config)
-- [ ] Restore gear icon button in channel rail account footer to open `client-settings`.
-- [ ] Keep workspace dropdown “Server Settings” but wire it to `workspace-settings`.
-- [ ] Move workspace-specific controls out of client settings panel.
-- [ ] Add/update tests:
+- [x] Restore gear icon button in channel rail account footer to open `client-settings`.
+- [x] Keep workspace dropdown “Server Settings” but wire it to `workspace-settings`.
+- [x] Move workspace-specific controls out of client settings panel.
+- [x] Add/update tests:
   - gear opens client settings
   - workspace menu opens workspace settings
   - panel titles/authorization behavior remain correct
+
+### Refactor Notes
+- Split overlay panel types and routing to:
+  - `client-settings` for Voice/Profile settings
+  - `workspace-settings` for workspace rename/visibility controls
+- Added `WorkspaceSettingsPanel` in `apps/filament-client-web/src/features/app-shell/components/panels/WorkspaceSettingsPanel.tsx` with:
+  - bounded name/visibility form inputs
+  - permission-gated save action (`manage_roles`/role-management access)
+  - explicit status/error feedback
+- Restored channel-rail account footer settings gear in `apps/filament-client-web/src/features/app-shell/components/ChannelRail.tsx` and wired:
+  - footer gear -> `client-settings`
+  - workspace dropdown Server Settings -> `workspace-settings`
+- Added `updateGuild` API client method in `apps/filament-client-web/src/lib/api.ts` and runtime save flow in `apps/filament-client-web/src/features/app-shell/runtime/create-app-shell-runtime.ts`.
+- Extended panel host prop adapters and panel host wiring to include workspace settings panel props and lazy loading.
+- Updated web tests for:
+  - split entry points and panel titles
+  - workspace settings save flow
+  - workspace settings authorization-disabled behavior
 
 ### Exit Criteria
 - Client and workspace settings are clearly separated and reachable from correct entry points.

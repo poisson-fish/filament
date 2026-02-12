@@ -84,6 +84,8 @@ export function AppShellPage() {
     messageListController,
     openOverlayPanel,
     closeOverlayPanel,
+    openClientSettingsPanel,
+    openWorkspaceSettingsPanel,
     panelHostPropGroups,
     actorLabel,
     displayUserLabel,
@@ -144,7 +146,8 @@ export function AppShellPage() {
           actorLabel={actorLabel}
           voiceParticipantLabel={voiceParticipantLabel}
           onOpenUserProfile={openUserProfile}
-          onOpenSettings={() => openOverlayPanel("settings")}
+          onOpenClientSettings={openClientSettingsPanel}
+          onOpenWorkspaceSettings={openWorkspaceSettingsPanel}
           onCreateTextChannel={openTextChannelCreatePanel}
           onCreateVoiceChannel={openVoiceChannelCreatePanel}
           onSelectChannel={(channelId) => workspaceState.workspaceChannel.setActiveChannelId(channelId)}

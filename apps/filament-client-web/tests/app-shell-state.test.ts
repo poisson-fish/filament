@@ -36,6 +36,11 @@ describe("app shell state factories", () => {
     expect(workspaceState.friendships.friendRequests()).toEqual({ incoming: [], outgoing: [] });
     expect(workspaceState.workspaceChannel.channelPermissions()).toBeNull();
     expect(workspaceState.workspaceChannel.createChannelName()).toBe("incident-room");
+    expect(workspaceState.workspaceChannel.workspaceSettingsName()).toBe("");
+    expect(workspaceState.workspaceChannel.workspaceSettingsVisibility()).toBe("private");
+    expect(workspaceState.workspaceChannel.isSavingWorkspaceSettings()).toBe(false);
+    expect(workspaceState.workspaceChannel.workspaceSettingsStatus()).toBe("");
+    expect(workspaceState.workspaceChannel.workspaceSettingsError()).toBe("");
     expect(workspaceState.friendships.friendRecipientUserIdInput()).toBe("");
     expect(workspaceState.discovery.publicGuildDirectory()).toEqual([]);
     expect(workspaceState.discovery.publicGuildJoinStatusByGuildId()).toEqual({});

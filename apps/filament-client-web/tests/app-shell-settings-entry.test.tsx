@@ -76,6 +76,7 @@ function seedAuthenticatedWorkspace(input?: {
       {
         guildId: GUILD_ID,
         guildName: "Security Ops",
+        visibility: "private",
         channels: [{ channelId: CHANNEL_ID, name: "incident-room", kind: "text" }],
       },
     ]),
@@ -130,6 +131,7 @@ function stubMediaDevicesWithPermissionFlow(input: {
 function createSettingsFixtureFetch(options?: {
   profileDelayMs?: number;
   profileError?: { status: number; code: string };
+  channelPermissions?: string[];
 }) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input);
@@ -167,6 +169,14 @@ function createSettingsFixtureFetch(options?: {
         guilds: [{ guild_id: GUILD_ID, name: "Security Ops", visibility: "private" }],
       });
     }
+    if (method === "PATCH" && url.endsWith(`/guilds/${GUILD_ID}`)) {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      return jsonResponse({
+        guild_id: GUILD_ID,
+        name: typeof body.name === "string" ? body.name : "Security Ops",
+        visibility: body.visibility === "public" ? "public" : "private",
+      });
+    }
     if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
       return jsonResponse({
         channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
@@ -176,7 +186,8 @@ function createSettingsFixtureFetch(options?: {
       method === "GET" &&
       url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)
     ) {
-      return jsonResponse({ role: "owner", permissions: ["create_message"] });
+      const permissions = options?.channelPermissions ?? ["create_message", "manage_roles"];
+      return jsonResponse({ role: permissions.includes("manage_roles") ? "owner" : "member", permissions });
     }
     if (
       method === "GET" &&
@@ -197,11 +208,15 @@ function createSettingsFixtureFetch(options?: {
   });
 }
 
-async function openSettingsPanelFromWorkspaceMenu(): Promise<void> {
+async function openWorkspaceSettingsPanelFromWorkspaceMenu(): Promise<void> {
   const menuButton = await screen.findByRole("button", { name: "Open workspace menu" });
   await waitFor(() => expect(menuButton).not.toBeDisabled());
   fireEvent.click(menuButton);
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Open settings panel" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open workspace settings panel" }));
+}
+
+async function openClientSettingsPanelFromAccountGear(): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: "Open client settings panel" }));
 }
 
 describe("app shell settings entry point", () => {
@@ -219,7 +234,7 @@ describe("app shell settings entry point", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens and closes settings panel from global app-shell action", async () => {
+  it("opens and closes client settings panel from account gear", async () => {
     seedAuthenticatedWorkspace();
     vi.stubGlobal("fetch", createSettingsFixtureFetch());
     vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
@@ -231,8 +246,8 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    await openSettingsPanelFromWorkspaceMenu();
-    expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
+    await openClientSettingsPanelFromAccountGear();
+    expect(await screen.findByRole("dialog", { name: "Client settings panel" })).toBeInTheDocument();
     expect(await screen.findByLabelText("Settings category rail")).toBeInTheDocument();
     expect(await screen.findByLabelText("Settings content pane")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Open Voice settings category" })).toHaveAttribute(
@@ -251,11 +266,11 @@ describe("app shell settings entry point", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Settings panel" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("dialog", { name: "Client settings panel" })).not.toBeInTheDocument(),
     );
   });
 
-  it("closes settings panel on Escape", async () => {
+  it("opens workspace settings panel from workspace menu", async () => {
     seedAuthenticatedWorkspace();
     vi.stubGlobal("fetch", createSettingsFixtureFetch());
     vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
@@ -264,12 +279,27 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    await openSettingsPanelFromWorkspaceMenu();
-    expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
+    await openWorkspaceSettingsPanelFromWorkspaceMenu();
+    expect(await screen.findByRole("dialog", { name: "Workspace settings panel" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Workspace settings name")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Workspace settings visibility")).toBeInTheDocument();
+  });
+
+  it("closes client settings panel on Escape", async () => {
+    seedAuthenticatedWorkspace();
+    vi.stubGlobal("fetch", createSettingsFixtureFetch());
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    stubMediaDevices([]);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    await openClientSettingsPanelFromAccountGear();
+    expect(await screen.findByRole("dialog", { name: "Client settings panel" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Settings panel" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("dialog", { name: "Client settings panel" })).not.toBeInTheDocument(),
     );
   });
 
@@ -282,8 +312,8 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    await openSettingsPanelFromWorkspaceMenu();
-    expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
+    await openClientSettingsPanelFromAccountGear();
+    expect(await screen.findByRole("dialog", { name: "Client settings panel" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Open Profile settings category" }));
     expect(screen.getByLabelText("Profile username")).toBeInTheDocument();
@@ -322,8 +352,8 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    await openSettingsPanelFromWorkspaceMenu();
-    expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
+    await openClientSettingsPanelFromAccountGear();
+    expect(await screen.findByRole("dialog", { name: "Client settings panel" })).toBeInTheDocument();
 
     const microphoneSelect = await screen.findByLabelText("Select microphone device");
     const speakerSelect = await screen.findByLabelText("Select speaker device");
@@ -366,8 +396,8 @@ describe("app shell settings entry point", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
-    await openSettingsPanelFromWorkspaceMenu();
-    expect(await screen.findByRole("dialog", { name: "Settings panel" })).toBeInTheDocument();
+    await openClientSettingsPanelFromAccountGear();
+    expect(await screen.findByRole("dialog", { name: "Client settings panel" })).toBeInTheDocument();
 
     const refreshButton = await screen.findByRole("button", { name: "Refresh devices" });
     fireEvent.click(refreshButton);
@@ -377,6 +407,58 @@ describe("app shell settings entry point", () => {
       expect(stopTrack).toHaveBeenCalledTimes(1);
     });
     expect(await screen.findByText("Desk Mic")).toBeInTheDocument();
+  });
+
+  it("saves workspace name and visibility from workspace settings panel", async () => {
+    seedAuthenticatedWorkspace();
+    const fetchMock = createSettingsFixtureFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    stubMediaDevices([]);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    await openWorkspaceSettingsPanelFromWorkspaceMenu();
+    expect(await screen.findByRole("dialog", { name: "Workspace settings panel" })).toBeInTheDocument();
+
+    fireEvent.input(screen.getByLabelText("Workspace settings name"), {
+      target: { value: "Blue Team" },
+    });
+    fireEvent.change(screen.getByLabelText("Workspace settings visibility"), {
+      target: { value: "public" },
+    });
+    const saveButton = screen.getByRole("button", { name: "Save workspace" });
+    await waitFor(() => expect(saveButton).not.toBeDisabled());
+    fireEvent.click(saveButton);
+
+    expect(await screen.findByText("Workspace settings saved.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/guilds/${GUILD_ID}`),
+      expect.objectContaining({
+        method: "PATCH",
+      }),
+    );
+  });
+
+  it("keeps workspace settings disabled for users without workspace role-management permission", async () => {
+    seedAuthenticatedWorkspace();
+    vi.stubGlobal(
+      "fetch",
+      createSettingsFixtureFetch({ channelPermissions: ["create_message"] }),
+    );
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+    stubMediaDevices([]);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    await openWorkspaceSettingsPanelFromWorkspaceMenu();
+    expect(await screen.findByRole("dialog", { name: "Workspace settings panel" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Save workspace" })).toBeDisabled();
+    expect(
+      await screen.findByText("You need workspace role-management permissions to update these settings."),
+    ).toBeInTheDocument();
   });
 
   it("opens profile panel when clicking avatar controls, renders loading, and closes", async () => {

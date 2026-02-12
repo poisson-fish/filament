@@ -41,6 +41,10 @@ const LEAVE_VOICE_ICON_URL = new URL(
   "../../../../resource/coolicons.v4.1/cooliocns SVG/Interface/Log_Out.svg",
   import.meta.url,
 ).href;
+const SETTINGS_ICON_URL = new URL(
+  "../../../../resource/coolicons.v4.1/cooliocns SVG/Interface/Settings.svg",
+  import.meta.url,
+).href;
 interface ChannelRailProps {
   activeWorkspace: WorkspaceRecord | null;
   activeChannel: ChannelRecord | null;
@@ -71,7 +75,8 @@ interface ChannelRailProps {
   actorLabel: (actorId: string) => string;
   voiceParticipantLabel: (identity: string, isLocal: boolean) => string;
   onOpenUserProfile: (userId: string) => void;
-  onOpenSettings: () => void;
+  onOpenClientSettings: () => void;
+  onOpenWorkspaceSettings: () => void;
   onCreateTextChannel: () => void;
   onCreateVoiceChannel: () => void;
   onSelectChannel: (channelId: ChannelId) => void;
@@ -106,9 +111,9 @@ export function ChannelRail(props: ChannelRailProps) {
     }
     setWorkspaceMenuOpen((open) => !open);
   };
-  const openSettingsPanel = () => {
+  const openWorkspaceSettingsPanel = () => {
     closeWorkspaceMenu();
-    props.onOpenSettings();
+    props.onOpenWorkspaceSettings();
   };
 
   createEffect(() => {
@@ -191,8 +196,8 @@ export function ChannelRail(props: ChannelRailProps) {
               type="button"
               class="workspace-menu-item"
               role="menuitem"
-              aria-label="Open settings panel"
-              onClick={openSettingsPanel}
+              aria-label="Open workspace settings panel"
+              onClick={openWorkspaceSettingsPanel}
             >
               Server Settings
             </button>
@@ -597,6 +602,15 @@ export function ChannelRail(props: ChannelRailProps) {
                   <p class="channel-rail-account-status">{currentUserStatusLabel()}</p>
                 </div>
               </div>
+              <button
+                type="button"
+                class="channel-rail-account-action"
+                aria-label="Open client settings panel"
+                title="Client settings"
+                onClick={props.onOpenClientSettings}
+              >
+                <span class="icon-mask" style={`--icon-url: url("${SETTINGS_ICON_URL}")`} aria-hidden="true" />
+              </button>
             </footer>
           </div>
         </Match>

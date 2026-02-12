@@ -27,7 +27,8 @@ export interface ReactionPickerOverlayPosition {
 export type OverlayPanel =
   | "workspace-create"
   | "channel-create"
-  | "settings"
+  | "client-settings"
+  | "workspace-settings"
   | "public-directory"
   | "friendships"
   | "search"

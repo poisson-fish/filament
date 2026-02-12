@@ -86,7 +86,8 @@ function channelRailPropsFixture(
     actorLabel: (value) => value,
     voiceParticipantLabel: (identity) => identity,
     onOpenUserProfile: () => {},
-    onOpenSettings: () => {},
+    onOpenClientSettings: () => {},
+    onOpenWorkspaceSettings: () => {},
     onCreateTextChannel: () => {},
     onCreateVoiceChannel: () => {},
     onSelectChannel: () => {},
@@ -124,15 +125,17 @@ describe("app shell extracted layout components", () => {
 
   it("renders voice controls in channel rail and invokes handlers", () => {
     const onJoinVoice = vi.fn();
-    const onOpenSettings = vi.fn();
+    const onOpenClientSettings = vi.fn();
+    const onOpenWorkspaceSettings = vi.fn();
 
     render(() => (
-      <ChannelRail
-        {...channelRailPropsFixture({
-          onJoinVoice,
-          onOpenSettings,
-        })}
-      />
+        <ChannelRail
+          {...channelRailPropsFixture({
+            onJoinVoice,
+            onOpenClientSettings,
+            onOpenWorkspaceSettings,
+          })}
+        />
     ));
 
     fireEvent.click(screen.getByRole("button", { name: "Join Voice" }));
@@ -140,8 +143,11 @@ describe("app shell extracted layout components", () => {
     expect(screen.queryByText("Join Voice")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open workspace menu" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Open settings panel" }));
-    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open workspace settings panel" }));
+    expect(onOpenWorkspaceSettings).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open client settings panel" }));
+    expect(onOpenClientSettings).toHaveBeenCalledTimes(1);
   });
 
   it("shows workspace menu entries with notification/privacy placeholders", () => {
@@ -150,7 +156,7 @@ describe("app shell extracted layout components", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open workspace menu" }));
 
     expect(screen.getByRole("menuitem", { name: "Invite to workspace" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Open settings panel" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Open workspace settings panel" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Notification settings coming soon" })).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "Privacy settings coming soon" })).toBeDisabled();
   });

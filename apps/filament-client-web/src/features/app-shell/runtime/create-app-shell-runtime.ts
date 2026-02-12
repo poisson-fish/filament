@@ -5,11 +5,13 @@ import {
 } from "solid-js";
 import {
   channelKindFromInput,
+  guildNameFromInput,
+  guildVisibilityFromInput,
   type ChannelId,
   type GuildId,
 } from "../../../domain/chat";
 import { useAuth } from "../../../lib/auth-context";
-import { ApiError, fetchChannelPermissionSnapshot } from "../../../lib/api";
+import { ApiError, fetchChannelPermissionSnapshot, updateGuild } from "../../../lib/api";
 import {
   canRequestAudioCapturePermission,
   enumerateAudioDevices,
@@ -124,6 +126,79 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     overlayState.setActiveSettingsCategory(category);
     if (category === "voice") {
       overlayState.setActiveVoiceSettingsSubmenu("audio-devices");
+    }
+  };
+
+  const openClientSettingsPanel = (): void => {
+    openOverlayPanel("client-settings");
+  };
+
+  const openWorkspaceSettingsPanel = (): void => {
+    const activeWorkspace = selectors.activeWorkspace();
+    if (activeWorkspace) {
+      workspaceChannelState.setWorkspaceSettingsName(activeWorkspace.guildName);
+      workspaceChannelState.setWorkspaceSettingsVisibility(activeWorkspace.visibility);
+    }
+    workspaceChannelState.setWorkspaceSettingsStatus("");
+    workspaceChannelState.setWorkspaceSettingsError("");
+    openOverlayPanel("workspace-settings");
+  };
+
+  const saveWorkspaceSettings = async (): Promise<void> => {
+    const session = auth.session();
+    const guildId = workspaceChannelState.activeGuildId();
+    if (!session || !guildId) {
+      return;
+    }
+    if (!selectors.canManageRoles()) {
+      workspaceChannelState.setWorkspaceSettingsError(
+        "You do not have permission to update workspace settings.",
+      );
+      workspaceChannelState.setWorkspaceSettingsStatus("");
+      return;
+    }
+
+    let nextName;
+    let nextVisibility;
+    try {
+      nextName = guildNameFromInput(workspaceChannelState.workspaceSettingsName());
+      nextVisibility = guildVisibilityFromInput(workspaceChannelState.workspaceSettingsVisibility());
+    } catch (error) {
+      workspaceChannelState.setWorkspaceSettingsError(
+        mapError(error, "Unable to validate workspace settings."),
+      );
+      workspaceChannelState.setWorkspaceSettingsStatus("");
+      return;
+    }
+
+    workspaceChannelState.setSavingWorkspaceSettings(true);
+    workspaceChannelState.setWorkspaceSettingsStatus("");
+    workspaceChannelState.setWorkspaceSettingsError("");
+    try {
+      const updatedGuild = await updateGuild(session, guildId, {
+        name: nextName,
+        visibility: nextVisibility,
+      });
+      workspaceChannelState.setWorkspaces((existing) =>
+        existing.map((workspace) =>
+          workspace.guildId === guildId
+            ? {
+                ...workspace,
+                guildName: updatedGuild.name,
+                visibility: updatedGuild.visibility,
+              }
+            : workspace,
+        ),
+      );
+      workspaceChannelState.setWorkspaceSettingsName(updatedGuild.name);
+      workspaceChannelState.setWorkspaceSettingsVisibility(updatedGuild.visibility);
+      workspaceChannelState.setWorkspaceSettingsStatus("Workspace settings saved.");
+    } catch (error) {
+      workspaceChannelState.setWorkspaceSettingsError(
+        mapError(error, "Unable to save workspace settings."),
+      );
+    } finally {
+      workspaceChannelState.setSavingWorkspaceSettings(false);
     }
   };
 
@@ -613,7 +688,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   createEffect(() => {
     const isVoiceAudioSettingsOpen =
-      overlayState.activeOverlayPanel() === "settings" &&
+      overlayState.activeOverlayPanel() === "client-settings" &&
       overlayState.activeSettingsCategory() === "voice" &&
       overlayState.activeVoiceSettingsSubmenu() === "audio-devices";
     if (!isVoiceAudioSettingsOpen) {
@@ -783,6 +858,26 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         onSaveProfileSettings: profileController.saveProfileSettings,
         onUploadProfileAvatar: profileController.uploadProfileAvatar,
       },
+      workspaceSettings: {
+        hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
+        canManageWorkspaceSettings: selectors.canManageRoles(),
+        workspaceName: workspaceChannelState.workspaceSettingsName(),
+        workspaceVisibility: workspaceChannelState.workspaceSettingsVisibility(),
+        isSavingWorkspaceSettings: workspaceChannelState.isSavingWorkspaceSettings(),
+        workspaceSettingsStatus: workspaceChannelState.workspaceSettingsStatus(),
+        workspaceSettingsError: workspaceChannelState.workspaceSettingsError(),
+        setWorkspaceSettingsName: (value) => {
+          workspaceChannelState.setWorkspaceSettingsName(value);
+          workspaceChannelState.setWorkspaceSettingsStatus("");
+          workspaceChannelState.setWorkspaceSettingsError("");
+        },
+        setWorkspaceSettingsVisibility: (value) => {
+          workspaceChannelState.setWorkspaceSettingsVisibility(value);
+          workspaceChannelState.setWorkspaceSettingsStatus("");
+          workspaceChannelState.setWorkspaceSettingsError("");
+        },
+        onSaveWorkspaceSettings: saveWorkspaceSettings,
+      },
       friendships: {
         friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput(),
         friendRequests: friendshipsState.friendRequests(),
@@ -927,6 +1022,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     panelHostPropGroups,
     openOverlayPanel,
     closeOverlayPanel,
+    openClientSettingsPanel,
+    openWorkspaceSettingsPanel,
     openSettingsCategory,
     refreshAudioDeviceInventory,
     setVoiceDevicePreference,

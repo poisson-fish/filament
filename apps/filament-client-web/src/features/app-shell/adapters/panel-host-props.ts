@@ -38,6 +38,7 @@ export type PanelHostPropGroups = Pick<
   | "channelCreatePanelProps"
   | "publicDirectoryPanelProps"
   | "settingsPanelProps"
+  | "workspaceSettingsPanelProps"
   | "friendshipsPanelProps"
   | "searchPanelProps"
   | "attachmentsPanelProps"
@@ -115,6 +116,19 @@ export interface SettingsPanelBuilderOptions {
   setSelectedProfileAvatarFile: (file: File | null) => void;
   onSaveProfileSettings: () => Promise<void> | void;
   onUploadProfileAvatar: () => Promise<void> | void;
+}
+
+export interface WorkspaceSettingsPanelBuilderOptions {
+  hasActiveWorkspace: boolean;
+  canManageWorkspaceSettings: boolean;
+  workspaceName: string;
+  workspaceVisibility: GuildVisibility;
+  isSavingWorkspaceSettings: boolean;
+  workspaceSettingsStatus: string;
+  workspaceSettingsError: string;
+  setWorkspaceSettingsName: (value: string) => void;
+  setWorkspaceSettingsVisibility: (value: GuildVisibility) => void;
+  onSaveWorkspaceSettings: () => Promise<void> | void;
 }
 
 export interface FriendshipsPanelBuilderOptions {
@@ -234,6 +248,7 @@ export interface BuildPanelHostPropGroupsOptions {
   channelCreate: ChannelCreatePanelBuilderOptions;
   publicDirectory: PublicDirectoryPanelBuilderOptions;
   settings: SettingsPanelBuilderOptions;
+  workspaceSettings: WorkspaceSettingsPanelBuilderOptions;
   friendships: FriendshipsPanelBuilderOptions;
   search: SearchPanelBuilderOptions;
   attachments: AttachmentsPanelBuilderOptions;
@@ -328,6 +343,23 @@ export function buildSettingsPanelProps(
     onSelectProfileAvatarFile: options.setSelectedProfileAvatarFile,
     onSaveProfile: options.onSaveProfileSettings,
     onUploadProfileAvatar: options.onUploadProfileAvatar,
+  };
+}
+
+export function buildWorkspaceSettingsPanelProps(
+  options: WorkspaceSettingsPanelBuilderOptions,
+): PanelHostProps["workspaceSettingsPanelProps"] {
+  return {
+    hasActiveWorkspace: options.hasActiveWorkspace,
+    canManageWorkspaceSettings: options.canManageWorkspaceSettings,
+    workspaceName: options.workspaceName,
+    workspaceVisibility: options.workspaceVisibility,
+    isSavingWorkspaceSettings: options.isSavingWorkspaceSettings,
+    workspaceSettingsStatus: options.workspaceSettingsStatus,
+    workspaceSettingsError: options.workspaceSettingsError,
+    onWorkspaceNameInput: options.setWorkspaceSettingsName,
+    onWorkspaceVisibilityChange: options.setWorkspaceSettingsVisibility,
+    onSaveWorkspaceSettings: options.onSaveWorkspaceSettings,
   };
 }
 
@@ -470,6 +502,7 @@ export function buildPanelHostPropGroups(
     channelCreatePanelProps: buildChannelCreatePanelProps(options.channelCreate),
     publicDirectoryPanelProps: buildPublicDirectoryPanelProps(options.publicDirectory),
     settingsPanelProps: buildSettingsPanelProps(options.settings),
+    workspaceSettingsPanelProps: buildWorkspaceSettingsPanelProps(options.workspaceSettings),
     friendshipsPanelProps: buildFriendshipsPanelProps(options.friendships),
     searchPanelProps: buildSearchPanelProps(options.search),
     attachmentsPanelProps: buildAttachmentsPanelProps(options.attachments),

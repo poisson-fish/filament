@@ -9,6 +9,7 @@ import type { RoleManagementPanelProps } from "./RoleManagementPanel";
 import type { SearchPanelProps } from "./SearchPanel";
 import type { SettingsPanelProps } from "./SettingsPanel";
 import type { UtilityPanelProps } from "./UtilityPanel";
+import type { WorkspaceSettingsPanelProps } from "./WorkspaceSettingsPanel";
 import { WorkspaceCreatePanel, type WorkspaceCreatePanelProps } from "./WorkspaceCreatePanel";
 
 const PublicDirectoryPanelLazy = lazy(() =>
@@ -19,6 +20,11 @@ const PublicDirectoryPanelLazy = lazy(() =>
 const SettingsPanelLazy = lazy(() =>
   import("./lazy/PublicPanelGroup").then((module) => ({
     default: module.SettingsPanel,
+  })),
+);
+const WorkspaceSettingsPanelLazy = lazy(() =>
+  import("./lazy/PublicPanelGroup").then((module) => ({
+    default: module.WorkspaceSettingsPanel,
   })),
 );
 const FriendshipsPanelLazy = lazy(() =>
@@ -67,6 +73,7 @@ export interface PanelHostProps {
   channelCreatePanelProps: ChannelCreatePanelProps;
   publicDirectoryPanelProps: PublicDirectoryPanelProps;
   settingsPanelProps: SettingsPanelProps;
+  workspaceSettingsPanelProps: WorkspaceSettingsPanelProps;
   friendshipsPanelProps: FriendshipsPanelProps;
   searchPanelProps: SearchPanelProps;
   attachmentsPanelProps: AttachmentsPanelProps;
@@ -115,8 +122,12 @@ export function PanelHost(props: PanelHostProps) {
                     <PublicDirectoryPanelLazy {...props.publicDirectoryPanelProps} />
                   </Match>
 
-                  <Match when={panelAccessor() === "settings"}>
+                  <Match when={panelAccessor() === "client-settings"}>
                     <SettingsPanelLazy {...props.settingsPanelProps} />
+                  </Match>
+
+                  <Match when={panelAccessor() === "workspace-settings"}>
+                    <WorkspaceSettingsPanelLazy {...props.workspaceSettingsPanelProps} />
                   </Match>
 
                   <Match when={panelAccessor() === "friendships"}>

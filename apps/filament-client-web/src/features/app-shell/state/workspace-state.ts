@@ -25,6 +25,12 @@ function createWorkspaceChannelState() {
   const [createChannelKind, setCreateChannelKind] = createSignal<ChannelKindName>("text");
   const [isCreatingWorkspace, setCreatingWorkspace] = createSignal(false);
   const [workspaceError, setWorkspaceError] = createSignal("");
+  const [workspaceSettingsName, setWorkspaceSettingsName] = createSignal("");
+  const [workspaceSettingsVisibility, setWorkspaceSettingsVisibility] =
+    createSignal<GuildVisibility>("private");
+  const [isSavingWorkspaceSettings, setSavingWorkspaceSettings] = createSignal(false);
+  const [workspaceSettingsStatus, setWorkspaceSettingsStatus] = createSignal("");
+  const [workspaceSettingsError, setWorkspaceSettingsError] = createSignal("");
 
   const [newChannelName, setNewChannelName] = createSignal("backend");
   const [newChannelKind, setNewChannelKind] = createSignal<ChannelKindName>("text");
@@ -55,6 +61,16 @@ function createWorkspaceChannelState() {
     setCreatingWorkspace,
     workspaceError,
     setWorkspaceError,
+    workspaceSettingsName,
+    setWorkspaceSettingsName,
+    workspaceSettingsVisibility,
+    setWorkspaceSettingsVisibility,
+    isSavingWorkspaceSettings,
+    setSavingWorkspaceSettings,
+    workspaceSettingsStatus,
+    setWorkspaceSettingsStatus,
+    workspaceSettingsError,
+    setWorkspaceSettingsError,
     newChannelName,
     setNewChannelName,
     newChannelKind,

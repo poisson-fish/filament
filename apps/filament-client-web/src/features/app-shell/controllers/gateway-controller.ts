@@ -456,8 +456,9 @@ export function createGatewayController(
         if (!connectedUserId) {
           return;
         }
+        const targetUserId = connectedUserId;
         options.setFriendRequests((existing) =>
-          upsertFriendRequestList(existing, payload, connectedUserId),
+          upsertFriendRequestList(existing, payload, targetUserId),
         );
       },
       onFriendRequestUpdate: (payload) => {

@@ -47,8 +47,11 @@ describe("app shell overlay controller", () => {
   it("keeps panel title and class mappings stable", () => {
     expect(overlayPanelTitle("public-directory")).toBe("Public workspace directory");
     expect(overlayPanelTitle("role-management")).toBe("Role management");
+    expect(overlayPanelTitle("client-settings")).toBe("Client settings");
+    expect(overlayPanelTitle("workspace-settings")).toBe("Workspace settings");
     expect(overlayPanelClassName("workspace-create")).toBe("panel-window panel-window-compact");
-    expect(overlayPanelClassName("settings")).toBe("panel-window panel-window-medium");
+    expect(overlayPanelClassName("client-settings")).toBe("panel-window panel-window-medium");
+    expect(overlayPanelClassName("workspace-settings")).toBe("panel-window panel-window-medium");
     expect(overlayPanelClassName("utility")).toBe("panel-window");
   });
 
@@ -79,14 +82,14 @@ describe("app shell overlay controller", () => {
     expect(panel()).toBe("channel-create");
     expect(channelError()).toBe("");
 
-    openOverlayPanelWithDefaults("settings", {
+    openOverlayPanelWithDefaults("client-settings", {
       setPanel,
       setWorkspaceError,
       setChannelCreateError: setChannelError,
       setActiveSettingsCategory: setSettingsCategory,
       setActiveVoiceSettingsSubmenu: setSettingsSubmenu,
     });
-    expect(panel()).toBe("settings");
+    expect(panel()).toBe("client-settings");
     expect(settingsCategory()).toBe("voice");
     expect(settingsSubmenu()).toBe("audio-devices");
   });
