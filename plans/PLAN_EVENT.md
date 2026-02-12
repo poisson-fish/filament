@@ -112,14 +112,52 @@ Only `create_message`, reaction add/remove, and `create_channel` broadcast updat
 Freeze event contracts and explicit endpoint-to-event mapping before implementation.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add `docs/GATEWAY_EVENTS.md` with canonical event list, payload schemas, scope, and auth visibility rules.
-- [ ] Define minimum payload fields per event (`guild_id`/`channel_id`/entity IDs + changed fields).
-- [ ] Decide and document actor metadata policy (`actor_user_id` included only where safe/useful).
-- [ ] Add compatibility notes: unknown events ignored by old clients.
-- [ ] Record final endpoint-to-event mapping table in this plan after signoff.
+- [x] Add `docs/GATEWAY_EVENTS.md` with canonical event list, payload schemas, scope, and auth visibility rules.
+- [x] Define minimum payload fields per event (`guild_id`/`channel_id`/entity IDs + changed fields).
+- [x] Decide and document actor metadata policy (`actor_user_id` included only where safe/useful).
+- [x] Add compatibility notes: unknown events ignored by old clients.
+- [x] Record final endpoint-to-event mapping table in this plan after signoff.
+
+### Locked Endpoint-to-Event Mapping (Phase 0 signoff)
+| Mutation endpoint | Event(s) | Scope | Status |
+| --- | --- | --- | --- |
+| `POST /guilds/{guild_id}/channels/{channel_id}/messages` | `message_create` | channel | Implemented |
+| `PATCH /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}` | `message_update` | channel | Planned (Phase 2) |
+| `DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}` | `message_delete` | channel | Planned (Phase 2) |
+| `POST/DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}` | `message_reaction` | channel | Implemented |
+| `POST /guilds/{guild_id}/channels` | `channel_create` | guild | Implemented |
+| `PATCH /guilds/{guild_id}/channels/{channel_id}` | `channel_update` | guild | Planned (future endpoint) |
+| `DELETE /guilds/{guild_id}/channels/{channel_id}` | `channel_delete` | guild | Planned (future endpoint) |
+| `PATCH /guilds/{guild_id}` | `workspace_update` | guild | Planned (Phase 3; endpoint not implemented yet) |
+| `POST /guilds/{guild_id}/join` | `workspace_member_add` | guild | Planned (Phase 3) |
+| `POST /guilds/{guild_id}/members/{user_id}` | `workspace_member_add` | guild | Planned (Phase 3) |
+| `PATCH /guilds/{guild_id}/members/{user_id}` | `workspace_member_update` | guild | Planned (Phase 3) |
+| `POST /guilds/{guild_id}/members/{user_id}/kick` | `workspace_member_remove` | guild | Planned (Phase 3) |
+| `POST /guilds/{guild_id}/members/{user_id}/ban` | `workspace_member_ban`, `workspace_member_remove` | guild | Planned (Phase 3) |
+| `POST /guilds/{guild_id}/roles` | `workspace_role_create` | guild | Planned (Phase 4) |
+| `PATCH /guilds/{guild_id}/roles/{role_id}` | `workspace_role_update` | guild | Planned (Phase 4) |
+| `DELETE /guilds/{guild_id}/roles/{role_id}` | `workspace_role_delete` | guild | Planned (Phase 4) |
+| `POST /guilds/{guild_id}/roles/reorder` | `workspace_role_reorder` | guild | Planned (Phase 4) |
+| `POST /guilds/{guild_id}/roles/{role_id}/members/{user_id}` | `workspace_role_assignment_add` | guild | Planned (Phase 4) |
+| `DELETE /guilds/{guild_id}/roles/{role_id}/members/{user_id}` | `workspace_role_assignment_remove` | guild | Planned (Phase 4) |
+| `POST /guilds/{guild_id}/channels/{channel_id}/overrides/{role}` | `workspace_channel_override_update` | guild | Planned (Phase 4) |
+| `GET/POST/DELETE /guilds/{guild_id}/ip-bans...` | `workspace_ip_ban_sync` | guild | Planned (Phase 4, redacted payload only) |
+| `PATCH /users/me/profile` | `profile_update` | user | Planned (Phase 5) |
+| `POST /users/me/profile/avatar` | `profile_avatar_update` | user | Planned (Phase 5) |
+| `POST /friends/requests` | `friend_request_create` | user | Planned (Phase 5) |
+| `POST /friends/requests/{request_id}/accept` | `friend_request_update` | user | Planned (Phase 5) |
+| `DELETE /friends/requests/{request_id}` | `friend_request_delete` | user | Planned (Phase 5) |
+| `DELETE /friends/{friend_user_id}` | `friend_remove` | user | Planned (Phase 5) |
+
+### Refactor Notes
+- Added `docs/GATEWAY_EVENTS.md` as the contract source for:
+  - canonical event list and minimum payload schemas
+  - scope and auth visibility rules
+  - actor metadata policy for optional `actor_user_id`
+  - compatibility guidance for unknown events in mixed-version clients
 
 ### Exit Criteria
 - Team-aligned contract exists before coding event fanout.
