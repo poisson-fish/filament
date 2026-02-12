@@ -73,21 +73,27 @@ Freeze current behavior so later extraction can move quickly with low regression
 Move non-reactive constants out of the page.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Create `apps/filament-client-web/src/features/app-shell/config/ui-constants.ts` for:
+- [x] Create `apps/filament-client-web/src/features/app-shell/config/ui-constants.ts` for:
   - icon URLs
   - scroll/picker threshold constants
   - RTC disconnected snapshot default
-- [ ] Create `apps/filament-client-web/src/features/app-shell/config/reaction-options.ts` for `OPENMOJI_REACTION_OPTIONS`.
-- [ ] Create `apps/filament-client-web/src/features/app-shell/config/settings-menu.ts` for settings category/submenu constants.
-- [ ] Replace in-page constant declarations with imports.
+- [x] Create `apps/filament-client-web/src/features/app-shell/config/reaction-options.ts` for `OPENMOJI_REACTION_OPTIONS`.
+- [x] Create `apps/filament-client-web/src/features/app-shell/config/settings-menu.ts` for settings category/submenu constants.
+- [x] Replace in-page constant declarations with imports.
 
 ### Tests
-- [ ] Add `apps/filament-client-web/tests/app-shell-config.test.ts` for:
+- [x] Add `apps/filament-client-web/tests/app-shell-config.test.ts` for:
   - reaction option integrity (non-empty labels, unique emoji)
   - settings menu IDs are unique and expected defaults exist
+
+### Refactor Notes
+- Moved static icon URLs, scroll/reaction-picker sizing thresholds, and the RTC disconnected snapshot to `features/app-shell/config/ui-constants.ts`.
+- Moved reaction picker options to `features/app-shell/config/reaction-options.ts`.
+- Added `features/app-shell/config/settings-menu.ts` for settings categories/submenu plus exported default selections, and reused those defaults in both `AppShellPage.tsx` and the overlay controller.
+- Added `tests/app-shell-config.test.ts` to assert reaction option/menu invariant safety and default setting/menu alignment.
 
 ### Exit Criteria
 - `AppShellPage.tsx` no longer contains large static tables/constant blocks.

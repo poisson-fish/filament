@@ -13,7 +13,6 @@ import {
   guildVisibilityFromInput,
   guildNameFromInput,
   profileAboutFromInput,
-  reactionEmojiFromInput,
   roleFromInput,
   userIdFromInput,
   type AttachmentId,
@@ -87,6 +86,26 @@ import { ReactionPickerPortal } from "../features/app-shell/components/messages/
 import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
 import { ServerRail } from "../features/app-shell/components/ServerRail";
 import { SafeMarkdown } from "../features/app-shell/components/SafeMarkdown";
+import { OPENMOJI_REACTION_OPTIONS } from "../features/app-shell/config/reaction-options";
+import {
+  DEFAULT_SETTINGS_CATEGORY,
+  DEFAULT_VOICE_SETTINGS_SUBMENU,
+  SETTINGS_CATEGORIES,
+  VOICE_SETTINGS_SUBMENU,
+} from "../features/app-shell/config/settings-menu";
+import {
+  ADD_REACTION_ICON_URL,
+  DELETE_MESSAGE_ICON_URL,
+  EDIT_MESSAGE_ICON_URL,
+  MESSAGE_AUTOLOAD_TOP_THRESHOLD_PX,
+  MESSAGE_LOAD_OLDER_BUTTON_TOP_THRESHOLD_PX,
+  MESSAGE_STICKY_BOTTOM_THRESHOLD_PX,
+  REACTION_PICKER_OVERLAY_ESTIMATED_HEIGHT_PX,
+  REACTION_PICKER_OVERLAY_GAP_PX,
+  REACTION_PICKER_OVERLAY_MARGIN_PX,
+  REACTION_PICKER_OVERLAY_MAX_WIDTH_PX,
+  RTC_DISCONNECTED_SNAPSHOT,
+} from "../features/app-shell/config/ui-constants";
 import { createAttachmentController } from "../features/app-shell/controllers/attachment-controller";
 import { createModerationController } from "../features/app-shell/controllers/moderation-controller";
 import {
@@ -113,14 +132,11 @@ import {
 } from "../features/app-shell/controllers/workspace-controller";
 import {
   type OverlayPanel,
-  type ReactionPickerOption,
   type ReactionPickerOverlayPosition,
   type SettingsCategory,
-  type SettingsCategoryItem,
   type VoiceRosterEntry,
   type VoiceSessionCapabilities,
   type VoiceSettingsSubmenu,
-  type VoiceSettingsSubmenuItem,
 } from "../features/app-shell/types";
 import { connectGateway } from "../lib/gateway";
 import { createRtcClient, type RtcClient, type RtcSnapshot } from "../lib/rtc";
@@ -140,186 +156,10 @@ import {
   resolveUsernames,
 } from "../lib/username-cache";
 
-const ADD_REACTION_ICON_URL = new URL(
-  "../../resource/coolicons.v4.1/cooliocns SVG/Edit/Add_Plus_Circle.svg",
-  import.meta.url,
-).href;
-const EDIT_MESSAGE_ICON_URL = new URL(
-  "../../resource/coolicons.v4.1/cooliocns SVG/Edit/Edit_Pencil_Line_01.svg",
-  import.meta.url,
-).href;
-const DELETE_MESSAGE_ICON_URL = new URL(
-  "../../resource/coolicons.v4.1/cooliocns SVG/Interface/Trash_Full.svg",
-  import.meta.url,
-).href;
-const MESSAGE_AUTOLOAD_TOP_THRESHOLD_PX = 120;
-const MESSAGE_LOAD_OLDER_BUTTON_TOP_THRESHOLD_PX = 340;
-const MESSAGE_STICKY_BOTTOM_THRESHOLD_PX = 140;
-const REACTION_PICKER_OVERLAY_GAP_PX = 8;
-const REACTION_PICKER_OVERLAY_MARGIN_PX = 8;
-const REACTION_PICKER_OVERLAY_MAX_WIDTH_PX = 368;
-const REACTION_PICKER_OVERLAY_ESTIMATED_HEIGHT_PX = 252;
-const RTC_DISCONNECTED_SNAPSHOT: RtcSnapshot = {
-  connectionStatus: "disconnected",
-  localParticipantIdentity: null,
-  isMicrophoneEnabled: false,
-  isCameraEnabled: false,
-  isScreenShareEnabled: false,
-  participants: [],
-  videoTracks: [],
-  activeSpeakerIdentities: [],
-  lastErrorCode: null,
-  lastErrorMessage: null,
-};
-
-const OPENMOJI_REACTION_OPTIONS: ReactionPickerOption[] = [
-  {
-    emoji: reactionEmojiFromInput("👍"),
-    label: "Thumbs up",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F44D.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("👎"),
-    label: "Thumbs down",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F44E.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("😂"),
-    label: "Tears of joy",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F602.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🤣"),
-    label: "Rolling on the floor laughing",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F923.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("😮"),
-    label: "Surprised",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F62E.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("😢"),
-    label: "Crying",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F622.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("😱"),
-    label: "Screaming",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F631.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("👏"),
-    label: "Clapping",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F44F.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🔥"),
-    label: "Fire",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F525.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🎉"),
-    label: "Party popper",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F389.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🤔"),
-    label: "Thinking",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F914.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🙌"),
-    label: "Raised hands",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F64C.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🚀"),
-    label: "Rocket",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F680.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("💯"),
-    label: "Hundred points",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F4AF.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🏆"),
-    label: "Trophy",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F3C6.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🤝"),
-    label: "Handshake",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F91D.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🙏"),
-    label: "Folded hands",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F64F.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("👌"),
-    label: "Ok hand",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F44C.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("✅"),
-    label: "Check mark",
-    iconUrl: new URL("../../resource/openmoji-svg-color/2705.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("❌"),
-    label: "Cross mark",
-    iconUrl: new URL("../../resource/openmoji-svg-color/274C.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("❤"),
-    label: "Heart",
-    iconUrl: new URL("../../resource/openmoji-svg-color/2764.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("💜"),
-    label: "Purple heart",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F49C.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("🧠"),
-    label: "Brain",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F9E0.svg", import.meta.url).href,
-  },
-  {
-    emoji: reactionEmojiFromInput("💡"),
-    label: "Light bulb",
-    iconUrl: new URL("../../resource/openmoji-svg-color/1F4A1.svg", import.meta.url).href,
-  },
-];
-
 const DEFAULT_VOICE_SESSION_CAPABILITIES: VoiceSessionCapabilities = {
   canSubscribe: false,
   publishSources: [],
 };
-
-const SETTINGS_CATEGORIES: SettingsCategoryItem[] = [
-  {
-    id: "voice",
-    label: "Voice",
-    summary: "Audio devices and call behavior.",
-  },
-  {
-    id: "profile",
-    label: "Profile",
-    summary: "Username, about, and avatar.",
-  },
-];
-
-const VOICE_SETTINGS_SUBMENU: VoiceSettingsSubmenuItem[] = [
-  {
-    id: "audio-devices",
-    label: "Audio Devices",
-    summary: "Select microphone and speaker devices.",
-  },
-];
 
 export function AppShellPage() {
   const auth = useAuth();
@@ -444,9 +284,10 @@ export function AppShellPage() {
   const [isCheckingHealth, setCheckingHealth] = createSignal(false);
   const [isEchoing, setEchoing] = createSignal(false);
   const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<OverlayPanel | null>(null);
-  const [activeSettingsCategory, setActiveSettingsCategory] = createSignal<SettingsCategory>("voice");
+  const [activeSettingsCategory, setActiveSettingsCategory] =
+    createSignal<SettingsCategory>(DEFAULT_SETTINGS_CATEGORY);
   const [activeVoiceSettingsSubmenu, setActiveVoiceSettingsSubmenu] =
-    createSignal<VoiceSettingsSubmenu>("audio-devices");
+    createSignal<VoiceSettingsSubmenu>(DEFAULT_VOICE_SETTINGS_SUBMENU);
   const [voiceDevicePreferences, setVoiceDevicePreferences] = createSignal<VoiceDevicePreferences>(
     loadVoiceDevicePreferences(),
   );

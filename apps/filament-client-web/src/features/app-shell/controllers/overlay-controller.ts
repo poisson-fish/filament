@@ -1,4 +1,8 @@
 import { createEffect, onCleanup, type Accessor, type Setter } from "solid-js";
+import {
+  DEFAULT_SETTINGS_CATEGORY,
+  DEFAULT_VOICE_SETTINGS_SUBMENU,
+} from "../config/settings-menu";
 import type {
   OverlayPanel,
   SettingsCategory,
@@ -103,8 +107,8 @@ export function openOverlayPanelWithDefaults(
     options.setChannelCreateError("");
   }
   if (panel === "settings") {
-    options.setActiveSettingsCategory("voice");
-    options.setActiveVoiceSettingsSubmenu("audio-devices");
+    options.setActiveSettingsCategory(DEFAULT_SETTINGS_CATEGORY);
+    options.setActiveVoiceSettingsSubmenu(DEFAULT_VOICE_SETTINGS_SUBMENU);
   }
   options.setPanel(panel);
 }
