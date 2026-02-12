@@ -468,23 +468,42 @@ Harden gateway presence/message parsing to enforce domain invariants and bounded
 Convert `AppShellPage.tsx` from orchestration-heavy module into a thin composition root.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Introduce a top-level runtime module (for example `features/app-shell/runtime/create-app-shell-runtime.ts`) that owns:
+- [x] Introduce a top-level runtime module (for example `features/app-shell/runtime/create-app-shell-runtime.ts`) that owns:
   - state slice creation
   - selector/controller wiring
   - async app-shell handlers (workspace/channel/session/diagnostics)
-- [ ] Keep `AppShellPage.tsx` limited to:
+- [x] Keep `AppShellPage.tsx` limited to:
   - auth/context access
   - runtime instantiation
   - layout/component composition
-- [ ] Move helper label/lookup closures (`actorLabel`, `displayUserLabel`, `voiceParticipantLabel`) and panel-open utility wiring into runtime-level modules where possible.
-- [ ] Preserve behavior and permissions exactly while reducing top-level page cognitive load.
+- [x] Move helper label/lookup closures (`actorLabel`, `displayUserLabel`, `voiceParticipantLabel`) and panel-open utility wiring into runtime-level modules where possible.
+- [x] Preserve behavior and permissions exactly while reducing top-level page cognitive load.
 
 ### Tests
-- [ ] Update `app-shell-*.test.ts(x)` suites that mount page composition to assert wiring parity.
-- [ ] Add focused runtime-level unit tests for extracted handlers previously owned by `AppShellPage.tsx`.
+- [x] Update `app-shell-*.test.ts(x)` suites that mount page composition to assert wiring parity.
+- [x] Add focused runtime-level unit tests for extracted handlers previously owned by `AppShellPage.tsx`.
+
+### Refactor Notes
+- Added `apps/filament-client-web/src/features/app-shell/runtime/create-app-shell-runtime.ts` as the orchestration root for app-shell state slices, selector/controller wiring, and async handlers previously defined inline in `AppShellPage.tsx`.
+- Added runtime-level extraction modules:
+  - `apps/filament-client-web/src/features/app-shell/runtime/runtime-labels.ts`
+  - `apps/filament-client-web/src/features/app-shell/runtime/workspace-channel-operations-controller.ts`
+  - `apps/filament-client-web/src/features/app-shell/runtime/session-diagnostics-controller.ts`
+- Rewired `apps/filament-client-web/src/pages/AppShellPage.tsx` to a thin composition root that now only reads auth context, instantiates runtime wiring, and composes layout/components.
+- Added focused runtime tests:
+  - `apps/filament-client-web/tests/app-shell-runtime-labels.test.ts`
+  - `apps/filament-client-web/tests/app-shell-workspace-channel-operations-controller.test.ts`
+  - `apps/filament-client-web/tests/app-shell-session-diagnostics-controller.test.ts`
+- Verified composition-mounted `app-shell-*.test.tsx` suites continue to pass after runtime extraction with no behavior regressions observed.
+- Metrics after Phase 11 (2026-02-12):
+  - `AppShellPage.tsx` line count: `306`
+  - Test command: `pnpm --prefix apps/filament-client-web test`
+  - Pass status: `44` test files passed, `178` tests passed
+  - Typecheck command: `pnpm --prefix apps/filament-client-web typecheck`
+  - Typecheck status: pass
 
 ### Metrics Target
 - Intermediate target: reduce `AppShellPage.tsx` to `<= 950` lines without behavioral regressions.
