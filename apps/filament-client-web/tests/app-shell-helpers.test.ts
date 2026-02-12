@@ -105,6 +105,12 @@ describe("app shell helpers", () => {
     expect(mapError(new ApiError(429, "rate_limited", "rate_limited"), "fallback")).toBe(
       "Rate limited. Please wait and retry.",
     );
+    expect(mapError(new ApiError(408, "request_timeout", "request_timeout"), "fallback")).toBe(
+      "Server timed out while processing the request.",
+    );
+    expect(mapError(new ApiError(500, "internal_error", "internal_error"), "fallback")).toBe(
+      "Server reported an internal error. Retry in a moment.",
+    );
     expect(mapError(new ApiError(500, "unexpected", "unexpected"), "fallback")).toBe(
       "Request failed (unexpected).",
     );

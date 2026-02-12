@@ -102,6 +102,17 @@ export function pruneWorkspaceChannel(
   return filterAccessibleWorkspaces(updated);
 }
 
+export function shouldResetChannelPermissionsForError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.code === "forbidden" || error.code === "not_found")
+  );
+}
+
+export function shouldResetWorkspacesForBootstrapError(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "invalid_credentials";
+}
+
 export function createWorkspaceBootstrapController(
   options: WorkspaceBootstrapControllerOptions,
 ): void {
@@ -151,11 +162,13 @@ export function createWorkspaceBootstrapController(
         );
         options.setActiveGuildId(nextSelection.guildId);
         options.setActiveChannelId(nextSelection.channelId);
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          options.setWorkspaces([]);
-          options.setActiveGuildId(null);
-          options.setActiveChannelId(null);
+          if (shouldResetWorkspacesForBootstrapError(error)) {
+            options.setWorkspaces([]);
+            options.setActiveGuildId(null);
+            options.setActiveChannelId(null);
+          }
         }
       } finally {
         if (!cancelled) {
@@ -217,11 +230,8 @@ export function createChannelPermissionsController(
         if (cancelled) {
           return;
         }
-        options.setChannelPermissions(null);
-        if (
-          error instanceof ApiError &&
-          (error.code === "forbidden" || error.code === "not_found")
-        ) {
+        if (shouldResetChannelPermissionsForError(error)) {
+          options.setChannelPermissions(null);
           options.setWorkspaces((existing) =>
             pruneWorkspaceChannel(existing, guildId, channelId),
           );

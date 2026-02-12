@@ -145,6 +145,34 @@ describe("api boundary hardening", () => {
     await expect(fetchHealth()).rejects.toMatchObject({ status: 429, code: "rate_limited" });
   });
 
+  it("maps non-json rate-limit responses by status fallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("Too Many Requests! Wait for 1s", {
+          status: 429,
+          headers: { "content-type": "text/plain" },
+        }),
+      ),
+    );
+
+    await expect(fetchHealth()).rejects.toMatchObject({ status: 429, code: "rate_limited" });
+  });
+
+  it("maps non-json timeout responses by status fallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("Request timed out", {
+          status: 408,
+          headers: { "content-type": "text/plain" },
+        }),
+      ),
+    );
+
+    await expect(fetchHealth()).rejects.toMatchObject({ status: 408, code: "request_timeout" });
+  });
+
   it("maps non-ok responses without string error to unexpected_error", async () => {
     vi.stubGlobal(
       "fetch",

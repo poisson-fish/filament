@@ -280,6 +280,34 @@ function readApiError(data: unknown): string {
   return typeof error === "string" ? error : "unexpected_error";
 }
 
+function fallbackErrorCodeFromStatus(status: number): string {
+  if (status === 400) {
+    return "invalid_request";
+  }
+  if (status === 401) {
+    return "invalid_credentials";
+  }
+  if (status === 403) {
+    return "forbidden";
+  }
+  if (status === 404) {
+    return "not_found";
+  }
+  if (status === 408) {
+    return "request_timeout";
+  }
+  if (status === 413) {
+    return "payload_too_large";
+  }
+  if (status === 429) {
+    return "rate_limited";
+  }
+  if (status >= 500) {
+    return "internal_error";
+  }
+  return "unexpected_error";
+}
+
 async function requestJson(request: JsonRequest): Promise<unknown> {
   const headers: Record<string, string> = { ...(request.headers ?? {}) };
   if (request.body !== undefined) {
@@ -293,7 +321,20 @@ async function requestJson(request: JsonRequest): Promise<unknown> {
     body: request.body === undefined ? undefined : JSON.stringify(request.body),
   });
 
-  const data = await readBoundedJson(response);
+  let data: unknown;
+  try {
+    data = await readBoundedJson(response);
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      error.code === "invalid_json" &&
+      !response.ok
+    ) {
+      const code = fallbackErrorCodeFromStatus(response.status);
+      throw new ApiError(response.status, code, code);
+    }
+    throw error;
+  }
   if (!response.ok) {
     const code = readApiError(data);
     throw new ApiError(response.status, code, code);
@@ -316,9 +357,23 @@ async function requestJsonWithBody(request: BodyRequest): Promise<unknown> {
     headers: request.headers,
     body: request.body,
   });
-  const data = await readBoundedJson(response);
+  let data: unknown;
+  try {
+    data = await readBoundedJson(response);
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      error.code === "invalid_json" &&
+      !response.ok
+    ) {
+      const code = fallbackErrorCodeFromStatus(response.status);
+      throw new ApiError(response.status, code, code);
+    }
+    throw error;
+  }
   if (!response.ok) {
-    throw new ApiError(response.status, readApiError(data), readApiError(data));
+    const code = readApiError(data);
+    throw new ApiError(response.status, code, code);
   }
   return data;
 }
@@ -336,8 +391,18 @@ async function requestBinary(input: {
     timeoutMs: input.timeoutMs,
   });
   if (!response.ok) {
-    const data = await readBoundedJson(response);
-    throw new ApiError(response.status, readApiError(data), readApiError(data));
+    let data: unknown;
+    try {
+      data = await readBoundedJson(response);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "invalid_json") {
+        const code = fallbackErrorCodeFromStatus(response.status);
+        throw new ApiError(response.status, code, code);
+      }
+      throw error;
+    }
+    const code = readApiError(data);
+    throw new ApiError(response.status, code, code);
   }
   const bytes = await readBoundedResponseBytes({
     response,

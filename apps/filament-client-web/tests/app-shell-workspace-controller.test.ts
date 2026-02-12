@@ -9,7 +9,10 @@ import {
 import {
   pruneWorkspaceChannel,
   resolveWorkspaceSelection,
+  shouldResetChannelPermissionsForError,
+  shouldResetWorkspacesForBootstrapError,
 } from "../src/features/app-shell/controllers/workspace-controller";
+import { ApiError } from "../src/lib/api";
 
 const GUILD_A = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAA");
 const GUILD_B = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAB");
@@ -55,5 +58,53 @@ describe("app shell workspace controller", () => {
 
     expect(selection.guildId).toBe(GUILD_A);
     expect(selection.channelId).toBe(CHANNEL_A2);
+  });
+
+  it("resets channel permission state only for hard authz channel errors", () => {
+    expect(
+      shouldResetChannelPermissionsForError(
+        new ApiError(403, "forbidden", "forbidden"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldResetChannelPermissionsForError(
+        new ApiError(404, "not_found", "not_found"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldResetChannelPermissionsForError(
+        new ApiError(429, "rate_limited", "rate_limited"),
+      ),
+    ).toBe(false);
+    expect(
+      shouldResetChannelPermissionsForError(
+        new ApiError(0, "network_error", "network_error"),
+      ),
+    ).toBe(false);
+    expect(shouldResetChannelPermissionsForError(new Error("oops"))).toBe(false);
+  });
+
+  it("resets bootstrap workspace state only for invalid auth", () => {
+    expect(
+      shouldResetWorkspacesForBootstrapError(
+        new ApiError(401, "invalid_credentials", "invalid_credentials"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldResetWorkspacesForBootstrapError(
+        new ApiError(429, "rate_limited", "rate_limited"),
+      ),
+    ).toBe(false);
+    expect(
+      shouldResetWorkspacesForBootstrapError(
+        new ApiError(0, "network_error", "network_error"),
+      ),
+    ).toBe(false);
+    expect(
+      shouldResetWorkspacesForBootstrapError(
+        new ApiError(500, "internal_error", "internal_error"),
+      ),
+    ).toBe(false);
+    expect(shouldResetWorkspacesForBootstrapError(new Error("oops"))).toBe(false);
   });
 });

@@ -245,6 +245,9 @@ export function mapError(error: unknown, fallback: string): string {
     if (error.code === "network_error") {
       return "Cannot reach server. Verify API origin and TLS setup.";
     }
+    if (error.code === "request_timeout") {
+      return "Server timed out while processing the request.";
+    }
     if (error.code === "payload_too_large") {
       return "Payload is too large for this endpoint.";
     }
@@ -262,6 +265,9 @@ export function mapError(error: unknown, fallback: string): string {
     }
     if (error.code === "protocol_mismatch") {
       return "Server/client protocol mismatch for attachments. Rebuild and restart filament-server.";
+    }
+    if (error.code === "internal_error") {
+      return "Server reported an internal error. Retry in a moment.";
     }
     return `Request failed (${error.code}).`;
   }
