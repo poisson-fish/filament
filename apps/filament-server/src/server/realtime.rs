@@ -1,4 +1,7 @@
-async fn gateway_ws(
+#[allow(clippy::wildcard_imports)]
+use super::*;
+
+pub(crate) async fn gateway_ws(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
     Query(query): Query<GatewayAuthQuery>,
@@ -16,7 +19,11 @@ async fn gateway_ws(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: AuthContext) {
+pub(crate) async fn handle_gateway_connection(
+    state: AppState,
+    socket: WebSocket,
+    auth: AuthContext,
+) {
     let connection_id = Uuid::new_v4();
     let (mut sink, mut stream) = socket.split();
     let slow_consumer_disconnect = Arc::new(AtomicBool::new(false));
@@ -197,7 +204,7 @@ async fn handle_gateway_connection(state: AppState, socket: WebSocket, auth: Aut
 }
 
 #[allow(clippy::too_many_lines)]
-async fn create_message_internal(
+pub(crate) async fn create_message_internal(
     state: &AppState,
     auth: &AuthContext,
     guild_id: &str,
@@ -374,7 +381,7 @@ async fn create_message_internal(
     Ok(response)
 }
 
-fn build_search_schema() -> (Schema, SearchFields) {
+pub(crate) fn build_search_schema() -> (Schema, SearchFields) {
     let mut schema_builder = Schema::builder();
     let message_id = schema_builder.add_text_field("message_id", STRING | STORED);
     let guild_id = schema_builder.add_text_field("guild_id", STRING | STORED);
@@ -400,7 +407,7 @@ fn build_search_schema() -> (Schema, SearchFields) {
     )
 }
 
-fn init_search_service() -> anyhow::Result<SearchService> {
+pub(crate) fn init_search_service() -> anyhow::Result<SearchService> {
     let (schema, fields) = build_search_schema();
     let index = tantivy::Index::create_in_ram(schema);
     let reader = index
@@ -434,7 +441,7 @@ fn init_search_service() -> anyhow::Result<SearchService> {
     Ok(SearchService { tx, state })
 }
 
-fn apply_search_batch(
+pub(crate) fn apply_search_batch(
     search: &Arc<SearchIndexState>,
     mut batch: Vec<SearchCommand>,
 ) -> anyhow::Result<()> {
@@ -473,7 +480,7 @@ fn apply_search_batch(
     }
 }
 
-fn apply_search_operation(
+pub(crate) fn apply_search_operation(
     search: &SearchIndexState,
     writer: &mut tantivy::IndexWriter,
     op: SearchOperation,
@@ -524,7 +531,7 @@ fn apply_search_operation(
     }
 }
 
-fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
+pub(crate) fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
     IndexedMessage {
         message_id: message.message_id.clone(),
         guild_id: message.guild_id.clone(),
@@ -535,7 +542,10 @@ fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
     }
 }
 
-fn validate_search_query(state: &AppState, query: &SearchQuery) -> Result<(), AuthFailure> {
+pub(crate) fn validate_search_query(
+    state: &AppState,
+    query: &SearchQuery,
+) -> Result<(), AuthFailure> {
     let raw = query.q.trim();
     if raw.is_empty() || raw.len() > state.runtime.search_query_max_chars {
         return Err(AuthFailure::InvalidRequest);
@@ -560,7 +570,7 @@ fn validate_search_query(state: &AppState, query: &SearchQuery) -> Result<(), Au
     Ok(())
 }
 
-async fn ensure_search_bootstrapped(state: &AppState) -> Result<(), AuthFailure> {
+pub(crate) async fn ensure_search_bootstrapped(state: &AppState) -> Result<(), AuthFailure> {
     state
         .search_bootstrapped
         .get_or_try_init(|| async move {
@@ -572,7 +582,7 @@ async fn ensure_search_bootstrapped(state: &AppState) -> Result<(), AuthFailure>
     Ok(())
 }
 
-async fn enqueue_search_operation(
+pub(crate) async fn enqueue_search_operation(
     state: &AppState,
     op: SearchOperation,
     wait_for_apply: bool,
@@ -599,7 +609,7 @@ async fn enqueue_search_operation(
     }
 }
 
-async fn collect_all_indexed_messages(
+pub(crate) async fn collect_all_indexed_messages(
     state: &AppState,
 ) -> Result<Vec<IndexedMessage>, AuthFailure> {
     if let Some(pool) = &state.db_pool {
@@ -651,7 +661,7 @@ async fn collect_all_indexed_messages(
     Ok(docs)
 }
 
-async fn collect_indexed_messages_for_guild(
+pub(crate) async fn collect_indexed_messages_for_guild(
     state: &AppState,
     guild_id: &str,
     max_docs: usize,
@@ -719,7 +729,7 @@ async fn collect_indexed_messages_for_guild(
     Ok(docs)
 }
 
-async fn collect_index_message_ids_for_guild(
+pub(crate) async fn collect_index_message_ids_for_guild(
     state: &AppState,
     guild_id: &str,
     max_docs: usize,
@@ -770,7 +780,7 @@ async fn collect_index_message_ids_for_guild(
     .map_err(|_| AuthFailure::InvalidRequest)?
 }
 
-async fn plan_search_reconciliation(
+pub(crate) async fn plan_search_reconciliation(
     state: &AppState,
     guild_id: &str,
     max_docs: usize,
@@ -794,7 +804,7 @@ async fn plan_search_reconciliation(
     Ok((upserts, delete_message_ids))
 }
 
-async fn run_search_query(
+pub(crate) async fn run_search_query(
     state: &AppState,
     guild_id: &str,
     channel_id: Option<&str>,
@@ -861,7 +871,7 @@ async fn run_search_query(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn hydrate_messages_by_id(
+pub(crate) async fn hydrate_messages_by_id(
     state: &AppState,
     guild_id: &str,
     channel_id: Option<&str>,
@@ -1009,7 +1019,7 @@ async fn hydrate_messages_by_id(
     Ok(hydrated)
 }
 
-async fn broadcast_channel_event(state: &AppState, key: &str, payload: String) {
+pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, payload: String) {
     let mut slow_connections = Vec::new();
 
     let mut subscriptions = state.subscriptions.write().await;
@@ -1041,7 +1051,7 @@ async fn broadcast_channel_event(state: &AppState, key: &str, payload: String) {
     }
 }
 
-async fn broadcast_guild_event(state: &AppState, guild_id: &str, payload: String) {
+pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, payload: String) {
     let mut slow_connections = Vec::new();
     let mut seen_connections = HashSet::new();
     let mut subscriptions = state.subscriptions.write().await;
@@ -1076,7 +1086,7 @@ async fn broadcast_guild_event(state: &AppState, guild_id: &str, payload: String
     }
 }
 
-async fn handle_presence_subscribe(
+pub(crate) async fn handle_presence_subscribe(
     state: &AppState,
     connection_id: Uuid,
     user_id: UserId,
@@ -1126,7 +1136,7 @@ async fn handle_presence_subscribe(
     }
 }
 
-async fn add_subscription(
+pub(crate) async fn add_subscription(
     state: &AppState,
     connection_id: Uuid,
     key: String,
@@ -1139,7 +1149,7 @@ async fn add_subscription(
         .insert(connection_id, outbound_tx);
 }
 
-async fn remove_connection(state: &AppState, connection_id: Uuid) {
+pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
     let removed_presence = state
         .connection_presence
         .write()
@@ -1186,7 +1196,11 @@ async fn remove_connection(state: &AppState, connection_id: Uuid) {
     }
 }
 
-fn allow_gateway_ingress(ingress: &mut VecDeque<Instant>, limit: u32, window: Duration) -> bool {
+pub(crate) fn allow_gateway_ingress(
+    ingress: &mut VecDeque<Instant>,
+    limit: u32,
+    window: Duration,
+) -> bool {
     let now = Instant::now();
     while ingress
         .front()
@@ -1202,4 +1216,3 @@ fn allow_gateway_ingress(ingress: &mut VecDeque<Instant>, limit: u32, window: Du
     ingress.push_back(now);
     true
 }
-

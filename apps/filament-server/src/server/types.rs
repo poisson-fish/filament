@@ -1,13 +1,15 @@
+use super::*;
+
 #[derive(Debug, Serialize)]
-struct HealthResponse {
-    status: &'static str,
+pub(crate) struct HealthResponse {
+    pub(crate) status: &'static str,
 }
 
-async fn health() -> Json<HealthResponse> {
+pub(crate) async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-async fn metrics() -> Response {
+pub(crate) async fn metrics() -> Response {
     (
         [(CONTENT_TYPE, METRICS_TEXT_CONTENT_TYPE)],
         render_metrics(),
@@ -17,16 +19,18 @@ async fn metrics() -> Response {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EchoRequest {
-    message: String,
+pub(crate) struct EchoRequest {
+    pub(crate) message: String,
 }
 
 #[derive(Debug, Serialize)]
-struct EchoResponse {
-    message: String,
+pub(crate) struct EchoResponse {
+    pub(crate) message: String,
 }
 
-async fn echo(Json(payload): Json<EchoRequest>) -> Result<Json<EchoResponse>, StatusCode> {
+pub(crate) async fn echo(
+    Json(payload): Json<EchoRequest>,
+) -> Result<Json<EchoResponse>, StatusCode> {
     if payload.message.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -36,363 +40,363 @@ async fn echo(Json(payload): Json<EchoRequest>) -> Result<Json<EchoResponse>, St
     }))
 }
 
-async fn slow() -> Json<HealthResponse> {
+pub(crate) async fn slow() -> Json<HealthResponse> {
     tokio::time::sleep(Duration::from_millis(200)).await;
     Json(HealthResponse { status: "ok" })
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RegisterRequest {
-    username: String,
-    password: String,
-    captcha_token: Option<String>,
+pub(crate) struct RegisterRequest {
+    pub(crate) username: String,
+    pub(crate) password: String,
+    pub(crate) captcha_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LoginRequest {
-    username: String,
-    password: String,
+pub(crate) struct LoginRequest {
+    pub(crate) username: String,
+    pub(crate) password: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RefreshRequest {
-    refresh_token: String,
+pub(crate) struct RefreshRequest {
+    pub(crate) refresh_token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct AuthResponse {
-    access_token: String,
-    refresh_token: String,
-    expires_in_secs: i64,
+pub(crate) struct AuthResponse {
+    pub(crate) access_token: String,
+    pub(crate) refresh_token: String,
+    pub(crate) expires_in_secs: i64,
 }
 
 #[derive(Debug, Serialize)]
-struct RegisterResponse {
-    accepted: bool,
+pub(crate) struct RegisterResponse {
+    pub(crate) accepted: bool,
 }
 
 #[derive(Debug, Serialize)]
-struct AuthError {
-    error: &'static str,
+pub(crate) struct AuthError {
+    pub(crate) error: &'static str,
 }
 
 #[derive(Debug, Serialize)]
-struct MeResponse {
-    user_id: String,
-    username: String,
+pub(crate) struct MeResponse {
+    pub(crate) user_id: String,
+    pub(crate) username: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct UserLookupRequest {
-    user_ids: Vec<String>,
+pub(crate) struct UserLookupRequest {
+    pub(crate) user_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
-struct UserLookupItem {
-    user_id: String,
-    username: String,
+pub(crate) struct UserLookupItem {
+    pub(crate) user_id: String,
+    pub(crate) username: String,
 }
 
 #[derive(Debug, Serialize)]
-struct UserLookupResponse {
-    users: Vec<UserLookupItem>,
+pub(crate) struct UserLookupResponse {
+    pub(crate) users: Vec<UserLookupItem>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateFriendRequest {
-    recipient_user_id: String,
+pub(crate) struct CreateFriendRequest {
+    pub(crate) recipient_user_id: String,
 }
 
 #[derive(Debug, Serialize)]
-struct FriendRecordResponse {
-    user_id: String,
-    username: String,
-    created_at_unix: i64,
+pub(crate) struct FriendRecordResponse {
+    pub(crate) user_id: String,
+    pub(crate) username: String,
+    pub(crate) created_at_unix: i64,
 }
 
 #[derive(Debug, Serialize)]
-struct FriendListResponse {
-    friends: Vec<FriendRecordResponse>,
+pub(crate) struct FriendListResponse {
+    pub(crate) friends: Vec<FriendRecordResponse>,
 }
 
 #[derive(Debug, Serialize)]
-struct FriendshipRequestResponse {
-    request_id: String,
-    sender_user_id: String,
-    sender_username: String,
-    recipient_user_id: String,
-    recipient_username: String,
-    created_at_unix: i64,
+pub(crate) struct FriendshipRequestResponse {
+    pub(crate) request_id: String,
+    pub(crate) sender_user_id: String,
+    pub(crate) sender_username: String,
+    pub(crate) recipient_user_id: String,
+    pub(crate) recipient_username: String,
+    pub(crate) created_at_unix: i64,
 }
 
 #[derive(Debug, Serialize)]
-struct FriendshipRequestListResponse {
-    incoming: Vec<FriendshipRequestResponse>,
-    outgoing: Vec<FriendshipRequestResponse>,
+pub(crate) struct FriendshipRequestListResponse {
+    pub(crate) incoming: Vec<FriendshipRequestResponse>,
+    pub(crate) outgoing: Vec<FriendshipRequestResponse>,
 }
 
 #[derive(Debug, Serialize)]
-struct FriendshipRequestCreateResponse {
-    request_id: String,
-    sender_user_id: String,
-    recipient_user_id: String,
-    created_at_unix: i64,
+pub(crate) struct FriendshipRequestCreateResponse {
+    pub(crate) request_id: String,
+    pub(crate) sender_user_id: String,
+    pub(crate) recipient_user_id: String,
+    pub(crate) created_at_unix: i64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateGuildRequest {
-    name: String,
-    visibility: Option<GuildVisibility>,
+pub(crate) struct CreateGuildRequest {
+    pub(crate) name: String,
+    pub(crate) visibility: Option<GuildVisibility>,
 }
 
 #[derive(Debug, Serialize)]
-struct GuildResponse {
-    guild_id: String,
-    name: String,
-    visibility: GuildVisibility,
+pub(crate) struct GuildResponse {
+    pub(crate) guild_id: String,
+    pub(crate) name: String,
+    pub(crate) visibility: GuildVisibility,
 }
 
 #[derive(Debug, Serialize)]
-struct GuildListResponse {
-    guilds: Vec<GuildResponse>,
+pub(crate) struct GuildListResponse {
+    pub(crate) guilds: Vec<GuildResponse>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateChannelRequest {
-    name: String,
-    kind: Option<ChannelKind>,
+pub(crate) struct CreateChannelRequest {
+    pub(crate) name: String,
+    pub(crate) kind: Option<ChannelKind>,
 }
 
 #[derive(Debug, Serialize)]
-struct ChannelResponse {
-    channel_id: String,
-    name: String,
-    kind: ChannelKind,
+pub(crate) struct ChannelResponse {
+    pub(crate) channel_id: String,
+    pub(crate) name: String,
+    pub(crate) kind: ChannelKind,
 }
 
 #[derive(Debug, Serialize)]
-struct ChannelListResponse {
-    channels: Vec<ChannelResponse>,
+pub(crate) struct ChannelListResponse {
+    pub(crate) channels: Vec<ChannelResponse>,
 }
 
 #[derive(Debug, Serialize)]
-struct ChannelPermissionsResponse {
-    role: Role,
-    permissions: Vec<Permission>,
+pub(crate) struct ChannelPermissionsResponse {
+    pub(crate) role: Role,
+    pub(crate) permissions: Vec<Permission>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateMessageRequest {
-    content: String,
-    attachment_ids: Option<Vec<String>>,
+pub(crate) struct CreateMessageRequest {
+    pub(crate) content: String,
+    pub(crate) attachment_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EditMessageRequest {
-    content: String,
+pub(crate) struct EditMessageRequest {
+    pub(crate) content: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct UpdateMemberRoleRequest {
-    role: Role,
+pub(crate) struct UpdateMemberRoleRequest {
+    pub(crate) role: Role,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct UpdateChannelRoleOverrideRequest {
-    allow: Vec<Permission>,
-    deny: Vec<Permission>,
+pub(crate) struct UpdateChannelRoleOverrideRequest {
+    pub(crate) allow: Vec<Permission>,
+    pub(crate) deny: Vec<Permission>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct MessageResponse {
-    message_id: String,
-    guild_id: String,
-    channel_id: String,
-    author_id: String,
-    content: String,
-    markdown_tokens: Vec<MarkdownToken>,
-    attachments: Vec<AttachmentResponse>,
-    reactions: Vec<ReactionResponse>,
-    created_at_unix: i64,
+pub(crate) struct MessageResponse {
+    pub(crate) message_id: String,
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) author_id: String,
+    pub(crate) content: String,
+    pub(crate) markdown_tokens: Vec<MarkdownToken>,
+    pub(crate) attachments: Vec<AttachmentResponse>,
+    pub(crate) reactions: Vec<ReactionResponse>,
+    pub(crate) created_at_unix: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct ReactionResponse {
-    emoji: String,
-    count: usize,
+pub(crate) struct ReactionResponse {
+    pub(crate) emoji: String,
+    pub(crate) count: usize,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct AttachmentResponse {
-    attachment_id: String,
-    guild_id: String,
-    channel_id: String,
-    owner_id: String,
-    filename: String,
-    mime_type: String,
-    size_bytes: u64,
-    sha256_hex: String,
+pub(crate) struct AttachmentResponse {
+    pub(crate) attachment_id: String,
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) owner_id: String,
+    pub(crate) filename: String,
+    pub(crate) mime_type: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) sha256_hex: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct UploadAttachmentQuery {
-    filename: Option<String>,
+pub(crate) struct UploadAttachmentQuery {
+    pub(crate) filename: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-struct ModerationResponse {
-    accepted: bool,
+pub(crate) struct ModerationResponse {
+    pub(crate) accepted: bool,
 }
 
 #[derive(Debug, Serialize)]
-struct MessageHistoryResponse {
-    messages: Vec<MessageResponse>,
-    next_before: Option<String>,
+pub(crate) struct MessageHistoryResponse {
+    pub(crate) messages: Vec<MessageResponse>,
+    pub(crate) next_before: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GuildPath {
-    guild_id: String,
+pub(crate) struct GuildPath {
+    pub(crate) guild_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChannelPath {
-    guild_id: String,
-    channel_id: String,
+pub(crate) struct ChannelPath {
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
 }
 
 #[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
-struct MessagePath {
-    guild_id: String,
-    channel_id: String,
-    message_id: String,
+pub(crate) struct MessagePath {
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) message_id: String,
 }
 
 #[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
-struct AttachmentPath {
-    guild_id: String,
-    channel_id: String,
-    attachment_id: String,
+pub(crate) struct AttachmentPath {
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) attachment_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct MemberPath {
-    guild_id: String,
-    user_id: String,
+pub(crate) struct MemberPath {
+    pub(crate) guild_id: String,
+    pub(crate) user_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct FriendPath {
-    friend_user_id: String,
+pub(crate) struct FriendPath {
+    pub(crate) friend_user_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct FriendRequestPath {
-    request_id: String,
+pub(crate) struct FriendRequestPath {
+    pub(crate) request_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChannelRolePath {
-    guild_id: String,
-    channel_id: String,
-    role: Role,
+pub(crate) struct ChannelRolePath {
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) role: Role,
 }
 
 #[derive(Debug, Deserialize)]
-struct ReactionPath {
-    guild_id: String,
-    channel_id: String,
-    message_id: String,
-    emoji: String,
+pub(crate) struct ReactionPath {
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) message_id: String,
+    pub(crate) emoji: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct HistoryQuery {
-    limit: Option<usize>,
-    before: Option<String>,
+pub(crate) struct HistoryQuery {
+    pub(crate) limit: Option<usize>,
+    pub(crate) before: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct SearchQuery {
-    q: String,
-    limit: Option<usize>,
-    channel_id: Option<String>,
+pub(crate) struct SearchQuery {
+    pub(crate) q: String,
+    pub(crate) limit: Option<usize>,
+    pub(crate) channel_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct PublicGuildListQuery {
-    q: Option<String>,
-    limit: Option<usize>,
+pub(crate) struct PublicGuildListQuery {
+    pub(crate) q: Option<String>,
+    pub(crate) limit: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
-struct PublicGuildListItem {
-    guild_id: String,
-    name: String,
-    visibility: GuildVisibility,
+pub(crate) struct PublicGuildListItem {
+    pub(crate) guild_id: String,
+    pub(crate) name: String,
+    pub(crate) visibility: GuildVisibility,
 }
 
 #[derive(Debug, Serialize)]
-struct PublicGuildListResponse {
-    guilds: Vec<PublicGuildListItem>,
+pub(crate) struct PublicGuildListResponse {
+    pub(crate) guilds: Vec<PublicGuildListItem>,
 }
 
 #[derive(Debug, Serialize)]
-struct SearchResponse {
-    message_ids: Vec<String>,
-    messages: Vec<MessageResponse>,
+pub(crate) struct SearchResponse {
+    pub(crate) message_ids: Vec<String>,
+    pub(crate) messages: Vec<MessageResponse>,
 }
 
 #[derive(Debug, Serialize)]
-struct SearchReconcileResponse {
-    upserted: usize,
-    deleted: usize,
+pub(crate) struct SearchReconcileResponse {
+    pub(crate) upserted: usize,
+    pub(crate) deleted: usize,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct VoiceTokenRequest {
-    can_publish: Option<bool>,
-    can_subscribe: Option<bool>,
-    publish_sources: Option<Vec<MediaPublishSource>>,
+pub(crate) struct VoiceTokenRequest {
+    pub(crate) can_publish: Option<bool>,
+    pub(crate) can_subscribe: Option<bool>,
+    pub(crate) publish_sources: Option<Vec<MediaPublishSource>>,
 }
 
 #[derive(Debug, Serialize)]
-struct VoiceTokenResponse {
-    token: String,
-    livekit_url: String,
-    room: String,
-    identity: String,
-    can_publish: bool,
-    can_subscribe: bool,
-    publish_sources: Vec<String>,
-    expires_in_secs: u64,
+pub(crate) struct VoiceTokenResponse {
+    pub(crate) token: String,
+    pub(crate) livekit_url: String,
+    pub(crate) room: String,
+    pub(crate) identity: String,
+    pub(crate) can_publish: bool,
+    pub(crate) can_subscribe: bool,
+    pub(crate) publish_sources: Vec<String>,
+    pub(crate) expires_in_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
-enum MediaPublishSource {
+pub(crate) enum MediaPublishSource {
     Microphone,
     Camera,
     ScreenShare,
 }
 
 impl MediaPublishSource {
-    fn as_livekit_source(self) -> &'static str {
+    pub(crate) fn as_livekit_source(self) -> &'static str {
         match self {
             Self::Microphone => "microphone",
             Self::Camera => "camera",
@@ -403,30 +407,30 @@ impl MediaPublishSource {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct GatewaySubscribe {
-    guild_id: String,
-    channel_id: String,
+pub(crate) struct GatewaySubscribe {
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct GatewayMessageCreate {
-    guild_id: String,
-    channel_id: String,
-    content: String,
-    attachment_ids: Option<Vec<String>>,
+pub(crate) struct GatewayMessageCreate {
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) content: String,
+    pub(crate) attachment_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GatewayAuthQuery {
-    access_token: Option<String>,
+pub(crate) struct GatewayAuthQuery {
+    pub(crate) access_token: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-struct CaptchaToken(String);
+pub(crate) struct CaptchaToken(String);
 
 impl CaptchaToken {
-    fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -450,7 +454,6 @@ impl TryFrom<String> for CaptchaToken {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct HcaptchaVerifyResponse {
-    success: bool,
+pub(crate) struct HcaptchaVerifyResponse {
+    pub(crate) success: bool,
 }
-

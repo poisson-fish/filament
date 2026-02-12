@@ -1,5 +1,7 @@
-type ChannelSubscriptions = HashMap<Uuid, mpsc::Sender<String>>;
-type Subscriptions = HashMap<String, ChannelSubscriptions>;
+use super::*;
+
+pub(crate) type ChannelSubscriptions = HashMap<Uuid, mpsc::Sender<String>>;
+pub(crate) type Subscriptions = HashMap<String, ChannelSubscriptions>;
 
 pub const DEFAULT_JSON_BODY_LIMIT_BYTES: usize = 1_048_576;
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 10;
@@ -24,29 +26,29 @@ pub const DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL: usize = 3;
 pub const DEFAULT_MAX_CREATED_GUILDS_PER_USER: usize = 5;
 pub const DEFAULT_CAPTCHA_VERIFY_TIMEOUT_SECS: u64 = 3;
 pub const MAX_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
-const MAX_CAPTCHA_TOKEN_CHARS: usize = 4096;
-const MIN_CAPTCHA_TOKEN_CHARS: usize = 20;
-const LOGIN_LOCK_THRESHOLD: u8 = 5;
-const LOGIN_LOCK_SECS: i64 = 30;
-const MAX_HISTORY_LIMIT: usize = 100;
-const MAX_MIME_SNIFF_BYTES: usize = 8192;
-const MAX_SEARCH_TERMS: usize = 20;
-const MAX_SEARCH_WILDCARDS: usize = 4;
-const MAX_SEARCH_FUZZY: usize = 2;
-const SEARCH_INDEX_QUEUE_CAPACITY: usize = 1024;
-const MAX_SEARCH_RECONCILE_DOCS: usize = 10_000;
-const MAX_REACTION_EMOJI_CHARS: usize = 32;
-const MAX_USER_LOOKUP_IDS: usize = 64;
-const MAX_ATTACHMENTS_PER_MESSAGE: usize = 5;
-const METRICS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
+pub(crate) const MAX_CAPTCHA_TOKEN_CHARS: usize = 4096;
+pub(crate) const MIN_CAPTCHA_TOKEN_CHARS: usize = 20;
+pub(crate) const LOGIN_LOCK_THRESHOLD: u8 = 5;
+pub(crate) const LOGIN_LOCK_SECS: i64 = 30;
+pub(crate) const MAX_HISTORY_LIMIT: usize = 100;
+pub(crate) const MAX_MIME_SNIFF_BYTES: usize = 8192;
+pub(crate) const MAX_SEARCH_TERMS: usize = 20;
+pub(crate) const MAX_SEARCH_WILDCARDS: usize = 4;
+pub(crate) const MAX_SEARCH_FUZZY: usize = 2;
+pub(crate) const SEARCH_INDEX_QUEUE_CAPACITY: usize = 1024;
+pub(crate) const MAX_SEARCH_RECONCILE_DOCS: usize = 10_000;
+pub(crate) const MAX_REACTION_EMOJI_CHARS: usize = 32;
+pub(crate) const MAX_USER_LOOKUP_IDS: usize = 64;
+pub(crate) const MAX_ATTACHMENTS_PER_MESSAGE: usize = 5;
+pub(crate) const METRICS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
-static METRICS_STATE: OnceLock<MetricsState> = OnceLock::new();
+pub(crate) static METRICS_STATE: OnceLock<MetricsState> = OnceLock::new();
 
 #[derive(Default)]
-struct MetricsState {
-    auth_failures: Mutex<HashMap<&'static str, u64>>,
-    rate_limit_hits: Mutex<HashMap<(&'static str, &'static str), u64>>,
-    ws_disconnects: Mutex<HashMap<&'static str, u64>>,
+pub(crate) struct MetricsState {
+    pub(crate) auth_failures: Mutex<HashMap<&'static str, u64>>,
+    pub(crate) rate_limit_hits: Mutex<HashMap<(&'static str, &'static str), u64>>,
+    pub(crate) ws_disconnects: Mutex<HashMap<&'static str, u64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -115,73 +117,73 @@ impl Default for AppConfig {
 }
 
 #[derive(Clone)]
-struct RuntimeSecurityConfig {
-    auth_route_requests_per_minute: u32,
-    gateway_ingress_events_per_window: u32,
-    gateway_ingress_window: Duration,
-    gateway_outbound_queue: usize,
-    max_gateway_event_bytes: usize,
-    max_attachment_bytes: usize,
-    user_attachment_quota_bytes: u64,
-    search_query_max_chars: usize,
-    search_result_limit_max: usize,
-    search_query_timeout: Duration,
-    media_token_requests_per_minute: u32,
-    media_publish_requests_per_minute: u32,
-    media_subscribe_token_cap_per_channel: usize,
-    max_created_guilds_per_user: usize,
-    livekit_token_ttl: Duration,
-    captcha: Option<Arc<CaptchaConfig>>,
+pub(crate) struct RuntimeSecurityConfig {
+    pub(crate) auth_route_requests_per_minute: u32,
+    pub(crate) gateway_ingress_events_per_window: u32,
+    pub(crate) gateway_ingress_window: Duration,
+    pub(crate) gateway_outbound_queue: usize,
+    pub(crate) max_gateway_event_bytes: usize,
+    pub(crate) max_attachment_bytes: usize,
+    pub(crate) user_attachment_quota_bytes: u64,
+    pub(crate) search_query_max_chars: usize,
+    pub(crate) search_result_limit_max: usize,
+    pub(crate) search_query_timeout: Duration,
+    pub(crate) media_token_requests_per_minute: u32,
+    pub(crate) media_publish_requests_per_minute: u32,
+    pub(crate) media_subscribe_token_cap_per_channel: usize,
+    pub(crate) max_created_guilds_per_user: usize,
+    pub(crate) livekit_token_ttl: Duration,
+    pub(crate) captcha: Option<Arc<CaptchaConfig>>,
 }
 
 #[derive(Clone)]
-struct LiveKitConfig {
-    api_key: String,
-    api_secret: String,
-    url: String,
+pub(crate) struct LiveKitConfig {
+    pub(crate) api_key: String,
+    pub(crate) api_secret: String,
+    pub(crate) url: String,
 }
 
 #[derive(Clone)]
-struct CaptchaConfig {
-    secret: String,
-    verify_url: String,
-    verify_timeout: Duration,
+pub(crate) struct CaptchaConfig {
+    pub(crate) secret: String,
+    pub(crate) verify_url: String,
+    pub(crate) verify_timeout: Duration,
 }
 
 #[derive(Clone)]
-struct SearchService {
-    tx: mpsc::Sender<SearchCommand>,
-    state: Arc<SearchIndexState>,
+pub(crate) struct SearchService {
+    pub(crate) tx: mpsc::Sender<SearchCommand>,
+    pub(crate) state: Arc<SearchIndexState>,
 }
 
 #[derive(Clone)]
-struct SearchIndexState {
-    index: tantivy::Index,
-    reader: tantivy::IndexReader,
-    fields: SearchFields,
+pub(crate) struct SearchIndexState {
+    pub(crate) index: tantivy::Index,
+    pub(crate) reader: tantivy::IndexReader,
+    pub(crate) fields: SearchFields,
 }
 
 #[derive(Clone, Copy)]
-struct SearchFields {
-    message_id: Field,
-    guild_id: Field,
-    channel_id: Field,
-    author_id: Field,
-    created_at_unix: Field,
-    content: Field,
+pub(crate) struct SearchFields {
+    pub(crate) message_id: Field,
+    pub(crate) guild_id: Field,
+    pub(crate) channel_id: Field,
+    pub(crate) author_id: Field,
+    pub(crate) created_at_unix: Field,
+    pub(crate) content: Field,
 }
 
 #[derive(Clone)]
-struct IndexedMessage {
-    message_id: String,
-    guild_id: String,
-    channel_id: String,
-    author_id: String,
-    created_at_unix: i64,
-    content: String,
+pub(crate) struct IndexedMessage {
+    pub(crate) message_id: String,
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) author_id: String,
+    pub(crate) created_at_unix: i64,
+    pub(crate) content: String,
 }
 
-enum SearchOperation {
+pub(crate) enum SearchOperation {
     Upsert(IndexedMessage),
     Delete {
         message_id: String,
@@ -195,42 +197,42 @@ enum SearchOperation {
     },
 }
 
-struct SearchCommand {
-    op: SearchOperation,
-    ack: Option<oneshot::Sender<Result<(), AuthFailure>>>,
+pub(crate) struct SearchCommand {
+    pub(crate) op: SearchOperation,
+    pub(crate) ack: Option<oneshot::Sender<Result<(), AuthFailure>>>,
 }
 
 #[derive(Clone)]
 pub struct AppState {
-    db_pool: Option<PgPool>,
-    db_init: Arc<OnceCell<()>>,
-    users: Arc<RwLock<HashMap<String, UserRecord>>>,
-    user_ids: Arc<RwLock<HashMap<String, String>>>,
-    sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
-    used_refresh_tokens: Arc<RwLock<HashMap<[u8; 32], String>>>,
-    token_key: Arc<SymmetricKey<V4>>,
-    dummy_password_hash: Arc<String>,
-    auth_route_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
-    media_token_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
-    media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
-    media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
-    guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
-    subscriptions: Arc<RwLock<Subscriptions>>,
-    connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
-    connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
-    attachment_store: Arc<LocalFileSystem>,
-    attachments: Arc<RwLock<HashMap<String, AttachmentRecord>>>,
-    friendship_requests: Arc<RwLock<HashMap<String, FriendshipRequestRecord>>>,
-    friendships: Arc<RwLock<HashSet<(String, String)>>>,
-    audit_logs: Arc<RwLock<Vec<serde_json::Value>>>,
-    search: SearchService,
-    search_bootstrapped: Arc<OnceCell<()>>,
-    runtime: Arc<RuntimeSecurityConfig>,
-    livekit: Option<Arc<LiveKitConfig>>,
+    pub(crate) db_pool: Option<PgPool>,
+    pub(crate) db_init: Arc<OnceCell<()>>,
+    pub(crate) users: Arc<RwLock<HashMap<String, UserRecord>>>,
+    pub(crate) user_ids: Arc<RwLock<HashMap<String, String>>>,
+    pub(crate) sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
+    pub(crate) used_refresh_tokens: Arc<RwLock<HashMap<[u8; 32], String>>>,
+    pub(crate) token_key: Arc<SymmetricKey<V4>>,
+    pub(crate) dummy_password_hash: Arc<String>,
+    pub(crate) auth_route_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) media_token_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
+    pub(crate) subscriptions: Arc<RwLock<Subscriptions>>,
+    pub(crate) connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
+    pub(crate) connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
+    pub(crate) attachment_store: Arc<LocalFileSystem>,
+    pub(crate) attachments: Arc<RwLock<HashMap<String, AttachmentRecord>>>,
+    pub(crate) friendship_requests: Arc<RwLock<HashMap<String, FriendshipRequestRecord>>>,
+    pub(crate) friendships: Arc<RwLock<HashSet<(String, String)>>>,
+    pub(crate) audit_logs: Arc<RwLock<Vec<serde_json::Value>>>,
+    pub(crate) search: SearchService,
+    pub(crate) search_bootstrapped: Arc<OnceCell<()>>,
+    pub(crate) runtime: Arc<RuntimeSecurityConfig>,
+    pub(crate) livekit: Option<Arc<LiveKitConfig>>,
 }
 
 impl AppState {
-    fn new(config: &AppConfig) -> anyhow::Result<Self> {
+    pub(crate) fn new(config: &AppConfig) -> anyhow::Result<Self> {
         let mut key_bytes = [0_u8; 32];
         OsRng.fill_bytes(&mut key_bytes);
         let token_key = SymmetricKey::<V4>::from(&key_bytes)
@@ -303,94 +305,93 @@ impl AppState {
 }
 
 #[derive(Debug, Clone)]
-struct UserRecord {
-    id: UserId,
-    username: Username,
-    password_hash: String,
-    failed_logins: u8,
-    locked_until_unix: Option<i64>,
+pub(crate) struct UserRecord {
+    pub(crate) id: UserId,
+    pub(crate) username: Username,
+    pub(crate) password_hash: String,
+    pub(crate) failed_logins: u8,
+    pub(crate) locked_until_unix: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
-struct SessionRecord {
-    user_id: UserId,
-    refresh_token_hash: [u8; 32],
-    expires_at_unix: i64,
-    revoked: bool,
+pub(crate) struct SessionRecord {
+    pub(crate) user_id: UserId,
+    pub(crate) refresh_token_hash: [u8; 32],
+    pub(crate) expires_at_unix: i64,
+    pub(crate) revoked: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum GuildVisibility {
+pub(crate) enum GuildVisibility {
     Private,
     Public,
 }
 
 #[derive(Debug, Clone)]
-struct GuildRecord {
-    name: String,
-    visibility: GuildVisibility,
-    created_by_user_id: UserId,
-    members: HashMap<UserId, Role>,
-    banned_members: HashSet<UserId>,
-    channels: HashMap<String, ChannelRecord>,
+pub(crate) struct GuildRecord {
+    pub(crate) name: String,
+    pub(crate) visibility: GuildVisibility,
+    pub(crate) created_by_user_id: UserId,
+    pub(crate) members: HashMap<UserId, Role>,
+    pub(crate) banned_members: HashSet<UserId>,
+    pub(crate) channels: HashMap<String, ChannelRecord>,
 }
 
 #[derive(Debug, Clone)]
-struct ChannelRecord {
-    name: String,
-    kind: ChannelKind,
-    messages: Vec<MessageRecord>,
-    role_overrides: HashMap<Role, ChannelPermissionOverwrite>,
+pub(crate) struct ChannelRecord {
+    pub(crate) name: String,
+    pub(crate) kind: ChannelKind,
+    pub(crate) messages: Vec<MessageRecord>,
+    pub(crate) role_overrides: HashMap<Role, ChannelPermissionOverwrite>,
 }
 
 #[derive(Debug, Clone)]
-struct MessageRecord {
-    id: String,
-    author_id: UserId,
-    content: String,
-    markdown_tokens: Vec<MarkdownToken>,
-    attachment_ids: Vec<String>,
-    created_at_unix: i64,
-    reactions: HashMap<String, HashSet<UserId>>,
+pub(crate) struct MessageRecord {
+    pub(crate) id: String,
+    pub(crate) author_id: UserId,
+    pub(crate) content: String,
+    pub(crate) markdown_tokens: Vec<MarkdownToken>,
+    pub(crate) attachment_ids: Vec<String>,
+    pub(crate) created_at_unix: i64,
+    pub(crate) reactions: HashMap<String, HashSet<UserId>>,
 }
 
 #[derive(Debug, Clone)]
-struct AttachmentRecord {
-    attachment_id: String,
-    guild_id: String,
-    channel_id: String,
-    owner_id: UserId,
-    filename: String,
-    mime_type: String,
-    size_bytes: u64,
-    sha256_hex: String,
-    object_key: String,
-    message_id: Option<String>,
+pub(crate) struct AttachmentRecord {
+    pub(crate) attachment_id: String,
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) owner_id: UserId,
+    pub(crate) filename: String,
+    pub(crate) mime_type: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) sha256_hex: String,
+    pub(crate) object_key: String,
+    pub(crate) message_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-struct FriendshipRequestRecord {
-    sender_user_id: UserId,
-    recipient_user_id: UserId,
-    created_at_unix: i64,
+pub(crate) struct FriendshipRequestRecord {
+    pub(crate) sender_user_id: UserId,
+    pub(crate) recipient_user_id: UserId,
+    pub(crate) created_at_unix: i64,
 }
 
 #[derive(Debug, Clone)]
-struct AuthContext {
-    user_id: UserId,
-    username: String,
+pub(crate) struct AuthContext {
+    pub(crate) user_id: UserId,
+    pub(crate) username: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConnectionControl {
+pub(crate) enum ConnectionControl {
     Open,
     Close,
 }
 
 #[derive(Debug, Clone)]
-struct ConnectionPresence {
-    user_id: UserId,
-    guild_ids: HashSet<String>,
+pub(crate) struct ConnectionPresence {
+    pub(crate) user_id: UserId,
+    pub(crate) guild_ids: HashSet<String>,
 }
-

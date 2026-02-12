@@ -1,5 +1,8 @@
+#[allow(clippy::wildcard_imports)]
+use super::*;
+
 #[allow(clippy::too_many_lines)]
-async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
+pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
     const SCHEMA_INIT_LOCK_ID: i64 = 0x4649_4c41_4d45_4e54;
     let Some(pool) = &state.db_pool else {
         return Ok(());
@@ -320,7 +323,7 @@ async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure> {
     Ok(())
 }
 
-fn role_to_i16(role: Role) -> i16 {
+pub(crate) fn role_to_i16(role: Role) -> i16 {
     match role {
         Role::Owner => 2,
         Role::Moderator => 1,
@@ -328,7 +331,7 @@ fn role_to_i16(role: Role) -> i16 {
     }
 }
 
-fn role_from_i16(value: i16) -> Option<Role> {
+pub(crate) fn role_from_i16(value: i16) -> Option<Role> {
     match value {
         2 => Some(Role::Owner),
         1 => Some(Role::Moderator),
@@ -337,14 +340,14 @@ fn role_from_i16(value: i16) -> Option<Role> {
     }
 }
 
-fn visibility_to_i16(visibility: GuildVisibility) -> i16 {
+pub(crate) fn visibility_to_i16(visibility: GuildVisibility) -> i16 {
     match visibility {
         GuildVisibility::Private => 0,
         GuildVisibility::Public => 1,
     }
 }
 
-fn visibility_from_i16(value: i16) -> Option<GuildVisibility> {
+pub(crate) fn visibility_from_i16(value: i16) -> Option<GuildVisibility> {
     match value {
         0 => Some(GuildVisibility::Private),
         1 => Some(GuildVisibility::Public),
@@ -352,14 +355,14 @@ fn visibility_from_i16(value: i16) -> Option<GuildVisibility> {
     }
 }
 
-fn channel_kind_to_i16(kind: ChannelKind) -> i16 {
+pub(crate) fn channel_kind_to_i16(kind: ChannelKind) -> i16 {
     match kind {
         ChannelKind::Text => 0,
         ChannelKind::Voice => 1,
     }
 }
 
-fn channel_kind_from_i16(value: i16) -> Option<ChannelKind> {
+pub(crate) fn channel_kind_from_i16(value: i16) -> Option<ChannelKind> {
     match value {
         0 => Some(ChannelKind::Text),
         1 => Some(ChannelKind::Voice),
@@ -367,16 +370,16 @@ fn channel_kind_from_i16(value: i16) -> Option<ChannelKind> {
     }
 }
 
-fn permission_set_to_i64(value: PermissionSet) -> Result<i64, AuthFailure> {
+pub(crate) fn permission_set_to_i64(value: PermissionSet) -> Result<i64, AuthFailure> {
     i64::try_from(value.bits()).map_err(|_| AuthFailure::Internal)
 }
 
-fn permission_set_from_i64(value: i64) -> Result<PermissionSet, AuthFailure> {
+pub(crate) fn permission_set_from_i64(value: i64) -> Result<PermissionSet, AuthFailure> {
     let bits = u64::try_from(value).map_err(|_| AuthFailure::Internal)?;
     Ok(PermissionSet::from_bits(bits))
 }
 
-fn permission_set_from_list(values: &[Permission]) -> PermissionSet {
+pub(crate) fn permission_set_from_list(values: &[Permission]) -> PermissionSet {
     let mut set = PermissionSet::empty();
     for permission in values {
         set.insert(*permission);
@@ -384,7 +387,7 @@ fn permission_set_from_list(values: &[Permission]) -> PermissionSet {
     set
 }
 
-fn permission_list_from_set(value: PermissionSet) -> Vec<Permission> {
+pub(crate) fn permission_list_from_set(value: PermissionSet) -> Vec<Permission> {
     const ORDERED_PERMISSIONS: [Permission; 8] = [
         Permission::ManageRoles,
         Permission::ManageChannelOverrides,
@@ -401,4 +404,3 @@ fn permission_list_from_set(value: PermissionSet) -> Vec<Permission> {
         .filter(|permission| value.contains(*permission))
         .collect()
 }
-

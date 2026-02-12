@@ -1,4 +1,6 @@
-fn validate_password(value: &str) -> Result<(), AuthFailure> {
+use super::*;
+
+pub(crate) fn validate_password(value: &str) -> Result<(), AuthFailure> {
     let len = value.len();
     if (12..=128).contains(&len) {
         Ok(())
@@ -7,7 +9,7 @@ fn validate_password(value: &str) -> Result<(), AuthFailure> {
     }
 }
 
-fn validate_message_content(content: &str) -> Result<(), AuthFailure> {
+pub(crate) fn validate_message_content(content: &str) -> Result<(), AuthFailure> {
     let len = content.len();
     if (1..=2000).contains(&len) {
         Ok(())
@@ -16,7 +18,7 @@ fn validate_message_content(content: &str) -> Result<(), AuthFailure> {
     }
 }
 
-fn hash_password(password: &str) -> anyhow::Result<String> {
+pub(crate) fn hash_password(password: &str) -> anyhow::Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     let hash = argon2
@@ -26,7 +28,7 @@ fn hash_password(password: &str) -> anyhow::Result<String> {
     Ok(hash)
 }
 
-fn verify_password(stored_hash: &str, supplied_password: &str) -> bool {
+pub(crate) fn verify_password(stored_hash: &str, supplied_password: &str) -> bool {
     let Ok(parsed) = PasswordHash::new(stored_hash) else {
         return false;
     };
@@ -35,7 +37,7 @@ fn verify_password(stored_hash: &str, supplied_password: &str) -> bool {
         .is_ok()
 }
 
-fn issue_tokens(
+pub(crate) fn issue_tokens(
     state: &AppState,
     user_id: UserId,
     username: &str,
@@ -62,7 +64,7 @@ fn issue_tokens(
     Ok((access_token, refresh_token, refresh_hash))
 }
 
-fn verify_access_token(state: &AppState, token: &str) -> anyhow::Result<Claims> {
+pub(crate) fn verify_access_token(state: &AppState, token: &str) -> anyhow::Result<Claims> {
     let untrusted = UntrustedToken::<Local, V4>::try_from(token).map_err(|e| anyhow!("{e}"))?;
     let validation_rules = ClaimsValidationRules::new();
     let trusted = local::decrypt(&state.token_key, &untrusted, &validation_rules, None, None)
@@ -73,12 +75,15 @@ fn verify_access_token(state: &AppState, token: &str) -> anyhow::Result<Claims> 
         .ok_or_else(|| anyhow!("token claims missing"))
 }
 
-async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<AuthContext, AuthFailure> {
+pub(crate) async fn authenticate(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<AuthContext, AuthFailure> {
     let access_token = bearer_token(headers).ok_or(AuthFailure::Unauthorized)?;
     authenticate_with_token(state, access_token).await
 }
 
-async fn authenticate_with_token(
+pub(crate) async fn authenticate_with_token(
     state: &AppState,
     access_token: &str,
 ) -> Result<AuthContext, AuthFailure> {
@@ -95,7 +100,7 @@ async fn authenticate_with_token(
     Ok(AuthContext { user_id, username })
 }
 
-async fn find_username_by_subject(state: &AppState, user_id: &str) -> Option<String> {
+pub(crate) async fn find_username_by_subject(state: &AppState, user_id: &str) -> Option<String> {
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query("SELECT username FROM users WHERE user_id = $1")
             .bind(user_id)
@@ -107,7 +112,7 @@ async fn find_username_by_subject(state: &AppState, user_id: &str) -> Option<Str
     state.user_ids.read().await.get(user_id).cloned()
 }
 
-async fn find_username_by_user_id(state: &AppState, user_id: UserId) -> Option<String> {
+pub(crate) async fn find_username_by_user_id(state: &AppState, user_id: UserId) -> Option<String> {
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query("SELECT username FROM users WHERE user_id = $1")
             .bind(user_id.to_string())
@@ -124,17 +129,17 @@ async fn find_username_by_user_id(state: &AppState, user_id: UserId) -> Option<S
         .cloned()
 }
 
-fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     let header = headers.get(AUTHORIZATION)?;
     let header = header.to_str().ok()?;
     header.strip_prefix("Bearer ")
 }
 
-fn hash_refresh_token(value: &str) -> [u8; 32] {
+pub(crate) fn hash_refresh_token(value: &str) -> [u8; 32] {
     Sha256::digest(value.as_bytes()).into()
 }
 
-fn now_unix() -> i64 {
+pub(crate) fn now_unix() -> i64 {
     let now = SystemTime::now();
     let seconds = now
         .duration_since(UNIX_EPOCH)
@@ -143,7 +148,7 @@ fn now_unix() -> i64 {
     i64::try_from(seconds).unwrap_or(i64::MAX)
 }
 
-fn outbound_event<T: Serialize>(event_type: &str, data: T) -> String {
+pub(crate) fn outbound_event<T: Serialize>(event_type: &str, data: T) -> String {
     let envelope = Envelope {
         v: PROTOCOL_VERSION,
         t: EventType::try_from(event_type.to_owned()).unwrap_or_else(|_| {
@@ -156,11 +161,11 @@ fn outbound_event<T: Serialize>(event_type: &str, data: T) -> String {
         .unwrap_or_else(|_| String::from(r#"{"v":1,"t":"ready","d":{}}"#))
 }
 
-fn channel_key(guild_id: &str, channel_id: &str) -> String {
+pub(crate) fn channel_key(guild_id: &str, channel_id: &str) -> String {
     format!("{guild_id}:{channel_id}")
 }
 
-fn build_livekit_config(config: &AppConfig) -> anyhow::Result<Option<LiveKitConfig>> {
+pub(crate) fn build_livekit_config(config: &AppConfig) -> anyhow::Result<Option<LiveKitConfig>> {
     match (&config.livekit_api_key, &config.livekit_api_secret) {
         (None, None) => Ok(None),
         (Some(_), None) | (None, Some(_)) => {
@@ -182,7 +187,7 @@ fn build_livekit_config(config: &AppConfig) -> anyhow::Result<Option<LiveKitConf
     }
 }
 
-fn build_captcha_config(config: &AppConfig) -> anyhow::Result<Option<CaptchaConfig>> {
+pub(crate) fn build_captcha_config(config: &AppConfig) -> anyhow::Result<Option<CaptchaConfig>> {
     match (
         &config.captcha_hcaptcha_site_key,
         &config.captcha_hcaptcha_secret,
@@ -214,7 +219,7 @@ fn build_captcha_config(config: &AppConfig) -> anyhow::Result<Option<CaptchaConf
     }
 }
 
-fn validate_livekit_url(value: &str) -> anyhow::Result<String> {
+pub(crate) fn validate_livekit_url(value: &str) -> anyhow::Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.len() > 256 {
         return Err(anyhow!("livekit url is invalid"));
@@ -225,7 +230,7 @@ fn validate_livekit_url(value: &str) -> anyhow::Result<String> {
     Ok(trimmed.to_owned())
 }
 
-fn validate_captcha_verify_url(value: &str) -> anyhow::Result<String> {
+pub(crate) fn validate_captcha_verify_url(value: &str) -> anyhow::Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.len() > 256 {
         return Err(anyhow!("captcha verify url is invalid"));
@@ -241,7 +246,7 @@ fn validate_captcha_verify_url(value: &str) -> anyhow::Result<String> {
     ))
 }
 
-async fn enforce_auth_route_rate_limit(
+pub(crate) async fn enforce_auth_route_rate_limit(
     state: &AppState,
     headers: &HeaderMap,
     route: &str,
@@ -263,7 +268,7 @@ async fn enforce_auth_route_rate_limit(
     Ok(())
 }
 
-async fn enforce_media_token_rate_limit(
+pub(crate) async fn enforce_media_token_rate_limit(
     state: &AppState,
     headers: &HeaderMap,
     user_id: UserId,
@@ -286,7 +291,7 @@ async fn enforce_media_token_rate_limit(
     Ok(())
 }
 
-async fn enforce_media_publish_rate_limit(
+pub(crate) async fn enforce_media_publish_rate_limit(
     state: &AppState,
     headers: &HeaderMap,
     user_id: UserId,
@@ -309,7 +314,7 @@ async fn enforce_media_publish_rate_limit(
     Ok(())
 }
 
-async fn enforce_media_subscribe_cap(
+pub(crate) async fn enforce_media_subscribe_cap(
     state: &AppState,
     user_id: UserId,
     path: &ChannelPath,
@@ -335,11 +340,11 @@ async fn enforce_media_subscribe_cap(
     Ok(())
 }
 
-fn media_channel_user_key(user_id: UserId, path: &ChannelPath) -> String {
+pub(crate) fn media_channel_user_key(user_id: UserId, path: &ChannelPath) -> String {
     format!("{}:{}:{}", user_id, path.guild_id, path.channel_id)
 }
 
-fn dedup_publish_sources(sources: &[MediaPublishSource]) -> Vec<MediaPublishSource> {
+pub(crate) fn dedup_publish_sources(sources: &[MediaPublishSource]) -> Vec<MediaPublishSource> {
     let mut deduped = Vec::new();
     for source in sources {
         if !deduped.contains(source) {
@@ -349,7 +354,7 @@ fn dedup_publish_sources(sources: &[MediaPublishSource]) -> Vec<MediaPublishSour
     deduped
 }
 
-fn allowed_publish_sources(permissions: PermissionSet) -> Vec<MediaPublishSource> {
+pub(crate) fn allowed_publish_sources(permissions: PermissionSet) -> Vec<MediaPublishSource> {
     let mut sources = Vec::with_capacity(3);
     if permissions.contains(Permission::CreateMessage) {
         sources.push(MediaPublishSource::Microphone);
@@ -363,7 +368,7 @@ fn allowed_publish_sources(permissions: PermissionSet) -> Vec<MediaPublishSource
     sources
 }
 
-fn extract_client_ip(headers: &HeaderMap) -> String {
+pub(crate) fn extract_client_ip(headers: &HeaderMap) -> String {
     headers
         .get("x-forwarded-for")
         .and_then(|value| value.to_str().ok())
@@ -372,4 +377,3 @@ fn extract_client_ip(headers: &HeaderMap) -> String {
         .filter(|value| !value.is_empty())
         .map_or_else(|| String::from("unknown"), ToOwned::to_owned)
 }
-

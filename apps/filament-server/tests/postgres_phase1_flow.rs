@@ -32,7 +32,7 @@ fn test_app(database_url: String) -> axum::Router {
         gateway_ingress_events_per_window: 20,
         gateway_ingress_window: Duration::from_secs(10),
         gateway_outbound_queue: 256,
-        max_gateway_event_bytes: filament_server::DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+        max_gateway_event_bytes: AppConfig::default().max_gateway_event_bytes,
         database_url: Some(database_url),
         ..AppConfig::default()
     })

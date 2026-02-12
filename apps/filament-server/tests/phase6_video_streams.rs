@@ -43,7 +43,7 @@ fn test_app(publish_limit: u32, subscribe_cap: usize) -> axum::Router {
         gateway_ingress_events_per_window: 20,
         gateway_ingress_window: Duration::from_secs(10),
         gateway_outbound_queue: 256,
-        max_gateway_event_bytes: filament_server::DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+        max_gateway_event_bytes: AppConfig::default().max_gateway_event_bytes,
         media_token_requests_per_minute: 200,
         media_publish_requests_per_minute: publish_limit,
         media_subscribe_token_cap_per_channel: subscribe_cap,

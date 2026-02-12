@@ -1,8 +1,10 @@
-fn metrics_state() -> &'static MetricsState {
+use super::*;
+
+pub(crate) fn metrics_state() -> &'static MetricsState {
     METRICS_STATE.get_or_init(MetricsState::default)
 }
 
-fn render_metrics() -> String {
+pub(crate) fn render_metrics() -> String {
     let auth_failures = metrics_state()
         .auth_failures
         .lock()
@@ -58,24 +60,23 @@ fn render_metrics() -> String {
     output
 }
 
-fn record_auth_failure(reason: &'static str) {
+pub(crate) fn record_auth_failure(reason: &'static str) {
     if let Ok(mut counters) = metrics_state().auth_failures.lock() {
         let entry = counters.entry(reason).or_insert(0);
         *entry += 1;
     }
 }
 
-fn record_rate_limit_hit(surface: &'static str, reason: &'static str) {
+pub(crate) fn record_rate_limit_hit(surface: &'static str, reason: &'static str) {
     if let Ok(mut counters) = metrics_state().rate_limit_hits.lock() {
         let entry = counters.entry((surface, reason)).or_insert(0);
         *entry += 1;
     }
 }
 
-fn record_ws_disconnect(reason: &'static str) {
+pub(crate) fn record_ws_disconnect(reason: &'static str) {
     if let Ok(mut counters) = metrics_state().ws_disconnects.lock() {
         let entry = counters.entry(reason).or_insert(0);
         *entry += 1;
     }
 }
-

@@ -1,4 +1,7 @@
-async fn user_can_write_channel(
+#[allow(clippy::wildcard_imports)]
+use super::*;
+
+pub(crate) async fn user_can_write_channel(
     state: &AppState,
     user_id: UserId,
     guild_id: &str,
@@ -10,7 +13,7 @@ async fn user_can_write_channel(
         .is_some_and(|(_, permissions)| permissions.contains(Permission::CreateMessage))
 }
 
-async fn channel_permission_snapshot(
+pub(crate) async fn channel_permission_snapshot(
     state: &AppState,
     user_id: UserId,
     guild_id: &str,
@@ -88,7 +91,7 @@ async fn channel_permission_snapshot(
     ))
 }
 
-async fn user_role_in_guild(
+pub(crate) async fn user_role_in_guild(
     state: &AppState,
     user_id: UserId,
     guild_id: &str,
@@ -128,7 +131,7 @@ async fn user_role_in_guild(
         .ok_or(AuthFailure::Forbidden)
 }
 
-async fn member_role_in_guild(
+pub(crate) async fn member_role_in_guild(
     state: &AppState,
     user_id: UserId,
     guild_id: &str,
@@ -155,7 +158,10 @@ async fn member_role_in_guild(
         .ok_or(AuthFailure::NotFound)
 }
 
-async fn attachment_usage_for_user(state: &AppState, user_id: UserId) -> Result<u64, AuthFailure> {
+pub(crate) async fn attachment_usage_for_user(
+    state: &AppState,
+    user_id: UserId,
+) -> Result<u64, AuthFailure> {
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query(
             "SELECT COALESCE(SUM(size_bytes)::BIGINT, 0) AS total FROM attachments WHERE owner_id = $1",
@@ -179,7 +185,7 @@ async fn attachment_usage_for_user(state: &AppState, user_id: UserId) -> Result<
     Ok(usage)
 }
 
-async fn find_attachment(
+pub(crate) async fn find_attachment(
     state: &AppState,
     path: &AttachmentPath,
 ) -> Result<AttachmentRecord, AuthFailure> {
@@ -235,7 +241,7 @@ async fn find_attachment(
         .ok_or(AuthFailure::NotFound)
 }
 
-fn parse_attachment_ids(value: Vec<String>) -> Result<Vec<String>, AuthFailure> {
+pub(crate) fn parse_attachment_ids(value: Vec<String>) -> Result<Vec<String>, AuthFailure> {
     if value.len() > MAX_ATTACHMENTS_PER_MESSAGE {
         return Err(AuthFailure::InvalidRequest);
     }
@@ -253,7 +259,7 @@ fn parse_attachment_ids(value: Vec<String>) -> Result<Vec<String>, AuthFailure> 
     Ok(deduped)
 }
 
-async fn bind_message_attachments_db(
+pub(crate) async fn bind_message_attachments_db(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     attachment_ids: &[String],
     message_id: &str,
@@ -291,7 +297,7 @@ async fn bind_message_attachments_db(
     Ok(())
 }
 
-async fn fetch_attachments_for_message_db(
+pub(crate) async fn fetch_attachments_for_message_db(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     guild_id: &str,
     channel_id: &str,
@@ -312,7 +318,7 @@ async fn fetch_attachments_for_message_db(
     rows_to_attachment_responses(rows)
 }
 
-async fn attachments_for_message_in_memory(
+pub(crate) async fn attachments_for_message_in_memory(
     state: &AppState,
     attachment_ids: &[String],
 ) -> Result<Vec<AttachmentResponse>, AuthFailure> {
@@ -339,7 +345,7 @@ async fn attachments_for_message_in_memory(
     Ok(out)
 }
 
-fn rows_to_attachment_responses(
+pub(crate) fn rows_to_attachment_responses(
     rows: Vec<sqlx::postgres::PgRow>,
 ) -> Result<Vec<AttachmentResponse>, AuthFailure> {
     let mut attachments = Vec::with_capacity(rows.len());
@@ -369,7 +375,7 @@ fn rows_to_attachment_responses(
     Ok(attachments)
 }
 
-async fn attachment_map_for_messages_db(
+pub(crate) async fn attachment_map_for_messages_db(
     pool: &PgPool,
     guild_id: &str,
     channel_id: Option<&str>,
@@ -441,7 +447,7 @@ async fn attachment_map_for_messages_db(
     Ok(by_message)
 }
 
-async fn attachment_map_for_messages_in_memory(
+pub(crate) async fn attachment_map_for_messages_in_memory(
     state: &AppState,
     guild_id: &str,
     channel_id: Option<&str>,
@@ -486,7 +492,7 @@ async fn attachment_map_for_messages_in_memory(
     by_message
 }
 
-fn attach_message_media(
+pub(crate) fn attach_message_media(
     messages: &mut [MessageResponse],
     attachment_map: &HashMap<String, Vec<AttachmentResponse>>,
 ) {
@@ -498,7 +504,7 @@ fn attach_message_media(
     }
 }
 
-fn attach_message_reactions(
+pub(crate) fn attach_message_reactions(
     messages: &mut [MessageResponse],
     reaction_map: &HashMap<String, Vec<ReactionResponse>>,
 ) {
@@ -510,7 +516,7 @@ fn attach_message_reactions(
     }
 }
 
-fn reaction_summaries_from_users(
+pub(crate) fn reaction_summaries_from_users(
     reactions: &HashMap<String, HashSet<UserId>>,
 ) -> Vec<ReactionResponse> {
     let mut summaries = Vec::with_capacity(reactions.len());
@@ -524,7 +530,7 @@ fn reaction_summaries_from_users(
     summaries
 }
 
-async fn reaction_map_for_messages_db(
+pub(crate) async fn reaction_map_for_messages_db(
     pool: &PgPool,
     guild_id: &str,
     channel_id: Option<&str>,
@@ -581,7 +587,7 @@ async fn reaction_map_for_messages_db(
     Ok(by_message)
 }
 
-fn validate_attachment_filename(value: String) -> Result<String, AuthFailure> {
+pub(crate) fn validate_attachment_filename(value: String) -> Result<String, AuthFailure> {
     if value.is_empty() || value.len() > 128 {
         return Err(AuthFailure::InvalidRequest);
     }
@@ -591,7 +597,7 @@ fn validate_attachment_filename(value: String) -> Result<String, AuthFailure> {
     Ok(value)
 }
 
-fn validate_reaction_emoji(value: &str) -> Result<(), AuthFailure> {
+pub(crate) fn validate_reaction_emoji(value: &str) -> Result<(), AuthFailure> {
     if value.is_empty() || value.chars().count() > MAX_REACTION_EMOJI_CHARS {
         return Err(AuthFailure::InvalidRequest);
     }
@@ -601,7 +607,7 @@ fn validate_reaction_emoji(value: &str) -> Result<(), AuthFailure> {
     Ok(())
 }
 
-async fn write_audit_log(
+pub(crate) async fn write_audit_log(
     state: &AppState,
     guild_id: Option<String>,
     actor_user_id: UserId,
@@ -637,4 +643,3 @@ async fn write_audit_log(
     }));
     Ok(())
 }
-

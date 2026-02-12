@@ -42,7 +42,7 @@ fn test_app(media_limit: u32) -> axum::Router {
         gateway_ingress_events_per_window: 20,
         gateway_ingress_window: Duration::from_secs(10),
         gateway_outbound_queue: 256,
-        max_gateway_event_bytes: filament_server::DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+        max_gateway_event_bytes: AppConfig::default().max_gateway_event_bytes,
         media_token_requests_per_minute: media_limit,
         livekit_token_ttl: Duration::from_secs(MAX_LIVEKIT_TOKEN_TTL_SECS),
         livekit_url: String::from(LIVEKIT_URL),

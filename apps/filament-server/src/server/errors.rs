@@ -1,5 +1,7 @@
+use super::*;
+
 #[derive(Debug)]
-enum AuthFailure {
+pub(crate) enum AuthFailure {
     InvalidRequest,
     CaptchaFailed,
     Unauthorized,
@@ -115,4 +117,3 @@ pub fn init_tracing() {
         .with_span_list(true)
         .init();
 }
-

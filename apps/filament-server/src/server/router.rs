@@ -1,3 +1,6 @@
+#[allow(clippy::wildcard_imports)]
+use super::*;
+
 /// Build the axum router with global security middleware.
 ///
 /// # Errors
