@@ -15,6 +15,7 @@ import {
   guildIpBanApplyResultFromResponse,
   guildIpBanPageFromResponse,
   guildIpBanIdFromInput,
+  guildRoleListFromResponse,
   guildVisibilityFromInput,
   guildIdFromInput,
   ipNetworkFromInput,
@@ -30,6 +31,8 @@ import {
   searchQueryFromInput,
   userLookupListFromResponse,
   voiceTokenFromResponse,
+  workspaceRoleIdFromInput,
+  workspaceRoleNameFromInput,
   workspaceFromStorage,
 } from "../src/domain/chat";
 
@@ -286,6 +289,14 @@ describe("chat domain invariants", () => {
 
     expect(auditCursorFromInput("abcDEF_123-xyz")).toBe("abcDEF_123-xyz");
     expect(() => auditCursorFromInput("bad cursor")).toThrow();
+
+    expect(workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV")).toBe(
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    );
+    expect(() => workspaceRoleIdFromInput("bad-role-id")).toThrow();
+    expect(workspaceRoleNameFromInput(" Incident Lead ")).toBe("Incident Lead");
+    expect(() => workspaceRoleNameFromInput("@everyone")).toThrow();
+    expect(() => workspaceRoleNameFromInput("workspace_owner")).toThrow();
   });
 
   it("validates directory join DTO and error-code mapping", () => {
@@ -394,5 +405,35 @@ describe("chat domain invariants", () => {
     });
     expect(applyResult.createdCount).toBe(2);
     expect(applyResult.banIds).toHaveLength(2);
+
+    const roleList = guildRoleListFromResponse({
+      roles: [
+        {
+          role_id: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+          name: "Responder",
+          position: 3,
+          is_system: false,
+          permissions: ["create_message", "subscribe_streams"],
+        },
+      ],
+    });
+    expect(roleList.roles[0]?.name).toBe("Responder");
+    expect(roleList.roles[0]?.permissions).toEqual([
+      "create_message",
+      "subscribe_streams",
+    ]);
+    expect(() =>
+      guildRoleListFromResponse({
+        roles: [
+          {
+            role_id: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+            name: "@everyone",
+            position: 3,
+            is_system: false,
+            permissions: ["create_message"],
+          },
+        ],
+      }),
+    ).toThrow();
   });
 });

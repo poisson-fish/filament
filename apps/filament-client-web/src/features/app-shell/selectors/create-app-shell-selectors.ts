@@ -53,6 +53,9 @@ export interface CreateAppShellSelectorsResult {
   canSubscribeVoiceStreams: Accessor<boolean>;
   canManageWorkspaceChannels: Accessor<boolean>;
   canManageSearchMaintenance: Accessor<boolean>;
+  canManageWorkspaceRoles: Accessor<boolean>;
+  canManageMemberRoles: Accessor<boolean>;
+  hasRoleManagementAccess: Accessor<boolean>;
   canManageRoles: Accessor<boolean>;
   canManageChannelOverrides: Accessor<boolean>;
   canBanMembers: Accessor<boolean>;
@@ -208,9 +211,20 @@ export function createAppShellSelectors(
     canDiscoverWorkspaceOperation(options.channelPermissions()?.role),
   );
   const canManageSearchMaintenance = createMemo(() => canManageWorkspaceChannels());
-  const canManageRoles = createMemo(() =>
-    hasChannelPermission(options.channelPermissions(), "manage_roles"),
+  const canManageWorkspaceRoles = createMemo(
+    () =>
+      hasChannelPermission(options.channelPermissions(), "manage_workspace_roles") ||
+      hasChannelPermission(options.channelPermissions(), "manage_roles"),
   );
+  const canManageMemberRoles = createMemo(
+    () =>
+      hasChannelPermission(options.channelPermissions(), "manage_member_roles") ||
+      hasChannelPermission(options.channelPermissions(), "manage_roles"),
+  );
+  const hasRoleManagementAccess = createMemo(
+    () => canManageWorkspaceRoles() || canManageMemberRoles(),
+  );
+  const canManageRoles = createMemo(() => hasRoleManagementAccess());
   const canManageChannelOverrides = createMemo(() =>
     hasChannelPermission(options.channelPermissions(), "manage_channel_overrides"),
   );
@@ -369,6 +383,9 @@ export function createAppShellSelectors(
     canSubscribeVoiceStreams,
     canManageWorkspaceChannels,
     canManageSearchMaintenance,
+    canManageWorkspaceRoles,
+    canManageMemberRoles,
+    hasRoleManagementAccess,
     canManageRoles,
     canManageChannelOverrides,
     canBanMembers,

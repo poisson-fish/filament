@@ -156,6 +156,7 @@ describe("app shell extracted layout components", () => {
           showUnauthorizedWorkspaceNote={false}
           canAccessActiveChannel={true}
           onlineMembers={["01ARZ3NDEKTSV4RRFFQ69G5FAZ"]}
+          hasRoleManagementAccess={true}
           hasModerationAccess={true}
           displayUserLabel={(value) => value}
           onOpenPanel={onOpenPanel}
@@ -181,6 +182,8 @@ describe("app shell extracted layout components", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open moderation panel" }));
     expect(onOpenPanel).toHaveBeenCalledWith("moderation");
+    fireEvent.click(screen.getByRole("button", { name: "Open role management panel" }));
+    expect(onOpenPanel).toHaveBeenCalledWith("role-management");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide channels" }));
     expect(onToggleChannels).toHaveBeenCalledTimes(1);

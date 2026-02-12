@@ -13,6 +13,7 @@ describe("app shell overlay controller", () => {
     const noAccess = {
       canAccessActiveChannel: false,
       canManageWorkspaceChannels: false,
+      hasRoleManagementAccess: false,
       hasModerationAccess: false,
     };
 
@@ -20,6 +21,7 @@ describe("app shell overlay controller", () => {
     expect(isOverlayPanelAuthorized("channel-create", noAccess)).toBe(false);
     expect(isOverlayPanelAuthorized("search", noAccess)).toBe(false);
     expect(isOverlayPanelAuthorized("moderation", noAccess)).toBe(false);
+    expect(isOverlayPanelAuthorized("role-management", noAccess)).toBe(false);
   });
 
   it("sanitizes unauthorized panels to null", () => {
@@ -27,6 +29,7 @@ describe("app shell overlay controller", () => {
       sanitizeOverlayPanel("channel-create", {
         canAccessActiveChannel: true,
         canManageWorkspaceChannels: false,
+        hasRoleManagementAccess: true,
         hasModerationAccess: true,
       }),
     ).toBeNull();
@@ -35,6 +38,7 @@ describe("app shell overlay controller", () => {
       sanitizeOverlayPanel("utility", {
         canAccessActiveChannel: false,
         canManageWorkspaceChannels: false,
+        hasRoleManagementAccess: false,
         hasModerationAccess: false,
       }),
     ).toBe("utility");
@@ -42,6 +46,7 @@ describe("app shell overlay controller", () => {
 
   it("keeps panel title and class mappings stable", () => {
     expect(overlayPanelTitle("public-directory")).toBe("Public workspace directory");
+    expect(overlayPanelTitle("role-management")).toBe("Role management");
     expect(overlayPanelClassName("workspace-create")).toBe("panel-window panel-window-compact");
     expect(overlayPanelClassName("settings")).toBe("panel-window panel-window-medium");
     expect(overlayPanelClassName("utility")).toBe("panel-window");

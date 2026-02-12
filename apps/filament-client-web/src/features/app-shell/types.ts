@@ -32,6 +32,7 @@ export type OverlayPanel =
   | "friendships"
   | "search"
   | "attachments"
+  | "role-management"
   | "moderation"
   | "utility";
 

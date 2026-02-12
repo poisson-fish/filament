@@ -12,6 +12,7 @@ import type {
 export interface OverlayAuthorizationContext {
   canAccessActiveChannel: boolean;
   canManageWorkspaceChannels: boolean;
+  hasRoleManagementAccess: boolean;
   hasModerationAccess: boolean;
 }
 
@@ -52,6 +53,8 @@ export function overlayPanelTitle(panel: OverlayPanel): string {
       return "Attachments";
     case "moderation":
       return "Moderation";
+    case "role-management":
+      return "Role management";
     case "utility":
       return "Utility";
   }
@@ -76,6 +79,9 @@ export function isOverlayPanelAuthorized(
   }
   if (panel === "moderation") {
     return context.hasModerationAccess;
+  }
+  if (panel === "role-management") {
+    return context.hasRoleManagementAccess;
   }
   if (panel === "search" || panel === "attachments") {
     return context.canAccessActiveChannel;

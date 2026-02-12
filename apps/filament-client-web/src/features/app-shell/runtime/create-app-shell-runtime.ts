@@ -46,6 +46,7 @@ import { createProfileController } from "../controllers/profile-controller";
 import { createProfileOverlayController } from "../controllers/profile-overlay-controller";
 import { createPublicDirectoryController } from "../controllers/public-directory-controller";
 import { createReactionPickerController } from "../controllers/reaction-picker-controller";
+import { createRoleManagementController } from "../controllers/role-management-controller";
 import { createSearchController } from "../controllers/search-controller";
 import {
   createVoiceOperationsController,
@@ -346,6 +347,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     context: () => ({
       canAccessActiveChannel: selectors.canAccessActiveChannel(),
       canManageWorkspaceChannels: selectors.canManageWorkspaceChannels(),
+      hasRoleManagementAccess: selectors.hasRoleManagementAccess(),
       hasModerationAccess: selectors.hasModerationAccess(),
     }),
     setPanel: overlayState.setActiveOverlayPanel,
@@ -450,6 +452,13 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setModerating: diagnosticsState.setModerating,
     setModerationError: diagnosticsState.setModerationError,
     setModerationStatus: diagnosticsState.setModerationStatus,
+  });
+
+  const roleManagementActions = createRoleManagementController({
+    session: auth.session,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
+    setChannelPermissions: workspaceChannelState.setChannelPermissions,
   });
 
   const profileController = createProfileController({
@@ -793,6 +802,27 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         setOverrideAllowCsv: diagnosticsState.setOverrideAllowCsv,
         setOverrideDenyCsv: diagnosticsState.setOverrideDenyCsv,
         onApplyOverride: moderationActions.applyOverride,
+        onOpenRoleManagementPanel: () => openOverlayPanel("role-management"),
+      },
+      roleManagement: {
+        hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
+        canManageWorkspaceRoles: selectors.canManageWorkspaceRoles(),
+        canManageMemberRoles: selectors.canManageMemberRoles(),
+        roles: roleManagementActions.roles(),
+        isLoadingRoles: roleManagementActions.isLoadingRoles(),
+        isMutatingRoles: roleManagementActions.isMutatingRoles(),
+        roleManagementStatus: roleManagementActions.roleManagementStatus(),
+        roleManagementError: roleManagementActions.roleManagementError(),
+        targetUserIdInput: diagnosticsState.moderationUserIdInput(),
+        setTargetUserIdInput: diagnosticsState.setModerationUserIdInput,
+        onRefreshRoles: roleManagementActions.refreshRoles,
+        onCreateRole: roleManagementActions.createRole,
+        onUpdateRole: roleManagementActions.updateRole,
+        onDeleteRole: roleManagementActions.deleteRole,
+        onReorderRoles: roleManagementActions.reorderRoles,
+        onAssignRole: roleManagementActions.assignRoleToMember,
+        onUnassignRole: roleManagementActions.unassignRoleFromMember,
+        onOpenModerationPanel: () => openOverlayPanel("moderation"),
       },
       utility: {
         echoInput: diagnosticsState.echoInput(),
@@ -839,6 +869,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     searchActions,
     attachmentActions,
     moderationActions,
+    roleManagementActions,
     profileController,
     publicDirectoryActions,
     friendshipActions,

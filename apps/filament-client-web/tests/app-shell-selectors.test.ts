@@ -149,6 +149,9 @@ describe("app shell selectors", () => {
       expect(harness.selectors.canAccessActiveChannel()).toBe(true);
       expect(harness.selectors.canManageWorkspaceChannels()).toBe(false);
       expect(harness.selectors.canManageSearchMaintenance()).toBe(false);
+      expect(harness.selectors.canManageWorkspaceRoles()).toBe(false);
+      expect(harness.selectors.canManageMemberRoles()).toBe(false);
+      expect(harness.selectors.hasRoleManagementAccess()).toBe(false);
       expect(harness.selectors.hasModerationAccess()).toBe(false);
       expect(harness.selectors.canDeleteMessages()).toBe(false);
 
@@ -160,6 +163,8 @@ describe("app shell selectors", () => {
           "publish_screen_share",
           "subscribe_streams",
           "manage_roles",
+          "manage_member_roles",
+          "manage_workspace_roles",
           "manage_channel_overrides",
           "ban_member",
           "delete_message",
@@ -167,6 +172,9 @@ describe("app shell selectors", () => {
       });
       expect(harness.selectors.canManageWorkspaceChannels()).toBe(true);
       expect(harness.selectors.canManageSearchMaintenance()).toBe(true);
+      expect(harness.selectors.canManageWorkspaceRoles()).toBe(true);
+      expect(harness.selectors.canManageMemberRoles()).toBe(true);
+      expect(harness.selectors.hasRoleManagementAccess()).toBe(true);
       expect(harness.selectors.hasModerationAccess()).toBe(true);
       expect(harness.selectors.canDeleteMessages()).toBe(true);
 

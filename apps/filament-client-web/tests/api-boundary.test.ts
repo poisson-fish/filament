@@ -1,6 +1,11 @@
 import { accessTokenFromInput, refreshTokenFromInput } from "../src/domain/auth";
 import { attachmentIdFromInput, channelIdFromInput, guildIdFromInput } from "../src/domain/chat";
-import { downloadChannelAttachmentPreview, fetchHealth, joinPublicGuild } from "../src/lib/api";
+import {
+  downloadChannelAttachmentPreview,
+  fetchGuildRoles,
+  fetchHealth,
+  joinPublicGuild,
+} from "../src/lib/api";
 
 function createProbeStream(chunks: Uint8Array[]): {
   stream: ReadableStream<Uint8Array>;
@@ -192,6 +197,40 @@ describe("api boundary hardening", () => {
       guildId,
       outcome: "already_member",
       joined: true,
+    });
+  });
+
+  it("maps guild role list responses through strict DTO parsing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            roles: [
+              {
+                role_id: "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+                name: "Responder",
+                position: 3,
+                is_system: false,
+                permissions: ["create_message", "subscribe_streams"],
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      ),
+    );
+
+    await expect(fetchGuildRoles(session, guildId)).resolves.toMatchObject({
+      roles: [
+        {
+          roleId: "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+          name: "Responder",
+        },
+      ],
     });
   });
 

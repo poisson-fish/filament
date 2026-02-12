@@ -625,29 +625,75 @@ Matrix guardrails:
 Ship owner-facing UX to configure workspace roles/permissions and member role assignments safely.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add role-management panel UX:
+- [x] Add role-management panel UX:
   - role list with hierarchy visualization
   - create/edit/delete role actions
   - permission matrix editor with explicit toggles and guardrails
   - member role assignment controls
-- [ ] UX guardrails:
+- [x] UX guardrails:
   - prevent dangerous self-lockout actions
   - explicit confirmation for destructive role changes
   - clear capability previews before apply
-- [ ] Enforce strict permission gating in UI:
+- [x] Enforce strict permission gating in UI:
   - only authorized workspace owners/managers can see/edit role controls
   - no server-owner-only controls in workspace owner panels
-- [ ] Integrate permission UX with existing moderation and channel override panels.
+- [x] Integrate permission UX with existing moderation and channel override panels.
 
 ### Tests
-- [ ] Add/expand:
+- [x] Add/expand:
   - role panel rendering and authorization gating tests
   - role permission matrix interaction tests
   - controller tests for assignment/update/reorder actions
   - integration-like tests for end-to-end role-change behavior impact
+
+### Refactor Notes
+- Added typed workspace-role domain/API contracts in web client:
+  - `apps/filament-client-web/src/domain/chat.ts`
+    - newtypes/invariants: `WorkspaceRoleId`, `WorkspaceRoleName`
+    - strict DTO parser: `guildRoleListFromResponse(...)`
+  - `apps/filament-client-web/src/lib/api.ts`
+    - role-management bindings: list/create/update/delete/reorder + assign/unassign member role endpoints
+- Added a dedicated role-management runtime controller:
+  - `apps/filament-client-web/src/features/app-shell/controllers/role-management-controller.ts`
+  - includes async state orchestration, deterministic mutation/status handling, and channel-permission snapshot refresh after role mutations
+- Added new owner-facing role management panel UX:
+  - `apps/filament-client-web/src/features/app-shell/components/panels/RoleManagementPanel.tsx`
+  - hierarchy view, create/edit/delete flows, reorder controls, permission matrix toggles, and member-role assignment controls
+  - explicit destructive confirmations + risky permission-drop guardrail + capability preview
+- Integrated new panel into app-shell overlay/runtime surfaces:
+  - overlay type/authorization/title updates:
+    - `apps/filament-client-web/src/features/app-shell/types.ts`
+    - `apps/filament-client-web/src/features/app-shell/controllers/overlay-controller.ts`
+  - panel host/lazy exports + prop adapter wiring:
+    - `apps/filament-client-web/src/features/app-shell/components/panels/PanelHost.tsx`
+    - `apps/filament-client-web/src/features/app-shell/components/panels/lazy/OperatorPanelGroup.ts`
+    - `apps/filament-client-web/src/features/app-shell/adapters/panel-host-props.ts`
+  - selector gating + runtime wiring + panel launch integration:
+    - `apps/filament-client-web/src/features/app-shell/selectors/create-app-shell-selectors.ts`
+    - `apps/filament-client-web/src/features/app-shell/runtime/create-app-shell-runtime.ts`
+    - `apps/filament-client-web/src/features/app-shell/components/MemberRail.tsx`
+    - `apps/filament-client-web/src/features/app-shell/components/panels/ModerationPanel.tsx`
+    - `apps/filament-client-web/src/pages/AppShellPage.tsx`
+- Added panel-specific styling for hierarchy/matrix/reorder UX:
+  - `apps/filament-client-web/src/styles/app.css`
+- Added/expanded tests:
+  - new:
+    - `apps/filament-client-web/tests/app-shell-role-management-controller.test.ts`
+    - `apps/filament-client-web/tests/app-shell-role-management-panel.test.tsx`
+  - updated:
+    - `apps/filament-client-web/tests/app-shell-operator-permissions.test.tsx`
+    - `apps/filament-client-web/tests/app-shell-panel-host-props.test.tsx`
+    - `apps/filament-client-web/tests/app-shell-layout-components.test.tsx`
+    - `apps/filament-client-web/tests/app-shell-overlay-controller.test.ts`
+    - `apps/filament-client-web/tests/app-shell-selectors.test.ts`
+    - `apps/filament-client-web/tests/domain-chat.test.ts`
+    - `apps/filament-client-web/tests/api-boundary.test.ts`
+- Verification (2026-02-12):
+  - `pnpm --prefix apps/filament-client-web test` passed
+  - `pnpm --prefix apps/filament-client-web typecheck` passed
 
 ### Security Outlook
 - Makes permission changes auditable, explicit, and less error-prone for workspace operators.

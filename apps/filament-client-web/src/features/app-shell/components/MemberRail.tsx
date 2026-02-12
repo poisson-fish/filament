@@ -12,6 +12,7 @@ interface MemberRailProps {
   profile: ProfileSummary | null;
   showUnauthorizedWorkspaceNote: boolean;
   canAccessActiveChannel: boolean;
+  hasRoleManagementAccess: boolean;
   onlineMembers: string[];
   hasModerationAccess: boolean;
   displayUserLabel: (userId: string) => string;
@@ -88,6 +89,11 @@ export function MemberRail(props: MemberRailProps) {
           <Show when={props.hasModerationAccess}>
             <button type="button" onClick={() => props.onOpenPanel("moderation")}>
               Open moderation panel
+            </button>
+          </Show>
+          <Show when={props.hasRoleManagementAccess}>
+            <button type="button" onClick={() => props.onOpenPanel("role-management")}>
+              Open role management panel
             </button>
           </Show>
           <button type="button" onClick={() => props.onOpenPanel("utility")}>

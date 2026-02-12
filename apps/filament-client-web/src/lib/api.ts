@@ -19,6 +19,8 @@ import {
   type ChannelName,
   type GuildRecord,
   type GuildId,
+  type GuildRoleList,
+  type GuildRoleRecord,
   type GuildName,
   type GuildVisibility,
   type FriendRecord,
@@ -39,6 +41,8 @@ import {
   type SearchReconcileResult,
   type SearchResults,
   type ProfileRecord,
+  type WorkspaceRoleId,
+  type WorkspaceRoleName,
   type UserLookupRecord,
   type UserId,
   type VoiceTokenRecord,
@@ -50,6 +54,7 @@ import {
   friendRequestCreateFromResponse,
   friendRequestListFromResponse,
   guildFromResponse,
+  guildRoleListFromResponse,
   messageFromResponse,
   messageHistoryFromResponse,
   moderationResultFromResponse,
@@ -59,6 +64,8 @@ import {
   searchReconcileFromResponse,
   searchResultsFromResponse,
   userLookupListFromResponse,
+  workspaceRoleIdFromInput,
+  workspaceRoleNameFromInput,
   voiceTokenFromResponse,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
@@ -1016,6 +1023,139 @@ export async function setChannelRoleOverride(
     path: `/guilds/${guildId}/channels/${channelId}/overrides/${role}`,
     accessToken: session.accessToken,
     body: input,
+  });
+  return moderationResultFromResponse(dto);
+}
+
+export async function fetchGuildRoles(
+  session: AuthSession,
+  guildId: GuildId,
+): Promise<GuildRoleList> {
+  const dto = await requestJson({
+    method: "GET",
+    path: `/guilds/${guildId}/roles`,
+    accessToken: session.accessToken,
+  });
+  return guildRoleListFromResponse(dto);
+}
+
+export async function createGuildRole(
+  session: AuthSession,
+  guildId: GuildId,
+  input: {
+    name: WorkspaceRoleName;
+    permissions: PermissionName[];
+    position?: number;
+  },
+): Promise<GuildRoleRecord> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/roles`,
+    accessToken: session.accessToken,
+    body: {
+      name: workspaceRoleNameFromInput(input.name),
+      permissions: input.permissions,
+      position:
+        Number.isInteger(input.position) && (input.position as number) > 0
+          ? input.position
+          : undefined,
+    },
+  });
+  return guildRoleListFromResponse({ roles: [dto] }).roles[0]!;
+}
+
+export async function updateGuildRole(
+  session: AuthSession,
+  guildId: GuildId,
+  roleId: WorkspaceRoleId,
+  input: {
+    name?: WorkspaceRoleName;
+    permissions?: PermissionName[];
+  },
+): Promise<GuildRoleRecord> {
+  if (typeof input.name === "undefined" && typeof input.permissions === "undefined") {
+    throw new ApiError(400, "invalid_request", "Role update requires at least one field.");
+  }
+  const body: Record<string, unknown> = {};
+  if (typeof input.name !== "undefined") {
+    body.name = workspaceRoleNameFromInput(input.name);
+  }
+  if (typeof input.permissions !== "undefined") {
+    body.permissions = input.permissions;
+  }
+  const dto = await requestJson({
+    method: "PATCH",
+    path: `/guilds/${guildId}/roles/${workspaceRoleIdFromInput(roleId)}`,
+    accessToken: session.accessToken,
+    body,
+  });
+  return guildRoleListFromResponse({ roles: [dto] }).roles[0]!;
+}
+
+export async function deleteGuildRole(
+  session: AuthSession,
+  guildId: GuildId,
+  roleId: WorkspaceRoleId,
+): Promise<ModerationResult> {
+  const dto = await requestJson({
+    method: "DELETE",
+    path: `/guilds/${guildId}/roles/${workspaceRoleIdFromInput(roleId)}`,
+    accessToken: session.accessToken,
+  });
+  return moderationResultFromResponse(dto);
+}
+
+export async function reorderGuildRoles(
+  session: AuthSession,
+  guildId: GuildId,
+  roleIds: WorkspaceRoleId[],
+): Promise<ModerationResult> {
+  const deduped: WorkspaceRoleId[] = [];
+  const seen = new Set<string>();
+  for (const roleId of roleIds) {
+    const parsed = workspaceRoleIdFromInput(roleId);
+    if (seen.has(parsed)) {
+      continue;
+    }
+    seen.add(parsed);
+    deduped.push(parsed);
+  }
+  if (deduped.length < 1 || deduped.length > 64) {
+    throw new ApiError(400, "invalid_request", "role_ids must contain 1-64 unique role ids.");
+  }
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/roles/reorder`,
+    accessToken: session.accessToken,
+    body: { role_ids: deduped },
+  });
+  return moderationResultFromResponse(dto);
+}
+
+export async function assignGuildRole(
+  session: AuthSession,
+  guildId: GuildId,
+  roleId: WorkspaceRoleId,
+  userId: UserId,
+): Promise<ModerationResult> {
+  const dto = await requestJson({
+    method: "POST",
+    path: `/guilds/${guildId}/roles/${workspaceRoleIdFromInput(roleId)}/members/${userId}`,
+    accessToken: session.accessToken,
+  });
+  return moderationResultFromResponse(dto);
+}
+
+export async function unassignGuildRole(
+  session: AuthSession,
+  guildId: GuildId,
+  roleId: WorkspaceRoleId,
+  userId: UserId,
+): Promise<ModerationResult> {
+  const dto = await requestJson({
+    method: "DELETE",
+    path: `/guilds/${guildId}/roles/${workspaceRoleIdFromInput(roleId)}/members/${userId}`,
+    accessToken: session.accessToken,
   });
   return moderationResultFromResponse(dto);
 }

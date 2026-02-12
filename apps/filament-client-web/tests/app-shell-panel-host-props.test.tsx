@@ -7,19 +7,24 @@ import {
   channelKindFromInput,
   guildIdFromInput,
   guildNameFromInput,
+  permissionFromInput,
   roleFromInput,
   userIdFromInput,
+  workspaceRoleIdFromInput,
+  workspaceRoleNameFromInput,
 } from "../src/domain/chat";
 import {
   buildAttachmentsPanelProps,
   buildModerationPanelProps,
   buildPanelHostPropGroups,
+  buildRoleManagementPanelProps,
   type AttachmentsPanelBuilderOptions,
   type BuildPanelHostPropGroupsOptions,
   type ChannelCreatePanelBuilderOptions,
   type FriendshipsPanelBuilderOptions,
   type ModerationPanelBuilderOptions,
   type PublicDirectoryPanelBuilderOptions,
+  type RoleManagementPanelBuilderOptions,
   type SearchPanelBuilderOptions,
   type SettingsPanelBuilderOptions,
   type UtilityPanelBuilderOptions,
@@ -36,6 +41,7 @@ interface PanelHostOptionsOverrides {
   search?: Partial<SearchPanelBuilderOptions>;
   attachments?: Partial<AttachmentsPanelBuilderOptions>;
   moderation?: Partial<ModerationPanelBuilderOptions>;
+  roleManagement?: Partial<RoleManagementPanelBuilderOptions>;
   utility?: Partial<UtilityPanelBuilderOptions>;
 }
 
@@ -191,6 +197,38 @@ function baseOptions(
       setOverrideAllowCsv: vi.fn(),
       setOverrideDenyCsv: vi.fn(),
       onApplyOverride: vi.fn(),
+      onOpenRoleManagementPanel: vi.fn(),
+    },
+    roleManagement: {
+      hasActiveWorkspace: true,
+      canManageWorkspaceRoles: true,
+      canManageMemberRoles: true,
+      roles: [
+        {
+          roleId: workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB1"),
+          name: workspaceRoleNameFromInput("Responder"),
+          position: 3,
+          isSystem: false,
+          permissions: [
+            permissionFromInput("create_message"),
+            permissionFromInput("subscribe_streams"),
+          ],
+        },
+      ],
+      isLoadingRoles: false,
+      isMutatingRoles: false,
+      roleManagementStatus: "",
+      roleManagementError: "",
+      targetUserIdInput: "",
+      setTargetUserIdInput: vi.fn(),
+      onRefreshRoles: vi.fn(),
+      onCreateRole: vi.fn(),
+      onUpdateRole: vi.fn(),
+      onDeleteRole: vi.fn(),
+      onReorderRoles: vi.fn(),
+      onAssignRole: vi.fn(),
+      onUnassignRole: vi.fn(),
+      onOpenModerationPanel: vi.fn(),
     },
     utility: {
       echoInput: "",
@@ -237,6 +275,10 @@ function baseOptions(
       ...defaults.moderation,
       ...overrides.moderation,
     },
+    roleManagement: {
+      ...defaults.roleManagement,
+      ...overrides.roleManagement,
+    },
     utility: {
       ...defaults.utility,
       ...overrides.utility,
@@ -272,6 +314,7 @@ describe("app shell panel host props adapter", () => {
         canCloseActivePanel={true}
         canManageWorkspaceChannels={true}
         canAccessActiveChannel={true}
+        hasRoleManagementAccess={true}
         hasModerationAccess={true}
         panelTitle={() => "Workspace"}
         panelClassName={() => "panel-window"}
@@ -308,6 +351,8 @@ describe("app shell panel host props adapter", () => {
   it("keeps moderation role and attachment file callbacks mapped", () => {
     const setModerationRoleInput = vi.fn();
     const setOverrideRoleInput = vi.fn();
+    const onOpenRoleManagementPanel = vi.fn();
+    const setTargetUserIdInput = vi.fn();
     const setSelectedAttachment = vi.fn();
     const setAttachmentFilename = vi.fn();
 
@@ -315,6 +360,10 @@ describe("app shell panel host props adapter", () => {
       moderation: {
         setModerationRoleInput,
         setOverrideRoleInput,
+        onOpenRoleManagementPanel,
+      },
+      roleManagement: {
+        setTargetUserIdInput,
       },
       attachments: {
         setSelectedAttachment,
@@ -323,10 +372,13 @@ describe("app shell panel host props adapter", () => {
     });
 
     const moderationPanelProps = buildModerationPanelProps(options.moderation);
+    const roleManagementPanelProps = buildRoleManagementPanelProps(options.roleManagement);
     const attachmentsPanelProps = buildAttachmentsPanelProps(options.attachments);
 
     moderationPanelProps.onModerationRoleChange("moderator");
     moderationPanelProps.onOverrideRoleChange("owner");
+    moderationPanelProps.onOpenRoleManagementPanel();
+    roleManagementPanelProps.onTargetUserIdInput("01ARZ3NDEKTSV4RRFFQ69G5FAA");
 
     const proofFile = new File(["proof"], "proof.png", { type: "image/png" });
     attachmentsPanelProps.onAttachmentFileInput(proofFile);
@@ -334,6 +386,8 @@ describe("app shell panel host props adapter", () => {
 
     expect(setModerationRoleInput).toHaveBeenCalledWith("moderator");
     expect(setOverrideRoleInput).toHaveBeenCalledWith("owner");
+    expect(onOpenRoleManagementPanel).toHaveBeenCalledTimes(1);
+    expect(setTargetUserIdInput).toHaveBeenCalledWith("01ARZ3NDEKTSV4RRFFQ69G5FAA");
     expect(setSelectedAttachment).toHaveBeenNthCalledWith(1, proofFile);
     expect(setSelectedAttachment).toHaveBeenNthCalledWith(2, null);
     expect(setAttachmentFilename).toHaveBeenNthCalledWith(1, "proof.png");
@@ -370,6 +424,7 @@ describe("app shell panel host props adapter", () => {
     expect(propGroups.moderationPanelProps.canManageRoles).toBe(
       options.moderation.canManageRoles,
     );
+    expect(propGroups.roleManagementPanelProps.roles).toBe(options.roleManagement.roles);
     expect(propGroups.utilityPanelProps.echoInput).toBe(options.utility.echoInput);
   });
 });

@@ -21,6 +21,7 @@ export interface ModerationPanelProps {
   onOverrideAllowInput: (value: string) => void;
   onOverrideDenyInput: (value: string) => void;
   onApplyOverride: (event: SubmitEvent) => Promise<void> | void;
+  onOpenRoleManagementPanel: () => void;
 }
 
 export function ModerationPanel(props: ModerationPanelProps) {
@@ -116,6 +117,11 @@ export function ModerationPanel(props: ModerationPanelProps) {
           </button>
         </form>
       </Show>
+      <div class="button-row">
+        <button type="button" onClick={props.onOpenRoleManagementPanel}>
+          Open role management panel
+        </button>
+      </div>
       <Show when={props.moderationStatus}>
         <p class="status ok">{props.moderationStatus}</p>
       </Show>

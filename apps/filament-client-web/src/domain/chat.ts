@@ -7,8 +7,10 @@ export type UserId = string & { readonly __brand: "user_id" };
 export type AttachmentId = string & { readonly __brand: "attachment_id" };
 export type FriendRequestId = string & { readonly __brand: "friend_request_id" };
 export type GuildIpBanId = string & { readonly __brand: "guild_ip_ban_id" };
+export type WorkspaceRoleId = string & { readonly __brand: "workspace_role_id" };
 export type GuildName = string & { readonly __brand: "guild_name" };
 export type ChannelName = string & { readonly __brand: "channel_name" };
+export type WorkspaceRoleName = string & { readonly __brand: "workspace_role_name" };
 export type MessageContent = string & { readonly __brand: "message_content" };
 export type SearchQuery = string & { readonly __brand: "search_query" };
 export type ReactionEmoji = string & { readonly __brand: "reaction_emoji" };
@@ -67,10 +69,21 @@ const MAX_AUDIT_EVENTS_PER_PAGE = 100;
 const MAX_GUILD_IP_BANS_PER_PAGE = 100;
 const MAX_GUILD_IP_BAN_REASON_CHARS = 240;
 const MAX_APPLIED_GUILD_IP_BAN_IDS = 2048;
+const MAX_WORKSPACE_ROLE_NAME_CHARS = 32;
+const MAX_WORKSPACE_ROLES_PER_GUILD = 64;
+const MAX_WORKSPACE_ROLE_PERMISSIONS = 64;
 const IPV6_MAX_VALUE = (1n << 128n) - 1n;
 
 function idFromInput<
-  T extends GuildId | ChannelId | MessageId | UserId | AttachmentId | FriendRequestId | GuildIpBanId,
+  T extends
+    | GuildId
+    | ChannelId
+    | MessageId
+    | UserId
+    | AttachmentId
+    | FriendRequestId
+    | GuildIpBanId
+    | WorkspaceRoleId,
 >(
   input: string,
   label: string,
@@ -329,6 +342,10 @@ export function guildIpBanIdFromInput(input: string): GuildIpBanId {
   return idFromInput<GuildIpBanId>(input, "Guild IP ban ID");
 }
 
+export function workspaceRoleIdFromInput(input: string): WorkspaceRoleId {
+  return idFromInput<WorkspaceRoleId>(input, "Workspace role ID");
+}
+
 export function auditCursorFromInput(input: string): AuditCursor {
   if (
     input.length < 1 ||
@@ -379,6 +396,23 @@ export function guildNameFromInput(input: string): GuildName {
 
 export function channelNameFromInput(input: string): ChannelName {
   return visibleNameFromInput<ChannelName>(input, "Channel name");
+}
+
+export function workspaceRoleNameFromInput(input: string): WorkspaceRoleName {
+  const normalized = input.trim();
+  if (normalized.length < 1 || normalized.length > MAX_WORKSPACE_ROLE_NAME_CHARS) {
+    throw new DomainValidationError("Workspace role name must be 1-32 characters.");
+  }
+  for (const char of normalized) {
+    const code = char.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) {
+      throw new DomainValidationError("Workspace role name contains invalid characters.");
+    }
+  }
+  if (normalized === "@everyone" || normalized.toLowerCase() === "workspace_owner") {
+    throw new DomainValidationError("Workspace role name is reserved.");
+  }
+  return normalized as WorkspaceRoleName;
 }
 
 export function channelKindFromInput(input: string): ChannelKindName {
@@ -754,6 +788,18 @@ export interface GuildIpBanApplyResult {
   banIds: GuildIpBanId[];
 }
 
+export interface GuildRoleRecord {
+  roleId: WorkspaceRoleId;
+  name: WorkspaceRoleName;
+  position: number;
+  isSystem: boolean;
+  permissions: PermissionName[];
+}
+
+export interface GuildRoleList {
+  roles: GuildRoleRecord[];
+}
+
 function guildIpBanRecordFromResponse(dto: unknown): GuildIpBanRecord {
   const data = requireObject(dto, "guild ip ban");
   if (hasRawIpField(data)) {
@@ -802,6 +848,35 @@ export function guildIpBanApplyResultFromResponse(dto: unknown): GuildIpBanApply
   return {
     createdCount: requireNonNegativeInteger(data.created_count, "created_count"),
     banIds: data.ban_ids.map((entry) => guildIpBanIdFromInput(requireString(entry, "ban_id"))),
+  };
+}
+
+function guildRoleFromResponse(dto: unknown): GuildRoleRecord {
+  const data = requireObject(dto, "guild role");
+  const permissions = requireStringArray(
+    data.permissions,
+    "permissions",
+    MAX_AUDIT_EVENT_ACTION_CHARS,
+  );
+  if (permissions.length > MAX_WORKSPACE_ROLE_PERMISSIONS) {
+    throw new DomainValidationError("Guild role permissions exceeds per-role cap.");
+  }
+  return {
+    roleId: workspaceRoleIdFromInput(requireString(data.role_id, "role_id")),
+    name: workspaceRoleNameFromInput(requireString(data.name, "name", MAX_WORKSPACE_ROLE_NAME_CHARS)),
+    position: requirePositiveInteger(data.position, "position"),
+    isSystem: requireBoolean(data.is_system, "is_system"),
+    permissions: permissions.map((entry) => permissionFromInput(entry)),
+  };
+}
+
+export function guildRoleListFromResponse(dto: unknown): GuildRoleList {
+  const data = requireObject(dto, "guild role list");
+  if (!Array.isArray(data.roles) || data.roles.length > MAX_WORKSPACE_ROLES_PER_GUILD) {
+    throw new DomainValidationError("Guild role list must be a bounded array.");
+  }
+  return {
+    roles: data.roles.map((entry) => guildRoleFromResponse(entry)),
   };
 }
 

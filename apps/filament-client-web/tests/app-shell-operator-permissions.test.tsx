@@ -121,6 +121,8 @@ function createOperatorFixtureFetch(role: FixtureRole) {
             role: "owner",
             permissions: [
               "manage_roles",
+              "manage_member_roles",
+              "manage_workspace_roles",
               "manage_channel_overrides",
               "delete_message",
               "ban_member",
@@ -183,6 +185,22 @@ function createOperatorFixtureFetch(role: FixtureRole) {
         : jsonResponse({ error: "forbidden" }, 403);
     }
 
+    if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/roles`)) {
+      return role === "owner"
+        ? jsonResponse({
+            roles: [
+              {
+                role_id: "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+                name: "Responder",
+                position: 3,
+                is_system: false,
+                permissions: ["create_message", "subscribe_streams"],
+              },
+            ],
+          })
+        : jsonResponse({ error: "forbidden" }, 403);
+    }
+
     if (
       method === "POST" &&
       url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/voice/token`)
@@ -237,6 +255,10 @@ describe("operator console permission fixtures", () => {
     expect(screen.getByRole("button", { name: "Reconcile Index" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open role management panel" }));
+    expect(await screen.findByRole("button", { name: "Create role" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Open moderation panel" }));
     expect(await screen.findByRole("button", { name: "Apply channel override" })).toBeEnabled();
 
@@ -262,5 +284,8 @@ describe("operator console permission fixtures", () => {
     expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Ban" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open moderation panel" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open role management panel" }),
+    ).not.toBeInTheDocument();
   });
 });

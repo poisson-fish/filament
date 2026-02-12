@@ -5,6 +5,7 @@ import type { AttachmentsPanelProps } from "./AttachmentsPanel";
 import type { FriendshipsPanelProps } from "./FriendshipsPanel";
 import type { ModerationPanelProps } from "./ModerationPanel";
 import type { PublicDirectoryPanelProps } from "./PublicDirectoryPanel";
+import type { RoleManagementPanelProps } from "./RoleManagementPanel";
 import type { SearchPanelProps } from "./SearchPanel";
 import type { SettingsPanelProps } from "./SettingsPanel";
 import type { UtilityPanelProps } from "./UtilityPanel";
@@ -41,6 +42,11 @@ const ModerationPanelLazy = lazy(() =>
     default: module.ModerationPanel,
   })),
 );
+const RoleManagementPanelLazy = lazy(() =>
+  import("./lazy/OperatorPanelGroup").then((module) => ({
+    default: module.RoleManagementPanel,
+  })),
+);
 const UtilityPanelLazy = lazy(() =>
   import("./lazy/OperatorPanelGroup").then((module) => ({
     default: module.UtilityPanel,
@@ -52,6 +58,7 @@ export interface PanelHostProps {
   canCloseActivePanel: boolean;
   canManageWorkspaceChannels: boolean;
   canAccessActiveChannel: boolean;
+  hasRoleManagementAccess: boolean;
   hasModerationAccess: boolean;
   panelTitle: (panel: OverlayPanel) => string;
   panelClassName: (panel: OverlayPanel) => string;
@@ -64,6 +71,7 @@ export interface PanelHostProps {
   searchPanelProps: SearchPanelProps;
   attachmentsPanelProps: AttachmentsPanelProps;
   moderationPanelProps: ModerationPanelProps;
+  roleManagementPanelProps: RoleManagementPanelProps;
   utilityPanelProps: UtilityPanelProps;
 }
 
@@ -125,6 +133,12 @@ export function PanelHost(props: PanelHostProps) {
 
                   <Match when={panelAccessor() === "moderation" && props.hasModerationAccess}>
                     <ModerationPanelLazy {...props.moderationPanelProps} />
+                  </Match>
+
+                  <Match
+                    when={panelAccessor() === "role-management" && props.hasRoleManagementAccess}
+                  >
+                    <RoleManagementPanelLazy {...props.roleManagementPanelProps} />
                   </Match>
 
                   <Match when={panelAccessor() === "utility"}>

@@ -36,6 +36,7 @@ export function AppShellPage() {
     activeVoiceChannels,
     canAccessActiveChannel,
     canManageWorkspaceChannels,
+    hasRoleManagementAccess,
     hasModerationAccess,
     canDeleteMessages,
     activeVoiceSessionLabel,
@@ -276,6 +277,7 @@ export function AppShellPage() {
           )}
           canAccessActiveChannel={canAccessActiveChannel()}
           onlineMembers={profileState.onlineMembers()}
+          hasRoleManagementAccess={hasRoleManagementAccess()}
           hasModerationAccess={hasModerationAccess()}
           displayUserLabel={displayUserLabel}
           onOpenPanel={openOverlayPanel}
@@ -287,6 +289,7 @@ export function AppShellPage() {
         canCloseActivePanel={canCloseActivePanel()}
         canManageWorkspaceChannels={canManageWorkspaceChannels()}
         canAccessActiveChannel={canAccessActiveChannel()}
+        hasRoleManagementAccess={hasRoleManagementAccess()}
         hasModerationAccess={hasModerationAccess()}
         panelTitle={overlayPanelTitle}
         panelClassName={overlayPanelClassName}
