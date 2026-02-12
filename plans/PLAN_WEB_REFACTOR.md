@@ -137,19 +137,30 @@ Move raw signal initialization into typed state factories.
 Move derived `createMemo` logic and pure derivations out of the page.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add `apps/filament-client-web/src/features/app-shell/selectors/create-app-shell-selectors.ts`.
-- [ ] Move derived access control booleans and channel/workspace selectors.
-- [ ] Move voice roster derivation and voice permission hint derivation into pure helpers.
-- [ ] Keep memo construction in one selector factory to preserve reactivity.
+- [x] Add `apps/filament-client-web/src/features/app-shell/selectors/create-app-shell-selectors.ts`.
+- [x] Move derived access control booleans and channel/workspace selectors.
+- [x] Move voice roster derivation and voice permission hint derivation into pure helpers.
+- [x] Keep memo construction in one selector factory to preserve reactivity.
 
 ### Tests
-- [ ] Add `apps/filament-client-web/tests/app-shell-selectors.test.ts` for:
+- [x] Add `apps/filament-client-web/tests/app-shell-selectors.test.ts` for:
   - permission-derived flags
   - voice roster synthesis
   - active workspace/channel selection behavior
+
+### Refactor Notes
+- Added `features/app-shell/selectors/create-app-shell-selectors.ts` and moved the page-level derived selectors into a single memo factory that preserves existing `Accessor` usage at call sites.
+- Added pure helpers in the selector module for voice roster synthesis and voice stream permission hint derivation, then consumed those helpers from selector memos.
+- Updated `AppShellPage.tsx` to wire selector outputs from `createAppShellSelectors(...)` and removed inline `createMemo(...)` declarations.
+- Added `tests/app-shell-selectors.test.ts` to lock permission flags, workspace/channel selection behavior, and voice roster/hint derivation parity.
+- Metrics after Phase 3 (2026-02-12):
+  - `AppShellPage.tsx` line count: `2226`
+  - `createMemo(...)` count in `AppShellPage.tsx`: `0`
+  - Test command: `pnpm --prefix apps/filament-client-web test`
+  - Pass status: `31` test files passed, `136` tests passed
 
 ### Exit Criteria
 - Most `createMemo` declarations are outside `AppShellPage.tsx`.

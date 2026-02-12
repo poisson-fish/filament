@@ -1,7 +1,6 @@
 import {
   Show,
   createEffect,
-  createMemo,
   createResource,
   onCleanup,
   untrack,
@@ -16,9 +15,7 @@ import {
   userIdFromInput,
   type AttachmentId,
   type AttachmentRecord,
-  type ChannelId,
   type ChannelKindName,
-  type ChannelPermissionSnapshot,
   type FriendRecord,
   type FriendRequestList,
   type GuildVisibility,
@@ -27,7 +24,6 @@ import {
   type MessageRecord,
   type GuildRecord,
   type MediaPublishSource,
-  type PermissionName,
   type RoleName,
   type SearchResults,
   type UserId,
@@ -58,22 +54,18 @@ import {
 import { useAuth } from "../lib/auth-context";
 import { usernameFromInput } from "../domain/auth";
 import {
-  canDiscoverWorkspaceOperation,
   channelHeaderLabel,
   channelKey,
-  formatVoiceDuration,
   mapError,
   mapRtcError,
   mapVoiceJoinError,
   mergeMessage,
   mergeMessageHistory,
   normalizeMessageOrder,
-  parseChannelKey,
   profileErrorMessage,
   shortActor,
   upsertWorkspace,
   userIdFromVoiceIdentity,
-  voiceConnectionLabel,
   type ReactionView,
 } from "../features/app-shell/helpers";
 import { ChannelRail } from "../features/app-shell/components/ChannelRail";
@@ -136,10 +128,10 @@ import {
   DEFAULT_VOICE_SESSION_CAPABILITIES,
 } from "../features/app-shell/state/voice-state";
 import { createWorkspaceState } from "../features/app-shell/state/workspace-state";
+import { createAppShellSelectors } from "../features/app-shell/selectors/create-app-shell-selectors";
 import {
   type OverlayPanel,
   type SettingsCategory,
-  type VoiceRosterEntry,
 } from "../features/app-shell/types";
 import { connectGateway } from "../lib/gateway";
 import { createRtcClient, type RtcClient } from "../lib/rtc";
@@ -395,202 +387,47 @@ export function AppShellPage() {
   let rtcClient: RtcClient | null = null;
   let stopRtcSubscription: (() => void) | null = null;
 
-  const activeWorkspace = createMemo(
-    () => workspaces().find((workspace) => workspace.guildId === activeGuildId()) ?? null,
-  );
-
-  const activeChannel = createMemo(
-    () =>
-      activeWorkspace()?.channels.find((channel) => channel.channelId === activeChannelId()) ??
-      null,
-  );
-  const activeTextChannels = createMemo(() =>
-    (activeWorkspace()?.channels ?? []).filter((channel) => channel.kind === "text"),
-  );
-  const activeVoiceChannels = createMemo(() =>
-    (activeWorkspace()?.channels ?? []).filter((channel) => channel.kind === "voice"),
-  );
-  const isActiveVoiceChannel = createMemo(() => activeChannel()?.kind === "voice");
-
-  const hasPermission = (permission: PermissionName): boolean =>
-    channelPermissions()?.permissions.includes(permission) ?? false;
-
-  const canAccessActiveChannel = createMemo(() => hasPermission("create_message"));
-  const canPublishVoiceCamera = createMemo(() => hasPermission("publish_video"));
-  const canPublishVoiceScreenShare = createMemo(() => hasPermission("publish_screen_share"));
-  const canSubscribeVoiceStreams = createMemo(() => hasPermission("subscribe_streams"));
-  const canManageWorkspaceChannels = createMemo(() => {
-    const role = channelPermissions()?.role;
-    return canDiscoverWorkspaceOperation(role);
-  });
-  const canManageSearchMaintenance = createMemo(() => canManageWorkspaceChannels());
-  const canManageRoles = createMemo(() => hasPermission("manage_roles"));
-  const canManageChannelOverrides = createMemo(() => hasPermission("manage_channel_overrides"));
-  const canBanMembers = createMemo(() => hasPermission("ban_member"));
-  const canDeleteMessages = createMemo(() => hasPermission("delete_message"));
-  const hasModerationAccess = createMemo(
-    () => canManageRoles() || canBanMembers() || canManageChannelOverrides(),
-  );
-  const canDismissWorkspaceCreateForm = createMemo(() => workspaces().length > 0);
-
-  const activeChannelKey = createMemo(() => {
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    return guildId && channelId ? channelKey(guildId, channelId) : null;
-  });
-  const activeVoiceSession = createMemo(() => {
-    const key = voiceSessionChannelKey();
-    return key ? parseChannelKey(key) : null;
-  });
-  const activeVoiceWorkspace = createMemo(() => {
-    const voiceSession = activeVoiceSession();
-    if (!voiceSession) {
-      return null;
-    }
-    return workspaces().find((workspace) => workspace.guildId === voiceSession.guildId) ?? null;
-  });
-  const activeVoiceSessionChannel = createMemo(() => {
-    const voiceSession = activeVoiceSession();
-    const workspace = activeVoiceWorkspace();
-    if (!voiceSession || !workspace) {
-      return null;
-    }
-    return (
-      workspace.channels.find((channel) => channel.channelId === voiceSession.channelId && channel.kind === "voice") ??
-      null
-    );
-  });
-  const activeVoiceSessionLabel = createMemo(() => {
-    const workspace = activeVoiceWorkspace();
-    const channel = activeVoiceSessionChannel();
-    if (workspace && channel) {
-      return `${channel.name} / ${workspace.guildName}`;
-    }
-    if (channel) {
-      return channel.name;
-    }
-    return "Unknown voice room";
-  });
-
-  const activeAttachments = createMemo(() => {
-    const key = activeChannelKey();
-    if (!key) {
-      return [];
-    }
-    return attachmentByChannel()[key] ?? [];
-  });
-  const voiceConnectionState = createMemo(() => voiceConnectionLabel(rtcSnapshot()));
-  const isVoiceSessionActive = createMemo(() => {
-    const state = rtcSnapshot().connectionStatus;
-    return state === "connecting" || state === "connected" || state === "reconnecting";
-  });
-  const isVoiceSessionForActiveChannel = createMemo(() => {
-    const key = activeChannelKey();
-    return Boolean(key) && key === voiceSessionChannelKey() && isVoiceSessionActive();
-  });
-  const isVoiceSessionForChannel = (channelId: ChannelId): boolean => {
-    const guildId = activeGuildId();
-    if (!guildId || !isVoiceSessionActive()) {
-      return false;
-    }
-    return voiceSessionChannelKey() === channelKey(guildId, channelId);
-  };
-  const hasVoicePublishGrant = (source: MediaPublishSource): boolean =>
-    voiceSessionCapabilities().publishSources.includes(source);
-  const canToggleVoiceCamera = createMemo(
-    () =>
-      isVoiceSessionActive() &&
-      canPublishVoiceCamera() &&
-      hasVoicePublishGrant("camera"),
-  );
-  const canToggleVoiceScreenShare = createMemo(
-    () =>
-      isVoiceSessionActive() &&
-      canPublishVoiceScreenShare() &&
-      hasVoicePublishGrant("screen_share"),
-  );
-  const canShowVoiceHeaderControls = createMemo(
-    () => isActiveVoiceChannel() && canAccessActiveChannel(),
-  );
-  const voiceRosterEntries = createMemo<VoiceRosterEntry[]>(() => {
-    const snapshot = rtcSnapshot();
-    const entries: VoiceRosterEntry[] = [];
-    const seenIdentities = new Set<string>();
-    const activeSpeakers = new Set(snapshot.activeSpeakerIdentities);
-    const identitiesWithCamera = new Set<string>();
-    const identitiesWithScreenShare = new Set<string>();
-    for (const track of snapshot.videoTracks) {
-      if (track.source === "camera") {
-        identitiesWithCamera.add(track.participantIdentity);
-      } else if (track.source === "screen_share") {
-        identitiesWithScreenShare.add(track.participantIdentity);
-      }
-    }
-    const localIdentity = snapshot.localParticipantIdentity;
-    if (localIdentity) {
-      entries.push({
-        identity: localIdentity,
-        isLocal: true,
-        isSpeaking: activeSpeakers.has(localIdentity),
-        hasCamera: identitiesWithCamera.has(localIdentity),
-        hasScreenShare: identitiesWithScreenShare.has(localIdentity),
-      });
-      seenIdentities.add(localIdentity);
-    }
-    for (const participant of snapshot.participants) {
-      if (seenIdentities.has(participant.identity)) {
-        continue;
-      }
-      entries.push({
-        identity: participant.identity,
-        isLocal: false,
-        isSpeaking: activeSpeakers.has(participant.identity),
-        hasCamera: identitiesWithCamera.has(participant.identity),
-        hasScreenShare: identitiesWithScreenShare.has(participant.identity),
-      });
-      seenIdentities.add(participant.identity);
-    }
-    return entries;
-  });
-  const voiceStreamPermissionHints = createMemo(() => {
-    if (!isVoiceSessionForActiveChannel()) {
-      return [];
-    }
-    const hints: string[] = [];
-    if (!canPublishVoiceCamera()) {
-      hints.push("Camera disabled: channel permission publish_video is missing.");
-    } else if (!hasVoicePublishGrant("camera")) {
-      hints.push("Camera disabled: this voice token did not grant camera publish.");
-    }
-    if (!canPublishVoiceScreenShare()) {
-      hints.push("Screen share disabled: channel permission publish_screen_share is missing.");
-    } else if (!hasVoicePublishGrant("screen_share")) {
-      hints.push("Screen share disabled: this voice token did not grant screen publish.");
-    }
-    if (!canSubscribeVoiceStreams()) {
-      hints.push("Remote stream subscription is denied by channel permission.");
-    } else if (!voiceSessionCapabilities().canSubscribe) {
-      hints.push("Remote stream subscription is denied for this call.");
-    }
-    return hints;
-  });
-  const voiceSessionDurationLabel = createMemo(() => {
-    if (!isVoiceSessionActive()) {
-      return "0:00";
-    }
-    const startedAt = voiceSessionStartedAtUnixMs();
-    if (!startedAt) {
-      return "0:00";
-    }
-    const elapsedSeconds = Math.floor((voiceDurationClockUnixMs() - startedAt) / 1000);
-    return formatVoiceDuration(elapsedSeconds);
-  });
-
-  const canCloseActivePanel = createMemo(() => {
-    if (activeOverlayPanel() !== "workspace-create") {
-      return true;
-    }
-    return canDismissWorkspaceCreateForm();
+  const {
+    activeWorkspace,
+    activeChannel,
+    activeTextChannels,
+    activeVoiceChannels,
+    canAccessActiveChannel,
+    canPublishVoiceCamera,
+    canPublishVoiceScreenShare,
+    canSubscribeVoiceStreams,
+    canManageWorkspaceChannels,
+    canManageSearchMaintenance,
+    canManageRoles,
+    canManageChannelOverrides,
+    canBanMembers,
+    canDeleteMessages,
+    hasModerationAccess,
+    canDismissWorkspaceCreateForm,
+    activeVoiceSessionLabel,
+    activeAttachments,
+    voiceConnectionState,
+    isVoiceSessionActive,
+    isVoiceSessionForChannel,
+    canToggleVoiceCamera,
+    canToggleVoiceScreenShare,
+    canShowVoiceHeaderControls,
+    voiceRosterEntries,
+    voiceStreamPermissionHints,
+    voiceSessionDurationLabel,
+    canCloseActivePanel,
+  } = createAppShellSelectors({
+    workspaces,
+    activeGuildId,
+    activeChannelId,
+    channelPermissions,
+    voiceSessionChannelKey,
+    attachmentByChannel,
+    rtcSnapshot,
+    voiceSessionCapabilities,
+    voiceSessionStartedAtUnixMs,
+    voiceDurationClockUnixMs,
+    activeOverlayPanel,
   });
 
   const openSettingsCategory = (category: SettingsCategory): void => {
