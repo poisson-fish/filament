@@ -1,21 +1,23 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{connect_info::ConnectInfo, Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
 use filament_core::{tokenize_markdown, Permission, UserId};
 use object_store::{path::Path as ObjectPath, ObjectStore};
 use sqlx::Row;
+use std::net::SocketAddr;
 
 use crate::server::{
-    auth::{authenticate, now_unix, validate_message_content},
+    auth::{authenticate, extract_client_ip, now_unix, validate_message_content},
     core::{AppState, SearchOperation, MAX_HISTORY_LIMIT},
     db::{ensure_db_schema, permission_list_from_set},
     domain::{
         attach_message_media, attach_message_reactions, attachment_map_for_messages_db,
         attachment_map_for_messages_in_memory, attachments_for_message_in_memory,
-        channel_permission_snapshot, reaction_map_for_messages_db, reaction_summaries_from_users,
-        user_can_write_channel, validate_reaction_emoji, write_audit_log,
+        channel_permission_snapshot, enforce_guild_ip_ban_for_request,
+        reaction_map_for_messages_db, reaction_summaries_from_users, user_can_write_channel,
+        validate_reaction_emoji, write_audit_log,
     },
     errors::AuthFailure,
     realtime::{create_message_internal, enqueue_search_operation, indexed_message_from_response},
@@ -29,10 +31,24 @@ use crate::server::{
 pub(crate) async fn create_message(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ChannelPath>,
     Json(payload): Json<CreateMessageRequest>,
 ) -> Result<Json<MessageResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "messages.create",
+    )
+    .await?;
     let response = create_message_internal(
         &state,
         &auth,
@@ -48,9 +64,23 @@ pub(crate) async fn create_message(
 pub(crate) async fn get_channel_permissions(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ChannelPath>,
 ) -> Result<Json<ChannelPermissionsResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "channels.permissions.self",
+    )
+    .await?;
     let (role, permissions) =
         channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
     if !permissions.contains(Permission::CreateMessage) {
@@ -67,11 +97,25 @@ pub(crate) async fn get_channel_permissions(
 pub(crate) async fn get_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ChannelPath>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<MessageHistoryResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "messages.list",
+    )
+    .await?;
     let limit = query.limit.unwrap_or(20);
     if limit == 0 || limit > MAX_HISTORY_LIMIT {
         return Err(AuthFailure::InvalidRequest);
@@ -210,11 +254,25 @@ pub(crate) async fn get_messages(
 pub(crate) async fn edit_message(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<MessagePath>,
     Json(payload): Json<EditMessageRequest>,
 ) -> Result<Json<MessageResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "messages.edit",
+    )
+    .await?;
     validate_message_content(&payload.content)?;
     let markdown_tokens = tokenize_markdown(&payload.content);
     let (_, permissions) =
@@ -347,10 +405,24 @@ pub(crate) async fn edit_message(
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<MessagePath>,
 ) -> Result<StatusCode, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "messages.delete",
+    )
+    .await?;
     let (_, permissions) =
         channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
 
@@ -487,10 +559,24 @@ pub(crate) async fn delete_message(
 pub(crate) async fn add_reaction(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ReactionPath>,
 ) -> Result<Json<ReactionResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "messages.reactions.add",
+    )
+    .await?;
     validate_reaction_emoji(&path.emoji)?;
     if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
         return Err(AuthFailure::Forbidden);
@@ -563,10 +649,24 @@ pub(crate) async fn add_reaction(
 pub(crate) async fn remove_reaction(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ReactionPath>,
 ) -> Result<Json<ReactionResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "messages.reactions.remove",
+    )
+    .await?;
     validate_reaction_emoji(&path.emoji)?;
     if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
         return Err(AuthFailure::Forbidden);

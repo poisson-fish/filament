@@ -27,16 +27,23 @@ use crate::server::{
         visibility_from_i16, visibility_to_i16,
     },
     directory_contract::{
-        AuditListQuery, AuditListQueryDto, DirectoryContractError, DirectoryJoinOutcome, IpNetwork,
+        AuditListQuery, AuditListQueryDto, DirectoryContractError, DirectoryJoinOutcome,
+        GuildIpBanByUserRequest, GuildIpBanByUserRequestDto, GuildIpBanId, GuildIpBanListQuery,
+        GuildIpBanListQueryDto, IpNetwork,
     },
-    domain::{member_role_in_guild, user_role_in_guild, write_audit_log},
+    domain::{
+        enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client, member_role_in_guild,
+        user_role_in_guild, write_audit_log,
+    },
     errors::AuthFailure,
     types::{
         ChannelListResponse, ChannelResponse, ChannelRolePath, CreateChannelRequest,
         CreateGuildRequest, DirectoryJoinOutcomeResponse, DirectoryJoinResponse,
-        GuildAuditEventResponse, GuildAuditListResponse, GuildListResponse, GuildPath,
-        GuildResponse, MemberPath, ModerationResponse, PublicGuildListItem, PublicGuildListQuery,
-        PublicGuildListResponse, UpdateChannelRoleOverrideRequest, UpdateMemberRoleRequest,
+        GuildAuditEventResponse, GuildAuditListResponse, GuildIpBanApplyResponse,
+        GuildIpBanListResponse, GuildIpBanPath, GuildIpBanRecordResponse, GuildListResponse,
+        GuildPath, GuildResponse, MemberPath, ModerationResponse, PublicGuildListItem,
+        PublicGuildListQuery, PublicGuildListResponse, UpdateChannelRoleOverrideRequest,
+        UpdateMemberRoleRequest,
     },
 };
 
@@ -317,47 +324,7 @@ async fn guild_has_active_ip_ban(
     guild_id: &str,
     client_ip: ClientIp,
 ) -> Result<bool, AuthFailure> {
-    let Some(ip) = client_ip.ip() else {
-        return Ok(false);
-    };
-    let now = now_unix();
-    if let Some(pool) = &state.db_pool {
-        let rows = sqlx::query(
-            "SELECT ip_cidr
-             FROM guild_ip_bans
-             WHERE guild_id = $1
-               AND (expires_at_unix IS NULL OR expires_at_unix > $2)
-             ORDER BY created_at_unix DESC
-             LIMIT $3",
-        )
-        .bind(guild_id)
-        .bind(now)
-        .bind(
-            i64::try_from(state.runtime.guild_ip_ban_max_entries)
-                .map_err(|_| AuthFailure::Internal)?,
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-        for row in rows {
-            let cidr: String = row.try_get("ip_cidr").map_err(|_| AuthFailure::Internal)?;
-            let Ok(network) = IpNetwork::try_from(cidr) else {
-                continue;
-            };
-            if network.contains(ip) {
-                return Ok(true);
-            }
-        }
-        return Ok(false);
-    }
-
-    let bans = state.guild_ip_bans.read().await;
-    let Some(guild_bans) = bans.get(guild_id) else {
-        return Ok(false);
-    };
-    Ok(guild_bans.iter().any(|(network, expires_at_unix)| {
-        expires_at_unix.is_none_or(|value| value > now) && network.contains(ip)
-    }))
+    guild_has_active_ip_ban_for_client(state, guild_id, client_ip).await
 }
 
 async fn write_directory_join_audit(
@@ -498,6 +465,18 @@ async fn enforce_audit_access(
         return Err(AuthFailure::AuditAccessDenied);
     }
     Ok(())
+}
+
+async fn enforce_guild_ip_ban_moderation_access(
+    state: &AppState,
+    guild_id: &str,
+    user_id: UserId,
+) -> Result<(), AuthFailure> {
+    match enforce_audit_access(state, guild_id, user_id).await {
+        Ok(()) => Ok(()),
+        Err(AuthFailure::AuditAccessDenied) => Err(AuthFailure::Forbidden),
+        Err(error) => Err(error),
+    }
 }
 
 fn parse_in_memory_audit_event(
@@ -690,6 +669,484 @@ pub(crate) async fn list_guild_audit(
     };
 
     Ok(Json(response))
+}
+
+#[derive(Debug, Clone)]
+struct GuildIpBanRecord {
+    ban_id: String,
+    source_user_id: Option<String>,
+    reason: Option<String>,
+    created_at_unix: i64,
+    expires_at_unix: Option<i64>,
+}
+
+fn normalize_reason(reason: &str) -> Option<String> {
+    if reason.is_empty() {
+        None
+    } else {
+        Some(reason.to_owned())
+    }
+}
+
+fn guild_ip_ban_response_from_record(record: GuildIpBanRecord) -> GuildIpBanRecordResponse {
+    GuildIpBanRecordResponse {
+        ban_id: record.ban_id,
+        source_user_id: record.source_user_id,
+        reason: record.reason,
+        created_at_unix: record.created_at_unix,
+        expires_at_unix: record.expires_at_unix,
+    }
+}
+
+fn resolve_expiry_unix(expires_in_secs: Option<u64>) -> Result<Option<i64>, AuthFailure> {
+    expires_in_secs
+        .map(|secs| i64::try_from(secs).map_err(|_| AuthFailure::InvalidRequest))
+        .transpose()?
+        .map(|secs| {
+            now_unix()
+                .checked_add(secs)
+                .ok_or(AuthFailure::InvalidRequest)
+        })
+        .transpose()
+}
+
+async fn list_guild_ip_bans_db(
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+    query: &GuildIpBanListQuery,
+) -> Result<GuildIpBanListResponse, AuthFailure> {
+    let cursor = query
+        .cursor
+        .as_ref()
+        .map(|value| parse_audit_cursor_position(value.as_str()))
+        .transpose()?;
+    let limit_plus_one = query
+        .limit
+        .checked_add(1)
+        .ok_or(AuthFailure::InvalidRequest)?;
+    let now = now_unix();
+
+    let rows = sqlx::query(
+        "SELECT ban_id, source_user_id, reason, created_at_unix, expires_at_unix
+         FROM guild_ip_bans
+         WHERE guild_id = $1
+           AND (expires_at_unix IS NULL OR expires_at_unix > $2)
+           AND (
+                $3::bigint IS NULL
+                OR created_at_unix < $3
+                OR (created_at_unix = $3 AND ban_id < $4)
+           )
+         ORDER BY created_at_unix DESC, ban_id DESC
+         LIMIT $5",
+    )
+    .bind(guild_id)
+    .bind(now)
+    .bind(cursor.as_ref().map(|value| value.created_at_unix))
+    .bind(cursor.as_ref().map(|value| value.audit_id.as_str()))
+    .bind(i64::try_from(limit_plus_one).map_err(|_| AuthFailure::Internal)?)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+
+    let mut records = Vec::with_capacity(rows.len());
+    for row in rows {
+        let reason: String = row.try_get("reason").map_err(|_| AuthFailure::Internal)?;
+        records.push(GuildIpBanRecord {
+            ban_id: row.try_get("ban_id").map_err(|_| AuthFailure::Internal)?,
+            source_user_id: row
+                .try_get::<Option<String>, _>("source_user_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            reason: normalize_reason(&reason),
+            created_at_unix: row
+                .try_get("created_at_unix")
+                .map_err(|_| AuthFailure::Internal)?,
+            expires_at_unix: row
+                .try_get("expires_at_unix")
+                .map_err(|_| AuthFailure::Internal)?,
+        });
+    }
+
+    let next_cursor = if records.len() > query.limit {
+        let cursor_record = records
+            .get(query.limit)
+            .cloned()
+            .ok_or(AuthFailure::Internal)?;
+        records.truncate(query.limit);
+        Some(build_audit_cursor(
+            cursor_record.created_at_unix,
+            &cursor_record.ban_id,
+        ))
+    } else {
+        None
+    };
+
+    Ok(GuildIpBanListResponse {
+        bans: records
+            .into_iter()
+            .map(guild_ip_ban_response_from_record)
+            .collect(),
+        next_cursor,
+    })
+}
+
+async fn list_guild_ip_bans_in_memory(
+    state: &AppState,
+    guild_id: &str,
+    query: &GuildIpBanListQuery,
+) -> Result<GuildIpBanListResponse, AuthFailure> {
+    let cursor = query
+        .cursor
+        .as_ref()
+        .map(|value| parse_audit_cursor_position(value.as_str()))
+        .transpose()?;
+    let now = now_unix();
+    let bans = state.guild_ip_bans.read().await;
+    let mut records = bans
+        .get(guild_id)
+        .into_iter()
+        .flat_map(|value| value.iter())
+        .filter(|entry| entry.expires_at_unix.is_none_or(|expires| expires > now))
+        .filter(|entry| {
+            cursor.as_ref().is_none_or(|value| {
+                entry.created_at_unix < value.created_at_unix
+                    || (entry.created_at_unix == value.created_at_unix
+                        && entry.ban_id < value.audit_id)
+            })
+        })
+        .map(|entry| GuildIpBanRecord {
+            ban_id: entry.ban_id.clone(),
+            source_user_id: entry.source_user_id.map(|value| value.to_string()),
+            reason: normalize_reason(&entry.reason),
+            created_at_unix: entry.created_at_unix,
+            expires_at_unix: entry.expires_at_unix,
+        })
+        .collect::<Vec<_>>();
+
+    records.sort_by(|left, right| {
+        right
+            .created_at_unix
+            .cmp(&left.created_at_unix)
+            .then_with(|| right.ban_id.cmp(&left.ban_id))
+    });
+
+    let next_cursor = if records.len() > query.limit {
+        let cursor_record = records
+            .get(query.limit)
+            .cloned()
+            .ok_or(AuthFailure::Internal)?;
+        records.truncate(query.limit);
+        Some(build_audit_cursor(
+            cursor_record.created_at_unix,
+            &cursor_record.ban_id,
+        ))
+    } else {
+        None
+    };
+
+    Ok(GuildIpBanListResponse {
+        bans: records
+            .into_iter()
+            .map(guild_ip_ban_response_from_record)
+            .collect(),
+        next_cursor,
+    })
+}
+
+async fn resolve_target_user_observed_networks_db(
+    pool: &sqlx::PgPool,
+    target_user_id: UserId,
+    limit: usize,
+) -> Result<Vec<IpNetwork>, AuthFailure> {
+    let rows = sqlx::query(
+        "SELECT ip_cidr
+         FROM user_ip_observations
+         WHERE user_id = $1
+         ORDER BY last_seen_at_unix DESC
+         LIMIT $2",
+    )
+    .bind(target_user_id.to_string())
+    .bind(i64::try_from(limit).map_err(|_| AuthFailure::InvalidRequest)?)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+
+    let mut deduped = HashSet::new();
+    let mut resolved = Vec::new();
+    for row in rows {
+        let ip_cidr: String = row.try_get("ip_cidr").map_err(|_| AuthFailure::Internal)?;
+        let network = IpNetwork::try_from(ip_cidr).map_err(|_| AuthFailure::Internal)?;
+        if deduped.insert(network) {
+            resolved.push(network);
+        }
+    }
+    Ok(resolved)
+}
+
+async fn resolve_target_user_observed_networks_in_memory(
+    state: &AppState,
+    target_user_id: UserId,
+    limit: usize,
+) -> Vec<IpNetwork> {
+    let observations = state.user_ip_observations.read().await;
+    let mut entries = observations
+        .iter()
+        .filter(|((user_id, _), _)| *user_id == target_user_id)
+        .map(|((_, network), last_seen)| (*network, *last_seen))
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.1.cmp(&left.1));
+
+    let mut deduped = HashSet::new();
+    let mut resolved = Vec::new();
+    for (network, _) in entries {
+        if resolved.len() >= limit {
+            break;
+        }
+        if deduped.insert(network) {
+            resolved.push(network);
+        }
+    }
+    resolved
+}
+
+pub(crate) async fn list_guild_ip_bans(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+    Query(query): Query<GuildIpBanListQueryDto>,
+) -> Result<Json<GuildIpBanListResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let query = GuildIpBanListQuery::try_from(query)
+        .map_err(map_directory_contract_error_to_auth_failure)?;
+    enforce_guild_ip_ban_moderation_access(&state, &path.guild_id, auth.user_id).await?;
+
+    let response = if let Some(pool) = &state.db_pool {
+        list_guild_ip_bans_db(pool, &path.guild_id, &query).await?
+    } else {
+        list_guild_ip_bans_in_memory(&state, &path.guild_id, &query).await?
+    };
+
+    Ok(Json(response))
+}
+
+pub(crate) async fn upsert_guild_ip_bans_by_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+    Json(payload): Json<GuildIpBanByUserRequestDto>,
+) -> Result<Json<GuildIpBanApplyResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let request = GuildIpBanByUserRequest::try_from(payload)
+        .map_err(map_directory_contract_error_to_auth_failure)?;
+    enforce_guild_ip_ban_moderation_access(&state, &path.guild_id, auth.user_id).await?;
+
+    let expires_at_unix = resolve_expiry_unix(request.expires_in_secs)?;
+    let reason_text = request.reason.clone().unwrap_or_default();
+    let now = now_unix();
+    let max_entries = state.runtime.guild_ip_ban_max_entries;
+
+    let ban_ids = if let Some(pool) = &state.db_pool {
+        let observed =
+            resolve_target_user_observed_networks_db(pool, request.target_user_id, max_entries)
+                .await?;
+        if observed.is_empty() {
+            Vec::new()
+        } else {
+            let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+            let count_row =
+                sqlx::query("SELECT COUNT(*) AS count FROM guild_ip_bans WHERE guild_id = $1")
+                    .bind(&path.guild_id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|_| AuthFailure::Internal)?;
+            let existing_total: i64 = count_row
+                .try_get("count")
+                .map_err(|_| AuthFailure::Internal)?;
+
+            let existing_rows = sqlx::query(
+                "SELECT ip_cidr
+                 FROM guild_ip_bans
+                 WHERE guild_id = $1
+                   AND (expires_at_unix IS NULL OR expires_at_unix > $2)
+                 ORDER BY created_at_unix DESC
+                 LIMIT $3",
+            )
+            .bind(&path.guild_id)
+            .bind(now)
+            .bind(i64::try_from(max_entries).map_err(|_| AuthFailure::Internal)?)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+
+            let mut existing_active = HashSet::new();
+            for row in existing_rows {
+                let ip_cidr: String = row.try_get("ip_cidr").map_err(|_| AuthFailure::Internal)?;
+                if let Ok(network) = IpNetwork::try_from(ip_cidr) {
+                    existing_active.insert(network);
+                }
+            }
+
+            let to_create = observed
+                .into_iter()
+                .filter(|network| !existing_active.contains(network))
+                .collect::<Vec<_>>();
+            let projected_total = usize::try_from(existing_total)
+                .map_err(|_| AuthFailure::Internal)?
+                .saturating_add(to_create.len());
+            if projected_total > max_entries {
+                return Err(AuthFailure::QuotaExceeded);
+            }
+
+            let mut created_ids = Vec::with_capacity(to_create.len());
+            for network in to_create {
+                let ban_id = GuildIpBanId::new().to_string();
+                sqlx::query(
+                    "INSERT INTO guild_ip_bans
+                     (ban_id, guild_id, ip_cidr, source_user_id, reason, created_by_user_id, created_at_unix, expires_at_unix)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                )
+                .bind(&ban_id)
+                .bind(&path.guild_id)
+                .bind(network.canonical_cidr())
+                .bind(request.target_user_id.to_string())
+                .bind(&reason_text)
+                .bind(auth.user_id.to_string())
+                .bind(now)
+                .bind(expires_at_unix)
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+                created_ids.push(ban_id);
+            }
+            tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+            created_ids
+        }
+    } else {
+        let observed = resolve_target_user_observed_networks_in_memory(
+            &state,
+            request.target_user_id,
+            max_entries,
+        )
+        .await;
+        if observed.is_empty() {
+            Vec::new()
+        } else {
+            let mut bans = state.guild_ip_bans.write().await;
+            let guild_entries = bans.entry(path.guild_id.clone()).or_default();
+            let active_networks = guild_entries
+                .iter()
+                .filter(|entry| entry.expires_at_unix.is_none_or(|expires| expires > now))
+                .map(|entry| entry.ip_network)
+                .collect::<HashSet<_>>();
+            let to_create = observed
+                .into_iter()
+                .filter(|network| !active_networks.contains(network))
+                .collect::<Vec<_>>();
+            let projected_total = guild_entries.len().saturating_add(to_create.len());
+            if projected_total > max_entries {
+                return Err(AuthFailure::QuotaExceeded);
+            }
+
+            let mut created_ids = Vec::with_capacity(to_create.len());
+            for network in to_create {
+                let ban_id = GuildIpBanId::new().to_string();
+                created_ids.push(ban_id.clone());
+                guild_entries.push(crate::server::core::GuildIpBanRecord {
+                    ban_id,
+                    ip_network: network,
+                    source_user_id: Some(request.target_user_id),
+                    reason: reason_text.clone(),
+                    created_at_unix: now,
+                    expires_at_unix,
+                });
+            }
+            created_ids
+        }
+    };
+
+    if !ban_ids.is_empty() {
+        write_audit_log(
+            &state,
+            Some(path.guild_id.clone()),
+            auth.user_id,
+            Some(request.target_user_id),
+            "moderation.ip_ban.add",
+            serde_json::json!({
+                "created_count": ban_ids.len(),
+                "ban_ids": ban_ids.clone(),
+                "expires_at_unix": expires_at_unix,
+            }),
+        )
+        .await?;
+    }
+
+    Ok(Json(GuildIpBanApplyResponse {
+        created_count: ban_ids.len(),
+        ban_ids,
+    }))
+}
+
+pub(crate) async fn remove_guild_ip_ban(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildIpBanPath>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let ban_id = GuildIpBanId::try_from(path.ban_id)
+        .map_err(map_directory_contract_error_to_auth_failure)?;
+    enforce_guild_ip_ban_moderation_access(&state, &path.guild_id, auth.user_id).await?;
+
+    let mut target_user_id = None;
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "DELETE FROM guild_ip_bans
+             WHERE guild_id = $1 AND ban_id = $2
+             RETURNING source_user_id",
+        )
+        .bind(&path.guild_id)
+        .bind(ban_id.to_string())
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let Some(row) = row else {
+            return Err(AuthFailure::NotFound);
+        };
+        let source_user_id = row
+            .try_get::<Option<String>, _>("source_user_id")
+            .map_err(|_| AuthFailure::Internal)?;
+        target_user_id = source_user_id.and_then(|value| UserId::try_from(value).ok());
+    } else {
+        let mut bans = state.guild_ip_bans.write().await;
+        let guild_bans = bans.get_mut(&path.guild_id).ok_or(AuthFailure::NotFound)?;
+        let before = guild_bans.len();
+        guild_bans.retain(|entry| {
+            if entry.ban_id == ban_id.to_string() {
+                target_user_id = entry.source_user_id;
+                false
+            } else {
+                true
+            }
+        });
+        if guild_bans.len() == before {
+            return Err(AuthFailure::NotFound);
+        }
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id),
+        auth.user_id,
+        target_user_id,
+        "moderation.ip_ban.remove",
+        serde_json::json!({
+            "ban_id": ban_id.to_string(),
+        }),
+    )
+    .await?;
+
+    Ok(Json(ModerationResponse { accepted: true }))
 }
 
 pub(crate) async fn list_public_guilds(
@@ -959,10 +1416,24 @@ pub(crate) const MAX_CHANNEL_LIST_LIMIT: usize = 500;
 pub(crate) async fn list_guild_channels(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
 ) -> Result<Json<ChannelListResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "guild.channels.list",
+    )
+    .await?;
 
     if let Some(pool) = &state.db_pool {
         let rows = sqlx::query(
@@ -1060,11 +1531,25 @@ pub(crate) async fn list_guild_channels(
 pub(crate) async fn create_channel(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
     Json(payload): Json<CreateChannelRequest>,
 ) -> Result<Json<ChannelResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "guild.channels.create",
+    )
+    .await?;
     let name = ChannelName::try_from(payload.name).map_err(|_| AuthFailure::InvalidRequest)?;
     let kind = payload.kind.unwrap_or(ChannelKind::Text);
 
@@ -1251,11 +1736,25 @@ pub(crate) async fn update_member_role(
 pub(crate) async fn set_channel_role_override(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ChannelRolePath>,
     Json(payload): Json<UpdateChannelRoleOverrideRequest>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "guild.channel_overrides.update",
+    )
+    .await?;
     let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     if !has_permission(actor_role, Permission::ManageChannelOverrides) {
         return Err(AuthFailure::Forbidden);

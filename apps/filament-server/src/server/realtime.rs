@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -10,8 +11,9 @@ use std::{
 use anyhow::anyhow;
 use axum::{
     extract::{
+        connect_info::ConnectInfo,
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        Extension, Query, State,
     },
     http::HeaderMap,
     response::IntoResponse,
@@ -35,8 +37,8 @@ use uuid::Uuid;
 
 use super::{
     auth::{
-        authenticate_with_token, bearer_token, channel_key, now_unix, outbound_event,
-        validate_message_content,
+        authenticate_with_token, bearer_token, channel_key, extract_client_ip, now_unix,
+        outbound_event, validate_message_content, ClientIp,
     },
     core::{
         AppState, AuthContext, ConnectionControl, ConnectionPresence, IndexedMessage,
@@ -48,8 +50,9 @@ use super::{
     domain::{
         attachment_map_for_messages_db, attachment_map_for_messages_in_memory,
         attachments_for_message_in_memory, bind_message_attachments_db,
-        channel_permission_snapshot, fetch_attachments_for_message_db, parse_attachment_ids,
-        reaction_map_for_messages_db, reaction_summaries_from_users, user_can_write_channel,
+        channel_permission_snapshot, enforce_guild_ip_ban_for_request,
+        fetch_attachments_for_message_db, parse_attachment_ids, reaction_map_for_messages_db,
+        reaction_summaries_from_users, user_can_write_channel,
     },
     errors::AuthFailure,
     metrics::record_ws_disconnect,
@@ -63,15 +66,21 @@ pub(crate) async fn gateway_ws(
     ws: WebSocketUpgrade,
     Query(query): Query<GatewayAuthQuery>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
 ) -> Result<impl IntoResponse, AuthFailure> {
     let token = query
         .access_token
         .or_else(|| bearer_token(&headers).map(ToOwned::to_owned))
         .ok_or(AuthFailure::Unauthorized)?;
     let auth = authenticate_with_token(&state, &token).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
 
     Ok(ws.on_upgrade(move |socket| async move {
-        handle_gateway_connection(state, socket, auth).await;
+        handle_gateway_connection(state, socket, auth, client_ip).await;
     }))
 }
 
@@ -80,6 +89,7 @@ pub(crate) async fn handle_gateway_connection(
     state: AppState,
     socket: WebSocket,
     auth: AuthContext,
+    client_ip: ClientIp,
 ) {
     let connection_id = Uuid::new_v4();
     let (mut sink, mut stream) = socket.split();
@@ -187,6 +197,19 @@ pub(crate) async fn handle_gateway_connection(
                 let Ok(subscribe) = serde_json::from_value::<GatewaySubscribe>(envelope.d) else {
                     break;
                 };
+                if enforce_guild_ip_ban_for_request(
+                    &state,
+                    &subscribe.guild_id,
+                    auth.user_id,
+                    client_ip,
+                    "gateway.subscribe",
+                )
+                .await
+                .is_err()
+                {
+                    disconnect_reason = "ip_banned";
+                    break;
+                }
                 if !user_can_write_channel(
                     &state,
                     auth.user_id,
@@ -231,6 +254,19 @@ pub(crate) async fn handle_gateway_connection(
                 let Ok(request) = serde_json::from_value::<GatewayMessageCreate>(envelope.d) else {
                     break;
                 };
+                if enforce_guild_ip_ban_for_request(
+                    &state,
+                    &request.guild_id,
+                    auth.user_id,
+                    client_ip,
+                    "gateway.message_create",
+                )
+                .await
+                .is_err()
+                {
+                    disconnect_reason = "ip_banned";
+                    break;
+                }
                 if create_message_internal(
                     &state,
                     &auth,

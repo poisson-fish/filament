@@ -26,8 +26,9 @@ use crate::server::{
     core::{AppState, AttachmentRecord, MAX_MIME_SNIFF_BYTES},
     db::ensure_db_schema,
     domain::{
-        attachment_usage_for_user, channel_permission_snapshot, find_attachment,
-        user_can_write_channel, user_role_in_guild, validate_attachment_filename, write_audit_log,
+        attachment_usage_for_user, channel_permission_snapshot, enforce_guild_ip_ban_for_request,
+        find_attachment, user_can_write_channel, user_role_in_guild, validate_attachment_filename,
+        write_audit_log,
     },
     errors::AuthFailure,
     types::{
@@ -40,12 +41,26 @@ use crate::server::{
 pub(crate) async fn upload_attachment(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ChannelPath>,
     Query(query): Query<UploadAttachmentQuery>,
     body: Body,
 ) -> Result<Json<AttachmentResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "attachments.upload",
+    )
+    .await?;
     if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
         return Err(AuthFailure::Forbidden);
     }
@@ -206,10 +221,24 @@ pub(crate) async fn upload_attachment(
 pub(crate) async fn download_attachment(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<AttachmentPath>,
 ) -> Result<Response, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "attachments.download",
+    )
+    .await?;
     if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
         return Err(AuthFailure::Forbidden);
     }
@@ -247,10 +276,24 @@ pub(crate) async fn download_attachment(
 pub(crate) async fn delete_attachment(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<AttachmentPath>,
 ) -> Result<StatusCode, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "attachments.delete",
+    )
+    .await?;
     let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     let record = find_attachment(&state, &path).await?;
     if record.owner_id != auth.user_id && !has_permission(role, Permission::DeleteMessage) {
@@ -292,6 +335,14 @@ pub(crate) async fn issue_voice_token(
         connect_info.as_ref().map(|value| value.0 .0.ip()),
     );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "voice.token.issue",
+    )
+    .await?;
     enforce_media_token_rate_limit(&state, client_ip, auth.user_id, &path).await?;
     let (_, permissions) =
         channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;

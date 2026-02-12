@@ -332,40 +332,75 @@ Expose auditable join/moderation history to authorized workspace operators.
 Allow workspace operators to trigger user-derived guild IP bans without IP visibility, and enforce them consistently.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add endpoints:
+- [x] Add endpoints:
   - `GET /guilds/{guild_id}/ip-bans?cursor=<...>&limit=<n>` (redacted records only)
   - `POST /guilds/{guild_id}/ip-bans/by-user`
   - `DELETE /guilds/{guild_id}/ip-bans/{ban_id}`
-- [ ] Request validation:
+- [x] Request validation:
   - target user ULID validation
   - reason length cap
   - optional expiry cap
-- [ ] Owner/moderator action semantics:
+- [x] Owner/moderator action semantics:
   - resolve all known observed IPs for target user server-side
   - create guild IP-ban entries for resolved IP set
   - response returns counts and ban IDs, never raw IP values
-- [ ] Authorization split:
+- [x] Authorization split:
   - workspace owner/moderator: user-derived IP ban actions only
   - server administrator tooling for raw IP inspection (out-of-scope in this plan; no owner exposure)
-- [ ] Enforcement points:
+- [x] Enforcement points:
   - directory join endpoint
   - guild channel/message/search/media endpoints (guild-scoped access denial)
   - gateway subscription/auth checks for affected guild channels
-- [ ] Audit events:
+- [x] Audit events:
   - `moderation.ip_ban.add`
   - `moderation.ip_ban.remove`
   - `moderation.ip_ban.hit`
 
 ### Tests
-- [ ] Unit tests for canonical host-IP observation + matching (IPv4 + IPv6).
-- [ ] Integration tests for:
+- [x] Unit tests for canonical host-IP observation + matching (IPv4 + IPv6).
+- [x] Integration tests for:
   - add/list/remove user-derived IP bans (redacted list payloads)
   - join rejection by IP
   - guild endpoint rejection when IP ban is active
   - expiry behavior
+
+### Refactor Notes
+- Added guild IP-ban API route wiring in `apps/filament-server/src/server/router.rs`:
+  - `GET /guilds/{guild_id}/ip-bans`
+  - `POST /guilds/{guild_id}/ip-bans/by-user`
+  - `DELETE /guilds/{guild_id}/ip-bans/{ban_id}`
+- Extended typed server DTO/path contracts in `apps/filament-server/src/server/types.rs` for:
+  - `GuildIpBanPath`
+  - redacted list payloads (`GuildIpBanRecordResponse`, `GuildIpBanListResponse`)
+  - apply payload (`GuildIpBanApplyResponse`)
+- Implemented Phase 5 handler logic in `apps/filament-server/src/server/handlers/guilds.rs`:
+  - owner/moderator-only list/create/delete with `403 {"error":"forbidden"}` for unauthorized callers
+  - strict typed request/query parsing via `GuildIpBanByUserRequest`/`GuildIpBanListQuery`
+  - server-side user-IP observation resolution and bounded dedupe before guild ban creation
+  - DB + in-memory parity for list/create/delete with cursor pagination and redacted payloads
+  - audit writes for `moderation.ip_ban.add` and `moderation.ip_ban.remove`
+- Added shared IP-ban enforcement helpers in `apps/filament-server/src/server/domain.rs`:
+  - `guild_has_active_ip_ban_for_client`
+  - `enforce_guild_ip_ban_for_request` (writes `moderation.ip_ban.hit` without raw IP exposure)
+- Applied guild-scoped IP-ban enforcement to channel/message/search/media and gateway surfaces:
+  - `apps/filament-server/src/server/handlers/guilds.rs`
+  - `apps/filament-server/src/server/handlers/messages.rs`
+  - `apps/filament-server/src/server/handlers/search.rs`
+  - `apps/filament-server/src/server/handlers/media.rs`
+  - `apps/filament-server/src/server/realtime.rs`
+- Added/expanded tests:
+  - unit: `apps/filament-server/src/server/domain.rs` (`guild_ip_ban_matching_handles_ipv4_and_ipv6_host_observations`)
+  - integration: `apps/filament-server/src/server/tests.rs`
+    - `guild_ip_ban_endpoints_add_list_remove_and_redact_payloads`
+    - `directory_join_rejects_on_matching_guild_ip_ban`
+    - `guild_scoped_endpoints_reject_active_ip_bans_and_allow_after_expiry`
+- Verification (2026-02-12):
+  - `cargo test -p filament-server` passed
+  - `pnpm --prefix apps/filament-client-web test` passed
+  - `cargo clippy -p filament-server` passed (existing `too_many_lines` pedantic warnings remain in pre-existing long handlers)
 
 ### Security Outlook
 - Provides strong guild-level abuse controls with deterministic enforcement.

@@ -30,7 +30,7 @@ use super::{
 
 pub(crate) type ChannelSubscriptions = HashMap<Uuid, mpsc::Sender<String>>;
 pub(crate) type Subscriptions = HashMap<String, ChannelSubscriptions>;
-pub(crate) type GuildIpBanMap = HashMap<String, Vec<(IpNetwork, Option<i64>)>>;
+pub(crate) type GuildIpBanMap = HashMap<String, Vec<GuildIpBanRecord>>;
 
 pub const DEFAULT_JSON_BODY_LIMIT_BYTES: usize = 1_048_576;
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 10;
@@ -425,6 +425,16 @@ pub(crate) struct ChannelRecord {
     pub(crate) kind: ChannelKind,
     pub(crate) messages: Vec<MessageRecord>,
     pub(crate) role_overrides: HashMap<Role, ChannelPermissionOverwrite>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GuildIpBanRecord {
+    pub(crate) ban_id: String,
+    pub(crate) ip_network: IpNetwork,
+    pub(crate) source_user_id: Option<UserId>,
+    pub(crate) reason: String,
+    pub(crate) created_at_unix: i64,
+    pub(crate) expires_at_unix: Option<i64>,
 }
 
 #[derive(Debug, Clone)]

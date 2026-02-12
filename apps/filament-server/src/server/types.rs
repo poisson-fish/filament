@@ -308,6 +308,12 @@ pub(crate) struct GuildPath {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct GuildIpBanPath {
+    pub(crate) guild_id: String,
+    pub(crate) ban_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct ChannelPath {
     pub(crate) guild_id: String,
     pub(crate) channel_id: String,
@@ -426,6 +432,27 @@ pub(crate) struct GuildAuditEventResponse {
 pub(crate) struct GuildAuditListResponse {
     pub(crate) events: Vec<GuildAuditEventResponse>,
     pub(crate) next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct GuildIpBanRecordResponse {
+    pub(crate) ban_id: String,
+    pub(crate) source_user_id: Option<String>,
+    pub(crate) reason: Option<String>,
+    pub(crate) created_at_unix: i64,
+    pub(crate) expires_at_unix: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GuildIpBanListResponse {
+    pub(crate) bans: Vec<GuildIpBanRecordResponse>,
+    pub(crate) next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GuildIpBanApplyResponse {
+    pub(crate) created_count: usize,
+    pub(crate) ban_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]

@@ -1,15 +1,16 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{connect_info::ConnectInfo, Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
 use filament_core::{has_permission, Permission, Role};
+use std::net::SocketAddr;
 
 use crate::server::{
-    auth::authenticate,
+    auth::{authenticate, extract_client_ip},
     core::{AppState, SearchOperation, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_RECONCILE_DOCS},
     db::ensure_db_schema,
-    domain::user_role_in_guild,
+    domain::{enforce_guild_ip_ban_for_request, user_role_in_guild},
     errors::AuthFailure,
     realtime::{
         collect_all_indexed_messages, enqueue_search_operation, ensure_search_bootstrapped,
@@ -23,11 +24,25 @@ use crate::server::{
 pub(crate) async fn search_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "search.messages",
+    )
+    .await?;
     let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     if !has_permission(role, Permission::CreateMessage) {
         return Err(AuthFailure::Forbidden);
@@ -57,10 +72,24 @@ pub(crate) async fn search_messages(
 pub(crate) async fn rebuild_search_index(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
 ) -> Result<StatusCode, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "search.rebuild",
+    )
+    .await?;
     let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     if !matches!(role, Role::Owner | Role::Moderator) {
         return Err(AuthFailure::Forbidden);
@@ -75,10 +104,24 @@ pub(crate) async fn rebuild_search_index(
 pub(crate) async fn reconcile_search_index(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
 ) -> Result<Json<SearchReconcileResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "search.reconcile",
+    )
+    .await?;
     let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     if !matches!(role, Role::Owner | Role::Moderator) {
         return Err(AuthFailure::Forbidden);

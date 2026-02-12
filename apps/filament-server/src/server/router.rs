@@ -34,8 +34,9 @@ use super::{
         },
         guilds::{
             add_member, ban_member, create_channel, create_guild, join_public_guild, kick_member,
-            list_guild_audit, list_guild_channels, list_guilds, list_public_guilds,
-            set_channel_role_override, update_member_role,
+            list_guild_audit, list_guild_channels, list_guild_ip_bans, list_guilds,
+            list_public_guilds, remove_guild_ip_ban, set_channel_role_override, update_member_role,
+            upsert_guild_ip_bans_by_user,
         },
         media::{delete_attachment, download_attachment, issue_voice_token, upload_attachment},
         messages::{
@@ -181,6 +182,15 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route("/guilds/public", get(list_public_guilds))
         .route("/guilds/{guild_id}/join", post(join_public_guild))
         .route("/guilds/{guild_id}/audit", get(list_guild_audit))
+        .route("/guilds/{guild_id}/ip-bans", get(list_guild_ip_bans))
+        .route(
+            "/guilds/{guild_id}/ip-bans/by-user",
+            post(upsert_guild_ip_bans_by_user),
+        )
+        .route(
+            "/guilds/{guild_id}/ip-bans/{ban_id}",
+            delete(remove_guild_ip_ban),
+        )
         .route(
             "/guilds/{guild_id}/channels",
             post(create_channel).get(list_guild_channels),
