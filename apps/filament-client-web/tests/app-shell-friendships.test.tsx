@@ -177,4 +177,89 @@ describe("app shell friendship flows", () => {
     await waitFor(() => expect(screen.getByText("Friend removed.")).toBeInTheDocument());
     expect(await screen.findByText("no-friends")).toBeInTheDocument();
   });
+
+  it("submits outgoing friend requests and refreshes outgoing state", async () => {
+    seedAuthenticatedWorkspace();
+
+    let outgoing = [] as Array<{
+      request_id: string;
+      sender_user_id: string;
+      sender_username: string;
+      recipient_user_id: string;
+      recipient_username: string;
+      created_at_unix: number;
+    }>;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(init);
+
+      if (method === "GET" && url.includes("/auth/me")) {
+        return jsonResponse({ user_id: ALICE_USER_ID, username: "alice" });
+      }
+      if (method === "GET" && url.endsWith("/guilds")) {
+        return jsonResponse({
+          guilds: [{ guild_id: GUILD_ID, name: "Security Ops", visibility: "private" }],
+        });
+      }
+      if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
+        });
+      }
+      if (
+        method === "GET" &&
+        url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)
+      ) {
+        return jsonResponse({ role: "member", permissions: ["create_message"] });
+      }
+      if (method === "GET" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages`)) {
+        return jsonResponse({ messages: [], next_before: null });
+      }
+      if (method === "GET" && url.includes("/guilds/public")) {
+        return jsonResponse({ guilds: [] });
+      }
+      if (method === "GET" && url.includes("/friends/requests")) {
+        return jsonResponse({ incoming: [], outgoing });
+      }
+      if (method === "GET" && url.includes("/friends")) {
+        return jsonResponse({ friends: [] });
+      }
+      if (method === "POST" && url.endsWith("/friends/requests")) {
+        outgoing = [
+          {
+            request_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+            sender_user_id: ALICE_USER_ID,
+            sender_username: "alice",
+            recipient_user_id: BOB_USER_ID,
+            recipient_username: "bob",
+            created_at_unix: 10,
+          },
+        ];
+        return jsonResponse({
+          request_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+          sender_user_id: ALICE_USER_ID,
+          recipient_user_id: BOB_USER_ID,
+          created_at_unix: 10,
+        });
+      }
+
+      return jsonResponse({ error: "not_found" }, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Friends" }));
+    await fireEvent.input(screen.getByLabelText("User ID"), {
+      target: { value: BOB_USER_ID },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+
+    await waitFor(() => expect(screen.getByText("Friend request sent.")).toBeInTheDocument());
+    expect(await screen.findByText("bob")).toBeInTheDocument();
+  });
 });

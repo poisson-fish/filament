@@ -1,7 +1,6 @@
 import {
   Show,
   createEffect,
-  createResource,
   onCleanup,
   untrack,
 } from "solid-js";
@@ -10,18 +9,13 @@ import {
   channelNameFromInput,
   guildVisibilityFromInput,
   guildNameFromInput,
-  profileAboutFromInput,
   roleFromInput,
-  userIdFromInput,
   type AttachmentId,
   type AttachmentRecord,
   type ChannelKindName,
-  type FriendRecord,
-  type FriendRequestList,
   type GuildVisibility,
   type GuildId,
   type MessageRecord,
-  type GuildRecord,
   type MediaPublishSource,
   type RoleName,
   type SearchResults,
@@ -29,43 +23,25 @@ import {
   type WorkspaceRecord,
 } from "../domain/chat";
 import {
-  acceptFriendRequest,
   createChannel,
-  createFriendRequest,
   createGuild,
-  deleteFriendRequest,
   echoMessage,
-  fetchChannelMessages,
-  fetchFriendRequests,
-  fetchFriends,
   fetchHealth,
-  fetchMe,
-  fetchPublicGuildDirectory,
-  fetchUserProfile,
   issueVoiceToken,
   logoutAuthSession,
-  profileAvatarUrl,
   refreshAuthSession,
-  removeFriend,
-  updateMyProfile,
-  uploadMyProfileAvatar,
 } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
-import { usernameFromInput } from "../domain/auth";
 import {
   channelHeaderLabel,
   channelKey,
   mapError,
   mapRtcError,
   mapVoiceJoinError,
-  mergeMessage,
-  mergeMessageHistory,
-  normalizeMessageOrder,
   profileErrorMessage,
   shortActor,
   upsertWorkspace,
   userIdFromVoiceIdentity,
-  type ReactionView,
 } from "../features/app-shell/helpers";
 import { ChannelRail } from "../features/app-shell/components/ChannelRail";
 import { ChatHeader } from "../features/app-shell/components/ChatHeader";
@@ -91,6 +67,16 @@ import { createAttachmentController } from "../features/app-shell/controllers/at
 import { createMessageListController } from "../features/app-shell/controllers/message-list-controller";
 import { createModerationController } from "../features/app-shell/controllers/moderation-controller";
 import {
+  createFriendshipController,
+} from "../features/app-shell/controllers/friendship-controller";
+import { createGatewayController } from "../features/app-shell/controllers/gateway-controller";
+import {
+  createIdentityResolutionController,
+} from "../features/app-shell/controllers/identity-resolution-controller";
+import {
+  createMessageHistoryController,
+} from "../features/app-shell/controllers/message-history-controller";
+import {
   createMessageActionsController,
   createMessageMediaPreviewController,
 } from "../features/app-shell/controllers/message-controller";
@@ -101,7 +87,9 @@ import {
   overlayPanelClassName,
   overlayPanelTitle,
 } from "../features/app-shell/controllers/overlay-controller";
+import { createProfileController } from "../features/app-shell/controllers/profile-controller";
 import { createProfileOverlayController } from "../features/app-shell/controllers/profile-overlay-controller";
+import { createPublicDirectoryController } from "../features/app-shell/controllers/public-directory-controller";
 import { createReactionPickerController } from "../features/app-shell/controllers/reaction-picker-controller";
 import {
   createVoiceSessionLifecycleController,
@@ -128,7 +116,6 @@ import {
   type OverlayPanel,
   type SettingsCategory,
 } from "../features/app-shell/types";
-import { connectGateway } from "../lib/gateway";
 import { createRtcClient, type RtcClient } from "../lib/rtc";
 import {
   enumerateAudioDevices,
@@ -138,11 +125,6 @@ import {
   type VoiceDevicePreferences,
 } from "../lib/voice-device-settings";
 import { clearWorkspaceCache, saveWorkspaceCache } from "../lib/workspace-cache";
-import {
-  clearUsernameLookupCache,
-  primeUsernameCache,
-  resolveUsernames,
-} from "../lib/username-cache";
 
 export function AppShellPage() {
   const auth = useAuth();
@@ -761,285 +743,71 @@ export function AppShellPage() {
     setModerationStatus,
   });
 
-  const loadPublicGuildDirectory = async (query?: string) => {
-    const session = auth.session();
-    if (!session) {
-      setPublicGuildDirectory([]);
-      return;
-    }
-    if (isSearchingPublicGuilds()) {
-      return;
-    }
-    setSearchingPublicGuilds(true);
-    setPublicGuildSearchError("");
-    try {
-      const directory = await fetchPublicGuildDirectory(session, {
-        query,
-        limit: 20,
-      });
-      setPublicGuildDirectory(directory.guilds);
-    } catch (error) {
-      setPublicGuildSearchError(mapError(error, "Unable to load public workspace directory."));
-      setPublicGuildDirectory([]);
-    } finally {
-      setSearchingPublicGuilds(false);
-    }
-  };
-
-  const refreshFriendDirectory = async () => {
-    const session = auth.session();
-    if (!session) {
-      setFriends([]);
-      setFriendRequests({ incoming: [], outgoing: [] });
-      return;
-    }
-    setFriendError("");
-    try {
-      const [friendList, requestList] = await Promise.all([
-        fetchFriends(session),
-        fetchFriendRequests(session),
-      ]);
-      setFriends(friendList);
-      setFriendRequests(requestList);
-    } catch (error) {
-      setFriendError(mapError(error, "Unable to load friendship state."));
-    }
-  };
-
-  const avatarUrlForUser = (userId: string): string | null => {
-    try {
-      const parsedUserId = userIdFromInput(userId);
-      const avatarVersion = avatarVersionByUserId()[userId] ?? 0;
-      return profileAvatarUrl(parsedUserId, avatarVersion);
-    } catch {
-      return null;
-    }
-  };
-
-  const openUserProfile = (rawUserId: string) => {
-    try {
-      const userId = userIdFromInput(rawUserId);
-      setSelectedProfileError("");
-      setSelectedProfileUserId(userId);
-    } catch {
-      setSelectedProfileError("User profile is unavailable.");
-    }
-  };
-
-  const saveProfileSettings = async () => {
-    const session = auth.session();
-    const currentProfile = profile();
-    if (!session || !currentProfile || isSavingProfile()) {
-      return;
-    }
-
-    setSavingProfile(true);
-    setProfileSettingsStatus("");
-    setProfileSettingsError("");
-    try {
-      const nextUsername = usernameFromInput(profileDraftUsername().trim());
-      const nextAbout = profileAboutFromInput(profileDraftAbout());
-      const updated = await updateMyProfile(session, {
-        username: nextUsername,
-        aboutMarkdown: nextAbout,
-      });
-      mutateProfile(updated);
-      setProfileSettingsStatus("Profile updated.");
-    } catch (error) {
-      setProfileSettingsError(mapError(error, "Unable to save profile settings."));
-    } finally {
-      setSavingProfile(false);
-    }
-  };
-
-  const uploadProfileAvatar = async () => {
-    const session = auth.session();
-    const selectedFile = selectedProfileAvatarFile();
-    if (!session || !selectedFile || isUploadingProfileAvatar()) {
-      return;
-    }
-
-    setUploadingProfileAvatar(true);
-    setProfileSettingsStatus("");
-    setProfileSettingsError("");
-    try {
-      const updated = await uploadMyProfileAvatar(session, selectedFile);
-      mutateProfile(updated);
-      setSelectedProfileAvatarFile(null);
-      setProfileSettingsStatus("Profile avatar updated.");
-    } catch (error) {
-      setProfileSettingsError(mapError(error, "Unable to upload profile avatar."));
-    } finally {
-      setUploadingProfileAvatar(false);
-    }
-  };
-
-  const [profile, { mutate: mutateProfile }] = createResource(async () => {
-    const session = auth.session();
-    if (!session) {
-      throw new Error("missing_session");
-    }
-    return fetchMe(session);
-  });
-  const [selectedProfile] = createResource(
-    () => selectedProfileUserId() ?? undefined,
-    async (userId) => {
-      const session = auth.session();
-      if (!session) {
-        return null;
-      }
-      try {
-        return await fetchUserProfile(session, userId);
-      } catch (error) {
-        setSelectedProfileError(mapError(error, "Profile unavailable."));
-        return null;
-      }
-    },
-  );
-
-  createEffect(() => {
-    const session = auth.session();
-    if (!session) {
-      clearUsernameLookupCache();
-      setResolvedUsernames({});
-      setAvatarVersionByUserId({});
-      setPublicGuildDirectory([]);
-      setPublicGuildSearchError("");
-      setProfileDraftUsername("");
-      setProfileDraftAbout("");
-      setSelectedProfileAvatarFile(null);
-      setProfileSettingsStatus("");
-      setProfileSettingsError("");
-      setSelectedProfileUserId(null);
-      setSelectedProfileError("");
-      return;
-    }
-    void untrack(() => loadPublicGuildDirectory());
+  const {
+    profile,
+    selectedProfile,
+    avatarUrlForUser,
+    openUserProfile,
+    saveProfileSettings,
+    uploadProfileAvatar,
+  } = createProfileController({
+    session: auth.session,
+    selectedProfileUserId,
+    avatarVersionByUserId,
+    profileDraftUsername,
+    profileDraftAbout,
+    selectedProfileAvatarFile,
+    isSavingProfile,
+    isUploadingProfileAvatar,
+    setProfileDraftUsername,
+    setProfileDraftAbout,
+    setSelectedProfileAvatarFile,
+    setProfileSettingsStatus,
+    setProfileSettingsError,
+    setSavingProfile,
+    setUploadingProfileAvatar,
+    setSelectedProfileUserId,
+    setSelectedProfileError,
   });
 
-  createEffect(() => {
-    const session = auth.session();
-    if (!session) {
-      clearUsernameLookupCache();
-      setResolvedUsernames({});
-      setAvatarVersionByUserId({});
-      setFriends([]);
-      setFriendRequests({ incoming: [], outgoing: [] });
-      setFriendStatus("");
-      setFriendError("");
-      return;
-    }
-    void untrack(() => refreshFriendDirectory());
+  const { runPublicGuildSearch } = createPublicDirectoryController({
+    session: auth.session,
+    publicGuildSearchQuery,
+    isSearchingPublicGuilds,
+    setSearchingPublicGuilds,
+    setPublicGuildSearchError,
+    setPublicGuildDirectory,
   });
 
-  createEffect(() => {
-    const value = profile();
-    if (!value) {
-      return;
-    }
-    setProfileDraftUsername(value.username);
-    setProfileDraftAbout(value.aboutMarkdown);
-    primeUsernameCache([{ userId: value.userId, username: value.username }]);
-    setResolvedUsernames((existing) => ({
-      ...existing,
-      [value.userId]: value.username,
-    }));
-    setAvatarVersionByUserId((existing) => ({
-      ...existing,
-      [value.userId]: value.avatarVersion,
-    }));
+  const {
+    submitFriendRequest,
+    acceptIncomingFriendRequest,
+    dismissFriendRequest,
+    removeFriendship,
+  } = createFriendshipController({
+    session: auth.session,
+    friendRecipientUserIdInput,
+    isRunningFriendAction,
+    setFriends,
+    setFriendRequests,
+    setRunningFriendAction,
+    setFriendStatus,
+    setFriendError,
+    setFriendRecipientUserIdInput,
   });
 
-  createEffect(() => {
-    const value = selectedProfile();
-    if (!value) {
-      return;
-    }
-    setSelectedProfileError("");
-    setAvatarVersionByUserId((existing) => ({
-      ...existing,
-      [value.userId]: value.avatarVersion,
-    }));
-  });
-
-  createEffect(() => {
-    const known = [
-      ...friends().map((friend) => ({
-        userId: friend.userId,
-        username: friend.username,
-      })),
-      ...friendRequests().incoming.map((request) => ({
-        userId: request.senderUserId,
-        username: request.senderUsername,
-      })),
-      ...friendRequests().outgoing.map((request) => ({
-        userId: request.recipientUserId,
-        username: request.recipientUsername,
-      })),
-    ];
-    if (known.length === 0) {
-      return;
-    }
-    primeUsernameCache(known);
-    setResolvedUsernames((existing) => ({
-      ...existing,
-      ...Object.fromEntries(known.map((entry) => [entry.userId, entry.username])),
-    }));
-  });
-
-  createEffect(() => {
-    const session = auth.session();
-    if (!session) {
-      return;
-    }
-
-    const lookupIds = new Set<UserId>();
-    for (const message of messages()) {
-      lookupIds.add(message.authorId);
-    }
-    for (const memberId of onlineMembers()) {
-      try {
-        lookupIds.add(userIdFromInput(memberId));
-      } catch {
-        continue;
-      }
-    }
-    for (const participant of voiceRosterEntries()) {
-      const participantUserId = userIdFromVoiceIdentity(participant.identity);
-      if (participantUserId) {
-        lookupIds.add(participantUserId);
-      }
-    }
-    const result = searchResults();
-    if (result) {
-      for (const message of result.messages) {
-        lookupIds.add(message.authorId);
-      }
-    }
-    if (lookupIds.size === 0) {
-      return;
-    }
-
-    let cancelled = false;
-    const resolveVisibleUsernames = async () => {
-      try {
-        const resolved = await resolveUsernames(session, [...lookupIds]);
-        if (cancelled || Object.keys(resolved).length === 0) {
-          return;
-        }
-        setResolvedUsernames((existing) => ({
-          ...existing,
-          ...resolved,
-        }));
-      } catch {
-        // Keep user-id fallback rendering if lookup fails.
-      }
-    };
-    void resolveVisibleUsernames();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
+  createIdentityResolutionController({
+    session: auth.session,
+    messages,
+    onlineMembers,
+    voiceRosterEntries,
+    searchResults,
+    profile,
+    selectedProfile,
+    friends,
+    friendRequests,
+    setResolvedUsernames,
+    setAvatarVersionByUserId,
   });
 
   createEffect(() => {
@@ -1058,84 +826,34 @@ export function AppShellPage() {
     }
   });
 
-  const refreshMessages = async () => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId) {
-      setMessages([]);
-      setNextBefore(null);
-      setShowLoadOlderButton(false);
-      return;
-    }
-
-    setMessageError("");
-    setLoadingMessages(true);
-    try {
-      const history = await fetchChannelMessages(session, guildId, channelId, { limit: 50 });
-      setMessages(normalizeMessageOrder(history.messages));
-      setNextBefore(history.nextBefore);
-      setEditingMessageId(null);
-      setEditingDraft("");
-      messageListController.scrollMessageListToBottom();
-    } catch (error) {
-      setMessageError(mapError(error, "Unable to load messages."));
-      setMessages([]);
-      setNextBefore(null);
-      setShowLoadOlderButton(false);
-    } finally {
-      setLoadingMessages(false);
-    }
-  };
-
-  const loadOlderMessages = async () => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    const before = nextBefore();
-    if (!session || !guildId || !channelId || !before || isLoadingOlder()) {
-      return;
-    }
-
-    const previousScrollMetrics = messageListController.captureScrollMetrics();
-    setLoadingOlder(true);
-    setMessageError("");
-    try {
-      const history = await fetchChannelMessages(session, guildId, channelId, {
-        limit: 50,
-        before,
-      });
-      setMessages((existing) => mergeMessageHistory(existing, history.messages));
-      setNextBefore(history.nextBefore);
-      messageListController.restoreScrollAfterPrepend(previousScrollMetrics);
-    } catch (error) {
-      setMessageError(mapError(error, "Unable to load older messages."));
-    } finally {
-      setLoadingOlder(false);
-    }
-  };
-
-  createEffect(() => {
-    void activeGuildId();
-    void activeChannelId();
-    const canRead = canAccessActiveChannel();
-    setReactionState({});
-    setPendingReactionByKey({});
-    setOpenReactionPickerMessageId(null);
-    setSearchResults(null);
-    setSearchError("");
-    setSearchOpsStatus("");
-    setAttachmentStatus("");
-    setAttachmentError("");
-    setVoiceStatus("");
-    setVoiceError("");
-    if (canRead) {
-      void refreshMessages();
-    } else {
-      setMessages([]);
-      setNextBefore(null);
-      setShowLoadOlderButton(false);
-    }
+  const { refreshMessages, loadOlderMessages } = createMessageHistoryController({
+    session: auth.session,
+    activeGuildId,
+    activeChannelId,
+    canAccessActiveChannel,
+    nextBefore,
+    isLoadingOlder,
+    setMessages,
+    setNextBefore,
+    setShowLoadOlderButton,
+    setMessageError,
+    setLoadingMessages,
+    setLoadingOlder,
+    setEditingMessageId,
+    setEditingDraft,
+    setReactionState,
+    setPendingReactionByKey,
+    setOpenReactionPickerMessageId,
+    setSearchResults,
+    setSearchError,
+    setSearchOpsStatus,
+    setAttachmentStatus,
+    setAttachmentError,
+    setVoiceStatus,
+    setVoiceError,
+    captureScrollMetrics: messageListController.captureScrollMetrics,
+    restoreScrollAfterPrepend: messageListController.restoreScrollAfterPrepend,
+    scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
   });
 
   createEffect(() => {
@@ -1151,48 +869,16 @@ export function AppShellPage() {
     void untrack(() => refreshAudioDeviceInventory());
   });
 
-  createEffect(() => {
-    const session = auth.session();
-    const guildId = activeGuildId();
-    const channelId = activeChannelId();
-    if (!session || !guildId || !channelId || !canAccessActiveChannel()) {
-      setGatewayOnline(false);
-      setOnlineMembers([]);
-      return;
-    }
-
-    const gateway = connectGateway(session.accessToken, guildId, channelId, {
-      onOpenStateChange: (isOpen) => setGatewayOnline(isOpen),
-      onMessageCreate: (message) => {
-        if (message.guildId !== guildId || message.channelId !== channelId) {
-          return;
-        }
-        const shouldStickToBottom = messageListController.isMessageListNearBottom();
-        setMessages((existing) => mergeMessage(existing, message));
-        if (shouldStickToBottom) {
-          messageListController.scrollMessageListToBottom();
-        }
-      },
-      onPresenceSync: (payload) => {
-        if (payload.guildId !== guildId) {
-          return;
-        }
-        setOnlineMembers(payload.userIds);
-      },
-      onPresenceUpdate: (payload) => {
-        if (payload.guildId !== guildId) {
-          return;
-        }
-        setOnlineMembers((existing) => {
-          if (payload.status === "online") {
-            return existing.includes(payload.userId) ? existing : [...existing, payload.userId];
-          }
-          return existing.filter((entry) => entry !== payload.userId);
-        });
-      },
-    });
-
-    onCleanup(() => gateway.close());
+  createGatewayController({
+    session: auth.session,
+    activeGuildId,
+    activeChannelId,
+    canAccessActiveChannel,
+    setGatewayOnline,
+    setOnlineMembers,
+    setMessages,
+    isMessageListNearBottom: messageListController.isMessageListNearBottom,
+    scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
   });
 
   onCleanup(() => {
@@ -1279,90 +965,6 @@ export function AppShellPage() {
       setChannelCreateError(mapError(error, "Unable to create channel."));
     } finally {
       setCreatingChannel(false);
-    }
-  };
-
-  const runPublicGuildSearch = async (event: SubmitEvent) => {
-    event.preventDefault();
-    await loadPublicGuildDirectory(publicGuildSearchQuery());
-  };
-
-  const submitFriendRequest = async (event: SubmitEvent) => {
-    event.preventDefault();
-    const session = auth.session();
-    if (!session || isRunningFriendAction()) {
-      return;
-    }
-    setRunningFriendAction(true);
-    setFriendError("");
-    setFriendStatus("");
-    try {
-      const recipientUserId = userIdFromInput(friendRecipientUserIdInput().trim());
-      await createFriendRequest(session, recipientUserId);
-      setFriendRecipientUserIdInput("");
-      await refreshFriendDirectory();
-      setFriendStatus("Friend request sent.");
-    } catch (error) {
-      setFriendError(mapError(error, "Unable to create friend request."));
-    } finally {
-      setRunningFriendAction(false);
-    }
-  };
-
-  const acceptIncomingFriendRequest = async (requestId: string) => {
-    const session = auth.session();
-    if (!session || isRunningFriendAction()) {
-      return;
-    }
-    setRunningFriendAction(true);
-    setFriendError("");
-    setFriendStatus("");
-    try {
-      await acceptFriendRequest(session, requestId);
-      await refreshFriendDirectory();
-      setFriendStatus("Friend request accepted.");
-    } catch (error) {
-      setFriendError(mapError(error, "Unable to accept friend request."));
-    } finally {
-      setRunningFriendAction(false);
-    }
-  };
-
-  const dismissFriendRequest = async (requestId: string) => {
-    const session = auth.session();
-    if (!session || isRunningFriendAction()) {
-      return;
-    }
-    setRunningFriendAction(true);
-    setFriendError("");
-    setFriendStatus("");
-    try {
-      await deleteFriendRequest(session, requestId);
-      await refreshFriendDirectory();
-      setFriendStatus("Friend request removed.");
-    } catch (error) {
-      setFriendError(mapError(error, "Unable to remove friend request."));
-    } finally {
-      setRunningFriendAction(false);
-    }
-  };
-
-  const removeFriendship = async (friendUserId: UserId) => {
-    const session = auth.session();
-    if (!session || isRunningFriendAction()) {
-      return;
-    }
-    setRunningFriendAction(true);
-    setFriendError("");
-    setFriendStatus("");
-    try {
-      await removeFriend(session, friendUserId);
-      await refreshFriendDirectory();
-      setFriendStatus("Friend removed.");
-    } catch (error) {
-      setFriendError(mapError(error, "Unable to remove friend."));
-    } finally {
-      setRunningFriendAction(false);
     }
   };
 

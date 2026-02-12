@@ -42,7 +42,7 @@ describe("app shell reaction picker controller", () => {
   });
 
   it("tracks picker position and closes on escape/outside pointer events", async () => {
-    let dispose = () => undefined;
+    let dispose: () => void = () => {};
     let openReactionPickerMessageId: Accessor<MessageId | null>;
     let setOpenReactionPickerMessageId: Setter<MessageId | null>;
     let position: Accessor<ReactionPickerOverlayPosition | null>;

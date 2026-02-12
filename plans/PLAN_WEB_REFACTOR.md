@@ -209,24 +209,50 @@ Move DOM/paint/listener mechanics out of page body.
 Move async resource orchestration and boundary fetch flows into domain-specific controllers.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add controllers:
+- [x] Add controllers:
   - `controllers/profile-controller.ts` (fetchMe, fetchUserProfile, profile save/avatar upload)
   - `controllers/friendship-controller.ts` (friend list + requests + actions)
   - `controllers/public-directory-controller.ts` (public guild search/load)
   - `controllers/identity-resolution-controller.ts` (username cache/resolve flows)
   - `controllers/message-history-controller.ts` (refresh/load older + reset on channel/permission changes)
   - `controllers/gateway-controller.ts` (connect/cleanup presence + message events)
-- [ ] Ensure each controller preserves:
+- [x] Ensure each controller preserves:
   - auth-null reset behavior
   - cancellation guards
   - bounded, deterministic state transitions
 
 ### Tests
-- [ ] Add targeted controller tests for success/error/cancellation paths.
-- [ ] Update existing `app-shell-*` integration-like tests to ensure no behavior drift.
+- [x] Add targeted controller tests for success/error/cancellation paths.
+- [x] Update existing `app-shell-*` integration-like tests to ensure no behavior drift.
+
+### Refactor Notes
+- Added six boundary/data controllers under `features/app-shell/controllers/`:
+  - `profile-controller.ts`
+  - `friendship-controller.ts`
+  - `public-directory-controller.ts`
+  - `identity-resolution-controller.ts`
+  - `message-history-controller.ts`
+  - `gateway-controller.ts`
+- Rewired `AppShellPage.tsx` to consume the new controller APIs and removed inline async orchestration for profile resources/settings, friendship/public-directory flows, username resolution, message history refresh/pagination/reset, and gateway session wiring.
+- Added controller-focused tests:
+  - `tests/app-shell-profile-controller.test.ts`
+  - `tests/app-shell-friendship-controller.test.ts`
+  - `tests/app-shell-public-directory-controller.test.ts`
+  - `tests/app-shell-identity-resolution-controller.test.ts`
+  - `tests/app-shell-message-history-controller.test.ts`
+  - `tests/app-shell-gateway-controller.test.ts`
+- Extended integration-like coverage in `tests/app-shell-friendships.test.tsx` with outgoing friend-request submission/refresh assertions.
+- Tightened test typing and cleanup contracts by correcting `tests/app-shell-reaction-picker-controller.test.ts` dispose typing and aligning new controller tests to branded domain IDs.
+- Metrics after Phase 5 (2026-02-12):
+  - `AppShellPage.tsx` line count: `1655`
+  - `createEffect(...)` count in `AppShellPage.tsx`: `3`
+  - Test command: `pnpm --prefix apps/filament-client-web test`
+  - Pass status: `39` test files passed, `154` tests passed
+  - Typecheck command: `pnpm --prefix apps/filament-client-web typecheck`
+  - Typecheck status: pass
 
 ### Exit Criteria
 - Most `createEffect` and async fetch orchestration leave `AppShellPage.tsx`.
