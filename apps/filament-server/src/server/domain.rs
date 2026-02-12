@@ -629,18 +629,20 @@ pub(crate) async fn write_audit_log(
     action: &str,
     details_json: serde_json::Value,
 ) -> Result<(), AuthFailure> {
+    let audit_id = Ulid::new().to_string();
+    let created_at_unix = now_unix();
     if let Some(pool) = &state.db_pool {
         sqlx::query(
             "INSERT INTO audit_logs (audit_id, guild_id, actor_user_id, target_user_id, action, details_json, created_at_unix)
              VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
-        .bind(Ulid::new().to_string())
+        .bind(audit_id)
         .bind(guild_id)
         .bind(actor_user_id.to_string())
         .bind(target_user_id.map(|value| value.to_string()))
         .bind(action)
         .bind(details_json.to_string())
-        .bind(now_unix())
+        .bind(created_at_unix)
         .execute(pool)
         .await
         .map_err(|_| AuthFailure::Internal)?;
@@ -648,12 +650,13 @@ pub(crate) async fn write_audit_log(
     }
 
     state.audit_logs.write().await.push(serde_json::json!({
+        "audit_id": audit_id,
         "guild_id": guild_id,
         "actor_user_id": actor_user_id.to_string(),
         "target_user_id": target_user_id.map(|value| value.to_string()),
         "action": action,
         "details": details_json,
-        "created_at_unix": now_unix(),
+        "created_at_unix": created_at_unix,
     }));
     Ok(())
 }

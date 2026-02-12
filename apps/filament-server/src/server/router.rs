@@ -34,8 +34,8 @@ use super::{
         },
         guilds::{
             add_member, ban_member, create_channel, create_guild, join_public_guild, kick_member,
-            list_guild_channels, list_guilds, list_public_guilds, set_channel_role_override,
-            update_member_role,
+            list_guild_audit, list_guild_channels, list_guilds, list_public_guilds,
+            set_channel_role_override, update_member_role,
         },
         media::{delete_attachment, download_attachment, issue_voice_token, upload_attachment},
         messages::{
@@ -180,6 +180,7 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         .route("/guilds", post(create_guild).get(list_guilds))
         .route("/guilds/public", get(list_public_guilds))
         .route("/guilds/{guild_id}/join", post(join_public_guild))
+        .route("/guilds/{guild_id}/audit", get(list_guild_audit))
         .route(
             "/guilds/{guild_id}/channels",
             post(create_channel).get(list_guild_channels),

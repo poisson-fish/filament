@@ -167,6 +167,7 @@ pub(crate) struct RuntimeSecurityConfig {
     pub(crate) auth_route_requests_per_minute: u32,
     pub(crate) directory_join_requests_per_minute_per_ip: u32,
     pub(crate) directory_join_requests_per_minute_per_user: u32,
+    pub(crate) audit_list_limit_max: usize,
     pub(crate) guild_ip_ban_max_entries: usize,
     pub(crate) gateway_ingress_events_per_window: u32,
     pub(crate) gateway_ingress_window: Duration,
@@ -348,6 +349,7 @@ impl AppState {
                     .directory_join_requests_per_minute_per_ip,
                 directory_join_requests_per_minute_per_user: config
                     .directory_join_requests_per_minute_per_user,
+                audit_list_limit_max: config.audit_list_limit_max,
                 guild_ip_ban_max_entries: config.guild_ip_ban_max_entries,
                 gateway_ingress_events_per_window: config.gateway_ingress_events_per_window,
                 gateway_ingress_window: config.gateway_ingress_window,

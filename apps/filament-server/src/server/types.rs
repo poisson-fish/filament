@@ -412,6 +412,22 @@ pub(crate) struct DirectoryJoinResponse {
     pub(crate) outcome: DirectoryJoinOutcomeResponse,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct GuildAuditEventResponse {
+    pub(crate) audit_id: String,
+    pub(crate) actor_user_id: String,
+    pub(crate) target_user_id: Option<String>,
+    pub(crate) action: String,
+    pub(crate) created_at_unix: i64,
+    pub(crate) ip_ban_match: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GuildAuditListResponse {
+    pub(crate) events: Vec<GuildAuditEventResponse>,
+    pub(crate) next_cursor: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct SearchResponse {
     pub(crate) message_ids: Vec<String>,

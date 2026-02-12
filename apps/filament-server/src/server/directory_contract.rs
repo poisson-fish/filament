@@ -222,8 +222,21 @@ impl TryFrom<AuditListQueryDto> for AuditListQuery {
     type Error = DirectoryContractError;
 
     fn try_from(value: AuditListQueryDto) -> Result<Self, Self::Error> {
+        Self::try_from_with_limit_max(value, DEFAULT_AUDIT_LIST_LIMIT_MAX)
+    }
+}
+
+impl AuditListQuery {
+    /// Parse and validate an audit-list query while applying a runtime-configured `limit` cap.
+    ///
+    /// # Errors
+    /// Returns `DirectoryContractError` when cursor, limit, or action-prefix invariants are not met.
+    pub fn try_from_with_limit_max(
+        value: AuditListQueryDto,
+        limit_max: usize,
+    ) -> Result<Self, DirectoryContractError> {
         let limit = value.limit.unwrap_or(DEFAULT_AUDIT_LIST_LIMIT);
-        if limit == 0 || limit > DEFAULT_AUDIT_LIST_LIMIT_MAX {
+        if limit == 0 || limit > limit_max {
             return Err(DirectoryContractError::Limit);
         }
 

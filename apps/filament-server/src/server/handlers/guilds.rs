@@ -26,15 +26,17 @@ use crate::server::{
         permission_set_from_list, permission_set_to_i64, role_from_i16, role_to_i16,
         visibility_from_i16, visibility_to_i16,
     },
-    directory_contract::{DirectoryJoinOutcome, IpNetwork},
+    directory_contract::{
+        AuditListQuery, AuditListQueryDto, DirectoryContractError, DirectoryJoinOutcome, IpNetwork,
+    },
     domain::{member_role_in_guild, user_role_in_guild, write_audit_log},
     errors::AuthFailure,
     types::{
         ChannelListResponse, ChannelResponse, ChannelRolePath, CreateChannelRequest,
-        CreateGuildRequest, DirectoryJoinOutcomeResponse, DirectoryJoinResponse, GuildListResponse,
-        GuildPath, GuildResponse, MemberPath, ModerationResponse, PublicGuildListItem,
-        PublicGuildListQuery, PublicGuildListResponse, UpdateChannelRoleOverrideRequest,
-        UpdateMemberRoleRequest,
+        CreateGuildRequest, DirectoryJoinOutcomeResponse, DirectoryJoinResponse,
+        GuildAuditEventResponse, GuildAuditListResponse, GuildListResponse, GuildPath,
+        GuildResponse, MemberPath, ModerationResponse, PublicGuildListItem, PublicGuildListQuery,
+        PublicGuildListResponse, UpdateChannelRoleOverrideRequest, UpdateMemberRoleRequest,
     },
 };
 
@@ -377,6 +379,317 @@ async fn write_directory_join_audit(
         }),
     )
     .await
+}
+
+#[derive(Debug, Clone)]
+struct GuildAuditEventRecord {
+    audit_id: String,
+    actor_user_id: String,
+    target_user_id: Option<String>,
+    action: String,
+    created_at_unix: i64,
+}
+
+#[derive(Debug, Clone)]
+struct AuditCursorPosition {
+    created_at_unix: i64,
+    audit_id: String,
+}
+
+const fn map_directory_contract_error_to_auth_failure(
+    _error: DirectoryContractError,
+) -> AuthFailure {
+    AuthFailure::InvalidRequest
+}
+
+fn parse_audit_cursor_position(cursor: &str) -> Result<AuditCursorPosition, AuthFailure> {
+    let (created_at_raw, audit_id_raw) =
+        cursor.split_once('_').ok_or(AuthFailure::InvalidRequest)?;
+    let created_at_unix = created_at_raw
+        .parse::<i64>()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    if Ulid::from_string(audit_id_raw).is_err() {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(AuditCursorPosition {
+        created_at_unix,
+        audit_id: audit_id_raw.to_owned(),
+    })
+}
+
+fn build_audit_cursor(created_at_unix: i64, audit_id: &str) -> String {
+    format!("{created_at_unix}_{audit_id}")
+}
+
+fn action_has_ip_ban_match(action: &str) -> bool {
+    action == "directory.join.rejected.ip_ban" || action == "moderation.ip_ban.hit"
+}
+
+fn guild_audit_response_from_record(record: GuildAuditEventRecord) -> GuildAuditEventResponse {
+    GuildAuditEventResponse {
+        audit_id: record.audit_id,
+        actor_user_id: record.actor_user_id,
+        target_user_id: record.target_user_id,
+        ip_ban_match: action_has_ip_ban_match(&record.action),
+        action: record.action,
+        created_at_unix: record.created_at_unix,
+    }
+}
+
+async fn enforce_audit_access(
+    state: &AppState,
+    guild_id: &str,
+    user_id: UserId,
+) -> Result<(), AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let guild_exists = sqlx::query("SELECT 1 FROM guilds WHERE guild_id = $1")
+            .bind(guild_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?
+            .is_some();
+        if !guild_exists {
+            return Err(AuthFailure::NotFound);
+        }
+
+        let user_banned =
+            sqlx::query("SELECT 1 FROM guild_bans WHERE guild_id = $1 AND user_id = $2")
+                .bind(guild_id)
+                .bind(user_id.to_string())
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?
+                .is_some();
+        if user_banned {
+            return Err(AuthFailure::AuditAccessDenied);
+        }
+
+        let role_row =
+            sqlx::query("SELECT role FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+                .bind(guild_id)
+                .bind(user_id.to_string())
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        let Some(role_row) = role_row else {
+            return Err(AuthFailure::AuditAccessDenied);
+        };
+        let role_value: i16 = role_row
+            .try_get("role")
+            .map_err(|_| AuthFailure::Internal)?;
+        let role = role_from_i16(role_value).ok_or(AuthFailure::AuditAccessDenied)?;
+        if !matches!(role, Role::Owner | Role::Moderator) {
+            return Err(AuthFailure::AuditAccessDenied);
+        }
+        return Ok(());
+    }
+
+    let guilds = state.guilds.read().await;
+    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+    if guild.banned_members.contains(&user_id) {
+        return Err(AuthFailure::AuditAccessDenied);
+    }
+    let role = guild
+        .members
+        .get(&user_id)
+        .copied()
+        .ok_or(AuthFailure::AuditAccessDenied)?;
+    if !matches!(role, Role::Owner | Role::Moderator) {
+        return Err(AuthFailure::AuditAccessDenied);
+    }
+    Ok(())
+}
+
+fn parse_in_memory_audit_event(
+    value: &serde_json::Value,
+    guild_id: &str,
+) -> Option<GuildAuditEventRecord> {
+    let object = value.as_object()?;
+    if object.get("guild_id")?.as_str()? != guild_id {
+        return None;
+    }
+    let audit_id = object.get("audit_id")?.as_str()?.to_owned();
+    if Ulid::from_string(&audit_id).is_err() {
+        return None;
+    }
+
+    let actor_user_id = object.get("actor_user_id")?.as_str()?.to_owned();
+    let target_user_id = object
+        .get("target_user_id")
+        .and_then(|raw| raw.as_str().map(str::to_owned));
+    let action = object.get("action")?.as_str()?.to_owned();
+    let created_at_unix = object.get("created_at_unix")?.as_i64()?;
+
+    Some(GuildAuditEventRecord {
+        audit_id,
+        actor_user_id,
+        target_user_id,
+        action,
+        created_at_unix,
+    })
+}
+
+async fn list_guild_audit_db(
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+    query: &AuditListQuery,
+) -> Result<GuildAuditListResponse, AuthFailure> {
+    let cursor = query
+        .cursor
+        .as_ref()
+        .map(|value| parse_audit_cursor_position(value.as_str()))
+        .transpose()?;
+    let action_pattern = query
+        .action_prefix
+        .as_ref()
+        .map(|prefix| format!("{prefix}%"));
+    let limit_plus_one = query
+        .limit
+        .checked_add(1)
+        .ok_or(AuthFailure::InvalidRequest)?;
+
+    let rows = sqlx::query(
+        "SELECT audit_id, actor_user_id, target_user_id, action, created_at_unix
+         FROM audit_logs
+         WHERE guild_id = $1
+           AND ($2::text IS NULL OR action LIKE $2)
+           AND (
+                $3::bigint IS NULL
+                OR created_at_unix < $3
+                OR (created_at_unix = $3 AND audit_id < $4)
+           )
+         ORDER BY created_at_unix DESC, audit_id DESC
+         LIMIT $5",
+    )
+    .bind(guild_id)
+    .bind(action_pattern)
+    .bind(cursor.as_ref().map(|value| value.created_at_unix))
+    .bind(cursor.as_ref().map(|value| value.audit_id.as_str()))
+    .bind(i64::try_from(limit_plus_one).map_err(|_| AuthFailure::Internal)?)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+
+    let mut records = Vec::with_capacity(rows.len());
+    for row in rows {
+        records.push(GuildAuditEventRecord {
+            audit_id: row.try_get("audit_id").map_err(|_| AuthFailure::Internal)?,
+            actor_user_id: row
+                .try_get("actor_user_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            target_user_id: row
+                .try_get::<Option<String>, _>("target_user_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            action: row.try_get("action").map_err(|_| AuthFailure::Internal)?,
+            created_at_unix: row
+                .try_get("created_at_unix")
+                .map_err(|_| AuthFailure::Internal)?,
+        });
+    }
+
+    let next_cursor = if records.len() > query.limit {
+        let cursor_record = records
+            .get(query.limit)
+            .cloned()
+            .ok_or(AuthFailure::Internal)?;
+        records.truncate(query.limit);
+        Some(build_audit_cursor(
+            cursor_record.created_at_unix,
+            &cursor_record.audit_id,
+        ))
+    } else {
+        None
+    };
+
+    Ok(GuildAuditListResponse {
+        events: records
+            .into_iter()
+            .map(guild_audit_response_from_record)
+            .collect(),
+        next_cursor,
+    })
+}
+
+async fn list_guild_audit_in_memory(
+    state: &AppState,
+    guild_id: &str,
+    query: &AuditListQuery,
+) -> Result<GuildAuditListResponse, AuthFailure> {
+    let cursor = query
+        .cursor
+        .as_ref()
+        .map(|value| parse_audit_cursor_position(value.as_str()))
+        .transpose()?;
+    let logs = state.audit_logs.read().await;
+
+    let mut records = logs
+        .iter()
+        .filter_map(|entry| parse_in_memory_audit_event(entry, guild_id))
+        .filter(|entry| {
+            query
+                .action_prefix
+                .as_ref()
+                .is_none_or(|prefix| entry.action.starts_with(prefix))
+        })
+        .filter(|entry| {
+            cursor.as_ref().is_none_or(|value| {
+                entry.created_at_unix < value.created_at_unix
+                    || (entry.created_at_unix == value.created_at_unix
+                        && entry.audit_id < value.audit_id)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    records.sort_by(|left, right| {
+        right
+            .created_at_unix
+            .cmp(&left.created_at_unix)
+            .then_with(|| right.audit_id.cmp(&left.audit_id))
+    });
+
+    let next_cursor = if records.len() > query.limit {
+        let cursor_record = records
+            .get(query.limit)
+            .cloned()
+            .ok_or(AuthFailure::Internal)?;
+        records.truncate(query.limit);
+        Some(build_audit_cursor(
+            cursor_record.created_at_unix,
+            &cursor_record.audit_id,
+        ))
+    } else {
+        None
+    };
+
+    Ok(GuildAuditListResponse {
+        events: records
+            .into_iter()
+            .map(guild_audit_response_from_record)
+            .collect(),
+        next_cursor,
+    })
+}
+
+pub(crate) async fn list_guild_audit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+    Query(query): Query<AuditListQueryDto>,
+) -> Result<Json<GuildAuditListResponse>, AuthFailure> {
+    ensure_db_schema(&state).await?;
+    let auth = authenticate(&state, &headers).await?;
+    let audit_query =
+        AuditListQuery::try_from_with_limit_max(query, state.runtime.audit_list_limit_max)
+            .map_err(map_directory_contract_error_to_auth_failure)?;
+    enforce_audit_access(&state, &path.guild_id, auth.user_id).await?;
+
+    let response = if let Some(pool) = &state.db_pool {
+        list_guild_audit_db(pool, &path.guild_id, &audit_query).await?
+    } else {
+        list_guild_audit_in_memory(&state, &path.guild_id, &audit_query).await?
+    };
+
+    Ok(Json(response))
 }
 
 pub(crate) async fn list_public_guilds(

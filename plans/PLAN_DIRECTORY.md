@@ -279,26 +279,45 @@ Enable authenticated self-join for public workspaces with strict policy checks a
 Expose auditable join/moderation history to authorized workspace operators.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add endpoint:
+- [x] Add endpoint:
   - `GET /guilds/{guild_id}/audit?cursor=<...>&limit=<n>&action_prefix=<...>`
-- [ ] Access policy:
+- [x] Access policy:
   - owner/moderator only (or explicit permission if introduced)
   - non-members receive policy-consistent denial
-- [ ] Pagination + caps:
+- [x] Pagination + caps:
   - cursor-based pagination
   - strict max limit (from config)
   - bounded action filter length/charset
-- [ ] Return typed audit response DTOs (no raw arbitrary JSON passthrough).
-- [ ] Redact IP data in owner/moderator audit responses:
+- [x] Return typed audit response DTOs (no raw arbitrary JSON passthrough).
+- [x] Redact IP data in owner/moderator audit responses:
   - no raw `ip`, `cidr`, or equivalent fields
   - optional non-sensitive derived metadata only (example: `ip_ban_match=true`)
 
 ### Tests
-- [ ] Integration tests for authz, pagination, action filtering, and bounded limits.
-- [ ] Domain parsing tests in web client for new audit DTOs.
+- [x] Integration tests for authz, pagination, action filtering, and bounded limits.
+- [x] Domain parsing tests in web client for new audit DTOs.
+
+### Refactor Notes
+- Added `GET /guilds/{guild_id}/audit` route in `apps/filament-server/src/server/router.rs` and implemented the handler in `apps/filament-server/src/server/handlers/guilds.rs` with:
+  - owner/moderator-only access control and explicit non-member denial as `audit_access_denied`
+  - unknown-guild `not_found` behavior
+  - bounded cursor pagination and runtime-configured `limit` max enforcement
+  - bounded action-prefix filtering (`[a-z0-9._]`, length-capped) through typed query parsing
+  - typed redacted response payloads (`events`, `next_cursor`) with optional `ip_ban_match` metadata only
+- Extended server contract/runtime surfaces:
+  - added `AuditListQuery::try_from_with_limit_max(...)` in `apps/filament-server/src/server/directory_contract.rs`
+  - added `audit_list_limit_max` to runtime config in `apps/filament-server/src/server/core.rs`
+  - added audit read response DTOs in `apps/filament-server/src/server/types.rs`
+  - updated `apps/filament-server/src/server/domain.rs` in-memory audit writes to persist `audit_id` for DB/in-memory pagination parity
+  - added `AuthFailure::AuditAccessDenied` in `apps/filament-server/src/server/errors.rs` for policy-consistent `403 {"error":"audit_access_denied"}`
+- Added integration coverage in `apps/filament-server/src/server/tests.rs`:
+  - `guild_audit_endpoint_enforces_authz_and_returns_redacted_events`
+  - `guild_audit_endpoint_supports_action_filter_and_cursor_pagination`
+  - `guild_audit_endpoint_rejects_invalid_filters_and_limit_overrides`
+- Existing web domain parsing coverage for audit DTOs remains in `apps/filament-client-web/tests/domain-chat.test.ts` (`validates redacted guild audit and ip-ban DTO payloads`) and passes with this server change.
 
 ### Security Outlook
 - Improves accountability while keeping query cost and data exposure bounded.
