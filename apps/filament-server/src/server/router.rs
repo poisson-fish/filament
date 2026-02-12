@@ -1,15 +1,21 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::anyhow;
 use axum::{
+    extract::ConnectInfo,
     extract::DefaultBodyLimit,
-    http::{HeaderName, StatusCode},
+    http::{request::Request, HeaderName, StatusCode},
     routing::{delete, get, patch, post},
     Router,
 };
 use tower::ServiceBuilder;
 use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+    errors::GovernorError, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
+    GovernorLayer,
 };
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -18,6 +24,7 @@ use tower_http::{
 };
 
 use super::{
+    auth::resolve_client_ip,
     core::{AppConfig, AppState, MAX_LIVEKIT_TOKEN_TTL_SECS},
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
@@ -40,6 +47,34 @@ use super::{
     realtime::gateway_ws,
     types::{echo, health, metrics, slow},
 };
+
+#[derive(Clone)]
+struct TrustedClientIpKeyExtractor {
+    trusted_proxy_cidrs: Arc<Vec<super::directory_contract::IpNetwork>>,
+}
+
+impl TrustedClientIpKeyExtractor {
+    fn new(trusted_proxy_cidrs: Arc<Vec<super::directory_contract::IpNetwork>>) -> Self {
+        Self {
+            trusted_proxy_cidrs,
+        }
+    }
+}
+
+impl KeyExtractor for TrustedClientIpKeyExtractor {
+    type Key = IpAddr;
+
+    fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
+        let peer_ip = req
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|value| value.0.ip())
+            .or_else(|| req.extensions().get::<SocketAddr>().map(SocketAddr::ip));
+        let resolved =
+            resolve_client_ip(req.headers(), peer_ip, self.trusted_proxy_cidrs.as_slice());
+        Ok(resolved.ip().unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))
+    }
+}
 
 /// Build the axum router with global security middleware.
 ///
@@ -103,7 +138,9 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         GovernorConfigBuilder::default()
             .period(Duration::from_secs(60))
             .burst_size(config.rate_limit_requests_per_minute)
-            .key_extractor(SmartIpKeyExtractor)
+            .key_extractor(TrustedClientIpKeyExtractor::new(Arc::new(
+                config.trusted_proxy_cidrs.clone(),
+            )))
             .finish()
             .ok_or_else(|| anyhow!("invalid governor configuration"))?,
     );

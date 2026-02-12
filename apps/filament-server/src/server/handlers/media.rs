@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{connect_info::ConnectInfo, Extension, Path, Query, State},
     http::{
         header::CONTENT_LENGTH, header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue,
         StatusCode,
@@ -12,6 +12,7 @@ use futures_util::StreamExt;
 use livekit_api::access_token::{AccessToken as LiveKitAccessToken, VideoGrants};
 use object_store::{path::Path as ObjectPath, ObjectStore};
 use sha2::{Digest, Sha256};
+use std::net::SocketAddr;
 use ulid::Ulid;
 
 use filament_core::{has_permission, LiveKitIdentity, LiveKitRoomName, Permission};
@@ -280,12 +281,18 @@ pub(crate) async fn delete_attachment(
 pub(crate) async fn issue_voice_token(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ChannelPath>,
     Json(payload): Json<VoiceTokenRequest>,
 ) -> Result<Json<VoiceTokenResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
     let auth = authenticate(&state, &headers).await?;
-    enforce_media_token_rate_limit(&state, &headers, auth.user_id, &path).await?;
+    enforce_media_token_rate_limit(&state, client_ip, auth.user_id, &path).await?;
     let (_, permissions) =
         channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
     if !permissions.contains(Permission::CreateMessage) {
@@ -334,7 +341,7 @@ pub(crate) async fn issue_voice_token(
             MediaPublishSource::Camera | MediaPublishSource::ScreenShare
         )
     }) {
-        enforce_media_publish_rate_limit(&state, &headers, auth.user_id, &path).await?;
+        enforce_media_publish_rate_limit(&state, client_ip, auth.user_id, &path).await?;
     }
 
     grants.can_publish = !effective_sources.is_empty();
@@ -381,7 +388,8 @@ pub(crate) async fn issue_voice_token(
             "can_publish": grants.can_publish,
             "can_subscribe": grants.can_subscribe,
             "ttl_secs": state.runtime.livekit_token_ttl.as_secs(),
-            "client_ip": extract_client_ip(&headers),
+            "client_ip": client_ip.normalized(),
+            "client_ip_source": client_ip.source().as_str(),
         }),
     )
     .await?;

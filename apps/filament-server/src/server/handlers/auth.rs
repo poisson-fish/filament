@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 
 use axum::{
-    extract::State,
+    extract::{connect_info::ConnectInfo, Extension, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
@@ -15,7 +16,7 @@ use crate::server::{
     auth::{
         authenticate, enforce_auth_route_rate_limit, extract_client_ip, find_username_by_user_id,
         hash_password, hash_refresh_token, issue_tokens, now_unix, validate_password,
-        verify_password,
+        verify_password, ClientIp,
     },
     core::{
         AppState, SessionRecord, UserRecord, ACCESS_TOKEN_TTL_SECS, LOGIN_LOCK_SECS,
@@ -32,7 +33,7 @@ use crate::server::{
 
 pub(crate) async fn verify_captcha_token(
     state: &AppState,
-    headers: &HeaderMap,
+    client_ip: ClientIp,
     token: Option<String>,
 ) -> Result<(), AuthFailure> {
     let Some(config) = state.runtime.captcha.clone() else {
@@ -47,14 +48,16 @@ pub(crate) async fn verify_captcha_token(
         .timeout(config.verify_timeout)
         .build()
         .map_err(|_| AuthFailure::Internal)?;
-    let remote_ip = extract_client_ip(headers);
+    let mut form_data = vec![
+        ("secret", config.secret.clone()),
+        ("response", token.as_str().to_owned()),
+    ];
+    if let Some(remote_ip) = client_ip.ip() {
+        form_data.push(("remoteip", remote_ip.to_string()));
+    }
     let response = client
         .post(&config.verify_url)
-        .form(&[
-            ("secret", config.secret.as_str()),
-            ("response", token.as_str()),
-            ("remoteip", remote_ip.as_str()),
-        ])
+        .form(&form_data)
         .send()
         .await
         .map_err(|_| AuthFailure::CaptchaFailed)?;
@@ -71,11 +74,17 @@ pub(crate) async fn verify_captcha_token(
 pub(crate) async fn register(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, AuthFailure> {
-    enforce_auth_route_rate_limit(&state, &headers, "register").await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    enforce_auth_route_rate_limit(&state, client_ip, "register").await?;
     ensure_db_schema(&state).await?;
-    verify_captcha_token(&state, &headers, payload.captcha_token).await?;
+    verify_captcha_token(&state, client_ip, payload.captcha_token).await?;
 
     let username = Username::try_from(payload.username).map_err(|_| AuthFailure::InvalidRequest)?;
     validate_password(&payload.password).map_err(|_| AuthFailure::InvalidRequest)?;
@@ -140,9 +149,15 @@ pub(crate) async fn register(
 pub(crate) async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, AuthFailure> {
-    enforce_auth_route_rate_limit(&state, &headers, "login").await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    enforce_auth_route_rate_limit(&state, client_ip, "login").await?;
     ensure_db_schema(&state).await?;
 
     let username = Username::try_from(payload.username).map_err(|_| AuthFailure::Unauthorized)?;
@@ -312,9 +327,15 @@ pub(crate) async fn login(
 pub(crate) async fn refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(payload): Json<RefreshRequest>,
 ) -> Result<Json<AuthResponse>, AuthFailure> {
-    enforce_auth_route_rate_limit(&state, &headers, "refresh").await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    enforce_auth_route_rate_limit(&state, client_ip, "refresh").await?;
     ensure_db_schema(&state).await?;
 
     if payload.refresh_token.is_empty() || payload.refresh_token.len() > 512 {

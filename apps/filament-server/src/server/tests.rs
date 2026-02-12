@@ -6,14 +6,15 @@ mod tests {
             AppConfig, AppState, AuthContext, ChannelRecord, ConnectionControl, GuildRecord,
             GuildVisibility, UserRecord, DEFAULT_MAX_GATEWAY_EVENT_BYTES,
         },
+        directory_contract::IpNetwork,
         realtime::{add_subscription, broadcast_channel_event, create_message_internal},
         router::build_router,
         types::AuthResponse,
     };
-    use axum::{body::Body, http::Request, http::StatusCode};
+    use axum::{body::Body, extract::connect_info::ConnectInfo, http::Request, http::StatusCode};
     use filament_core::{ChannelKind, Role, UserId, Username};
     use serde_json::{json, Value};
-    use std::{collections::HashMap, time::Duration};
+    use std::{collections::HashMap, net::SocketAddr, time::Duration};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::{mpsc, watch};
@@ -108,6 +109,14 @@ mod tests {
             .unwrap();
         let payload: Value = serde_json::from_slice(&bytes).unwrap();
         (status, Some(payload))
+    }
+
+    fn with_connect_info(mut request: Request<Body>, peer: &str) -> Request<Body> {
+        let socket = format!("{peer}:443")
+            .parse::<SocketAddr>()
+            .expect("peer socket must parse");
+        request.extensions_mut().insert(ConnectInfo(socket));
+        request
     }
 
     async fn user_id_from_me(app: &axum::Router, auth: &AuthResponse, ip: &str) -> String {
@@ -618,6 +627,87 @@ mod tests {
             let response = app.clone().oneshot(login).await.unwrap();
             assert_eq!(response.status(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn auth_rate_limit_ignores_forwarded_headers_when_proxy_is_untrusted() {
+        let app = build_router(&AppConfig {
+            auth_route_requests_per_minute: 1,
+            ..AppConfig::default()
+        })
+        .unwrap();
+
+        let first = with_connect_info(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/login")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "198.51.100.101")
+                .body(Body::from(
+                    json!({"username":"ghost_user","password":"super-secure-password"}).to_string(),
+                ))
+                .unwrap(),
+            "10.0.0.15",
+        );
+        let first_response = app.clone().oneshot(first).await.unwrap();
+        assert_eq!(first_response.status(), StatusCode::UNAUTHORIZED);
+
+        let second = with_connect_info(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/login")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "198.51.100.102")
+                .body(Body::from(
+                    json!({"username":"ghost_user","password":"super-secure-password"}).to_string(),
+                ))
+                .unwrap(),
+            "10.0.0.15",
+        );
+        let second_response = app.oneshot(second).await.unwrap();
+        assert_eq!(second_response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn auth_rate_limit_uses_forwarded_headers_for_trusted_proxy_peers() {
+        let app = build_router(&AppConfig {
+            auth_route_requests_per_minute: 1,
+            trusted_proxy_cidrs: vec![
+                IpNetwork::try_from(String::from("10.0.0.0/8")).expect("valid cidr")
+            ],
+            ..AppConfig::default()
+        })
+        .unwrap();
+
+        let first = with_connect_info(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/login")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "198.51.100.111")
+                .body(Body::from(
+                    json!({"username":"ghost_user","password":"super-secure-password"}).to_string(),
+                ))
+                .unwrap(),
+            "10.0.0.15",
+        );
+        let first_response = app.clone().oneshot(first).await.unwrap();
+        assert_eq!(first_response.status(), StatusCode::UNAUTHORIZED);
+
+        let second = with_connect_info(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/login")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "198.51.100.112")
+                .body(Body::from(
+                    json!({"username":"ghost_user","password":"super-secure-password"}).to_string(),
+                ))
+                .unwrap(),
+            "10.0.0.15",
+        );
+        let second_response = app.oneshot(second).await.unwrap();
+        assert_eq!(second_response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

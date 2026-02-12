@@ -2,8 +2,9 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::str::FromStr;
 
-use filament_server::{build_router, init_tracing, AppConfig};
+use filament_server::{build_router, directory_contract::IpNetwork, init_tracing, AppConfig};
 use tokio::net::TcpListener;
 
 fn parse_usize_env_or_default(var_name: &str, default: usize) -> anyhow::Result<usize> {
@@ -55,6 +56,35 @@ fn parse_directory_runtime_limits_from_env(
     ))
 }
 
+fn parse_trusted_proxy_cidrs_from_env(defaults: &AppConfig) -> anyhow::Result<Vec<IpNetwork>> {
+    std::env::var("FILAMENT_TRUSTED_PROXY_CIDRS").map_or_else(
+        |_| Ok(defaults.trusted_proxy_cidrs.clone()),
+        |raw| {
+            if raw.trim().is_empty() {
+                return Ok(Vec::new());
+            }
+            raw.split(',')
+                .enumerate()
+                .map(|(index, value)| {
+                    let candidate = value.trim();
+                    if candidate.is_empty() {
+                        return Err(anyhow::anyhow!(
+                            "invalid FILAMENT_TRUSTED_PROXY_CIDRS entry at position {}: empty value",
+                            index + 1
+                        ));
+                    }
+                    IpNetwork::from_str(candidate).map_err(|_| {
+                        anyhow::anyhow!(
+                            "invalid FILAMENT_TRUSTED_PROXY_CIDRS entry at position {}: {candidate:?}",
+                            index + 1
+                        )
+                    })
+                })
+                .collect()
+        },
+    )
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -76,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
         audit_list_limit_max,
         guild_ip_ban_max_entries,
     ) = parse_directory_runtime_limits_from_env(&defaults)?;
+    let trusted_proxy_cidrs = parse_trusted_proxy_cidrs_from_env(&defaults)?;
     let captcha_hcaptcha_site_key = std::env::var("FILAMENT_HCAPTCHA_SITE_KEY").ok();
     let captcha_hcaptcha_secret = std::env::var("FILAMENT_HCAPTCHA_SECRET").ok();
     let app_config = AppConfig {
@@ -90,6 +121,7 @@ async fn main() -> anyhow::Result<()> {
         directory_join_requests_per_minute_per_user,
         audit_list_limit_max,
         guild_ip_ban_max_entries,
+        trusted_proxy_cidrs,
         captcha_hcaptcha_site_key,
         captcha_hcaptcha_secret,
         captcha_verify_url: std::env::var("FILAMENT_HCAPTCHA_VERIFY_URL")
@@ -105,17 +137,21 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     tracing::info!(%addr, "filament-server listening");
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_directory_runtime_limits_from_env, parse_u32_env_or_default,
-        parse_usize_env_or_default,
+        parse_directory_runtime_limits_from_env, parse_trusted_proxy_cidrs_from_env,
+        parse_u32_env_or_default, parse_usize_env_or_default,
     };
-    use filament_server::AppConfig;
+    use filament_server::{directory_contract::IpNetwork, AppConfig};
     use std::sync::{Mutex, OnceLock};
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -177,6 +213,37 @@ mod tests {
         std::env::set_var("FILAMENT_AUDIT_LIST_LIMIT_MAX", "bogus");
         let result = parse_directory_runtime_limits_from_env(&AppConfig::default());
         std::env::remove_var("FILAMENT_AUDIT_LIST_LIMIT_MAX");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn trusted_proxy_cidrs_env_overrides_are_parsed() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_TRUSTED_PROXY_CIDRS");
+        std::env::set_var(
+            "FILAMENT_TRUSTED_PROXY_CIDRS",
+            "10.0.0.0/8, 192.0.2.10, 2001:db8::/64",
+        );
+        let parsed = parse_trusted_proxy_cidrs_from_env(&AppConfig::default())
+            .expect("trusted proxy cidrs should parse");
+        std::env::remove_var("FILAMENT_TRUSTED_PROXY_CIDRS");
+        assert_eq!(
+            parsed,
+            vec![
+                IpNetwork::try_from(String::from("10.0.0.0/8")).expect("valid cidr"),
+                IpNetwork::try_from(String::from("192.0.2.10")).expect("valid host"),
+                IpNetwork::try_from(String::from("2001:db8::/64")).expect("valid cidr"),
+            ]
+        );
+    }
+
+    #[test]
+    fn trusted_proxy_cidrs_env_rejects_invalid_values() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_TRUSTED_PROXY_CIDRS");
+        std::env::set_var("FILAMENT_TRUSTED_PROXY_CIDRS", "10.0.0.0/8,bad-cidr");
+        let result = parse_trusted_proxy_cidrs_from_env(&AppConfig::default());
+        std::env::remove_var("FILAMENT_TRUSTED_PROXY_CIDRS");
         assert!(result.is_err());
     }
 }

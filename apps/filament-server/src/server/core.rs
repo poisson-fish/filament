@@ -21,7 +21,7 @@ use uuid::Uuid;
 use super::{
     auth::{build_captcha_config, build_livekit_config, hash_password},
     directory_contract::{
-        DEFAULT_AUDIT_LIST_LIMIT_MAX, DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP,
+        IpNetwork, DEFAULT_AUDIT_LIST_LIMIT_MAX, DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP,
         DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER, DEFAULT_GUILD_IP_BAN_MAX_ENTRIES,
     },
     errors::AuthFailure,
@@ -106,6 +106,7 @@ pub struct AppConfig {
     pub guild_ip_ban_max_entries: usize,
     pub media_subscribe_token_cap_per_channel: usize,
     pub max_created_guilds_per_user: usize,
+    pub trusted_proxy_cidrs: Vec<IpNetwork>,
     pub livekit_token_ttl: Duration,
     pub captcha_hcaptcha_site_key: Option<String>,
     pub captcha_hcaptcha_secret: Option<String>,
@@ -145,6 +146,7 @@ impl Default for AppConfig {
             guild_ip_ban_max_entries: DEFAULT_GUILD_IP_BAN_MAX_ENTRIES,
             media_subscribe_token_cap_per_channel: DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL,
             max_created_guilds_per_user: DEFAULT_MAX_CREATED_GUILDS_PER_USER,
+            trusted_proxy_cidrs: Vec::new(),
             livekit_token_ttl: Duration::from_secs(DEFAULT_LIVEKIT_TOKEN_TTL_SECS),
             captcha_hcaptcha_site_key: None,
             captcha_hcaptcha_secret: None,
@@ -176,6 +178,7 @@ pub(crate) struct RuntimeSecurityConfig {
     pub(crate) media_publish_requests_per_minute: u32,
     pub(crate) media_subscribe_token_cap_per_channel: usize,
     pub(crate) max_created_guilds_per_user: usize,
+    pub(crate) trusted_proxy_cidrs: Arc<Vec<IpNetwork>>,
     pub(crate) livekit_token_ttl: Duration,
     pub(crate) captcha: Option<Arc<CaptchaConfig>>,
 }
@@ -341,6 +344,7 @@ impl AppState {
                 media_publish_requests_per_minute: config.media_publish_requests_per_minute,
                 media_subscribe_token_cap_per_channel: config.media_subscribe_token_cap_per_channel,
                 max_created_guilds_per_user: config.max_created_guilds_per_user,
+                trusted_proxy_cidrs: Arc::new(config.trusted_proxy_cidrs.clone()),
                 livekit_token_ttl: config.livekit_token_ttl,
                 captcha: captcha.map(Arc::new),
             }),

@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{connect_info::ConnectInfo, Extension, Path, State},
     http::{header::CONTENT_LENGTH, header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
     response::Response,
     Json,
@@ -9,11 +9,12 @@ use futures_util::StreamExt;
 use object_store::{path::Path as ObjectPath, ObjectStore};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
+use std::net::SocketAddr;
 
 use filament_core::{tokenize_markdown, ProfileAbout, UserId, Username};
 
 use crate::server::{
-    auth::{authenticate, enforce_auth_route_rate_limit, now_unix},
+    auth::{authenticate, enforce_auth_route_rate_limit, extract_client_ip, now_unix},
     core::{
         AppState, ProfileAvatarRecord, MAX_MIME_SNIFF_BYTES, MAX_PROFILE_AVATAR_MIME_CHARS,
         MAX_PROFILE_AVATAR_OBJECT_KEY_CHARS,
@@ -27,10 +28,16 @@ use crate::server::{
 pub(crate) async fn update_my_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(payload): Json<UpdateProfileRequest>,
 ) -> Result<Json<UserProfileResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
-    enforce_auth_route_rate_limit(&state, &headers, "profile_update").await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    enforce_auth_route_rate_limit(&state, client_ip, "profile_update").await?;
     let auth = authenticate(&state, &headers).await?;
 
     let next_username = payload
@@ -167,10 +174,16 @@ pub(crate) async fn get_user_profile(
 pub(crate) async fn upload_my_avatar(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     body: Body,
 ) -> Result<Json<UserProfileResponse>, AuthFailure> {
     ensure_db_schema(&state).await?;
-    enforce_auth_route_rate_limit(&state, &headers, "profile_avatar_upload").await?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    enforce_auth_route_rate_limit(&state, client_ip, "profile_avatar_upload").await?;
     let auth = authenticate(&state, &headers).await?;
 
     let declared_content_type = if let Some(content_type) = headers

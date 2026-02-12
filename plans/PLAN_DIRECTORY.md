@@ -171,19 +171,37 @@ Add durable tables/config for IP bans and scalable join/audit queries.
 Harden client-IP derivation so IP bans are enforceable and non-spoofable.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Replace direct `x-forwarded-for` trust with a trusted proxy model:
+- [x] Replace direct `x-forwarded-for` trust with a trusted proxy model:
   - default: use socket peer address
   - optional forwarded-header trust only when explicitly configured
-- [ ] Introduce canonical IP parser (IPv4/IPv6) and reject malformed/suspicious values.
-- [ ] Update rate-limit keying and moderation handlers to use normalized client IP output.
-- [ ] Add structured tracing fields for `client_ip_source` (`peer|forwarded`) without logging unsafe raw header blobs.
+- [x] Introduce canonical IP parser (IPv4/IPv6) and reject malformed/suspicious values.
+- [x] Update rate-limit keying and moderation handlers to use normalized client IP output.
+- [x] Add structured tracing fields for `client_ip_source` (`peer|forwarded`) without logging unsafe raw header blobs.
 
 ### Tests
-- [ ] Unit tests for IP extraction precedence and malformed header handling.
-- [ ] Integration tests for trusted/untrusted proxy modes.
+- [x] Unit tests for IP extraction precedence and malformed header handling.
+- [x] Integration tests for trusted/untrusted proxy modes.
+
+### Refactor Notes
+- Replaced header-only client IP extraction in `apps/filament-server/src/server/auth.rs` with a typed resolver pipeline:
+  - `ClientIp` (`ip: Option<IpAddr>`, source enum `peer|forwarded`)
+  - trusted proxy evaluation against configured CIDR ranges
+  - strict `x-forwarded-for` parsing with bounded header/entry length and IPv4/IPv6 parsing
+- Added trusted proxy runtime configuration in server config surfaces:
+  - new `AppConfig` field: `trusted_proxy_cidrs` in `apps/filament-server/src/server/core.rs`
+  - env parsing for `FILAMENT_TRUSTED_PROXY_CIDRS` in `apps/filament-server/src/main.rs`
+- Updated all IP-based keying paths to use normalized `ClientIp` output:
+  - route-local auth/media rate limits in `apps/filament-server/src/server/auth.rs`
+  - media token audit metadata now writes normalized IP and explicit `client_ip_source` in `apps/filament-server/src/server/handlers/media.rs`
+- Replaced global governor `SmartIpKeyExtractor` with a trusted extractor bound to the same policy in `apps/filament-server/src/server/router.rs`, removing unconditional forwarded-header trust.
+- Runtime now serves with connection metadata (`into_make_service_with_connect_info::<SocketAddr>`) in `apps/filament-server/src/main.rs`, enabling peer-address-first policy in production.
+- Added tests:
+  - unit: `apps/filament-server/src/server/auth.rs` (`client_ip_*` resolution tests)
+  - integration: `apps/filament-server/src/server/tests.rs` trusted vs untrusted proxy rate-limit behavior tests
+  - env parsing: `apps/filament-server/src/main.rs` trusted proxy CIDR parser tests
 
 ### Security Outlook
 - Eliminates spoofed-header bypass for IP-based abuse controls.

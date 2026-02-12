@@ -1,4 +1,7 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    net::IpAddr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::anyhow;
 use argon2::{
@@ -24,9 +27,68 @@ use sqlx::Row;
 use super::{
     core::{AppConfig, AppState, AuthContext, CaptchaConfig, LiveKitConfig, ACCESS_TOKEN_TTL_SECS},
     db::ensure_db_schema,
+    directory_contract::IpNetwork,
     errors::AuthFailure,
     types::{ChannelPath, MediaPublishSource},
 };
+
+const MAX_X_FORWARDED_FOR_HEADER_CHARS: usize = 512;
+const MAX_X_FORWARDED_FOR_ENTRY_CHARS: usize = 64;
+const UNKNOWN_CLIENT_IP: &str = "unknown";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClientIpSource {
+    Peer,
+    Forwarded,
+}
+
+impl ClientIpSource {
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Peer => "peer",
+            Self::Forwarded => "forwarded",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ClientIp {
+    ip: Option<IpAddr>,
+    source: ClientIpSource,
+}
+
+impl ClientIp {
+    #[must_use]
+    pub(crate) fn ip(self) -> Option<IpAddr> {
+        self.ip
+    }
+
+    #[must_use]
+    pub(crate) fn source(self) -> ClientIpSource {
+        self.source
+    }
+
+    #[must_use]
+    pub(crate) fn normalized(self) -> String {
+        self.ip
+            .map_or_else(|| String::from(UNKNOWN_CLIENT_IP), |ip| ip.to_string())
+    }
+
+    fn peer(ip: Option<IpAddr>) -> Self {
+        Self {
+            ip,
+            source: ClientIpSource::Peer,
+        }
+    }
+
+    fn forwarded(ip: IpAddr) -> Self {
+        Self {
+            ip: Some(ip),
+            source: ClientIpSource::Forwarded,
+        }
+    }
+}
 
 pub(crate) fn validate_password(value: &str) -> Result<(), AuthFailure> {
     let len = value.len();
@@ -276,10 +338,10 @@ pub(crate) fn validate_captcha_verify_url(value: &str) -> anyhow::Result<String>
 
 pub(crate) async fn enforce_auth_route_rate_limit(
     state: &AppState,
-    headers: &HeaderMap,
+    client_ip: ClientIp,
     route: &str,
 ) -> Result<(), AuthFailure> {
-    let ip = extract_client_ip(headers);
+    let ip = client_ip.normalized();
     let key = format!("{route}:{ip}");
     let now = now_unix();
 
@@ -289,7 +351,12 @@ pub(crate) async fn enforce_auth_route_rate_limit(
     let max_hits =
         usize::try_from(state.runtime.auth_route_requests_per_minute).unwrap_or(usize::MAX);
     if route_hits.len() >= max_hits {
-        tracing::warn!(event = "auth.rate_limit", route = %route, ip = %ip);
+        tracing::warn!(
+            event = "auth.rate_limit",
+            route = %route,
+            client_ip = %ip,
+            client_ip_source = client_ip.source().as_str()
+        );
         return Err(AuthFailure::RateLimited);
     }
     route_hits.push(now);
@@ -298,11 +365,11 @@ pub(crate) async fn enforce_auth_route_rate_limit(
 
 pub(crate) async fn enforce_media_token_rate_limit(
     state: &AppState,
-    headers: &HeaderMap,
+    client_ip: ClientIp,
     user_id: UserId,
     path: &ChannelPath,
 ) -> Result<(), AuthFailure> {
-    let ip = extract_client_ip(headers);
+    let ip = client_ip.normalized();
     let key = format!("{ip}:{}:{}:{}", user_id, path.guild_id, path.channel_id);
     let now = now_unix();
 
@@ -312,7 +379,14 @@ pub(crate) async fn enforce_media_token_rate_limit(
     let max_hits =
         usize::try_from(state.runtime.media_token_requests_per_minute).unwrap_or(usize::MAX);
     if route_hits.len() >= max_hits {
-        tracing::warn!(event = "media.token.rate_limit", ip = %ip, user_id = %user_id, guild_id = %path.guild_id, channel_id = %path.channel_id);
+        tracing::warn!(
+            event = "media.token.rate_limit",
+            client_ip = %ip,
+            client_ip_source = client_ip.source().as_str(),
+            user_id = %user_id,
+            guild_id = %path.guild_id,
+            channel_id = %path.channel_id
+        );
         return Err(AuthFailure::RateLimited);
     }
     route_hits.push(now);
@@ -321,11 +395,11 @@ pub(crate) async fn enforce_media_token_rate_limit(
 
 pub(crate) async fn enforce_media_publish_rate_limit(
     state: &AppState,
-    headers: &HeaderMap,
+    client_ip: ClientIp,
     user_id: UserId,
     path: &ChannelPath,
 ) -> Result<(), AuthFailure> {
-    let ip = extract_client_ip(headers);
+    let ip = client_ip.normalized();
     let key = format!("{ip}:{}", media_channel_user_key(user_id, path));
     let now = now_unix();
 
@@ -335,7 +409,14 @@ pub(crate) async fn enforce_media_publish_rate_limit(
     let max_hits =
         usize::try_from(state.runtime.media_publish_requests_per_minute).unwrap_or(usize::MAX);
     if route_hits.len() >= max_hits {
-        tracing::warn!(event = "media.publish.rate_limit", ip = %ip, user_id = %user_id, guild_id = %path.guild_id, channel_id = %path.channel_id);
+        tracing::warn!(
+            event = "media.publish.rate_limit",
+            client_ip = %ip,
+            client_ip_source = client_ip.source().as_str(),
+            user_id = %user_id,
+            guild_id = %path.guild_id,
+            channel_id = %path.channel_id
+        );
         return Err(AuthFailure::RateLimited);
     }
     route_hits.push(now);
@@ -396,12 +477,141 @@ pub(crate) fn allowed_publish_sources(permissions: PermissionSet) -> Vec<MediaPu
     sources
 }
 
-pub(crate) fn extract_client_ip(headers: &HeaderMap) -> String {
+pub(crate) fn resolve_client_ip(
+    headers: &HeaderMap,
+    peer_ip: Option<IpAddr>,
+    trusted_proxy_cidrs: &[IpNetwork],
+) -> ClientIp {
+    let Some(peer_ip) = peer_ip else {
+        return ClientIp::peer(None);
+    };
+    let peer_is_trusted = trusted_proxy_cidrs
+        .iter()
+        .any(|network| network.contains(peer_ip));
+    if peer_is_trusted {
+        if let Some(forwarded_ip) = parse_forwarded_ip(headers) {
+            return ClientIp::forwarded(forwarded_ip);
+        }
+    }
+    ClientIp::peer(Some(peer_ip))
+}
+
+#[must_use]
+pub(crate) fn extract_client_ip(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer_ip: Option<IpAddr>,
+) -> ClientIp {
+    resolve_client_ip(
+        headers,
+        peer_ip,
+        state.runtime.trusted_proxy_cidrs.as_slice(),
+    )
+}
+
+fn parse_forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
     headers
         .get("x-forwarded-for")
         .and_then(|value| value.to_str().ok())
+        .filter(|value| value.len() <= MAX_X_FORWARDED_FOR_HEADER_CHARS)
         .and_then(|value| value.split(',').next())
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| String::from("unknown"), ToOwned::to_owned)
+        .filter(|value| !value.is_empty() && value.len() <= MAX_X_FORWARDED_FOR_ENTRY_CHARS)
+        .and_then(|value| value.parse::<IpAddr>().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_client_ip, ClientIpSource};
+    use crate::server::directory_contract::IpNetwork;
+    use axum::http::HeaderMap;
+
+    #[test]
+    fn client_ip_defaults_to_peer_when_proxy_is_untrusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.21".parse().expect("valid header"),
+        );
+        let resolved = resolve_client_ip(
+            &headers,
+            Some("10.10.0.4".parse().expect("valid ip")),
+            &Vec::new(),
+        );
+        assert_eq!(resolved.source(), ClientIpSource::Peer);
+        assert_eq!(
+            resolved
+                .ip()
+                .expect("peer ip should be present")
+                .to_string(),
+            "10.10.0.4"
+        );
+    }
+
+    #[test]
+    fn client_ip_uses_forwarded_value_when_peer_proxy_is_trusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.44, 203.0.113.10".parse().expect("valid header"),
+        );
+        let trusted = vec![IpNetwork::try_from(String::from("10.0.0.0/8")).expect("valid cidr")];
+        let resolved = resolve_client_ip(
+            &headers,
+            Some("10.2.0.8".parse().expect("valid ip")),
+            &trusted,
+        );
+        assert_eq!(resolved.source(), ClientIpSource::Forwarded);
+        assert_eq!(
+            resolved
+                .ip()
+                .expect("forwarded ip should be present")
+                .to_string(),
+            "198.51.100.44"
+        );
+    }
+
+    #[test]
+    fn client_ip_rejects_malformed_forwarded_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.44:80".parse().expect("valid header"),
+        );
+        let trusted = vec![IpNetwork::try_from(String::from("10.0.0.0/8")).expect("valid cidr")];
+        let resolved = resolve_client_ip(
+            &headers,
+            Some("10.2.0.8".parse().expect("valid ip")),
+            &trusted,
+        );
+        assert_eq!(resolved.source(), ClientIpSource::Peer);
+        assert_eq!(
+            resolved
+                .ip()
+                .expect("peer ip should be present")
+                .to_string(),
+            "10.2.0.8"
+        );
+    }
+
+    #[test]
+    fn client_ip_rejects_oversized_forwarded_header() {
+        let mut headers = HeaderMap::new();
+        let oversized = format!("{},{}", "198.51.100.1", "9".repeat(600));
+        headers.insert("x-forwarded-for", oversized.parse().expect("valid header"));
+        let trusted = vec![IpNetwork::try_from(String::from("10.0.0.0/8")).expect("valid cidr")];
+        let resolved = resolve_client_ip(
+            &headers,
+            Some("10.2.0.8".parse().expect("valid ip")),
+            &trusted,
+        );
+        assert_eq!(resolved.source(), ClientIpSource::Peer);
+        assert_eq!(
+            resolved
+                .ip()
+                .expect("peer ip should be present")
+                .to_string(),
+            "10.2.0.8"
+        );
+    }
 }
