@@ -593,6 +593,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setGatewayOnline: profileState.setGatewayOnline,
     setOnlineMembers: profileState.setOnlineMembers,
     setMessages: messageState.setMessages,
+    setReactionState: messageState.setReactionState,
     isMessageListNearBottom: messageListController.isMessageListNearBottom,
     scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
   });

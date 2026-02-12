@@ -4,7 +4,7 @@
 - HTTP JSON body default cap: `1 MiB`.
 - WebSocket frame cap: `64 KiB`.
 - WebSocket decoded event cap: `64 KiB`.
-- Baseline REST rate limit: `60 requests/minute/client IP`.
+- Baseline REST rate limit: `180 requests/minute/client IP` (override with `FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE`).
 - Gateway ingress cap: `20 events/10s/connection` (Phase 1 implementation target).
 
 ## Timeouts

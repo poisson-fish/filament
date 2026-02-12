@@ -9,7 +9,10 @@ use sqlx::Row;
 use std::net::SocketAddr;
 
 use crate::server::{
-    auth::{authenticate, extract_client_ip, now_unix, validate_message_content},
+    auth::{
+        authenticate, channel_key, extract_client_ip, now_unix, outbound_event,
+        validate_message_content,
+    },
     core::{AppState, SearchOperation, MAX_HISTORY_LIMIT},
     db::{ensure_db_schema, permission_list_from_set},
     domain::{
@@ -20,13 +23,30 @@ use crate::server::{
         validate_reaction_emoji, write_audit_log,
     },
     errors::AuthFailure,
-    realtime::{create_message_internal, enqueue_search_operation, indexed_message_from_response},
+    realtime::{
+        broadcast_channel_event, create_message_internal, enqueue_search_operation,
+        indexed_message_from_response,
+    },
     types::{
         ChannelPath, ChannelPermissionsResponse, CreateMessageRequest, EditMessageRequest,
         HistoryQuery, MessageHistoryResponse, MessagePath, MessageResponse, ReactionPath,
         ReactionResponse,
     },
 };
+
+async fn broadcast_message_reaction_event(state: &AppState, path: &ReactionPath, count: usize) {
+    let event = outbound_event(
+        "message_reaction",
+        serde_json::json!({
+            "guild_id": &path.guild_id,
+            "channel_id": &path.channel_id,
+            "message_id": &path.message_id,
+            "emoji": &path.emoji,
+            "count": count,
+        }),
+    );
+    broadcast_channel_event(state, &channel_key(&path.guild_id, &path.channel_id), event).await;
+}
 
 pub(crate) async fn create_message(
     State(state): State<AppState>,
@@ -618,10 +638,12 @@ pub(crate) async fn add_reaction(
         .map_err(|_| AuthFailure::Internal)?;
         let count: i64 = row.try_get("count").map_err(|_| AuthFailure::Internal)?;
         let count = usize::try_from(count).map_err(|_| AuthFailure::Internal)?;
-        return Ok(Json(ReactionResponse {
-            emoji: path.emoji,
+        let response = ReactionResponse {
+            emoji: path.emoji.clone(),
             count,
-        }));
+        };
+        broadcast_message_reaction_event(&state, &path, response.count).await;
+        return Ok(Json(response));
     }
 
     let mut guilds = state.guilds.write().await;
@@ -639,11 +661,13 @@ pub(crate) async fn add_reaction(
         .ok_or(AuthFailure::NotFound)?;
     let users = message.reactions.entry(path.emoji.clone()).or_default();
     users.insert(auth.user_id);
-
-    Ok(Json(ReactionResponse {
-        emoji: path.emoji,
+    let response = ReactionResponse {
+        emoji: path.emoji.clone(),
         count: users.len(),
-    }))
+    };
+    drop(guilds);
+    broadcast_message_reaction_event(&state, &path, response.count).await;
+    Ok(Json(response))
 }
 
 pub(crate) async fn remove_reaction(
@@ -700,10 +724,12 @@ pub(crate) async fn remove_reaction(
         .map_err(|_| AuthFailure::Internal)?;
         let count: i64 = row.try_get("count").map_err(|_| AuthFailure::Internal)?;
         let count = usize::try_from(count).map_err(|_| AuthFailure::Internal)?;
-        return Ok(Json(ReactionResponse {
-            emoji: path.emoji,
+        let response = ReactionResponse {
+            emoji: path.emoji.clone(),
             count,
-        }));
+        };
+        broadcast_message_reaction_event(&state, &path, response.count).await;
+        return Ok(Json(response));
     }
 
     let mut guilds = state.guilds.write().await;
@@ -731,8 +757,11 @@ pub(crate) async fn remove_reaction(
         0
     };
 
-    Ok(Json(ReactionResponse {
-        emoji: path.emoji,
+    let response = ReactionResponse {
+        emoji: path.emoji.clone(),
         count,
-    }))
+    };
+    drop(guilds);
+    broadcast_message_reaction_event(&state, &path, response.count).await;
+    Ok(Json(response))
 }

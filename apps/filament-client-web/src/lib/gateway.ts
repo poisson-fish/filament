@@ -1,10 +1,15 @@
 import { type AccessToken } from "../domain/auth";
 import {
+  channelIdFromInput,
   type ChannelId,
   type GuildId,
+  type MessageId,
   type MessageRecord,
+  type ReactionEmoji,
   guildIdFromInput,
+  messageIdFromInput,
   messageFromResponse,
+  reactionEmojiFromInput,
   userIdFromInput,
 } from "../domain/chat";
 
@@ -31,9 +36,18 @@ interface PresenceUpdatePayload {
   status: PresenceStatus;
 }
 
+export interface MessageReactionPayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  messageId: MessageId;
+  emoji: ReactionEmoji;
+  count: number;
+}
+
 interface GatewayHandlers {
   onReady?: () => void;
   onMessageCreate?: (message: MessageRecord) => void;
+  onMessageReaction?: (payload: MessageReactionPayload) => void;
   onPresenceSync?: (payload: PresenceSyncPayload) => void;
   onPresenceUpdate?: (payload: PresenceUpdatePayload) => void;
   onOpenStateChange?: (isOpen: boolean) => void;
@@ -116,6 +130,45 @@ function parsePresenceUpdatePayload(payload: unknown): PresenceUpdatePayload | n
     guildId,
     userId,
     status: value.status,
+  };
+}
+
+function parseMessageReactionPayload(payload: unknown): MessageReactionPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.guild_id !== "string" ||
+    typeof value.channel_id !== "string" ||
+    typeof value.message_id !== "string" ||
+    typeof value.emoji !== "string" ||
+    typeof value.count !== "number" ||
+    !Number.isSafeInteger(value.count) ||
+    value.count < 0
+  ) {
+    return null;
+  }
+
+  let guildId: GuildId;
+  let channelId: ChannelId;
+  let messageId: MessageId;
+  let emoji: ReactionEmoji;
+  try {
+    guildId = guildIdFromInput(value.guild_id);
+    channelId = channelIdFromInput(value.channel_id);
+    messageId = messageIdFromInput(value.message_id);
+    emoji = reactionEmojiFromInput(value.emoji);
+  } catch {
+    return null;
+  }
+
+  return {
+    guildId,
+    channelId,
+    messageId,
+    emoji,
+    count: value.count,
   };
 }
 
@@ -228,6 +281,15 @@ export function connectGateway(
       } catch {
         return;
       }
+      return;
+    }
+
+    if (envelope.t === "message_reaction") {
+      const payload = parseMessageReactionPayload(envelope.d);
+      if (!payload) {
+        return;
+      }
+      handlers.onMessageReaction?.(payload);
       return;
     }
 

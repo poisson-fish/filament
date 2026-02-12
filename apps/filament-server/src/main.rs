@@ -30,6 +30,13 @@ fn parse_u32_env_or_default(var_name: &str, default: u32) -> anyhow::Result<u32>
     )
 }
 
+fn parse_rate_limit_requests_per_minute_from_env(defaults: &AppConfig) -> anyhow::Result<u32> {
+    parse_u32_env_or_default(
+        "FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE",
+        defaults.rate_limit_requests_per_minute,
+    )
+}
+
 fn parse_directory_runtime_limits_from_env(
     defaults: &AppConfig,
 ) -> anyhow::Result<(u32, u32, usize, usize)> {
@@ -112,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
     let livekit_api_secret = std::env::var("FILAMENT_LIVEKIT_API_SECRET")
         .map_err(|_| anyhow::anyhow!("FILAMENT_LIVEKIT_API_SECRET is required for runtime"))?;
     let defaults = AppConfig::default();
+    let rate_limit_requests_per_minute = parse_rate_limit_requests_per_minute_from_env(&defaults)?;
     let max_created_guilds_per_user = parse_usize_env_or_default(
         "FILAMENT_MAX_CREATED_GUILDS_PER_USER",
         defaults.max_created_guilds_per_user,
@@ -133,6 +141,7 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|_| String::from("ws://127.0.0.1:7880")),
         livekit_api_key: Some(livekit_api_key),
         livekit_api_secret: Some(livekit_api_secret),
+        rate_limit_requests_per_minute,
         max_created_guilds_per_user,
         directory_join_requests_per_minute_per_ip,
         directory_join_requests_per_minute_per_user,
@@ -166,8 +175,9 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_directory_runtime_limits_from_env, parse_server_owner_user_id_from_env,
-        parse_trusted_proxy_cidrs_from_env, parse_u32_env_or_default, parse_usize_env_or_default,
+        parse_directory_runtime_limits_from_env, parse_rate_limit_requests_per_minute_from_env,
+        parse_server_owner_user_id_from_env, parse_trusted_proxy_cidrs_from_env,
+        parse_u32_env_or_default, parse_usize_env_or_default,
     };
     use filament_core::UserId;
     use filament_server::{directory_contract::IpNetwork, AppConfig};
@@ -199,6 +209,31 @@ mod tests {
         std::env::set_var(key, "NaN");
         let result = parse_u32_env_or_default(key, 10);
         std::env::remove_var(key);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rate_limit_env_override_is_parsed() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE");
+        std::env::set_var("FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE", "240");
+
+        let parsed = parse_rate_limit_requests_per_minute_from_env(&AppConfig::default())
+            .expect("rate limit env should parse");
+
+        std::env::remove_var("FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE");
+        assert_eq!(parsed, 240);
+    }
+
+    #[test]
+    fn rate_limit_env_rejects_invalid_values() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE");
+        std::env::set_var("FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE", "bogus");
+
+        let result = parse_rate_limit_requests_per_minute_from_env(&AppConfig::default());
+
+        std::env::remove_var("FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE");
         assert!(result.is_err());
     }
 

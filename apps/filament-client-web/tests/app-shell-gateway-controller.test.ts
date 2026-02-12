@@ -2,14 +2,18 @@ import { createRoot, createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { authSessionFromResponse } from "../src/domain/auth";
 import {
+  messageIdFromInput,
   channelIdFromInput,
   guildIdFromInput,
   messageFromResponse,
+  reactionEmojiFromInput,
 } from "../src/domain/chat";
 import {
+  applyMessageReactionUpdate,
   applyPresenceUpdate,
   createGatewayController,
 } from "../src/features/app-shell/controllers/gateway-controller";
+import type { ReactionView } from "../src/features/app-shell/helpers";
 
 const SESSION = authSessionFromResponse({
   access_token: "A".repeat(64),
@@ -19,6 +23,8 @@ const SESSION = authSessionFromResponse({
 
 const GUILD_ID = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
 const CHANNEL_ID = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW");
+const MESSAGE_ID = messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAA");
+const THUMBS_UP = reactionEmojiFromInput("👍");
 
 function messageFixture(input: {
   guildId: string;
@@ -66,6 +72,21 @@ describe("app shell gateway controller", () => {
     ).toEqual(["alpha"]);
   });
 
+  it("applies message reaction updates without preserving impossible reacted state", () => {
+    expect(
+      applyMessageReactionUpdate(
+        {
+          [`${MESSAGE_ID}|${THUMBS_UP}`]: { count: 2, reacted: true },
+        },
+        {
+          messageId: MESSAGE_ID,
+          emoji: THUMBS_UP,
+          count: 0,
+        },
+      ),
+    ).toEqual({});
+  });
+
   it("wires gateway events and closes subscriptions on channel access loss", async () => {
     const [session] = createSignal(SESSION);
     const [activeGuildId] = createSignal(GUILD_ID);
@@ -82,6 +103,9 @@ describe("app shell gateway controller", () => {
         content: "existing",
       }),
     ]);
+    const [reactionState, setReactionState] = createSignal<Record<string, ReactionView>>(
+      {},
+    );
 
     const scrollMessageListToBottomMock = vi.fn();
     const closeGatewayMock = vi.fn();
@@ -103,6 +127,7 @@ describe("app shell gateway controller", () => {
           setGatewayOnline,
           setOnlineMembers,
           setMessages,
+          setReactionState,
           isMessageListNearBottom: () => true,
           scrollMessageListToBottom: scrollMessageListToBottomMock,
         },
@@ -156,6 +181,18 @@ describe("app shell gateway controller", () => {
       status: "offline",
     });
     expect(onlineMembers()).toEqual(["beta"]);
+
+    handlers.onMessageReaction({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      messageId: MESSAGE_ID,
+      emoji: THUMBS_UP,
+      count: 1,
+    });
+    expect(reactionState()[`${MESSAGE_ID}|${THUMBS_UP}`]).toEqual({
+      count: 1,
+      reacted: false,
+    });
 
     setCanAccessActiveChannel(false);
     await flush();

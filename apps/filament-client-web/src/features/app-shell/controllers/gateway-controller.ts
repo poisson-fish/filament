@@ -1,8 +1,19 @@
 import { createEffect, onCleanup, type Accessor, type Setter } from "solid-js";
 import type { AccessToken, AuthSession } from "../../../domain/auth";
-import type { ChannelId, GuildId, MessageRecord } from "../../../domain/chat";
-import { connectGateway } from "../../../lib/gateway";
-import { mergeMessage } from "../helpers";
+import type {
+  ChannelId,
+  GuildId,
+  MessageId,
+  MessageRecord,
+  ReactionEmoji,
+} from "../../../domain/chat";
+import { connectGateway, type MessageReactionPayload } from "../../../lib/gateway";
+import {
+  mergeMessage,
+  reactionKey,
+  upsertReactionEntry,
+  type ReactionView,
+} from "../helpers";
 
 export interface GatewayControllerOptions {
   session: Accessor<AuthSession | null>;
@@ -12,6 +23,7 @@ export interface GatewayControllerOptions {
   setGatewayOnline: Setter<boolean>;
   setOnlineMembers: Setter<string[]>;
   setMessages: Setter<MessageRecord[]>;
+  setReactionState: Setter<Record<string, ReactionView>>;
   isMessageListNearBottom: () => boolean;
   scrollMessageListToBottom: () => void;
 }
@@ -23,6 +35,7 @@ interface GatewayClient {
 interface GatewayHandlers {
   onOpenStateChange: (isOpen: boolean) => void;
   onMessageCreate: (message: MessageRecord) => void;
+  onMessageReaction: (payload: MessageReactionPayload) => void;
   onPresenceSync: (payload: { guildId: GuildId; userIds: string[] }) => void;
   onPresenceUpdate: (payload: {
     guildId: GuildId;
@@ -38,6 +51,23 @@ export interface GatewayControllerDependencies {
     channelId: ChannelId,
     handlers: GatewayHandlers,
   ) => GatewayClient;
+}
+
+export function applyMessageReactionUpdate(
+  existing: Record<string, ReactionView>,
+  payload: {
+    messageId: MessageId;
+    emoji: ReactionEmoji;
+    count: number;
+  },
+): Record<string, ReactionView> {
+  const key = reactionKey(payload.messageId, payload.emoji);
+  const nextReacted =
+    payload.count === 0 ? false : (existing[key]?.reacted ?? false);
+  return upsertReactionEntry(existing, key, {
+    count: payload.count,
+    reacted: nextReacted,
+  });
 }
 
 const DEFAULT_GATEWAY_CONTROLLER_DEPENDENCIES: GatewayControllerDependencies = {
@@ -89,6 +119,14 @@ export function createGatewayController(
         if (shouldStickToBottom) {
           options.scrollMessageListToBottom();
         }
+      },
+      onMessageReaction: (payload) => {
+        if (payload.guildId !== guildId || payload.channelId !== channelId) {
+          return;
+        }
+        options.setReactionState((existing) =>
+          applyMessageReactionUpdate(existing, payload),
+        );
       },
       onPresenceSync: (payload) => {
         if (payload.guildId !== guildId) {

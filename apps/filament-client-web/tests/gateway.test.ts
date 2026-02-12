@@ -86,6 +86,7 @@ function ulidFromIndex(index: number): string {
 function createOpenGateway() {
   const onReady = vi.fn();
   const onMessageCreate = vi.fn();
+  const onMessageReaction = vi.fn();
   const onPresenceSync = vi.fn();
   const onPresenceUpdate = vi.fn();
   const onOpenStateChange = vi.fn();
@@ -97,6 +98,7 @@ function createOpenGateway() {
     {
       onReady,
       onMessageCreate,
+      onMessageReaction,
       onPresenceSync,
       onPresenceUpdate,
       onOpenStateChange,
@@ -114,6 +116,7 @@ function createOpenGateway() {
     socket,
     onReady,
     onMessageCreate,
+    onMessageReaction,
     onPresenceSync,
     onPresenceUpdate,
     onOpenStateChange,
@@ -160,7 +163,7 @@ describe("gateway payload parsing", () => {
   });
 
   it("rejects invalid envelope versions and event types fail-closed", () => {
-    const { socket, onReady, onMessageCreate, onPresenceSync, onPresenceUpdate } = createOpenGateway();
+    const { socket, onReady, onMessageCreate, onMessageReaction, onPresenceSync, onPresenceUpdate } = createOpenGateway();
     const invalidEnvelopes = [
       { v: 2, t: "ready", d: {} },
       { v: 1, t: "INVALID_TYPE", d: {} },
@@ -176,16 +179,18 @@ describe("gateway payload parsing", () => {
 
     expect(onReady).not.toHaveBeenCalled();
     expect(onMessageCreate).not.toHaveBeenCalled();
+    expect(onMessageReaction).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
     expect(onPresenceUpdate).not.toHaveBeenCalled();
   });
 
   it("rejects oversized gateway event payloads before dispatch", () => {
-    const { socket, onReady, onMessageCreate, onPresenceSync, onPresenceUpdate } = createOpenGateway();
+    const { socket, onReady, onMessageCreate, onMessageReaction, onPresenceSync, onPresenceUpdate } = createOpenGateway();
     socket.emitMessage("x".repeat(70 * 1024));
 
     expect(onReady).not.toHaveBeenCalled();
     expect(onMessageCreate).not.toHaveBeenCalled();
+    expect(onMessageReaction).not.toHaveBeenCalled();
     expect(onPresenceSync).not.toHaveBeenCalled();
     expect(onPresenceUpdate).not.toHaveBeenCalled();
   });
@@ -232,7 +237,7 @@ describe("gateway payload parsing", () => {
   });
 
   it("keeps valid gateway payload compatibility", () => {
-    const { socket, onReady, onMessageCreate, onPresenceSync, onPresenceUpdate } = createOpenGateway();
+    const { socket, onReady, onMessageCreate, onMessageReaction, onPresenceSync, onPresenceUpdate } = createOpenGateway();
     const messageId = ulidFromIndex(3);
     const authorId = ulidFromIndex(4);
     const presenceUserId = ulidFromIndex(5);
@@ -251,6 +256,19 @@ describe("gateway payload parsing", () => {
           markdown_tokens: [{ type: "text", text: "hello" }],
           attachments: [],
           created_at_unix: 1,
+        },
+      }),
+    );
+    socket.emitMessage(
+      JSON.stringify({
+        v: 1,
+        t: "message_reaction",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          message_id: messageId,
+          emoji: "👍",
+          count: 2,
         },
       }),
     );
@@ -278,6 +296,14 @@ describe("gateway payload parsing", () => {
 
     expect(onReady).toHaveBeenCalledTimes(1);
     expect(onMessageCreate).toHaveBeenCalledTimes(1);
+    expect(onMessageReaction).toHaveBeenCalledTimes(1);
+    expect(onMessageReaction).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      channelId: DEFAULT_CHANNEL_ID,
+      messageId,
+      emoji: "👍",
+      count: 2,
+    });
     expect(onPresenceSync).toHaveBeenCalledWith({
       guildId: DEFAULT_GUILD_ID,
       userIds: [presenceUserId],

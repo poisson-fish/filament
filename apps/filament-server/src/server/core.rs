@@ -38,7 +38,7 @@ pub(crate) type GuildChannelPermissionOverrideMap =
 
 pub const DEFAULT_JSON_BODY_LIMIT_BYTES: usize = 1_048_576;
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 10;
-pub const DEFAULT_RATE_LIMIT_REQUESTS_PER_MINUTE: u32 = 60;
+pub const DEFAULT_RATE_LIMIT_REQUESTS_PER_MINUTE: u32 = 180;
 pub const DEFAULT_AUTH_ROUTE_REQUESTS_PER_MINUTE: u32 = 20;
 pub const ACCESS_TOKEN_TTL_SECS: i64 = 15 * 60;
 pub const REFRESH_TOKEN_TTL_SECS: i64 = 30 * 24 * 60 * 60;
