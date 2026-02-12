@@ -172,12 +172,14 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
     - `{ "guilds": [{ "guild_id": "...", "name": "...", "visibility": "public" }] }`
 - `POST /guilds/{guild_id}/channels`
   - Auth required; role must be `owner` or `moderator`
-  - Request: `{ "name": "..." }` (1..64 visible chars/spaces)
-  - Response `200`: `{ "channel_id": "...", "name": "..." }`
+  - Request: `{ "name": "...", "kind"?: "text"|"voice" }` (`kind` defaults to `text`)
+  - `name`: 1..64 visible chars/spaces
+  - Response `200`: `{ "channel_id": "...", "name": "...", "kind": "text"|"voice" }`
 - `GET /guilds/{guild_id}/channels`
   - Auth required; requester must be a guild member
   - Returns channels in that guild where requester has effective `create_message` permission
-  - Response `200`: `{ "channels": [{ "channel_id": "...", "name": "..." }] }`
+  - Response `200`:
+    - `{ "channels": [{ "channel_id": "...", "name": "...", "kind": "text"|"voice" }] }`
 - `GET /guilds/{guild_id}/channels/{channel_id}/permissions/self`
   - Auth required
   - Least-visibility gate: requires effective `create_message` permission in the channel
@@ -303,6 +305,15 @@ Permission enum values:
     - subscribe active-token cap per user/channel
   - Response `200`:
     - `{ "token", "livekit_url", "room", "identity", "can_publish", "can_subscribe", "publish_sources", "expires_in_secs" }`
+
+### RTC Client UX Behavior (Web)
+- Voice controls are only shown for channels with `kind: "voice"` and effective `create_message` access.
+- Web client call states are surfaced as `connecting`, `connected`, `reconnecting`, and `error`.
+- Troubleshooting states are explicit:
+  - token/session expiry (`invalid_credentials`) prompts refresh/login before rejoin
+  - permission rejection (`forbidden`) reports channel permission/override denial
+  - signaling/connect failures prompt verification of `livekit_url` reachability from the browser
+- Camera/screen controls remain capability-based on top of voice (`publish_video`, `publish_screen_share`); no separate video-channel mode exists.
 
 ## Gateway WebSocket API
 

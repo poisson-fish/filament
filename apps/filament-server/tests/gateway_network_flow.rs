@@ -238,3 +238,82 @@ async fn websocket_handshake_and_message_flow_work_over_network() {
         .expect("socket close should succeed");
     server.abort();
 }
+
+#[tokio::test]
+async fn websocket_disconnect_does_not_block_rest_message_create() {
+    let app = test_app();
+
+    let auth = register_and_login(&app, "203.0.113.55").await;
+    let channel = create_channel_context(&app, &auth, "203.0.113.55").await;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener addr should be readable");
+    let server_app = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_app)
+            .await
+            .expect("server should run without errors");
+    });
+
+    let ws_url = format!("ws://{addr}/gateway/ws?access_token={}", auth.access_token);
+    let mut ws_request = ws_url
+        .into_client_request()
+        .expect("websocket request should build");
+    ws_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.55"),
+    );
+    let (mut socket, _response) = connect_async(ws_request)
+        .await
+        .expect("websocket handshake should succeed");
+
+    let ready_json = next_text_event(&mut socket).await;
+    assert_eq!(ready_json["t"], "ready");
+
+    let subscribe = json!({
+        "v": 1,
+        "t": "subscribe",
+        "d": {
+            "guild_id": channel.guild_id,
+            "channel_id": channel.channel_id
+        }
+    });
+    socket
+        .send(Message::Text(subscribe.to_string()))
+        .await
+        .expect("subscribe event should send");
+    let subscribed_json = next_event_of_type(&mut socket, "subscribed").await;
+    assert_eq!(subscribed_json["t"], "subscribed");
+
+    socket
+        .close(None)
+        .await
+        .expect("socket close should succeed");
+    let _ = tokio::time::timeout(Duration::from_millis(250), socket.next()).await;
+
+    let create_message = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.55")
+        .body(Body::from(
+            json!({"content":"message after websocket disconnect"}).to_string(),
+        ))
+        .expect("create message request should build");
+    let message_response = app
+        .clone()
+        .oneshot(create_message)
+        .await
+        .expect("create message request should execute");
+    assert_eq!(message_response.status(), StatusCode::OK);
+
+    server.abort();
+}

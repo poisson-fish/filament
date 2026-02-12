@@ -1,6 +1,8 @@
 import {
   attachmentFilenameFromInput,
   attachmentFromResponse,
+  channelFromResponse,
+  channelKindFromInput,
   channelPermissionSnapshotFromResponse,
   channelIdFromInput,
   friendListFromResponse,
@@ -67,10 +69,11 @@ describe("chat domain invariants", () => {
       guildId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       guildName: "Security",
       visibility: "public",
-      channels: [{ channelId: "01ARZ3NDEKTSV4RRFFQ69G5FAV", name: "incident-room" }],
+      channels: [{ channelId: "01ARZ3NDEKTSV4RRFFQ69G5FAV", name: "incident-room", kind: "voice" }],
     });
 
     expect(workspace.channels[0]?.name).toBe("incident-room");
+    expect(workspace.channels[0]?.kind).toBe("voice");
     expect(workspace.visibility).toBe("public");
   });
 
@@ -81,6 +84,26 @@ describe("chat domain invariants", () => {
       channels: [{ channelId: "01ARZ3NDEKTSV4RRFFQ69G5FAV", name: "incident-room" }],
     });
     expect(workspace.visibility).toBe("private");
+    expect(workspace.channels[0]?.kind).toBe("text");
+  });
+
+  it("validates channel kind parsing", () => {
+    expect(channelKindFromInput("text")).toBe("text");
+    expect(channelKindFromInput("voice")).toBe("voice");
+    expect(() => channelKindFromInput("video")).toThrow();
+
+    const channel = channelFromResponse({
+      channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      name: "incident-room",
+      kind: "voice",
+    });
+    expect(channel.kind).toBe("voice");
+    expect(() =>
+      channelFromResponse({
+        channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        name: "incident-room",
+      }),
+    ).toThrow();
   });
 
   it("validates reactions", () => {

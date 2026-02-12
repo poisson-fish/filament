@@ -17,6 +17,7 @@ export type LivekitUrl = string & { readonly __brand: "livekit_url" };
 export type LivekitRoom = string & { readonly __brand: "livekit_room" };
 export type LivekitIdentity = string & { readonly __brand: "livekit_identity" };
 export type GuildVisibility = "private" | "public";
+export type ChannelKindName = "text" | "voice";
 export type RoleName = "owner" | "moderator" | "member";
 export type PermissionName =
   | "manage_roles"
@@ -156,6 +157,13 @@ export function channelNameFromInput(input: string): ChannelName {
   return visibleNameFromInput<ChannelName>(input, "Channel name");
 }
 
+export function channelKindFromInput(input: string): ChannelKindName {
+  if (input !== "text" && input !== "voice") {
+    throw new DomainValidationError("Channel kind must be text or voice.");
+  }
+  return input;
+}
+
 export function messageContentFromInput(input: string): MessageContent {
   if (input.length > 2000) {
     throw new DomainValidationError("Message content must be 0-2000 characters.");
@@ -267,6 +275,7 @@ export interface GuildRecord {
 export interface ChannelRecord {
   channelId: ChannelId;
   name: ChannelName;
+  kind: ChannelKindName;
 }
 
 export interface ChannelPermissionSnapshot {
@@ -361,6 +370,7 @@ export function channelFromResponse(dto: unknown): ChannelRecord {
   return {
     channelId: channelIdFromInput(requireString(data.channel_id, "channel_id")),
     name: channelNameFromInput(requireString(data.name, "name")),
+    kind: channelKindFromInput(requireString(data.kind, "kind", 16)),
   };
 }
 
@@ -659,9 +669,14 @@ export function workspaceFromStorage(dto: unknown): WorkspaceRecord {
         : "private",
     channels: channelsDto.map((channel) => {
       const channelObj = requireObject(channel, "channel cache");
+      const kindValue = channelObj.kind;
       return {
         channelId: channelIdFromInput(requireString(channelObj.channelId, "channelId")),
         name: channelNameFromInput(requireString(channelObj.name, "name")),
+        kind:
+          typeof kindValue === "string"
+            ? channelKindFromInput(requireString(kindValue, "kind", 16))
+            : "text",
       };
     }),
   };

@@ -145,7 +145,7 @@ describe("app shell guild creation limits", () => {
       }
       if (method === "GET" && url.endsWith(`/guilds/${EXISTING_GUILD_ID}/channels`)) {
         return jsonResponse({
-          channels: [{ channel_id: EXISTING_CHANNEL_ID, name: "general" }],
+          channels: [{ channel_id: EXISTING_CHANNEL_ID, name: "general", kind: "text" }],
         });
       }
       if (
@@ -164,7 +164,7 @@ describe("app shell guild creation limits", () => {
         return jsonResponse({ guild_id: CREATED_GUILD_ID, name: "Security Ops", visibility: "private" });
       }
       if (method === "POST" && url.includes(`/guilds/${CREATED_GUILD_ID}/channels`)) {
-        return jsonResponse({ channel_id: CREATED_CHANNEL_ID, name: "incident-room" });
+        return jsonResponse({ channel_id: CREATED_CHANNEL_ID, name: "incident-room", kind: "text" });
       }
       if (method === "GET" && url.includes("/guilds/public")) {
         return jsonResponse({ guilds: [] });

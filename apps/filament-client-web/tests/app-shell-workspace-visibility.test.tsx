@@ -125,7 +125,7 @@ describe("app shell workspace visibility", () => {
 
       if (url.endsWith(`/guilds/${MEMBER_GUILD_ID}/channels`)) {
         return jsonResponse({
-          channels: [{ channel_id: MEMBER_CHANNEL_ID, name: "incident-room" }],
+          channels: [{ channel_id: MEMBER_CHANNEL_ID, name: "incident-room", kind: "text" }],
         });
       }
 

@@ -12,6 +12,7 @@ import {
   type AttachmentId,
   type AttachmentRecord,
   type ChannelId,
+  type ChannelKindName,
   type ChannelRecord,
   type ChannelPermissionSnapshot,
   type ChannelName,
@@ -524,13 +525,13 @@ export async function fetchGuildChannels(
 export async function createChannel(
   session: AuthSession,
   guildId: GuildId,
-  input: { name: ChannelName },
-): Promise<{ channelId: ChannelId; name: ChannelName }> {
+  input: { name: ChannelName; kind: ChannelKindName },
+): Promise<ChannelRecord> {
   const dto = await requestJson({
     method: "POST",
     path: `/guilds/${guildId}/channels`,
     accessToken: session.accessToken,
-    body: { name: input.name },
+    body: { name: input.name, kind: input.kind },
   });
   return channelFromResponse(dto);
 }
