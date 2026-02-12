@@ -57,15 +57,6 @@ export function ServerRail(props: ServerRailProps) {
         >
           F
         </button>
-        <button
-          type="button"
-          class="server-action"
-          aria-label="Open settings panel"
-          title="Settings"
-          onClick={() => props.onOpenPanel("settings")}
-        >
-          S
-        </button>
       </div>
     </aside>
   );

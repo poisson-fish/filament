@@ -1906,6 +1906,8 @@ export function AppShellPage() {
             isTogglingVoiceMic={isTogglingVoiceMic()}
             isTogglingVoiceCamera={isTogglingVoiceCamera()}
             isTogglingVoiceScreenShare={isTogglingVoiceScreenShare()}
+            currentUserLabel={profile()?.username}
+            currentUserStatusLabel={gatewayOnline() ? "Online" : "Offline"}
             actorLabel={actorLabel}
             voiceParticipantLabel={voiceParticipantLabel}
             onOpenSettings={() => openOverlayPanel("settings")}

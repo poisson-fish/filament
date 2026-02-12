@@ -57,6 +57,7 @@ describe("app shell extracted layout components", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "S" }));
     expect(onSelectWorkspace).toHaveBeenCalledWith(GUILD_ID, TEXT_CHANNEL_ID);
+    expect(screen.queryByRole("button", { name: "Open settings panel" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open friendships panel" }));
     expect(onOpenPanel).toHaveBeenCalledWith("friendships");
@@ -64,6 +65,7 @@ describe("app shell extracted layout components", () => {
 
   it("renders voice controls in channel rail and invokes handlers", () => {
     const onJoinVoice = vi.fn();
+    const onOpenSettings = vi.fn();
 
     render(() => (
       <ChannelRail
@@ -101,7 +103,7 @@ describe("app shell extracted layout components", () => {
         isTogglingVoiceScreenShare={false}
         actorLabel={(value) => value}
         voiceParticipantLabel={(identity) => identity}
-        onOpenSettings={() => {}}
+        onOpenSettings={onOpenSettings}
         onCreateTextChannel={() => {}}
         onCreateVoiceChannel={() => {}}
         onSelectChannel={() => {}}
@@ -115,6 +117,10 @@ describe("app shell extracted layout components", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Join Voice" }));
     expect(onJoinVoice).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Join Voice")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings panel" }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
   it("keeps member rail panel actions and chat header toggles wired", () => {

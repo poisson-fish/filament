@@ -2091,21 +2091,17 @@ select {
   letter-spacing: 0.01em;
 }
 
-.channel-rail-header-action {
-  width: 1.8rem;
-  min-height: 1.8rem;
-  border: 1px solid #3b404c;
-  border-radius: 0.52rem;
-  background: #2d313a;
-  color: #dce1e9;
-  padding: 0;
-  line-height: 1;
-}
-
 .channel-rail-subtitle {
   color: #8f97a4;
   font-size: 0.74rem;
   text-transform: capitalize;
+}
+
+.channel-rail-body {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 0.5rem;
 }
 
 .channel-nav {
@@ -2115,8 +2111,9 @@ select {
   border: 0;
   border-radius: 0;
   background: transparent;
-  overflow: visible;
+  overflow: auto;
   padding-right: 0;
+  min-height: 0;
 }
 
 .channel-nav .channel-group {
@@ -2315,7 +2312,6 @@ select {
 }
 
 .voice-connected-dock {
-  margin-top: auto;
   border: 1px solid #373c48;
   border-radius: 0.72rem;
   background: linear-gradient(180deg, #2a2d35, #262932);
@@ -2352,22 +2348,125 @@ select {
 }
 
 .voice-connected-dock-controls {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.36rem;
 }
 
-.voice-connected-dock-controls button {
+.voice-dock-icon-button {
+  width: 2.45rem;
+  min-height: 2.2rem;
   border: 1px solid #474d5b;
   border-radius: 0.56rem;
   background: #313641;
   color: #e3e6ec;
-  padding: 0.36rem 0.5rem;
-  font-size: 0.79rem;
-  font-weight: 650;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
 
-.voice-connected-dock-controls button:hover {
+.voice-dock-icon-button .icon-mask {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.voice-dock-icon-button:hover {
+  background: #3b404b;
+}
+
+.voice-dock-icon-button.danger {
+  color: #f0b6bf;
+}
+
+.voice-dock-icon-button:disabled {
+  opacity: 0.58;
+  cursor: default;
+}
+
+.voice-dock-icon-button.is-busy .icon-mask {
+  animation: message-action-pulse 950ms ease-in-out infinite;
+}
+
+.channel-rail-account-bar {
+  border: 1px solid #373c48;
+  border-radius: 0.72rem;
+  background: linear-gradient(180deg, #2b2f38, #252932);
+  padding: 0.48rem 0.52rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.channel-rail-account-identity {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.channel-rail-account-avatar {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  border: 1px solid #50586a;
+  background: linear-gradient(140deg, #59657b, #434c5d);
+  color: #f4f6f9;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.channel-rail-account-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.02rem;
+}
+
+.channel-rail-account-name {
+  margin: 0;
+  color: #eef1f5;
+  font-size: 0.8rem;
+  font-weight: 740;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-rail-account-status {
+  margin: 0;
+  color: #969eab;
+  font-size: 0.72rem;
+}
+
+.channel-rail-account-action {
+  width: 2.1rem;
+  min-height: 2.1rem;
+  border: 1px solid #474d5b;
+  border-radius: 0.56rem;
+  background: #313641;
+  color: #e3e6ec;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.channel-rail-account-action .icon-mask {
+  width: 1.02rem;
+  height: 1.02rem;
+}
+
+.channel-rail-account-action:hover {
   background: #3b404b;
 }
 
