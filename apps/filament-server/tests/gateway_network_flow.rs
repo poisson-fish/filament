@@ -206,6 +206,25 @@ async fn next_event_of_type(
     panic!("expected event type {event_type}");
 }
 
+async fn metrics_text(app: &axum::Router) -> String {
+    let metrics_request = Request::builder()
+        .method("GET")
+        .uri("/metrics")
+        .header("x-forwarded-for", "198.51.100.250")
+        .body(Body::empty())
+        .expect("metrics request should build");
+    let metrics_response = app
+        .clone()
+        .oneshot(metrics_request)
+        .await
+        .expect("metrics request should execute");
+    assert_eq!(metrics_response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(metrics_response.into_body(), usize::MAX)
+        .await
+        .expect("metrics body should be readable");
+    String::from_utf8(body.to_vec()).expect("metrics should be utf-8")
+}
+
 fn contains_ip_field(value: &Value) -> bool {
     match value {
         Value::Object(map) => map.iter().any(|(key, value)| {
@@ -309,6 +328,81 @@ async fn websocket_handshake_and_message_flow_work_over_network() {
         .await
         .expect("socket close should succeed");
     server.abort();
+}
+
+#[tokio::test]
+async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() {
+    let app = test_app();
+    let auth = register_and_login(&app, "198.51.100.31").await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener.local_addr().expect("listener should expose addr");
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app_clone.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("server should run");
+    });
+
+    let ws_url = format!("ws://{addr}/gateway/ws?access_token={}", auth.access_token);
+
+    let mut malformed_request = ws_url
+        .as_str()
+        .into_client_request()
+        .expect("malformed ws request should build");
+    malformed_request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.31".parse().expect("valid ip header"),
+    );
+    let (mut malformed_socket, _) = connect_async(malformed_request)
+        .await
+        .expect("ws should connect");
+    let _ = next_event_of_type(&mut malformed_socket, "ready").await;
+    malformed_socket
+        .send(Message::Text(String::from("not-json").into()))
+        .await
+        .expect("invalid envelope should send");
+    let _ = tokio::time::timeout(Duration::from_secs(1), malformed_socket.next()).await;
+
+    let mut unknown_request = ws_url
+        .as_str()
+        .into_client_request()
+        .expect("unknown ws request should build");
+    unknown_request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.31".parse().expect("valid ip header"),
+    );
+    let (mut unknown_socket, _) = connect_async(unknown_request)
+        .await
+        .expect("ws should connect");
+    let _ = next_event_of_type(&mut unknown_socket, "ready").await;
+    unknown_socket
+        .send(Message::Text(
+            json!({
+                "v": 1,
+                "t": "unknown_ingress_event",
+                "d": {}
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("unknown event should send");
+    let _ = tokio::time::timeout(Duration::from_secs(1), unknown_socket.next()).await;
+
+    let metrics = metrics_text(&app).await;
+    assert!(metrics.contains("filament_gateway_events_unknown_received_total"));
+    assert!(metrics.contains("filament_gateway_events_parse_rejected_total"));
+    assert!(metrics.contains(
+        "filament_gateway_events_unknown_received_total{scope=\"ingress\",event_type=\"unknown_ingress_event\"}",
+    ));
+    assert!(metrics.contains(
+        "filament_gateway_events_parse_rejected_total{scope=\"ingress\",reason=\"invalid_envelope\"}",
+    ));
 }
 
 #[tokio::test]

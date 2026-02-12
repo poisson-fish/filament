@@ -56,7 +56,11 @@ use super::{
     },
     errors::AuthFailure,
     gateway_events::{self, GatewayEvent},
-    metrics::{record_gateway_event_dropped, record_gateway_event_emitted, record_ws_disconnect},
+    metrics::{
+        record_gateway_event_dropped, record_gateway_event_emitted,
+        record_gateway_event_parse_rejected, record_gateway_event_unknown_received,
+        record_ws_disconnect,
+    },
     types::{
         GatewayAuthQuery, GatewayMessageCreate, GatewaySubscribe, MessageResponse, SearchQuery,
     },
@@ -192,6 +196,7 @@ pub(crate) async fn handle_gateway_connection(
         }
 
         let Ok(envelope) = parse_envelope(&payload) else {
+            record_gateway_event_parse_rejected("ingress", "invalid_envelope");
             disconnect_reason = "invalid_envelope";
             break;
         };
@@ -199,6 +204,8 @@ pub(crate) async fn handle_gateway_connection(
         match envelope.t.as_str() {
             "subscribe" => {
                 let Ok(subscribe) = serde_json::from_value::<GatewaySubscribe>(envelope.d) else {
+                    record_gateway_event_parse_rejected("ingress", "invalid_subscribe_payload");
+                    disconnect_reason = "invalid_subscribe_payload";
                     break;
                 };
                 if enforce_guild_ip_ban_for_request(
@@ -257,6 +264,11 @@ pub(crate) async fn handle_gateway_connection(
             }
             "message_create" => {
                 let Ok(request) = serde_json::from_value::<GatewayMessageCreate>(envelope.d) else {
+                    record_gateway_event_parse_rejected(
+                        "ingress",
+                        "invalid_message_create_payload",
+                    );
+                    disconnect_reason = "invalid_message_create_payload";
                     break;
                 };
                 if enforce_guild_ip_ban_for_request(
@@ -288,6 +300,7 @@ pub(crate) async fn handle_gateway_connection(
                 }
             }
             _ => {
+                record_gateway_event_unknown_received("ingress", envelope.t.as_str());
                 disconnect_reason = "unknown_event";
                 break;
             }

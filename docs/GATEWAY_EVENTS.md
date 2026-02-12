@@ -338,3 +338,27 @@ All events use the versioned envelope:
   - `removed_at_unix`
 - Optional:
   - `actor_user_id`
+
+## Rollout Checklist
+- Deploy server event additions before client features that require them.
+- Keep existing envelope version at `v=1`; add only optional payload fields during minor rollouts.
+- Verify `/metrics` includes:
+  - `filament_gateway_events_emitted_total`
+  - `filament_gateway_events_dropped_total`
+  - `filament_gateway_events_unknown_received_total`
+  - `filament_gateway_events_parse_rejected_total`
+- Watch for spikes in:
+  - dropped events (`reason="full_queue"` or `reason="closed"`)
+  - parse-rejected ingress events (`scope="ingress"`)
+  - unknown ingress event types from stale/misbehaving clients
+- Roll out web/desktop clients gradually and confirm critical realtime paths:
+  - message create/update/delete
+  - workspace rename/visibility update
+  - role and override changes
+  - profile and friendship updates
+
+## Mixed-Version Fallback Behavior
+- New clients must ignore unknown event types and continue processing subsequent events.
+- Clients must fail closed on malformed payloads: reject the event, keep connection behavior unchanged, and avoid local state mutation.
+- Server payload changes must remain additive and backward compatible until all supported clients are updated.
+- If a client does not recognize an event needed for local state freshness, it must rely on existing REST refresh flows instead of speculative local mutation.

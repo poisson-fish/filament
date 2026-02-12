@@ -895,6 +895,10 @@ mod tests {
         let metrics_text = String::from_utf8(metrics_body.to_vec()).unwrap();
         assert!(metrics_text.contains("filament_auth_failures_total"));
         assert!(metrics_text.contains("filament_rate_limit_hits_total"));
+        assert!(metrics_text.contains("filament_gateway_events_emitted_total"));
+        assert!(metrics_text.contains("filament_gateway_events_dropped_total"));
+        assert!(metrics_text.contains("filament_gateway_events_unknown_received_total"));
+        assert!(metrics_text.contains("filament_gateway_events_parse_rejected_total"));
     }
 
     #[tokio::test]

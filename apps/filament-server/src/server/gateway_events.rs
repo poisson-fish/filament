@@ -842,3 +842,322 @@ pub(crate) fn friend_remove(
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use filament_core::{ChannelKind, MarkdownToken, Permission, Role, UserId};
+    use serde_json::Value;
+
+    use super::*;
+    use crate::server::types::{ChannelResponse, MessageResponse};
+
+    fn parse_event(event: &GatewayEvent) -> Value {
+        let value: Value =
+            serde_json::from_str(&event.payload).expect("gateway event payload should be json");
+        assert_eq!(value["v"], Value::from(1));
+        assert_eq!(value["t"], Value::from(event.event_type));
+        assert!(value["d"].is_object());
+        value["d"].clone()
+    }
+
+    fn contains_ip_field(value: &Value) -> bool {
+        match value {
+            Value::Object(map) => map.iter().any(|(key, nested)| {
+                key == "ip"
+                    || key == "ip_cidr"
+                    || key == "ip_network"
+                    || key == "source_ip"
+                    || key == "address"
+                    || contains_ip_field(nested)
+            }),
+            Value::Array(values) => values.iter().any(contains_ip_field),
+            _ => false,
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn event_builders_emit_contract_payloads() {
+        let user_id = UserId::new();
+        let friend_id = UserId::new();
+        let message = MessageResponse {
+            message_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+            guild_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            channel_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+            author_id: user_id.to_string(),
+            content: String::from("hello"),
+            markdown_tokens: vec![MarkdownToken::Text {
+                text: String::from("hello"),
+            }],
+            attachments: Vec::new(),
+            reactions: Vec::new(),
+            created_at_unix: 10,
+        };
+        let channel = ChannelResponse {
+            channel_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+            name: String::from("general"),
+            kind: ChannelKind::Text,
+        };
+
+        let ready_payload = parse_event(&ready(user_id));
+        assert_eq!(ready_payload["user_id"], Value::from(user_id.to_string()));
+
+        let subscribed_payload = parse_event(&subscribed("g", "c"));
+        assert_eq!(subscribed_payload["guild_id"], Value::from("g"));
+        assert_eq!(subscribed_payload["channel_id"], Value::from("c"));
+
+        let message_create_payload = parse_event(&message_create(&message));
+        assert_eq!(
+            message_create_payload["message_id"],
+            Value::from(message.message_id)
+        );
+
+        let message_reaction_payload = parse_event(&message_reaction("g", "c", "m", "👍", 2));
+        assert_eq!(message_reaction_payload["count"], Value::from(2));
+
+        let message_update_payload = parse_event(&message_update(
+            "g",
+            "c",
+            "m",
+            "updated",
+            &[MarkdownToken::Text {
+                text: String::from("updated"),
+            }],
+            11,
+        ));
+        assert_eq!(
+            message_update_payload["updated_fields"]["content"],
+            Value::from("updated")
+        );
+        assert_eq!(message_update_payload["updated_at_unix"], Value::from(11));
+
+        let message_delete_payload = parse_event(&message_delete("g", "c", "m", 12));
+        assert_eq!(message_delete_payload["deleted_at_unix"], Value::from(12));
+
+        let channel_create_payload = parse_event(&channel_create("g", &channel));
+        assert_eq!(
+            channel_create_payload["channel"]["name"],
+            Value::from("general")
+        );
+
+        let presence_sync_payload = parse_event(&presence_sync(
+            "g",
+            [user_id.to_string(), friend_id.to_string()]
+                .into_iter()
+                .collect(),
+        ));
+        assert!(presence_sync_payload["user_ids"].is_array());
+
+        let presence_update_payload = parse_event(&presence_update("g", user_id, "online"));
+        assert_eq!(presence_update_payload["status"], Value::from("online"));
+
+        let workspace_update_payload = parse_event(&workspace_update(
+            "g",
+            Some("Guild Prime"),
+            Some(crate::server::core::GuildVisibility::Public),
+            13,
+            Some(user_id),
+        ));
+        assert_eq!(
+            workspace_update_payload["updated_fields"]["name"],
+            Value::from("Guild Prime")
+        );
+        assert_eq!(
+            workspace_update_payload["updated_fields"]["visibility"],
+            Value::from("public")
+        );
+
+        let workspace_member_add_payload = parse_event(&workspace_member_add(
+            "g",
+            friend_id,
+            Role::Member,
+            14,
+            Some(user_id),
+        ));
+        assert_eq!(workspace_member_add_payload["role"], Value::from("member"));
+
+        let workspace_member_update_payload = parse_event(&workspace_member_update(
+            "g",
+            friend_id,
+            Some(Role::Moderator),
+            15,
+            Some(user_id),
+        ));
+        assert_eq!(
+            workspace_member_update_payload["updated_fields"]["role"],
+            Value::from("moderator")
+        );
+
+        let workspace_member_remove_payload = parse_event(&workspace_member_remove(
+            "g",
+            friend_id,
+            "kick",
+            16,
+            Some(user_id),
+        ));
+        assert_eq!(
+            workspace_member_remove_payload["reason"],
+            Value::from("kick")
+        );
+
+        let workspace_member_ban_payload =
+            parse_event(&workspace_member_ban("g", friend_id, 17, Some(user_id)));
+        assert_eq!(
+            workspace_member_ban_payload["banned_at_unix"],
+            Value::from(17)
+        );
+
+        let workspace_role_create_payload = parse_event(&workspace_role_create(
+            "g",
+            "role-1",
+            "ops",
+            90,
+            false,
+            vec![Permission::ManageRoles],
+            Some(user_id),
+        ));
+        assert_eq!(
+            workspace_role_create_payload["role"]["name"],
+            Value::from("ops")
+        );
+
+        let workspace_role_update_payload = parse_event(&workspace_role_update(
+            "g",
+            "role-1",
+            Some("ops-v2"),
+            Some(vec![
+                Permission::ManageRoles,
+                Permission::ManageChannelOverrides,
+            ]),
+            18,
+            Some(user_id),
+        ));
+        assert_eq!(
+            workspace_role_update_payload["updated_fields"]["name"],
+            Value::from("ops-v2")
+        );
+
+        let workspace_role_delete_payload =
+            parse_event(&workspace_role_delete("g", "role-1", 19, Some(user_id)));
+        assert_eq!(
+            workspace_role_delete_payload["deleted_at_unix"],
+            Value::from(19)
+        );
+
+        let workspace_role_reorder_payload = parse_event(&workspace_role_reorder(
+            "g",
+            vec![String::from("role-1"), String::from("role-2")],
+            20,
+            Some(user_id),
+        ));
+        assert_eq!(
+            workspace_role_reorder_payload["role_ids"][0],
+            Value::from("role-1")
+        );
+
+        let workspace_assignment_add_payload = parse_event(&workspace_role_assignment_add(
+            "g",
+            friend_id,
+            "role-1",
+            21,
+            Some(user_id),
+        ));
+        assert_eq!(
+            workspace_assignment_add_payload["assigned_at_unix"],
+            Value::from(21)
+        );
+
+        let workspace_assignment_remove_payload = parse_event(&workspace_role_assignment_remove(
+            "g",
+            friend_id,
+            "role-1",
+            22,
+            Some(user_id),
+        ));
+        assert_eq!(
+            workspace_assignment_remove_payload["removed_at_unix"],
+            Value::from(22)
+        );
+
+        let workspace_override_payload = parse_event(&workspace_channel_override_update(
+            "g",
+            "c",
+            Role::Moderator,
+            vec![Permission::CreateMessage],
+            vec![Permission::BanMember],
+            23,
+            Some(user_id),
+        ));
+        assert_eq!(workspace_override_payload["role"], Value::from("moderator"));
+        assert!(workspace_override_payload["updated_fields"]["allow"].is_array());
+        assert!(workspace_override_payload["updated_fields"]["deny"].is_array());
+
+        let workspace_ip_ban_payload =
+            parse_event(&workspace_ip_ban_sync("g", "upsert", 2, 24, Some(user_id)));
+        assert_eq!(
+            workspace_ip_ban_payload["summary"]["changed_count"],
+            Value::from(2)
+        );
+        assert!(!contains_ip_field(&workspace_ip_ban_payload));
+
+        let profile_update_payload = parse_event(&profile_update(
+            &user_id.to_string(),
+            Some("alice"),
+            Some("about"),
+            Some(&[MarkdownToken::Text {
+                text: String::from("about"),
+            }]),
+            25,
+        ));
+        assert_eq!(
+            profile_update_payload["updated_fields"]["username"],
+            Value::from("alice")
+        );
+
+        let profile_avatar_payload =
+            parse_event(&profile_avatar_update(&user_id.to_string(), 3, 26));
+        assert_eq!(profile_avatar_payload["avatar_version"], Value::from(3));
+
+        let friend_request_create_payload = parse_event(&friend_request_create(
+            "req-1",
+            &user_id.to_string(),
+            "alice",
+            &friend_id.to_string(),
+            "bob",
+            27,
+        ));
+        assert_eq!(
+            friend_request_create_payload["recipient_username"],
+            Value::from("bob")
+        );
+
+        let friend_request_update_payload = parse_event(&friend_request_update(
+            "req-1",
+            &user_id.to_string(),
+            &friend_id.to_string(),
+            "bob",
+            28,
+            29,
+            Some(user_id),
+        ));
+        assert_eq!(
+            friend_request_update_payload["state"],
+            Value::from("accepted")
+        );
+
+        let friend_request_delete_payload =
+            parse_event(&friend_request_delete("req-1", 30, Some(user_id)));
+        assert_eq!(
+            friend_request_delete_payload["deleted_at_unix"],
+            Value::from(30)
+        );
+
+        let friend_remove_payload = parse_event(&friend_remove(
+            &user_id.to_string(),
+            &friend_id.to_string(),
+            31,
+            Some(user_id),
+        ));
+        assert_eq!(friend_remove_payload["removed_at_unix"], Value::from(31));
+    }
+}

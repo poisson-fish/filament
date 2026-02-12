@@ -6,6 +6,7 @@ pub(crate) fn metrics_state() -> &'static MetricsState {
     METRICS_STATE.get_or_init(MetricsState::default)
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn render_metrics() -> String {
     let auth_failures = metrics_state()
         .auth_failures
@@ -25,6 +26,14 @@ pub(crate) fn render_metrics() -> String {
         .map_or_else(|_| HashMap::new(), |guard| guard.clone());
     let gateway_events_dropped = metrics_state()
         .gateway_events_dropped
+        .lock()
+        .map_or_else(|_| HashMap::new(), |guard| guard.clone());
+    let gateway_events_unknown_received = metrics_state()
+        .gateway_events_unknown_received
+        .lock()
+        .map_or_else(|_| HashMap::new(), |guard| guard.clone());
+    let gateway_events_parse_rejected = metrics_state()
+        .gateway_events_parse_rejected
         .lock()
         .map_or_else(|_| HashMap::new(), |guard| guard.clone());
 
@@ -102,6 +111,36 @@ pub(crate) fn render_metrics() -> String {
         );
     }
 
+    output.push_str(
+        "# HELP filament_gateway_events_unknown_received_total Count of unknown gateway events received by scope and event type\n",
+    );
+    output.push_str("# TYPE filament_gateway_events_unknown_received_total counter\n");
+    let mut unknown_entries: Vec<_> = gateway_events_unknown_received.into_iter().collect();
+    unknown_entries.sort_by(|((a_scope, a_event), _), ((b_scope, b_event), _)| {
+        a_scope.cmp(b_scope).then(a_event.cmp(b_event))
+    });
+    for ((scope, event_type), value) in unknown_entries {
+        let _ = writeln!(
+            output,
+            "filament_gateway_events_unknown_received_total{{scope=\"{scope}\",event_type=\"{event_type}\"}} {value}"
+        );
+    }
+
+    output.push_str(
+        "# HELP filament_gateway_events_parse_rejected_total Count of gateway events rejected during parsing by scope and reason\n",
+    );
+    output.push_str("# TYPE filament_gateway_events_parse_rejected_total counter\n");
+    let mut parse_rejected_entries: Vec<_> = gateway_events_parse_rejected.into_iter().collect();
+    parse_rejected_entries.sort_by(|((a_scope, a_reason), _), ((b_scope, b_reason), _)| {
+        a_scope.cmp(b_scope).then(a_reason.cmp(b_reason))
+    });
+    for ((scope, reason), value) in parse_rejected_entries {
+        let _ = writeln!(
+            output,
+            "filament_gateway_events_parse_rejected_total{{scope=\"{scope}\",reason=\"{reason}\"}} {value}"
+        );
+    }
+
     output
 }
 
@@ -143,6 +182,24 @@ pub(crate) fn record_gateway_event_dropped(
     if let Ok(mut counters) = metrics_state().gateway_events_dropped.lock() {
         let entry = counters
             .entry((scope.to_owned(), event_type.to_owned(), reason.to_owned()))
+            .or_insert(0);
+        *entry += 1;
+    }
+}
+
+pub(crate) fn record_gateway_event_unknown_received(scope: &'static str, event_type: &str) {
+    if let Ok(mut counters) = metrics_state().gateway_events_unknown_received.lock() {
+        let entry = counters
+            .entry((scope.to_owned(), event_type.to_owned()))
+            .or_insert(0);
+        *entry += 1;
+    }
+}
+
+pub(crate) fn record_gateway_event_parse_rejected(scope: &'static str, reason: &'static str) {
+    if let Ok(mut counters) = metrics_state().gateway_events_parse_rejected.lock() {
+        let entry = counters
+            .entry((scope.to_owned(), reason.to_owned()))
             .or_insert(0);
         *entry += 1;
     }

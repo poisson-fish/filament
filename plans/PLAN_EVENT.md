@@ -418,14 +418,32 @@ Fix settings information architecture and restore expected entry points.
 Finalize stability and prevent event regressions.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add contract tests for all gateway event payload validators (server + web).
-- [ ] Add end-to-end multi-client sync tests for key flows (message, workspace rename, role changes, profile).
-- [ ] Add event observability counters (`emitted`, `dropped`, `unknown_received`, `parse_rejected`).
-- [ ] Add rollout checklist and fallback behavior notes for mixed-version clients.
-- [ ] Update this file with implementation notes after each completed phase.
+- [x] Add contract tests for all gateway event payload validators (server + web).
+- [x] Add end-to-end multi-client sync tests for key flows (message, workspace rename, role changes, profile).
+- [x] Add event observability counters (`emitted`, `dropped`, `unknown_received`, `parse_rejected`).
+- [x] Add rollout checklist and fallback behavior notes for mixed-version clients.
+- [x] Update this file with implementation notes after each completed phase.
+
+### Refactor Notes
+- Added missing gateway ingress observability counters in server metrics:
+  - `filament_gateway_events_unknown_received_total{scope,event_type}`
+  - `filament_gateway_events_parse_rejected_total{scope,reason}`
+  and wired them in `apps/filament-server/src/server/realtime.rs` for malformed envelope/payload and unknown ingress event paths.
+- Expanded metrics output and baseline coverage:
+  - updated `apps/filament-server/src/server/metrics.rs`
+  - updated `apps/filament-server/src/server/tests.rs` metrics endpoint assertions
+  - added network-level metric regression in `apps/filament-server/tests/gateway_network_flow.rs` to verify unknown + parse-rejected ingress counters increment through real websocket traffic.
+- Added server-side gateway event contract tests in `apps/filament-server/src/server/gateway_events.rs`:
+  - validates envelope + minimum payload fields for all emitted event constructors
+  - asserts redaction invariants for `workspace_ip_ban_sync` payloads (no raw IP fields).
+- Added web gateway validator contract coverage in `apps/filament-client-web/tests/gateway.test.ts`:
+  - malformed payload matrix across all parsed event types to ensure fail-closed rejection with zero handler dispatch.
+- Added rollout and mixed-version fallback guidance in `docs/GATEWAY_EVENTS.md`:
+  - deploy/verification checklist
+  - fallback behavior requirements for unknown or malformed events in mixed-client fleets.
 
 ### Exit Criteria
 - Event system has coverage for main mutable state and regression alarms for future changes.

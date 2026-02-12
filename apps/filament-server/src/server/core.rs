@@ -87,6 +87,8 @@ pub(crate) struct MetricsState {
     pub(crate) ws_disconnects: Mutex<HashMap<&'static str, u64>>,
     pub(crate) gateway_events_emitted: Mutex<HashMap<(String, String), u64>>,
     pub(crate) gateway_events_dropped: Mutex<HashMap<(String, String, String), u64>>,
+    pub(crate) gateway_events_unknown_received: Mutex<HashMap<(String, String), u64>>,
+    pub(crate) gateway_events_parse_rejected: Mutex<HashMap<(String, String), u64>>,
 }
 
 #[derive(Clone, Debug)]

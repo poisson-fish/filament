@@ -228,6 +228,349 @@ describe("gateway payload parsing", () => {
     expect(onPresenceUpdate).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed payloads across all gateway payload validators", () => {
+    const {
+      socket,
+      onReady,
+      onMessageCreate,
+      onMessageUpdate,
+      onMessageDelete,
+      onMessageReaction,
+      onChannelCreate,
+      onWorkspaceUpdate,
+      onWorkspaceMemberAdd,
+      onWorkspaceMemberUpdate,
+      onWorkspaceMemberRemove,
+      onWorkspaceMemberBan,
+      onWorkspaceRoleCreate,
+      onWorkspaceRoleUpdate,
+      onWorkspaceRoleDelete,
+      onWorkspaceRoleReorder,
+      onWorkspaceRoleAssignmentAdd,
+      onWorkspaceRoleAssignmentRemove,
+      onWorkspaceChannelOverrideUpdate,
+      onWorkspaceIpBanSync,
+      onProfileUpdate,
+      onProfileAvatarUpdate,
+      onFriendRequestCreate,
+      onFriendRequestUpdate,
+      onFriendRequestDelete,
+      onFriendRemove,
+      onPresenceSync,
+      onPresenceUpdate,
+    } = createOpenGateway();
+    const messageId = ulidFromIndex(80);
+    const actorId = ulidFromIndex(81);
+    const roleId = ulidFromIndex(82);
+    const requestId = ulidFromIndex(83);
+
+    const malformedEnvelopes = [
+      { v: 1, t: "ready", d: {} },
+      {
+        v: 1,
+        t: "message_create",
+        d: {
+          message_id: messageId,
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          author_id: actorId,
+          content: "ok",
+          markdown_tokens: [],
+          attachments: [],
+          created_at_unix: 0,
+        },
+      },
+      {
+        v: 1,
+        t: "message_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          message_id: messageId,
+          updated_fields: {},
+          updated_at_unix: 2,
+        },
+      },
+      {
+        v: 1,
+        t: "message_delete",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          message_id: messageId,
+          deleted_at_unix: 0,
+        },
+      },
+      {
+        v: 1,
+        t: "message_reaction",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          message_id: messageId,
+          emoji: "👍",
+          count: -1,
+        },
+      },
+      {
+        v: 1,
+        t: "channel_create",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel: {
+            channel_id: ulidFromIndex(84),
+            name: "",
+            kind: "text",
+          },
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          updated_fields: {},
+          updated_at_unix: 3,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_member_add",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: actorId,
+          role: "member",
+          joined_at_unix: 0,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_member_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: actorId,
+          updated_fields: {},
+          updated_at_unix: 4,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_member_remove",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: actorId,
+          reason: "other",
+          removed_at_unix: 5,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_member_ban",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: actorId,
+          banned_at_unix: 0,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_role_create",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          role: {
+            role_id: roleId,
+            name: "ops",
+            position: 1,
+            is_system: false,
+            permissions: "manage_roles",
+          },
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_role_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          role_id: roleId,
+          updated_fields: {},
+          updated_at_unix: 6,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_role_delete",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          role_id: roleId,
+          deleted_at_unix: 0,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_role_reorder",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          role_ids: "bad",
+          updated_at_unix: 7,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_role_assignment_add",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: actorId,
+          role_id: roleId,
+          assigned_at_unix: 0,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_role_assignment_remove",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: actorId,
+          role_id: roleId,
+          removed_at_unix: 0,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_channel_override_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+          role: "member",
+          updated_fields: {
+            allow: "create_message",
+            deny: [],
+          },
+          updated_at_unix: 8,
+        },
+      },
+      {
+        v: 1,
+        t: "workspace_ip_ban_sync",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          summary: {
+            action: "noop",
+            changed_count: 1,
+          },
+          updated_at_unix: 9,
+        },
+      },
+      {
+        v: 1,
+        t: "profile_update",
+        d: {
+          user_id: actorId,
+          updated_fields: {},
+          updated_at_unix: 10,
+        },
+      },
+      {
+        v: 1,
+        t: "profile_avatar_update",
+        d: {
+          user_id: actorId,
+          avatar_version: -1,
+          updated_at_unix: 11,
+        },
+      },
+      {
+        v: 1,
+        t: "friend_request_create",
+        d: {
+          request_id: requestId,
+          sender_user_id: actorId,
+          sender_username: "",
+          recipient_user_id: ulidFromIndex(85),
+          recipient_username: "bob",
+          created_at_unix: 12,
+        },
+      },
+      {
+        v: 1,
+        t: "friend_request_update",
+        d: {
+          request_id: requestId,
+          state: "pending",
+          user_id: actorId,
+          friend_user_id: ulidFromIndex(85),
+          friend_username: "bob",
+          friendship_created_at_unix: 13,
+          updated_at_unix: 14,
+        },
+      },
+      {
+        v: 1,
+        t: "friend_request_delete",
+        d: {
+          request_id: requestId,
+          deleted_at_unix: 0,
+        },
+      },
+      {
+        v: 1,
+        t: "friend_remove",
+        d: {
+          user_id: actorId,
+          friend_user_id: ulidFromIndex(85),
+          removed_at_unix: 0,
+        },
+      },
+      {
+        v: 1,
+        t: "presence_sync",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_ids: {},
+        },
+      },
+      {
+        v: 1,
+        t: "presence_update",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          user_id: actorId,
+          status: "idle",
+        },
+      },
+    ];
+    for (const envelope of malformedEnvelopes) {
+      socket.emitMessage(JSON.stringify(envelope));
+    }
+
+    expect(onReady).not.toHaveBeenCalled();
+    expect(onMessageCreate).not.toHaveBeenCalled();
+    expect(onMessageUpdate).not.toHaveBeenCalled();
+    expect(onMessageDelete).not.toHaveBeenCalled();
+    expect(onMessageReaction).not.toHaveBeenCalled();
+    expect(onChannelCreate).not.toHaveBeenCalled();
+    expect(onWorkspaceUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberAdd).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberRemove).not.toHaveBeenCalled();
+    expect(onWorkspaceMemberBan).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleCreate).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleDelete).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleReorder).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleAssignmentAdd).not.toHaveBeenCalled();
+    expect(onWorkspaceRoleAssignmentRemove).not.toHaveBeenCalled();
+    expect(onWorkspaceChannelOverrideUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceIpBanSync).not.toHaveBeenCalled();
+    expect(onProfileUpdate).not.toHaveBeenCalled();
+    expect(onProfileAvatarUpdate).not.toHaveBeenCalled();
+    expect(onFriendRequestCreate).not.toHaveBeenCalled();
+    expect(onFriendRequestUpdate).not.toHaveBeenCalled();
+    expect(onFriendRequestDelete).not.toHaveBeenCalled();
+    expect(onFriendRemove).not.toHaveBeenCalled();
+    expect(onPresenceSync).not.toHaveBeenCalled();
+    expect(onPresenceUpdate).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid envelope versions and event types fail-closed", () => {
     const {
       socket,
