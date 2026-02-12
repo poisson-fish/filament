@@ -361,6 +361,16 @@ async fn backfill_channel_role_overrides_for_guild(
     Ok(())
 }
 
+pub(crate) async fn seed_hierarchical_permissions_for_new_guild(
+    tx: &mut Transaction<'_, Postgres>,
+    guild_id: &str,
+    creator_user_id: &str,
+) -> Result<(), sqlx::Error> {
+    let role_ids = ensure_seed_roles_for_guild(tx, guild_id).await?;
+    backfill_role_assignments_for_guild(tx, guild_id, Some(creator_user_id), &role_ids).await?;
+    Ok(())
+}
+
 async fn backfill_hierarchical_permission_schema(
     tx: &mut Transaction<'_, Postgres>,
 ) -> Result<(), sqlx::Error> {

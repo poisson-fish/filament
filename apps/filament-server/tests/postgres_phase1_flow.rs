@@ -473,6 +473,70 @@ async fn postgres_backed_phase1_auth_and_realtime_text_flow() {
 }
 
 #[tokio::test]
+async fn postgres_backed_first_public_workspace_creator_can_create_initial_channel() {
+    let Some(database_url) = postgres_url() else {
+        eprintln!("skipping postgres-backed test: FILAMENT_TEST_DATABASE_URL is unset");
+        return;
+    };
+
+    let app = test_app(database_url);
+    let suffix = Ulid::new().to_string().to_lowercase();
+    let username = format!("public_{}", &suffix[..20]);
+    let password = "super-secure-password";
+    let client_ip = "203.0.113.63";
+
+    assert_eq!(
+        register_user(&app, client_ip, &username, password).await,
+        StatusCode::OK
+    );
+    let login_response = login_user(&app, client_ip, &username, password).await;
+    assert_eq!(login_response.status(), StatusCode::OK);
+    let auth: AuthResponse = parse_json_body(login_response).await;
+
+    let create_guild = Request::builder()
+        .method("POST")
+        .uri("/guilds")
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", client_ip)
+        .body(Body::from(
+            json!({"name":format!("Public Guild {suffix}"), "visibility":"public"}).to_string(),
+        ))
+        .expect("create public guild request should build");
+    let guild_response = app
+        .clone()
+        .oneshot(create_guild)
+        .await
+        .expect("create public guild request should execute");
+    assert_eq!(guild_response.status(), StatusCode::OK);
+    let guild_json: Value = parse_json_body(guild_response).await;
+    let guild_id = guild_json["guild_id"]
+        .as_str()
+        .expect("guild id should exist")
+        .to_owned();
+    assert_eq!(guild_json["visibility"], "public");
+
+    let create_channel = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{guild_id}/channels"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", client_ip)
+        .body(Body::from(
+            json!({"name":"first-public-channel"}).to_string(),
+        ))
+        .expect("create initial public channel request should build");
+    let channel_response = app
+        .clone()
+        .oneshot(create_channel)
+        .await
+        .expect("create initial public channel request should execute");
+    assert_eq!(channel_response.status(), StatusCode::OK);
+    let channel_json: Value = parse_json_body(channel_response).await;
+    assert_eq!(channel_json["name"], "first-public-channel");
+}
+
+#[tokio::test]
 async fn postgres_backed_channel_kind_round_trips_and_defaults_to_text() {
     let Some(database_url) = postgres_url() else {
         eprintln!("skipping postgres-backed test: FILAMENT_TEST_DATABASE_URL is unset");

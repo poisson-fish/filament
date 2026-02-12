@@ -22,7 +22,8 @@ use crate::server::{
     core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
     db::{
         channel_kind_from_i16, channel_kind_to_i16, ensure_db_schema, permission_set_from_list,
-        permission_set_to_i64, role_to_i16, visibility_from_i16, visibility_to_i16,
+        permission_set_to_i64, role_to_i16, seed_hierarchical_permissions_for_new_guild,
+        visibility_from_i16, visibility_to_i16,
     },
     directory_contract::{
         validate_workspace_role_name, AuditListQuery, AuditListQueryDto, DirectoryContractError,
@@ -103,6 +104,9 @@ pub(crate) async fn create_guild(
             .bind(&creator_user_id)
             .bind(role_to_i16(Role::Owner))
             .execute(&mut *tx)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        seed_hierarchical_permissions_for_new_guild(&mut tx, &guild_id, &creator_user_id)
             .await
             .map_err(|_| AuthFailure::Internal)?;
         tx.commit().await.map_err(|_| AuthFailure::Internal)?;
