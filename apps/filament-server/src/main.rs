@@ -6,6 +6,55 @@ use std::path::PathBuf;
 use filament_server::{build_router, init_tracing, AppConfig};
 use tokio::net::TcpListener;
 
+fn parse_usize_env_or_default(var_name: &str, default: usize) -> anyhow::Result<usize> {
+    std::env::var(var_name).map_or_else(
+        |_| Ok(default),
+        |value| {
+            value
+                .parse::<usize>()
+                .map_err(|e| anyhow::anyhow!("invalid {var_name} value {value:?}: {e}"))
+        },
+    )
+}
+
+fn parse_u32_env_or_default(var_name: &str, default: u32) -> anyhow::Result<u32> {
+    std::env::var(var_name).map_or_else(
+        |_| Ok(default),
+        |value| {
+            value
+                .parse::<u32>()
+                .map_err(|e| anyhow::anyhow!("invalid {var_name} value {value:?}: {e}"))
+        },
+    )
+}
+
+fn parse_directory_runtime_limits_from_env(
+    defaults: &AppConfig,
+) -> anyhow::Result<(u32, u32, usize, usize)> {
+    let join_per_ip = parse_u32_env_or_default(
+        "FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP",
+        defaults.directory_join_requests_per_minute_per_ip,
+    )?;
+    let join_per_user = parse_u32_env_or_default(
+        "FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER",
+        defaults.directory_join_requests_per_minute_per_user,
+    )?;
+    let audit_list_limit_max = parse_usize_env_or_default(
+        "FILAMENT_AUDIT_LIST_LIMIT_MAX",
+        defaults.audit_list_limit_max,
+    )?;
+    let guild_ip_ban_max_entries = parse_usize_env_or_default(
+        "FILAMENT_GUILD_IP_BAN_MAX_ENTRIES",
+        defaults.guild_ip_ban_max_entries,
+    )?;
+    Ok((
+        join_per_ip,
+        join_per_user,
+        audit_list_limit_max,
+        guild_ip_ban_max_entries,
+    ))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -16,17 +65,17 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("FILAMENT_LIVEKIT_API_KEY is required for runtime"))?;
     let livekit_api_secret = std::env::var("FILAMENT_LIVEKIT_API_SECRET")
         .map_err(|_| anyhow::anyhow!("FILAMENT_LIVEKIT_API_SECRET is required for runtime"))?;
-    let max_created_guilds_per_user = std::env::var("FILAMENT_MAX_CREATED_GUILDS_PER_USER")
-        .map_or_else(
-            |_| Ok(AppConfig::default().max_created_guilds_per_user),
-            |value| {
-                value.parse::<usize>().map_err(|e| {
-                    anyhow::anyhow!(
-                        "invalid FILAMENT_MAX_CREATED_GUILDS_PER_USER value {value:?}: {e}"
-                    )
-                })
-            },
-        )?;
+    let defaults = AppConfig::default();
+    let max_created_guilds_per_user = parse_usize_env_or_default(
+        "FILAMENT_MAX_CREATED_GUILDS_PER_USER",
+        defaults.max_created_guilds_per_user,
+    )?;
+    let (
+        directory_join_requests_per_minute_per_ip,
+        directory_join_requests_per_minute_per_user,
+        audit_list_limit_max,
+        guild_ip_ban_max_entries,
+    ) = parse_directory_runtime_limits_from_env(&defaults)?;
     let captcha_hcaptcha_site_key = std::env::var("FILAMENT_HCAPTCHA_SITE_KEY").ok();
     let captcha_hcaptcha_secret = std::env::var("FILAMENT_HCAPTCHA_SECRET").ok();
     let app_config = AppConfig {
@@ -37,6 +86,10 @@ async fn main() -> anyhow::Result<()> {
         livekit_api_key: Some(livekit_api_key),
         livekit_api_secret: Some(livekit_api_secret),
         max_created_guilds_per_user,
+        directory_join_requests_per_minute_per_ip,
+        directory_join_requests_per_minute_per_user,
+        audit_list_limit_max,
+        guild_ip_ban_max_entries,
         captcha_hcaptcha_site_key,
         captcha_hcaptcha_secret,
         captcha_verify_url: std::env::var("FILAMENT_HCAPTCHA_VERIFY_URL")
@@ -54,4 +107,76 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        parse_directory_runtime_limits_from_env, parse_u32_env_or_default,
+        parse_usize_env_or_default,
+    };
+    use filament_server::AppConfig;
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock should not be poisoned")
+    }
+
+    #[test]
+    fn parse_usize_env_or_default_rejects_invalid_values() {
+        let _guard = lock_env();
+        let key = "FILAMENT_TEST_PARSE_USIZE_INVALID";
+        std::env::set_var(key, "not-a-number");
+        let result = parse_usize_env_or_default(key, 10);
+        std::env::remove_var(key);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_u32_env_or_default_rejects_invalid_values() {
+        let _guard = lock_env();
+        let key = "FILAMENT_TEST_PARSE_U32_INVALID";
+        std::env::set_var(key, "NaN");
+        let result = parse_u32_env_or_default(key, 10);
+        std::env::remove_var(key);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn directory_runtime_limits_env_overrides_are_parsed() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP");
+        std::env::remove_var("FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER");
+        std::env::remove_var("FILAMENT_AUDIT_LIST_LIMIT_MAX");
+        std::env::remove_var("FILAMENT_GUILD_IP_BAN_MAX_ENTRIES");
+        std::env::set_var("FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP", "31");
+        std::env::set_var("FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER", "19");
+        std::env::set_var("FILAMENT_AUDIT_LIST_LIMIT_MAX", "250");
+        std::env::set_var("FILAMENT_GUILD_IP_BAN_MAX_ENTRIES", "1200");
+
+        let parsed = parse_directory_runtime_limits_from_env(&AppConfig::default())
+            .expect("directory env limits should parse");
+
+        std::env::remove_var("FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP");
+        std::env::remove_var("FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER");
+        std::env::remove_var("FILAMENT_AUDIT_LIST_LIMIT_MAX");
+        std::env::remove_var("FILAMENT_GUILD_IP_BAN_MAX_ENTRIES");
+
+        assert_eq!(parsed, (31, 19, 250, 1200));
+    }
+
+    #[test]
+    fn directory_runtime_limits_env_rejects_invalid_values() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_AUDIT_LIST_LIMIT_MAX");
+        std::env::set_var("FILAMENT_AUDIT_LIST_LIMIT_MAX", "bogus");
+        let result = parse_directory_runtime_limits_from_env(&AppConfig::default());
+        std::env::remove_var("FILAMENT_AUDIT_LIST_LIMIT_MAX");
+        assert!(result.is_err());
+    }
 }

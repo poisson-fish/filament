@@ -20,6 +20,10 @@ use uuid::Uuid;
 
 use super::{
     auth::{build_captcha_config, build_livekit_config, hash_password},
+    directory_contract::{
+        DEFAULT_AUDIT_LIST_LIMIT_MAX, DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP,
+        DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER, DEFAULT_GUILD_IP_BAN_MAX_ENTRIES,
+    },
     errors::AuthFailure,
     realtime::init_search_service,
 };
@@ -96,6 +100,10 @@ pub struct AppConfig {
     pub search_query_timeout: Duration,
     pub media_token_requests_per_minute: u32,
     pub media_publish_requests_per_minute: u32,
+    pub directory_join_requests_per_minute_per_ip: u32,
+    pub directory_join_requests_per_minute_per_user: u32,
+    pub audit_list_limit_max: usize,
+    pub guild_ip_ban_max_entries: usize,
     pub media_subscribe_token_cap_per_channel: usize,
     pub max_created_guilds_per_user: usize,
     pub livekit_token_ttl: Duration,
@@ -129,6 +137,12 @@ impl Default for AppConfig {
             search_query_timeout: Duration::from_millis(DEFAULT_SEARCH_QUERY_TIMEOUT_MILLIS),
             media_token_requests_per_minute: DEFAULT_MEDIA_TOKEN_REQUESTS_PER_MINUTE,
             media_publish_requests_per_minute: DEFAULT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE,
+            directory_join_requests_per_minute_per_ip:
+                DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP,
+            directory_join_requests_per_minute_per_user:
+                DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER,
+            audit_list_limit_max: DEFAULT_AUDIT_LIST_LIMIT_MAX,
+            guild_ip_ban_max_entries: DEFAULT_GUILD_IP_BAN_MAX_ENTRIES,
             media_subscribe_token_cap_per_channel: DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL,
             max_created_guilds_per_user: DEFAULT_MAX_CREATED_GUILDS_PER_USER,
             livekit_token_ttl: Duration::from_secs(DEFAULT_LIVEKIT_TOKEN_TTL_SECS),

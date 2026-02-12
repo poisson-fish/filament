@@ -1302,6 +1302,42 @@ mod tests {
     }
 
     #[test]
+    fn zero_directory_join_per_ip_limit_is_rejected() {
+        let result = build_router(&AppConfig {
+            directory_join_requests_per_minute_per_ip: 0,
+            ..AppConfig::default()
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn zero_directory_join_per_user_limit_is_rejected() {
+        let result = build_router(&AppConfig {
+            directory_join_requests_per_minute_per_user: 0,
+            ..AppConfig::default()
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn zero_audit_list_limit_max_is_rejected() {
+        let result = build_router(&AppConfig {
+            audit_list_limit_max: 0,
+            ..AppConfig::default()
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn zero_guild_ip_ban_max_entries_is_rejected() {
+        let result = build_router(&AppConfig {
+            guild_ip_ban_max_entries: 0,
+            ..AppConfig::default()
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn partial_hcaptcha_config_is_rejected() {
         let result = build_router(&AppConfig {
             captcha_hcaptcha_site_key: Some(String::from("site")),

@@ -68,6 +68,26 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             "max created guilds per user must be at least 1 guild"
         ));
     }
+    if config.directory_join_requests_per_minute_per_ip == 0 {
+        return Err(anyhow!(
+            "directory join per-ip rate limit must be at least 1 request per minute"
+        ));
+    }
+    if config.directory_join_requests_per_minute_per_user == 0 {
+        return Err(anyhow!(
+            "directory join per-user rate limit must be at least 1 request per minute"
+        ));
+    }
+    if config.audit_list_limit_max == 0 {
+        return Err(anyhow!(
+            "audit list limit max must be at least 1 record per request"
+        ));
+    }
+    if config.guild_ip_ban_max_entries == 0 {
+        return Err(anyhow!(
+            "guild ip ban max entries must be at least 1 record"
+        ));
+    }
     if config.max_profile_avatar_bytes == 0 {
         return Err(anyhow!("max profile avatar bytes must be at least 1 byte"));
     }

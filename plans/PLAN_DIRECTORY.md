@@ -121,10 +121,10 @@ Lock API contracts, trust boundaries, and invariants before implementation.
 Add durable tables/config for IP bans and scalable join/audit queries.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Extend DB schema in `apps/filament-server/src/server/db.rs`:
+- [x] Extend DB schema in `apps/filament-server/src/server/db.rs`:
   - `user_ip_observations` table:
     - `observation_id`, `user_id`, `ip_cidr`, `first_seen_at_unix`, `last_seen_at_unix`
     - canonicalized host CIDR (`/32` IPv4, `/128` IPv6)
@@ -135,16 +135,28 @@ Add durable tables/config for IP bans and scalable join/audit queries.
     - `idx_guild_ip_bans_guild_created`
     - `idx_audit_logs_guild_created`
     - `idx_audit_logs_guild_action_created`
-- [ ] Add runtime config defaults + env overrides for:
+- [x] Add runtime config defaults + env overrides for:
   - `FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP`
   - `FILAMENT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER`
   - `FILAMENT_AUDIT_LIST_LIMIT_MAX`
   - `FILAMENT_GUILD_IP_BAN_MAX_ENTRIES`
-- [ ] Ensure config validation rejects zero/invalid values.
+- [x] Ensure config validation rejects zero/invalid values.
 
 ### Tests
-- [ ] Schema initialization tests for new tables/indexes and backward-compatible startup.
-- [ ] Config parsing/validation tests for new env vars.
+- [x] Schema initialization tests for new tables/indexes and backward-compatible startup.
+- [x] Config parsing/validation tests for new env vars.
+
+### Refactor Notes
+- Added Phase 1 schema DDL constants and idempotent schema application in `apps/filament-server/src/server/db.rs`:
+  - new tables: `user_ip_observations`, `guild_ip_bans`
+  - new indexes: `idx_user_ip_observations_user_last_seen`, `idx_guild_ip_bans_guild_created`, `idx_audit_logs_guild_created`, `idx_audit_logs_guild_action_created`
+  - additional uniqueness guard: `idx_user_ip_observations_user_ip_unique`
+- Extended `AppConfig` defaults in `apps/filament-server/src/server/core.rs` with directory/audit/ip-ban runtime caps for upcoming phases.
+- Added env parsing for the new `FILAMENT_*` limits in `apps/filament-server/src/main.rs` and startup rejection paths for zero values in `apps/filament-server/src/server/router.rs`.
+- Added tests:
+  - `apps/filament-server/src/server/db.rs` schema/no-DB-idempotence coverage
+  - `apps/filament-server/src/main.rs` env parsing/invalid-value coverage
+  - `apps/filament-server/src/server/tests.rs` startup validation coverage for zero-valued directory/audit/ip-ban limits
 
 ### Security Outlook
 - Provides bounded storage and query performance for moderation surfaces.
