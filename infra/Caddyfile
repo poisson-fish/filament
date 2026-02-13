@@ -25,11 +25,13 @@ https://filamentapp.net {
 
   # Backend API
   handle /api/* {
+    uri strip_prefix /api
     reverse_proxy filament-server:3000
   }
 
   # Backend WebSocket Gateway
   handle /gateway/* {
+    uri strip_prefix /gateway
     reverse_proxy filament-server:3000
   }
 
