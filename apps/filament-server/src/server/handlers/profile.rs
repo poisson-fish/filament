@@ -587,7 +587,7 @@ async fn profile_observer_user_ids(
     user_id: UserId,
 ) -> Result<Vec<UserId>, AuthFailure> {
     if let Some(pool) = &state.db_pool {
-        let rows = sqlx::query(
+        let friend_rows = sqlx::query(
             "SELECT CASE
                  WHEN user_a_id = $1 THEN user_b_id
                  ELSE user_a_id
@@ -599,8 +599,22 @@ async fn profile_observer_user_ids(
         .fetch_all(pool)
         .await
         .map_err(|_| AuthFailure::Internal)?;
+
+        let guild_member_rows = sqlx::query(
+            "SELECT DISTINCT gm_other.user_id AS observer_user_id
+             FROM guild_members gm_self
+             INNER JOIN guild_members gm_other
+                 ON gm_other.guild_id = gm_self.guild_id
+             WHERE gm_self.user_id = $1
+               AND gm_other.user_id <> $1",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
         let mut unique = HashSet::new();
-        for row in rows {
+        for row in friend_rows {
             let friend_user_id: String = row
                 .try_get("friend_user_id")
                 .map_err(|_| AuthFailure::Internal)?;
@@ -608,6 +622,16 @@ async fn profile_observer_user_ids(
                 UserId::try_from(friend_user_id).map_err(|_| AuthFailure::Internal)?;
             if friend_user_id != user_id {
                 unique.insert(friend_user_id);
+            }
+        }
+        for row in guild_member_rows {
+            let observer_user_id: String = row
+                .try_get("observer_user_id")
+                .map_err(|_| AuthFailure::Internal)?;
+            let observer_user_id =
+                UserId::try_from(observer_user_id).map_err(|_| AuthFailure::Internal)?;
+            if observer_user_id != user_id {
+                unique.insert(observer_user_id);
             }
         }
         return Ok(unique.into_iter().collect());
@@ -627,5 +651,19 @@ async fn profile_observer_user_ids(
             }
         }
     }
+    drop(friendships);
+
+    let guilds = state.guilds.read().await;
+    for guild in guilds.values() {
+        if !guild.members.contains_key(&user_id) {
+            continue;
+        }
+        for observer_user_id in guild.members.keys() {
+            if *observer_user_id != user_id {
+                unique.insert(*observer_user_id);
+            }
+        }
+    }
+
     Ok(unique.into_iter().collect())
 }

@@ -1209,6 +1209,15 @@ async fn websocket_profile_and_friendship_events_sync_across_sessions() {
     let bob = register_and_login_as(&app_http, "phase5_bob", "203.0.113.121").await;
     let outsider = register_and_login_as(&app_http, "phase5_outsider", "203.0.113.122").await;
     let bob_id = user_id_from_me(&app_http, &bob, "203.0.113.121").await;
+    let shared_guild = create_channel_context(&app_http, &alice, "203.0.113.120").await;
+    add_member(
+        &app_http,
+        &alice.access_token,
+        "203.0.113.120",
+        &shared_guild.guild_id,
+        &bob_id,
+    )
+    .await;
 
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -1279,14 +1288,19 @@ async fn websocket_profile_and_friendship_events_sync_across_sessions() {
         Value::String("phase5_alice_renamed".to_owned())
     );
     assert_eq!(profile_update_b["d"], profile_update_a["d"]);
+    let profile_update_bob = next_event_of_type(&mut bob_socket, "profile_update").await;
+    assert_eq!(
+        profile_update_bob["d"]["updated_fields"]["username"],
+        Value::String("phase5_alice_renamed".to_owned())
+    );
     assert!(
         tokio::time::timeout(
             Duration::from_millis(200),
-            next_event_of_type(&mut bob_socket, "profile_update"),
+            next_event_of_type(&mut outsider_socket, "profile_update"),
         )
         .await
         .is_err(),
-        "non-friend should not receive profile update before friendship"
+        "outsider should not receive profile updates",
     );
 
     let create_request = Request::builder()
@@ -1391,6 +1405,15 @@ async fn websocket_profile_and_friendship_events_sync_across_sessions() {
     assert_eq!(
         avatar_update_alice["d"]["avatar_version"].as_i64(),
         avatar_update_bob["d"]["avatar_version"].as_i64()
+    );
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            next_event_of_type(&mut outsider_socket, "profile_avatar_update"),
+        )
+        .await
+        .is_err(),
+        "outsider should not receive profile avatar updates",
     );
 
     let remove_friend = Request::builder()
