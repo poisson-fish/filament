@@ -54,7 +54,6 @@ import {
 import { createWorkspaceState } from "../state/workspace-state";
 import { createOverlayPanelActions } from "./overlay-panel-actions";
 import { createAppShellRuntimeLabels } from "./runtime-labels";
-import { createWorkspaceChannelOperationsController } from "./workspace-channel-operations-controller";
 import { createWorkspacePermissionActions } from "./workspace-permission-actions";
 import { createWorkspaceSettingsActions } from "./workspace-settings-actions";
 import { createVoiceDeviceActions } from "./voice-device-actions";
@@ -63,6 +62,7 @@ import { createRuntimeEffects } from "./runtime-effects";
 import { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 import { registerGatewayController } from "./gateway-controller-registration";
 import { createPanelHostPropGroupsFactory } from "./panel-host-prop-groups-factory";
+import { createWorkspaceChannelOperationsActions } from "./workspace-channel-operations-actions";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -496,31 +496,12 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     refreshWorkspacePermissionStateFromGateway,
   });
 
-  const workspaceChannelOperations =
-    createWorkspaceChannelOperationsController({
-      session: auth.session,
-      activeGuildId: workspaceChannelState.activeGuildId,
-      createGuildName: workspaceChannelState.createGuildName,
-      createGuildVisibility: workspaceChannelState.createGuildVisibility,
-      createChannelName: workspaceChannelState.createChannelName,
-      createChannelKind: workspaceChannelState.createChannelKind,
-      isCreatingWorkspace: workspaceChannelState.isCreatingWorkspace,
-      isCreatingChannel: workspaceChannelState.isCreatingChannel,
-      newChannelName: workspaceChannelState.newChannelName,
-      newChannelKind: workspaceChannelState.newChannelKind,
-      setWorkspaces: workspaceChannelState.setWorkspaces,
-      setActiveGuildId: workspaceChannelState.setActiveGuildId,
-      setActiveChannelId: workspaceChannelState.setActiveChannelId,
-      setCreateChannelKind: workspaceChannelState.setCreateChannelKind,
-      setWorkspaceError: workspaceChannelState.setWorkspaceError,
-      setCreatingWorkspace: workspaceChannelState.setCreatingWorkspace,
-      setMessageStatus: messageState.setMessageStatus,
-      setActiveOverlayPanel: overlayState.setActiveOverlayPanel,
-      setChannelCreateError: workspaceChannelState.setChannelCreateError,
-      setCreatingChannel: workspaceChannelState.setCreatingChannel,
-      setNewChannelName: workspaceChannelState.setNewChannelName,
-      setNewChannelKind: workspaceChannelState.setNewChannelKind,
-    });
+  const workspaceChannelOperations = createWorkspaceChannelOperationsActions({
+    session: auth.session,
+    workspaceChannelState,
+    messageState,
+    overlayState,
+  });
 
   createVoiceSessionLifecycleController({
     session: auth.session,
