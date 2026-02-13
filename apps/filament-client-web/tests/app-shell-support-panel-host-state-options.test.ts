@@ -1,0 +1,198 @@
+import { describe, expect, it, vi } from "vitest";
+import { createSupportPanelHostStateOptions } from "../src/features/app-shell/runtime/support-panel-host-state-options";
+
+describe("app shell support panel-host state options", () => {
+  it("maps support panel-host accessors and handlers", () => {
+    const publicGuildSearchQuery = () => "ops";
+    const isSearchingPublicGuilds = () => false;
+    const publicGuildSearchError = () => "";
+    const publicGuildDirectory = vi.fn(() => [{ guildId: "guild-1" }]);
+    const publicGuildJoinStatusByGuildId = vi.fn(() => ({ "guild-1": "idle" }));
+    const publicGuildJoinErrorByGuildId = vi.fn(() => ({}));
+    const setPublicGuildSearchQuery = vi.fn();
+
+    const activeSettingsCategory = () => "profile";
+    const activeVoiceSettingsSubmenu = () => "audio-devices";
+    const setActiveVoiceSettingsSubmenu = vi.fn();
+
+    const voiceDevicePreferences = () => ({
+      audioinput: "in-1",
+      audiooutput: "out-1",
+    });
+    const audioInputDevices = () => [{ deviceId: "in-1", label: "Mic" }];
+    const audioOutputDevices = () => [{ deviceId: "out-1", label: "Speaker" }];
+    const isRefreshingAudioDevices = () => false;
+    const audioDevicesStatus = () => "ready";
+    const audioDevicesError = () => "";
+
+    const profile = vi.fn(() => ({ id: "user-1" }));
+    const profileDraftUsername = () => "filament";
+    const profileDraftAbout = () => "ops";
+    const selectedProfileAvatarFile = () => ({ name: "avatar.png" } as File);
+    const isSavingProfile = () => false;
+    const isUploadingProfileAvatar = () => false;
+    const profileSettingsStatus = () => "ready";
+    const profileSettingsError = () => "";
+    const setProfileDraftUsername = vi.fn();
+    const setProfileDraftAbout = vi.fn();
+    const setSelectedProfileAvatarFile = vi.fn();
+    const saveProfileSettings = vi.fn();
+    const uploadProfileAvatar = vi.fn();
+    const avatarUrlForUser = vi.fn(() => "/avatar/user-1");
+
+    const activeWorkspace = vi.fn(() => ({ id: "guild-1" }));
+    const canManageRoles = () => true;
+    const workspaceSettingsName = () => "Ops";
+    const workspaceSettingsVisibility = () => "private";
+    const isSavingWorkspaceSettings = () => false;
+    const workspaceSettingsStatus = () => "ready";
+    const workspaceSettingsError = () => "";
+    const setWorkspaceSettingsName = vi.fn();
+    const setWorkspaceSettingsVisibility = vi.fn();
+    const setWorkspaceSettingsStatus = vi.fn();
+    const setWorkspaceSettingsError = vi.fn();
+
+    const canManageWorkspaceRoles = () => true;
+    const canManageMemberRoles = () => true;
+    const roles = () => [{ roleId: "role-1" }];
+    const isLoadingRoles = () => false;
+    const isMutatingRoles = () => false;
+    const roleManagementStatus = () => "ready";
+    const roleManagementError = () => "";
+    const moderationUserIdInput = () => "user-2";
+    const setModerationUserIdInput = vi.fn();
+    const refreshRoles = vi.fn();
+    const createRole = vi.fn();
+    const updateRole = vi.fn();
+    const deleteRole = vi.fn();
+    const reorderRoles = vi.fn();
+    const assignRoleToMember = vi.fn();
+    const unassignRoleFromMember = vi.fn();
+
+    const echoInput = () => "ping";
+    const healthStatus = () => "ok";
+    const diagError = () => "";
+    const isCheckingHealth = () => false;
+    const isEchoing = () => false;
+    const setEchoInput = vi.fn();
+
+    const runPublicGuildSearch = vi.fn();
+    const joinGuildFromDirectory = vi.fn();
+    const openSettingsCategory = vi.fn();
+    const setVoiceDevicePreference = vi.fn();
+    const refreshAudioDeviceInventory = vi.fn(async () => undefined);
+    const saveWorkspaceSettings = vi.fn(async () => undefined);
+    const openOverlayPanel = vi.fn();
+    const runHealthCheck = vi.fn();
+    const runEcho = vi.fn();
+
+    const stateOptions = createSupportPanelHostStateOptions({
+      discoveryState: {
+        publicGuildSearchQuery,
+        isSearchingPublicGuilds,
+        publicGuildSearchError,
+        publicGuildDirectory,
+        publicGuildJoinStatusByGuildId,
+        publicGuildJoinErrorByGuildId,
+        setPublicGuildSearchQuery,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["discoveryState"],
+      overlayState: {
+        activeSettingsCategory,
+        activeVoiceSettingsSubmenu,
+        setActiveVoiceSettingsSubmenu,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["overlayState"],
+      voiceState: {
+        voiceDevicePreferences,
+        audioInputDevices,
+        audioOutputDevices,
+        isRefreshingAudioDevices,
+        audioDevicesStatus,
+        audioDevicesError,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["voiceState"],
+      profileState: {
+        profileDraftUsername,
+        profileDraftAbout,
+        selectedProfileAvatarFile,
+        isSavingProfile,
+        isUploadingProfileAvatar,
+        profileSettingsStatus,
+        profileSettingsError,
+        setProfileDraftUsername,
+        setProfileDraftAbout,
+        setSelectedProfileAvatarFile,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["profileState"],
+      workspaceChannelState: {
+        workspaceSettingsName,
+        workspaceSettingsVisibility,
+        isSavingWorkspaceSettings,
+        workspaceSettingsStatus,
+        workspaceSettingsError,
+        setWorkspaceSettingsName,
+        setWorkspaceSettingsVisibility,
+        setWorkspaceSettingsStatus,
+        setWorkspaceSettingsError,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["workspaceChannelState"],
+      diagnosticsState: {
+        moderationUserIdInput,
+        setModerationUserIdInput,
+        echoInput,
+        healthStatus,
+        diagError,
+        isCheckingHealth,
+        isEchoing,
+        setEchoInput,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["diagnosticsState"],
+      selectors: {
+        activeWorkspace,
+        canManageRoles,
+        canManageWorkspaceRoles,
+        canManageMemberRoles,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["selectors"],
+      publicDirectoryActions: {
+        runPublicGuildSearch,
+        joinGuildFromDirectory,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["publicDirectoryActions"],
+      profileController: {
+        profile,
+        saveProfileSettings,
+        uploadProfileAvatar,
+        avatarUrlForUser,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["profileController"],
+      roleManagementActions: {
+        roles,
+        isLoadingRoles,
+        isMutatingRoles,
+        roleManagementStatus,
+        roleManagementError,
+        refreshRoles,
+        createRole,
+        updateRole,
+        deleteRole,
+        reorderRoles,
+        assignRoleToMember,
+        unassignRoleFromMember,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["roleManagementActions"],
+      sessionDiagnostics: {
+        runHealthCheck,
+        runEcho,
+      } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["sessionDiagnostics"],
+      openSettingsCategory,
+      setVoiceDevicePreference,
+      refreshAudioDeviceInventory,
+      saveWorkspaceSettings,
+      openOverlayPanel,
+    });
+
+    expect(stateOptions.publicGuildSearchQuery).toBe(publicGuildSearchQuery);
+    expect(stateOptions.publicGuildDirectory).toEqual(publicGuildDirectory());
+    expect(stateOptions.activeSettingsCategory).toBe(activeSettingsCategory);
+    expect(stateOptions.profile()).toEqual(profile());
+    expect(stateOptions.selectedAvatarFilename()).toBe("avatar.png");
+    expect(stateOptions.workspaceName).toBe(workspaceSettingsName);
+    expect(stateOptions.roles).toBe(roles);
+    expect(stateOptions.echoInput).toBe(echoInput);
+
+    stateOptions.onOpenModerationPanel();
+    expect(openOverlayPanel).toHaveBeenCalledWith("moderation");
+  });
+});
