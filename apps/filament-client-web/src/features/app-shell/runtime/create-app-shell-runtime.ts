@@ -69,6 +69,7 @@ import { createFriendshipsPanelProps } from "./friendships-panel-props";
 import { createSearchPanelProps } from "./search-panel-props";
 import { createModerationPanelProps } from "./moderation-panel-props";
 import { createAttachmentsPanelProps } from "./attachments-panel-props";
+import { createClientSettingsPanelProps } from "./client-settings-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -622,7 +623,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           publicDirectoryActions.joinGuildFromDirectory(guildId),
         setPublicGuildSearchQuery: discoveryState.setPublicGuildSearchQuery,
       },
-      settings: {
+      settings: createClientSettingsPanelProps({
         activeSettingsCategory: overlayState.activeSettingsCategory(),
         activeVoiceSettingsSubmenu: overlayState.activeVoiceSettingsSubmenu(),
         voiceDevicePreferences: voiceState.voiceDevicePreferences(),
@@ -634,9 +635,6 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         profile: profileController.profile() ?? null,
         profileDraftUsername: profileState.profileDraftUsername(),
         profileDraftAbout: profileState.profileDraftAbout(),
-        profileAvatarUrl: profileController.profile()
-          ? profileController.avatarUrlForUser(profileController.profile()!.userId)
-          : null,
         selectedAvatarFilename: profileState.selectedProfileAvatarFile()?.name ?? "",
         isSavingProfile: profileState.isSavingProfile(),
         isUploadingProfileAvatar: profileState.isUploadingProfileAvatar(),
@@ -652,7 +650,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         setSelectedProfileAvatarFile: profileState.setSelectedProfileAvatarFile,
         onSaveProfileSettings: profileController.saveProfileSettings,
         onUploadProfileAvatar: profileController.uploadProfileAvatar,
-      },
+        avatarUrlForUser: profileController.avatarUrlForUser,
+      }),
       workspaceSettings: {
         ...createWorkspaceSettingsPanelProps({
           hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
