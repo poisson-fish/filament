@@ -43,7 +43,6 @@ import { createModerationController } from "../controllers/moderation-controller
 import {
   createOverlayPanelAuthorizationController,
   createOverlayPanelEscapeController,
-  openOverlayPanelWithDefaults,
 } from "../controllers/overlay-controller";
 import { createProfileController } from "../controllers/profile-controller";
 import { createProfileOverlayController } from "../controllers/profile-overlay-controller";
@@ -80,10 +79,7 @@ import {
   DEFAULT_VOICE_SESSION_CAPABILITIES,
 } from "../state/voice-state";
 import { createWorkspaceState } from "../state/workspace-state";
-import type {
-  OverlayPanel,
-  SettingsCategory,
-} from "../types";
+import { createOverlayPanelActions } from "./overlay-panel-actions";
 import { createAppShellRuntimeLabels } from "./runtime-labels";
 import { createSessionDiagnosticsController } from "./session-diagnostics-controller";
 import { createWorkspaceChannelOperationsController } from "./workspace-channel-operations-controller";
@@ -122,28 +118,6 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     voiceDurationClockUnixMs: voiceState.voiceDurationClockUnixMs,
     activeOverlayPanel: overlayState.activeOverlayPanel,
   });
-
-  const openSettingsCategory = (category: SettingsCategory): void => {
-    overlayState.setActiveSettingsCategory(category);
-    if (category === "voice") {
-      overlayState.setActiveVoiceSettingsSubmenu("audio-devices");
-    }
-  };
-
-  const openClientSettingsPanel = (): void => {
-    openOverlayPanel("client-settings");
-  };
-
-  const openWorkspaceSettingsPanel = (): void => {
-    const activeWorkspace = selectors.activeWorkspace();
-    if (activeWorkspace) {
-      workspaceChannelState.setWorkspaceSettingsName(activeWorkspace.guildName);
-      workspaceChannelState.setWorkspaceSettingsVisibility(activeWorkspace.visibility);
-    }
-    workspaceChannelState.setWorkspaceSettingsStatus("");
-    workspaceChannelState.setWorkspaceSettingsError("");
-    openOverlayPanel("workspace-settings");
-  };
 
   const saveWorkspaceSettings = async (): Promise<void> => {
     const session = auth.session();
@@ -377,22 +351,25 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     }
   };
 
-  const openOverlayPanel = (panel: OverlayPanel): void => {
-    openOverlayPanelWithDefaults(panel, {
-      setPanel: overlayState.setActiveOverlayPanel,
-      setWorkspaceError: workspaceChannelState.setWorkspaceError,
-      setChannelCreateError: workspaceChannelState.setChannelCreateError,
-      setActiveSettingsCategory: overlayState.setActiveSettingsCategory,
-      setActiveVoiceSettingsSubmenu: overlayState.setActiveVoiceSettingsSubmenu,
-    });
-  };
-
-  const closeOverlayPanel = (): void => {
-    if (!selectors.canCloseActivePanel()) {
-      return;
-    }
-    overlayState.setActiveOverlayPanel(null);
-  };
+  const {
+    openOverlayPanel,
+    closeOverlayPanel,
+    openSettingsCategory,
+    openClientSettingsPanel,
+    openWorkspaceSettingsPanel,
+  } = createOverlayPanelActions({
+    activeWorkspace: selectors.activeWorkspace,
+    canCloseActivePanel: selectors.canCloseActivePanel,
+    setWorkspaceSettingsName: workspaceChannelState.setWorkspaceSettingsName,
+    setWorkspaceSettingsVisibility: workspaceChannelState.setWorkspaceSettingsVisibility,
+    setWorkspaceSettingsStatus: workspaceChannelState.setWorkspaceSettingsStatus,
+    setWorkspaceSettingsError: workspaceChannelState.setWorkspaceSettingsError,
+    setActiveOverlayPanel: overlayState.setActiveOverlayPanel,
+    setWorkspaceError: workspaceChannelState.setWorkspaceError,
+    setChannelCreateError: workspaceChannelState.setChannelCreateError,
+    setActiveSettingsCategory: overlayState.setActiveSettingsCategory,
+    setActiveVoiceSettingsSubmenu: overlayState.setActiveVoiceSettingsSubmenu,
+  });
 
   createWorkspaceBootstrapController({
     session: auth.session,
