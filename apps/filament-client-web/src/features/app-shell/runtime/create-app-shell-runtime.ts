@@ -70,6 +70,7 @@ import { createSearchPanelProps } from "./search-panel-props";
 import { createModerationPanelProps } from "./moderation-panel-props";
 import { createAttachmentsPanelProps } from "./attachments-panel-props";
 import { createClientSettingsPanelProps } from "./client-settings-panel-props";
+import { createUtilityPanelProps } from "./utility-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -759,7 +760,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           onOpenModerationPanel: () => openOverlayPanel("moderation"),
         }),
       },
-      utility: {
+      utility: createUtilityPanelProps({
         echoInput: diagnosticsState.echoInput(),
         healthStatus: diagnosticsState.healthStatus(),
         diagError: diagnosticsState.diagError(),
@@ -768,7 +769,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         setEchoInput: diagnosticsState.setEchoInput,
         onRunHealthCheck: sessionDiagnostics.runHealthCheck,
         onRunEcho: sessionDiagnostics.runEcho,
-      },
+      }),
     });
 
   return {
