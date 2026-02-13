@@ -64,6 +64,7 @@ import { createVoiceDeviceActions } from "./voice-device-actions";
 import { createWorkspaceSelectionActions } from "./workspace-selection-actions";
 import { createWorkspaceSettingsPanelProps } from "./workspace-settings-panel-props";
 import { createRuntimeEffects } from "./runtime-effects";
+import { createRoleManagementPanelProps } from "./role-management-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -734,24 +735,26 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         onOpenRoleManagementPanel: () => openOverlayPanel("role-management"),
       },
       roleManagement: {
-        hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
-        canManageWorkspaceRoles: selectors.canManageWorkspaceRoles(),
-        canManageMemberRoles: selectors.canManageMemberRoles(),
-        roles: roleManagementActions.roles(),
-        isLoadingRoles: roleManagementActions.isLoadingRoles(),
-        isMutatingRoles: roleManagementActions.isMutatingRoles(),
-        roleManagementStatus: roleManagementActions.roleManagementStatus(),
-        roleManagementError: roleManagementActions.roleManagementError(),
-        targetUserIdInput: diagnosticsState.moderationUserIdInput(),
-        setTargetUserIdInput: diagnosticsState.setModerationUserIdInput,
-        onRefreshRoles: roleManagementActions.refreshRoles,
-        onCreateRole: roleManagementActions.createRole,
-        onUpdateRole: roleManagementActions.updateRole,
-        onDeleteRole: roleManagementActions.deleteRole,
-        onReorderRoles: roleManagementActions.reorderRoles,
-        onAssignRole: roleManagementActions.assignRoleToMember,
-        onUnassignRole: roleManagementActions.unassignRoleFromMember,
-        onOpenModerationPanel: () => openOverlayPanel("moderation"),
+        ...createRoleManagementPanelProps({
+          hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
+          canManageWorkspaceRoles: selectors.canManageWorkspaceRoles(),
+          canManageMemberRoles: selectors.canManageMemberRoles(),
+          roles: roleManagementActions.roles(),
+          isLoadingRoles: roleManagementActions.isLoadingRoles(),
+          isMutatingRoles: roleManagementActions.isMutatingRoles(),
+          roleManagementStatus: roleManagementActions.roleManagementStatus(),
+          roleManagementError: roleManagementActions.roleManagementError(),
+          targetUserIdInput: diagnosticsState.moderationUserIdInput(),
+          setTargetUserIdInput: diagnosticsState.setModerationUserIdInput,
+          onRefreshRoles: roleManagementActions.refreshRoles,
+          onCreateRole: roleManagementActions.createRole,
+          onUpdateRole: roleManagementActions.updateRole,
+          onDeleteRole: roleManagementActions.deleteRole,
+          onReorderRoles: roleManagementActions.reorderRoles,
+          onAssignRole: roleManagementActions.assignRoleToMember,
+          onUnassignRole: roleManagementActions.unassignRoleFromMember,
+          onOpenModerationPanel: () => openOverlayPanel("moderation"),
+        }),
       },
       utility: {
         echoInput: diagnosticsState.echoInput(),
