@@ -65,6 +65,7 @@ import { createWorkspaceSelectionActions } from "./workspace-selection-actions";
 import { createWorkspaceSettingsPanelProps } from "./workspace-settings-panel-props";
 import { createRuntimeEffects } from "./runtime-effects";
 import { createRoleManagementPanelProps } from "./role-management-panel-props";
+import { createFriendshipsPanelProps } from "./friendships-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -665,7 +666,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           onSaveWorkspaceSettings: saveWorkspaceSettings,
         }),
       },
-      friendships: {
+      friendships: createFriendshipsPanelProps({
         friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput(),
         friendRequests: friendshipsState.friendRequests(),
         friends: friendshipsState.friends(),
@@ -680,7 +681,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           friendshipActions.dismissFriendRequest(requestId),
         onRemoveFriendship: (friendUserId) =>
           friendshipActions.removeFriendship(friendUserId),
-      },
+      }),
       search: {
         searchQuery: discoveryState.searchQuery(),
         isSearching: discoveryState.isSearching(),
