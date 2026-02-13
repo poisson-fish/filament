@@ -61,15 +61,11 @@ import { createWorkspacePermissionActions } from "./workspace-permission-actions
 import { createWorkspaceSettingsActions } from "./workspace-settings-actions";
 import { createVoiceDeviceActions } from "./voice-device-actions";
 import { createWorkspaceSelectionActions } from "./workspace-selection-actions";
-import { createWorkspaceSettingsPanelProps } from "./workspace-settings-panel-props";
 import { createRuntimeEffects } from "./runtime-effects";
-import { createRoleManagementPanelProps } from "./role-management-panel-props";
-import { createClientSettingsPanelProps } from "./client-settings-panel-props";
-import { createUtilityPanelProps } from "./utility-panel-props";
-import { createPublicDirectoryPanelProps } from "./public-directory-panel-props";
 import { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 import { createWorkspaceChannelCreatePanelGroups } from "./workspace-channel-create-panel-groups";
 import { createCollaborationPanelPropGroups } from "./collaboration-panel-prop-groups";
+import { createSupportPanelPropGroups } from "./support-panel-prop-groups";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -613,48 +609,48 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           onCancelChannelCreate: closeOverlayPanel,
         },
       }),
-      publicDirectory: createPublicDirectoryPanelProps({
-        publicGuildSearchQuery: discoveryState.publicGuildSearchQuery(),
-        isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds(),
-        publicGuildSearchError: discoveryState.publicGuildSearchError(),
-        publicGuildDirectory: discoveryState.publicGuildDirectory(),
-        publicGuildJoinStatusByGuildId: discoveryState.publicGuildJoinStatusByGuildId(),
-        publicGuildJoinErrorByGuildId: discoveryState.publicGuildJoinErrorByGuildId(),
-        onSubmitPublicGuildSearch: publicDirectoryActions.runPublicGuildSearch,
-        onJoinGuildFromDirectory: publicDirectoryActions.joinGuildFromDirectory,
-        setPublicGuildSearchQuery: discoveryState.setPublicGuildSearchQuery,
-      }),
-      settings: createClientSettingsPanelProps({
-        activeSettingsCategory: overlayState.activeSettingsCategory(),
-        activeVoiceSettingsSubmenu: overlayState.activeVoiceSettingsSubmenu(),
-        voiceDevicePreferences: voiceState.voiceDevicePreferences(),
-        audioInputDevices: voiceState.audioInputDevices(),
-        audioOutputDevices: voiceState.audioOutputDevices(),
-        isRefreshingAudioDevices: voiceState.isRefreshingAudioDevices(),
-        audioDevicesStatus: voiceState.audioDevicesStatus(),
-        audioDevicesError: voiceState.audioDevicesError(),
-        profile: profileController.profile() ?? null,
-        profileDraftUsername: profileState.profileDraftUsername(),
-        profileDraftAbout: profileState.profileDraftAbout(),
-        selectedAvatarFilename: profileState.selectedProfileAvatarFile()?.name ?? "",
-        isSavingProfile: profileState.isSavingProfile(),
-        isUploadingProfileAvatar: profileState.isUploadingProfileAvatar(),
-        profileSettingsStatus: profileState.profileSettingsStatus(),
-        profileSettingsError: profileState.profileSettingsError(),
-        onOpenSettingsCategory: openSettingsCategory,
-        onOpenVoiceSettingsSubmenu: overlayState.setActiveVoiceSettingsSubmenu,
-        onSetVoiceDevicePreference: (kind, value) =>
-          setVoiceDevicePreference(kind, value),
-        onRefreshAudioDeviceInventory: () => refreshAudioDeviceInventory(true),
-        setProfileDraftUsername: profileState.setProfileDraftUsername,
-        setProfileDraftAbout: profileState.setProfileDraftAbout,
-        setSelectedProfileAvatarFile: profileState.setSelectedProfileAvatarFile,
-        onSaveProfileSettings: profileController.saveProfileSettings,
-        onUploadProfileAvatar: profileController.uploadProfileAvatar,
-        avatarUrlForUser: profileController.avatarUrlForUser,
-      }),
-      workspaceSettings: {
-        ...createWorkspaceSettingsPanelProps({
+      ...createSupportPanelPropGroups({
+        publicDirectory: {
+          publicGuildSearchQuery: discoveryState.publicGuildSearchQuery(),
+          isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds(),
+          publicGuildSearchError: discoveryState.publicGuildSearchError(),
+          publicGuildDirectory: discoveryState.publicGuildDirectory(),
+          publicGuildJoinStatusByGuildId: discoveryState.publicGuildJoinStatusByGuildId(),
+          publicGuildJoinErrorByGuildId: discoveryState.publicGuildJoinErrorByGuildId(),
+          onSubmitPublicGuildSearch: publicDirectoryActions.runPublicGuildSearch,
+          onJoinGuildFromDirectory: publicDirectoryActions.joinGuildFromDirectory,
+          setPublicGuildSearchQuery: discoveryState.setPublicGuildSearchQuery,
+        },
+        settings: {
+          activeSettingsCategory: overlayState.activeSettingsCategory(),
+          activeVoiceSettingsSubmenu: overlayState.activeVoiceSettingsSubmenu(),
+          voiceDevicePreferences: voiceState.voiceDevicePreferences(),
+          audioInputDevices: voiceState.audioInputDevices(),
+          audioOutputDevices: voiceState.audioOutputDevices(),
+          isRefreshingAudioDevices: voiceState.isRefreshingAudioDevices(),
+          audioDevicesStatus: voiceState.audioDevicesStatus(),
+          audioDevicesError: voiceState.audioDevicesError(),
+          profile: profileController.profile() ?? null,
+          profileDraftUsername: profileState.profileDraftUsername(),
+          profileDraftAbout: profileState.profileDraftAbout(),
+          selectedAvatarFilename: profileState.selectedProfileAvatarFile()?.name ?? "",
+          isSavingProfile: profileState.isSavingProfile(),
+          isUploadingProfileAvatar: profileState.isUploadingProfileAvatar(),
+          profileSettingsStatus: profileState.profileSettingsStatus(),
+          profileSettingsError: profileState.profileSettingsError(),
+          onOpenSettingsCategory: openSettingsCategory,
+          onOpenVoiceSettingsSubmenu: overlayState.setActiveVoiceSettingsSubmenu,
+          onSetVoiceDevicePreference: (kind, value) =>
+            setVoiceDevicePreference(kind, value),
+          onRefreshAudioDeviceInventory: () => refreshAudioDeviceInventory(true),
+          setProfileDraftUsername: profileState.setProfileDraftUsername,
+          setProfileDraftAbout: profileState.setProfileDraftAbout,
+          setSelectedProfileAvatarFile: profileState.setSelectedProfileAvatarFile,
+          onSaveProfileSettings: profileController.saveProfileSettings,
+          onUploadProfileAvatar: profileController.uploadProfileAvatar,
+          avatarUrlForUser: profileController.avatarUrlForUser,
+        },
+        workspaceSettings: {
           hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
           canManageWorkspaceSettings: selectors.canManageRoles(),
           workspaceName: workspaceChannelState.workspaceSettingsName(),
@@ -667,8 +663,38 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           setWorkspaceSettingsStatus: workspaceChannelState.setWorkspaceSettingsStatus,
           setWorkspaceSettingsError: workspaceChannelState.setWorkspaceSettingsError,
           onSaveWorkspaceSettings: saveWorkspaceSettings,
-        }),
-      },
+        },
+        roleManagement: {
+          hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
+          canManageWorkspaceRoles: selectors.canManageWorkspaceRoles(),
+          canManageMemberRoles: selectors.canManageMemberRoles(),
+          roles: roleManagementActions.roles(),
+          isLoadingRoles: roleManagementActions.isLoadingRoles(),
+          isMutatingRoles: roleManagementActions.isMutatingRoles(),
+          roleManagementStatus: roleManagementActions.roleManagementStatus(),
+          roleManagementError: roleManagementActions.roleManagementError(),
+          targetUserIdInput: diagnosticsState.moderationUserIdInput(),
+          setTargetUserIdInput: diagnosticsState.setModerationUserIdInput,
+          onRefreshRoles: roleManagementActions.refreshRoles,
+          onCreateRole: roleManagementActions.createRole,
+          onUpdateRole: roleManagementActions.updateRole,
+          onDeleteRole: roleManagementActions.deleteRole,
+          onReorderRoles: roleManagementActions.reorderRoles,
+          onAssignRole: roleManagementActions.assignRoleToMember,
+          onUnassignRole: roleManagementActions.unassignRoleFromMember,
+          onOpenModerationPanel: () => openOverlayPanel("moderation"),
+        },
+        utility: {
+          echoInput: diagnosticsState.echoInput(),
+          healthStatus: diagnosticsState.healthStatus(),
+          diagError: diagnosticsState.diagError(),
+          isCheckingHealth: diagnosticsState.isCheckingHealth(),
+          isEchoing: diagnosticsState.isEchoing(),
+          setEchoInput: diagnosticsState.setEchoInput,
+          onRunHealthCheck: sessionDiagnostics.runHealthCheck,
+          onRunEcho: sessionDiagnostics.runEcho,
+        },
+      }),
       ...createCollaborationPanelPropGroups({
         friendships: {
           friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput(),
@@ -739,38 +765,6 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           onApplyOverride: moderationActions.applyOverride,
           onOpenRoleManagementPanel: () => openOverlayPanel("role-management"),
         },
-      }),
-      roleManagement: {
-        ...createRoleManagementPanelProps({
-          hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
-          canManageWorkspaceRoles: selectors.canManageWorkspaceRoles(),
-          canManageMemberRoles: selectors.canManageMemberRoles(),
-          roles: roleManagementActions.roles(),
-          isLoadingRoles: roleManagementActions.isLoadingRoles(),
-          isMutatingRoles: roleManagementActions.isMutatingRoles(),
-          roleManagementStatus: roleManagementActions.roleManagementStatus(),
-          roleManagementError: roleManagementActions.roleManagementError(),
-          targetUserIdInput: diagnosticsState.moderationUserIdInput(),
-          setTargetUserIdInput: diagnosticsState.setModerationUserIdInput,
-          onRefreshRoles: roleManagementActions.refreshRoles,
-          onCreateRole: roleManagementActions.createRole,
-          onUpdateRole: roleManagementActions.updateRole,
-          onDeleteRole: roleManagementActions.deleteRole,
-          onReorderRoles: roleManagementActions.reorderRoles,
-          onAssignRole: roleManagementActions.assignRoleToMember,
-          onUnassignRole: roleManagementActions.unassignRoleFromMember,
-          onOpenModerationPanel: () => openOverlayPanel("moderation"),
-        }),
-      },
-      utility: createUtilityPanelProps({
-        echoInput: diagnosticsState.echoInput(),
-        healthStatus: diagnosticsState.healthStatus(),
-        diagError: diagnosticsState.diagError(),
-        isCheckingHealth: diagnosticsState.isCheckingHealth(),
-        isEchoing: diagnosticsState.isEchoing(),
-        setEchoInput: diagnosticsState.setEchoInput,
-        onRunHealthCheck: sessionDiagnostics.runHealthCheck,
-        onRunEcho: sessionDiagnostics.runEcho,
       }),
     });
 
