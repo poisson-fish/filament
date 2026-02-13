@@ -40,6 +40,13 @@ https://filamentapp.net {
   }
 }
 
+# LiveKit Signaling Proxy
+# Allows clients to connect via wss://filamentapp.net:8443
+:8443 {
+  tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+  reverse_proxy livekit:7880
+}
+
 # Keep the old port for direct access if needed (optional, can be removed)
 :8080 {
   reverse_proxy filament-server:3000
