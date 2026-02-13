@@ -64,15 +64,12 @@ import { createWorkspaceSelectionActions } from "./workspace-selection-actions";
 import { createWorkspaceSettingsPanelProps } from "./workspace-settings-panel-props";
 import { createRuntimeEffects } from "./runtime-effects";
 import { createRoleManagementPanelProps } from "./role-management-panel-props";
-import { createFriendshipsPanelProps } from "./friendships-panel-props";
-import { createSearchPanelProps } from "./search-panel-props";
-import { createModerationPanelProps } from "./moderation-panel-props";
-import { createAttachmentsPanelProps } from "./attachments-panel-props";
 import { createClientSettingsPanelProps } from "./client-settings-panel-props";
 import { createUtilityPanelProps } from "./utility-panel-props";
 import { createPublicDirectoryPanelProps } from "./public-directory-panel-props";
 import { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 import { createWorkspaceChannelCreatePanelGroups } from "./workspace-channel-create-panel-groups";
+import { createCollaborationPanelPropGroups } from "./collaboration-panel-prop-groups";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -672,74 +669,76 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           onSaveWorkspaceSettings: saveWorkspaceSettings,
         }),
       },
-      friendships: createFriendshipsPanelProps({
-        friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput(),
-        friendRequests: friendshipsState.friendRequests(),
-        friends: friendshipsState.friends(),
-        isRunningFriendAction: friendshipsState.isRunningFriendAction(),
-        friendStatus: friendshipsState.friendStatus(),
-        friendError: friendshipsState.friendError(),
-        onSubmitFriendRequest: friendshipActions.submitFriendRequest,
-        setFriendRecipientUserIdInput: friendshipsState.setFriendRecipientUserIdInput,
-        onAcceptIncomingFriendRequest: (requestId) =>
-          friendshipActions.acceptIncomingFriendRequest(requestId),
-        onDismissFriendRequest: (requestId) =>
-          friendshipActions.dismissFriendRequest(requestId),
-        onRemoveFriendship: (friendUserId) =>
-          friendshipActions.removeFriendship(friendUserId),
-      }),
-      search: createSearchPanelProps({
-        searchQuery: discoveryState.searchQuery(),
-        isSearching: discoveryState.isSearching(),
-        hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
-        canManageSearchMaintenance: selectors.canManageSearchMaintenance(),
-        isRunningSearchOps: discoveryState.isRunningSearchOps(),
-        searchOpsStatus: discoveryState.searchOpsStatus(),
-        searchError: discoveryState.searchError(),
-        searchResults: discoveryState.searchResults(),
-        onSubmitSearch: searchActions.runSearch,
-        setSearchQuery: discoveryState.setSearchQuery,
-        onRebuildSearch: searchActions.rebuildSearch,
-        onReconcileSearch: searchActions.reconcileSearch,
-        displayUserLabel: labels.displayUserLabel,
-      }),
-      attachments: createAttachmentsPanelProps({
-        attachmentFilename: messageState.attachmentFilename(),
-        activeAttachments: selectors.activeAttachments(),
-        isUploadingAttachment: messageState.isUploadingAttachment(),
-        hasActiveChannel: Boolean(selectors.activeChannel()),
-        attachmentStatus: messageState.attachmentStatus(),
-        attachmentError: messageState.attachmentError(),
-        downloadingAttachmentId: messageState.downloadingAttachmentId(),
-        deletingAttachmentId: messageState.deletingAttachmentId(),
-        onSubmitUploadAttachment: attachmentActions.uploadAttachment,
-        setSelectedAttachment: messageState.setSelectedAttachment,
-        setAttachmentFilename: messageState.setAttachmentFilename,
-        onDownloadAttachment: (record) => attachmentActions.downloadAttachment(record),
-        onRemoveAttachment: (record) => attachmentActions.removeAttachment(record),
-      }),
-      moderation: createModerationPanelProps({
-        moderationUserIdInput: diagnosticsState.moderationUserIdInput(),
-        moderationRoleInput: diagnosticsState.moderationRoleInput(),
-        overrideRoleInput: diagnosticsState.overrideRoleInput(),
-        overrideAllowCsv: diagnosticsState.overrideAllowCsv(),
-        overrideDenyCsv: diagnosticsState.overrideDenyCsv(),
-        isModerating: diagnosticsState.isModerating(),
-        hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
-        hasActiveChannel: Boolean(selectors.activeChannel()),
-        canManageRoles: selectors.canManageRoles(),
-        canBanMembers: selectors.canBanMembers(),
-        canManageChannelOverrides: selectors.canManageChannelOverrides(),
-        moderationStatus: diagnosticsState.moderationStatus(),
-        moderationError: diagnosticsState.moderationError(),
-        setModerationUserIdInput: diagnosticsState.setModerationUserIdInput,
-        setModerationRoleInput: diagnosticsState.setModerationRoleInput,
-        onRunMemberAction: (action) => moderationActions.runMemberAction(action),
-        setOverrideRoleInput: diagnosticsState.setOverrideRoleInput,
-        setOverrideAllowCsv: diagnosticsState.setOverrideAllowCsv,
-        setOverrideDenyCsv: diagnosticsState.setOverrideDenyCsv,
-        onApplyOverride: moderationActions.applyOverride,
-        onOpenRoleManagementPanel: () => openOverlayPanel("role-management"),
+      ...createCollaborationPanelPropGroups({
+        friendships: {
+          friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput(),
+          friendRequests: friendshipsState.friendRequests(),
+          friends: friendshipsState.friends(),
+          isRunningFriendAction: friendshipsState.isRunningFriendAction(),
+          friendStatus: friendshipsState.friendStatus(),
+          friendError: friendshipsState.friendError(),
+          onSubmitFriendRequest: friendshipActions.submitFriendRequest,
+          setFriendRecipientUserIdInput: friendshipsState.setFriendRecipientUserIdInput,
+          onAcceptIncomingFriendRequest: (requestId) =>
+            friendshipActions.acceptIncomingFriendRequest(requestId),
+          onDismissFriendRequest: (requestId) =>
+            friendshipActions.dismissFriendRequest(requestId),
+          onRemoveFriendship: (friendUserId) =>
+            friendshipActions.removeFriendship(friendUserId),
+        },
+        search: {
+          searchQuery: discoveryState.searchQuery(),
+          isSearching: discoveryState.isSearching(),
+          hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
+          canManageSearchMaintenance: selectors.canManageSearchMaintenance(),
+          isRunningSearchOps: discoveryState.isRunningSearchOps(),
+          searchOpsStatus: discoveryState.searchOpsStatus(),
+          searchError: discoveryState.searchError(),
+          searchResults: discoveryState.searchResults(),
+          onSubmitSearch: searchActions.runSearch,
+          setSearchQuery: discoveryState.setSearchQuery,
+          onRebuildSearch: searchActions.rebuildSearch,
+          onReconcileSearch: searchActions.reconcileSearch,
+          displayUserLabel: labels.displayUserLabel,
+        },
+        attachments: {
+          attachmentFilename: messageState.attachmentFilename(),
+          activeAttachments: selectors.activeAttachments(),
+          isUploadingAttachment: messageState.isUploadingAttachment(),
+          hasActiveChannel: Boolean(selectors.activeChannel()),
+          attachmentStatus: messageState.attachmentStatus(),
+          attachmentError: messageState.attachmentError(),
+          downloadingAttachmentId: messageState.downloadingAttachmentId(),
+          deletingAttachmentId: messageState.deletingAttachmentId(),
+          onSubmitUploadAttachment: attachmentActions.uploadAttachment,
+          setSelectedAttachment: messageState.setSelectedAttachment,
+          setAttachmentFilename: messageState.setAttachmentFilename,
+          onDownloadAttachment: (record) => attachmentActions.downloadAttachment(record),
+          onRemoveAttachment: (record) => attachmentActions.removeAttachment(record),
+        },
+        moderation: {
+          moderationUserIdInput: diagnosticsState.moderationUserIdInput(),
+          moderationRoleInput: diagnosticsState.moderationRoleInput(),
+          overrideRoleInput: diagnosticsState.overrideRoleInput(),
+          overrideAllowCsv: diagnosticsState.overrideAllowCsv(),
+          overrideDenyCsv: diagnosticsState.overrideDenyCsv(),
+          isModerating: diagnosticsState.isModerating(),
+          hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
+          hasActiveChannel: Boolean(selectors.activeChannel()),
+          canManageRoles: selectors.canManageRoles(),
+          canBanMembers: selectors.canBanMembers(),
+          canManageChannelOverrides: selectors.canManageChannelOverrides(),
+          moderationStatus: diagnosticsState.moderationStatus(),
+          moderationError: diagnosticsState.moderationError(),
+          setModerationUserIdInput: diagnosticsState.setModerationUserIdInput,
+          setModerationRoleInput: diagnosticsState.setModerationRoleInput,
+          onRunMemberAction: (action) => moderationActions.runMemberAction(action),
+          setOverrideRoleInput: diagnosticsState.setOverrideRoleInput,
+          setOverrideAllowCsv: diagnosticsState.setOverrideAllowCsv,
+          setOverrideDenyCsv: diagnosticsState.setOverrideDenyCsv,
+          onApplyOverride: moderationActions.applyOverride,
+          onOpenRoleManagementPanel: () => openOverlayPanel("role-management"),
+        },
       }),
       roleManagement: {
         ...createRoleManagementPanelProps({
