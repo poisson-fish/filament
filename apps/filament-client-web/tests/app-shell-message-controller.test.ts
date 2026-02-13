@@ -89,8 +89,21 @@ describe("app shell message controller", () => {
     expect(thirdAttempt).toBe(3);
     expect(shouldRetryMediaPreview(secondAttempt, 2)).toBe(true);
     expect(shouldRetryMediaPreview(thirdAttempt, 2)).toBe(false);
-    expect(mediaPreviewRetryDelayMs(1)).toBe(600);
-    expect(mediaPreviewRetryDelayMs(2)).toBe(1200);
+    // Default base is 250ms
+    expect(mediaPreviewRetryDelayMs(1)).toBe(250);
+    // 2nd attempt: 250 * 1.5 = 375
+    expect(mediaPreviewRetryDelayMs(2)).toBe(375);
+  });
+
+  it("calculates retry delays with exponential backoff and cap", () => {
+    // 1st attempt: 250 * 1 = 250
+    expect(mediaPreviewRetryDelayMs(1, 250)).toBe(250);
+    // 2nd attempt: 250 * 1.5 = 375
+    expect(mediaPreviewRetryDelayMs(2, 250)).toBe(375);
+    // 5th attempt: 250 * 1.5^4 = 1265.625
+    expect(mediaPreviewRetryDelayMs(5, 250)).toBeCloseTo(1265.625);
+    // High attempt cap: 10000
+    expect(mediaPreviewRetryDelayMs(100, 250)).toBe(10000);
   });
 
   it("retains record entries only for allowed IDs", () => {

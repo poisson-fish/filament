@@ -205,6 +205,7 @@ async function readBoundedResponseBytes(input: {
   response: Response;
   maxBytes: number;
   oversizedError: ApiError;
+  timeoutMs?: number;
 }): Promise<Uint8Array> {
   const contentLength = parseContentLength(input.response.headers);
   if (contentLength !== null && contentLength > input.maxBytes) {
@@ -220,10 +221,28 @@ async function readBoundedResponseBytes(input: {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
+  let timeoutId: number | undefined;
 
   try {
+    const timeoutMs = input.timeoutMs ?? 30_000;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = window.setTimeout(() => {
+        reject(
+          new ApiError(
+            input.response.status,
+            "request_timeout",
+            "Response read timed out.",
+          ),
+        );
+      }, timeoutMs);
+    });
+
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await Promise.race([
+        reader.read(),
+        timeoutPromise,
+      ]);
+
       if (done) {
         break;
       }
@@ -241,7 +260,17 @@ async function readBoundedResponseBytes(input: {
       }
       chunks.push(value);
     }
+  } catch (error) {
+    try {
+      await reader.cancel("read_error");
+    } catch {
+      // Ignore cancellation errors
+    }
+    throw error;
   } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
     reader.releaseLock();
   }
 
@@ -412,6 +441,7 @@ async function requestBinary(input: {
       "oversized_response",
       "Attachment response too large.",
     ),
+    timeoutMs: input.timeoutMs,
   });
   return {
     bytes,
@@ -1015,7 +1045,7 @@ export async function downloadChannelAttachmentPreview(
   return requestBinary({
     path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
     accessToken: session.accessToken,
-    timeoutMs: 2_500,
+    timeoutMs: 15_000,
     maxBytes: 12 * 1024 * 1024,
   });
 }

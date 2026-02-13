@@ -1,4 +1,4 @@
-FROM rust:1.93-slim-bookworm AS builder
+FROM rust:1.93.1-slim-trixie AS builder
 WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
@@ -7,7 +7,7 @@ COPY apps ./apps
 
 RUN cargo build --release -p filament-server
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN useradd --system --home /nonexistent --shell /usr/sbin/nologin filament
 WORKDIR /app
 

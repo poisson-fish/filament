@@ -48,8 +48,8 @@ import {
 } from "../helpers";
 
 const DEFAULT_MAX_PREVIEW_BYTES = 25 * 1024 * 1024;
-const DEFAULT_MAX_MEDIA_PREVIEW_RETRIES = 2;
-const DEFAULT_INITIAL_MEDIA_PREVIEW_DELAY_MS = 75;
+const DEFAULT_MAX_MEDIA_PREVIEW_RETRIES = 20;
+const DEFAULT_INITIAL_MEDIA_PREVIEW_DELAY_MS = 250;
 const DEFAULT_MAX_COMPOSER_ATTACHMENTS = 5;
 
 export interface MessageMediaPreviewControllerOptions {
@@ -216,9 +216,10 @@ export function shouldRetryMediaPreview(
 
 export function mediaPreviewRetryDelayMs(
   attempt: number,
-  baseDelayMs = 600,
+  baseDelayMs = 250,
 ): number {
-  return baseDelayMs * Math.max(attempt, 1);
+  const delay = baseDelayMs * Math.pow(1.5, Math.max(attempt - 1, 0));
+  return Math.min(delay, 10_000);
 }
 
 export function createMessageActionsController(
@@ -774,7 +775,7 @@ export function createMessageMediaPreviewController(
             previewRetryAttempts.set(attachmentId, nextAttempt);
             if (shouldRetryMediaPreview(nextAttempt, maxRetries)) {
               window.setTimeout(() => {
-                setMediaPreviewRetryTick((value) => value + 1);
+                setMediaPreviewRetryTick((value) => v, initialDelayMsalue + 1);
               }, mediaPreviewRetryDelayMs(nextAttempt));
               return;
             }
