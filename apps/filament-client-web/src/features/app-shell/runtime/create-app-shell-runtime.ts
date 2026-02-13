@@ -71,6 +71,7 @@ import { createModerationPanelProps } from "./moderation-panel-props";
 import { createAttachmentsPanelProps } from "./attachments-panel-props";
 import { createClientSettingsPanelProps } from "./client-settings-panel-props";
 import { createUtilityPanelProps } from "./utility-panel-props";
+import { createPublicDirectoryPanelProps } from "./public-directory-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -612,7 +613,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         setNewChannelKind: workspaceChannelState.setNewChannelKind,
         onCancelChannelCreate: closeOverlayPanel,
       },
-      publicDirectory: {
+      publicDirectory: createPublicDirectoryPanelProps({
         publicGuildSearchQuery: discoveryState.publicGuildSearchQuery(),
         isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds(),
         publicGuildSearchError: discoveryState.publicGuildSearchError(),
@@ -620,10 +621,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         publicGuildJoinStatusByGuildId: discoveryState.publicGuildJoinStatusByGuildId(),
         publicGuildJoinErrorByGuildId: discoveryState.publicGuildJoinErrorByGuildId(),
         onSubmitPublicGuildSearch: publicDirectoryActions.runPublicGuildSearch,
-        onJoinGuildFromDirectory: (guildId) =>
-          publicDirectoryActions.joinGuildFromDirectory(guildId),
+        onJoinGuildFromDirectory: publicDirectoryActions.joinGuildFromDirectory,
         setPublicGuildSearchQuery: discoveryState.setPublicGuildSearchQuery,
-      },
+      }),
       settings: createClientSettingsPanelProps({
         activeSettingsCategory: overlayState.activeSettingsCategory(),
         activeVoiceSettingsSubmenu: overlayState.activeVoiceSettingsSubmenu(),
