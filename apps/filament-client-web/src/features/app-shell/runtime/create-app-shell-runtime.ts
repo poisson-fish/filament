@@ -3,11 +3,6 @@ import {
   onCleanup,
   untrack,
 } from "solid-js";
-import {
-  channelKindFromInput,
-  type ChannelId,
-  type GuildId,
-} from "../../../domain/chat";
 import { useAuth } from "../../../lib/auth-context";
 import { saveWorkspaceCache } from "../../../lib/workspace-cache";
 import { buildPanelHostPropGroups } from "../adapters/panel-host-props";
@@ -69,6 +64,7 @@ import { createWorkspaceChannelOperationsController } from "./workspace-channel-
 import { createWorkspacePermissionActions } from "./workspace-permission-actions";
 import { createWorkspaceSettingsActions } from "./workspace-settings-actions";
 import { createVoiceDeviceActions } from "./voice-device-actions";
+import { createWorkspaceSelectionActions } from "./workspace-selection-actions";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -589,6 +585,17 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     void releaseRtcClient();
   });
 
+  const {
+    openTextChannelCreatePanel,
+    openVoiceChannelCreatePanel,
+    onSelectWorkspace,
+  } = createWorkspaceSelectionActions({
+    setNewChannelKind: workspaceChannelState.setNewChannelKind,
+    openOverlayPanel,
+    setActiveGuildId: workspaceChannelState.setActiveGuildId,
+    setActiveChannelId: workspaceChannelState.setActiveChannelId,
+  });
+
   const panelHostPropGroups = () =>
     buildPanelHostPropGroups({
       workspaceCreate: {
@@ -779,24 +786,6 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         onRunEcho: sessionDiagnostics.runEcho,
       },
     });
-
-  const openTextChannelCreatePanel = (): void => {
-    workspaceChannelState.setNewChannelKind(channelKindFromInput("text"));
-    openOverlayPanel("channel-create");
-  };
-
-  const openVoiceChannelCreatePanel = (): void => {
-    workspaceChannelState.setNewChannelKind(channelKindFromInput("voice"));
-    openOverlayPanel("channel-create");
-  };
-
-  const onSelectWorkspace = (
-    guildId: GuildId,
-    firstChannelId: ChannelId | null,
-  ): void => {
-    workspaceChannelState.setActiveGuildId(guildId);
-    workspaceChannelState.setActiveChannelId(firstChannelId);
-  };
 
   return {
     workspaceState,
