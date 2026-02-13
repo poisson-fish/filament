@@ -62,11 +62,7 @@ import { createWorkspaceSelectionActions } from "./workspace-selection-actions";
 import { createRuntimeEffects } from "./runtime-effects";
 import { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 import { registerGatewayController } from "./gateway-controller-registration";
-import { createPanelHostPropGroups } from "./panel-host-prop-groups";
-import { createPanelHostPropGroupsOptions } from "./panel-host-prop-groups-options";
-import { createWorkspaceChannelCreatePanelHostStateOptions } from "./workspace-channel-create-panel-host-state-options";
-import { createCollaborationPanelHostStateOptions } from "./collaboration-panel-host-state-options";
-import { createSupportPanelHostStateOptions } from "./support-panel-host-state-options";
+import { createPanelHostPropGroupsFactory } from "./panel-host-prop-groups-factory";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -579,49 +575,45 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setActiveChannelId: workspaceChannelState.setActiveChannelId,
   });
 
-  const panelHostPropGroups = () =>
-    createPanelHostPropGroups(
-      createPanelHostPropGroupsOptions({
-        workspaceChannelCreate:
-          createWorkspaceChannelCreatePanelHostStateOptions({
-            workspaceChannelState,
-            selectors,
-            workspaceChannelOperations,
-            closeOverlayPanel,
-          }),
-      support: createSupportPanelHostStateOptions({
-        discoveryState,
-        overlayState,
-        voiceState,
-        profileState,
-        workspaceChannelState,
-        diagnosticsState,
-        selectors,
-        publicDirectoryActions,
-        profileController,
-        roleManagementActions,
-        sessionDiagnostics,
-        openSettingsCategory,
-        setVoiceDevicePreference,
-        refreshAudioDeviceInventory,
-        saveWorkspaceSettings,
-        openOverlayPanel,
-      }),
-      collaboration: createCollaborationPanelHostStateOptions({
-        friendshipsState,
-        discoveryState,
-        messageState,
-        diagnosticsState,
-        selectors,
-        friendshipActions,
-        searchActions,
-        attachmentActions,
-        moderationActions,
-        labels,
-        openOverlayPanel,
-      }),
-      }),
-    );
+  const panelHostPropGroups = createPanelHostPropGroupsFactory({
+    workspaceChannelCreate: {
+      workspaceChannelState,
+      selectors,
+      workspaceChannelOperations,
+      closeOverlayPanel,
+    },
+    support: {
+      discoveryState,
+      overlayState,
+      voiceState,
+      profileState,
+      workspaceChannelState,
+      diagnosticsState,
+      selectors,
+      publicDirectoryActions,
+      profileController,
+      roleManagementActions,
+      sessionDiagnostics,
+      openSettingsCategory,
+      setVoiceDevicePreference,
+      refreshAudioDeviceInventory,
+      saveWorkspaceSettings,
+      openOverlayPanel,
+    },
+    collaboration: {
+      friendshipsState,
+      discoveryState,
+      messageState,
+      diagnosticsState,
+      selectors,
+      friendshipActions,
+      searchActions,
+      attachmentActions,
+      moderationActions,
+      labels,
+      openOverlayPanel,
+    },
+  });
 
   return {
     workspaceState,
