@@ -56,7 +56,6 @@ import {
 import { createWorkspaceState } from "../state/workspace-state";
 import { createOverlayPanelActions } from "./overlay-panel-actions";
 import { createAppShellRuntimeLabels } from "./runtime-labels";
-import { createSessionDiagnosticsController } from "./session-diagnostics-controller";
 import { createWorkspaceChannelOperationsController } from "./workspace-channel-operations-controller";
 import { createWorkspacePermissionActions } from "./workspace-permission-actions";
 import { createWorkspaceSettingsActions } from "./workspace-settings-actions";
@@ -74,6 +73,7 @@ import { createUtilityPanelProps } from "./utility-panel-props";
 import { createPublicDirectoryPanelProps } from "./public-directory-panel-props";
 import { createWorkspaceCreatePanelProps } from "./workspace-create-panel-props";
 import { createChannelCreatePanelProps } from "./channel-create-panel-props";
+import { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -554,12 +554,12 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setVoiceError: voiceState.setVoiceError,
   });
 
-  const sessionDiagnostics = createSessionDiagnosticsController({
+  const sessionDiagnostics = createSessionDiagnosticsActions({
     session: auth.session,
     setAuthenticatedSession: auth.setAuthenticatedSession,
     clearAuthenticatedSession: auth.clearAuthenticatedSession,
-    leaveVoiceChannel: () => leaveVoiceChannel(),
-    releaseRtcClient: () => releaseRtcClient(),
+    leaveVoiceChannel,
+    releaseRtcClient,
     isRefreshingSession: diagnosticsState.isRefreshingSession,
     setRefreshingSession: diagnosticsState.setRefreshingSession,
     setSessionStatus: diagnosticsState.setSessionStatus,
