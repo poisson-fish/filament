@@ -5,47 +5,68 @@
   admin off
 }
 
-# Redirect HTTP to HTTPS
-http://filamentapp.net {
-  redir https://filamentapp.net{uri}
+
+(tls_origin_cert) {
+  tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
 }
 
-https://filamentapp.net {
-  encode zstd gzip
-
-  # SSL Configuration
-  tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
-
+(security_headers) {
   header {
     X-Content-Type-Options "nosniff"
     X-Frame-Options "DENY"
     Referrer-Policy "no-referrer"
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
   }
+}
 
-  # Backend API
-  handle /api/* {
+(api_gateway_routes) {
+  @api_path path /api /api/*
+  handle @api_path {
     uri strip_prefix /api
     reverse_proxy filament-server:3000
   }
 
-  # Backend WebSocket Gateway
-  handle /gateway/* {
-    uri strip_prefix /gateway
+  @gateway_path path /gateway/ws /gateway/ws*
+  handle @gateway_path {
     reverse_proxy filament-server:3000
   }
+}
+
+# Redirect HTTP to HTTPS for active web/app hosts
+http://filamentapp.net, http://app.filament.local, http://api.filament.local {
+  redir https://{host}{uri}
+}
+
+# App host: SPA + same-origin API/gateway paths
+https://filamentapp.net, https://app.filament.local {
+  import tls_origin_cert
+  encode zstd gzip
+  import security_headers
+  import api_gateway_routes
 
   # Frontend (Vite Dev Server running on Host)
   # Requires "host.docker.internal" to be mapped in docker-compose.yml
-  handle /* {
+  handle {
     reverse_proxy host.docker.internal:4173
+  }
+}
+
+# API host: API + gateway only
+https://api.filament.local {
+  import tls_origin_cert
+  encode zstd gzip
+  import security_headers
+  import api_gateway_routes
+
+  handle {
+    respond 404
   }
 }
 
 # LiveKit Signaling Proxy
 # Allows clients to connect via wss://filamentapp.net:8443
 :8443 {
-  tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+  import tls_origin_cert
   reverse_proxy livekit:7880
 }
 
