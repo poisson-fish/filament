@@ -147,13 +147,18 @@ async fn ws_next_text(
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
 ) -> Value {
-    let event = socket
-        .next()
-        .await
-        .expect("socket should yield event")
-        .expect("socket event should decode");
-    let text = event.into_text().expect("event should be text");
-    serde_json::from_str(&text).expect("event should be valid json")
+    loop {
+        let event = socket
+            .next()
+            .await
+            .expect("socket should yield event")
+            .expect("socket event should decode");
+        if event.is_ping() || event.is_pong() {
+            continue;
+        }
+        let text = event.into_text().expect("event should be text");
+        return serde_json::from_str(&text).expect("event should be valid json");
+    }
 }
 
 async fn ws_wait_for_type(

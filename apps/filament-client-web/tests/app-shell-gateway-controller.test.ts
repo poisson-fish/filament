@@ -15,8 +15,8 @@ import {
   type FriendRecord,
   type FriendRequestList,
 } from "../src/domain/chat";
+import { type VoiceParticipantPayload } from "../src/lib/gateway";
 import {
-  type VoiceParticipantPayload,
   applyMessageDelete,
   applyMessageUpdate,
   applyChannelCreate,

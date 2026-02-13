@@ -775,7 +775,7 @@ export function createMessageMediaPreviewController(
             previewRetryAttempts.set(attachmentId, nextAttempt);
             if (shouldRetryMediaPreview(nextAttempt, maxRetries)) {
               window.setTimeout(() => {
-                setMediaPreviewRetryTick((value) => v, initialDelayMsalue + 1);
+                setMediaPreviewRetryTick((value) => value + 1);
               }, mediaPreviewRetryDelayMs(nextAttempt));
               return;
             }

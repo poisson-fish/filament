@@ -180,13 +180,18 @@ async fn next_text_event(
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
 ) -> Value {
-    let event = socket
-        .next()
-        .await
-        .expect("event should be emitted")
-        .expect("event should decode");
-    let text = event.into_text().expect("event should be text");
-    serde_json::from_str(&text).expect("event should be valid json")
+    loop {
+        let event = socket
+            .next()
+            .await
+            .expect("event should be emitted")
+            .expect("event should decode");
+        if event.is_ping() || event.is_pong() {
+            continue;
+        }
+        let text = event.into_text().expect("event should be text");
+        return serde_json::from_str(&text).expect("event should be valid json");
+    }
 }
 
 async fn next_event_of_type(

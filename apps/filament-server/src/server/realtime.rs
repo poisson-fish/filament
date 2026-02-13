@@ -128,8 +128,16 @@ pub(crate) async fn handle_gateway_connection(
 
     let slow_consumer_disconnect_send = Arc::clone(&slow_consumer_disconnect);
     let send_task = tokio::spawn(async move {
+        let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
+        ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
+                _ = ping_interval.tick() => {
+                    if sink.send(Message::Ping(vec![].into())).await.is_err() {
+                        break;
+                    }
+                }
                 control_change = control_rx.changed() => {
                     if control_change.is_ok() && *control_rx.borrow() == ConnectionControl::Close {
                         slow_consumer_disconnect_send.store(true, Ordering::Relaxed);

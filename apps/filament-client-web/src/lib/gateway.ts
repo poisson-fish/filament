@@ -1888,23 +1888,14 @@ export function connectGateway(
     };
   }
 
-  const socket = new WebSocket(resolveGatewayUrl(accessToken));
+  let socket: WebSocket | null = null;
   let currentGuildId = guildId;
   let currentChannelId = channelId;
+  let isClosed = false;
+  let retryDelay = 1000;
+  let reconnectTimer: number | null = null;
 
-  socket.onopen = () => {
-    handlers.onOpenStateChange?.(true);
-    sendEnvelope(socket, "subscribe", {
-      guild_id: currentGuildId,
-      channel_id: currentChannelId,
-    });
-  };
-
-  socket.onclose = () => {
-    handlers.onOpenStateChange?.(false);
-  };
-
-  socket.onmessage = (event) => {
+  const handleMessage = (event: MessageEvent) => {
     if (typeof event.data !== "string") {
       return;
     }
@@ -2210,18 +2201,58 @@ export function connectGateway(
     }
   };
 
+  const connect = () => {
+    if (isClosed) return;
+
+    socket = new WebSocket(resolveGatewayUrl(accessToken));
+
+    socket.onopen = () => {
+      retryDelay = 1000;
+      handlers.onOpenStateChange?.(true);
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        sendEnvelope(socket, "subscribe", {
+          guild_id: currentGuildId,
+          channel_id: currentChannelId,
+        });
+      }
+    };
+
+    socket.onclose = () => {
+      handlers.onOpenStateChange?.(false);
+      if (!isClosed) {
+        retryDelay = Math.min(retryDelay * 2, 30000);
+        reconnectTimer = window.setTimeout(connect, retryDelay);
+      }
+    };
+
+    socket.onmessage = handleMessage;
+  };
+
+  connect();
+
   return {
     updateSubscription: (nextGuildId, nextChannelId) => {
       currentGuildId = nextGuildId;
       currentChannelId = nextChannelId;
-      sendEnvelope(socket, "subscribe", {
-        guild_id: currentGuildId,
-        channel_id: currentChannelId,
-      });
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        sendEnvelope(socket, "subscribe", {
+          guild_id: currentGuildId,
+          channel_id: currentChannelId,
+        });
+      }
     },
     close: () => {
-      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-        socket.close();
+      isClosed = true;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (socket) {
+        socket.onclose = null;
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close();
+        }
+        socket = null;
       }
     },
   };
