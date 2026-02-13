@@ -1,16 +1,46 @@
 {
+  # Cloudflare "Full (Strict)" requires a valid certificate on the origin.
+  # We use the Cloudflare Origin CA certificate mounted at /etc/caddy/certs.
   auto_https off
   admin off
 }
 
-:8080 {
+# Redirect HTTP to HTTPS
+http://filamentapp.net {
+  redir https://filamentapp.net{uri}
+}
+
+https://filamentapp.net {
   encode zstd gzip
+
+  # SSL Configuration
+  tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
 
   header {
     X-Content-Type-Options "nosniff"
     X-Frame-Options "DENY"
     Referrer-Policy "no-referrer"
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
   }
 
+  # Backend API
+  handle /api/* {
+    reverse_proxy filament-server:3000
+  }
+
+  # Backend WebSocket Gateway
+  handle /gateway/* {
+    reverse_proxy filament-server:3000
+  }
+
+  # Frontend (Vite Dev Server running on Host)
+  # Requires "host.docker.internal" to be mapped in docker-compose.yml
+  handle /* {
+    reverse_proxy host.docker.internal:4173
+  }
+}
+
+# Keep the old port for direct access if needed (optional, can be removed)
+:8080 {
   reverse_proxy filament-server:3000
 }
