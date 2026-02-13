@@ -5,13 +5,11 @@ import {
 } from "solid-js";
 import {
   channelKindFromInput,
-  guildNameFromInput,
-  guildVisibilityFromInput,
   type ChannelId,
   type GuildId,
 } from "../../../domain/chat";
 import { useAuth } from "../../../lib/auth-context";
-import { ApiError, fetchChannelPermissionSnapshot, updateGuild } from "../../../lib/api";
+import { ApiError, fetchChannelPermissionSnapshot } from "../../../lib/api";
 import {
   canRequestAudioCapturePermission,
   enumerateAudioDevices,
@@ -83,6 +81,7 @@ import { createOverlayPanelActions } from "./overlay-panel-actions";
 import { createAppShellRuntimeLabels } from "./runtime-labels";
 import { createSessionDiagnosticsController } from "./session-diagnostics-controller";
 import { createWorkspaceChannelOperationsController } from "./workspace-channel-operations-controller";
+import { createWorkspaceSettingsActions } from "./workspace-settings-actions";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -119,63 +118,21 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     activeOverlayPanel: overlayState.activeOverlayPanel,
   });
 
-  const saveWorkspaceSettings = async (): Promise<void> => {
-    const session = auth.session();
-    const guildId = workspaceChannelState.activeGuildId();
-    if (!session || !guildId) {
-      return;
-    }
-    if (!selectors.canManageRoles()) {
-      workspaceChannelState.setWorkspaceSettingsError(
-        "You do not have permission to update workspace settings.",
-      );
-      workspaceChannelState.setWorkspaceSettingsStatus("");
-      return;
-    }
+  const workspaceSettingsActions = createWorkspaceSettingsActions({
+    session: auth.session,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    canManageRoles: selectors.canManageRoles,
+    workspaceSettingsName: workspaceChannelState.workspaceSettingsName,
+    workspaceSettingsVisibility: workspaceChannelState.workspaceSettingsVisibility,
+    setSavingWorkspaceSettings: workspaceChannelState.setSavingWorkspaceSettings,
+    setWorkspaceSettingsStatus: workspaceChannelState.setWorkspaceSettingsStatus,
+    setWorkspaceSettingsError: workspaceChannelState.setWorkspaceSettingsError,
+    setWorkspaces: workspaceChannelState.setWorkspaces,
+    setWorkspaceSettingsName: workspaceChannelState.setWorkspaceSettingsName,
+    setWorkspaceSettingsVisibility: workspaceChannelState.setWorkspaceSettingsVisibility,
+  });
 
-    let nextName;
-    let nextVisibility;
-    try {
-      nextName = guildNameFromInput(workspaceChannelState.workspaceSettingsName());
-      nextVisibility = guildVisibilityFromInput(workspaceChannelState.workspaceSettingsVisibility());
-    } catch (error) {
-      workspaceChannelState.setWorkspaceSettingsError(
-        mapError(error, "Unable to validate workspace settings."),
-      );
-      workspaceChannelState.setWorkspaceSettingsStatus("");
-      return;
-    }
-
-    workspaceChannelState.setSavingWorkspaceSettings(true);
-    workspaceChannelState.setWorkspaceSettingsStatus("");
-    workspaceChannelState.setWorkspaceSettingsError("");
-    try {
-      const updatedGuild = await updateGuild(session, guildId, {
-        name: nextName,
-        visibility: nextVisibility,
-      });
-      workspaceChannelState.setWorkspaces((existing) =>
-        existing.map((workspace) =>
-          workspace.guildId === guildId
-            ? {
-                ...workspace,
-                guildName: updatedGuild.name,
-                visibility: updatedGuild.visibility,
-              }
-            : workspace,
-        ),
-      );
-      workspaceChannelState.setWorkspaceSettingsName(updatedGuild.name);
-      workspaceChannelState.setWorkspaceSettingsVisibility(updatedGuild.visibility);
-      workspaceChannelState.setWorkspaceSettingsStatus("Workspace settings saved.");
-    } catch (error) {
-      workspaceChannelState.setWorkspaceSettingsError(
-        mapError(error, "Unable to save workspace settings."),
-      );
-    } finally {
-      workspaceChannelState.setSavingWorkspaceSettings(false);
-    }
-  };
+  const { saveWorkspaceSettings } = workspaceSettingsActions;
 
   const reactionPickerController = createReactionPickerController({
     openReactionPickerMessageId: messageState.openReactionPickerMessageId,
