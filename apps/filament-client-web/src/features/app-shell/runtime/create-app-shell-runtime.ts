@@ -67,6 +67,7 @@ import { createRuntimeEffects } from "./runtime-effects";
 import { createRoleManagementPanelProps } from "./role-management-panel-props";
 import { createFriendshipsPanelProps } from "./friendships-panel-props";
 import { createSearchPanelProps } from "./search-panel-props";
+import { createModerationPanelProps } from "./moderation-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -713,7 +714,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         onDownloadAttachment: (record) => attachmentActions.downloadAttachment(record),
         onRemoveAttachment: (record) => attachmentActions.removeAttachment(record),
       },
-      moderation: {
+      moderation: createModerationPanelProps({
         moderationUserIdInput: diagnosticsState.moderationUserIdInput(),
         moderationRoleInput: diagnosticsState.moderationRoleInput(),
         overrideRoleInput: diagnosticsState.overrideRoleInput(),
@@ -735,7 +736,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         setOverrideDenyCsv: diagnosticsState.setOverrideDenyCsv,
         onApplyOverride: moderationActions.applyOverride,
         onOpenRoleManagementPanel: () => openOverlayPanel("role-management"),
-      },
+      }),
       roleManagement: {
         ...createRoleManagementPanelProps({
           hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
