@@ -10,15 +10,6 @@ import {
 } from "../../../domain/chat";
 import { useAuth } from "../../../lib/auth-context";
 import { ApiError, fetchChannelPermissionSnapshot } from "../../../lib/api";
-import {
-  canRequestAudioCapturePermission,
-  enumerateAudioDevices,
-  reconcileVoiceDevicePreferences,
-  requestAudioCapturePermission,
-  saveVoiceDevicePreferences,
-  type MediaDeviceId,
-  type VoiceDevicePreferences,
-} from "../../../lib/voice-device-settings";
 import { saveWorkspaceCache } from "../../../lib/workspace-cache";
 import { buildPanelHostPropGroups } from "../adapters/panel-host-props";
 import { createAttachmentController } from "../controllers/attachment-controller";
@@ -53,8 +44,6 @@ import {
 } from "../controllers/voice-operations-controller";
 import {
   createVoiceSessionLifecycleController,
-  resolveVoiceDevicePreferenceStatus,
-  unavailableVoiceDeviceError,
 } from "../controllers/voice-controller";
 import {
   createChannelPermissionsController,
@@ -63,8 +52,6 @@ import {
   createWorkspaceSelectionController,
 } from "../controllers/workspace-controller";
 import {
-  mapError,
-  mapRtcError,
   userIdFromVoiceIdentity,
 } from "../helpers";
 import { createAppShellSelectors } from "../selectors/create-app-shell-selectors";
@@ -82,6 +69,7 @@ import { createAppShellRuntimeLabels } from "./runtime-labels";
 import { createSessionDiagnosticsController } from "./session-diagnostics-controller";
 import { createWorkspaceChannelOperationsController } from "./workspace-channel-operations-controller";
 import { createWorkspaceSettingsActions } from "./workspace-settings-actions";
+import { createVoiceDeviceActions } from "./voice-device-actions";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -195,118 +183,21 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     toggleVoiceScreenShare,
   } = voiceOperationsController;
 
-  const persistVoiceDevicePreferences = (next: VoiceDevicePreferences): void => {
-    voiceState.setVoiceDevicePreferences(next);
-    try {
-      saveVoiceDevicePreferences(next);
-    } catch {
-      voiceState.setAudioDevicesError(
-        "Unable to persist audio device preferences in local storage.",
-      );
-    }
-  };
-
-  const refreshAudioDeviceInventory = async (
-    requestPermissionPrompt = false,
-  ): Promise<void> => {
-    if (voiceState.isRefreshingAudioDevices()) {
-      return;
-    }
-    voiceState.setRefreshingAudioDevices(true);
-    voiceState.setAudioDevicesError("");
-    try {
-      let inventory = await enumerateAudioDevices();
-      if (
-        requestPermissionPrompt &&
-        inventory.audioInputs.length === 0 &&
-        canRequestAudioCapturePermission()
-      ) {
-        await requestAudioCapturePermission();
-        inventory = await enumerateAudioDevices();
-      }
-      voiceState.setAudioInputDevices(inventory.audioInputs);
-      voiceState.setAudioOutputDevices(inventory.audioOutputs);
-      voiceState.setAudioDevicesStatus(
-        `Detected ${inventory.audioInputs.length} microphone(s) and ${inventory.audioOutputs.length} speaker(s).`,
-      );
-      const current = voiceState.voiceDevicePreferences();
-      const reconciled = reconcileVoiceDevicePreferences(current, inventory);
-      if (
-        current.audioInputDeviceId !== reconciled.audioInputDeviceId ||
-        current.audioOutputDeviceId !== reconciled.audioOutputDeviceId
-      ) {
-        persistVoiceDevicePreferences(reconciled);
-        voiceState.setAudioDevicesStatus(
-          "Some saved audio devices are no longer available. Reverted to system defaults.",
-        );
-      }
-    } catch (error) {
-      voiceState.setAudioInputDevices([]);
-      voiceState.setAudioOutputDevices([]);
-      voiceState.setAudioDevicesStatus("");
-      voiceState.setAudioDevicesError(
-        mapError(error, "Unable to enumerate audio devices."),
-      );
-    } finally {
-      voiceState.setRefreshingAudioDevices(false);
-    }
-  };
-
-  const setVoiceDevicePreference = async (
-    kind: "audioinput" | "audiooutput",
-    nextValue: string,
-  ): Promise<void> => {
-    const options =
-      kind === "audioinput"
-        ? voiceState.audioInputDevices()
-        : voiceState.audioOutputDevices();
-    if (nextValue.length > 0 && !options.some((entry) => entry.deviceId === nextValue)) {
-      voiceState.setAudioDevicesError(unavailableVoiceDeviceError(kind));
-      return;
-    }
-
-    const nextDeviceId = nextValue.length > 0 ? (nextValue as MediaDeviceId) : null;
-    const next: VoiceDevicePreferences =
-      kind === "audioinput"
-        ? {
-            ...voiceState.voiceDevicePreferences(),
-            audioInputDeviceId: nextDeviceId,
-          }
-        : {
-            ...voiceState.voiceDevicePreferences(),
-            audioOutputDeviceId: nextDeviceId,
-          };
-    voiceState.setAudioDevicesError("");
-    persistVoiceDevicePreferences(next);
-
-    const client = voiceOperationsController.peekRtcClient();
-    if (!client || !selectors.isVoiceSessionActive()) {
-      voiceState.setAudioDevicesStatus(
-        resolveVoiceDevicePreferenceStatus(kind, false, nextDeviceId),
-      );
-      return;
-    }
-
-    try {
-      if (kind === "audioinput") {
-        await client.setAudioInputDevice(next.audioInputDeviceId);
-      } else {
-        await client.setAudioOutputDevice(next.audioOutputDeviceId);
-      }
-      voiceState.setAudioDevicesStatus(
-        resolveVoiceDevicePreferenceStatus(kind, true, nextDeviceId),
-      );
-    } catch (error) {
-      voiceState.setAudioDevicesError(
-        mapRtcError(
-          error,
-          kind === "audioinput"
-            ? "Unable to apply microphone selection."
-            : "Unable to apply speaker selection.",
-        ),
-      );
-    }
-  };
+  const { refreshAudioDeviceInventory, setVoiceDevicePreference } =
+    createVoiceDeviceActions({
+      voiceDevicePreferences: voiceState.voiceDevicePreferences,
+      setVoiceDevicePreferences: voiceState.setVoiceDevicePreferences,
+      audioInputDevices: voiceState.audioInputDevices,
+      audioOutputDevices: voiceState.audioOutputDevices,
+      isRefreshingAudioDevices: voiceState.isRefreshingAudioDevices,
+      setRefreshingAudioDevices: voiceState.setRefreshingAudioDevices,
+      setAudioInputDevices: voiceState.setAudioInputDevices,
+      setAudioOutputDevices: voiceState.setAudioOutputDevices,
+      setAudioDevicesStatus: voiceState.setAudioDevicesStatus,
+      setAudioDevicesError: voiceState.setAudioDevicesError,
+      isVoiceSessionActive: selectors.isVoiceSessionActive,
+      peekRtcClient: voiceOperationsController.peekRtcClient,
+    });
 
   const {
     openOverlayPanel,
