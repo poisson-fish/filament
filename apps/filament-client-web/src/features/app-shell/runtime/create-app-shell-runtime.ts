@@ -2,7 +2,6 @@ import {
   onCleanup,
 } from "solid-js";
 import { useAuth } from "../../../lib/auth-context";
-import { buildPanelHostPropGroups } from "../adapters/panel-host-props";
 import { createAttachmentController } from "../controllers/attachment-controller";
 import {
   createFriendshipController,
@@ -62,10 +61,8 @@ import { createVoiceDeviceActions } from "./voice-device-actions";
 import { createWorkspaceSelectionActions } from "./workspace-selection-actions";
 import { createRuntimeEffects } from "./runtime-effects";
 import { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
-import { createWorkspaceChannelCreatePanelGroups } from "./workspace-channel-create-panel-groups";
-import { createCollaborationPanelPropGroups } from "./collaboration-panel-prop-groups";
-import { createSupportPanelPropGroups } from "./support-panel-prop-groups";
 import { registerGatewayController } from "./gateway-controller-registration";
+import { createPanelHostPropGroups } from "./panel-host-prop-groups";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -579,8 +576,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   });
 
   const panelHostPropGroups = () =>
-    buildPanelHostPropGroups({
-      ...createWorkspaceChannelCreatePanelGroups({
+    createPanelHostPropGroups({
+      workspaceChannelCreate: {
         workspaceCreate: {
           createGuildName: workspaceChannelState.createGuildName(),
           createGuildVisibility: workspaceChannelState.createGuildVisibility(),
@@ -606,8 +603,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           setNewChannelKind: workspaceChannelState.setNewChannelKind,
           onCancelChannelCreate: closeOverlayPanel,
         },
-      }),
-      ...createSupportPanelPropGroups({
+      },
+      support: {
         publicDirectory: {
           publicGuildSearchQuery: discoveryState.publicGuildSearchQuery(),
           isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds(),
@@ -692,8 +689,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           onRunHealthCheck: sessionDiagnostics.runHealthCheck,
           onRunEcho: sessionDiagnostics.runEcho,
         },
-      }),
-      ...createCollaborationPanelPropGroups({
+      },
+      collaboration: {
         friendships: {
           friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput(),
           friendRequests: friendshipsState.friendRequests(),
@@ -763,7 +760,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           onApplyOverride: moderationActions.applyOverride,
           onOpenRoleManagementPanel: () => openOverlayPanel("role-management"),
         },
-      }),
+      },
     });
 
   return {
