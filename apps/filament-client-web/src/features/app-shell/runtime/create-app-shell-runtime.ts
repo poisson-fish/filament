@@ -1,10 +1,7 @@
 import {
-  createEffect,
   onCleanup,
-  untrack,
 } from "solid-js";
 import { useAuth } from "../../../lib/auth-context";
-import { saveWorkspaceCache } from "../../../lib/workspace-cache";
 import { buildPanelHostPropGroups } from "../adapters/panel-host-props";
 import { createAttachmentController } from "../controllers/attachment-controller";
 import {
@@ -66,6 +63,7 @@ import { createWorkspaceSettingsActions } from "./workspace-settings-actions";
 import { createVoiceDeviceActions } from "./voice-device-actions";
 import { createWorkspaceSelectionActions } from "./workspace-selection-actions";
 import { createWorkspaceSettingsPanelProps } from "./workspace-settings-panel-props";
+import { createRuntimeEffects } from "./runtime-effects";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -437,20 +435,14 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setAvatarVersionByUserId: profileState.setAvatarVersionByUserId,
   });
 
-  createEffect(() => {
-    if (!workspaceChannelState.workspaceBootstrapDone()) {
-      return;
-    }
-    saveWorkspaceCache(workspaceChannelState.workspaces());
-  });
-
-  createEffect(() => {
-    if (!workspaceChannelState.workspaceBootstrapDone()) {
-      return;
-    }
-    if (workspaceChannelState.workspaces().length === 0) {
-      overlayState.setActiveOverlayPanel("workspace-create");
-    }
+  createRuntimeEffects({
+    workspaceBootstrapDone: workspaceChannelState.workspaceBootstrapDone,
+    workspaces: workspaceChannelState.workspaces,
+    setActiveOverlayPanel: overlayState.setActiveOverlayPanel,
+    activeOverlayPanel: overlayState.activeOverlayPanel,
+    activeSettingsCategory: overlayState.activeSettingsCategory,
+    activeVoiceSettingsSubmenu: overlayState.activeVoiceSettingsSubmenu,
+    refreshAudioDeviceInventory,
   });
 
   const messageHistoryActions = createMessageHistoryController({
@@ -481,17 +473,6 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     captureScrollMetrics: messageListController.captureScrollMetrics,
     restoreScrollAfterPrepend: messageListController.restoreScrollAfterPrepend,
     scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
-  });
-
-  createEffect(() => {
-    const isVoiceAudioSettingsOpen =
-      overlayState.activeOverlayPanel() === "client-settings" &&
-      overlayState.activeSettingsCategory() === "voice" &&
-      overlayState.activeVoiceSettingsSubmenu() === "audio-devices";
-    if (!isVoiceAudioSettingsOpen) {
-      return;
-    }
-    void untrack(() => refreshAudioDeviceInventory(false));
   });
 
   createGatewayController({

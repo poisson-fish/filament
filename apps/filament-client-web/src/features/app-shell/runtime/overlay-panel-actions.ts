@@ -1,3 +1,4 @@
+import type { Setter } from "solid-js";
 import type {
   GuildVisibility,
   WorkspaceRecord,
@@ -10,17 +11,17 @@ import type {
 } from "../types";
 
 export interface OverlayPanelActionsOptions {
-  activeWorkspace: () => WorkspaceRecord | undefined;
+  activeWorkspace: () => WorkspaceRecord | null | undefined;
   canCloseActivePanel: () => boolean;
-  setWorkspaceSettingsName: (value: string) => string;
-  setWorkspaceSettingsVisibility: (value: GuildVisibility) => GuildVisibility;
-  setWorkspaceSettingsStatus: (value: string) => string;
-  setWorkspaceSettingsError: (value: string) => string;
-  setActiveOverlayPanel: (value: OverlayPanel | null) => OverlayPanel | null;
-  setWorkspaceError: (value: string) => string;
-  setChannelCreateError: (value: string) => string;
-  setActiveSettingsCategory: (value: SettingsCategory) => SettingsCategory;
-  setActiveVoiceSettingsSubmenu: (value: VoiceSettingsSubmenu) => VoiceSettingsSubmenu;
+  setWorkspaceSettingsName: Setter<string>;
+  setWorkspaceSettingsVisibility: Setter<GuildVisibility>;
+  setWorkspaceSettingsStatus: Setter<string>;
+  setWorkspaceSettingsError: Setter<string>;
+  setActiveOverlayPanel: Setter<OverlayPanel | null>;
+  setWorkspaceError: Setter<string>;
+  setChannelCreateError: Setter<string>;
+  setActiveSettingsCategory: Setter<SettingsCategory>;
+  setActiveVoiceSettingsSubmenu: Setter<VoiceSettingsSubmenu>;
 }
 
 export function createOverlayPanelActions(options: OverlayPanelActionsOptions) {

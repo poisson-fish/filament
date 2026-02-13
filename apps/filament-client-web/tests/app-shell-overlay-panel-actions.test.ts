@@ -6,6 +6,7 @@ import {
   type WorkspaceRecord,
 } from "../src/domain/chat";
 import { createOverlayPanelActions } from "../src/features/app-shell/runtime/overlay-panel-actions";
+import type { OverlayPanel } from "../src/features/app-shell/types";
 
 describe("app shell overlay panel actions", () => {
   it("opens workspace settings with active workspace defaults and clears state", () => {
@@ -21,7 +22,8 @@ describe("app shell overlay panel actions", () => {
     >("private");
     const [workspaceSettingsStatus, setWorkspaceSettingsStatus] = createSignal("pending");
     const [workspaceSettingsError, setWorkspaceSettingsError] = createSignal("stale");
-    const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<string | null>(null);
+    const [activeOverlayPanel, setActiveOverlayPanel] =
+      createSignal<OverlayPanel | null>(null);
 
     const actions = createOverlayPanelActions({
       activeWorkspace: () => activeWorkspace,
@@ -75,7 +77,7 @@ describe("app shell overlay panel actions", () => {
   });
 
   it("does not close panel when close is not allowed", () => {
-    const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<string | null>(
+    const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<OverlayPanel | null>(
       "workspace-create",
     );
 
