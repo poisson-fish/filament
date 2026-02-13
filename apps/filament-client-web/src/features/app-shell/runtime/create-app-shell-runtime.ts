@@ -66,6 +66,7 @@ import { createWorkspaceSettingsPanelProps } from "./workspace-settings-panel-pr
 import { createRuntimeEffects } from "./runtime-effects";
 import { createRoleManagementPanelProps } from "./role-management-panel-props";
 import { createFriendshipsPanelProps } from "./friendships-panel-props";
+import { createSearchPanelProps } from "./search-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -682,7 +683,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         onRemoveFriendship: (friendUserId) =>
           friendshipActions.removeFriendship(friendUserId),
       }),
-      search: {
+      search: createSearchPanelProps({
         searchQuery: discoveryState.searchQuery(),
         isSearching: discoveryState.isSearching(),
         hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
@@ -696,7 +697,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         onRebuildSearch: searchActions.rebuildSearch,
         onReconcileSearch: searchActions.reconcileSearch,
         displayUserLabel: labels.displayUserLabel,
-      },
+      }),
       attachments: {
         attachmentFilename: messageState.attachmentFilename(),
         activeAttachments: selectors.activeAttachments(),
