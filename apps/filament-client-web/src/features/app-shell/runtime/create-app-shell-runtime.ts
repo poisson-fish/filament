@@ -68,6 +68,7 @@ import { createRoleManagementPanelProps } from "./role-management-panel-props";
 import { createFriendshipsPanelProps } from "./friendships-panel-props";
 import { createSearchPanelProps } from "./search-panel-props";
 import { createModerationPanelProps } from "./moderation-panel-props";
+import { createAttachmentsPanelProps } from "./attachments-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -699,7 +700,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         onReconcileSearch: searchActions.reconcileSearch,
         displayUserLabel: labels.displayUserLabel,
       }),
-      attachments: {
+      attachments: createAttachmentsPanelProps({
         attachmentFilename: messageState.attachmentFilename(),
         activeAttachments: selectors.activeAttachments(),
         isUploadingAttachment: messageState.isUploadingAttachment(),
@@ -713,7 +714,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         setAttachmentFilename: messageState.setAttachmentFilename,
         onDownloadAttachment: (record) => attachmentActions.downloadAttachment(record),
         onRemoveAttachment: (record) => attachmentActions.removeAttachment(record),
-      },
+      }),
       moderation: createModerationPanelProps({
         moderationUserIdInput: diagnosticsState.moderationUserIdInput(),
         moderationRoleInput: diagnosticsState.moderationRoleInput(),
