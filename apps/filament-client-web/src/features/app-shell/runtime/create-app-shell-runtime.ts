@@ -72,6 +72,7 @@ import { createAttachmentsPanelProps } from "./attachments-panel-props";
 import { createClientSettingsPanelProps } from "./client-settings-panel-props";
 import { createUtilityPanelProps } from "./utility-panel-props";
 import { createPublicDirectoryPanelProps } from "./public-directory-panel-props";
+import { createWorkspaceCreatePanelProps } from "./workspace-create-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -589,19 +590,21 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const panelHostPropGroups = () =>
     buildPanelHostPropGroups({
       workspaceCreate: {
-        createGuildName: workspaceChannelState.createGuildName(),
-        createGuildVisibility: workspaceChannelState.createGuildVisibility(),
-        createChannelName: workspaceChannelState.createChannelName(),
-        createChannelKind: workspaceChannelState.createChannelKind(),
-        isCreatingWorkspace: workspaceChannelState.isCreatingWorkspace(),
-        canDismissWorkspaceCreateForm: selectors.canDismissWorkspaceCreateForm(),
-        workspaceError: workspaceChannelState.workspaceError(),
-        onCreateWorkspaceSubmit: workspaceChannelOperations.createWorkspace,
-        setCreateGuildName: workspaceChannelState.setCreateGuildName,
-        setCreateGuildVisibility: workspaceChannelState.setCreateGuildVisibility,
-        setCreateChannelName: workspaceChannelState.setCreateChannelName,
-        setCreateChannelKind: workspaceChannelState.setCreateChannelKind,
-        onCancelWorkspaceCreate: closeOverlayPanel,
+        ...createWorkspaceCreatePanelProps({
+          createGuildName: workspaceChannelState.createGuildName(),
+          createGuildVisibility: workspaceChannelState.createGuildVisibility(),
+          createChannelName: workspaceChannelState.createChannelName(),
+          createChannelKind: workspaceChannelState.createChannelKind(),
+          isCreatingWorkspace: workspaceChannelState.isCreatingWorkspace(),
+          canDismissWorkspaceCreateForm: selectors.canDismissWorkspaceCreateForm(),
+          workspaceError: workspaceChannelState.workspaceError(),
+          onCreateWorkspaceSubmit: workspaceChannelOperations.createWorkspace,
+          setCreateGuildName: workspaceChannelState.setCreateGuildName,
+          setCreateGuildVisibility: workspaceChannelState.setCreateGuildVisibility,
+          setCreateChannelName: workspaceChannelState.setCreateChannelName,
+          setCreateChannelKind: workspaceChannelState.setCreateChannelKind,
+          onCancelWorkspaceCreate: closeOverlayPanel,
+        }),
       },
       channelCreate: {
         newChannelName: workspaceChannelState.newChannelName(),
