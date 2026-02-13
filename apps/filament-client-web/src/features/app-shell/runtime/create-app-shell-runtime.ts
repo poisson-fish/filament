@@ -73,6 +73,7 @@ import { createClientSettingsPanelProps } from "./client-settings-panel-props";
 import { createUtilityPanelProps } from "./utility-panel-props";
 import { createPublicDirectoryPanelProps } from "./public-directory-panel-props";
 import { createWorkspaceCreatePanelProps } from "./workspace-create-panel-props";
+import { createChannelCreatePanelProps } from "./channel-create-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -607,14 +608,16 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         }),
       },
       channelCreate: {
-        newChannelName: workspaceChannelState.newChannelName(),
-        newChannelKind: workspaceChannelState.newChannelKind(),
-        isCreatingChannel: workspaceChannelState.isCreatingChannel(),
-        channelCreateError: workspaceChannelState.channelCreateError(),
-        onCreateChannelSubmit: workspaceChannelOperations.createNewChannel,
-        setNewChannelName: workspaceChannelState.setNewChannelName,
-        setNewChannelKind: workspaceChannelState.setNewChannelKind,
-        onCancelChannelCreate: closeOverlayPanel,
+        ...createChannelCreatePanelProps({
+          newChannelName: workspaceChannelState.newChannelName(),
+          newChannelKind: workspaceChannelState.newChannelKind(),
+          isCreatingChannel: workspaceChannelState.isCreatingChannel(),
+          channelCreateError: workspaceChannelState.channelCreateError(),
+          onCreateChannelSubmit: workspaceChannelOperations.createNewChannel,
+          setNewChannelName: workspaceChannelState.setNewChannelName,
+          setNewChannelKind: workspaceChannelState.setNewChannelKind,
+          onCancelChannelCreate: closeOverlayPanel,
+        }),
       },
       publicDirectory: createPublicDirectoryPanelProps({
         publicGuildSearchQuery: discoveryState.publicGuildSearchQuery(),
