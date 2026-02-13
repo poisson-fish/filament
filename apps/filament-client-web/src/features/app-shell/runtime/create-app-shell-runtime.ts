@@ -7,7 +7,6 @@ import { createAttachmentController } from "../controllers/attachment-controller
 import {
   createFriendshipController,
 } from "../controllers/friendship-controller";
-import { createGatewayController } from "../controllers/gateway-controller";
 import {
   createIdentityResolutionController,
 } from "../controllers/identity-resolution-controller";
@@ -66,6 +65,7 @@ import { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 import { createWorkspaceChannelCreatePanelGroups } from "./workspace-channel-create-panel-groups";
 import { createCollaborationPanelPropGroups } from "./collaboration-panel-prop-groups";
 import { createSupportPanelPropGroups } from "./support-panel-prop-groups";
+import { registerGatewayController } from "./gateway-controller-registration";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -477,7 +477,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
   });
 
-  createGatewayController({
+  registerGatewayController({
     session: auth.session,
     activeGuildId: workspaceChannelState.activeGuildId,
     activeChannelId: workspaceChannelState.activeChannelId,
@@ -496,9 +496,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setVoiceParticipantsByChannel: voiceState.setVoiceParticipantsByChannel,
     isMessageListNearBottom: messageListController.isMessageListNearBottom,
     scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
-    onWorkspacePermissionsChanged: (guildId) => {
-      void refreshWorkspacePermissionStateFromGateway(guildId);
-    },
+    refreshWorkspacePermissionStateFromGateway,
   });
 
   const workspaceChannelOperations =
