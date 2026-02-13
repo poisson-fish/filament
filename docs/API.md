@@ -51,10 +51,10 @@ Global middleware can also return non-handler errors such as `408 Request Timeou
 ## Security and Limits (defaults)
 - Global JSON body limit: `1 MiB`
 - Request timeout: `10s`
-- Baseline IP rate limit: `60 req/min`
-- Auth route rate limit (`register/login/refresh`): `20 req/min` per route+IP
+- Baseline IP rate limit: `600 req/min`
+- Auth route rate limit (`register/login/refresh`): `60 req/min` per route+IP
 - Gateway max event size: `64 KiB`
-- Gateway ingress limit: `20 events / 10s / connection`
+- Gateway ingress limit: `60 events / 10s / connection`
 - Gateway outbound queue: `256` events/connection
 - Message content length: `1..=2000`
 - History pagination max `limit`: `100`
@@ -94,8 +94,8 @@ This section locks response semantics and limits for upcoming directory-join/aud
 
 ### Locked per-route limits (default contracts)
 - `POST /guilds/{guild_id}/join`:
-  - `20 req/min` per client IP
-  - `10 req/min` per authenticated user
+  - `60 req/min` per client IP
+  - `30 req/min` per authenticated user
 - `GET /guilds/{guild_id}/audit`:
   - `limit` default `20`, max `100`
   - `action_prefix` max `64` chars, charset `[a-z0-9._]`

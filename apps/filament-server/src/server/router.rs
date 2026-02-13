@@ -86,10 +86,35 @@ impl KeyExtractor for TrustedClientIpKeyExtractor {
 /// Returns an error if configured security limits are invalid.
 #[allow(clippy::too_many_lines)]
 pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
+    if config.rate_limit_requests_per_minute == 0 {
+        return Err(anyhow!(
+            "global rate limit must be at least 1 request per minute"
+        ));
+    }
+    if config.auth_route_requests_per_minute == 0 {
+        return Err(anyhow!(
+            "auth route rate limit must be at least 1 request per minute"
+        ));
+    }
+    if config.gateway_ingress_events_per_window == 0 {
+        return Err(anyhow!(
+            "gateway ingress rate limit must be at least 1 event per window"
+        ));
+    }
+    if config.gateway_ingress_window.is_zero() {
+        return Err(anyhow!(
+            "gateway ingress window must be at least 1 second"
+        ));
+    }
     if config.max_gateway_event_bytes > filament_protocol::MAX_EVENT_BYTES {
         return Err(anyhow!(
             "gateway event limit cannot exceed protocol max of {} bytes",
             filament_protocol::MAX_EVENT_BYTES
+        ));
+    }
+    if config.media_token_requests_per_minute == 0 {
+        return Err(anyhow!(
+            "media token rate limit must be at least 1 request per minute"
         ));
     }
     if config.media_publish_requests_per_minute == 0 {

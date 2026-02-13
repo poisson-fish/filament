@@ -3,6 +3,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 use filament_core::UserId;
 use filament_server::{build_router, directory_contract::IpNetwork, init_tracing, AppConfig};
@@ -30,11 +31,54 @@ fn parse_u32_env_or_default(var_name: &str, default: u32) -> anyhow::Result<u32>
     )
 }
 
+fn parse_u64_env_or_default(var_name: &str, default: u64) -> anyhow::Result<u64> {
+    std::env::var(var_name).map_or_else(
+        |_| Ok(default),
+        |value| {
+            value
+                .parse::<u64>()
+                .map_err(|e| anyhow::anyhow!("invalid {var_name} value {value:?}: {e}"))
+        },
+    )
+}
+
 fn parse_rate_limit_requests_per_minute_from_env(defaults: &AppConfig) -> anyhow::Result<u32> {
     parse_u32_env_or_default(
         "FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE",
         defaults.rate_limit_requests_per_minute,
     )
+}
+
+fn parse_rate_runtime_limits_from_env(
+    defaults: &AppConfig,
+) -> anyhow::Result<(u32, u32, Duration, u32, u32)> {
+    let auth_route_requests_per_minute = parse_u32_env_or_default(
+        "FILAMENT_AUTH_ROUTE_REQUESTS_PER_MINUTE",
+        defaults.auth_route_requests_per_minute,
+    )?;
+    let gateway_ingress_events_per_window = parse_u32_env_or_default(
+        "FILAMENT_GATEWAY_INGRESS_EVENTS_PER_WINDOW",
+        defaults.gateway_ingress_events_per_window,
+    )?;
+    let gateway_ingress_window_secs = parse_u64_env_or_default(
+        "FILAMENT_GATEWAY_INGRESS_WINDOW_SECS",
+        defaults.gateway_ingress_window.as_secs(),
+    )?;
+    let media_token_requests_per_minute = parse_u32_env_or_default(
+        "FILAMENT_MEDIA_TOKEN_REQUESTS_PER_MINUTE",
+        defaults.media_token_requests_per_minute,
+    )?;
+    let media_publish_requests_per_minute = parse_u32_env_or_default(
+        "FILAMENT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE",
+        defaults.media_publish_requests_per_minute,
+    )?;
+    Ok((
+        auth_route_requests_per_minute,
+        gateway_ingress_events_per_window,
+        Duration::from_secs(gateway_ingress_window_secs),
+        media_token_requests_per_minute,
+        media_publish_requests_per_minute,
+    ))
 }
 
 fn parse_directory_runtime_limits_from_env(
@@ -120,6 +164,13 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("FILAMENT_LIVEKIT_API_SECRET is required for runtime"))?;
     let defaults = AppConfig::default();
     let rate_limit_requests_per_minute = parse_rate_limit_requests_per_minute_from_env(&defaults)?;
+    let (
+        auth_route_requests_per_minute,
+        gateway_ingress_events_per_window,
+        gateway_ingress_window,
+        media_token_requests_per_minute,
+        media_publish_requests_per_minute,
+    ) = parse_rate_runtime_limits_from_env(&defaults)?;
     let max_created_guilds_per_user = parse_usize_env_or_default(
         "FILAMENT_MAX_CREATED_GUILDS_PER_USER",
         defaults.max_created_guilds_per_user,
@@ -142,6 +193,11 @@ async fn main() -> anyhow::Result<()> {
         livekit_api_key: Some(livekit_api_key),
         livekit_api_secret: Some(livekit_api_secret),
         rate_limit_requests_per_minute,
+        auth_route_requests_per_minute,
+        gateway_ingress_events_per_window,
+        gateway_ingress_window,
+        media_token_requests_per_minute,
+        media_publish_requests_per_minute,
         max_created_guilds_per_user,
         directory_join_requests_per_minute_per_ip,
         directory_join_requests_per_minute_per_user,
@@ -176,12 +232,16 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::{
         parse_directory_runtime_limits_from_env, parse_rate_limit_requests_per_minute_from_env,
-        parse_server_owner_user_id_from_env, parse_trusted_proxy_cidrs_from_env,
-        parse_u32_env_or_default, parse_usize_env_or_default,
+        parse_rate_runtime_limits_from_env, parse_server_owner_user_id_from_env,
+        parse_trusted_proxy_cidrs_from_env, parse_u32_env_or_default, parse_u64_env_or_default,
+        parse_usize_env_or_default,
     };
     use filament_core::UserId;
     use filament_server::{directory_contract::IpNetwork, AppConfig};
-    use std::sync::{Mutex, OnceLock};
+    use std::{
+        sync::{Mutex, OnceLock},
+        time::Duration,
+    };
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -213,6 +273,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_u64_env_or_default_rejects_invalid_values() {
+        let _guard = lock_env();
+        let key = "FILAMENT_TEST_PARSE_U64_INVALID";
+        std::env::set_var(key, "NaN");
+        let result = parse_u64_env_or_default(key, 10);
+        std::env::remove_var(key);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn rate_limit_env_override_is_parsed() {
         let _guard = lock_env();
         std::env::remove_var("FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE");
@@ -234,6 +304,44 @@ mod tests {
         let result = parse_rate_limit_requests_per_minute_from_env(&AppConfig::default());
 
         std::env::remove_var("FILAMENT_RATE_LIMIT_REQUESTS_PER_MINUTE");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rate_runtime_limits_env_overrides_are_parsed() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_AUTH_ROUTE_REQUESTS_PER_MINUTE");
+        std::env::remove_var("FILAMENT_GATEWAY_INGRESS_EVENTS_PER_WINDOW");
+        std::env::remove_var("FILAMENT_GATEWAY_INGRESS_WINDOW_SECS");
+        std::env::remove_var("FILAMENT_MEDIA_TOKEN_REQUESTS_PER_MINUTE");
+        std::env::remove_var("FILAMENT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE");
+        std::env::set_var("FILAMENT_AUTH_ROUTE_REQUESTS_PER_MINUTE", "90");
+        std::env::set_var("FILAMENT_GATEWAY_INGRESS_EVENTS_PER_WINDOW", "75");
+        std::env::set_var("FILAMENT_GATEWAY_INGRESS_WINDOW_SECS", "12");
+        std::env::set_var("FILAMENT_MEDIA_TOKEN_REQUESTS_PER_MINUTE", "120");
+        std::env::set_var("FILAMENT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE", "40");
+
+        let parsed = parse_rate_runtime_limits_from_env(&AppConfig::default())
+            .expect("runtime rate limits should parse");
+
+        std::env::remove_var("FILAMENT_AUTH_ROUTE_REQUESTS_PER_MINUTE");
+        std::env::remove_var("FILAMENT_GATEWAY_INGRESS_EVENTS_PER_WINDOW");
+        std::env::remove_var("FILAMENT_GATEWAY_INGRESS_WINDOW_SECS");
+        std::env::remove_var("FILAMENT_MEDIA_TOKEN_REQUESTS_PER_MINUTE");
+        std::env::remove_var("FILAMENT_MEDIA_PUBLISH_REQUESTS_PER_MINUTE");
+
+        assert_eq!(parsed, (90, 75, Duration::from_secs(12), 120, 40));
+    }
+
+    #[test]
+    fn rate_runtime_limits_env_rejects_invalid_values() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_GATEWAY_INGRESS_WINDOW_SECS");
+        std::env::set_var("FILAMENT_GATEWAY_INGRESS_WINDOW_SECS", "bad");
+
+        let result = parse_rate_runtime_limits_from_env(&AppConfig::default());
+
+        std::env::remove_var("FILAMENT_GATEWAY_INGRESS_WINDOW_SECS");
         assert!(result.is_err());
     }
 
