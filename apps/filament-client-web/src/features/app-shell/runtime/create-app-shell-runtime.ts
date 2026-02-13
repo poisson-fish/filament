@@ -63,9 +63,7 @@ import { createRuntimeEffects } from "./runtime-effects";
 import { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 import { registerGatewayController } from "./gateway-controller-registration";
 import { createPanelHostPropGroups } from "./panel-host-prop-groups";
-import { createWorkspaceChannelCreatePanelGroupsOptions } from "./workspace-channel-create-panel-groups-options";
-import { createSupportPanelPropGroupsOptions } from "./support-panel-prop-groups-options";
-import { createCollaborationPanelPropGroupsOptions } from "./collaboration-panel-prop-groups-options";
+import { createPanelHostPropGroupsOptions } from "./panel-host-prop-groups-options";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -579,9 +577,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   });
 
   const panelHostPropGroups = () =>
-    createPanelHostPropGroups({
-      workspaceChannelCreate:
-        createWorkspaceChannelCreatePanelGroupsOptions({
+    createPanelHostPropGroups(
+      createPanelHostPropGroupsOptions({
+      workspaceChannelCreate: {
           createGuildName: workspaceChannelState.createGuildName,
           createGuildVisibility: workspaceChannelState.createGuildVisibility,
           createChannelName: workspaceChannelState.createChannelName,
@@ -602,8 +600,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
           setNewChannelName: workspaceChannelState.setNewChannelName,
           setNewChannelKind: workspaceChannelState.setNewChannelKind,
           closeOverlayPanel,
-        }),
-      support: createSupportPanelPropGroupsOptions({
+        },
+      support: {
         publicGuildSearchQuery: discoveryState.publicGuildSearchQuery,
         isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds,
         publicGuildSearchError: discoveryState.publicGuildSearchError,
@@ -679,8 +677,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         setEchoInput: diagnosticsState.setEchoInput,
         onRunHealthCheck: sessionDiagnostics.runHealthCheck,
         onRunEcho: sessionDiagnostics.runEcho,
-      }),
-      collaboration: createCollaborationPanelPropGroupsOptions({
+      },
+      collaboration: {
         friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput,
         friendRequests: friendshipsState.friendRequests(),
         friends: friendshipsState.friends(),
@@ -740,8 +738,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         setOverrideDenyCsv: diagnosticsState.setOverrideDenyCsv,
         onApplyOverride: moderationActions.applyOverride,
         onOpenRoleManagementPanel: () => openOverlayPanel("role-management"),
+      },
       }),
-    });
+    );
 
   return {
     workspaceState,
