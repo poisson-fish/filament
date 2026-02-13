@@ -65,6 +65,7 @@ import { createWorkspacePermissionActions } from "./workspace-permission-actions
 import { createWorkspaceSettingsActions } from "./workspace-settings-actions";
 import { createVoiceDeviceActions } from "./voice-device-actions";
 import { createWorkspaceSelectionActions } from "./workspace-selection-actions";
+import { createWorkspaceSettingsPanelProps } from "./workspace-settings-panel-props";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -667,24 +668,20 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
         onUploadProfileAvatar: profileController.uploadProfileAvatar,
       },
       workspaceSettings: {
-        hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
-        canManageWorkspaceSettings: selectors.canManageRoles(),
-        workspaceName: workspaceChannelState.workspaceSettingsName(),
-        workspaceVisibility: workspaceChannelState.workspaceSettingsVisibility(),
-        isSavingWorkspaceSettings: workspaceChannelState.isSavingWorkspaceSettings(),
-        workspaceSettingsStatus: workspaceChannelState.workspaceSettingsStatus(),
-        workspaceSettingsError: workspaceChannelState.workspaceSettingsError(),
-        setWorkspaceSettingsName: (value) => {
-          workspaceChannelState.setWorkspaceSettingsName(value);
-          workspaceChannelState.setWorkspaceSettingsStatus("");
-          workspaceChannelState.setWorkspaceSettingsError("");
-        },
-        setWorkspaceSettingsVisibility: (value) => {
-          workspaceChannelState.setWorkspaceSettingsVisibility(value);
-          workspaceChannelState.setWorkspaceSettingsStatus("");
-          workspaceChannelState.setWorkspaceSettingsError("");
-        },
-        onSaveWorkspaceSettings: saveWorkspaceSettings,
+        ...createWorkspaceSettingsPanelProps({
+          hasActiveWorkspace: Boolean(selectors.activeWorkspace()),
+          canManageWorkspaceSettings: selectors.canManageRoles(),
+          workspaceName: workspaceChannelState.workspaceSettingsName(),
+          workspaceVisibility: workspaceChannelState.workspaceSettingsVisibility(),
+          isSavingWorkspaceSettings: workspaceChannelState.isSavingWorkspaceSettings(),
+          workspaceSettingsStatus: workspaceChannelState.workspaceSettingsStatus(),
+          workspaceSettingsError: workspaceChannelState.workspaceSettingsError(),
+          setWorkspaceSettingsName: workspaceChannelState.setWorkspaceSettingsName,
+          setWorkspaceSettingsVisibility: workspaceChannelState.setWorkspaceSettingsVisibility,
+          setWorkspaceSettingsStatus: workspaceChannelState.setWorkspaceSettingsStatus,
+          setWorkspaceSettingsError: workspaceChannelState.setWorkspaceSettingsError,
+          onSaveWorkspaceSettings: saveWorkspaceSettings,
+        }),
       },
       friendships: {
         friendRecipientUserIdInput: friendshipsState.friendRecipientUserIdInput(),
