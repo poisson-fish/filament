@@ -2874,6 +2874,7 @@ select {
 .channel-rail-account-action {
   width: 2.1rem;
   min-height: 2.1rem;
+  margin-left: auto;
   border: 1px solid #474d5b;
   border-radius: 0.56rem;
   background: #313641;
