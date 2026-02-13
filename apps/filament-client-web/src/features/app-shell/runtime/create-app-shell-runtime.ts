@@ -64,6 +64,7 @@ import { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 import { registerGatewayController } from "./gateway-controller-registration";
 import { createPanelHostPropGroups } from "./panel-host-prop-groups";
 import { createPanelHostPropGroupsOptions } from "./panel-host-prop-groups-options";
+import { createWorkspaceChannelCreatePanelHostStateOptions } from "./workspace-channel-create-panel-host-state-options";
 
 export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
@@ -579,28 +580,13 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const panelHostPropGroups = () =>
     createPanelHostPropGroups(
       createPanelHostPropGroupsOptions({
-      workspaceChannelCreate: {
-          createGuildName: workspaceChannelState.createGuildName,
-          createGuildVisibility: workspaceChannelState.createGuildVisibility,
-          createChannelName: workspaceChannelState.createChannelName,
-          createChannelKind: workspaceChannelState.createChannelKind,
-          isCreatingWorkspace: workspaceChannelState.isCreatingWorkspace,
-          canDismissWorkspaceCreateForm: selectors.canDismissWorkspaceCreateForm,
-          workspaceError: workspaceChannelState.workspaceError,
-          onCreateWorkspaceSubmit: workspaceChannelOperations.createWorkspace,
-          setCreateGuildName: workspaceChannelState.setCreateGuildName,
-          setCreateGuildVisibility: workspaceChannelState.setCreateGuildVisibility,
-          setCreateChannelName: workspaceChannelState.setCreateChannelName,
-          setCreateChannelKind: workspaceChannelState.setCreateChannelKind,
-          newChannelName: workspaceChannelState.newChannelName,
-          newChannelKind: workspaceChannelState.newChannelKind,
-          isCreatingChannel: workspaceChannelState.isCreatingChannel,
-          channelCreateError: workspaceChannelState.channelCreateError,
-          onCreateChannelSubmit: workspaceChannelOperations.createNewChannel,
-          setNewChannelName: workspaceChannelState.setNewChannelName,
-          setNewChannelKind: workspaceChannelState.setNewChannelKind,
-          closeOverlayPanel,
-        },
+        workspaceChannelCreate:
+          createWorkspaceChannelCreatePanelHostStateOptions({
+            workspaceChannelState,
+            selectors,
+            workspaceChannelOperations,
+            closeOverlayPanel,
+          }),
       support: {
         publicGuildSearchQuery: discoveryState.publicGuildSearchQuery,
         isSearchingPublicGuilds: discoveryState.isSearchingPublicGuilds,
