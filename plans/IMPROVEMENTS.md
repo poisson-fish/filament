@@ -73,7 +73,7 @@ Scope: `apps/filament-client-web`
 | FE-07 | P2 | Rendering scalability | Message/voice surfaces can grow in dense channels | Evaluate targeted list virtualization for message list while preserving scroll/history semantics | Stable scroll behavior with large histories and no regression in history scroll tests |
 
 Item Status
-- FE-01: In progress (slice 1 completed on 2026-02-12: extracted overlay/settings panel actions from `create-app-shell-runtime.ts` into `runtime/overlay-panel-actions.ts` with focused unit tests; slice 2 completed on 2026-02-12: extracted workspace settings save orchestration into `runtime/workspace-settings-actions.ts` with focused unit tests; slice 3 completed on 2026-02-12: extracted voice device inventory/preference actions into `runtime/voice-device-actions.ts` with focused unit tests).
+- FE-01: In progress (slice 1 completed on 2026-02-12: extracted overlay/settings panel actions from `create-app-shell-runtime.ts` into `runtime/overlay-panel-actions.ts` with focused unit tests; slice 2 completed on 2026-02-12: extracted workspace settings save orchestration into `runtime/workspace-settings-actions.ts` with focused unit tests; slice 3 completed on 2026-02-12: extracted voice device inventory/preference actions into `runtime/voice-device-actions.ts` with focused unit tests; slice 4 completed on 2026-02-12: extracted gateway-triggered workspace permission refresh orchestration into `runtime/workspace-permission-actions.ts` with focused unit tests).
 
 ### Recommended Iteration Order (Frontend)
 1. FE-01 Runtime decomposition
@@ -88,6 +88,7 @@ Item Status
 - 2026-02-12: FE-01 slice 1 completed. Extracted overlay/settings panel action orchestration into `src/features/app-shell/runtime/overlay-panel-actions.ts`, wired runtime to use it, and added targeted tests in `tests/app-shell-overlay-panel-actions.test.ts` (3 passing).
 - 2026-02-12: FE-01 slice 2 completed. Extracted workspace settings save orchestration into `src/features/app-shell/runtime/workspace-settings-actions.ts`, wired `create-app-shell-runtime.ts` to consume the new helper, and added targeted tests in `tests/app-shell-workspace-settings-actions.test.ts` (3 passing).
 - 2026-02-12: FE-01 slice 3 completed. Extracted voice device inventory/preference orchestration from `src/features/app-shell/runtime/create-app-shell-runtime.ts` into `src/features/app-shell/runtime/voice-device-actions.ts`, wired runtime to consume the new helper, and added targeted tests in `tests/app-shell-voice-device-actions.test.ts` (3 passing).
+- 2026-02-12: FE-01 slice 4 completed. Extracted gateway workspace permission refresh orchestration from `src/features/app-shell/runtime/create-app-shell-runtime.ts` into `src/features/app-shell/runtime/workspace-permission-actions.ts`, wired runtime to consume the new helper, and added targeted tests in `tests/app-shell-workspace-permission-actions.test.ts` (3 passing).
 
 ---
 

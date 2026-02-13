@@ -9,7 +9,6 @@ import {
   type GuildId,
 } from "../../../domain/chat";
 import { useAuth } from "../../../lib/auth-context";
-import { ApiError, fetchChannelPermissionSnapshot } from "../../../lib/api";
 import { saveWorkspaceCache } from "../../../lib/workspace-cache";
 import { buildPanelHostPropGroups } from "../adapters/panel-host-props";
 import { createAttachmentController } from "../controllers/attachment-controller";
@@ -48,7 +47,6 @@ import {
 import {
   createChannelPermissionsController,
   createWorkspaceBootstrapController,
-  pruneWorkspaceChannel,
   createWorkspaceSelectionController,
 } from "../controllers/workspace-controller";
 import {
@@ -68,6 +66,7 @@ import { createOverlayPanelActions } from "./overlay-panel-actions";
 import { createAppShellRuntimeLabels } from "./runtime-labels";
 import { createSessionDiagnosticsController } from "./session-diagnostics-controller";
 import { createWorkspaceChannelOperationsController } from "./workspace-channel-operations-controller";
+import { createWorkspacePermissionActions } from "./workspace-permission-actions";
 import { createWorkspaceSettingsActions } from "./workspace-settings-actions";
 import { createVoiceDeviceActions } from "./voice-device-actions";
 
@@ -364,40 +363,15 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setChannelPermissions: workspaceChannelState.setChannelPermissions,
   });
 
-  const refreshWorkspacePermissionStateFromGateway = async (
-    guildId: GuildId,
-  ): Promise<void> => {
-    const session = auth.session();
-    const activeGuildId = workspaceChannelState.activeGuildId();
-    const activeChannelId = workspaceChannelState.activeChannelId();
-    if (!session || !activeGuildId || activeGuildId !== guildId) {
-      return;
-    }
-
-    void roleManagementActions.refreshRoles();
-    if (!activeChannelId) {
-      return;
-    }
-
-    try {
-      const snapshot = await fetchChannelPermissionSnapshot(
-        session,
-        activeGuildId,
-        activeChannelId,
-      );
-      workspaceChannelState.setChannelPermissions(snapshot);
-    } catch (error) {
-      if (
-        error instanceof ApiError &&
-        (error.code === "forbidden" || error.code === "not_found")
-      ) {
-        workspaceChannelState.setChannelPermissions(null);
-        workspaceChannelState.setWorkspaces((existing) =>
-          pruneWorkspaceChannel(existing, activeGuildId, activeChannelId),
-        );
-      }
-    }
-  };
+  const { refreshWorkspacePermissionStateFromGateway } =
+    createWorkspacePermissionActions({
+      session: auth.session,
+      activeGuildId: workspaceChannelState.activeGuildId,
+      activeChannelId: workspaceChannelState.activeChannelId,
+      setChannelPermissions: workspaceChannelState.setChannelPermissions,
+      setWorkspaces: workspaceChannelState.setWorkspaces,
+      refreshRoles: roleManagementActions.refreshRoles,
+    });
 
   const profileController = createProfileController({
     session: auth.session,
