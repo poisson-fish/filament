@@ -6,6 +6,9 @@ import {
   decodeFriendGatewayEvent,
 } from "./gateway-friend-events";
 import {
+  decodeMessageGatewayEvent,
+} from "./gateway-message-events";
+import {
   decodePresenceGatewayEvent,
   type PresenceSyncPayload,
   type PresenceUpdatePayload,
@@ -26,8 +29,6 @@ import {
   type GuildName,
   type GuildVisibility,
   guildVisibilityFromInput,
-  markdownTokensFromResponse,
-  messageContentFromInput,
   type MessageId,
   type MarkdownToken,
   type MessageRecord,
@@ -38,9 +39,6 @@ import {
   type PermissionName,
   type WorkspaceRoleId,
   guildIdFromInput,
-  messageIdFromInput,
-  messageFromResponse,
-  reactionEmojiFromInput,
   userIdFromInput,
   workspaceRoleIdFromInput,
 } from "../domain/chat";
@@ -368,145 +366,6 @@ function parseReadyPayload(payload: unknown): ReadyPayload | null {
   }
 
   return { userId };
-}
-
-function parseMessageReactionPayload(payload: unknown): MessageReactionPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.channel_id !== "string" ||
-    typeof value.message_id !== "string" ||
-    typeof value.emoji !== "string" ||
-    typeof value.count !== "number" ||
-    !Number.isSafeInteger(value.count) ||
-    value.count < 0
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let channelId: ChannelId;
-  let messageId: MessageId;
-  let emoji: ReactionEmoji;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    channelId = channelIdFromInput(value.channel_id);
-    messageId = messageIdFromInput(value.message_id);
-    emoji = reactionEmojiFromInput(value.emoji);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    channelId,
-    messageId,
-    emoji,
-    count: value.count,
-  };
-}
-
-function parseMessageUpdatePayload(payload: unknown): MessageUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.channel_id !== "string" ||
-    typeof value.message_id !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let channelId: ChannelId;
-  let messageId: MessageId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    channelId = channelIdFromInput(value.channel_id);
-    messageId = messageIdFromInput(value.message_id);
-  } catch {
-    return null;
-  }
-
-  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
-  let content: MessageRecord["content"] | undefined;
-  let markdownTokens: MarkdownToken[] | undefined;
-  if (typeof updatedFieldsDto.content !== "undefined") {
-    if (typeof updatedFieldsDto.content !== "string") {
-      return null;
-    }
-    try {
-      content = messageContentFromInput(updatedFieldsDto.content);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof updatedFieldsDto.markdown_tokens !== "undefined") {
-    try {
-      markdownTokens = markdownTokensFromResponse(updatedFieldsDto.markdown_tokens);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof content === "undefined" && typeof markdownTokens === "undefined") {
-    return null;
-  }
-
-  return {
-    guildId,
-    channelId,
-    messageId,
-    updatedFields: {
-      content,
-      markdownTokens,
-    },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseMessageDeletePayload(payload: unknown): MessageDeletePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.channel_id !== "string" ||
-    typeof value.message_id !== "string" ||
-    typeof value.deleted_at_unix !== "number" ||
-    !Number.isSafeInteger(value.deleted_at_unix) ||
-    value.deleted_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let channelId: ChannelId;
-  let messageId: MessageId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    channelId = channelIdFromInput(value.channel_id);
-    messageId = messageIdFromInput(value.message_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    channelId,
-    messageId,
-    deletedAtUnix: value.deleted_at_unix,
-  };
 }
 
 function parseChannelCreatePayload(payload: unknown): ChannelCreatePayload | null {
@@ -1202,39 +1061,29 @@ export function connectGateway(
       return;
     }
 
-    if (envelope.t === "message_create") {
-      try {
-        handlers.onMessageCreate?.(messageFromResponse(envelope.d));
-      } catch {
+    if (
+      envelope.t === "message_create" ||
+      envelope.t === "message_update" ||
+      envelope.t === "message_delete" ||
+      envelope.t === "message_reaction"
+    ) {
+      const messageEvent = decodeMessageGatewayEvent(envelope.t, envelope.d);
+      if (!messageEvent) {
         return;
       }
-      return;
-    }
-
-    if (envelope.t === "message_update") {
-      const payload = parseMessageUpdatePayload(envelope.d);
-      if (!payload) {
+      if (messageEvent.type === "message_create") {
+        handlers.onMessageCreate?.(messageEvent.payload);
         return;
       }
-      handlers.onMessageUpdate?.(payload);
-      return;
-    }
-
-    if (envelope.t === "message_delete") {
-      const payload = parseMessageDeletePayload(envelope.d);
-      if (!payload) {
+      if (messageEvent.type === "message_update") {
+        handlers.onMessageUpdate?.(messageEvent.payload);
         return;
       }
-      handlers.onMessageDelete?.(payload);
-      return;
-    }
-
-    if (envelope.t === "message_reaction") {
-      const payload = parseMessageReactionPayload(envelope.d);
-      if (!payload) {
+      if (messageEvent.type === "message_delete") {
+        handlers.onMessageDelete?.(messageEvent.payload);
         return;
       }
-      handlers.onMessageReaction?.(payload);
+      handlers.onMessageReaction?.(messageEvent.payload);
       return;
     }
 
