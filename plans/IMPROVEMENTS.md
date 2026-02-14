@@ -73,8 +73,8 @@ Scope: `apps/filament-client-web`
 | FE-07 | P2 | Rendering scalability | Message/voice surfaces can grow in dense channels | Evaluate targeted list virtualization for message list while preserving scroll/history semantics | Stable scroll behavior with large histories and no regression in history scroll tests |
 
 Item Status
-- FE-01: In progress (slice 1 completed on 2026-02-12: extracted overlay/settings panel actions from `create-app-shell-runtime.ts` into `runtime/overlay-panel-actions.ts` with focused unit tests; slice 2 completed on 2026-02-12: extracted workspace settings save orchestration into `runtime/workspace-settings-actions.ts` with focused unit tests; slice 3 completed on 2026-02-12: extracted voice device inventory/preference actions into `runtime/voice-device-actions.ts` with focused unit tests; slice 4 completed on 2026-02-12: extracted gateway-triggered workspace permission refresh orchestration into `runtime/workspace-permission-actions.ts` with focused unit tests; slice 5 completed on 2026-02-12: extracted workspace/channel selection panel actions into `runtime/workspace-selection-actions.ts` with focused unit tests; slice 6 completed on 2026-02-12: extracted workspace settings panel prop composition into `runtime/workspace-settings-panel-props.ts` with focused unit tests; slice 7 completed on 2026-02-12: extracted runtime side-effect registrations (workspace cache persist, empty-workspace overlay fallback, and voice-device refresh trigger) into `runtime/runtime-effects.ts` with focused unit tests; slice 8 completed on 2026-02-12: extracted role-management panel prop composition into `runtime/role-management-panel-props.ts` with focused unit tests; slice 9 completed on 2026-02-12: extracted friendships panel prop composition into `runtime/friendships-panel-props.ts` with focused unit tests; slice 10 completed on 2026-02-12: extracted search panel prop composition into `runtime/search-panel-props.ts` with focused unit tests; slice 11 completed on 2026-02-12: extracted moderation panel prop composition into `runtime/moderation-panel-props.ts` with focused unit tests; slice 12 completed on 2026-02-12: extracted attachments panel prop composition into `runtime/attachments-panel-props.ts` with focused unit tests; slice 13 completed on 2026-02-12: extracted client settings panel prop composition into `runtime/client-settings-panel-props.ts` with focused unit tests; slice 14 completed on 2026-02-12: extracted utility panel prop composition into `runtime/utility-panel-props.ts` with focused unit tests; slice 15 completed on 2026-02-12: extracted public-directory panel prop composition into `runtime/public-directory-panel-props.ts` with focused unit tests; slice 16 completed on 2026-02-12: extracted workspace-create panel prop composition into `runtime/workspace-create-panel-props.ts` with focused unit tests; slice 17 completed on 2026-02-12: extracted channel-create panel prop composition into `runtime/channel-create-panel-props.ts` with focused unit tests; slice 18 completed on 2026-02-12: extracted session diagnostics orchestration wiring into `runtime/session-diagnostics-actions.ts` with focused unit tests; slice 19 completed on 2026-02-12: extracted workspace/channel create panel group composition wiring into `runtime/workspace-channel-create-panel-groups.ts` with focused unit tests; slice 20 completed on 2026-02-12: extracted grouped collaboration panel prop composition (friendships/search/attachments/moderation) into `runtime/collaboration-panel-prop-groups.ts` and wired runtime usage with focused unit tests; slice 21 completed on 2026-02-12: extracted grouped support panel prop composition (public directory/settings/workspace settings/role management/utility) into `runtime/support-panel-prop-groups.ts` and wired runtime usage with focused unit tests; slice 22 completed on 2026-02-12: extracted gateway-controller registration wiring into `runtime/gateway-controller-registration.ts` and wired runtime usage with focused unit tests).
-- FE-01 latest: slice 32 completed on 2026-02-13 (extracted workspace/channel operations controller wiring from `create-app-shell-runtime.ts` into `runtime/workspace-channel-operations-actions.ts` and wired runtime usage with focused unit tests).
+- FE-01: Completed on 2026-02-13 (all planned slices 1–32 completed; runtime composition root `src/features/app-shell/runtime/create-app-shell-runtime.ts` reduced to 645 lines, meeting the FE-01 `<700 lines` success metric while preserving prior focused runtime/controller test coverage).
+- FE-02: In progress (slice 1 completed on 2026-02-13: extracted strict `{v,t,d}` envelope parsing from `src/lib/gateway.ts` into `src/lib/gateway-envelope.ts` and added focused envelope contract tests for unknown version/type, oversized payload, and invalid JSON handling).
 
 ### Recommended Iteration Order (Frontend)
 1. FE-01 Runtime decomposition
@@ -83,6 +83,23 @@ Item Status
 4. FE-04 Typed async state transitions
 5. FE-05/FE-06 guardrails + diagnostics
 6. FE-07 scalability optimization
+
+### Frontend Target Architecture
+- Keep a single top-level composition root, but keep it thin and wiring-only.
+- Move behavior/policy/state transition logic into domain composers and focused boundary modules.
+- Preserve strict boundary hardening (fail-closed parsing, payload caps, timeout expectations, and hostile-input assumptions).
+
+### Frontend Exit Criteria Addendum
+- FE-02 exit criteria:
+	- Gateway dispatch uses an explicit decoder registry for versioned `{v,t,d}` events.
+	- Event decoder concerns are split into domain-focused modules; `src/lib/gateway.ts` remains transport/wiring focused.
+	- Contract tests for unknown event type/version and oversized envelope handling remain green.
+- FE-03 exit criteria:
+	- API client is split into domain modules (`auth`, `messages`, `workspace`, `friends`, `voice`) behind shared bounded request primitives.
+	- Existing API boundary hardening behavior is preserved with focused boundary tests.
+
+### Frontend Anti-Regression Guardrail
+- Composition-root rule: no new domain behavior/policy logic is added to `create-app-shell-runtime.ts`; only orchestration/wiring is allowed.
 
 ### Frontend Iteration Log
 - 2026-02-12: Initial objective assessment captured; no code behavior changed in this pass.
@@ -119,6 +136,8 @@ Item Status
 - 2026-02-13: FE-01 slice 30 completed. Extracted support panel-host state option wiring from `src/features/app-shell/runtime/create-app-shell-runtime.ts` into `src/features/app-shell/runtime/support-panel-host-state-options.ts`, wired runtime to consume the new helper, and added targeted tests in `tests/app-shell-support-panel-host-state-options.test.ts` (1 passing). Targeted validation passed (`pnpm -C apps/filament-client-web run typecheck`, `pnpm -C apps/filament-client-web exec vitest run tests/app-shell-support-panel-host-state-options.test.ts tests/app-shell-support-panel-prop-groups-options.test.ts`).
 - 2026-02-13: FE-01 slice 31 completed. Extracted panel-host prop-group factory wiring from `src/features/app-shell/runtime/create-app-shell-runtime.ts` into `src/features/app-shell/runtime/panel-host-prop-groups-factory.ts`, wired runtime to consume the new helper, and added targeted tests in `tests/app-shell-panel-host-prop-groups-factory.test.ts` (1 passing). Targeted validation passed (`pnpm -C apps/filament-client-web run typecheck`, `pnpm -C apps/filament-client-web exec vitest run tests/app-shell-panel-host-prop-groups-factory.test.ts`).
 - 2026-02-13: FE-01 slice 32 completed. Extracted workspace/channel operations controller wiring from `src/features/app-shell/runtime/create-app-shell-runtime.ts` into `src/features/app-shell/runtime/workspace-channel-operations-actions.ts`, wired runtime to consume the new helper, and added targeted tests in `tests/app-shell-workspace-channel-operations-actions.test.ts` (1 passing). Targeted validation passed (`pnpm -C apps/filament-client-web run typecheck`, `pnpm -C apps/filament-client-web exec vitest run tests/app-shell-workspace-channel-operations-actions.test.ts`).
+- 2026-02-13: FE-01 marked complete after verifying `src/features/app-shell/runtime/create-app-shell-runtime.ts` is 645 lines (`wc -l`) and confirming FE-01 success criteria are met.
+- 2026-02-13: FE-02 slice 1 completed. Extracted strict gateway envelope parsing from `src/lib/gateway.ts` into `src/lib/gateway-envelope.ts`, rewired gateway dispatch to use `parseGatewayEventEnvelope`, and added focused tests in `tests/gateway-envelope.test.ts` (5 passing). Targeted validation passed (`pnpm -C apps/filament-client-web run typecheck`, `pnpm -C apps/filament-client-web exec vitest run tests/gateway-envelope.test.ts tests/gateway.test.ts`).
 
 ---
 
