@@ -74,7 +74,7 @@ Scope: `apps/filament-client-web`
 
 Item Status
 - FE-01: Completed on 2026-02-13 (all planned slices 1–32 completed; runtime composition root `src/features/app-shell/runtime/create-app-shell-runtime.ts` reduced to 645 lines, meeting the FE-01 `<700 lines` success metric while preserving prior focused runtime/controller test coverage).
-- FE-02: In progress (slices 1–2 completed on 2026-02-13: extracted strict `{v,t,d}` envelope parsing into `src/lib/gateway-envelope.ts`, then extracted presence-domain decoder registry/parsing into `src/lib/gateway-presence-events.ts` and rewired `src/lib/gateway.ts` dispatch to consume the typed presence decoder module while preserving fail-closed behavior).
+- FE-02: In progress (slices 1–3 completed on 2026-02-13: extracted strict `{v,t,d}` envelope parsing into `src/lib/gateway-envelope.ts`, extracted presence-domain decoder registry/parsing into `src/lib/gateway-presence-events.ts`, and extracted friend-domain decoder registry/parsing into `src/lib/gateway-friend-events.ts` with `src/lib/gateway.ts` rewired to consume typed decoder modules while preserving fail-closed behavior).
 
 ### Recommended Iteration Order (Frontend)
 1. FE-01 Runtime decomposition
@@ -139,6 +139,7 @@ Item Status
 - 2026-02-13: FE-01 marked complete after verifying `src/features/app-shell/runtime/create-app-shell-runtime.ts` is 645 lines (`wc -l`) and confirming FE-01 success criteria are met.
 - 2026-02-13: FE-02 slice 1 completed. Extracted strict gateway envelope parsing from `src/lib/gateway.ts` into `src/lib/gateway-envelope.ts`, rewired gateway dispatch to use `parseGatewayEventEnvelope`, and added focused tests in `tests/gateway-envelope.test.ts` (5 passing). Targeted validation passed (`pnpm -C apps/filament-client-web run typecheck`, `pnpm -C apps/filament-client-web exec vitest run tests/gateway-envelope.test.ts tests/gateway.test.ts`).
 - 2026-02-13: FE-02 slice 2 completed. Extracted presence-domain decoder registry and payload parsing from `src/lib/gateway.ts` into `src/lib/gateway-presence-events.ts`, rewired gateway dispatch to consume `decodePresenceGatewayEvent` for `presence_sync`/`presence_update`, and added focused tests in `tests/gateway-presence-events.test.ts` (3 passing, including unknown-type fail-closed behavior). Targeted validation passed (`pnpm -C apps/filament-client-web run typecheck`, `pnpm -C apps/filament-client-web exec vitest run tests/gateway-presence-events.test.ts tests/gateway.test.ts`).
+- 2026-02-13: FE-02 slice 3 completed. Extracted friend-domain decoder registry and payload parsing from `src/lib/gateway.ts` into `src/lib/gateway-friend-events.ts`, rewired gateway dispatch to consume `decodeFriendGatewayEvent` for `friend_request_create`/`friend_request_update`/`friend_request_delete`/`friend_remove`, and added focused tests in `tests/gateway-friend-events.test.ts` (4 passing, including unknown-type and invalid-payload fail-closed behavior). Targeted validation passed (`pnpm -C apps/filament-client-web run typecheck`, `pnpm -C apps/filament-client-web exec vitest run tests/gateway-friend-events.test.ts tests/gateway.test.ts`).
 
 ---
 

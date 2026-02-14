@@ -3,6 +3,9 @@ import {
   parseGatewayEventEnvelope,
 } from "./gateway-envelope";
 import {
+  decodeFriendGatewayEvent,
+} from "./gateway-friend-events";
+import {
   decodePresenceGatewayEvent,
   type PresenceSyncPayload,
   type PresenceUpdatePayload,
@@ -20,7 +23,6 @@ import {
   type GuildName,
   type GuildVisibility,
   guildVisibilityFromInput,
-  friendRequestIdFromInput,
   markdownTokensFromResponse,
   profileAboutFromInput,
   messageContentFromInput,
@@ -1242,163 +1244,6 @@ function parseProfileAvatarUpdatePayload(
   };
 }
 
-function parseFriendRequestCreatePayload(
-  payload: unknown,
-): FriendRequestCreatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.request_id !== "string" ||
-    typeof value.sender_user_id !== "string" ||
-    typeof value.sender_username !== "string" ||
-    value.sender_username.length === 0 ||
-    value.sender_username.length > 64 ||
-    typeof value.recipient_user_id !== "string" ||
-    typeof value.recipient_username !== "string" ||
-    value.recipient_username.length === 0 ||
-    value.recipient_username.length > 64 ||
-    typeof value.created_at_unix !== "number" ||
-    !Number.isSafeInteger(value.created_at_unix) ||
-    value.created_at_unix < 1
-  ) {
-    return null;
-  }
-
-  try {
-    friendRequestIdFromInput(value.request_id);
-  } catch {
-    return null;
-  }
-
-  let senderUserId: string;
-  let recipientUserId: string;
-  try {
-    senderUserId = userIdFromInput(value.sender_user_id);
-    recipientUserId = userIdFromInput(value.recipient_user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    requestId: value.request_id,
-    senderUserId,
-    senderUsername: value.sender_username,
-    recipientUserId,
-    recipientUsername: value.recipient_username,
-    createdAtUnix: value.created_at_unix,
-  };
-}
-
-function parseFriendRequestUpdatePayload(
-  payload: unknown,
-): FriendRequestUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.request_id !== "string" ||
-    value.state !== "accepted" ||
-    typeof value.user_id !== "string" ||
-    typeof value.friend_user_id !== "string" ||
-    typeof value.friend_username !== "string" ||
-    value.friend_username.length === 0 ||
-    value.friend_username.length > 64 ||
-    typeof value.friendship_created_at_unix !== "number" ||
-    !Number.isSafeInteger(value.friendship_created_at_unix) ||
-    value.friendship_created_at_unix < 1 ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  try {
-    friendRequestIdFromInput(value.request_id);
-  } catch {
-    return null;
-  }
-
-  let userId: string;
-  let friendUserId: string;
-  try {
-    userId = userIdFromInput(value.user_id);
-    friendUserId = userIdFromInput(value.friend_user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    requestId: value.request_id,
-    state: "accepted",
-    userId,
-    friendUserId,
-    friendUsername: value.friend_username,
-    friendshipCreatedAtUnix: value.friendship_created_at_unix,
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseFriendRequestDeletePayload(
-  payload: unknown,
-): FriendRequestDeletePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.request_id !== "string" ||
-    typeof value.deleted_at_unix !== "number" ||
-    !Number.isSafeInteger(value.deleted_at_unix) ||
-    value.deleted_at_unix < 1
-  ) {
-    return null;
-  }
-  try {
-    friendRequestIdFromInput(value.request_id);
-  } catch {
-    return null;
-  }
-  return {
-    requestId: value.request_id,
-    deletedAtUnix: value.deleted_at_unix,
-  };
-}
-
-function parseFriendRemovePayload(payload: unknown): FriendRemovePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.user_id !== "string" ||
-    typeof value.friend_user_id !== "string" ||
-    typeof value.removed_at_unix !== "number" ||
-    !Number.isSafeInteger(value.removed_at_unix) ||
-    value.removed_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let userId: string;
-  let friendUserId: string;
-  try {
-    userId = userIdFromInput(value.user_id);
-    friendUserId = userIdFromInput(value.friend_user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    userId,
-    friendUserId,
-    removedAtUnix: value.removed_at_unix,
-  };
-}
-
 function normalizeGatewayBaseUrl(): string {
   const envGateway = import.meta.env.VITE_FILAMENT_GATEWAY_WS_URL;
   if (typeof envGateway === "string" && envGateway.length > 0) {
@@ -1649,39 +1494,29 @@ export function connectGateway(
       return;
     }
 
-    if (envelope.t === "friend_request_create") {
-      const payload = parseFriendRequestCreatePayload(envelope.d);
-      if (!payload) {
+    if (
+      envelope.t === "friend_request_create" ||
+      envelope.t === "friend_request_update" ||
+      envelope.t === "friend_request_delete" ||
+      envelope.t === "friend_remove"
+    ) {
+      const friendEvent = decodeFriendGatewayEvent(envelope.t, envelope.d);
+      if (!friendEvent) {
         return;
       }
-      handlers.onFriendRequestCreate?.(payload);
-      return;
-    }
-
-    if (envelope.t === "friend_request_update") {
-      const payload = parseFriendRequestUpdatePayload(envelope.d);
-      if (!payload) {
+      if (friendEvent.type === "friend_request_create") {
+        handlers.onFriendRequestCreate?.(friendEvent.payload);
         return;
       }
-      handlers.onFriendRequestUpdate?.(payload);
-      return;
-    }
-
-    if (envelope.t === "friend_request_delete") {
-      const payload = parseFriendRequestDeletePayload(envelope.d);
-      if (!payload) {
+      if (friendEvent.type === "friend_request_update") {
+        handlers.onFriendRequestUpdate?.(friendEvent.payload);
         return;
       }
-      handlers.onFriendRequestDelete?.(payload);
-      return;
-    }
-
-    if (envelope.t === "friend_remove") {
-      const payload = parseFriendRemovePayload(envelope.d);
-      if (!payload) {
+      if (friendEvent.type === "friend_request_delete") {
+        handlers.onFriendRequestDelete?.(friendEvent.payload);
         return;
       }
-      handlers.onFriendRemove?.(payload);
+      handlers.onFriendRemove?.(friendEvent.payload);
       return;
     }
 
