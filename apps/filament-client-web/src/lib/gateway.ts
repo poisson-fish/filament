@@ -3,6 +3,11 @@ import {
   parseGatewayEventEnvelope,
 } from "./gateway-envelope";
 import {
+  decodePresenceGatewayEvent,
+  type PresenceSyncPayload,
+  type PresenceUpdatePayload,
+} from "./gateway-presence-events";
+import {
   channelFromResponse,
   channelIdFromInput,
   type ChannelRecord,
@@ -33,25 +38,11 @@ import {
   workspaceRoleIdFromInput,
 } from "../domain/chat";
 
-const MAX_PRESENCE_SYNC_USER_IDS = 1024;
 const MAX_WORKSPACE_ROLE_REORDER_IDS = 64;
 const MAX_VOICE_PARTICIPANT_SYNC_SIZE = 512;
 
-type PresenceStatus = "online" | "offline";
-
 interface ReadyPayload {
   userId: string;
-}
-
-interface PresenceSyncPayload {
-  guildId: GuildId;
-  userIds: string[];
-}
-
-interface PresenceUpdatePayload {
-  guildId: GuildId;
-  userId: string;
-  status: PresenceStatus;
 }
 
 export type VoiceStreamKind = "microphone" | "camera" | "screen_share";
@@ -371,81 +362,6 @@ function parseReadyPayload(payload: unknown): ReadyPayload | null {
   }
 
   return { userId };
-}
-
-function parsePresenceSyncPayload(payload: unknown): PresenceSyncPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (typeof value.guild_id !== "string" || !Array.isArray(value.user_ids)) {
-    return null;
-  }
-  if (value.user_ids.length > MAX_PRESENCE_SYNC_USER_IDS) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-  } catch {
-    return null;
-  }
-
-  const seen = new Set<string>();
-  const userIds: string[] = [];
-  for (const entry of value.user_ids) {
-    if (typeof entry !== "string") {
-      return null;
-    }
-
-    let userId: string;
-    try {
-      userId = userIdFromInput(entry);
-    } catch {
-      return null;
-    }
-
-    if (seen.has(userId)) {
-      continue;
-    }
-    seen.add(userId);
-    userIds.push(userId);
-  }
-
-  return {
-    guildId,
-    userIds,
-  };
-}
-
-function parsePresenceUpdatePayload(payload: unknown): PresenceUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    (value.status !== "online" && value.status !== "offline")
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    status: value.status,
-  };
 }
 
 function parseVoiceStreamKind(value: unknown): VoiceStreamKind | null {
@@ -2150,21 +2066,16 @@ export function connectGateway(
       return;
     }
 
-    if (envelope.t === "presence_sync") {
-      const payload = parsePresenceSyncPayload(envelope.d);
-      if (!payload) {
+    if (envelope.t === "presence_sync" || envelope.t === "presence_update") {
+      const presenceEvent = decodePresenceGatewayEvent(envelope.t, envelope.d);
+      if (!presenceEvent) {
         return;
       }
-      handlers.onPresenceSync?.(payload);
-      return;
-    }
-
-    if (envelope.t === "presence_update") {
-      const payload = parsePresenceUpdatePayload(envelope.d);
-      if (!payload) {
-        return;
+      if (presenceEvent.type === "presence_sync") {
+        handlers.onPresenceSync?.(presenceEvent.payload);
+      } else {
+        handlers.onPresenceUpdate?.(presenceEvent.payload);
       }
-      handlers.onPresenceUpdate?.(payload);
     }
   };
 
