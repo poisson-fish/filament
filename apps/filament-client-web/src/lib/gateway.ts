@@ -20,30 +20,23 @@ import {
   decodeVoiceGatewayEvent,
 } from "./gateway-voice-events";
 import {
-  channelFromResponse,
-  channelIdFromInput,
+  decodeWorkspaceGatewayEvent,
+} from "./gateway-workspace-events";
+import {
   type ChannelRecord,
   type ChannelId,
   type GuildId,
-  guildNameFromInput,
   type GuildName,
   type GuildVisibility,
-  guildVisibilityFromInput,
   type MessageId,
   type MarkdownToken,
   type MessageRecord,
   type ReactionEmoji,
-  roleFromInput,
-  permissionFromInput,
   type RoleName,
   type PermissionName,
   type WorkspaceRoleId,
-  guildIdFromInput,
   userIdFromInput,
-  workspaceRoleIdFromInput,
 } from "../domain/chat";
-
-const MAX_WORKSPACE_ROLE_REORDER_IDS = 64;
 
 interface ReadyPayload {
   userId: string;
@@ -117,7 +110,7 @@ export interface VoiceStreamUnpublishPayload {
   unpublishedAtUnix: number;
 }
 
-interface ChannelCreatePayload {
+export interface ChannelCreatePayload {
   guildId: GuildId;
   channel: ChannelRecord;
 }
@@ -368,629 +361,6 @@ function parseReadyPayload(payload: unknown): ReadyPayload | null {
   return { userId };
 }
 
-function parseChannelCreatePayload(payload: unknown): ChannelCreatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (typeof value.guild_id !== "string") {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let channel: ChannelRecord;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    channel = channelFromResponse(value.channel);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    channel,
-  };
-}
-
-function parseWorkspaceUpdatePayload(payload: unknown): WorkspaceUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-  } catch {
-    return null;
-  }
-
-  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
-  let name: GuildName | undefined;
-  let visibility: GuildVisibility | undefined;
-  if (typeof updatedFieldsDto.name !== "undefined") {
-    if (typeof updatedFieldsDto.name !== "string") {
-      return null;
-    }
-    try {
-      name = guildNameFromInput(updatedFieldsDto.name);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof updatedFieldsDto.visibility !== "undefined") {
-    if (typeof updatedFieldsDto.visibility !== "string") {
-      return null;
-    }
-    try {
-      visibility = guildVisibilityFromInput(updatedFieldsDto.visibility);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof name === "undefined" && typeof visibility === "undefined") {
-    return null;
-  }
-
-  return {
-    guildId,
-    updatedFields: {
-      name,
-      visibility,
-    },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseWorkspaceMemberAddPayload(payload: unknown): WorkspaceMemberAddPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.role !== "string" ||
-    typeof value.joined_at_unix !== "number" ||
-    !Number.isSafeInteger(value.joined_at_unix) ||
-    value.joined_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  let role: RoleName;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-    role = roleFromInput(value.role);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    role,
-    joinedAtUnix: value.joined_at_unix,
-  };
-}
-
-function parseWorkspaceMemberUpdatePayload(payload: unknown): WorkspaceMemberUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
-  let role: RoleName | undefined;
-  if (typeof updatedFieldsDto.role !== "undefined") {
-    if (typeof updatedFieldsDto.role !== "string") {
-      return null;
-    }
-    try {
-      role = roleFromInput(updatedFieldsDto.role);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof role === "undefined") {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    updatedFields: { role },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseWorkspaceMemberRemovePayload(payload: unknown): WorkspaceMemberRemovePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    (value.reason !== "kick" && value.reason !== "ban" && value.reason !== "leave") ||
-    typeof value.removed_at_unix !== "number" ||
-    !Number.isSafeInteger(value.removed_at_unix) ||
-    value.removed_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    reason: value.reason,
-    removedAtUnix: value.removed_at_unix,
-  };
-}
-
-function parseWorkspaceMemberBanPayload(payload: unknown): WorkspaceMemberBanPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.banned_at_unix !== "number" ||
-    !Number.isSafeInteger(value.banned_at_unix) ||
-    value.banned_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    bannedAtUnix: value.banned_at_unix,
-  };
-}
-
-function parseWorkspaceRolePayload(payload: unknown): WorkspaceRoleRecordPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.role_id !== "string" ||
-    typeof value.name !== "string" ||
-    typeof value.position !== "number" ||
-    !Number.isSafeInteger(value.position) ||
-    value.position < 1 ||
-    typeof value.is_system !== "boolean" ||
-    !Array.isArray(value.permissions)
-  ) {
-    return null;
-  }
-
-  let roleId: WorkspaceRoleId;
-  try {
-    roleId = workspaceRoleIdFromInput(value.role_id);
-  } catch {
-    return null;
-  }
-
-  const permissions: PermissionName[] = [];
-  for (const entry of value.permissions) {
-    if (typeof entry !== "string") {
-      return null;
-    }
-    try {
-      permissions.push(permissionFromInput(entry));
-    } catch {
-      return null;
-    }
-  }
-
-  return {
-    roleId,
-    name: value.name,
-    position: value.position,
-    isSystem: value.is_system,
-    permissions,
-  };
-}
-
-function parseWorkspaceRoleCreatePayload(payload: unknown): WorkspaceRoleCreatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (typeof value.guild_id !== "string") {
-    return null;
-  }
-
-  let guildId: GuildId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-  } catch {
-    return null;
-  }
-  const role = parseWorkspaceRolePayload(value.role);
-  if (!role) {
-    return null;
-  }
-
-  return { guildId, role };
-}
-
-function parseWorkspaceRoleUpdatePayload(payload: unknown): WorkspaceRoleUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.role_id !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let roleId: WorkspaceRoleId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    roleId = workspaceRoleIdFromInput(value.role_id);
-  } catch {
-    return null;
-  }
-
-  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
-  let name: string | undefined;
-  let permissions: PermissionName[] | undefined;
-  if (typeof updatedFieldsDto.name !== "undefined") {
-    if (typeof updatedFieldsDto.name !== "string") {
-      return null;
-    }
-    name = updatedFieldsDto.name;
-  }
-  if (typeof updatedFieldsDto.permissions !== "undefined") {
-    if (!Array.isArray(updatedFieldsDto.permissions)) {
-      return null;
-    }
-    permissions = [];
-    for (const entry of updatedFieldsDto.permissions) {
-      if (typeof entry !== "string") {
-        return null;
-      }
-      try {
-        permissions.push(permissionFromInput(entry));
-      } catch {
-        return null;
-      }
-    }
-  }
-  if (typeof name === "undefined" && typeof permissions === "undefined") {
-    return null;
-  }
-
-  return {
-    guildId,
-    roleId,
-    updatedFields: {
-      name,
-      permissions,
-    },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseWorkspaceRoleDeletePayload(payload: unknown): WorkspaceRoleDeletePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.role_id !== "string" ||
-    typeof value.deleted_at_unix !== "number" ||
-    !Number.isSafeInteger(value.deleted_at_unix) ||
-    value.deleted_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let roleId: WorkspaceRoleId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    roleId = workspaceRoleIdFromInput(value.role_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    roleId,
-    deletedAtUnix: value.deleted_at_unix,
-  };
-}
-
-function parseWorkspaceRoleReorderPayload(payload: unknown): WorkspaceRoleReorderPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    !Array.isArray(value.role_ids) ||
-    value.role_ids.length > MAX_WORKSPACE_ROLE_REORDER_IDS ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-  } catch {
-    return null;
-  }
-
-  const roleIds: WorkspaceRoleId[] = [];
-  for (const entry of value.role_ids) {
-    if (typeof entry !== "string") {
-      return null;
-    }
-    try {
-      roleIds.push(workspaceRoleIdFromInput(entry));
-    } catch {
-      return null;
-    }
-  }
-
-  return {
-    guildId,
-    roleIds,
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseWorkspaceRoleAssignmentAddPayload(
-  payload: unknown,
-): WorkspaceRoleAssignmentAddPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.role_id !== "string" ||
-    typeof value.assigned_at_unix !== "number" ||
-    !Number.isSafeInteger(value.assigned_at_unix) ||
-    value.assigned_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  let roleId: WorkspaceRoleId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-    roleId = workspaceRoleIdFromInput(value.role_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    roleId,
-    assignedAtUnix: value.assigned_at_unix,
-  };
-}
-
-function parseWorkspaceRoleAssignmentRemovePayload(
-  payload: unknown,
-): WorkspaceRoleAssignmentRemovePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.role_id !== "string" ||
-    typeof value.removed_at_unix !== "number" ||
-    !Number.isSafeInteger(value.removed_at_unix) ||
-    value.removed_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  let roleId: WorkspaceRoleId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-    roleId = workspaceRoleIdFromInput(value.role_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    roleId,
-    removedAtUnix: value.removed_at_unix,
-  };
-}
-
-function parseWorkspaceChannelOverrideUpdatePayload(
-  payload: unknown,
-): WorkspaceChannelOverrideUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.channel_id !== "string" ||
-    typeof value.role !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let channelId: ChannelId;
-  let role: RoleName;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    channelId = channelIdFromInput(value.channel_id);
-    role = roleFromInput(value.role);
-  } catch {
-    return null;
-  }
-
-  const updatedFields = value.updated_fields as Record<string, unknown>;
-  if (!Array.isArray(updatedFields.allow) || !Array.isArray(updatedFields.deny)) {
-    return null;
-  }
-  const allow: PermissionName[] = [];
-  for (const entry of updatedFields.allow) {
-    if (typeof entry !== "string") {
-      return null;
-    }
-    try {
-      allow.push(permissionFromInput(entry));
-    } catch {
-      return null;
-    }
-  }
-  const deny: PermissionName[] = [];
-  for (const entry of updatedFields.deny) {
-    if (typeof entry !== "string") {
-      return null;
-    }
-    try {
-      deny.push(permissionFromInput(entry));
-    } catch {
-      return null;
-    }
-  }
-
-  return {
-    guildId,
-    channelId,
-    role,
-    updatedFields: { allow, deny },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseWorkspaceIpBanSyncPayload(payload: unknown): WorkspaceIpBanSyncPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    !value.summary ||
-    typeof value.summary !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-  const summaryDto = value.summary as Record<string, unknown>;
-  if (
-    (summaryDto.action !== "upsert" && summaryDto.action !== "remove") ||
-    typeof summaryDto.changed_count !== "number" ||
-    !Number.isSafeInteger(summaryDto.changed_count) ||
-    summaryDto.changed_count < 0
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    summary: {
-      action: summaryDto.action,
-      changedCount: summaryDto.changed_count,
-    },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
 function normalizeGatewayBaseUrl(): string {
   const envGateway = import.meta.env.VITE_FILAMENT_GATEWAY_WS_URL;
   if (typeof envGateway === "string" && envGateway.length > 0) {
@@ -1087,129 +457,80 @@ export function connectGateway(
       return;
     }
 
-    if (envelope.t === "channel_create") {
-      const payload = parseChannelCreatePayload(envelope.d);
-      if (!payload) {
+    if (
+      envelope.t === "channel_create" ||
+      envelope.t === "workspace_update" ||
+      envelope.t === "workspace_member_add" ||
+      envelope.t === "workspace_member_update" ||
+      envelope.t === "workspace_member_remove" ||
+      envelope.t === "workspace_member_ban" ||
+      envelope.t === "workspace_role_create" ||
+      envelope.t === "workspace_role_update" ||
+      envelope.t === "workspace_role_delete" ||
+      envelope.t === "workspace_role_reorder" ||
+      envelope.t === "workspace_role_assignment_add" ||
+      envelope.t === "workspace_role_assignment_remove" ||
+      envelope.t === "workspace_channel_override_update" ||
+      envelope.t === "workspace_ip_ban_sync"
+    ) {
+      const workspaceEvent = decodeWorkspaceGatewayEvent(envelope.t, envelope.d);
+      if (!workspaceEvent) {
         return;
       }
-      handlers.onChannelCreate?.(payload);
-      return;
-    }
 
-    if (envelope.t === "workspace_update") {
-      const payload = parseWorkspaceUpdatePayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "channel_create") {
+        handlers.onChannelCreate?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceUpdate?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_member_add") {
-      const payload = parseWorkspaceMemberAddPayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_update") {
+        handlers.onWorkspaceUpdate?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceMemberAdd?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_member_update") {
-      const payload = parseWorkspaceMemberUpdatePayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_member_add") {
+        handlers.onWorkspaceMemberAdd?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceMemberUpdate?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_member_remove") {
-      const payload = parseWorkspaceMemberRemovePayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_member_update") {
+        handlers.onWorkspaceMemberUpdate?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceMemberRemove?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_member_ban") {
-      const payload = parseWorkspaceMemberBanPayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_member_remove") {
+        handlers.onWorkspaceMemberRemove?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceMemberBan?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_role_create") {
-      const payload = parseWorkspaceRoleCreatePayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_member_ban") {
+        handlers.onWorkspaceMemberBan?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceRoleCreate?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_role_update") {
-      const payload = parseWorkspaceRoleUpdatePayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_role_create") {
+        handlers.onWorkspaceRoleCreate?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceRoleUpdate?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_role_delete") {
-      const payload = parseWorkspaceRoleDeletePayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_role_update") {
+        handlers.onWorkspaceRoleUpdate?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceRoleDelete?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_role_reorder") {
-      const payload = parseWorkspaceRoleReorderPayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_role_delete") {
+        handlers.onWorkspaceRoleDelete?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceRoleReorder?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_role_assignment_add") {
-      const payload = parseWorkspaceRoleAssignmentAddPayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_role_reorder") {
+        handlers.onWorkspaceRoleReorder?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceRoleAssignmentAdd?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_role_assignment_remove") {
-      const payload = parseWorkspaceRoleAssignmentRemovePayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_role_assignment_add") {
+        handlers.onWorkspaceRoleAssignmentAdd?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceRoleAssignmentRemove?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_channel_override_update") {
-      const payload = parseWorkspaceChannelOverrideUpdatePayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_role_assignment_remove") {
+        handlers.onWorkspaceRoleAssignmentRemove?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceChannelOverrideUpdate?.(payload);
-      return;
-    }
-
-    if (envelope.t === "workspace_ip_ban_sync") {
-      const payload = parseWorkspaceIpBanSyncPayload(envelope.d);
-      if (!payload) {
+      if (workspaceEvent.type === "workspace_channel_override_update") {
+        handlers.onWorkspaceChannelOverrideUpdate?.(workspaceEvent.payload);
         return;
       }
-      handlers.onWorkspaceIpBanSync?.(payload);
+      handlers.onWorkspaceIpBanSync?.(workspaceEvent.payload);
       return;
     }
 
