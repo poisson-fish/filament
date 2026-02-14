@@ -11,6 +11,9 @@ import {
   type PresenceUpdatePayload,
 } from "./gateway-presence-events";
 import {
+  decodeProfileGatewayEvent,
+} from "./gateway-profile-events";
+import {
   decodeVoiceGatewayEvent,
 } from "./gateway-voice-events";
 import {
@@ -24,7 +27,6 @@ import {
   type GuildVisibility,
   guildVisibilityFromInput,
   markdownTokensFromResponse,
-  profileAboutFromInput,
   messageContentFromInput,
   type MessageId,
   type MarkdownToken,
@@ -1130,120 +1132,6 @@ function parseWorkspaceIpBanSyncPayload(payload: unknown): WorkspaceIpBanSyncPay
   };
 }
 
-function parseProfileUpdatePayload(payload: unknown): ProfileUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.user_id !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let userId: string;
-  try {
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
-  let username: string | undefined;
-  let aboutMarkdown: string | undefined;
-  let aboutMarkdownTokens: MarkdownToken[] | undefined;
-  if (typeof updatedFieldsDto.username !== "undefined") {
-    if (
-      typeof updatedFieldsDto.username !== "string" ||
-      updatedFieldsDto.username.length === 0 ||
-      updatedFieldsDto.username.length > 64
-    ) {
-      return null;
-    }
-    username = updatedFieldsDto.username;
-  }
-  if (typeof updatedFieldsDto.about_markdown !== "undefined") {
-    if (typeof updatedFieldsDto.about_markdown !== "string") {
-      return null;
-    }
-    try {
-      aboutMarkdown = profileAboutFromInput(updatedFieldsDto.about_markdown);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof updatedFieldsDto.about_markdown_tokens !== "undefined") {
-    try {
-      aboutMarkdownTokens = markdownTokensFromResponse(
-        updatedFieldsDto.about_markdown_tokens,
-      );
-    } catch {
-      return null;
-    }
-  }
-  if (
-    typeof username === "undefined" &&
-    typeof aboutMarkdown === "undefined" &&
-    typeof aboutMarkdownTokens === "undefined"
-  ) {
-    return null;
-  }
-  if (
-    typeof aboutMarkdownTokens !== "undefined" &&
-    typeof aboutMarkdown === "undefined"
-  ) {
-    return null;
-  }
-
-  return {
-    userId,
-    updatedFields: {
-      username,
-      aboutMarkdown,
-      aboutMarkdownTokens,
-    },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseProfileAvatarUpdatePayload(
-  payload: unknown,
-): ProfileAvatarUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.user_id !== "string" ||
-    typeof value.avatar_version !== "number" ||
-    !Number.isSafeInteger(value.avatar_version) ||
-    value.avatar_version < 0 ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let userId: string;
-  try {
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    userId,
-    avatarVersion: value.avatar_version,
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
 function normalizeGatewayBaseUrl(): string {
   const envGateway = import.meta.env.VITE_FILAMENT_GATEWAY_WS_URL;
   if (typeof envGateway === "string" && envGateway.length > 0) {
@@ -1476,21 +1364,16 @@ export function connectGateway(
       return;
     }
 
-    if (envelope.t === "profile_update") {
-      const payload = parseProfileUpdatePayload(envelope.d);
-      if (!payload) {
+    if (envelope.t === "profile_update" || envelope.t === "profile_avatar_update") {
+      const profileEvent = decodeProfileGatewayEvent(envelope.t, envelope.d);
+      if (!profileEvent) {
         return;
       }
-      handlers.onProfileUpdate?.(payload);
-      return;
-    }
-
-    if (envelope.t === "profile_avatar_update") {
-      const payload = parseProfileAvatarUpdatePayload(envelope.d);
-      if (!payload) {
+      if (profileEvent.type === "profile_update") {
+        handlers.onProfileUpdate?.(profileEvent.payload);
         return;
       }
-      handlers.onProfileAvatarUpdate?.(payload);
+      handlers.onProfileAvatarUpdate?.(profileEvent.payload);
       return;
     }
 
