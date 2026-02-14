@@ -1,5 +1,8 @@
 import { type AccessToken } from "../domain/auth";
 import {
+  parseGatewayEventEnvelope,
+} from "./gateway-envelope";
+import {
   channelFromResponse,
   channelIdFromInput,
   type ChannelRecord,
@@ -30,17 +33,9 @@ import {
   workspaceRoleIdFromInput,
 } from "../domain/chat";
 
-const MAX_GATEWAY_EVENT_BYTES = 64 * 1024;
 const MAX_PRESENCE_SYNC_USER_IDS = 1024;
 const MAX_WORKSPACE_ROLE_REORDER_IDS = 64;
 const MAX_VOICE_PARTICIPANT_SYNC_SIZE = 512;
-const EVENT_TYPE_PATTERN = /^[a-z0-9_.]{1,64}$/;
-
-type GatewayEventEnvelope = {
-  v: number;
-  t: string;
-  d: unknown;
-};
 
 type PresenceStatus = "online" | "offline";
 
@@ -1839,34 +1834,6 @@ export function resolveGatewayUrl(accessToken: AccessToken): string {
   return `/gateway/ws?${query}`;
 }
 
-function parseEnvelope(raw: string): GatewayEventEnvelope | null {
-  if (new TextEncoder().encode(raw).length > MAX_GATEWAY_EVENT_BYTES) {
-    return null;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-
-  if (!parsed || typeof parsed !== "object") {
-    return null;
-  }
-
-  const value = parsed as Record<string, unknown>;
-  if (value.v !== 1 || typeof value.t !== "string" || !EVENT_TYPE_PATTERN.test(value.t)) {
-    return null;
-  }
-
-  return {
-    v: 1,
-    t: value.t,
-    d: value.d,
-  };
-}
-
 function sendEnvelope(socket: WebSocket, type: string, data: unknown): void {
   if (socket.readyState !== WebSocket.OPEN) {
     return;
@@ -1899,7 +1866,7 @@ export function connectGateway(
     if (typeof event.data !== "string") {
       return;
     }
-    const envelope = parseEnvelope(event.data);
+    const envelope = parseGatewayEventEnvelope(event.data);
     if (!envelope) {
       return;
     }
