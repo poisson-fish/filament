@@ -62,11 +62,11 @@ import {
   userLookupListFromResponse,
   workspaceRoleIdFromInput,
   workspaceRoleNameFromInput,
-  voiceTokenFromResponse,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
 import { createFriendsApi } from "./api-friends";
+import { createVoiceApi } from "./api-voice";
 
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -461,6 +461,10 @@ const friendsApi = createFriendsApi({
   createApiError(status, code, message) {
     return new ApiError(status, code, message);
   },
+});
+
+const voiceApi = createVoiceApi({
+  requestJson,
 });
 
 export async function registerWithPassword(input: {
@@ -1216,15 +1220,5 @@ export async function issueVoiceToken(
     publishSources?: MediaPublishSource[];
   },
 ): Promise<VoiceTokenRecord> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/channels/${channelId}/voice/token`,
-    accessToken: session.accessToken,
-    body: {
-      can_publish: input.canPublish,
-      can_subscribe: input.canSubscribe,
-      publish_sources: input.publishSources,
-    },
-  });
-  return voiceTokenFromResponse(dto);
+  return voiceApi.issueVoiceToken(session, guildId, channelId, input);
 }
