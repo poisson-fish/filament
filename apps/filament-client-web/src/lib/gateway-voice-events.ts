@@ -11,10 +11,12 @@ import type {
   VoiceParticipantPayload,
   VoiceParticipantSyncPayload,
   VoiceParticipantUpdatePayload,
-  VoiceStreamKind,
-  VoiceStreamPublishPayload,
-  VoiceStreamUnpublishPayload,
 } from "./gateway-contracts";
+import {
+  decodeVoiceStreamGatewayEvent,
+  isVoiceStreamGatewayEventType,
+  type VoiceStreamGatewayEvent,
+} from "./gateway-voice-stream-events";
 
 const MAX_VOICE_PARTICIPANT_SYNC_SIZE = 512;
 
@@ -35,24 +37,15 @@ type VoiceGatewayEvent =
       type: "voice_participant_update";
       payload: VoiceParticipantUpdatePayload;
     }
-  | {
-      type: "voice_stream_publish";
-      payload: VoiceStreamPublishPayload;
-    }
-  | {
-      type: "voice_stream_unpublish";
-      payload: VoiceStreamUnpublishPayload;
-    };
+  | VoiceStreamGatewayEvent;
 
 type VoiceGatewayEventType = VoiceGatewayEvent["type"];
+type VoiceParticipantGatewayEventType =
+  | "voice_participant_sync"
+  | "voice_participant_join"
+  | "voice_participant_leave"
+  | "voice_participant_update";
 type VoiceEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
-
-function parseVoiceStreamKind(value: unknown): VoiceStreamKind | null {
-  if (value === "microphone" || value === "camera" || value === "screen_share") {
-    return value;
-  }
-  return null;
-}
 
 function parseVoiceParticipant(payload: unknown): VoiceParticipantPayload | null {
   if (!payload || typeof payload !== "object") {
@@ -296,99 +289,19 @@ function parseVoiceParticipantUpdatePayload(payload: unknown): VoiceParticipantU
   };
 }
 
-function parseVoiceStreamPublishPayload(payload: unknown): VoiceStreamPublishPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.channel_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.identity !== "string" ||
-    typeof value.published_at_unix !== "number" ||
-    !Number.isSafeInteger(value.published_at_unix) ||
-    value.published_at_unix < 1
-  ) {
-    return null;
-  }
-  const stream = parseVoiceStreamKind(value.stream);
-  if (!stream) {
-    return null;
-  }
-  let guildId: GuildId;
-  let channelId: ChannelId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    channelId = channelIdFromInput(value.channel_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-  return {
-    guildId,
-    channelId,
-    userId,
-    identity: value.identity,
-    stream,
-    publishedAtUnix: value.published_at_unix,
-  };
-}
-
-function parseVoiceStreamUnpublishPayload(payload: unknown): VoiceStreamUnpublishPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.channel_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.identity !== "string" ||
-    typeof value.unpublished_at_unix !== "number" ||
-    !Number.isSafeInteger(value.unpublished_at_unix) ||
-    value.unpublished_at_unix < 1
-  ) {
-    return null;
-  }
-  const stream = parseVoiceStreamKind(value.stream);
-  if (!stream) {
-    return null;
-  }
-  let guildId: GuildId;
-  let channelId: ChannelId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    channelId = channelIdFromInput(value.channel_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-  return {
-    guildId,
-    channelId,
-    userId,
-    identity: value.identity,
-    stream,
-    unpublishedAtUnix: value.unpublished_at_unix,
-  };
-}
-
 const VOICE_EVENT_DECODERS: {
-  [K in VoiceGatewayEventType]: VoiceEventDecoder<Extract<VoiceGatewayEvent, { type: K }>["payload"]>;
+  [K in VoiceParticipantGatewayEventType]: VoiceEventDecoder<
+    Extract<VoiceGatewayEvent, { type: K }>["payload"]
+  >;
 } = {
   voice_participant_sync: parseVoiceParticipantSyncPayload,
   voice_participant_join: parseVoiceParticipantJoinPayload,
   voice_participant_leave: parseVoiceParticipantLeavePayload,
   voice_participant_update: parseVoiceParticipantUpdatePayload,
-  voice_stream_publish: parseVoiceStreamPublishPayload,
-  voice_stream_unpublish: parseVoiceStreamUnpublishPayload,
 };
 
 export function isVoiceGatewayEventType(value: string): value is VoiceGatewayEventType {
-  return value in VOICE_EVENT_DECODERS;
+  return value in VOICE_EVENT_DECODERS || isVoiceStreamGatewayEventType(value);
 }
 
 export function decodeVoiceGatewayEvent(
@@ -397,6 +310,10 @@ export function decodeVoiceGatewayEvent(
 ): VoiceGatewayEvent | null {
   if (!isVoiceGatewayEventType(type)) {
     return null;
+  }
+
+  if (isVoiceStreamGatewayEventType(type)) {
+    return decodeVoiceStreamGatewayEvent(type, payload);
   }
 
   if (type === "voice_participant_sync") {
@@ -443,23 +360,5 @@ export function decodeVoiceGatewayEvent(
     };
   }
 
-  if (type === "voice_stream_publish") {
-    const parsedPayload = VOICE_EVENT_DECODERS.voice_stream_publish(payload);
-    if (!parsedPayload) {
-      return null;
-    }
-    return {
-      type,
-      payload: parsedPayload,
-    };
-  }
-
-  const parsedPayload = VOICE_EVENT_DECODERS.voice_stream_unpublish(payload);
-  if (!parsedPayload) {
-    return null;
-  }
-  return {
-    type,
-    payload: parsedPayload,
-  };
+  return null;
 }
