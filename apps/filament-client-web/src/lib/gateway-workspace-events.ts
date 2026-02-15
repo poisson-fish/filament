@@ -46,6 +46,13 @@ export type WorkspaceGatewayEvent =
   | WorkspaceNonRoleGatewayEvent;
 export type WorkspaceGatewayEventType = WorkspaceGatewayEvent["type"];
 type WorkspaceNonRoleGatewayEventType = WorkspaceNonRoleGatewayEvent["type"];
+type WorkspaceGatewayDomain =
+  | "role"
+  | "member"
+  | "ipBan"
+  | "channelOverride"
+  | "workspaceUpdate"
+  | "channel";
 
 function isWorkspaceNonRoleGatewayEventType(
   value: string,
@@ -53,28 +60,48 @@ function isWorkspaceNonRoleGatewayEventType(
   return isWorkspaceChannelGatewayEventType(value);
 }
 
-const WORKSPACE_EVENT_TYPE_GUARDS: ReadonlyArray<(value: string) => boolean> = [
-  isWorkspaceRoleGatewayEventType,
-  isWorkspaceMemberGatewayEventType,
-  isWorkspaceIpBanGatewayEventType,
-  isWorkspaceChannelOverrideGatewayEventType,
-  isWorkspaceUpdateGatewayEventType,
-  isWorkspaceNonRoleGatewayEventType,
+const WORKSPACE_EVENT_TYPE_GUARDS: {
+  [K in WorkspaceGatewayDomain]: (value: string) => boolean;
+} = {
+  role: isWorkspaceRoleGatewayEventType,
+  member: isWorkspaceMemberGatewayEventType,
+  ipBan: isWorkspaceIpBanGatewayEventType,
+  channelOverride: isWorkspaceChannelOverrideGatewayEventType,
+  workspaceUpdate: isWorkspaceUpdateGatewayEventType,
+  channel: isWorkspaceNonRoleGatewayEventType,
+};
+
+const WORKSPACE_EVENT_DECODER_REGISTRY: {
+  [K in WorkspaceGatewayDomain]: WorkspaceGatewayEventDecoder;
+} = {
+  role: decodeWorkspaceRoleGatewayEvent,
+  member: decodeWorkspaceMemberGatewayEvent,
+  ipBan: decodeWorkspaceIpBanGatewayEvent,
+  channelOverride: decodeWorkspaceChannelOverrideGatewayEvent,
+  workspaceUpdate: decodeWorkspaceUpdateGatewayEvent,
+  channel: decodeWorkspaceChannelGatewayEvent,
+};
+
+const WORKSPACE_EVENT_DOMAINS: readonly WorkspaceGatewayDomain[] = [
+  "role",
+  "member",
+  "ipBan",
+  "channelOverride",
+  "workspaceUpdate",
+  "channel",
 ];
 
-const WORKSPACE_EVENT_DECODER_REGISTRY: ReadonlyArray<WorkspaceGatewayEventDecoder> = [
-  decodeWorkspaceRoleGatewayEvent,
-  decodeWorkspaceMemberGatewayEvent,
-  decodeWorkspaceIpBanGatewayEvent,
-  decodeWorkspaceChannelOverrideGatewayEvent,
-  decodeWorkspaceUpdateGatewayEvent,
-  decodeWorkspaceChannelGatewayEvent,
-];
+const hasOwn = Object.prototype.hasOwnProperty;
 
 export function isWorkspaceGatewayEventType(
   value: string,
 ): value is WorkspaceGatewayEventType {
-  return WORKSPACE_EVENT_TYPE_GUARDS.some((guard) => guard(value));
+  return WORKSPACE_EVENT_DOMAINS.some((domain) => {
+    if (!hasOwn.call(WORKSPACE_EVENT_TYPE_GUARDS, domain)) {
+      return false;
+    }
+    return WORKSPACE_EVENT_TYPE_GUARDS[domain](value);
+  });
 }
 
 export function decodeWorkspaceGatewayEvent(
@@ -85,7 +112,11 @@ export function decodeWorkspaceGatewayEvent(
     return null;
   }
 
-  for (const decoder of WORKSPACE_EVENT_DECODER_REGISTRY) {
+  for (const domain of WORKSPACE_EVENT_DOMAINS) {
+    if (!hasOwn.call(WORKSPACE_EVENT_DECODER_REGISTRY, domain)) {
+      continue;
+    }
+    const decoder = WORKSPACE_EVENT_DECODER_REGISTRY[domain];
     const decodedEvent = decoder(type, payload);
     if (decodedEvent) {
       return decodedEvent;

@@ -107,4 +107,8 @@ describe("decodeWorkspaceGatewayEvent", () => {
 
     expect(result).toBeNull();
   });
+
+  it("fails closed for prototype-chain event types", () => {
+    expect(isWorkspaceGatewayEventType("__proto__")).toBe(false);
+  });
 });
