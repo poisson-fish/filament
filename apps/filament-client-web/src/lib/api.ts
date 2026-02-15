@@ -51,11 +51,8 @@ import {
   directoryJoinResultFromResponse,
   guildFromResponse,
   guildRoleListFromResponse,
-  messageFromResponse,
-  messageHistoryFromResponse,
   moderationResultFromResponse,
   publicGuildDirectoryFromResponse,
-  reactionFromResponse,
   profileFromResponse,
   searchReconcileFromResponse,
   searchResultsFromResponse,
@@ -66,6 +63,7 @@ import {
 import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
 import { createFriendsApi } from "./api-friends";
+import { createMessagesApi } from "./api-messages";
 import { createVoiceApi } from "./api-voice";
 
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
@@ -463,6 +461,17 @@ const friendsApi = createFriendsApi({
   },
 });
 
+const messagesApi = createMessagesApi({
+  requestJson,
+  requestNoContent,
+  createApiError(status, code, message) {
+    return new ApiError(status, code, message);
+  },
+  isApiErrorCode(error, code) {
+    return error instanceof ApiError && error.code === code;
+  },
+});
+
 const voiceApi = createVoiceApi({
   requestJson,
 });
@@ -785,21 +794,7 @@ export async function fetchChannelMessages(
   channelId: ChannelId,
   input?: { limit?: number; before?: MessageId },
 ): Promise<MessageHistory> {
-  const params = new URLSearchParams();
-  if (input?.limit && Number.isInteger(input.limit) && input.limit > 0 && input.limit <= 100) {
-    params.set("limit", String(input.limit));
-  }
-  if (input?.before) {
-    params.set("before", input.before);
-  }
-
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  const dto = await requestJson({
-    method: "GET",
-    path: `/guilds/${guildId}/channels/${channelId}/messages${query}`,
-    accessToken: session.accessToken,
-  });
-  return messageHistoryFromResponse(dto);
+  return messagesApi.fetchChannelMessages(session, guildId, channelId, input);
 }
 
 export async function createChannelMessage(
@@ -808,32 +803,7 @@ export async function createChannelMessage(
   channelId: ChannelId,
   input: { content: MessageContent; attachmentIds?: AttachmentId[] },
 ): Promise<MessageRecord> {
-  try {
-    const dto = await requestJson({
-      method: "POST",
-      path: `/guilds/${guildId}/channels/${channelId}/messages`,
-      accessToken: session.accessToken,
-      body: {
-        content: input.content,
-        attachment_ids: input.attachmentIds,
-      },
-    });
-    return messageFromResponse(dto);
-  } catch (error) {
-    if (
-      error instanceof ApiError &&
-      error.code === "invalid_json" &&
-      input.attachmentIds &&
-      input.attachmentIds.length > 0
-    ) {
-      throw new ApiError(
-        400,
-        "protocol_mismatch",
-        "Server does not support attachment_ids on message create.",
-      );
-    }
-    throw error;
-  }
+  return messagesApi.createChannelMessage(session, guildId, channelId, input);
 }
 
 export async function editChannelMessage(
@@ -843,13 +813,7 @@ export async function editChannelMessage(
   messageId: MessageId,
   input: { content: MessageContent },
 ): Promise<MessageRecord> {
-  const dto = await requestJson({
-    method: "PATCH",
-    path: `/guilds/${guildId}/channels/${channelId}/messages/${messageId}`,
-    accessToken: session.accessToken,
-    body: { content: input.content },
-  });
-  return messageFromResponse(dto);
+  return messagesApi.editChannelMessage(session, guildId, channelId, messageId, input);
 }
 
 export async function deleteChannelMessage(
@@ -858,11 +822,7 @@ export async function deleteChannelMessage(
   channelId: ChannelId,
   messageId: MessageId,
 ): Promise<void> {
-  await requestNoContent({
-    method: "DELETE",
-    path: `/guilds/${guildId}/channels/${channelId}/messages/${messageId}`,
-    accessToken: session.accessToken,
-  });
+  await messagesApi.deleteChannelMessage(session, guildId, channelId, messageId);
 }
 
 export async function searchGuildMessages(
@@ -917,12 +877,7 @@ export async function addMessageReaction(
   messageId: MessageId,
   emoji: ReactionEmoji,
 ): Promise<ReactionRecord> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
-    accessToken: session.accessToken,
-  });
-  return reactionFromResponse(dto);
+  return messagesApi.addMessageReaction(session, guildId, channelId, messageId, emoji);
 }
 
 export async function removeMessageReaction(
@@ -932,12 +887,7 @@ export async function removeMessageReaction(
   messageId: MessageId,
   emoji: ReactionEmoji,
 ): Promise<ReactionRecord> {
-  const dto = await requestJson({
-    method: "DELETE",
-    path: `/guilds/${guildId}/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
-    accessToken: session.accessToken,
-  });
-  return reactionFromResponse(dto);
+  return messagesApi.removeMessageReaction(session, guildId, channelId, messageId, emoji);
 }
 
 export async function uploadChannelAttachment(
