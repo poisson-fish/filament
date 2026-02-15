@@ -4,13 +4,17 @@ import {
 } from "../domain/auth";
 import {
   type GuildId,
+  type GuildName,
   type GuildRoleList,
   type GuildRoleRecord,
+  type GuildRecord,
+  type GuildVisibility,
   type ModerationResult,
   type PermissionName,
   type UserId,
   type WorkspaceRoleId,
   type WorkspaceRoleName,
+  guildFromResponse,
   guildRoleListFromResponse,
   moderationResultFromResponse,
   workspaceRoleIdFromInput,
@@ -30,6 +34,16 @@ interface WorkspaceApiDependencies {
 }
 
 export interface WorkspaceApi {
+  createGuild(
+    session: AuthSession,
+    input: { name: GuildName; visibility?: GuildVisibility },
+  ): Promise<GuildRecord>;
+  fetchGuilds(session: AuthSession): Promise<GuildRecord[]>;
+  updateGuild(
+    session: AuthSession,
+    guildId: GuildId,
+    input: { name: GuildName; visibility?: GuildVisibility },
+  ): Promise<GuildRecord>;
   fetchGuildRoles(
     session: AuthSession,
     guildId: GuildId,
@@ -78,6 +92,42 @@ export interface WorkspaceApi {
 
 export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceApi {
   return {
+    async createGuild(session, guildInput) {
+      const dto = await input.requestJson({
+        method: "POST",
+        path: "/guilds",
+        accessToken: session.accessToken,
+        body: { name: guildInput.name, visibility: guildInput.visibility },
+      });
+      return guildFromResponse(dto);
+    },
+
+    async fetchGuilds(session) {
+      const dto = await input.requestJson({
+        method: "GET",
+        path: "/guilds",
+        accessToken: session.accessToken,
+      });
+      if (!dto || typeof dto !== "object" || !Array.isArray((dto as { guilds?: unknown }).guilds)) {
+        throw input.createApiError(
+          500,
+          "invalid_guild_list_shape",
+          "Unexpected guild list response.",
+        );
+      }
+      return (dto as { guilds: unknown[] }).guilds.map((entry) => guildFromResponse(entry));
+    },
+
+    async updateGuild(session, guildId, guildInput) {
+      const dto = await input.requestJson({
+        method: "PATCH",
+        path: `/guilds/${guildId}`,
+        accessToken: session.accessToken,
+        body: { name: guildInput.name, visibility: guildInput.visibility },
+      });
+      return guildFromResponse(dto);
+    },
+
     async fetchGuildRoles(session, guildId) {
       const dto = await input.requestJson({
         method: "GET",

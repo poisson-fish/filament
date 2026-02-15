@@ -1,6 +1,8 @@
 import { accessTokenFromInput, refreshTokenFromInput } from "../src/domain/auth";
 import {
   guildIdFromInput,
+  guildNameFromInput,
+  guildVisibilityFromInput,
   userIdFromInput,
   workspaceRoleIdFromInput,
 } from "../src/domain/chat";
@@ -25,6 +27,8 @@ describe("api-workspace", () => {
     expiresAtUnix: 2_000_000_000,
   };
   const guildId = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+  const guildName = guildNameFromInput("Filament Ops");
+  const guildVisibility = guildVisibilityFromInput("private");
   const roleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB1");
   const userId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB2");
 
@@ -57,6 +61,65 @@ describe("api-workspace", () => {
       method: "GET",
       path: `/guilds/${guildId}/roles`,
       accessToken: session.accessToken,
+    });
+  });
+
+  it("createGuild delegates and parses strict guild response", async () => {
+    const requestJson = vi.fn(async () => ({
+      guild_id: guildId,
+      name: guildName,
+      visibility: guildVisibility,
+    }));
+
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(
+      api.createGuild(session, { name: guildName, visibility: guildVisibility }),
+    ).resolves.toMatchObject({ guildId, name: guildName, visibility: guildVisibility });
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "POST",
+      path: "/guilds",
+      accessToken: session.accessToken,
+      body: { name: guildName, visibility: guildVisibility },
+    });
+  });
+
+  it("fetchGuilds fails closed on invalid guild list shape", async () => {
+    const requestJson = vi.fn(async () => ({ guilds: null }));
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(api.fetchGuilds(session)).rejects.toMatchObject({
+      status: 500,
+      code: "invalid_guild_list_shape",
+    });
+  });
+
+  it("updateGuild delegates with guild path and strict payload", async () => {
+    const requestJson = vi.fn(async () => ({
+      guild_id: guildId,
+      name: guildName,
+      visibility: guildVisibility,
+    }));
+
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(
+      api.updateGuild(session, guildId, { name: guildName, visibility: guildVisibility }),
+    ).resolves.toMatchObject({ guildId, name: guildName, visibility: guildVisibility });
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "PATCH",
+      path: `/guilds/${guildId}`,
+      accessToken: session.accessToken,
+      body: { name: guildName, visibility: guildVisibility },
     });
   });
 

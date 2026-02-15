@@ -49,7 +49,6 @@ import {
   channelFromResponse,
   channelPermissionSnapshotFromResponse,
   directoryJoinResultFromResponse,
-  guildFromResponse,
   moderationResultFromResponse,
   publicGuildDirectoryFromResponse,
   profileFromResponse,
@@ -683,25 +682,11 @@ export async function createGuild(
   name: GuildName;
   visibility: GuildVisibility;
 }> {
-  const dto = await requestJson({
-    method: "POST",
-    path: "/guilds",
-    accessToken: session.accessToken,
-    body: { name: input.name, visibility: input.visibility },
-  });
-  return guildFromResponse(dto);
+  return workspaceApi.createGuild(session, input);
 }
 
 export async function fetchGuilds(session: AuthSession): Promise<GuildRecord[]> {
-  const dto = await requestJson({
-    method: "GET",
-    path: "/guilds",
-    accessToken: session.accessToken,
-  });
-  if (!dto || typeof dto !== "object" || !Array.isArray((dto as { guilds?: unknown }).guilds)) {
-    throw new ApiError(500, "invalid_guild_list_shape", "Unexpected guild list response.");
-  }
-  return (dto as { guilds: unknown[] }).guilds.map((entry) => guildFromResponse(entry));
+  return workspaceApi.fetchGuilds(session);
 }
 
 export async function updateGuild(
@@ -709,13 +694,7 @@ export async function updateGuild(
   guildId: GuildId,
   input: { name: GuildName; visibility?: GuildVisibility },
 ): Promise<GuildRecord> {
-  const dto = await requestJson({
-    method: "PATCH",
-    path: `/guilds/${guildId}`,
-    accessToken: session.accessToken,
-    body: { name: input.name, visibility: input.visibility },
-  });
-  return guildFromResponse(dto);
+  return workspaceApi.updateGuild(session, guildId, input);
 }
 
 export async function fetchPublicGuildDirectory(
