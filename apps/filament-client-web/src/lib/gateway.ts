@@ -6,8 +6,8 @@ import {
   dispatchFriendGatewayEvent,
 } from "./gateway-friend-dispatch";
 import {
-  decodeMessageGatewayEvent,
-} from "./gateway-message-events";
+  dispatchMessageGatewayEvent,
+} from "./gateway-message-dispatch";
 import {
   type PresenceSyncPayload,
   type PresenceUpdatePayload,
@@ -433,29 +433,7 @@ export function connectGateway(
       return;
     }
 
-    if (
-      envelope.t === "message_create" ||
-      envelope.t === "message_update" ||
-      envelope.t === "message_delete" ||
-      envelope.t === "message_reaction"
-    ) {
-      const messageEvent = decodeMessageGatewayEvent(envelope.t, envelope.d);
-      if (!messageEvent) {
-        return;
-      }
-      if (messageEvent.type === "message_create") {
-        handlers.onMessageCreate?.(messageEvent.payload);
-        return;
-      }
-      if (messageEvent.type === "message_update") {
-        handlers.onMessageUpdate?.(messageEvent.payload);
-        return;
-      }
-      if (messageEvent.type === "message_delete") {
-        handlers.onMessageDelete?.(messageEvent.payload);
-        return;
-      }
-      handlers.onMessageReaction?.(messageEvent.payload);
+    if (dispatchMessageGatewayEvent(envelope.t, envelope.d, handlers)) {
       return;
     }
 
