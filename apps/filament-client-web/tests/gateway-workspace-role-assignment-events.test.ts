@@ -85,4 +85,8 @@ describe("isWorkspaceRoleAssignmentGatewayEventType", () => {
     expect(isWorkspaceRoleAssignmentGatewayEventType("workspace_role_assignment_remove")).toBe(true);
     expect(isWorkspaceRoleAssignmentGatewayEventType("workspace_role_create")).toBe(false);
   });
+
+  it("fails closed for prototype-chain event types", () => {
+    expect(isWorkspaceRoleAssignmentGatewayEventType("__proto__")).toBe(false);
+  });
 });
