@@ -46,7 +46,6 @@ import {
   type UserId,
   type VoiceTokenRecord,
   attachmentFromResponse,
-  moderationResultFromResponse,
   profileFromResponse,
   searchReconcileFromResponse,
   searchResultsFromResponse,
@@ -901,12 +900,7 @@ export async function addGuildMember(
   guildId: GuildId,
   userId: UserId,
 ): Promise<ModerationResult> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/members/${userId}`,
-    accessToken: session.accessToken,
-  });
-  return moderationResultFromResponse(dto);
+  return workspaceApi.addGuildMember(session, guildId, userId);
 }
 
 export async function updateGuildMemberRole(
@@ -915,13 +909,7 @@ export async function updateGuildMemberRole(
   userId: UserId,
   role: RoleName,
 ): Promise<ModerationResult> {
-  const dto = await requestJson({
-    method: "PATCH",
-    path: `/guilds/${guildId}/members/${userId}`,
-    accessToken: session.accessToken,
-    body: { role },
-  });
-  return moderationResultFromResponse(dto);
+  return workspaceApi.updateGuildMemberRole(session, guildId, userId, role);
 }
 
 export async function kickGuildMember(
@@ -929,12 +917,7 @@ export async function kickGuildMember(
   guildId: GuildId,
   userId: UserId,
 ): Promise<ModerationResult> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/members/${userId}/kick`,
-    accessToken: session.accessToken,
-  });
-  return moderationResultFromResponse(dto);
+  return workspaceApi.kickGuildMember(session, guildId, userId);
 }
 
 export async function banGuildMember(
@@ -942,12 +925,7 @@ export async function banGuildMember(
   guildId: GuildId,
   userId: UserId,
 ): Promise<ModerationResult> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/members/${userId}/ban`,
-    accessToken: session.accessToken,
-  });
-  return moderationResultFromResponse(dto);
+  return workspaceApi.banGuildMember(session, guildId, userId);
 }
 
 export async function setChannelRoleOverride(
@@ -960,13 +938,7 @@ export async function setChannelRoleOverride(
     deny: PermissionName[];
   },
 ): Promise<ModerationResult> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/channels/${channelId}/overrides/${role}`,
-    accessToken: session.accessToken,
-    body: input,
-  });
-  return moderationResultFromResponse(dto);
+  return workspaceApi.setChannelRoleOverride(session, guildId, channelId, role, input);
 }
 
 export async function fetchGuildRoles(

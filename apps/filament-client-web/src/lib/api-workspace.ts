@@ -18,6 +18,7 @@ import {
   type ModerationResult,
   type PermissionName,
   type PublicGuildDirectory,
+  type RoleName,
   type UserId,
   type WorkspaceRoleId,
   type WorkspaceRoleName,
@@ -77,6 +78,37 @@ export interface WorkspaceApi {
     guildId: GuildId,
     channelId: ChannelId,
   ): Promise<ChannelPermissionSnapshot>;
+  addGuildMember(
+    session: AuthSession,
+    guildId: GuildId,
+    userId: UserId,
+  ): Promise<ModerationResult>;
+  updateGuildMemberRole(
+    session: AuthSession,
+    guildId: GuildId,
+    userId: UserId,
+    role: RoleName,
+  ): Promise<ModerationResult>;
+  kickGuildMember(
+    session: AuthSession,
+    guildId: GuildId,
+    userId: UserId,
+  ): Promise<ModerationResult>;
+  banGuildMember(
+    session: AuthSession,
+    guildId: GuildId,
+    userId: UserId,
+  ): Promise<ModerationResult>;
+  setChannelRoleOverride(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+    role: RoleName,
+    input: {
+      allow: PermissionName[];
+      deny: PermissionName[];
+    },
+  ): Promise<ModerationResult>;
   fetchGuildRoles(
     session: AuthSession,
     guildId: GuildId,
@@ -226,6 +258,53 @@ export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceAp
         accessToken: session.accessToken,
       });
       return channelPermissionSnapshotFromResponse(dto);
+    },
+
+    async addGuildMember(session, guildId, userId) {
+      const dto = await input.requestJson({
+        method: "POST",
+        path: `/guilds/${guildId}/members/${userId}`,
+        accessToken: session.accessToken,
+      });
+      return moderationResultFromResponse(dto);
+    },
+
+    async updateGuildMemberRole(session, guildId, userId, role) {
+      const dto = await input.requestJson({
+        method: "PATCH",
+        path: `/guilds/${guildId}/members/${userId}`,
+        accessToken: session.accessToken,
+        body: { role },
+      });
+      return moderationResultFromResponse(dto);
+    },
+
+    async kickGuildMember(session, guildId, userId) {
+      const dto = await input.requestJson({
+        method: "POST",
+        path: `/guilds/${guildId}/members/${userId}/kick`,
+        accessToken: session.accessToken,
+      });
+      return moderationResultFromResponse(dto);
+    },
+
+    async banGuildMember(session, guildId, userId) {
+      const dto = await input.requestJson({
+        method: "POST",
+        path: `/guilds/${guildId}/members/${userId}/ban`,
+        accessToken: session.accessToken,
+      });
+      return moderationResultFromResponse(dto);
+    },
+
+    async setChannelRoleOverride(session, guildId, channelId, role, roleInput) {
+      const dto = await input.requestJson({
+        method: "POST",
+        path: `/guilds/${guildId}/channels/${channelId}/overrides/${role}`,
+        accessToken: session.accessToken,
+        body: roleInput,
+      });
+      return moderationResultFromResponse(dto);
     },
 
     async fetchGuildRoles(session, guildId) {

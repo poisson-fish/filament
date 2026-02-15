@@ -6,6 +6,8 @@ import {
   guildIdFromInput,
   guildNameFromInput,
   guildVisibilityFromInput,
+  type PermissionName,
+  roleFromInput,
   userIdFromInput,
   workspaceRoleIdFromInput,
 } from "../src/domain/chat";
@@ -35,6 +37,7 @@ describe("api-workspace", () => {
   const channelId = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FC1");
   const channelName = channelNameFromInput("ops-voice");
   const channelKind = channelKindFromInput("voice");
+  const role = roleFromInput("member");
   const roleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB1");
   const userId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB2");
 
@@ -298,6 +301,71 @@ describe("api-workspace", () => {
       method: "DELETE",
       path: `/guilds/${guildId}/roles/${normalizedRoleId}/members/${userId}`,
       accessToken: session.accessToken,
+    });
+  });
+
+  it("member moderation endpoints delegate with strict paths", async () => {
+    const requestJson = vi
+      .fn()
+      .mockResolvedValueOnce({ accepted: true })
+      .mockResolvedValueOnce({ accepted: true })
+      .mockResolvedValueOnce({ accepted: true })
+      .mockResolvedValueOnce({ accepted: true });
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(api.addGuildMember(session, guildId, userId)).resolves.toEqual({ accepted: true });
+    await expect(api.updateGuildMemberRole(session, guildId, userId, role)).resolves.toEqual({
+      accepted: true,
+    });
+    await expect(api.kickGuildMember(session, guildId, userId)).resolves.toEqual({ accepted: true });
+    await expect(api.banGuildMember(session, guildId, userId)).resolves.toEqual({ accepted: true });
+
+    expect(requestJson).toHaveBeenNthCalledWith(1, {
+      method: "POST",
+      path: `/guilds/${guildId}/members/${userId}`,
+      accessToken: session.accessToken,
+    });
+    expect(requestJson).toHaveBeenNthCalledWith(2, {
+      method: "PATCH",
+      path: `/guilds/${guildId}/members/${userId}`,
+      accessToken: session.accessToken,
+      body: { role },
+    });
+    expect(requestJson).toHaveBeenNthCalledWith(3, {
+      method: "POST",
+      path: `/guilds/${guildId}/members/${userId}/kick`,
+      accessToken: session.accessToken,
+    });
+    expect(requestJson).toHaveBeenNthCalledWith(4, {
+      method: "POST",
+      path: `/guilds/${guildId}/members/${userId}/ban`,
+      accessToken: session.accessToken,
+    });
+  });
+
+  it("setChannelRoleOverride delegates override payload unchanged", async () => {
+    const requestJson = vi.fn(async () => ({ accepted: true }));
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    const input: { allow: PermissionName[]; deny: PermissionName[] } = {
+      allow: ["create_message"],
+      deny: ["subscribe_streams"],
+    };
+    await expect(api.setChannelRoleOverride(session, guildId, channelId, role, input)).resolves.toEqual({
+      accepted: true,
+    });
+
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "POST",
+      path: `/guilds/${guildId}/channels/${channelId}/overrides/${role}`,
+      accessToken: session.accessToken,
+      body: input,
     });
   });
 });
