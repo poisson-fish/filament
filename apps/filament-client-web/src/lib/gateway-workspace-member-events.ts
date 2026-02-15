@@ -1,15 +1,17 @@
 import {
   guildIdFromInput,
-  roleFromInput,
   userIdFromInput,
   type GuildId,
-  type RoleName,
 } from "../domain/chat";
 import type {
-  WorkspaceMemberAddPayload,
   WorkspaceMemberBanPayload,
   WorkspaceMemberRemovePayload,
 } from "./gateway-contracts";
+import {
+  decodeWorkspaceMemberAddGatewayEvent,
+  isWorkspaceMemberAddGatewayEventType,
+  type WorkspaceMemberAddGatewayEvent,
+} from "./gateway-workspace-member-add-events";
 import {
   decodeWorkspaceMemberUpdateGatewayEvent,
   isWorkspaceMemberUpdateGatewayEventType,
@@ -17,10 +19,7 @@ import {
 } from "./gateway-workspace-member-update-events";
 
 export type WorkspaceMemberGatewayEvent =
-  | {
-      type: "workspace_member_add";
-      payload: WorkspaceMemberAddPayload;
-    }
+  | WorkspaceMemberAddGatewayEvent
   | WorkspaceMemberUpdateGatewayEvent
   | {
       type: "workspace_member_remove";
@@ -33,41 +32,6 @@ export type WorkspaceMemberGatewayEvent =
 
 type WorkspaceMemberGatewayEventType = WorkspaceMemberGatewayEvent["type"];
 type WorkspaceMemberEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
-
-function parseWorkspaceMemberAddPayload(payload: unknown): WorkspaceMemberAddPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.role !== "string" ||
-    typeof value.joined_at_unix !== "number" ||
-    !Number.isSafeInteger(value.joined_at_unix) ||
-    value.joined_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  let role: RoleName;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-    role = roleFromInput(value.role);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    role,
-    joinedAtUnix: value.joined_at_unix,
-  };
-}
 
 function parseWorkspaceMemberRemovePayload(payload: unknown): WorkspaceMemberRemovePayload | null {
   if (!payload || typeof payload !== "object") {
@@ -138,7 +102,8 @@ const WORKSPACE_MEMBER_EVENT_DECODERS: {
     Extract<WorkspaceMemberGatewayEvent, { type: K }>["payload"]
   >;
 } = {
-  workspace_member_add: parseWorkspaceMemberAddPayload,
+  workspace_member_add: (payload) =>
+    decodeWorkspaceMemberAddGatewayEvent("workspace_member_add", payload)?.payload ?? null,
   workspace_member_update: (payload) =>
     decodeWorkspaceMemberUpdateGatewayEvent("workspace_member_update", payload)?.payload ?? null,
   workspace_member_remove: parseWorkspaceMemberRemovePayload,
@@ -148,7 +113,11 @@ const WORKSPACE_MEMBER_EVENT_DECODERS: {
 export function isWorkspaceMemberGatewayEventType(
   value: string,
 ): value is WorkspaceMemberGatewayEventType {
-  return isWorkspaceMemberUpdateGatewayEventType(value) || value in WORKSPACE_MEMBER_EVENT_DECODERS;
+  return (
+    isWorkspaceMemberAddGatewayEventType(value) ||
+    isWorkspaceMemberUpdateGatewayEventType(value) ||
+    value in WORKSPACE_MEMBER_EVENT_DECODERS
+  );
 }
 
 function decodeKnownWorkspaceMemberGatewayEvent<K extends WorkspaceMemberGatewayEventType>(

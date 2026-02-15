@@ -7,7 +7,7 @@ const DEFAULT_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const DEFAULT_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 
 describe("decodeWorkspaceMemberGatewayEvent", () => {
-  it("decodes valid workspace_member_add payload", () => {
+  it("decodes valid workspace_member_add payload via aggregate member decoder", () => {
     const result = decodeWorkspaceMemberGatewayEvent("workspace_member_add", {
       guild_id: DEFAULT_GUILD_ID,
       user_id: DEFAULT_USER_ID,
@@ -24,6 +24,17 @@ describe("decodeWorkspaceMemberGatewayEvent", () => {
         joinedAtUnix: 1710000001,
       },
     });
+  });
+
+  it("fails closed for invalid workspace_member_add payload delegated through aggregate member decoder", () => {
+    const result = decodeWorkspaceMemberGatewayEvent("workspace_member_add", {
+      guild_id: DEFAULT_GUILD_ID,
+      user_id: DEFAULT_USER_ID,
+      role: "member",
+      joined_at_unix: 0,
+    });
+
+    expect(result).toBeNull();
   });
 
   it("fails closed for workspace_member_update payload without updatable fields", () => {
