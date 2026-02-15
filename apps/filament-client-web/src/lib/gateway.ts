@@ -6,6 +6,10 @@ import {
   dispatchGatewayDomainEvent,
 } from "./gateway-domain-dispatch";
 import {
+  dispatchReadyGatewayEvent,
+  type ReadyPayload,
+} from "./gateway-ready-dispatch";
+import {
   type PresenceSyncPayload,
   type PresenceUpdatePayload,
 } from "./gateway-presence-events";
@@ -22,12 +26,7 @@ import {
   type RoleName,
   type PermissionName,
   type WorkspaceRoleId,
-  userIdFromInput,
 } from "../domain/chat";
-
-interface ReadyPayload {
-  userId: string;
-}
 
 export type VoiceStreamKind = "microphone" | "camera" | "screen_share";
 
@@ -329,25 +328,6 @@ interface GatewayClient {
   close: () => void;
 }
 
-function parseReadyPayload(payload: unknown): ReadyPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (typeof value.user_id !== "string") {
-    return null;
-  }
-
-  let userId: string;
-  try {
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  return { userId };
-}
-
 function normalizeGatewayBaseUrl(): string {
   const envGateway = import.meta.env.VITE_FILAMENT_GATEWAY_WS_URL;
   if (typeof envGateway === "string" && envGateway.length > 0) {
@@ -409,12 +389,7 @@ export function connectGateway(
       return;
     }
 
-    if (envelope.t === "ready") {
-      const payload = parseReadyPayload(envelope.d);
-      if (!payload) {
-        return;
-      }
-      handlers.onReady?.(payload);
+    if (dispatchReadyGatewayEvent(envelope.t, envelope.d, handlers)) {
       return;
     }
 
