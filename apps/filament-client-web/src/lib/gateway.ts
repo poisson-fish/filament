@@ -3,8 +3,8 @@ import {
   parseGatewayEventEnvelope,
 } from "./gateway-envelope";
 import {
-  decodeFriendGatewayEvent,
-} from "./gateway-friend-events";
+  dispatchFriendGatewayEvent,
+} from "./gateway-friend-dispatch";
 import {
   decodeMessageGatewayEvent,
 } from "./gateway-message-events";
@@ -549,29 +549,7 @@ export function connectGateway(
       return;
     }
 
-    if (
-      envelope.t === "friend_request_create" ||
-      envelope.t === "friend_request_update" ||
-      envelope.t === "friend_request_delete" ||
-      envelope.t === "friend_remove"
-    ) {
-      const friendEvent = decodeFriendGatewayEvent(envelope.t, envelope.d);
-      if (!friendEvent) {
-        return;
-      }
-      if (friendEvent.type === "friend_request_create") {
-        handlers.onFriendRequestCreate?.(friendEvent.payload);
-        return;
-      }
-      if (friendEvent.type === "friend_request_update") {
-        handlers.onFriendRequestUpdate?.(friendEvent.payload);
-        return;
-      }
-      if (friendEvent.type === "friend_request_delete") {
-        handlers.onFriendRequestDelete?.(friendEvent.payload);
-        return;
-      }
-      handlers.onFriendRemove?.(friendEvent.payload);
+    if (dispatchFriendGatewayEvent(envelope.t, envelope.d, handlers)) {
       return;
     }
 
