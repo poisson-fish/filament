@@ -6,6 +6,7 @@ import {
   messageContentFromInput,
   messageIdFromInput,
   reactionEmojiFromInput,
+  searchQueryFromInput,
 } from "../src/domain/chat";
 import { createMessagesApi } from "../src/lib/api-messages";
 
@@ -146,6 +147,98 @@ describe("api-messages", () => {
     expect(requestJson).toHaveBeenNthCalledWith(2, {
       method: "DELETE",
       path: `/guilds/${guildId}/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+      accessToken: session.accessToken,
+    });
+  });
+
+  it("searchGuildMessages applies bounded query params and strict DTO parsing", async () => {
+    const requestJson = vi.fn(async () => ({
+      message_ids: ["01ARZ3NDEKTSV4RRFFQ69G5FB1"],
+      messages: [
+        {
+          message_id: "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+          guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+          author_id: "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+          content: "hello search",
+          markdown_tokens: [],
+          attachments: [],
+          created_at_unix: 1_700_000_000,
+        },
+      ],
+    }));
+
+    const api = createMessagesApi({
+      requestJson,
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      isApiErrorCode: () => false,
+    });
+
+    await expect(
+      api.searchGuildMessages(session, guildId, {
+        query: searchQueryFromInput("hello"),
+        limit: 25,
+        channelId,
+      }),
+    ).resolves.toMatchObject({
+      messageIds: ["01ARZ3NDEKTSV4RRFFQ69G5FB1"],
+      messages: [{ messageId: "01ARZ3NDEKTSV4RRFFQ69G5FB1" }],
+    });
+
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "GET",
+      path: `/guilds/${guildId}/search?q=hello&limit=25&channel_id=${channelId}`,
+      accessToken: session.accessToken,
+    });
+  });
+
+  it("searchGuildMessages ignores out-of-range limit values", async () => {
+    const requestJson = vi.fn(async () => ({ message_ids: [], messages: [] }));
+
+    const api = createMessagesApi({
+      requestJson,
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      isApiErrorCode: () => false,
+    });
+
+    await api.searchGuildMessages(session, guildId, {
+      query: searchQueryFromInput("hello"),
+      limit: 500,
+    });
+
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "GET",
+      path: `/guilds/${guildId}/search?q=hello`,
+      accessToken: session.accessToken,
+    });
+  });
+
+  it("rebuild/reconcile search index delegate through bounded request primitives", async () => {
+    const requestJson = vi.fn(async () => ({ upserted: 2, deleted: 1 }));
+    const requestNoContent = vi.fn(async () => undefined);
+    const api = createMessagesApi({
+      requestJson,
+      requestNoContent,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      isApiErrorCode: () => false,
+    });
+
+    await expect(api.rebuildGuildSearchIndex(session, guildId)).resolves.toBeUndefined();
+    await expect(api.reconcileGuildSearchIndex(session, guildId)).resolves.toEqual({
+      upserted: 2,
+      deleted: 1,
+    });
+
+    expect(requestNoContent).toHaveBeenCalledWith({
+      method: "POST",
+      path: `/guilds/${guildId}/search/rebuild`,
+      accessToken: session.accessToken,
+    });
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "POST",
+      path: `/guilds/${guildId}/search/reconcile`,
       accessToken: session.accessToken,
     });
   });

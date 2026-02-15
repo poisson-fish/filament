@@ -10,11 +10,16 @@ import {
   type MessageHistory,
   type MessageId,
   type MessageRecord,
+  type SearchQuery,
+  type SearchReconcileResult,
+  type SearchResults,
   type ReactionEmoji,
   type ReactionRecord,
   messageFromResponse,
   messageHistoryFromResponse,
   reactionFromResponse,
+  searchReconcileFromResponse,
+  searchResultsFromResponse,
 } from "../domain/chat";
 
 interface JsonRequest {
@@ -71,6 +76,19 @@ export interface MessagesApi {
     messageId: MessageId,
     emoji: ReactionEmoji,
   ): Promise<ReactionRecord>;
+  searchGuildMessages(
+    session: AuthSession,
+    guildId: GuildId,
+    input: { query: SearchQuery; limit?: number; channelId?: ChannelId },
+  ): Promise<SearchResults>;
+  rebuildGuildSearchIndex(
+    session: AuthSession,
+    guildId: GuildId,
+  ): Promise<void>;
+  reconcileGuildSearchIndex(
+    session: AuthSession,
+    guildId: GuildId,
+  ): Promise<SearchReconcileResult>;
 }
 
 export function createMessagesApi(input: MessagesApiDependencies): MessagesApi {
@@ -160,6 +178,46 @@ export function createMessagesApi(input: MessagesApiDependencies): MessagesApi {
         accessToken: session.accessToken,
       });
       return reactionFromResponse(dto);
+    },
+
+    async searchGuildMessages(session, guildId, payload) {
+      const params = new URLSearchParams();
+      params.set("q", payload.query);
+      if (
+        payload.limit &&
+        Number.isInteger(payload.limit) &&
+        payload.limit > 0 &&
+        payload.limit <= 50
+      ) {
+        params.set("limit", String(payload.limit));
+      }
+      if (payload.channelId) {
+        params.set("channel_id", payload.channelId);
+      }
+
+      const dto = await input.requestJson({
+        method: "GET",
+        path: `/guilds/${guildId}/search?${params.toString()}`,
+        accessToken: session.accessToken,
+      });
+      return searchResultsFromResponse(dto);
+    },
+
+    async rebuildGuildSearchIndex(session, guildId) {
+      await input.requestNoContent({
+        method: "POST",
+        path: `/guilds/${guildId}/search/rebuild`,
+        accessToken: session.accessToken,
+      });
+    },
+
+    async reconcileGuildSearchIndex(session, guildId) {
+      const dto = await input.requestJson({
+        method: "POST",
+        path: `/guilds/${guildId}/search/reconcile`,
+        accessToken: session.accessToken,
+      });
+      return searchReconcileFromResponse(dto);
     },
   };
 }

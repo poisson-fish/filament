@@ -47,8 +47,6 @@ import {
   type VoiceTokenRecord,
   attachmentFromResponse,
   profileFromResponse,
-  searchReconcileFromResponse,
-  searchResultsFromResponse,
   userLookupListFromResponse,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
@@ -771,44 +769,21 @@ export async function searchGuildMessages(
   guildId: GuildId,
   input: { query: SearchQuery; limit?: number; channelId?: ChannelId },
 ): Promise<SearchResults> {
-  const params = new URLSearchParams();
-  params.set("q", input.query);
-  if (input.limit && Number.isInteger(input.limit) && input.limit > 0 && input.limit <= 50) {
-    params.set("limit", String(input.limit));
-  }
-  if (input.channelId) {
-    params.set("channel_id", input.channelId);
-  }
-
-  const dto = await requestJson({
-    method: "GET",
-    path: `/guilds/${guildId}/search?${params.toString()}`,
-    accessToken: session.accessToken,
-  });
-  return searchResultsFromResponse(dto);
+  return messagesApi.searchGuildMessages(session, guildId, input);
 }
 
 export async function rebuildGuildSearchIndex(
   session: AuthSession,
   guildId: GuildId,
 ): Promise<void> {
-  await requestNoContent({
-    method: "POST",
-    path: `/guilds/${guildId}/search/rebuild`,
-    accessToken: session.accessToken,
-  });
+  await messagesApi.rebuildGuildSearchIndex(session, guildId);
 }
 
 export async function reconcileGuildSearchIndex(
   session: AuthSession,
   guildId: GuildId,
 ): Promise<SearchReconcileResult> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/search/reconcile`,
-    accessToken: session.accessToken,
-  });
-  return searchReconcileFromResponse(dto);
+  return messagesApi.reconcileGuildSearchIndex(session, guildId);
 }
 
 export async function addMessageReaction(
