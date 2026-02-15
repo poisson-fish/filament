@@ -1,21 +1,23 @@
 import {
   guildIdFromInput,
   permissionFromInput,
-  userIdFromInput,
   workspaceRoleIdFromInput,
   type GuildId,
   type PermissionName,
   type WorkspaceRoleId,
 } from "../domain/chat";
 import type {
-  WorkspaceRoleAssignmentAddPayload,
-  WorkspaceRoleAssignmentRemovePayload,
   WorkspaceRoleCreatePayload,
   WorkspaceRoleDeletePayload,
   WorkspaceRoleRecordPayload,
   WorkspaceRoleReorderPayload,
   WorkspaceRoleUpdatePayload,
 } from "./gateway-contracts";
+import {
+  decodeWorkspaceRoleAssignmentGatewayEvent,
+  isWorkspaceRoleAssignmentGatewayEventType,
+  type WorkspaceRoleAssignmentGatewayEvent,
+} from "./gateway-workspace-role-assignment-events";
 
 const MAX_WORKSPACE_ROLE_REORDER_IDS = 64;
 
@@ -36,16 +38,11 @@ export type WorkspaceRoleGatewayEvent =
       type: "workspace_role_reorder";
       payload: WorkspaceRoleReorderPayload;
     }
-  | {
-      type: "workspace_role_assignment_add";
-      payload: WorkspaceRoleAssignmentAddPayload;
-    }
-  | {
-      type: "workspace_role_assignment_remove";
-      payload: WorkspaceRoleAssignmentRemovePayload;
-    };
+  | WorkspaceRoleAssignmentGatewayEvent;
 
+type WorkspaceRoleCoreGatewayEvent = Exclude<WorkspaceRoleGatewayEvent, WorkspaceRoleAssignmentGatewayEvent>;
 type WorkspaceRoleGatewayEventType = WorkspaceRoleGatewayEvent["type"];
+type WorkspaceRoleCoreGatewayEventType = WorkspaceRoleCoreGatewayEvent["type"];
 type WorkspaceRoleEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
 
 function parseWorkspaceRolePayload(payload: unknown): WorkspaceRoleRecordPayload | null {
@@ -255,103 +252,31 @@ function parseWorkspaceRoleReorderPayload(payload: unknown): WorkspaceRoleReorde
   };
 }
 
-function parseWorkspaceRoleAssignmentAddPayload(
-  payload: unknown,
-): WorkspaceRoleAssignmentAddPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.role_id !== "string" ||
-    typeof value.assigned_at_unix !== "number" ||
-    !Number.isSafeInteger(value.assigned_at_unix) ||
-    value.assigned_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  let roleId: WorkspaceRoleId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-    roleId = workspaceRoleIdFromInput(value.role_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    roleId,
-    assignedAtUnix: value.assigned_at_unix,
-  };
-}
-
-function parseWorkspaceRoleAssignmentRemovePayload(
-  payload: unknown,
-): WorkspaceRoleAssignmentRemovePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.role_id !== "string" ||
-    typeof value.removed_at_unix !== "number" ||
-    !Number.isSafeInteger(value.removed_at_unix) ||
-    value.removed_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  let roleId: WorkspaceRoleId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-    roleId = workspaceRoleIdFromInput(value.role_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    roleId,
-    removedAtUnix: value.removed_at_unix,
-  };
-}
-
 const WORKSPACE_ROLE_EVENT_DECODERS: {
-  [K in WorkspaceRoleGatewayEventType]: WorkspaceRoleEventDecoder<
-    Extract<WorkspaceRoleGatewayEvent, { type: K }>["payload"]
+  [K in WorkspaceRoleCoreGatewayEventType]: WorkspaceRoleEventDecoder<
+    Extract<WorkspaceRoleCoreGatewayEvent, { type: K }>["payload"]
   >;
 } = {
   workspace_role_create: parseWorkspaceRoleCreatePayload,
   workspace_role_update: parseWorkspaceRoleUpdatePayload,
   workspace_role_delete: parseWorkspaceRoleDeletePayload,
   workspace_role_reorder: parseWorkspaceRoleReorderPayload,
-  workspace_role_assignment_add: parseWorkspaceRoleAssignmentAddPayload,
-  workspace_role_assignment_remove: parseWorkspaceRoleAssignmentRemovePayload,
 };
 
 export function isWorkspaceRoleGatewayEventType(
   value: string,
 ): value is WorkspaceRoleGatewayEventType {
+  return value in WORKSPACE_ROLE_EVENT_DECODERS || isWorkspaceRoleAssignmentGatewayEventType(value);
+}
+
+function isWorkspaceRoleCoreGatewayEventType(value: string): value is WorkspaceRoleCoreGatewayEventType {
   return value in WORKSPACE_ROLE_EVENT_DECODERS;
 }
 
-function decodeKnownWorkspaceRoleGatewayEvent<K extends WorkspaceRoleGatewayEventType>(
+function decodeKnownWorkspaceRoleGatewayEvent<K extends WorkspaceRoleCoreGatewayEventType>(
   type: K,
   payload: unknown,
-): Extract<WorkspaceRoleGatewayEvent, { type: K }> | null {
+): Extract<WorkspaceRoleCoreGatewayEvent, { type: K }> | null {
   const parsedPayload = WORKSPACE_ROLE_EVENT_DECODERS[type](payload);
   if (!parsedPayload) {
     return null;
@@ -360,14 +285,23 @@ function decodeKnownWorkspaceRoleGatewayEvent<K extends WorkspaceRoleGatewayEven
   return {
     type,
     payload: parsedPayload,
-  } as Extract<WorkspaceRoleGatewayEvent, { type: K }>;
+  } as Extract<WorkspaceRoleCoreGatewayEvent, { type: K }>;
 }
 
 export function decodeWorkspaceRoleGatewayEvent(
   type: string,
   payload: unknown,
 ): WorkspaceRoleGatewayEvent | null {
+  const assignmentEvent = decodeWorkspaceRoleAssignmentGatewayEvent(type, payload);
+  if (assignmentEvent) {
+    return assignmentEvent;
+  }
+
   if (!isWorkspaceRoleGatewayEventType(type)) {
+    return null;
+  }
+
+  if (!isWorkspaceRoleCoreGatewayEventType(type)) {
     return null;
   }
 
