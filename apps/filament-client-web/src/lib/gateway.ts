@@ -16,8 +16,8 @@ import {
   dispatchPresenceGatewayEvent,
 } from "./gateway-presence-dispatch";
 import {
-  decodeProfileGatewayEvent,
-} from "./gateway-profile-events";
+  dispatchProfileGatewayEvent,
+} from "./gateway-profile-dispatch";
 import {
   dispatchVoiceGatewayEvent,
 } from "./gateway-voice-dispatch";
@@ -536,16 +536,7 @@ export function connectGateway(
       return;
     }
 
-    if (envelope.t === "profile_update" || envelope.t === "profile_avatar_update") {
-      const profileEvent = decodeProfileGatewayEvent(envelope.t, envelope.d);
-      if (!profileEvent) {
-        return;
-      }
-      if (profileEvent.type === "profile_update") {
-        handlers.onProfileUpdate?.(profileEvent.payload);
-        return;
-      }
-      handlers.onProfileAvatarUpdate?.(profileEvent.payload);
+    if (dispatchProfileGatewayEvent(envelope.t, envelope.d, handlers)) {
       return;
     }
 
