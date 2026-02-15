@@ -32,6 +32,13 @@ type FriendGatewayEvent =
 type FriendGatewayEventType = FriendGatewayEvent["type"];
 type FriendEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
 
+function hasOwnKey(
+  value: Record<string, unknown>,
+  key: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 function parseFriendRequestCreatePayload(
   payload: unknown,
 ): FriendRequestCreatePayload | null {
@@ -199,7 +206,7 @@ const FRIEND_EVENT_DECODERS: {
 };
 
 function isFriendGatewayEventType(value: string): value is FriendGatewayEventType {
-  return value in FRIEND_EVENT_DECODERS;
+  return hasOwnKey(FRIEND_EVENT_DECODERS, value);
 }
 
 export function decodeFriendGatewayEvent(

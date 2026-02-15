@@ -63,4 +63,14 @@ describe("decodeFriendGatewayEvent", () => {
 
     expect(result).toBeNull();
   });
+
+  it("fails closed for hostile prototype event type", () => {
+    const result = decodeFriendGatewayEvent("__proto__", {
+      user_id: DEFAULT_USER_ID,
+      friend_user_id: DEFAULT_FRIEND_USER_ID,
+      removed_at_unix: 1710000003,
+    });
+
+    expect(result).toBeNull();
+  });
 });
