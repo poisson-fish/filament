@@ -1,4 +1,7 @@
-import { decodeWorkspaceRoleGatewayEvent } from "../src/lib/gateway-workspace-role-events";
+import {
+  decodeWorkspaceRoleGatewayEvent,
+  isWorkspaceRoleGatewayEventType,
+} from "../src/lib/gateway-workspace-role-events";
 
 const DEFAULT_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const DEFAULT_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
@@ -142,5 +145,17 @@ describe("decodeWorkspaceRoleGatewayEvent", () => {
     });
 
     expect(result).toBeNull();
+  });
+});
+
+describe("isWorkspaceRoleGatewayEventType", () => {
+  it("classifies only workspace role event types", () => {
+    expect(isWorkspaceRoleGatewayEventType("workspace_role_create")).toBe(true);
+    expect(isWorkspaceRoleGatewayEventType("workspace_role_update")).toBe(true);
+    expect(isWorkspaceRoleGatewayEventType("workspace_role_delete")).toBe(true);
+    expect(isWorkspaceRoleGatewayEventType("workspace_role_reorder")).toBe(true);
+    expect(isWorkspaceRoleGatewayEventType("workspace_role_assignment_add")).toBe(true);
+    expect(isWorkspaceRoleGatewayEventType("workspace_role_assignment_remove")).toBe(true);
+    expect(isWorkspaceRoleGatewayEventType("workspace_channel_create")).toBe(false);
   });
 });

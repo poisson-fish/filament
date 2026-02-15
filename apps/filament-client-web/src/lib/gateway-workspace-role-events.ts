@@ -4,10 +4,11 @@ import {
   type WorkspaceRoleCreateGatewayEvent,
 } from "./gateway-workspace-role-create-events";
 import {
-  decodeWorkspaceRoleAssignmentGatewayEvent,
   isWorkspaceRoleAssignmentGatewayEventType,
   type WorkspaceRoleAssignmentGatewayEvent,
 } from "./gateway-workspace-role-assignment-events";
+import { decodeWorkspaceRoleAssignmentAddGatewayEvent } from "./gateway-workspace-role-assignment-add-events";
+import { decodeWorkspaceRoleAssignmentRemoveGatewayEvent } from "./gateway-workspace-role-assignment-remove-events";
 import {
   decodeWorkspaceRoleReorderGatewayEvent,
   isWorkspaceRoleReorderGatewayEventType,
@@ -31,6 +32,28 @@ export type WorkspaceRoleGatewayEvent =
   | WorkspaceRoleReorderGatewayEvent
   | WorkspaceRoleAssignmentGatewayEvent;
 type WorkspaceRoleGatewayEventType = WorkspaceRoleGatewayEvent["type"];
+type WorkspaceRoleEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
+
+const WORKSPACE_ROLE_EVENT_DECODERS: {
+  [K in WorkspaceRoleGatewayEventType]: WorkspaceRoleEventDecoder<
+    Extract<WorkspaceRoleGatewayEvent, { type: K }>["payload"]
+  >;
+} = {
+  workspace_role_create: (payload) =>
+    decodeWorkspaceRoleCreateGatewayEvent("workspace_role_create", payload)?.payload ?? null,
+  workspace_role_update: (payload) =>
+    decodeWorkspaceRoleUpdateGatewayEvent("workspace_role_update", payload)?.payload ?? null,
+  workspace_role_delete: (payload) =>
+    decodeWorkspaceRoleDeleteGatewayEvent("workspace_role_delete", payload)?.payload ?? null,
+  workspace_role_reorder: (payload) =>
+    decodeWorkspaceRoleReorderGatewayEvent("workspace_role_reorder", payload)?.payload ?? null,
+  workspace_role_assignment_add: (payload) =>
+    decodeWorkspaceRoleAssignmentAddGatewayEvent("workspace_role_assignment_add", payload)
+      ?.payload ?? null,
+  workspace_role_assignment_remove: (payload) =>
+    decodeWorkspaceRoleAssignmentRemoveGatewayEvent("workspace_role_assignment_remove", payload)
+      ?.payload ?? null,
+};
 
 export function isWorkspaceRoleGatewayEventType(
   value: string,
@@ -40,38 +63,33 @@ export function isWorkspaceRoleGatewayEventType(
     isWorkspaceRoleUpdateGatewayEventType(value) ||
     isWorkspaceRoleDeleteGatewayEventType(value) ||
     isWorkspaceRoleReorderGatewayEventType(value) ||
-    isWorkspaceRoleAssignmentGatewayEventType(value)
+    isWorkspaceRoleAssignmentGatewayEventType(value) ||
+    value in WORKSPACE_ROLE_EVENT_DECODERS
   );
+}
+
+function decodeKnownWorkspaceRoleGatewayEvent<K extends WorkspaceRoleGatewayEventType>(
+  type: K,
+  payload: unknown,
+): Extract<WorkspaceRoleGatewayEvent, { type: K }> | null {
+  const parsedPayload = WORKSPACE_ROLE_EVENT_DECODERS[type](payload);
+  if (!parsedPayload) {
+    return null;
+  }
+
+  return {
+    type,
+    payload: parsedPayload,
+  } as Extract<WorkspaceRoleGatewayEvent, { type: K }>;
 }
 
 export function decodeWorkspaceRoleGatewayEvent(
   type: string,
   payload: unknown,
 ): WorkspaceRoleGatewayEvent | null {
-  const createEvent = decodeWorkspaceRoleCreateGatewayEvent(type, payload);
-  if (createEvent) {
-    return createEvent;
+  if (!isWorkspaceRoleGatewayEventType(type)) {
+    return null;
   }
 
-  const deleteEvent = decodeWorkspaceRoleDeleteGatewayEvent(type, payload);
-  if (deleteEvent) {
-    return deleteEvent;
-  }
-
-  const reorderEvent = decodeWorkspaceRoleReorderGatewayEvent(type, payload);
-  if (reorderEvent) {
-    return reorderEvent;
-  }
-
-  const assignmentEvent = decodeWorkspaceRoleAssignmentGatewayEvent(type, payload);
-  if (assignmentEvent) {
-    return assignmentEvent;
-  }
-
-  const updateEvent = decodeWorkspaceRoleUpdateGatewayEvent(type, payload);
-  if (updateEvent) {
-    return updateEvent;
-  }
-
-  return null;
+  return decodeKnownWorkspaceRoleGatewayEvent(type, payload);
 }
