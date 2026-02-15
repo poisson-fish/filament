@@ -32,7 +32,7 @@ import type {
   WorkspaceRoleReorderPayload,
   WorkspaceRoleUpdatePayload,
   WorkspaceUpdatePayload,
-} from "./gateway";
+} from "./gateway-contracts";
 
 const MAX_WORKSPACE_ROLE_REORDER_IDS = 64;
 

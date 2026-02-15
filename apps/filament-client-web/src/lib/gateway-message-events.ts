@@ -17,7 +17,7 @@ import type {
   MessageDeletePayload,
   MessageReactionPayload,
   MessageUpdatePayload,
-} from "./gateway";
+} from "./gateway-contracts";
 
 type MessageGatewayEvent =
   | {

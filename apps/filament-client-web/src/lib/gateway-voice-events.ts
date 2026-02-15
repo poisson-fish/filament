@@ -14,7 +14,7 @@ import type {
   VoiceStreamKind,
   VoiceStreamPublishPayload,
   VoiceStreamUnpublishPayload,
-} from "./gateway";
+} from "./gateway-contracts";
 
 const MAX_VOICE_PARTICIPANT_SYNC_SIZE = 512;
 

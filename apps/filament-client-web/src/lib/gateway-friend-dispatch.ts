@@ -3,7 +3,7 @@ import type {
   FriendRequestCreatePayload,
   FriendRequestDeletePayload,
   FriendRequestUpdatePayload,
-} from "./gateway";
+} from "./gateway-contracts";
 import {
   decodeFriendGatewayEvent,
 } from "./gateway-friend-events";

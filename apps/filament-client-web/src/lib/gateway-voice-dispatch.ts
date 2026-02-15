@@ -5,7 +5,7 @@ import type {
   VoiceParticipantUpdatePayload,
   VoiceStreamPublishPayload,
   VoiceStreamUnpublishPayload,
-} from "./gateway";
+} from "./gateway-contracts";
 import {
   decodeVoiceGatewayEvent,
   isVoiceGatewayEventType,

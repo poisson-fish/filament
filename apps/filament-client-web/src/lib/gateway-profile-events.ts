@@ -6,7 +6,7 @@ import {
 import type {
   ProfileAvatarUpdatePayload,
   ProfileUpdatePayload,
-} from "./gateway";
+} from "./gateway-contracts";
 
 type ProfileGatewayEvent =
   | {

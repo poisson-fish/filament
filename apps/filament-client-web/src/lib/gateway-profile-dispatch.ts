@@ -1,7 +1,7 @@
 import type {
   ProfileAvatarUpdatePayload,
   ProfileUpdatePayload,
-} from "./gateway";
+} from "./gateway-contracts";
 import {
   decodeProfileGatewayEvent,
 } from "./gateway-profile-events";

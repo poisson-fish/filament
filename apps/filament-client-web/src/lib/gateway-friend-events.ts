@@ -7,7 +7,7 @@ import type {
   FriendRequestCreatePayload,
   FriendRequestDeletePayload,
   FriendRequestUpdatePayload,
-} from "./gateway";
+} from "./gateway-contracts";
 
 const MAX_FRIEND_USERNAME_LENGTH = 64;
 

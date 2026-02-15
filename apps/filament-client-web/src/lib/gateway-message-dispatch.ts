@@ -2,7 +2,7 @@ import type {
   MessageDeletePayload,
   MessageReactionPayload,
   MessageUpdatePayload,
-} from "./gateway";
+} from "./gateway-contracts";
 import {
   decodeMessageGatewayEvent,
 } from "./gateway-message-events";

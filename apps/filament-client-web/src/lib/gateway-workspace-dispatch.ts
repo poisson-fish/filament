@@ -13,7 +13,7 @@ import type {
   WorkspaceRoleReorderPayload,
   WorkspaceRoleUpdatePayload,
   WorkspaceUpdatePayload,
-} from "./gateway";
+} from "./gateway-contracts";
 import {
   decodeWorkspaceGatewayEvent,
 } from "./gateway-workspace-events";
