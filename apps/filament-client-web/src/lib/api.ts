@@ -50,21 +50,19 @@ import {
   channelPermissionSnapshotFromResponse,
   directoryJoinResultFromResponse,
   guildFromResponse,
-  guildRoleListFromResponse,
   moderationResultFromResponse,
   publicGuildDirectoryFromResponse,
   profileFromResponse,
   searchReconcileFromResponse,
   searchResultsFromResponse,
   userLookupListFromResponse,
-  workspaceRoleIdFromInput,
-  workspaceRoleNameFromInput,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
 import { createFriendsApi } from "./api-friends";
 import { createMessagesApi } from "./api-messages";
 import { createVoiceApi } from "./api-voice";
+import { createWorkspaceApi } from "./api-workspace";
 
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -474,6 +472,13 @@ const messagesApi = createMessagesApi({
 
 const voiceApi = createVoiceApi({
   requestJson,
+});
+
+const workspaceApi = createWorkspaceApi({
+  requestJson,
+  createApiError(status, code, message) {
+    return new ApiError(status, code, message);
+  },
 });
 
 export async function registerWithPassword(input: {
@@ -1031,12 +1036,7 @@ export async function fetchGuildRoles(
   session: AuthSession,
   guildId: GuildId,
 ): Promise<GuildRoleList> {
-  const dto = await requestJson({
-    method: "GET",
-    path: `/guilds/${guildId}/roles`,
-    accessToken: session.accessToken,
-  });
-  return guildRoleListFromResponse(dto);
+  return workspaceApi.fetchGuildRoles(session, guildId);
 }
 
 export async function createGuildRole(
@@ -1048,20 +1048,7 @@ export async function createGuildRole(
     position?: number;
   },
 ): Promise<GuildRoleRecord> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/roles`,
-    accessToken: session.accessToken,
-    body: {
-      name: workspaceRoleNameFromInput(input.name),
-      permissions: input.permissions,
-      position:
-        Number.isInteger(input.position) && (input.position as number) > 0
-          ? input.position
-          : undefined,
-    },
-  });
-  return guildRoleListFromResponse({ roles: [dto] }).roles[0]!;
+  return workspaceApi.createGuildRole(session, guildId, input);
 }
 
 export async function updateGuildRole(
@@ -1073,23 +1060,7 @@ export async function updateGuildRole(
     permissions?: PermissionName[];
   },
 ): Promise<GuildRoleRecord> {
-  if (typeof input.name === "undefined" && typeof input.permissions === "undefined") {
-    throw new ApiError(400, "invalid_request", "Role update requires at least one field.");
-  }
-  const body: Record<string, unknown> = {};
-  if (typeof input.name !== "undefined") {
-    body.name = workspaceRoleNameFromInput(input.name);
-  }
-  if (typeof input.permissions !== "undefined") {
-    body.permissions = input.permissions;
-  }
-  const dto = await requestJson({
-    method: "PATCH",
-    path: `/guilds/${guildId}/roles/${workspaceRoleIdFromInput(roleId)}`,
-    accessToken: session.accessToken,
-    body,
-  });
-  return guildRoleListFromResponse({ roles: [dto] }).roles[0]!;
+  return workspaceApi.updateGuildRole(session, guildId, roleId, input);
 }
 
 export async function deleteGuildRole(
@@ -1097,12 +1068,7 @@ export async function deleteGuildRole(
   guildId: GuildId,
   roleId: WorkspaceRoleId,
 ): Promise<ModerationResult> {
-  const dto = await requestJson({
-    method: "DELETE",
-    path: `/guilds/${guildId}/roles/${workspaceRoleIdFromInput(roleId)}`,
-    accessToken: session.accessToken,
-  });
-  return moderationResultFromResponse(dto);
+  return workspaceApi.deleteGuildRole(session, guildId, roleId);
 }
 
 export async function reorderGuildRoles(
@@ -1110,26 +1076,7 @@ export async function reorderGuildRoles(
   guildId: GuildId,
   roleIds: WorkspaceRoleId[],
 ): Promise<ModerationResult> {
-  const deduped: WorkspaceRoleId[] = [];
-  const seen = new Set<string>();
-  for (const roleId of roleIds) {
-    const parsed = workspaceRoleIdFromInput(roleId);
-    if (seen.has(parsed)) {
-      continue;
-    }
-    seen.add(parsed);
-    deduped.push(parsed);
-  }
-  if (deduped.length < 1 || deduped.length > 64) {
-    throw new ApiError(400, "invalid_request", "role_ids must contain 1-64 unique role ids.");
-  }
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/roles/reorder`,
-    accessToken: session.accessToken,
-    body: { role_ids: deduped },
-  });
-  return moderationResultFromResponse(dto);
+  return workspaceApi.reorderGuildRoles(session, guildId, roleIds);
 }
 
 export async function assignGuildRole(
@@ -1138,12 +1085,7 @@ export async function assignGuildRole(
   roleId: WorkspaceRoleId,
   userId: UserId,
 ): Promise<ModerationResult> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/roles/${workspaceRoleIdFromInput(roleId)}/members/${userId}`,
-    accessToken: session.accessToken,
-  });
-  return moderationResultFromResponse(dto);
+  return workspaceApi.assignGuildRole(session, guildId, roleId, userId);
 }
 
 export async function unassignGuildRole(
@@ -1152,12 +1094,7 @@ export async function unassignGuildRole(
   roleId: WorkspaceRoleId,
   userId: UserId,
 ): Promise<ModerationResult> {
-  const dto = await requestJson({
-    method: "DELETE",
-    path: `/guilds/${guildId}/roles/${workspaceRoleIdFromInput(roleId)}/members/${userId}`,
-    accessToken: session.accessToken,
-  });
-  return moderationResultFromResponse(dto);
+  return workspaceApi.unassignGuildRole(session, guildId, roleId, userId);
 }
 
 export async function issueVoiceToken(
