@@ -2,7 +2,6 @@ import {
   type AuthSession,
   type Password,
   type Username,
-  authSessionFromResponse,
   type AccessToken,
   type CaptchaToken,
   type RefreshToken,
@@ -69,6 +68,7 @@ import {
   voiceTokenFromResponse,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
+import { createAuthApi } from "./api-auth";
 
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -449,75 +449,37 @@ async function requestBinary(input: {
   };
 }
 
+const authApi = createAuthApi({
+  requestJson,
+  requestNoContent,
+  createApiError(status, code, message) {
+    return new ApiError(status, code, message);
+  },
+});
+
 export async function registerWithPassword(input: {
   username: Username;
   password: Password;
   captchaToken?: CaptchaToken;
 }): Promise<void> {
-  const dto = await requestJson({
-    method: "POST",
-    path: "/auth/register",
-    body: {
-      username: input.username,
-      password: input.password,
-      ...(input.captchaToken ? { captcha_token: input.captchaToken } : {}),
-    },
-  });
-
-  if (!dto || typeof dto !== "object" || (dto as { accepted?: unknown }).accepted !== true) {
-    throw new ApiError(500, "invalid_register_shape", "Unexpected register response.");
-  }
+  await authApi.registerWithPassword(input);
 }
 
 export async function loginWithPassword(input: {
   username: Username;
   password: Password;
 }): Promise<AuthSession> {
-  const dto = await requestJson({
-    method: "POST",
-    path: "/auth/login",
-    body: {
-      username: input.username,
-      password: input.password,
-    },
-  });
-
-  if (!dto || typeof dto !== "object") {
-    throw new ApiError(500, "invalid_login_shape", "Unexpected login response.");
-  }
-
-  return authSessionFromResponse(dto as {
-    access_token: string;
-    refresh_token: string;
-    expires_in_secs: number;
-  });
+  return authApi.loginWithPassword(input);
 }
 
 export async function refreshAuthSession(
   refreshToken: RefreshToken,
 ): Promise<AuthSession> {
-  const dto = await requestJson({
-    method: "POST",
-    path: "/auth/refresh",
-    body: { refresh_token: refreshToken },
-  });
-
-  if (!dto || typeof dto !== "object") {
-    throw new ApiError(500, "invalid_refresh_shape", "Unexpected refresh response.");
-  }
-  return authSessionFromResponse(dto as {
-    access_token: string;
-    refresh_token: string;
-    expires_in_secs: number;
-  });
+  return authApi.refreshAuthSession(refreshToken);
 }
 
 export async function logoutAuthSession(refreshToken: RefreshToken): Promise<void> {
-  await requestNoContent({
-    method: "POST",
-    path: "/auth/logout",
-    body: { refresh_token: refreshToken },
-  });
+  await authApi.logoutAuthSession(refreshToken);
 }
 
 export async function fetchMe(session: AuthSession): Promise<ProfileRecord> {
