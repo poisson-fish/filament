@@ -22,8 +22,8 @@ import {
   dispatchVoiceGatewayEvent,
 } from "./gateway-voice-dispatch";
 import {
-  decodeWorkspaceGatewayEvent,
-} from "./gateway-workspace-events";
+  dispatchWorkspaceGatewayEvent,
+} from "./gateway-workspace-dispatch";
 import {
   type ChannelRecord,
   type ChannelId,
@@ -437,80 +437,7 @@ export function connectGateway(
       return;
     }
 
-    if (
-      envelope.t === "channel_create" ||
-      envelope.t === "workspace_update" ||
-      envelope.t === "workspace_member_add" ||
-      envelope.t === "workspace_member_update" ||
-      envelope.t === "workspace_member_remove" ||
-      envelope.t === "workspace_member_ban" ||
-      envelope.t === "workspace_role_create" ||
-      envelope.t === "workspace_role_update" ||
-      envelope.t === "workspace_role_delete" ||
-      envelope.t === "workspace_role_reorder" ||
-      envelope.t === "workspace_role_assignment_add" ||
-      envelope.t === "workspace_role_assignment_remove" ||
-      envelope.t === "workspace_channel_override_update" ||
-      envelope.t === "workspace_ip_ban_sync"
-    ) {
-      const workspaceEvent = decodeWorkspaceGatewayEvent(envelope.t, envelope.d);
-      if (!workspaceEvent) {
-        return;
-      }
-
-      if (workspaceEvent.type === "channel_create") {
-        handlers.onChannelCreate?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_update") {
-        handlers.onWorkspaceUpdate?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_member_add") {
-        handlers.onWorkspaceMemberAdd?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_member_update") {
-        handlers.onWorkspaceMemberUpdate?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_member_remove") {
-        handlers.onWorkspaceMemberRemove?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_member_ban") {
-        handlers.onWorkspaceMemberBan?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_role_create") {
-        handlers.onWorkspaceRoleCreate?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_role_update") {
-        handlers.onWorkspaceRoleUpdate?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_role_delete") {
-        handlers.onWorkspaceRoleDelete?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_role_reorder") {
-        handlers.onWorkspaceRoleReorder?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_role_assignment_add") {
-        handlers.onWorkspaceRoleAssignmentAdd?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_role_assignment_remove") {
-        handlers.onWorkspaceRoleAssignmentRemove?.(workspaceEvent.payload);
-        return;
-      }
-      if (workspaceEvent.type === "workspace_channel_override_update") {
-        handlers.onWorkspaceChannelOverrideUpdate?.(workspaceEvent.payload);
-        return;
-      }
-      handlers.onWorkspaceIpBanSync?.(workspaceEvent.payload);
+    if (dispatchWorkspaceGatewayEvent(envelope.t, envelope.d, handlers)) {
       return;
     }
 
