@@ -16,6 +16,7 @@ import type {
 } from "./gateway-contracts";
 import {
   decodeWorkspaceGatewayEvent,
+  isWorkspaceGatewayEventType,
 } from "./gateway-workspace-events";
 
 export interface WorkspaceGatewayDispatchHandlers {
@@ -39,29 +40,12 @@ export interface WorkspaceGatewayDispatchHandlers {
   onWorkspaceIpBanSync?: (payload: WorkspaceIpBanSyncPayload) => void;
 }
 
-const WORKSPACE_GATEWAY_EVENT_TYPES = new Set<string>([
-  "channel_create",
-  "workspace_update",
-  "workspace_member_add",
-  "workspace_member_update",
-  "workspace_member_remove",
-  "workspace_member_ban",
-  "workspace_role_create",
-  "workspace_role_update",
-  "workspace_role_delete",
-  "workspace_role_reorder",
-  "workspace_role_assignment_add",
-  "workspace_role_assignment_remove",
-  "workspace_channel_override_update",
-  "workspace_ip_ban_sync",
-]);
-
 export function dispatchWorkspaceGatewayEvent(
   type: string,
   payload: unknown,
   handlers: WorkspaceGatewayDispatchHandlers,
 ): boolean {
-  if (!WORKSPACE_GATEWAY_EVENT_TYPES.has(type)) {
+  if (!isWorkspaceGatewayEventType(type)) {
     return false;
   }
 

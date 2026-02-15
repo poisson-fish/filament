@@ -21,10 +21,12 @@ import type {
 } from "./gateway-contracts";
 import {
   decodeWorkspaceMemberGatewayEvent,
+  isWorkspaceMemberGatewayEventType,
   type WorkspaceMemberGatewayEvent,
 } from "./gateway-workspace-member-events";
 import {
   decodeWorkspaceRoleGatewayEvent,
+  isWorkspaceRoleGatewayEventType,
   type WorkspaceRoleGatewayEvent,
 } from "./gateway-workspace-role-events";
 
@@ -50,6 +52,7 @@ export type WorkspaceGatewayEvent =
   | WorkspaceRoleGatewayEvent
   | WorkspaceMemberGatewayEvent
   | WorkspaceNonRoleGatewayEvent;
+export type WorkspaceGatewayEventType = WorkspaceGatewayEvent["type"];
 type WorkspaceNonRoleGatewayEventType = WorkspaceNonRoleGatewayEvent["type"];
 type WorkspaceEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
 
@@ -257,8 +260,20 @@ const WORKSPACE_EVENT_DECODERS: {
   workspace_ip_ban_sync: parseWorkspaceIpBanSyncPayload,
 };
 
-function isWorkspaceGatewayEventType(value: string): value is WorkspaceNonRoleGatewayEventType {
+function isWorkspaceNonRoleGatewayEventType(
+  value: string,
+): value is WorkspaceNonRoleGatewayEventType {
   return value in WORKSPACE_EVENT_DECODERS;
+}
+
+export function isWorkspaceGatewayEventType(
+  value: string,
+): value is WorkspaceGatewayEventType {
+  return (
+    isWorkspaceRoleGatewayEventType(value) ||
+    isWorkspaceMemberGatewayEventType(value) ||
+    isWorkspaceNonRoleGatewayEventType(value)
+  );
 }
 
 function decodeKnownWorkspaceGatewayEvent<K extends WorkspaceNonRoleGatewayEventType>(
@@ -290,7 +305,7 @@ export function decodeWorkspaceGatewayEvent(
     return memberEvent;
   }
 
-  if (!isWorkspaceGatewayEventType(type)) {
+  if (!isWorkspaceNonRoleGatewayEventType(type)) {
     return null;
   }
 

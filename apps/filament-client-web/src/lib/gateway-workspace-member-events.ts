@@ -193,7 +193,9 @@ const WORKSPACE_MEMBER_EVENT_DECODERS: {
   workspace_member_ban: parseWorkspaceMemberBanPayload,
 };
 
-function isWorkspaceMemberGatewayEventType(value: string): value is WorkspaceMemberGatewayEventType {
+export function isWorkspaceMemberGatewayEventType(
+  value: string,
+): value is WorkspaceMemberGatewayEventType {
   return value in WORKSPACE_MEMBER_EVENT_DECODERS;
 }
 

@@ -1,5 +1,6 @@
 import {
   decodeWorkspaceGatewayEvent,
+  isWorkspaceGatewayEventType,
 } from "../src/lib/gateway-workspace-events";
 
 const DEFAULT_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -7,6 +8,13 @@ const DEFAULT_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const DEFAULT_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 
 describe("decodeWorkspaceGatewayEvent", () => {
+  it("exposes strict workspace event type guard from decoder registries", () => {
+    expect(isWorkspaceGatewayEventType("workspace_role_create")).toBe(true);
+    expect(isWorkspaceGatewayEventType("workspace_member_add")).toBe(true);
+    expect(isWorkspaceGatewayEventType("workspace_ip_ban_sync")).toBe(true);
+    expect(isWorkspaceGatewayEventType("profile_update")).toBe(false);
+  });
+
   it("decodes valid channel_create payload", () => {
     const result = decodeWorkspaceGatewayEvent("channel_create", {
       guild_id: DEFAULT_GUILD_ID,
