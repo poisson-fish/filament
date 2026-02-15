@@ -27,6 +27,17 @@ describe("decodeWorkspaceRoleGatewayEvent", () => {
     });
   });
 
+  it("fails closed for invalid role-assignment payload delegated through aggregate role decoder", () => {
+    const result = decodeWorkspaceRoleGatewayEvent("workspace_role_assignment_remove", {
+      guild_id: DEFAULT_GUILD_ID,
+      user_id: DEFAULT_USER_ID,
+      role_id: DEFAULT_ROLE_ID,
+      removed_at_unix: 0,
+    });
+
+    expect(result).toBeNull();
+  });
+
   it("decodes valid workspace_role_create payload", () => {
     const result = decodeWorkspaceRoleGatewayEvent("workspace_role_create", {
       guild_id: DEFAULT_GUILD_ID,
