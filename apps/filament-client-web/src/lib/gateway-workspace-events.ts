@@ -1,15 +1,10 @@
 import {
   channelFromResponse,
   guildIdFromInput,
-  guildNameFromInput,
-  guildVisibilityFromInput,
   type GuildId,
-  type GuildName,
-  type GuildVisibility,
 } from "../domain/chat";
 import type {
   ChannelCreatePayload,
-  WorkspaceUpdatePayload,
 } from "./gateway-contracts";
 import {
   decodeWorkspaceChannelOverrideGatewayEvent,
@@ -31,22 +26,24 @@ import {
   isWorkspaceRoleGatewayEventType,
   type WorkspaceRoleGatewayEvent,
 } from "./gateway-workspace-role-events";
+import {
+  decodeWorkspaceUpdateGatewayEvent,
+  isWorkspaceUpdateGatewayEventType,
+  type WorkspaceUpdateGatewayEvent,
+} from "./gateway-workspace-update-events";
 
 type WorkspaceNonRoleGatewayEvent =
-  | {
-      type: "channel_create";
-      payload: ChannelCreatePayload;
-    }
-  | {
-      type: "workspace_update";
-      payload: WorkspaceUpdatePayload;
-    };
+  {
+    type: "channel_create";
+    payload: ChannelCreatePayload;
+  };
 
 export type WorkspaceGatewayEvent =
   | WorkspaceRoleGatewayEvent
   | WorkspaceMemberGatewayEvent
   | WorkspaceIpBanGatewayEvent
   | WorkspaceChannelOverrideGatewayEvent
+  | WorkspaceUpdateGatewayEvent
   | WorkspaceNonRoleGatewayEvent;
 export type WorkspaceGatewayEventType = WorkspaceGatewayEvent["type"];
 type WorkspaceNonRoleGatewayEventType = WorkspaceNonRoleGatewayEvent["type"];
@@ -76,73 +73,12 @@ function parseChannelCreatePayload(payload: unknown): ChannelCreatePayload | nul
   };
 }
 
-function parseWorkspaceUpdatePayload(payload: unknown): WorkspaceUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-  } catch {
-    return null;
-  }
-
-  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
-  let name: GuildName | undefined;
-  let visibility: GuildVisibility | undefined;
-  if (typeof updatedFieldsDto.name !== "undefined") {
-    if (typeof updatedFieldsDto.name !== "string") {
-      return null;
-    }
-    try {
-      name = guildNameFromInput(updatedFieldsDto.name);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof updatedFieldsDto.visibility !== "undefined") {
-    if (typeof updatedFieldsDto.visibility !== "string") {
-      return null;
-    }
-    try {
-      visibility = guildVisibilityFromInput(updatedFieldsDto.visibility);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof name === "undefined" && typeof visibility === "undefined") {
-    return null;
-  }
-
-  return {
-    guildId,
-    updatedFields: {
-      name,
-      visibility,
-    },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
 const WORKSPACE_EVENT_DECODERS: {
   [K in WorkspaceNonRoleGatewayEventType]: WorkspaceEventDecoder<
     Extract<WorkspaceNonRoleGatewayEvent, { type: K }>["payload"]
   >;
 } = {
   channel_create: parseChannelCreatePayload,
-  workspace_update: parseWorkspaceUpdatePayload,
 };
 
 function isWorkspaceNonRoleGatewayEventType(
@@ -159,6 +95,7 @@ export function isWorkspaceGatewayEventType(
     isWorkspaceMemberGatewayEventType(value) ||
     isWorkspaceIpBanGatewayEventType(value) ||
     isWorkspaceChannelOverrideGatewayEventType(value) ||
+    isWorkspaceUpdateGatewayEventType(value) ||
     isWorkspaceNonRoleGatewayEventType(value)
   );
 }
@@ -200,6 +137,11 @@ export function decodeWorkspaceGatewayEvent(
   const channelOverrideEvent = decodeWorkspaceChannelOverrideGatewayEvent(type, payload);
   if (channelOverrideEvent) {
     return channelOverrideEvent;
+  }
+
+  const workspaceUpdateEvent = decodeWorkspaceUpdateGatewayEvent(type, payload);
+  if (workspaceUpdateEvent) {
+    return workspaceUpdateEvent;
   }
 
   if (!isWorkspaceNonRoleGatewayEventType(type)) {
