@@ -58,6 +58,18 @@ describe("decodeVoiceGatewayEvent", () => {
     expect(result).toBeNull();
   });
 
+  it("fails closed for invalid voice_participant_leave payload", () => {
+    const result = decodeVoiceGatewayEvent("voice_participant_leave", {
+      guild_id: DEFAULT_GUILD_ID,
+      channel_id: DEFAULT_CHANNEL_ID,
+      user_id: DEFAULT_USER_ID,
+      identity: "user.identity",
+      left_at_unix: 0,
+    });
+
+    expect(result).toBeNull();
+  });
+
   it("returns null for unknown event type", () => {
     const result = decodeVoiceGatewayEvent("voice_unknown", {
       guild_id: DEFAULT_GUILD_ID,

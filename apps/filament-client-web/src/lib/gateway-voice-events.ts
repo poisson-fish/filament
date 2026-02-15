@@ -12,9 +12,23 @@ import {
 type VoiceGatewayEvent = VoiceParticipantGatewayEvent | VoiceStreamGatewayEvent;
 
 type VoiceGatewayEventType = VoiceGatewayEvent["type"];
+type VoiceGatewayEventDecoder = (
+  type: string,
+  payload: unknown,
+) => VoiceGatewayEvent | null;
+
+const VOICE_EVENT_TYPE_GUARDS: ReadonlyArray<(value: string) => boolean> = [
+  isVoiceParticipantGatewayEventType,
+  isVoiceStreamGatewayEventType,
+];
+
+const VOICE_EVENT_DECODER_REGISTRY: ReadonlyArray<VoiceGatewayEventDecoder> = [
+  decodeVoiceParticipantGatewayEvent,
+  decodeVoiceStreamGatewayEvent,
+];
 
 export function isVoiceGatewayEventType(value: string): value is VoiceGatewayEventType {
-  return isVoiceParticipantGatewayEventType(value) || isVoiceStreamGatewayEventType(value);
+  return VOICE_EVENT_TYPE_GUARDS.some((guard) => guard(value));
 }
 
 export function decodeVoiceGatewayEvent(
@@ -25,12 +39,11 @@ export function decodeVoiceGatewayEvent(
     return null;
   }
 
-  if (isVoiceStreamGatewayEventType(type)) {
-    return decodeVoiceStreamGatewayEvent(type, payload);
-  }
-
-  if (isVoiceParticipantGatewayEventType(type)) {
-    return decodeVoiceParticipantGatewayEvent(type, payload);
+  for (const decoder of VOICE_EVENT_DECODER_REGISTRY) {
+    const decodedEvent = decoder(type, payload);
+    if (decodedEvent) {
+      return decodedEvent;
+    }
   }
 
   return null;
