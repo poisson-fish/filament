@@ -146,4 +146,14 @@ describe("isWorkspaceMemberGatewayEventType", () => {
     expect(isWorkspaceMemberGatewayEventType("workspace_member_ban")).toBe(true);
     expect(isWorkspaceMemberGatewayEventType("workspace_role_create")).toBe(false);
   });
+
+  it("fails closed for prototype-key event type", () => {
+    expect(isWorkspaceMemberGatewayEventType("__proto__")).toBe(false);
+    expect(
+      decodeWorkspaceMemberGatewayEvent("__proto__", {
+        guild_id: DEFAULT_GUILD_ID,
+        user_id: DEFAULT_USER_ID,
+      }),
+    ).toBeNull();
+  });
 });

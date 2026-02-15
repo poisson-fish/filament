@@ -27,6 +27,8 @@ export type WorkspaceMemberGatewayEvent =
 
 type WorkspaceMemberGatewayEventType = WorkspaceMemberGatewayEvent["type"];
 type WorkspaceMemberEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
+const hasOwn = (value: object, key: PropertyKey): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
 
 const WORKSPACE_MEMBER_EVENT_DECODERS: {
   [K in WorkspaceMemberGatewayEventType]: WorkspaceMemberEventDecoder<
@@ -51,7 +53,7 @@ export function isWorkspaceMemberGatewayEventType(
     isWorkspaceMemberUpdateGatewayEventType(value) ||
     isWorkspaceMemberRemoveGatewayEventType(value) ||
     isWorkspaceMemberBanGatewayEventType(value) ||
-    value in WORKSPACE_MEMBER_EVENT_DECODERS
+    hasOwn(WORKSPACE_MEMBER_EVENT_DECODERS, value)
   );
 }
 
