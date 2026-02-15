@@ -101,6 +101,33 @@ describe("decodeWorkspaceMemberGatewayEvent", () => {
     expect(result).toBeNull();
   });
 
+  it("decodes valid workspace_member_ban payload via aggregate member decoder", () => {
+    const result = decodeWorkspaceMemberGatewayEvent("workspace_member_ban", {
+      guild_id: DEFAULT_GUILD_ID,
+      user_id: DEFAULT_USER_ID,
+      banned_at_unix: 1710000001,
+    });
+
+    expect(result).toEqual({
+      type: "workspace_member_ban",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        userId: DEFAULT_USER_ID,
+        bannedAtUnix: 1710000001,
+      },
+    });
+  });
+
+  it("fails closed for invalid workspace_member_ban payload delegated through aggregate member decoder", () => {
+    const result = decodeWorkspaceMemberGatewayEvent("workspace_member_ban", {
+      guild_id: DEFAULT_GUILD_ID,
+      user_id: DEFAULT_USER_ID,
+      banned_at_unix: 0,
+    });
+
+    expect(result).toBeNull();
+  });
+
   it("returns null for unknown member event type", () => {
     const result = decodeWorkspaceMemberGatewayEvent("workspace_member_unknown", {
       guild_id: DEFAULT_GUILD_ID,

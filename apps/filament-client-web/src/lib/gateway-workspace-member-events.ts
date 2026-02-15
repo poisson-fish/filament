@@ -1,11 +1,8 @@
 import {
-  guildIdFromInput,
-  userIdFromInput,
-  type GuildId,
-} from "../domain/chat";
-import type {
-  WorkspaceMemberBanPayload,
-} from "./gateway-contracts";
+  decodeWorkspaceMemberBanGatewayEvent,
+  isWorkspaceMemberBanGatewayEventType,
+  type WorkspaceMemberBanGatewayEvent,
+} from "./gateway-workspace-member-ban-events";
 import {
   decodeWorkspaceMemberAddGatewayEvent,
   isWorkspaceMemberAddGatewayEventType,
@@ -26,44 +23,10 @@ export type WorkspaceMemberGatewayEvent =
   | WorkspaceMemberAddGatewayEvent
   | WorkspaceMemberUpdateGatewayEvent
   | WorkspaceMemberRemoveGatewayEvent
-  | {
-      type: "workspace_member_ban";
-      payload: WorkspaceMemberBanPayload;
-    };
+  | WorkspaceMemberBanGatewayEvent;
 
 type WorkspaceMemberGatewayEventType = WorkspaceMemberGatewayEvent["type"];
 type WorkspaceMemberEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
-
-function parseWorkspaceMemberBanPayload(payload: unknown): WorkspaceMemberBanPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.banned_at_unix !== "number" ||
-    !Number.isSafeInteger(value.banned_at_unix) ||
-    value.banned_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    bannedAtUnix: value.banned_at_unix,
-  };
-}
 
 const WORKSPACE_MEMBER_EVENT_DECODERS: {
   [K in WorkspaceMemberGatewayEventType]: WorkspaceMemberEventDecoder<
@@ -76,7 +39,8 @@ const WORKSPACE_MEMBER_EVENT_DECODERS: {
     decodeWorkspaceMemberUpdateGatewayEvent("workspace_member_update", payload)?.payload ?? null,
   workspace_member_remove: (payload) =>
     decodeWorkspaceMemberRemoveGatewayEvent("workspace_member_remove", payload)?.payload ?? null,
-  workspace_member_ban: parseWorkspaceMemberBanPayload,
+  workspace_member_ban: (payload) =>
+    decodeWorkspaceMemberBanGatewayEvent("workspace_member_ban", payload)?.payload ?? null,
 };
 
 export function isWorkspaceMemberGatewayEventType(
@@ -86,6 +50,7 @@ export function isWorkspaceMemberGatewayEventType(
     isWorkspaceMemberAddGatewayEventType(value) ||
     isWorkspaceMemberUpdateGatewayEventType(value) ||
     isWorkspaceMemberRemoveGatewayEventType(value) ||
+    isWorkspaceMemberBanGatewayEventType(value) ||
     value in WORKSPACE_MEMBER_EVENT_DECODERS
   );
 }
