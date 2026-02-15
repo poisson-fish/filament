@@ -65,6 +65,23 @@ describe("decodeWorkspaceRoleGatewayEvent", () => {
     expect(result).toBeNull();
   });
 
+  it("decodes workspace_role_reorder payloads via aggregate role decoder", () => {
+    const result = decodeWorkspaceRoleGatewayEvent("workspace_role_reorder", {
+      guild_id: DEFAULT_GUILD_ID,
+      role_ids: [DEFAULT_ROLE_ID],
+      updated_at_unix: 1710000001,
+    });
+
+    expect(result).toEqual({
+      type: "workspace_role_reorder",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        roleIds: [DEFAULT_ROLE_ID],
+        updatedAtUnix: 1710000001,
+      },
+    });
+  });
+
   it("fails closed for workspace_role_update payload without any updatable fields", () => {
     const result = decodeWorkspaceRoleGatewayEvent("workspace_role_update", {
       guild_id: DEFAULT_GUILD_ID,
