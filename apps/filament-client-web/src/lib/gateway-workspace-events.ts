@@ -1,23 +1,21 @@
 import {
   channelFromResponse,
-  channelIdFromInput,
   guildIdFromInput,
   guildNameFromInput,
   guildVisibilityFromInput,
-  permissionFromInput,
-  roleFromInput,
-  type ChannelId,
   type GuildId,
   type GuildName,
   type GuildVisibility,
-  type PermissionName,
-  type RoleName,
 } from "../domain/chat";
 import type {
   ChannelCreatePayload,
-  WorkspaceChannelOverrideUpdatePayload,
   WorkspaceUpdatePayload,
 } from "./gateway-contracts";
+import {
+  decodeWorkspaceChannelOverrideGatewayEvent,
+  isWorkspaceChannelOverrideGatewayEventType,
+  type WorkspaceChannelOverrideGatewayEvent,
+} from "./gateway-workspace-channel-override-events";
 import {
   decodeWorkspaceIpBanGatewayEvent,
   isWorkspaceIpBanGatewayEventType,
@@ -42,16 +40,13 @@ type WorkspaceNonRoleGatewayEvent =
   | {
       type: "workspace_update";
       payload: WorkspaceUpdatePayload;
-    }
-  | {
-      type: "workspace_channel_override_update";
-      payload: WorkspaceChannelOverrideUpdatePayload;
     };
 
 export type WorkspaceGatewayEvent =
   | WorkspaceRoleGatewayEvent
   | WorkspaceMemberGatewayEvent
   | WorkspaceIpBanGatewayEvent
+  | WorkspaceChannelOverrideGatewayEvent
   | WorkspaceNonRoleGatewayEvent;
 export type WorkspaceGatewayEventType = WorkspaceGatewayEvent["type"];
 type WorkspaceNonRoleGatewayEventType = WorkspaceNonRoleGatewayEvent["type"];
@@ -141,73 +136,6 @@ function parseWorkspaceUpdatePayload(payload: unknown): WorkspaceUpdatePayload |
   };
 }
 
-function parseWorkspaceChannelOverrideUpdatePayload(
-  payload: unknown,
-): WorkspaceChannelOverrideUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.channel_id !== "string" ||
-    typeof value.role !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let channelId: ChannelId;
-  let role: RoleName;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    channelId = channelIdFromInput(value.channel_id);
-    role = roleFromInput(value.role);
-  } catch {
-    return null;
-  }
-
-  const updatedFields = value.updated_fields as Record<string, unknown>;
-  if (!Array.isArray(updatedFields.allow) || !Array.isArray(updatedFields.deny)) {
-    return null;
-  }
-  const allow: PermissionName[] = [];
-  for (const entry of updatedFields.allow) {
-    if (typeof entry !== "string") {
-      return null;
-    }
-    try {
-      allow.push(permissionFromInput(entry));
-    } catch {
-      return null;
-    }
-  }
-  const deny: PermissionName[] = [];
-  for (const entry of updatedFields.deny) {
-    if (typeof entry !== "string") {
-      return null;
-    }
-    try {
-      deny.push(permissionFromInput(entry));
-    } catch {
-      return null;
-    }
-  }
-
-  return {
-    guildId,
-    channelId,
-    role,
-    updatedFields: { allow, deny },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
 const WORKSPACE_EVENT_DECODERS: {
   [K in WorkspaceNonRoleGatewayEventType]: WorkspaceEventDecoder<
     Extract<WorkspaceNonRoleGatewayEvent, { type: K }>["payload"]
@@ -215,7 +143,6 @@ const WORKSPACE_EVENT_DECODERS: {
 } = {
   channel_create: parseChannelCreatePayload,
   workspace_update: parseWorkspaceUpdatePayload,
-  workspace_channel_override_update: parseWorkspaceChannelOverrideUpdatePayload,
 };
 
 function isWorkspaceNonRoleGatewayEventType(
@@ -231,6 +158,7 @@ export function isWorkspaceGatewayEventType(
     isWorkspaceRoleGatewayEventType(value) ||
     isWorkspaceMemberGatewayEventType(value) ||
     isWorkspaceIpBanGatewayEventType(value) ||
+    isWorkspaceChannelOverrideGatewayEventType(value) ||
     isWorkspaceNonRoleGatewayEventType(value)
   );
 }
@@ -267,6 +195,11 @@ export function decodeWorkspaceGatewayEvent(
   const ipBanEvent = decodeWorkspaceIpBanGatewayEvent(type, payload);
   if (ipBanEvent) {
     return ipBanEvent;
+  }
+
+  const channelOverrideEvent = decodeWorkspaceChannelOverrideGatewayEvent(type, payload);
+  if (channelOverrideEvent) {
+    return channelOverrideEvent;
   }
 
   if (!isWorkspaceNonRoleGatewayEventType(type)) {

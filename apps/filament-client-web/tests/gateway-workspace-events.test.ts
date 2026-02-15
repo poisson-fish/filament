@@ -12,6 +12,7 @@ describe("decodeWorkspaceGatewayEvent", () => {
     expect(isWorkspaceGatewayEventType("workspace_role_create")).toBe(true);
     expect(isWorkspaceGatewayEventType("workspace_member_add")).toBe(true);
     expect(isWorkspaceGatewayEventType("workspace_ip_ban_sync")).toBe(true);
+    expect(isWorkspaceGatewayEventType("workspace_channel_override_update")).toBe(true);
     expect(isWorkspaceGatewayEventType("profile_update")).toBe(false);
   });
 
