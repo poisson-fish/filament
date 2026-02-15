@@ -94,4 +94,15 @@ describe("decodeMessageGatewayEvent", () => {
 
     expect(result).toBeNull();
   });
+
+  it("fails closed for hostile prototype-chain event types", () => {
+    const result = decodeMessageGatewayEvent("__proto__", {
+      guild_id: DEFAULT_GUILD_ID,
+      channel_id: DEFAULT_CHANNEL_ID,
+      message_id: DEFAULT_MESSAGE_ID,
+      deleted_at_unix: 1710000003,
+    });
+
+    expect(result).toBeNull();
+  });
 });

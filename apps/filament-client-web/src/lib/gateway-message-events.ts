@@ -197,7 +197,7 @@ const MESSAGE_EVENT_DECODERS: {
 };
 
 function isMessageGatewayEventType(value: string): value is MessageGatewayEventType {
-  return value in MESSAGE_EVENT_DECODERS;
+  return Object.prototype.hasOwnProperty.call(MESSAGE_EVENT_DECODERS, value);
 }
 
 export function decodeMessageGatewayEvent(
