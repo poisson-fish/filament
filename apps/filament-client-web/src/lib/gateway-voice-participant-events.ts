@@ -35,6 +35,8 @@ export type VoiceParticipantGatewayEvent =
 
 type VoiceParticipantGatewayEventType = VoiceParticipantGatewayEvent["type"];
 type VoiceParticipantEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
+const hasOwn = (value: object, key: PropertyKey): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
 
 function parseVoiceParticipant(payload: unknown): VoiceParticipantPayload | null {
   if (!payload || typeof payload !== "object") {
@@ -292,7 +294,7 @@ const VOICE_PARTICIPANT_EVENT_DECODERS: {
 export function isVoiceParticipantGatewayEventType(
   value: string,
 ): value is VoiceParticipantGatewayEventType {
-  return value in VOICE_PARTICIPANT_EVENT_DECODERS;
+  return hasOwn(VOICE_PARTICIPANT_EVENT_DECODERS, value);
 }
 
 function decodeKnownVoiceParticipantGatewayEvent<K extends VoiceParticipantGatewayEventType>(

@@ -23,6 +23,8 @@ export type VoiceStreamGatewayEvent =
 
 type VoiceStreamGatewayEventType = VoiceStreamGatewayEvent["type"];
 type VoiceStreamEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
+const hasOwn = (value: object, key: PropertyKey): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
 
 function parseVoiceStreamKind(value: unknown): VoiceStreamKind | null {
   if (value === "microphone" || value === "camera" || value === "screen_share") {
@@ -123,7 +125,7 @@ const VOICE_STREAM_EVENT_DECODERS: {
 export function isVoiceStreamGatewayEventType(
   value: string,
 ): value is VoiceStreamGatewayEventType {
-  return value in VOICE_STREAM_EVENT_DECODERS;
+  return hasOwn(VOICE_STREAM_EVENT_DECODERS, value);
 }
 
 function decodeKnownVoiceStreamGatewayEvent<K extends VoiceStreamGatewayEventType>(

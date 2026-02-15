@@ -90,4 +90,15 @@ describe("decodeVoiceParticipantGatewayEvent", () => {
 
     expect(result).toBeNull();
   });
+
+  it("fails closed for prototype-key event type", () => {
+    const result = decodeVoiceParticipantGatewayEvent("__proto__", {
+      guild_id: DEFAULT_GUILD_ID,
+      channel_id: DEFAULT_CHANNEL_ID,
+      participants: [],
+      synced_at_unix: 1,
+    });
+
+    expect(result).toBeNull();
+  });
 });

@@ -31,6 +31,8 @@ type PresenceGatewayEvent =
 
 type PresenceGatewayEventType = PresenceGatewayEvent["type"];
 type PresenceEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
+const hasOwn = (value: object, key: PropertyKey): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
 
 function parsePresenceSyncPayload(payload: unknown): PresenceSyncPayload | null {
   if (!payload || typeof payload !== "object") {
@@ -115,7 +117,7 @@ const PRESENCE_EVENT_DECODERS: {
 };
 
 function isPresenceGatewayEventType(value: string): value is PresenceGatewayEventType {
-  return value in PRESENCE_EVENT_DECODERS;
+  return hasOwn(PRESENCE_EVENT_DECODERS, value);
 }
 
 export function decodePresenceGatewayEvent(

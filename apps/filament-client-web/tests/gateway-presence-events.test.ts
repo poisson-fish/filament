@@ -39,4 +39,13 @@ describe("decodePresenceGatewayEvent", () => {
 
     expect(result).toBeNull();
   });
+
+  it("fails closed for prototype-key event type", () => {
+    const result = decodePresenceGatewayEvent("__proto__", {
+      guild_id: DEFAULT_GUILD_ID,
+      user_ids: [DEFAULT_USER_ID],
+    });
+
+    expect(result).toBeNull();
+  });
 });

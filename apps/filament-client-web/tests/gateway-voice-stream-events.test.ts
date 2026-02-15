@@ -61,4 +61,17 @@ describe("decodeVoiceStreamGatewayEvent", () => {
 
     expect(result).toBeNull();
   });
+
+  it("fails closed for prototype-key event type", () => {
+    const result = decodeVoiceStreamGatewayEvent("__proto__", {
+      guild_id: DEFAULT_GUILD_ID,
+      channel_id: DEFAULT_CHANNEL_ID,
+      user_id: DEFAULT_USER_ID,
+      identity: "user.identity",
+      stream: "microphone",
+      unpublished_at_unix: 6,
+    });
+
+    expect(result).toBeNull();
+  });
 });
