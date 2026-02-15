@@ -52,6 +52,8 @@ const WORKSPACE_ROLE_EVENT_DECODERS: {
     decodeWorkspaceRoleAssignmentGatewayEventPayload("workspace_role_assignment_remove", payload),
 };
 
+const hasOwn = Object.prototype.hasOwnProperty;
+
 export function isWorkspaceRoleGatewayEventType(
   value: string,
 ): value is WorkspaceRoleGatewayEventType {
@@ -61,7 +63,7 @@ export function isWorkspaceRoleGatewayEventType(
     isWorkspaceRoleDeleteGatewayEventType(value) ||
     isWorkspaceRoleReorderGatewayEventType(value) ||
     isWorkspaceRoleAssignmentGatewayEventType(value) ||
-    value in WORKSPACE_ROLE_EVENT_DECODERS
+    hasOwn.call(WORKSPACE_ROLE_EVENT_DECODERS, value)
   );
 }
 

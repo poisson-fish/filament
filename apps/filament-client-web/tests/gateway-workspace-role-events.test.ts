@@ -169,4 +169,8 @@ describe("isWorkspaceRoleGatewayEventType", () => {
     expect(isWorkspaceRoleGatewayEventType("workspace_role_assignment_remove")).toBe(true);
     expect(isWorkspaceRoleGatewayEventType("workspace_channel_create")).toBe(false);
   });
+
+  it("rejects prototype-chain event type keys", () => {
+    expect(isWorkspaceRoleGatewayEventType("__proto__")).toBe(false);
+  });
 });
