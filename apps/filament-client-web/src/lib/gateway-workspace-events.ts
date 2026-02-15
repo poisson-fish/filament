@@ -1,11 +1,8 @@
 import {
-  channelFromResponse,
-  guildIdFromInput,
-  type GuildId,
-} from "../domain/chat";
-import type {
-  ChannelCreatePayload,
-} from "./gateway-contracts";
+  decodeWorkspaceChannelGatewayEvent,
+  isWorkspaceChannelGatewayEventType,
+  type WorkspaceChannelGatewayEvent,
+} from "./gateway-workspace-channel-events";
 import {
   decodeWorkspaceChannelOverrideGatewayEvent,
   isWorkspaceChannelOverrideGatewayEventType,
@@ -33,10 +30,7 @@ import {
 } from "./gateway-workspace-update-events";
 
 type WorkspaceNonRoleGatewayEvent =
-  {
-    type: "channel_create";
-    payload: ChannelCreatePayload;
-  };
+  WorkspaceChannelGatewayEvent;
 
 export type WorkspaceGatewayEvent =
   | WorkspaceRoleGatewayEvent
@@ -47,44 +41,11 @@ export type WorkspaceGatewayEvent =
   | WorkspaceNonRoleGatewayEvent;
 export type WorkspaceGatewayEventType = WorkspaceGatewayEvent["type"];
 type WorkspaceNonRoleGatewayEventType = WorkspaceNonRoleGatewayEvent["type"];
-type WorkspaceEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
-
-function parseChannelCreatePayload(payload: unknown): ChannelCreatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (typeof value.guild_id !== "string") {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let channel: ChannelCreatePayload["channel"];
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    channel = channelFromResponse(value.channel);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    channel,
-  };
-}
-
-const WORKSPACE_EVENT_DECODERS: {
-  [K in WorkspaceNonRoleGatewayEventType]: WorkspaceEventDecoder<
-    Extract<WorkspaceNonRoleGatewayEvent, { type: K }>["payload"]
-  >;
-} = {
-  channel_create: parseChannelCreatePayload,
-};
 
 function isWorkspaceNonRoleGatewayEventType(
   value: string,
 ): value is WorkspaceNonRoleGatewayEventType {
-  return value in WORKSPACE_EVENT_DECODERS;
+  return isWorkspaceChannelGatewayEventType(value);
 }
 
 export function isWorkspaceGatewayEventType(
@@ -98,21 +59,6 @@ export function isWorkspaceGatewayEventType(
     isWorkspaceUpdateGatewayEventType(value) ||
     isWorkspaceNonRoleGatewayEventType(value)
   );
-}
-
-function decodeKnownWorkspaceGatewayEvent<K extends WorkspaceNonRoleGatewayEventType>(
-  type: K,
-  payload: unknown,
-): Extract<WorkspaceNonRoleGatewayEvent, { type: K }> | null {
-  const parsedPayload = WORKSPACE_EVENT_DECODERS[type](payload);
-  if (!parsedPayload) {
-    return null;
-  }
-
-  return {
-    type,
-    payload: parsedPayload,
-  } as Extract<WorkspaceNonRoleGatewayEvent, { type: K }>;
 }
 
 export function decodeWorkspaceGatewayEvent(
@@ -148,5 +94,5 @@ export function decodeWorkspaceGatewayEvent(
     return null;
   }
 
-  return decodeKnownWorkspaceGatewayEvent(type, payload);
+  return decodeWorkspaceChannelGatewayEvent(type, payload);
 }

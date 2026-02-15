@@ -9,6 +9,7 @@ const DEFAULT_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 
 describe("decodeWorkspaceGatewayEvent", () => {
   it("exposes strict workspace event type guard from decoder registries", () => {
+    expect(isWorkspaceGatewayEventType("channel_create")).toBe(true);
     expect(isWorkspaceGatewayEventType("workspace_role_create")).toBe(true);
     expect(isWorkspaceGatewayEventType("workspace_member_add")).toBe(true);
     expect(isWorkspaceGatewayEventType("workspace_ip_ban_sync")).toBe(true);
