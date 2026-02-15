@@ -9,18 +9,19 @@ import type {
   WorkspaceMemberAddPayload,
   WorkspaceMemberBanPayload,
   WorkspaceMemberRemovePayload,
-  WorkspaceMemberUpdatePayload,
 } from "./gateway-contracts";
+import {
+  decodeWorkspaceMemberUpdateGatewayEvent,
+  isWorkspaceMemberUpdateGatewayEventType,
+  type WorkspaceMemberUpdateGatewayEvent,
+} from "./gateway-workspace-member-update-events";
 
 export type WorkspaceMemberGatewayEvent =
   | {
       type: "workspace_member_add";
       payload: WorkspaceMemberAddPayload;
     }
-  | {
-      type: "workspace_member_update";
-      payload: WorkspaceMemberUpdatePayload;
-    }
+  | WorkspaceMemberUpdateGatewayEvent
   | {
       type: "workspace_member_remove";
       payload: WorkspaceMemberRemovePayload;
@@ -65,56 +66,6 @@ function parseWorkspaceMemberAddPayload(payload: unknown): WorkspaceMemberAddPay
     userId,
     role,
     joinedAtUnix: value.joined_at_unix,
-  };
-}
-
-function parseWorkspaceMemberUpdatePayload(payload: unknown): WorkspaceMemberUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
-  let role: RoleName | undefined;
-  if (typeof updatedFieldsDto.role !== "undefined") {
-    if (typeof updatedFieldsDto.role !== "string") {
-      return null;
-    }
-    try {
-      role = roleFromInput(updatedFieldsDto.role);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof role === "undefined") {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    updatedFields: { role },
-    updatedAtUnix: value.updated_at_unix,
   };
 }
 
@@ -188,7 +139,8 @@ const WORKSPACE_MEMBER_EVENT_DECODERS: {
   >;
 } = {
   workspace_member_add: parseWorkspaceMemberAddPayload,
-  workspace_member_update: parseWorkspaceMemberUpdatePayload,
+  workspace_member_update: (payload) =>
+    decodeWorkspaceMemberUpdateGatewayEvent("workspace_member_update", payload)?.payload ?? null,
   workspace_member_remove: parseWorkspaceMemberRemovePayload,
   workspace_member_ban: parseWorkspaceMemberBanPayload,
 };
@@ -196,7 +148,7 @@ const WORKSPACE_MEMBER_EVENT_DECODERS: {
 export function isWorkspaceMemberGatewayEventType(
   value: string,
 ): value is WorkspaceMemberGatewayEventType {
-  return value in WORKSPACE_MEMBER_EVENT_DECODERS;
+  return isWorkspaceMemberUpdateGatewayEventType(value) || value in WORKSPACE_MEMBER_EVENT_DECODERS;
 }
 
 function decodeKnownWorkspaceMemberGatewayEvent<K extends WorkspaceMemberGatewayEventType>(
