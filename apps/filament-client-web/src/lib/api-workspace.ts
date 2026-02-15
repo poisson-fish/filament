@@ -3,6 +3,11 @@ import {
   type AuthSession,
 } from "../domain/auth";
 import {
+  type ChannelId,
+  type ChannelKindName,
+  type ChannelName,
+  type ChannelPermissionSnapshot,
+  type ChannelRecord,
   type GuildId,
   type GuildName,
   type GuildRoleList,
@@ -16,6 +21,8 @@ import {
   type UserId,
   type WorkspaceRoleId,
   type WorkspaceRoleName,
+  channelFromResponse,
+  channelPermissionSnapshotFromResponse,
   directoryJoinResultFromResponse,
   guildFromResponse,
   guildRoleListFromResponse,
@@ -56,6 +63,20 @@ export interface WorkspaceApi {
     session: AuthSession,
     guildId: GuildId,
   ): Promise<DirectoryJoinResult>;
+  fetchGuildChannels(
+    session: AuthSession,
+    guildId: GuildId,
+  ): Promise<ChannelRecord[]>;
+  createChannel(
+    session: AuthSession,
+    guildId: GuildId,
+    input: { name: ChannelName; kind: ChannelKindName },
+  ): Promise<ChannelRecord>;
+  fetchChannelPermissionSnapshot(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+  ): Promise<ChannelPermissionSnapshot>;
   fetchGuildRoles(
     session: AuthSession,
     guildId: GuildId,
@@ -170,6 +191,41 @@ export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceAp
         accessToken: session.accessToken,
       });
       return directoryJoinResultFromResponse(dto);
+    },
+
+    async fetchGuildChannels(session, guildId) {
+      const dto = await input.requestJson({
+        method: "GET",
+        path: `/guilds/${guildId}/channels`,
+        accessToken: session.accessToken,
+      });
+      if (!dto || typeof dto !== "object" || !Array.isArray((dto as { channels?: unknown }).channels)) {
+        throw input.createApiError(
+          500,
+          "invalid_channel_list_shape",
+          "Unexpected channel list response.",
+        );
+      }
+      return (dto as { channels: unknown[] }).channels.map((entry) => channelFromResponse(entry));
+    },
+
+    async createChannel(session, guildId, channelInput) {
+      const dto = await input.requestJson({
+        method: "POST",
+        path: `/guilds/${guildId}/channels`,
+        accessToken: session.accessToken,
+        body: { name: channelInput.name, kind: channelInput.kind },
+      });
+      return channelFromResponse(dto);
+    },
+
+    async fetchChannelPermissionSnapshot(session, guildId, channelId) {
+      const dto = await input.requestJson({
+        method: "GET",
+        path: `/guilds/${guildId}/channels/${channelId}/permissions/self`,
+        accessToken: session.accessToken,
+      });
+      return channelPermissionSnapshotFromResponse(dto);
     },
 
     async fetchGuildRoles(session, guildId) {

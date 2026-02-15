@@ -12,9 +12,9 @@ import {
   type AttachmentRecord,
   type ChannelId,
   type ChannelKindName,
-  type ChannelRecord,
-  type ChannelPermissionSnapshot,
   type ChannelName,
+  type ChannelPermissionSnapshot,
+  type ChannelRecord,
   type DirectoryJoinResult,
   type GuildRecord,
   type GuildId,
@@ -46,8 +46,6 @@ import {
   type UserId,
   type VoiceTokenRecord,
   attachmentFromResponse,
-  channelFromResponse,
-  channelPermissionSnapshotFromResponse,
   moderationResultFromResponse,
   profileFromResponse,
   searchReconcileFromResponse,
@@ -713,15 +711,7 @@ export async function fetchGuildChannels(
   session: AuthSession,
   guildId: GuildId,
 ): Promise<ChannelRecord[]> {
-  const dto = await requestJson({
-    method: "GET",
-    path: `/guilds/${guildId}/channels`,
-    accessToken: session.accessToken,
-  });
-  if (!dto || typeof dto !== "object" || !Array.isArray((dto as { channels?: unknown }).channels)) {
-    throw new ApiError(500, "invalid_channel_list_shape", "Unexpected channel list response.");
-  }
-  return (dto as { channels: unknown[] }).channels.map((entry) => channelFromResponse(entry));
+  return workspaceApi.fetchGuildChannels(session, guildId);
 }
 
 export async function createChannel(
@@ -729,13 +719,7 @@ export async function createChannel(
   guildId: GuildId,
   input: { name: ChannelName; kind: ChannelKindName },
 ): Promise<ChannelRecord> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/channels`,
-    accessToken: session.accessToken,
-    body: { name: input.name, kind: input.kind },
-  });
-  return channelFromResponse(dto);
+  return workspaceApi.createChannel(session, guildId, input);
 }
 
 export async function fetchChannelPermissionSnapshot(
@@ -743,12 +727,7 @@ export async function fetchChannelPermissionSnapshot(
   guildId: GuildId,
   channelId: ChannelId,
 ): Promise<ChannelPermissionSnapshot> {
-  const dto = await requestJson({
-    method: "GET",
-    path: `/guilds/${guildId}/channels/${channelId}/permissions/self`,
-    accessToken: session.accessToken,
-  });
-  return channelPermissionSnapshotFromResponse(dto);
+  return workspaceApi.fetchChannelPermissionSnapshot(session, guildId, channelId);
 }
 
 export async function fetchChannelMessages(

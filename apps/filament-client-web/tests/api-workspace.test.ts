@@ -1,5 +1,8 @@
 import { accessTokenFromInput, refreshTokenFromInput } from "../src/domain/auth";
 import {
+  channelIdFromInput,
+  channelKindFromInput,
+  channelNameFromInput,
   guildIdFromInput,
   guildNameFromInput,
   guildVisibilityFromInput,
@@ -29,6 +32,9 @@ describe("api-workspace", () => {
   const guildId = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
   const guildName = guildNameFromInput("Filament Ops");
   const guildVisibility = guildVisibilityFromInput("private");
+  const channelId = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FC1");
+  const channelName = channelNameFromInput("ops-voice");
+  const channelKind = channelKindFromInput("voice");
   const roleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB1");
   const userId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB2");
 
@@ -120,6 +126,62 @@ describe("api-workspace", () => {
       path: `/guilds/${guildId}`,
       accessToken: session.accessToken,
       body: { name: guildName, visibility: guildVisibility },
+    });
+  });
+
+  it("fetchGuildChannels fails closed on invalid channel list shape", async () => {
+    const requestJson = vi.fn(async () => ({ channels: null }));
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(api.fetchGuildChannels(session, guildId)).rejects.toMatchObject({
+      status: 500,
+      code: "invalid_channel_list_shape",
+    });
+  });
+
+  it("createChannel delegates with bounded payload and parses strict DTO", async () => {
+    const requestJson = vi.fn(async () => ({
+      channel_id: channelId,
+      name: channelName,
+      kind: channelKind,
+    }));
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(
+      api.createChannel(session, guildId, { name: channelName, kind: channelKind }),
+    ).resolves.toMatchObject({ channelId, name: channelName, kind: channelKind });
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "POST",
+      path: `/guilds/${guildId}/channels`,
+      accessToken: session.accessToken,
+      body: { name: channelName, kind: channelKind },
+    });
+  });
+
+  it("fetchChannelPermissionSnapshot parses strict permissions DTO", async () => {
+    const requestJson = vi.fn(async () => ({
+      role: "member",
+      permissions: ["create_message", "subscribe_streams"],
+    }));
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(api.fetchChannelPermissionSnapshot(session, guildId, channelId)).resolves.toEqual({
+      role: "member",
+      permissions: ["create_message", "subscribe_streams"],
+    });
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "GET",
+      path: `/guilds/${guildId}/channels/${channelId}/permissions/self`,
+      accessToken: session.accessToken,
     });
   });
 
