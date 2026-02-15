@@ -9,10 +9,12 @@ import {
   decodeMessageGatewayEvent,
 } from "./gateway-message-events";
 import {
-  decodePresenceGatewayEvent,
   type PresenceSyncPayload,
   type PresenceUpdatePayload,
 } from "./gateway-presence-events";
+import {
+  dispatchPresenceGatewayEvent,
+} from "./gateway-presence-dispatch";
 import {
   decodeProfileGatewayEvent,
 } from "./gateway-profile-events";
@@ -577,16 +579,8 @@ export function connectGateway(
       return;
     }
 
-    if (envelope.t === "presence_sync" || envelope.t === "presence_update") {
-      const presenceEvent = decodePresenceGatewayEvent(envelope.t, envelope.d);
-      if (!presenceEvent) {
-        return;
-      }
-      if (presenceEvent.type === "presence_sync") {
-        handlers.onPresenceSync?.(presenceEvent.payload);
-      } else {
-        handlers.onPresenceUpdate?.(presenceEvent.payload);
-      }
+    if (dispatchPresenceGatewayEvent(envelope.t, envelope.d, handlers)) {
+      return;
     }
   };
 
