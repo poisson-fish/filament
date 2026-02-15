@@ -7,11 +7,14 @@ import {
   type WorkspaceRoleId,
 } from "../domain/chat";
 import type {
-  WorkspaceRoleCreatePayload,
   WorkspaceRoleDeletePayload,
-  WorkspaceRoleRecordPayload,
   WorkspaceRoleUpdatePayload,
 } from "./gateway-contracts";
+import {
+  decodeWorkspaceRoleCreateGatewayEvent,
+  isWorkspaceRoleCreateGatewayEventType,
+  type WorkspaceRoleCreateGatewayEvent,
+} from "./gateway-workspace-role-create-events";
 import {
   decodeWorkspaceRoleAssignmentGatewayEvent,
   isWorkspaceRoleAssignmentGatewayEventType,
@@ -24,10 +27,7 @@ import {
 } from "./gateway-workspace-role-reorder-events";
 
 export type WorkspaceRoleGatewayEvent =
-  | {
-      type: "workspace_role_create";
-      payload: WorkspaceRoleCreatePayload;
-    }
+  | WorkspaceRoleCreateGatewayEvent
   | {
       type: "workspace_role_update";
       payload: WorkspaceRoleUpdatePayload;
@@ -41,79 +41,13 @@ export type WorkspaceRoleGatewayEvent =
 
 type WorkspaceRoleCoreGatewayEvent = Exclude<
   WorkspaceRoleGatewayEvent,
-  WorkspaceRoleAssignmentGatewayEvent | WorkspaceRoleReorderGatewayEvent
+  | WorkspaceRoleCreateGatewayEvent
+  | WorkspaceRoleAssignmentGatewayEvent
+  | WorkspaceRoleReorderGatewayEvent
 >;
 type WorkspaceRoleGatewayEventType = WorkspaceRoleGatewayEvent["type"];
 type WorkspaceRoleCoreGatewayEventType = WorkspaceRoleCoreGatewayEvent["type"];
 type WorkspaceRoleEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
-
-function parseWorkspaceRolePayload(payload: unknown): WorkspaceRoleRecordPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.role_id !== "string" ||
-    typeof value.name !== "string" ||
-    typeof value.position !== "number" ||
-    !Number.isSafeInteger(value.position) ||
-    value.position < 1 ||
-    typeof value.is_system !== "boolean" ||
-    !Array.isArray(value.permissions)
-  ) {
-    return null;
-  }
-
-  let roleId: WorkspaceRoleId;
-  try {
-    roleId = workspaceRoleIdFromInput(value.role_id);
-  } catch {
-    return null;
-  }
-
-  const permissions: PermissionName[] = [];
-  for (const entry of value.permissions) {
-    if (typeof entry !== "string") {
-      return null;
-    }
-    try {
-      permissions.push(permissionFromInput(entry));
-    } catch {
-      return null;
-    }
-  }
-
-  return {
-    roleId,
-    name: value.name,
-    position: value.position,
-    isSystem: value.is_system,
-    permissions,
-  };
-}
-
-function parseWorkspaceRoleCreatePayload(payload: unknown): WorkspaceRoleCreatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (typeof value.guild_id !== "string") {
-    return null;
-  }
-
-  let guildId: GuildId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-  } catch {
-    return null;
-  }
-  const role = parseWorkspaceRolePayload(value.role);
-  if (!role) {
-    return null;
-  }
-
-  return { guildId, role };
-}
 
 function parseWorkspaceRoleUpdatePayload(payload: unknown): WorkspaceRoleUpdatePayload | null {
   if (!payload || typeof payload !== "object") {
@@ -217,7 +151,6 @@ const WORKSPACE_ROLE_EVENT_DECODERS: {
     Extract<WorkspaceRoleCoreGatewayEvent, { type: K }>["payload"]
   >;
 } = {
-  workspace_role_create: parseWorkspaceRoleCreatePayload,
   workspace_role_update: parseWorkspaceRoleUpdatePayload,
   workspace_role_delete: parseWorkspaceRoleDeletePayload,
 };
@@ -226,6 +159,7 @@ export function isWorkspaceRoleGatewayEventType(
   value: string,
 ): value is WorkspaceRoleGatewayEventType {
   return (
+    isWorkspaceRoleCreateGatewayEventType(value) ||
     value in WORKSPACE_ROLE_EVENT_DECODERS ||
     isWorkspaceRoleReorderGatewayEventType(value) ||
     isWorkspaceRoleAssignmentGatewayEventType(value)
@@ -255,6 +189,11 @@ export function decodeWorkspaceRoleGatewayEvent(
   type: string,
   payload: unknown,
 ): WorkspaceRoleGatewayEvent | null {
+  const createEvent = decodeWorkspaceRoleCreateGatewayEvent(type, payload);
+  if (createEvent) {
+    return createEvent;
+  }
+
   const reorderEvent = decodeWorkspaceRoleReorderGatewayEvent(type, payload);
   if (reorderEvent) {
     return reorderEvent;
