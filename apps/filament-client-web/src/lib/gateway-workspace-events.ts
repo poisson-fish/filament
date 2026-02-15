@@ -16,9 +16,13 @@ import {
 import type {
   ChannelCreatePayload,
   WorkspaceChannelOverrideUpdatePayload,
-  WorkspaceIpBanSyncPayload,
   WorkspaceUpdatePayload,
 } from "./gateway-contracts";
+import {
+  decodeWorkspaceIpBanGatewayEvent,
+  isWorkspaceIpBanGatewayEventType,
+  type WorkspaceIpBanGatewayEvent,
+} from "./gateway-workspace-ip-ban-events";
 import {
   decodeWorkspaceMemberGatewayEvent,
   isWorkspaceMemberGatewayEventType,
@@ -42,15 +46,12 @@ type WorkspaceNonRoleGatewayEvent =
   | {
       type: "workspace_channel_override_update";
       payload: WorkspaceChannelOverrideUpdatePayload;
-    }
-  | {
-      type: "workspace_ip_ban_sync";
-      payload: WorkspaceIpBanSyncPayload;
     };
 
 export type WorkspaceGatewayEvent =
   | WorkspaceRoleGatewayEvent
   | WorkspaceMemberGatewayEvent
+  | WorkspaceIpBanGatewayEvent
   | WorkspaceNonRoleGatewayEvent;
 export type WorkspaceGatewayEventType = WorkspaceGatewayEvent["type"];
 type WorkspaceNonRoleGatewayEventType = WorkspaceNonRoleGatewayEvent["type"];
@@ -207,48 +208,6 @@ function parseWorkspaceChannelOverrideUpdatePayload(
   };
 }
 
-function parseWorkspaceIpBanSyncPayload(payload: unknown): WorkspaceIpBanSyncPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    !value.summary ||
-    typeof value.summary !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-  const summaryDto = value.summary as Record<string, unknown>;
-  if (
-    (summaryDto.action !== "upsert" && summaryDto.action !== "remove") ||
-    typeof summaryDto.changed_count !== "number" ||
-    !Number.isSafeInteger(summaryDto.changed_count) ||
-    summaryDto.changed_count < 0
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    summary: {
-      action: summaryDto.action,
-      changedCount: summaryDto.changed_count,
-    },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
 const WORKSPACE_EVENT_DECODERS: {
   [K in WorkspaceNonRoleGatewayEventType]: WorkspaceEventDecoder<
     Extract<WorkspaceNonRoleGatewayEvent, { type: K }>["payload"]
@@ -257,7 +216,6 @@ const WORKSPACE_EVENT_DECODERS: {
   channel_create: parseChannelCreatePayload,
   workspace_update: parseWorkspaceUpdatePayload,
   workspace_channel_override_update: parseWorkspaceChannelOverrideUpdatePayload,
-  workspace_ip_ban_sync: parseWorkspaceIpBanSyncPayload,
 };
 
 function isWorkspaceNonRoleGatewayEventType(
@@ -272,6 +230,7 @@ export function isWorkspaceGatewayEventType(
   return (
     isWorkspaceRoleGatewayEventType(value) ||
     isWorkspaceMemberGatewayEventType(value) ||
+    isWorkspaceIpBanGatewayEventType(value) ||
     isWorkspaceNonRoleGatewayEventType(value)
   );
 }
@@ -303,6 +262,11 @@ export function decodeWorkspaceGatewayEvent(
   const memberEvent = decodeWorkspaceMemberGatewayEvent(type, payload);
   if (memberEvent) {
     return memberEvent;
+  }
+
+  const ipBanEvent = decodeWorkspaceIpBanGatewayEvent(type, payload);
+  if (ipBanEvent) {
+    return ipBanEvent;
   }
 
   if (!isWorkspaceNonRoleGatewayEventType(type)) {
