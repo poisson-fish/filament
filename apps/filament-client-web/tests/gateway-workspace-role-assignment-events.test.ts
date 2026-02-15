@@ -8,6 +8,17 @@ const DEFAULT_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 const DEFAULT_ROLE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
 
 describe("decodeWorkspaceRoleAssignmentGatewayEvent", () => {
+  it("fails closed for invalid workspace_role_assignment_add payload", () => {
+    const result = decodeWorkspaceRoleAssignmentGatewayEvent("workspace_role_assignment_add", {
+      guild_id: DEFAULT_GUILD_ID,
+      user_id: DEFAULT_USER_ID,
+      role_id: DEFAULT_ROLE_ID,
+      assigned_at_unix: 0,
+    });
+
+    expect(result).toBeNull();
+  });
+
   it("decodes valid workspace_role_assignment_add payload via aggregate assignment decoder", () => {
     const result = decodeWorkspaceRoleAssignmentGatewayEvent("workspace_role_assignment_add", {
       guild_id: DEFAULT_GUILD_ID,

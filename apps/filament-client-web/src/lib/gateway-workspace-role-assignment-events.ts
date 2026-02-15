@@ -14,46 +14,27 @@ export type WorkspaceRoleAssignmentGatewayEvent =
   | WorkspaceRoleAssignmentRemoveGatewayEvent;
 
 type WorkspaceRoleAssignmentGatewayEventType = WorkspaceRoleAssignmentGatewayEvent["type"];
-type WorkspaceRoleAssignmentEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
+type WorkspaceRoleAssignmentGatewayEventDecoder = (
+  type: string,
+  payload: unknown,
+) => WorkspaceRoleAssignmentGatewayEvent | null;
 
-const WORKSPACE_ROLE_ASSIGNMENT_EVENT_DECODERS: {
-  [K in WorkspaceRoleAssignmentGatewayEventType]: WorkspaceRoleAssignmentEventDecoder<
-    Extract<WorkspaceRoleAssignmentGatewayEvent, { type: K }>["payload"]
-  >;
-} = {
-  workspace_role_assignment_add: (payload) =>
-    decodeWorkspaceRoleAssignmentAddGatewayEvent("workspace_role_assignment_add", payload)
-      ?.payload ?? null,
-  workspace_role_assignment_remove: (payload) =>
-    decodeWorkspaceRoleAssignmentRemoveGatewayEvent("workspace_role_assignment_remove", payload)
-      ?.payload ?? null,
-};
+const WORKSPACE_ROLE_ASSIGNMENT_EVENT_TYPE_GUARDS: ReadonlyArray<(value: string) => boolean> = [
+  isWorkspaceRoleAssignmentAddGatewayEventType,
+  isWorkspaceRoleAssignmentRemoveGatewayEventType,
+];
+
+const WORKSPACE_ROLE_ASSIGNMENT_EVENT_DECODER_REGISTRY: ReadonlyArray<
+  WorkspaceRoleAssignmentGatewayEventDecoder
+> = [
+  decodeWorkspaceRoleAssignmentAddGatewayEvent,
+  decodeWorkspaceRoleAssignmentRemoveGatewayEvent,
+];
 
 export function isWorkspaceRoleAssignmentGatewayEventType(
   value: string,
 ): value is WorkspaceRoleAssignmentGatewayEventType {
-  return (
-    isWorkspaceRoleAssignmentAddGatewayEventType(value) ||
-    isWorkspaceRoleAssignmentRemoveGatewayEventType(value) ||
-    value in WORKSPACE_ROLE_ASSIGNMENT_EVENT_DECODERS
-  );
-}
-
-function decodeKnownWorkspaceRoleAssignmentGatewayEvent<
-  K extends WorkspaceRoleAssignmentGatewayEventType,
->(
-  type: K,
-  payload: unknown,
-): Extract<WorkspaceRoleAssignmentGatewayEvent, { type: K }> | null {
-  const parsedPayload = WORKSPACE_ROLE_ASSIGNMENT_EVENT_DECODERS[type](payload);
-  if (!parsedPayload) {
-    return null;
-  }
-
-  return {
-    type,
-    payload: parsedPayload,
-  } as Extract<WorkspaceRoleAssignmentGatewayEvent, { type: K }>;
+  return WORKSPACE_ROLE_ASSIGNMENT_EVENT_TYPE_GUARDS.some((guard) => guard(value));
 }
 
 export function decodeWorkspaceRoleAssignmentGatewayEvent(
@@ -64,5 +45,12 @@ export function decodeWorkspaceRoleAssignmentGatewayEvent(
     return null;
   }
 
-  return decodeKnownWorkspaceRoleAssignmentGatewayEvent(type, payload);
+  for (const decoder of WORKSPACE_ROLE_ASSIGNMENT_EVENT_DECODER_REGISTRY) {
+    const decodedEvent = decoder(type, payload);
+    if (decodedEvent) {
+      return decodedEvent;
+    }
+  }
+
+  return null;
 }
