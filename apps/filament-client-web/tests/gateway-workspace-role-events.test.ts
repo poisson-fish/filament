@@ -99,6 +99,30 @@ describe("decodeWorkspaceRoleGatewayEvent", () => {
     });
   });
 
+  it("decodes workspace_role_update payloads via aggregate role decoder", () => {
+    const result = decodeWorkspaceRoleGatewayEvent("workspace_role_update", {
+      guild_id: DEFAULT_GUILD_ID,
+      role_id: DEFAULT_ROLE_ID,
+      updated_fields: {
+        name: "moderator",
+      },
+      updated_at_unix: 1710000001,
+    });
+
+    expect(result).toEqual({
+      type: "workspace_role_update",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        roleId: DEFAULT_ROLE_ID,
+        updatedFields: {
+          name: "moderator",
+          permissions: undefined,
+        },
+        updatedAtUnix: 1710000001,
+      },
+    });
+  });
+
   it("fails closed for workspace_role_update payload without any updatable fields", () => {
     const result = decodeWorkspaceRoleGatewayEvent("workspace_role_update", {
       guild_id: DEFAULT_GUILD_ID,
