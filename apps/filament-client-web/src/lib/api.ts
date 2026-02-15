@@ -49,9 +49,6 @@ import {
   channelFromResponse,
   channelPermissionSnapshotFromResponse,
   directoryJoinResultFromResponse,
-  friendListFromResponse,
-  friendRequestCreateFromResponse,
-  friendRequestListFromResponse,
   guildFromResponse,
   guildRoleListFromResponse,
   messageFromResponse,
@@ -69,6 +66,7 @@ import {
 } from "../domain/chat";
 import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
+import { createFriendsApi } from "./api-friends";
 
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -457,6 +455,14 @@ const authApi = createAuthApi({
   },
 });
 
+const friendsApi = createFriendsApi({
+  requestJson,
+  requestNoContent,
+  createApiError(status, code, message) {
+    return new ApiError(status, code, message);
+  },
+});
+
 export async function registerWithPassword(input: {
   username: Username;
   password: Password;
@@ -593,70 +599,39 @@ export async function lookupUsersByIds(
 }
 
 export async function fetchFriends(session: AuthSession): Promise<FriendRecord[]> {
-  const dto = await requestJson({
-    method: "GET",
-    path: "/friends",
-    accessToken: session.accessToken,
-  });
-  return friendListFromResponse(dto);
+  return friendsApi.fetchFriends(session);
 }
 
 export async function fetchFriendRequests(session: AuthSession): Promise<FriendRequestList> {
-  const dto = await requestJson({
-    method: "GET",
-    path: "/friends/requests",
-    accessToken: session.accessToken,
-  });
-  return friendRequestListFromResponse(dto);
+  return friendsApi.fetchFriendRequests(session);
 }
 
 export async function createFriendRequest(
   session: AuthSession,
   recipientUserId: UserId,
 ): Promise<FriendRequestCreateResult> {
-  const dto = await requestJson({
-    method: "POST",
-    path: "/friends/requests",
-    accessToken: session.accessToken,
-    body: { recipient_user_id: recipientUserId },
-  });
-  return friendRequestCreateFromResponse(dto);
+  return friendsApi.createFriendRequest(session, recipientUserId);
 }
 
 export async function acceptFriendRequest(
   session: AuthSession,
   requestId: string,
 ): Promise<void> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/friends/requests/${requestId}/accept`,
-    accessToken: session.accessToken,
-  });
-  if (!dto || typeof dto !== "object" || (dto as { accepted?: unknown }).accepted !== true) {
-    throw new ApiError(500, "invalid_friend_accept_shape", "Unexpected friend accept response.");
-  }
+  await friendsApi.acceptFriendRequest(session, requestId);
 }
 
 export async function deleteFriendRequest(
   session: AuthSession,
   requestId: string,
 ): Promise<void> {
-  await requestNoContent({
-    method: "DELETE",
-    path: `/friends/requests/${requestId}`,
-    accessToken: session.accessToken,
-  });
+  await friendsApi.deleteFriendRequest(session, requestId);
 }
 
 export async function removeFriend(
   session: AuthSession,
   friendUserId: UserId,
 ): Promise<void> {
-  await requestNoContent({
-    method: "DELETE",
-    path: `/friends/${friendUserId}`,
-    accessToken: session.accessToken,
-  });
+  await friendsApi.removeFriend(session, friendUserId);
 }
 
 export async function fetchHealth(): Promise<{ status: "ok" }> {
