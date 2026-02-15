@@ -32,4 +32,9 @@ describe("parseGatewayEventEnvelope", () => {
     const result = parseGatewayEventEnvelope("not-json");
     expect(result).toBeNull();
   });
+
+  it("rejects envelope missing d field", () => {
+    const result = parseGatewayEventEnvelope(JSON.stringify({ v: 1, t: "ready" }));
+    expect(result).toBeNull();
+  });
 });

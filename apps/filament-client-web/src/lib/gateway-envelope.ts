@@ -1,5 +1,6 @@
 const MAX_GATEWAY_EVENT_BYTES = 64 * 1024;
 const EVENT_TYPE_PATTERN = /^[a-z0-9_.]{1,64}$/;
+const hasOwn = Object.prototype.hasOwnProperty;
 
 export type GatewayEventEnvelope = {
   v: number;
@@ -24,7 +25,14 @@ export function parseGatewayEventEnvelope(raw: string): GatewayEventEnvelope | n
   }
 
   const value = parsed as Record<string, unknown>;
-  if (value.v !== 1 || typeof value.t !== "string" || !EVENT_TYPE_PATTERN.test(value.t)) {
+  if (
+    !hasOwn.call(value, "v") ||
+    !hasOwn.call(value, "t") ||
+    !hasOwn.call(value, "d") ||
+    value.v !== 1 ||
+    typeof value.t !== "string" ||
+    !EVENT_TYPE_PATTERN.test(value.t)
+  ) {
     return null;
   }
 
