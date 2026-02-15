@@ -1,0 +1,68 @@
+import {
+  decodeWorkspaceRoleAssignmentRemoveGatewayEvent,
+  isWorkspaceRoleAssignmentRemoveGatewayEventType,
+} from "../src/lib/gateway-workspace-role-assignment-remove-events";
+
+const DEFAULT_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const DEFAULT_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
+const DEFAULT_ROLE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
+
+describe("decodeWorkspaceRoleAssignmentRemoveGatewayEvent", () => {
+  it("decodes valid workspace_role_assignment_remove payload", () => {
+    const result = decodeWorkspaceRoleAssignmentRemoveGatewayEvent(
+      "workspace_role_assignment_remove",
+      {
+        guild_id: DEFAULT_GUILD_ID,
+        user_id: DEFAULT_USER_ID,
+        role_id: DEFAULT_ROLE_ID,
+        removed_at_unix: 1710000001,
+      },
+    );
+
+    expect(result).toEqual({
+      type: "workspace_role_assignment_remove",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        userId: DEFAULT_USER_ID,
+        roleId: DEFAULT_ROLE_ID,
+        removedAtUnix: 1710000001,
+      },
+    });
+  });
+
+  it("fails closed for invalid workspace_role_assignment_remove payload", () => {
+    const result = decodeWorkspaceRoleAssignmentRemoveGatewayEvent(
+      "workspace_role_assignment_remove",
+      {
+        guild_id: DEFAULT_GUILD_ID,
+        user_id: DEFAULT_USER_ID,
+        role_id: DEFAULT_ROLE_ID,
+        removed_at_unix: 0,
+      },
+    );
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null for unknown assignment remove event type", () => {
+    const result = decodeWorkspaceRoleAssignmentRemoveGatewayEvent("workspace_role_assignment_add", {
+      guild_id: DEFAULT_GUILD_ID,
+      user_id: DEFAULT_USER_ID,
+      role_id: DEFAULT_ROLE_ID,
+      removed_at_unix: 1710000001,
+    });
+
+    expect(result).toBeNull();
+  });
+});
+
+describe("isWorkspaceRoleAssignmentRemoveGatewayEventType", () => {
+  it("classifies only assignment remove event types", () => {
+    expect(
+      isWorkspaceRoleAssignmentRemoveGatewayEventType("workspace_role_assignment_remove"),
+    ).toBe(true);
+    expect(isWorkspaceRoleAssignmentRemoveGatewayEventType("workspace_role_assignment_add")).toBe(
+      false,
+    );
+  });
+});

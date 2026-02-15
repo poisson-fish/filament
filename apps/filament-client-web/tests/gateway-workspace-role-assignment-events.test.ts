@@ -38,6 +38,25 @@ describe("decodeWorkspaceRoleAssignmentGatewayEvent", () => {
     expect(result).toBeNull();
   });
 
+  it("decodes valid workspace_role_assignment_remove payload via aggregate assignment decoder", () => {
+    const result = decodeWorkspaceRoleAssignmentGatewayEvent("workspace_role_assignment_remove", {
+      guild_id: DEFAULT_GUILD_ID,
+      user_id: DEFAULT_USER_ID,
+      role_id: DEFAULT_ROLE_ID,
+      removed_at_unix: 1710000001,
+    });
+
+    expect(result).toEqual({
+      type: "workspace_role_assignment_remove",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        userId: DEFAULT_USER_ID,
+        roleId: DEFAULT_ROLE_ID,
+        removedAtUnix: 1710000001,
+      },
+    });
+  });
+
   it("returns null for unknown role assignment event type", () => {
     const result = decodeWorkspaceRoleAssignmentGatewayEvent("workspace_role_assignment_unknown", {
       guild_id: DEFAULT_GUILD_ID,
