@@ -78,4 +78,16 @@ describe("decodeProfileGatewayEvent", () => {
 
     expect(result).toBeNull();
   });
+
+  it("fails closed for hostile prototype event type", () => {
+    const result = decodeProfileGatewayEvent("__proto__", {
+      user_id: DEFAULT_USER_ID,
+      updated_fields: {
+        username: "updated-user",
+      },
+      updated_at_unix: 1710000001,
+    });
+
+    expect(result).toBeNull();
+  });
 });

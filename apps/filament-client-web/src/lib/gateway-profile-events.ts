@@ -143,7 +143,7 @@ const PROFILE_EVENT_DECODERS: {
 };
 
 function isProfileGatewayEventType(value: string): value is ProfileGatewayEventType {
-  return value in PROFILE_EVENT_DECODERS;
+  return Object.prototype.hasOwnProperty.call(PROFILE_EVENT_DECODERS, value);
 }
 
 export function decodeProfileGatewayEvent(
