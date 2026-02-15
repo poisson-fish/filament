@@ -3,27 +3,12 @@ import {
   parseGatewayEventEnvelope,
 } from "./gateway-envelope";
 import {
-  dispatchFriendGatewayEvent,
-} from "./gateway-friend-dispatch";
-import {
-  dispatchMessageGatewayEvent,
-} from "./gateway-message-dispatch";
+  dispatchGatewayDomainEvent,
+} from "./gateway-domain-dispatch";
 import {
   type PresenceSyncPayload,
   type PresenceUpdatePayload,
 } from "./gateway-presence-events";
-import {
-  dispatchPresenceGatewayEvent,
-} from "./gateway-presence-dispatch";
-import {
-  dispatchProfileGatewayEvent,
-} from "./gateway-profile-dispatch";
-import {
-  dispatchVoiceGatewayEvent,
-} from "./gateway-voice-dispatch";
-import {
-  dispatchWorkspaceGatewayEvent,
-} from "./gateway-workspace-dispatch";
 import {
   type ChannelRecord,
   type ChannelId,
@@ -433,27 +418,7 @@ export function connectGateway(
       return;
     }
 
-    if (dispatchMessageGatewayEvent(envelope.t, envelope.d, handlers)) {
-      return;
-    }
-
-    if (dispatchWorkspaceGatewayEvent(envelope.t, envelope.d, handlers)) {
-      return;
-    }
-
-    if (dispatchProfileGatewayEvent(envelope.t, envelope.d, handlers)) {
-      return;
-    }
-
-    if (dispatchFriendGatewayEvent(envelope.t, envelope.d, handlers)) {
-      return;
-    }
-
-    if (dispatchVoiceGatewayEvent(envelope.t, envelope.d, handlers)) {
-      return;
-    }
-
-    if (dispatchPresenceGatewayEvent(envelope.t, envelope.d, handlers)) {
+    if (dispatchGatewayDomainEvent(envelope.t, envelope.d, handlers)) {
       return;
     }
   };
