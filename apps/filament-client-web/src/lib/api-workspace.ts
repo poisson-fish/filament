@@ -9,14 +9,18 @@ import {
   type GuildRoleRecord,
   type GuildRecord,
   type GuildVisibility,
+  type DirectoryJoinResult,
   type ModerationResult,
   type PermissionName,
+  type PublicGuildDirectory,
   type UserId,
   type WorkspaceRoleId,
   type WorkspaceRoleName,
+  directoryJoinResultFromResponse,
   guildFromResponse,
   guildRoleListFromResponse,
   moderationResultFromResponse,
+  publicGuildDirectoryFromResponse,
   workspaceRoleIdFromInput,
   workspaceRoleNameFromInput,
 } from "../domain/chat";
@@ -44,6 +48,14 @@ export interface WorkspaceApi {
     guildId: GuildId,
     input: { name: GuildName; visibility?: GuildVisibility },
   ): Promise<GuildRecord>;
+  fetchPublicGuildDirectory(
+    session: AuthSession,
+    input?: { query?: string; limit?: number },
+  ): Promise<PublicGuildDirectory>;
+  joinPublicGuild(
+    session: AuthSession,
+    guildId: GuildId,
+  ): Promise<DirectoryJoinResult>;
   fetchGuildRoles(
     session: AuthSession,
     guildId: GuildId,
@@ -126,6 +138,38 @@ export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceAp
         body: { name: guildInput.name, visibility: guildInput.visibility },
       });
       return guildFromResponse(dto);
+    },
+
+    async fetchPublicGuildDirectory(session, directoryInput) {
+      const params = new URLSearchParams();
+      const query = directoryInput?.query?.trim();
+      if (query && query.length > 0) {
+        params.set("q", query.slice(0, 64));
+      }
+      if (
+        directoryInput?.limit
+        && Number.isInteger(directoryInput.limit)
+        && directoryInput.limit > 0
+        && directoryInput.limit <= 50
+      ) {
+        params.set("limit", String(directoryInput.limit));
+      }
+      const suffix = params.size > 0 ? `?${params.toString()}` : "";
+      const dto = await input.requestJson({
+        method: "GET",
+        path: `/guilds/public${suffix}`,
+        accessToken: session.accessToken,
+      });
+      return publicGuildDirectoryFromResponse(dto);
+    },
+
+    async joinPublicGuild(session, guildId) {
+      const dto = await input.requestJson({
+        method: "POST",
+        path: `/guilds/${guildId}/join`,
+        accessToken: session.accessToken,
+      });
+      return directoryJoinResultFromResponse(dto);
     },
 
     async fetchGuildRoles(session, guildId) {

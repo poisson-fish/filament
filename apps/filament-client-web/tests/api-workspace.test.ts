@@ -123,6 +123,57 @@ describe("api-workspace", () => {
     });
   });
 
+  it("fetchPublicGuildDirectory bounds query/limit and parses strict response", async () => {
+    const requestJson = vi.fn(async () => ({
+      guilds: [
+        {
+          guild_id: guildId,
+          name: guildName,
+          visibility: "public",
+          member_count: 42,
+          blurb: "public blurb",
+        },
+      ],
+    }));
+
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(
+      api.fetchPublicGuildDirectory(session, { query: `  ${"x".repeat(80)}  `, limit: 50 }),
+    ).resolves.toMatchObject({ guilds: [{ guildId, name: guildName }] });
+
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "GET",
+      path: `/guilds/public?q=${"x".repeat(64)}&limit=50`,
+      accessToken: session.accessToken,
+    });
+  });
+
+  it("joinPublicGuild delegates and parses strict join response", async () => {
+    const requestJson = vi.fn(async () => ({
+      guild_id: guildId,
+      outcome: "accepted",
+    }));
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(api.joinPublicGuild(session, guildId)).resolves.toMatchObject({
+      guildId,
+      outcome: "accepted",
+      joined: true,
+    });
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "POST",
+      path: `/guilds/${guildId}/join`,
+      accessToken: session.accessToken,
+    });
+  });
+
   it("updateGuildRole fails closed when no update fields are provided", async () => {
     const requestJson = vi.fn(async () => null);
     const api = createWorkspaceApi({

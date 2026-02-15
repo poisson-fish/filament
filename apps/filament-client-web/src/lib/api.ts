@@ -14,8 +14,8 @@ import {
   type ChannelKindName,
   type ChannelRecord,
   type ChannelPermissionSnapshot,
-  type DirectoryJoinResult,
   type ChannelName,
+  type DirectoryJoinResult,
   type GuildRecord,
   type GuildId,
   type GuildRoleList,
@@ -48,9 +48,7 @@ import {
   attachmentFromResponse,
   channelFromResponse,
   channelPermissionSnapshotFromResponse,
-  directoryJoinResultFromResponse,
   moderationResultFromResponse,
-  publicGuildDirectoryFromResponse,
   profileFromResponse,
   searchReconcileFromResponse,
   searchResultsFromResponse,
@@ -701,33 +699,14 @@ export async function fetchPublicGuildDirectory(
   session: AuthSession,
   input?: { query?: string; limit?: number },
 ): Promise<PublicGuildDirectory> {
-  const params = new URLSearchParams();
-  const query = input?.query?.trim();
-  if (query && query.length > 0) {
-    params.set("q", query.slice(0, 64));
-  }
-  if (input?.limit && Number.isInteger(input.limit) && input.limit > 0 && input.limit <= 50) {
-    params.set("limit", String(input.limit));
-  }
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  const dto = await requestJson({
-    method: "GET",
-    path: `/guilds/public${suffix}`,
-    accessToken: session.accessToken,
-  });
-  return publicGuildDirectoryFromResponse(dto);
+  return workspaceApi.fetchPublicGuildDirectory(session, input);
 }
 
 export async function joinPublicGuild(
   session: AuthSession,
   guildId: GuildId,
 ): Promise<DirectoryJoinResult> {
-  const dto = await requestJson({
-    method: "POST",
-    path: `/guilds/${guildId}/join`,
-    accessToken: session.accessToken,
-  });
-  return directoryJoinResultFromResponse(dto);
+  return workspaceApi.joinPublicGuild(session, guildId);
 }
 
 export async function fetchGuildChannels(
