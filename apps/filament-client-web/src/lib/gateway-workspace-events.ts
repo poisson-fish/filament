@@ -32,6 +32,11 @@ import {
 type WorkspaceNonRoleGatewayEvent =
   WorkspaceChannelGatewayEvent;
 
+type WorkspaceGatewayEventDecoder = (
+  type: string,
+  payload: unknown,
+) => WorkspaceGatewayEvent | null;
+
 export type WorkspaceGatewayEvent =
   | WorkspaceRoleGatewayEvent
   | WorkspaceMemberGatewayEvent
@@ -48,51 +53,44 @@ function isWorkspaceNonRoleGatewayEventType(
   return isWorkspaceChannelGatewayEventType(value);
 }
 
+const WORKSPACE_EVENT_TYPE_GUARDS: ReadonlyArray<(value: string) => boolean> = [
+  isWorkspaceRoleGatewayEventType,
+  isWorkspaceMemberGatewayEventType,
+  isWorkspaceIpBanGatewayEventType,
+  isWorkspaceChannelOverrideGatewayEventType,
+  isWorkspaceUpdateGatewayEventType,
+  isWorkspaceNonRoleGatewayEventType,
+];
+
+const WORKSPACE_EVENT_DECODER_REGISTRY: ReadonlyArray<WorkspaceGatewayEventDecoder> = [
+  decodeWorkspaceRoleGatewayEvent,
+  decodeWorkspaceMemberGatewayEvent,
+  decodeWorkspaceIpBanGatewayEvent,
+  decodeWorkspaceChannelOverrideGatewayEvent,
+  decodeWorkspaceUpdateGatewayEvent,
+  decodeWorkspaceChannelGatewayEvent,
+];
+
 export function isWorkspaceGatewayEventType(
   value: string,
 ): value is WorkspaceGatewayEventType {
-  return (
-    isWorkspaceRoleGatewayEventType(value) ||
-    isWorkspaceMemberGatewayEventType(value) ||
-    isWorkspaceIpBanGatewayEventType(value) ||
-    isWorkspaceChannelOverrideGatewayEventType(value) ||
-    isWorkspaceUpdateGatewayEventType(value) ||
-    isWorkspaceNonRoleGatewayEventType(value)
-  );
+  return WORKSPACE_EVENT_TYPE_GUARDS.some((guard) => guard(value));
 }
 
 export function decodeWorkspaceGatewayEvent(
   type: string,
   payload: unknown,
 ): WorkspaceGatewayEvent | null {
-  const roleEvent = decodeWorkspaceRoleGatewayEvent(type, payload);
-  if (roleEvent) {
-    return roleEvent;
-  }
-
-  const memberEvent = decodeWorkspaceMemberGatewayEvent(type, payload);
-  if (memberEvent) {
-    return memberEvent;
-  }
-
-  const ipBanEvent = decodeWorkspaceIpBanGatewayEvent(type, payload);
-  if (ipBanEvent) {
-    return ipBanEvent;
-  }
-
-  const channelOverrideEvent = decodeWorkspaceChannelOverrideGatewayEvent(type, payload);
-  if (channelOverrideEvent) {
-    return channelOverrideEvent;
-  }
-
-  const workspaceUpdateEvent = decodeWorkspaceUpdateGatewayEvent(type, payload);
-  if (workspaceUpdateEvent) {
-    return workspaceUpdateEvent;
-  }
-
-  if (!isWorkspaceNonRoleGatewayEventType(type)) {
+  if (!isWorkspaceGatewayEventType(type)) {
     return null;
   }
 
-  return decodeWorkspaceChannelGatewayEvent(type, payload);
+  for (const decoder of WORKSPACE_EVENT_DECODER_REGISTRY) {
+    const decodedEvent = decoder(type, payload);
+    if (decodedEvent) {
+      return decodedEvent;
+    }
+  }
+
+  return null;
 }

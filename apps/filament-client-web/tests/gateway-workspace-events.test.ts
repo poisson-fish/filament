@@ -40,6 +40,28 @@ describe("decodeWorkspaceGatewayEvent", () => {
     });
   });
 
+  it("decodes valid workspace_update payload through delegated registry", () => {
+    const result = decodeWorkspaceGatewayEvent("workspace_update", {
+      guild_id: DEFAULT_GUILD_ID,
+      updated_fields: {
+        name: "Filament Workspace",
+      },
+      updated_at_unix: 1710000001,
+    });
+
+    expect(result).toEqual({
+      type: "workspace_update",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        updatedFields: {
+          name: "Filament Workspace",
+          visibility: undefined,
+        },
+        updatedAtUnix: 1710000001,
+      },
+    });
+  });
+
   it("fails closed for invalid workspace_member_add payload", () => {
     const result = decodeWorkspaceGatewayEvent("workspace_member_add", {
       guild_id: DEFAULT_GUILD_ID,
