@@ -1,5 +1,6 @@
 import {
   decodeVoiceGatewayEvent,
+  isVoiceGatewayEventType,
 } from "../src/lib/gateway-voice-events";
 
 const DEFAULT_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -7,6 +8,11 @@ const DEFAULT_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const DEFAULT_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 
 describe("decodeVoiceGatewayEvent", () => {
+  it("exposes strict voice event type guard from decoder registry", () => {
+    expect(isVoiceGatewayEventType("voice_stream_publish")).toBe(true);
+    expect(isVoiceGatewayEventType("message_create")).toBe(false);
+  });
+
   it("decodes valid voice_participant_sync payload with deduped identities", () => {
     const result = decodeVoiceGatewayEvent("voice_participant_sync", {
       guild_id: DEFAULT_GUILD_ID,

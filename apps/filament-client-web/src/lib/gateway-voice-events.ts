@@ -387,7 +387,7 @@ const VOICE_EVENT_DECODERS: {
   voice_stream_unpublish: parseVoiceStreamUnpublishPayload,
 };
 
-function isVoiceGatewayEventType(value: string): value is VoiceGatewayEventType {
+export function isVoiceGatewayEventType(value: string): value is VoiceGatewayEventType {
   return value in VOICE_EVENT_DECODERS;
 }
 

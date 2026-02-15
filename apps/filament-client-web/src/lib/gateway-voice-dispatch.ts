@@ -8,6 +8,7 @@ import type {
 } from "./gateway";
 import {
   decodeVoiceGatewayEvent,
+  isVoiceGatewayEventType,
 } from "./gateway-voice-events";
 
 export interface VoiceGatewayDispatchHandlers {
@@ -19,21 +20,12 @@ export interface VoiceGatewayDispatchHandlers {
   onVoiceStreamUnpublish?: (payload: VoiceStreamUnpublishPayload) => void;
 }
 
-const VOICE_GATEWAY_EVENT_TYPES = new Set<string>([
-  "voice_participant_sync",
-  "voice_participant_join",
-  "voice_participant_leave",
-  "voice_participant_update",
-  "voice_stream_publish",
-  "voice_stream_unpublish",
-]);
-
 export function dispatchVoiceGatewayEvent(
   type: string,
   payload: unknown,
   handlers: VoiceGatewayDispatchHandlers,
 ): boolean {
-  if (!VOICE_GATEWAY_EVENT_TYPES.has(type)) {
+  if (!isVoiceGatewayEventType(type)) {
     return false;
   }
 
