@@ -6,7 +6,6 @@ import {
   guildVisibilityFromInput,
   permissionFromInput,
   roleFromInput,
-  userIdFromInput,
   type ChannelId,
   type GuildId,
   type GuildName,
@@ -18,12 +17,12 @@ import type {
   ChannelCreatePayload,
   WorkspaceChannelOverrideUpdatePayload,
   WorkspaceIpBanSyncPayload,
-  WorkspaceMemberAddPayload,
-  WorkspaceMemberBanPayload,
-  WorkspaceMemberRemovePayload,
-  WorkspaceMemberUpdatePayload,
   WorkspaceUpdatePayload,
 } from "./gateway-contracts";
+import {
+  decodeWorkspaceMemberGatewayEvent,
+  type WorkspaceMemberGatewayEvent,
+} from "./gateway-workspace-member-events";
 import {
   decodeWorkspaceRoleGatewayEvent,
   type WorkspaceRoleGatewayEvent,
@@ -39,22 +38,6 @@ type WorkspaceNonRoleGatewayEvent =
       payload: WorkspaceUpdatePayload;
     }
   | {
-      type: "workspace_member_add";
-      payload: WorkspaceMemberAddPayload;
-    }
-  | {
-      type: "workspace_member_update";
-      payload: WorkspaceMemberUpdatePayload;
-    }
-  | {
-      type: "workspace_member_remove";
-      payload: WorkspaceMemberRemovePayload;
-    }
-  | {
-      type: "workspace_member_ban";
-      payload: WorkspaceMemberBanPayload;
-    }
-  | {
       type: "workspace_channel_override_update";
       payload: WorkspaceChannelOverrideUpdatePayload;
     }
@@ -63,7 +46,10 @@ type WorkspaceNonRoleGatewayEvent =
       payload: WorkspaceIpBanSyncPayload;
     };
 
-export type WorkspaceGatewayEvent = WorkspaceRoleGatewayEvent | WorkspaceNonRoleGatewayEvent;
+export type WorkspaceGatewayEvent =
+  | WorkspaceRoleGatewayEvent
+  | WorkspaceMemberGatewayEvent
+  | WorkspaceNonRoleGatewayEvent;
 type WorkspaceNonRoleGatewayEventType = WorkspaceNonRoleGatewayEvent["type"];
 type WorkspaceEventDecoder<TPayload> = (payload: unknown) => TPayload | null;
 
@@ -148,155 +134,6 @@ function parseWorkspaceUpdatePayload(payload: unknown): WorkspaceUpdatePayload |
       visibility,
     },
     updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseWorkspaceMemberAddPayload(payload: unknown): WorkspaceMemberAddPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.role !== "string" ||
-    typeof value.joined_at_unix !== "number" ||
-    !Number.isSafeInteger(value.joined_at_unix) ||
-    value.joined_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  let role: RoleName;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-    role = roleFromInput(value.role);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    role,
-    joinedAtUnix: value.joined_at_unix,
-  };
-}
-
-function parseWorkspaceMemberUpdatePayload(payload: unknown): WorkspaceMemberUpdatePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    !value.updated_fields ||
-    typeof value.updated_fields !== "object" ||
-    typeof value.updated_at_unix !== "number" ||
-    !Number.isSafeInteger(value.updated_at_unix) ||
-    value.updated_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
-  let role: RoleName | undefined;
-  if (typeof updatedFieldsDto.role !== "undefined") {
-    if (typeof updatedFieldsDto.role !== "string") {
-      return null;
-    }
-    try {
-      role = roleFromInput(updatedFieldsDto.role);
-    } catch {
-      return null;
-    }
-  }
-  if (typeof role === "undefined") {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    updatedFields: { role },
-    updatedAtUnix: value.updated_at_unix,
-  };
-}
-
-function parseWorkspaceMemberRemovePayload(payload: unknown): WorkspaceMemberRemovePayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    (value.reason !== "kick" && value.reason !== "ban" && value.reason !== "leave") ||
-    typeof value.removed_at_unix !== "number" ||
-    !Number.isSafeInteger(value.removed_at_unix) ||
-    value.removed_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    reason: value.reason,
-    removedAtUnix: value.removed_at_unix,
-  };
-}
-
-function parseWorkspaceMemberBanPayload(payload: unknown): WorkspaceMemberBanPayload | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.guild_id !== "string" ||
-    typeof value.user_id !== "string" ||
-    typeof value.banned_at_unix !== "number" ||
-    !Number.isSafeInteger(value.banned_at_unix) ||
-    value.banned_at_unix < 1
-  ) {
-    return null;
-  }
-
-  let guildId: GuildId;
-  let userId: string;
-  try {
-    guildId = guildIdFromInput(value.guild_id);
-    userId = userIdFromInput(value.user_id);
-  } catch {
-    return null;
-  }
-
-  return {
-    guildId,
-    userId,
-    bannedAtUnix: value.banned_at_unix,
   };
 }
 
@@ -416,10 +253,6 @@ const WORKSPACE_EVENT_DECODERS: {
 } = {
   channel_create: parseChannelCreatePayload,
   workspace_update: parseWorkspaceUpdatePayload,
-  workspace_member_add: parseWorkspaceMemberAddPayload,
-  workspace_member_update: parseWorkspaceMemberUpdatePayload,
-  workspace_member_remove: parseWorkspaceMemberRemovePayload,
-  workspace_member_ban: parseWorkspaceMemberBanPayload,
   workspace_channel_override_update: parseWorkspaceChannelOverrideUpdatePayload,
   workspace_ip_ban_sync: parseWorkspaceIpBanSyncPayload,
 };
@@ -450,6 +283,11 @@ export function decodeWorkspaceGatewayEvent(
   const roleEvent = decodeWorkspaceRoleGatewayEvent(type, payload);
   if (roleEvent) {
     return roleEvent;
+  }
+
+  const memberEvent = decodeWorkspaceMemberGatewayEvent(type, payload);
+  if (memberEvent) {
+    return memberEvent;
   }
 
   if (!isWorkspaceGatewayEventType(type)) {
