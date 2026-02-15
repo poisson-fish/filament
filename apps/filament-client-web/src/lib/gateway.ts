@@ -17,8 +17,8 @@ import {
   decodeProfileGatewayEvent,
 } from "./gateway-profile-events";
 import {
-  decodeVoiceGatewayEvent,
-} from "./gateway-voice-events";
+  dispatchVoiceGatewayEvent,
+} from "./gateway-voice-dispatch";
 import {
   decodeWorkspaceGatewayEvent,
 } from "./gateway-workspace-events";
@@ -573,39 +573,7 @@ export function connectGateway(
       return;
     }
 
-    if (
-      envelope.t === "voice_participant_sync" ||
-      envelope.t === "voice_participant_join" ||
-      envelope.t === "voice_participant_leave" ||
-      envelope.t === "voice_participant_update" ||
-      envelope.t === "voice_stream_publish" ||
-      envelope.t === "voice_stream_unpublish"
-    ) {
-      const voiceEvent = decodeVoiceGatewayEvent(envelope.t, envelope.d);
-      if (!voiceEvent) {
-        return;
-      }
-      if (voiceEvent.type === "voice_participant_sync") {
-        handlers.onVoiceParticipantSync?.(voiceEvent.payload);
-        return;
-      }
-      if (voiceEvent.type === "voice_participant_join") {
-        handlers.onVoiceParticipantJoin?.(voiceEvent.payload);
-        return;
-      }
-      if (voiceEvent.type === "voice_participant_leave") {
-        handlers.onVoiceParticipantLeave?.(voiceEvent.payload);
-        return;
-      }
-      if (voiceEvent.type === "voice_participant_update") {
-        handlers.onVoiceParticipantUpdate?.(voiceEvent.payload);
-        return;
-      }
-      if (voiceEvent.type === "voice_stream_publish") {
-        handlers.onVoiceStreamPublish?.(voiceEvent.payload);
-        return;
-      }
-      handlers.onVoiceStreamUnpublish?.(voiceEvent.payload);
+    if (dispatchVoiceGatewayEvent(envelope.t, envelope.d, handlers)) {
       return;
     }
 
