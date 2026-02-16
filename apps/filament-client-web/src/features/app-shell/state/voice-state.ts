@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createMemo, createSignal } from "solid-js";
 import { RTC_DISCONNECTED_SNAPSHOT } from "../config/ui-constants";
 import type { VoiceSessionCapabilities } from "../types";
 import { loadVoiceDevicePreferences, type AudioDeviceOption, type VoiceDevicePreferences } from "../../../lib/voice-device-settings";
@@ -18,9 +18,11 @@ export function createVoiceState() {
   const [rtcSnapshot, setRtcSnapshot] = createSignal<RtcSnapshot>(RTC_DISCONNECTED_SNAPSHOT);
   const [voiceStatus, setVoiceStatus] = createSignal("");
   const [voiceError, setVoiceError] = createSignal("");
-  const [isJoiningVoice, setJoiningVoice] = createSignal(false);
   const [voiceJoinState, setVoiceJoinState] = createSignal<AsyncOperationState>(
     createIdleAsyncOperationState(),
+  );
+  const isJoiningVoice = createMemo(
+    () => voiceJoinState().phase === "running",
   );
   const [isLeavingVoice, setLeavingVoice] = createSignal(false);
   const [isTogglingVoiceMic, setTogglingVoiceMic] = createSignal(false);
@@ -53,7 +55,6 @@ export function createVoiceState() {
     voiceError,
     setVoiceError,
     isJoiningVoice,
-    setJoiningVoice,
     voiceJoinState,
     setVoiceJoinState,
     isLeavingVoice,

@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createMemo, createSignal } from "solid-js";
 import type {
   AttachmentId,
   AttachmentRecord,
@@ -18,9 +18,11 @@ export function createMessageState() {
   const [messageError, setMessageError] = createSignal("");
   const [isLoadingMessages, setLoadingMessages] = createSignal(false);
   const [isLoadingOlder, setLoadingOlder] = createSignal(false);
-  const [isSendingMessage, setSendingMessage] = createSignal(false);
   const [sendMessageState, setSendMessageState] = createSignal<AsyncOperationState>(
     createIdleAsyncOperationState(),
+  );
+  const isSendingMessage = createMemo(
+    () => sendMessageState().phase === "running",
   );
   const [refreshMessagesState, setRefreshMessagesState] =
     createSignal<AsyncOperationState>(createIdleAsyncOperationState());
@@ -61,7 +63,6 @@ export function createMessageState() {
     isLoadingOlder,
     setLoadingOlder,
     isSendingMessage,
-    setSendingMessage,
     sendMessageState,
     setSendMessageState,
     refreshMessagesState,

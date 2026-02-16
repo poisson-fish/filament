@@ -91,7 +91,6 @@ export interface MessageActionsControllerOptions {
   setComposerAttachments: Setter<File[]>;
   composerAttachmentInputElement: Accessor<HTMLInputElement | undefined>;
   isSendingMessage: Accessor<boolean>;
-  setSendingMessage: Setter<boolean>;
   setSendMessageState: Setter<AsyncOperationState>;
   setMessageStatus: Setter<string>;
   setMessageError: Setter<string>;
@@ -288,7 +287,6 @@ export function createMessageActionsController(
         type: "start",
       }),
     );
-    options.setSendingMessage(true);
     let uploadedForMessage: AttachmentRecord[] = [];
     try {
       const draft = options.composer().trim();
@@ -382,8 +380,6 @@ export function createMessageActionsController(
           errorMessage,
         }),
       );
-    } finally {
-      options.setSendingMessage(false);
     }
   };
 

@@ -40,7 +40,6 @@ export interface VoiceOperationsControllerOptions {
   setVoiceStatus: Setter<string>;
   setVoiceError: Setter<string>;
   setVoiceJoinState: Setter<AsyncOperationState>;
-  setJoiningVoice: Setter<boolean>;
   setLeavingVoice: Setter<boolean>;
   setTogglingVoiceMic: Setter<boolean>;
   setTogglingVoiceCamera: Setter<boolean>;
@@ -177,7 +176,6 @@ export function createVoiceOperationsController(
       return;
     }
 
-    options.setJoiningVoice(true);
     options.setVoiceError("");
     options.setVoiceStatus("");
     options.setVoiceJoinState((existing) =>
@@ -266,8 +264,6 @@ export function createVoiceOperationsController(
           errorMessage,
         }),
       );
-    } finally {
-      options.setJoiningVoice(false);
     }
   };
 

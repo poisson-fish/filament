@@ -56,6 +56,13 @@ describe("app shell state factories", () => {
       statusMessage: "",
       errorMessage: "",
     });
+    expect(messageState.isSendingMessage()).toBe(false);
+    messageState.setSendMessageState({
+      phase: "running",
+      statusMessage: "",
+      errorMessage: "",
+    });
+    expect(messageState.isSendingMessage()).toBe(true);
     expect(messageState.refreshMessagesState()).toEqual({
       phase: "idle",
       statusMessage: "",
@@ -101,6 +108,13 @@ describe("app shell state factories", () => {
       statusMessage: "",
       errorMessage: "",
     });
+    expect(voiceState.isJoiningVoice()).toBe(false);
+    voiceState.setVoiceJoinState({
+      phase: "running",
+      statusMessage: "",
+      errorMessage: "",
+    });
+    expect(voiceState.isJoiningVoice()).toBe(true);
     expect(voiceState.voiceSessionChannelKey()).toBeNull();
     expect(voiceState.voiceSessionStartedAtUnixMs()).toBeNull();
     expect(voiceState.voiceSessionCapabilities()).toEqual(DEFAULT_VOICE_SESSION_CAPABILITIES);

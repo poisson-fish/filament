@@ -1,4 +1,4 @@
-import { createRoot, createSignal } from "solid-js";
+import { createMemo, createRoot, createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { authSessionFromResponse } from "../src/domain/auth";
 import {
@@ -51,12 +51,14 @@ function createMessageActionsHarness(input?: {
   const [, setComposerAttachments] = createSignal<File[]>([]);
   const [messageStatus, setMessageStatus] = createSignal("");
   const [messageError, setMessageError] = createSignal("");
-  const [isSendingMessage, setSendingMessage] = createSignal(false);
   const [sendMessageState, setSendMessageState] = createSignal<AsyncOperationState>({
     phase: "idle",
     statusMessage: "",
     errorMessage: "",
   });
+  const isSendingMessage = createMemo(
+    () => sendMessageState().phase === "running",
+  );
 
   const controller = createMessageActionsController({
     session,
@@ -70,7 +72,6 @@ function createMessageActionsHarness(input?: {
     setComposerAttachments,
     composerAttachmentInputElement: () => undefined,
     isSendingMessage,
-    setSendingMessage,
     setSendMessageState,
     setMessageStatus,
     setMessageError,

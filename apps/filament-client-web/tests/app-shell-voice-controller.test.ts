@@ -1,4 +1,4 @@
-import { createRoot, createSignal } from "solid-js";
+import { createMemo, createRoot, createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { authSessionFromResponse } from "../src/domain/auth";
 import {
@@ -76,7 +76,6 @@ function createVoiceOperationsHarness(input?: {
   const [canToggleVoiceCamera] = createSignal(input?.canToggleVoiceCamera ?? true);
   const [canToggleVoiceScreenShare] = createSignal(input?.canToggleVoiceScreenShare ?? true);
 
-  const [isJoiningVoice, setJoiningVoice] = createSignal(false);
   const [isLeavingVoice, setLeavingVoice] = createSignal(false);
   const [isTogglingVoiceMic, setTogglingVoiceMic] = createSignal(false);
   const [isTogglingVoiceCamera, setTogglingVoiceCamera] = createSignal(false);
@@ -89,6 +88,9 @@ function createVoiceOperationsHarness(input?: {
     statusMessage: "",
     errorMessage: "",
   });
+  const isJoiningVoice = createMemo(
+    () => voiceJoinState().phase === "running",
+  );
   const [audioDevicesError, setAudioDevicesError] = createSignal("");
   const [rtcSnapshot, setRtcSnapshot] = createSignal<RtcSnapshot>(RTC_DISCONNECTED_SNAPSHOT);
   const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(
@@ -134,7 +136,6 @@ function createVoiceOperationsHarness(input?: {
       setVoiceStatus,
       setVoiceError,
       setVoiceJoinState,
-      setJoiningVoice,
       setLeavingVoice,
       setTogglingVoiceMic,
       setTogglingVoiceCamera,
