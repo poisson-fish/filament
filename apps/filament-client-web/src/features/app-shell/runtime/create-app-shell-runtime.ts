@@ -140,6 +140,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     session: auth.session,
     activeGuildId: workspaceChannelState.activeGuildId,
     activeChannel: selectors.activeChannel,
+    voiceSessionChannelKey: voiceState.voiceSessionChannelKey,
     canPublishVoiceCamera: selectors.canPublishVoiceCamera,
     canPublishVoiceScreenShare: selectors.canPublishVoiceScreenShare,
     canSubscribeVoiceStreams: selectors.canSubscribeVoiceStreams,

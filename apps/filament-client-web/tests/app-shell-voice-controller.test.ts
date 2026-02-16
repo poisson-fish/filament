@@ -92,6 +92,7 @@ function createVoiceOperationsHarness(input?: {
   audioInputDeviceId?: string | null;
   audioOutputDeviceId?: string | null;
   initialVoiceJoinState?: AsyncOperationState;
+  initialVoiceSessionChannelKey?: string | null;
 }) {
   const [session] = createSignal(SESSION);
   const [activeGuildId] = createSignal(GUILD_ID);
@@ -134,7 +135,7 @@ function createVoiceOperationsHarness(input?: {
   const [audioDevicesError, setAudioDevicesError] = createSignal("");
   const [rtcSnapshot, setRtcSnapshot] = createSignal<RtcSnapshot>(RTC_DISCONNECTED_SNAPSHOT);
   const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(
-    "seeded|channel",
+    input?.initialVoiceSessionChannelKey ?? "seeded|channel",
   );
   const [voiceSessionStartedAtUnixMs, setVoiceSessionStartedAtUnixMs] = createSignal<number | null>(
     111,
@@ -161,6 +162,7 @@ function createVoiceOperationsHarness(input?: {
       session,
       activeGuildId,
       activeChannel,
+      voiceSessionChannelKey,
       canPublishVoiceCamera,
       canPublishVoiceScreenShare,
       canSubscribeVoiceStreams,
@@ -528,6 +530,37 @@ describe("app shell voice controller", () => {
     expect(harness.voiceJoinPhaseTransitions()).toEqual(["idle"]);
   });
 
+  it("resets voice join state when leaving voice session", async () => {
+    const leave = vi.fn(async () => {});
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        initialVoiceJoinState: {
+          phase: "failed",
+          statusMessage: "",
+          errorMessage: "Unable to join voice.",
+        },
+        dependencies: {
+          createRtcClient: () =>
+            createRtcClientMock({
+              leave,
+            }),
+        },
+      }),
+    );
+
+    harness.controller.ensureRtcClient();
+    await harness.controller.leaveVoiceChannel("Left voice channel.");
+
+    expect(leave).toHaveBeenCalledTimes(1);
+    expect(harness.voiceJoinState()).toEqual({
+      phase: "idle",
+      statusMessage: "",
+      errorMessage: "",
+    });
+    expect(harness.voiceStatus()).toBe("Left voice channel.");
+    expect(harness.voiceError()).toBe("");
+  });
+
   it("keeps running join state on duplicate join attempts", async () => {
     const issueVoiceTokenGate = deferred<ReturnType<typeof voiceTokenFromResponse>>();
     const issueVoiceTokenMock = vi.fn(() => issueVoiceTokenGate.promise);
@@ -556,5 +589,41 @@ describe("app shell voice controller", () => {
       errorMessage: "Unable to join voice.",
     });
     expect(harness.voiceJoinPhaseTransitions()).toEqual(["running", "failed"]);
+  });
+
+  it("does not request a new token when already connected to the same voice channel", async () => {
+    const issueVoiceTokenMock = vi.fn(async () =>
+      voiceTokenFromResponse({
+        token: "T".repeat(96),
+        livekit_url: "wss://livekit.example.com",
+        room: "filament.voice.room",
+        identity: "u.identity.idempotent",
+        can_publish: true,
+        can_subscribe: true,
+        publish_sources: ["microphone"],
+        expires_in_secs: 300,
+      }),
+    );
+
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        initialVoiceSessionChannelKey: `${GUILD_ID}|${VOICE_CHANNEL.channelId}`,
+        dependencies: {
+          issueVoiceToken: issueVoiceTokenMock,
+        },
+      }),
+    );
+
+    harness.controller.ensureRtcClient();
+    await harness.controller.joinVoiceChannel();
+
+    expect(issueVoiceTokenMock).not.toHaveBeenCalled();
+    expect(harness.voiceJoinState()).toEqual({
+      phase: "succeeded",
+      statusMessage: "Voice connected.",
+      errorMessage: "",
+    });
+    expect(harness.voiceStatus()).toBe("Voice connected.");
+    expect(harness.voiceError()).toBe("");
   });
 });

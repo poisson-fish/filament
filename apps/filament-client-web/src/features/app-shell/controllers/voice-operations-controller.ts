@@ -26,6 +26,7 @@ export interface VoiceOperationsControllerOptions {
   session: Accessor<AuthSession | null>;
   activeGuildId: Accessor<GuildId | null>;
   activeChannel: Accessor<ChannelRecord | null>;
+  voiceSessionChannelKey: Accessor<string | null>;
   canPublishVoiceCamera: Accessor<boolean>;
   canPublishVoiceScreenShare: Accessor<boolean>;
   canSubscribeVoiceStreams: Accessor<boolean>;
@@ -159,6 +160,9 @@ export function createVoiceOperationsController(
       // Local session teardown is deterministic even if leave fails.
     } finally {
       resetVoiceSessionState();
+      applyVoiceJoinTransition({
+        type: "reset",
+      });
       if (statusMessage) {
         options.setVoiceStatus(statusMessage);
       }
@@ -182,6 +186,15 @@ export function createVoiceOperationsController(
     ) {
       applyVoiceJoinTransition({
         type: "reset",
+      });
+      return;
+    }
+
+    const targetVoiceSessionChannelKey = deps.channelKey(guildId, channel.channelId);
+    if (options.voiceSessionChannelKey() === targetVoiceSessionChannelKey) {
+      applyVoiceJoinTransition({
+        type: "succeed",
+        statusMessage: "Voice connected.",
       });
       return;
     }
@@ -213,7 +226,7 @@ export function createVoiceOperationsController(
       });
 
       const startedAt = deps.now();
-      options.setVoiceSessionChannelKey(deps.channelKey(guildId, channel.channelId));
+      options.setVoiceSessionChannelKey(targetVoiceSessionChannelKey);
       options.setVoiceSessionStartedAtUnixMs(startedAt);
       options.setVoiceDurationClockUnixMs(startedAt);
       options.setVoiceSessionCapabilities({
