@@ -45,7 +45,6 @@ import {
   type UserLookupRecord,
   type UserId,
   type VoiceTokenRecord,
-  attachmentFromResponse,
   profileFromResponse,
   userLookupListFromResponse,
 } from "../domain/chat";
@@ -58,7 +57,6 @@ import { createWorkspaceApi } from "./api-workspace";
 
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
 const MAX_RESPONSE_BYTES = 64 * 1024;
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const MAX_ATTACHMENT_DOWNLOAD_BYTES = 26 * 1024 * 1024;
 const MAX_PROFILE_AVATAR_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 7_000;
@@ -454,6 +452,8 @@ const friendsApi = createFriendsApi({
 const messagesApi = createMessagesApi({
   requestJson,
   requestNoContent,
+  requestJsonWithBody,
+  requestBinary,
   createApiError(status, code, message) {
     return new ApiError(status, code, message);
   },
@@ -813,22 +813,7 @@ export async function uploadChannelAttachment(
   file: File,
   filename: AttachmentFilename,
 ): Promise<AttachmentRecord> {
-  if (file.size < 1 || file.size > MAX_ATTACHMENT_BYTES) {
-    throw new ApiError(400, "invalid_request", "Attachment size must be within server limits.");
-  }
-  const query = new URLSearchParams({ filename });
-  const headers: Record<string, string> = {};
-  if (file.type && file.type.length <= 128) {
-    headers["content-type"] = file.type;
-  }
-  const dto = await requestJsonWithBody({
-    method: "POST",
-    path: `/guilds/${guildId}/channels/${channelId}/attachments?${query.toString()}`,
-    accessToken: session.accessToken,
-    headers,
-    body: file,
-  });
-  return attachmentFromResponse(dto);
+  return messagesApi.uploadChannelAttachment(session, guildId, channelId, file, filename);
 }
 
 export async function downloadChannelAttachment(
@@ -837,10 +822,7 @@ export async function downloadChannelAttachment(
   channelId: ChannelId,
   attachmentId: AttachmentId,
 ): Promise<{ bytes: Uint8Array; mimeType: string | null }> {
-  return requestBinary({
-    path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
-    accessToken: session.accessToken,
-  });
+  return messagesApi.downloadChannelAttachment(session, guildId, channelId, attachmentId);
 }
 
 export async function downloadChannelAttachmentPreview(
@@ -849,12 +831,7 @@ export async function downloadChannelAttachmentPreview(
   channelId: ChannelId,
   attachmentId: AttachmentId,
 ): Promise<{ bytes: Uint8Array; mimeType: string | null }> {
-  return requestBinary({
-    path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
-    accessToken: session.accessToken,
-    timeoutMs: 15_000,
-    maxBytes: 12 * 1024 * 1024,
-  });
+  return messagesApi.downloadChannelAttachmentPreview(session, guildId, channelId, attachmentId);
 }
 
 export async function deleteChannelAttachment(
@@ -863,11 +840,7 @@ export async function deleteChannelAttachment(
   channelId: ChannelId,
   attachmentId: AttachmentId,
 ): Promise<void> {
-  await requestNoContent({
-    method: "DELETE",
-    path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
-    accessToken: session.accessToken,
-  });
+  await messagesApi.deleteChannelAttachment(session, guildId, channelId, attachmentId);
 }
 
 export async function addGuildMember(

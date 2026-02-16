@@ -4,6 +4,8 @@ import {
 } from "../domain/auth";
 import {
   type AttachmentId,
+  type AttachmentFilename,
+  type AttachmentRecord,
   type ChannelId,
   type GuildId,
   type MessageContent,
@@ -15,6 +17,7 @@ import {
   type SearchResults,
   type ReactionEmoji,
   type ReactionRecord,
+  attachmentFromResponse,
   messageFromResponse,
   messageHistoryFromResponse,
   reactionFromResponse,
@@ -29,12 +32,30 @@ interface JsonRequest {
   accessToken?: AccessToken;
 }
 
+interface BodyRequest {
+  method: "POST" | "PATCH" | "DELETE";
+  path: string;
+  body: BodyInit;
+  accessToken?: AccessToken;
+  headers?: Record<string, string>;
+}
+
 interface MessagesApiDependencies {
   requestJson: (request: JsonRequest) => Promise<unknown>;
   requestNoContent: (request: JsonRequest) => Promise<void>;
+  requestJsonWithBody: (request: BodyRequest) => Promise<unknown>;
+  requestBinary: (input: {
+    path: string;
+    accessToken: AccessToken;
+    timeoutMs?: number;
+    maxBytes?: number;
+  }) => Promise<{ bytes: Uint8Array; mimeType: string | null }>;
   createApiError: (status: number, code: string, message: string) => Error;
   isApiErrorCode: (error: unknown, code: string) => boolean;
 }
+
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const ATTACHMENT_DOWNLOAD_PREVIEW_MAX_BYTES = 12 * 1024 * 1024;
 
 export interface MessagesApi {
   fetchChannelMessages(
@@ -89,6 +110,31 @@ export interface MessagesApi {
     session: AuthSession,
     guildId: GuildId,
   ): Promise<SearchReconcileResult>;
+  uploadChannelAttachment(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+    file: File,
+    filename: AttachmentFilename,
+  ): Promise<AttachmentRecord>;
+  downloadChannelAttachment(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+    attachmentId: AttachmentId,
+  ): Promise<{ bytes: Uint8Array; mimeType: string | null }>;
+  downloadChannelAttachmentPreview(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+    attachmentId: AttachmentId,
+  ): Promise<{ bytes: Uint8Array; mimeType: string | null }>;
+  deleteChannelAttachment(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+    attachmentId: AttachmentId,
+  ): Promise<void>;
 }
 
 export function createMessagesApi(input: MessagesApiDependencies): MessagesApi {
@@ -218,6 +264,53 @@ export function createMessagesApi(input: MessagesApiDependencies): MessagesApi {
         accessToken: session.accessToken,
       });
       return searchReconcileFromResponse(dto);
+    },
+
+    async uploadChannelAttachment(session, guildId, channelId, file, filename) {
+      if (file.size < 1 || file.size > MAX_ATTACHMENT_BYTES) {
+        throw input.createApiError(
+          400,
+          "invalid_request",
+          "Attachment size must be within server limits.",
+        );
+      }
+      const query = new URLSearchParams({ filename });
+      const headers: Record<string, string> = {};
+      if (file.type && file.type.length <= 128) {
+        headers["content-type"] = file.type;
+      }
+      const dto = await input.requestJsonWithBody({
+        method: "POST",
+        path: `/guilds/${guildId}/channels/${channelId}/attachments?${query.toString()}`,
+        accessToken: session.accessToken,
+        headers,
+        body: file,
+      });
+      return attachmentFromResponse(dto);
+    },
+
+    async downloadChannelAttachment(session, guildId, channelId, attachmentId) {
+      return input.requestBinary({
+        path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
+        accessToken: session.accessToken,
+      });
+    },
+
+    async downloadChannelAttachmentPreview(session, guildId, channelId, attachmentId) {
+      return input.requestBinary({
+        path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
+        accessToken: session.accessToken,
+        timeoutMs: 15_000,
+        maxBytes: ATTACHMENT_DOWNLOAD_PREVIEW_MAX_BYTES,
+      });
+    },
+
+    async deleteChannelAttachment(session, guildId, channelId, attachmentId) {
+      await input.requestNoContent({
+        method: "DELETE",
+        path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
+        accessToken: session.accessToken,
+      });
     },
   };
 }

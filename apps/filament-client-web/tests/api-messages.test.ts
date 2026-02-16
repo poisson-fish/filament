@@ -1,5 +1,6 @@
 import { accessTokenFromInput, refreshTokenFromInput } from "../src/domain/auth";
 import {
+  attachmentFilenameFromInput,
   attachmentIdFromInput,
   channelIdFromInput,
   guildIdFromInput,
@@ -56,6 +57,8 @@ describe("api-messages", () => {
     const api = createMessagesApi({
       requestJson,
       requestNoContent: vi.fn(async () => undefined),
+      requestJsonWithBody: vi.fn(async () => null),
+      requestBinary: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: null })),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
       isApiErrorCode: () => false,
     });
@@ -83,6 +86,8 @@ describe("api-messages", () => {
         throw new MockApiError(500, "invalid_json", "Malformed server response.");
       }),
       requestNoContent: vi.fn(async () => undefined),
+      requestJsonWithBody: vi.fn(async () => null),
+      requestBinary: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: null })),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
       isApiErrorCode: (error, code) => error instanceof MockApiError && error.code === code,
     });
@@ -103,6 +108,8 @@ describe("api-messages", () => {
     const api = createMessagesApi({
       requestJson: vi.fn(async () => null),
       requestNoContent,
+      requestJsonWithBody: vi.fn(async () => null),
+      requestBinary: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: null })),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
       isApiErrorCode: () => false,
     });
@@ -125,6 +132,8 @@ describe("api-messages", () => {
     const api = createMessagesApi({
       requestJson,
       requestNoContent: vi.fn(async () => undefined),
+      requestJsonWithBody: vi.fn(async () => null),
+      requestBinary: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: null })),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
       isApiErrorCode: () => false,
     });
@@ -171,6 +180,8 @@ describe("api-messages", () => {
     const api = createMessagesApi({
       requestJson,
       requestNoContent: vi.fn(async () => undefined),
+      requestJsonWithBody: vi.fn(async () => null),
+      requestBinary: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: null })),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
       isApiErrorCode: () => false,
     });
@@ -199,6 +210,8 @@ describe("api-messages", () => {
     const api = createMessagesApi({
       requestJson,
       requestNoContent: vi.fn(async () => undefined),
+      requestJsonWithBody: vi.fn(async () => null),
+      requestBinary: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: null })),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
       isApiErrorCode: () => false,
     });
@@ -221,6 +234,8 @@ describe("api-messages", () => {
     const api = createMessagesApi({
       requestJson,
       requestNoContent,
+      requestJsonWithBody: vi.fn(async () => null),
+      requestBinary: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: null })),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
       isApiErrorCode: () => false,
     });
@@ -240,6 +255,81 @@ describe("api-messages", () => {
       method: "POST",
       path: `/guilds/${guildId}/search/reconcile`,
       accessToken: session.accessToken,
+    });
+  });
+
+  it("uploadChannelAttachment enforces size cap and uses body request primitive", async () => {
+    const requestJsonWithBody = vi.fn(async () => ({
+      attachment_id: "01ARZ3NDEKTSV4RRFFQ69G5FB4",
+      guild_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+      owner_id: "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+      filename: "avatar.png",
+      mime_type: "image/png",
+      size_bytes: 4,
+      sha256_hex: "a".repeat(64),
+    }));
+    const api = createMessagesApi({
+      requestJson: vi.fn(async () => null),
+      requestNoContent: vi.fn(async () => undefined),
+      requestJsonWithBody,
+      requestBinary: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: null })),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      isApiErrorCode: () => false,
+    });
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "avatar.png", { type: "image/png" });
+    const filename = attachmentFilenameFromInput("avatar.png");
+    await expect(
+      api.uploadChannelAttachment(session, guildId, channelId, file, filename),
+    ).resolves.toMatchObject({
+      attachmentId: "01ARZ3NDEKTSV4RRFFQ69G5FB4",
+      filename,
+    });
+
+    expect(requestJsonWithBody).toHaveBeenCalledWith({
+      method: "POST",
+      path: `/guilds/${guildId}/channels/${channelId}/attachments?filename=avatar.png`,
+      accessToken: session.accessToken,
+      headers: { "content-type": "image/png" },
+      body: file,
+    });
+
+    const oversizedFile = new File([new Uint8Array(25 * 1024 * 1024 + 1)], "large.bin", {
+      type: "application/octet-stream",
+    });
+    await expect(
+      api.uploadChannelAttachment(session, guildId, channelId, oversizedFile, attachmentFilenameFromInput("large.bin")),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+  });
+
+  it("attachment download delegates bounded binary requests", async () => {
+    const requestBinary = vi
+      .fn()
+      .mockResolvedValueOnce({ bytes: new Uint8Array([1]), mimeType: "image/png" })
+      .mockResolvedValueOnce({ bytes: new Uint8Array([2]), mimeType: "image/png" });
+    const attachmentId = attachmentIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB4");
+    const api = createMessagesApi({
+      requestJson: vi.fn(async () => null),
+      requestNoContent: vi.fn(async () => undefined),
+      requestJsonWithBody: vi.fn(async () => null),
+      requestBinary,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      isApiErrorCode: () => false,
+    });
+
+    await api.downloadChannelAttachment(session, guildId, channelId, attachmentId);
+    await api.downloadChannelAttachmentPreview(session, guildId, channelId, attachmentId);
+
+    expect(requestBinary).toHaveBeenNthCalledWith(1, {
+      path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
+      accessToken: session.accessToken,
+    });
+    expect(requestBinary).toHaveBeenNthCalledWith(2, {
+      path: `/guilds/${guildId}/channels/${channelId}/attachments/${attachmentId}`,
+      accessToken: session.accessToken,
+      timeoutMs: 15_000,
+      maxBytes: 12 * 1024 * 1024,
     });
   });
 });
