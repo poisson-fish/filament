@@ -93,6 +93,28 @@ describe("api boundary hardening", () => {
     expect(probe.cancelCalls()).toBeGreaterThan(0);
   });
 
+  it("ignores malformed content-length and still enforces streaming response size caps", async () => {
+    const chunk = new TextEncoder().encode("A".repeat(4096));
+    const chunks = Array.from({ length: 40 }, () => chunk);
+    const probe = createProbeStream(chunks);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(probe.stream, {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-length": "not-a-number",
+          },
+        }),
+      ),
+    );
+
+    await expect(fetchHealth()).rejects.toMatchObject({ status: 200, code: "oversized_response" });
+    expect(probe.cancelCalls()).toBeGreaterThan(0);
+    expect(probe.emittedChunks()).toBeLessThan(chunks.length);
+  });
+
   it("rejects oversized binary responses before consuming full payload", async () => {
     const chunk = new Uint8Array(256 * 1024).fill(0x5a);
     const chunks = Array.from({ length: 64 }, () => chunk);
