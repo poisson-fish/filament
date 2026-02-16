@@ -4,6 +4,10 @@ mod connection_subscriptions;
 mod search_batch_drain;
 mod search_enqueue;
 mod search_apply_batch;
+mod subscribe_ack;
+mod hydration_merge;
+mod message_record;
+mod presence_disconnect_events;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
@@ -102,6 +106,10 @@ use connection_subscriptions::remove_connection_from_subscriptions;
 use search_batch_drain::drain_search_batch;
 use search_enqueue::enqueue_search_command;
 use search_apply_batch::apply_search_batch_with_ack;
+use subscribe_ack::{try_enqueue_subscribed_event, SubscribeAckEnqueueResult};
+use hydration_merge::merge_hydration_maps;
+use message_record::{build_in_memory_message_record, build_message_response_from_record};
+use presence_disconnect_events::build_offline_presence_updates;
 
 use super::{
     auth::{
@@ -110,7 +118,7 @@ use super::{
     },
     core::{
         AppState, AuthContext, ConnectionControl, ConnectionPresence, IndexedMessage,
-        MessageRecord, SearchCommand, SearchFields, SearchIndexState, SearchOperation,
+        SearchCommand, SearchFields, SearchIndexState, SearchOperation,
         SearchService, VoiceStreamKind, DEFAULT_SEARCH_RESULT_LIMIT,
         MAX_TRACKED_VOICE_CHANNELS, MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
         SEARCH_INDEX_QUEUE_CAPACITY,
@@ -336,16 +344,20 @@ pub(crate) async fn handle_gateway_connection(
 
                 let subscribed_event =
                     gateway_events::subscribed(&subscribe.guild_id, &subscribe.channel_id);
-                if outbound_tx.try_send(subscribed_event.payload).is_err() {
-                    record_gateway_event_dropped(
-                        "connection",
-                        subscribed_event.event_type,
-                        "full_queue",
-                    );
-                    disconnect_reason = "outbound_queue_full";
-                    break;
+                match try_enqueue_subscribed_event(&outbound_tx, subscribed_event.payload) {
+                    SubscribeAckEnqueueResult::Enqueued => {
+                        record_gateway_event_emitted("connection", subscribed_event.event_type);
+                    }
+                    SubscribeAckEnqueueResult::Rejected => {
+                        record_gateway_event_dropped(
+                            "connection",
+                            subscribed_event.event_type,
+                            "full_queue",
+                        );
+                        disconnect_reason = "outbound_queue_full";
+                        break;
+                    }
                 }
-                record_gateway_event_emitted("connection", subscribed_event.event_type);
                 handle_voice_subscribe(
                     &state,
                     &subscribe.guild_id,
@@ -481,15 +493,15 @@ pub(crate) async fn create_message_internal(
         .ok_or(AuthFailure::NotFound)?;
 
     let message_id = Ulid::new().to_string();
-    let record = MessageRecord {
-        id: message_id.clone(),
-        author_id: auth.user_id,
+    let created_at_unix = now_unix();
+    let record = build_in_memory_message_record(
+        message_id.clone(),
+        auth.user_id,
         content,
-        markdown_tokens: markdown_tokens.clone(),
-        attachment_ids: attachment_ids.clone(),
-        created_at_unix: now_unix(),
-        reactions: HashMap::new(),
-    };
+        markdown_tokens.clone(),
+        attachment_ids.clone(),
+        created_at_unix,
+    );
     if !attachment_ids.is_empty() {
         let mut attachments = state.attachments.write().await;
         bind_message_attachments_in_memory(
@@ -505,17 +517,13 @@ pub(crate) async fn create_message_internal(
     drop(guilds);
 
     let attachments = attachments_for_message_in_memory(state, &record.attachment_ids).await?;
-    let response = MessageResponse {
-        message_id,
-        guild_id: guild_id.to_owned(),
-        channel_id: channel_id.to_owned(),
-        author_id: auth.user_id.to_string(),
-        content: record.content,
-        markdown_tokens: record.markdown_tokens,
+    let response = build_message_response_from_record(
+        &record,
+        guild_id,
+        channel_id,
         attachments,
-        reactions: reaction_summaries_from_users(&record.reactions),
-        created_at_unix: record.created_at_unix,
-    };
+        reaction_summaries_from_users(&record.reactions),
+    );
 
     let event = gateway_events::message_create(&response);
     broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
@@ -826,10 +834,7 @@ pub(crate) async fn hydrate_messages_by_id(
                 .await?;
         let reaction_map =
             reaction_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered).await?;
-        for (id, message) in &mut by_id {
-            message.attachments = attachment_map.get(id).cloned().unwrap_or_default();
-            message.reactions = reaction_map.get(id).cloned().unwrap_or_default();
-        }
+        merge_hydration_maps(&mut by_id, &attachment_map, &reaction_map);
 
         let hydrated = collect_hydrated_in_request_order(by_id, message_ids);
         return Ok(hydrated);
@@ -1129,9 +1134,9 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
             .await;
     }
 
-    for guild_id in outcome.offline_guilds {
-        let update =
-            gateway_events::presence_update(&guild_id, removed_presence.user_id, "offline");
+    for (guild_id, update) in
+        build_offline_presence_updates(outcome.offline_guilds, removed_presence.user_id)
+    {
         broadcast_guild_event(state, &guild_id, &update).await;
     }
 }
