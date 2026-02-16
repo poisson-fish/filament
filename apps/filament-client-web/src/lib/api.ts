@@ -48,6 +48,7 @@ import {
 } from "../domain/chat";
 import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
+import { createAuthClient } from "./api-auth-client";
 import { createFriendsApi } from "./api-friends";
 import { createMessagesApi } from "./api-messages";
 import { createSystemApi } from "./api-system";
@@ -443,6 +444,8 @@ const authApi = createAuthApi({
   },
 });
 
+const authClient = createAuthClient({ authApi });
+
 const friendsApi = createFriendsApi({
   requestJson,
   requestNoContent,
@@ -482,66 +485,16 @@ const systemApi = createSystemApi({
   },
 });
 
-export async function registerWithPassword(input: {
-  username: Username;
-  password: Password;
-  captchaToken?: CaptchaToken;
-}): Promise<void> {
-  await authApi.registerWithPassword(input);
-}
-
-export async function loginWithPassword(input: {
-  username: Username;
-  password: Password;
-}): Promise<AuthSession> {
-  return authApi.loginWithPassword(input);
-}
-
-export async function refreshAuthSession(
-  refreshToken: RefreshToken,
-): Promise<AuthSession> {
-  return authApi.refreshAuthSession(refreshToken);
-}
-
-export async function logoutAuthSession(refreshToken: RefreshToken): Promise<void> {
-  await authApi.logoutAuthSession(refreshToken);
-}
-
-export async function fetchMe(session: AuthSession): Promise<ProfileRecord> {
-  return authApi.fetchMe(session);
-}
-
-export async function fetchUserProfile(
-  session: AuthSession,
-  userId: UserId,
-): Promise<ProfileRecord> {
-  return authApi.fetchUserProfile(session, userId);
-}
-
-export async function updateMyProfile(
-  session: AuthSession,
-  input: { username?: Username; aboutMarkdown?: string },
-): Promise<ProfileRecord> {
-  return authApi.updateMyProfile(session, input);
-}
-
-export async function uploadMyProfileAvatar(
-  session: AuthSession,
-  file: File,
-): Promise<ProfileRecord> {
-  return authApi.uploadMyProfileAvatar(session, file);
-}
-
-export function profileAvatarUrl(userId: UserId, avatarVersion: number): string {
-  return authApi.profileAvatarUrl(userId, avatarVersion);
-}
-
-export async function lookupUsersByIds(
-  session: AuthSession,
-  userIds: UserId[],
-): Promise<UserLookupRecord[]> {
-  return authApi.lookupUsersByIds(session, userIds);
-}
+export const registerWithPassword = authClient.registerWithPassword;
+export const loginWithPassword = authClient.loginWithPassword;
+export const refreshAuthSession = authClient.refreshAuthSession;
+export const logoutAuthSession = authClient.logoutAuthSession;
+export const fetchMe = authClient.fetchMe;
+export const fetchUserProfile = authClient.fetchUserProfile;
+export const updateMyProfile = authClient.updateMyProfile;
+export const uploadMyProfileAvatar = authClient.uploadMyProfileAvatar;
+export const profileAvatarUrl = authClient.profileAvatarUrl;
+export const lookupUsersByIds = authClient.lookupUsersByIds;
 
 export async function fetchFriends(session: AuthSession): Promise<FriendRecord[]> {
   return friendsApi.fetchFriends(session);
