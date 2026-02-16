@@ -12,6 +12,7 @@ import {
   createVoiceState,
   DEFAULT_VOICE_SESSION_CAPABILITIES,
 } from "../src/features/app-shell/state/voice-state";
+import { isMessageHistoryLoading } from "../src/features/app-shell/state/message-state";
 import { createWorkspaceState } from "../src/features/app-shell/state/workspace-state";
 import { VOICE_DEVICE_SETTINGS_STORAGE_KEY } from "../src/lib/voice-device-settings";
 
@@ -159,5 +160,22 @@ describe("app shell state factories", () => {
     expect(workspaceState.friendships.friendStatus()).toBe("updated");
     expect(workspaceState.discovery.searchQuery()).toBe("incident");
     expect(overlayState.isChannelRailCollapsed()).toBe(true);
+  });
+
+  it("treats any running history operation as loading", () => {
+    expect(
+      isMessageHistoryLoading({
+        phase: "running",
+        statusMessage: "",
+        errorMessage: "",
+      }),
+    ).toBe(true);
+    expect(
+      isMessageHistoryLoading({
+        phase: "failed",
+        statusMessage: "",
+        errorMessage: "Unable to load messages.",
+      }),
+    ).toBe(false);
   });
 });

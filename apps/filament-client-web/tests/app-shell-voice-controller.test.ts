@@ -626,4 +626,44 @@ describe("app shell voice controller", () => {
     expect(harness.voiceStatus()).toBe("Voice connected.");
     expect(harness.voiceError()).toBe("");
   });
+
+  it("clears stale failed join state during same-channel idempotent join", async () => {
+    const issueVoiceTokenMock = vi.fn(async () =>
+      voiceTokenFromResponse({
+        token: "T".repeat(96),
+        livekit_url: "wss://livekit.example.com",
+        room: "filament.voice.room",
+        identity: "u.identity.stale",
+        can_publish: true,
+        can_subscribe: true,
+        publish_sources: ["microphone"],
+        expires_in_secs: 300,
+      }),
+    );
+
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        initialVoiceJoinState: {
+          phase: "failed",
+          statusMessage: "",
+          errorMessage: "Unable to join voice.",
+        },
+        initialVoiceSessionChannelKey: `${GUILD_ID}|${VOICE_CHANNEL.channelId}`,
+        dependencies: {
+          issueVoiceToken: issueVoiceTokenMock,
+        },
+      }),
+    );
+
+    await harness.controller.joinVoiceChannel();
+
+    expect(issueVoiceTokenMock).not.toHaveBeenCalled();
+    expect(harness.voiceJoinState()).toEqual({
+      phase: "succeeded",
+      statusMessage: "Voice connected.",
+      errorMessage: "",
+    });
+    expect(harness.voiceStatus()).toBe("Voice connected.");
+    expect(harness.voiceError()).toBe("");
+  });
 });

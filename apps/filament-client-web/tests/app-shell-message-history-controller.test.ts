@@ -452,4 +452,92 @@ describe("app shell message history controller", () => {
     pendingRefresh.resolve({ messages: [], nextBefore: null });
     await flush();
   });
+
+  it("fails closed for load-older when refresh state is running with null load target", async () => {
+    const [session] = createSignal(SESSION);
+    const [activeGuildId] = createSignal(GUILD_ID);
+    const [activeChannelId] = createSignal(CHANNEL_ID);
+    const [canAccessActiveChannel] = createSignal(true);
+    const [nextBefore, setNextBefore] = createSignal<
+      ReturnType<typeof messageIdFromInput> | null
+    >(messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"));
+    const [refreshMessagesState, setRefreshMessagesState] =
+      createSignal<AsyncOperationState>({
+        phase: "running",
+        statusMessage: "",
+        errorMessage: "",
+      });
+    const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] =
+      createSignal<MessageHistoryLoadTarget | null>(null);
+    const [messages, setMessages] = createSignal<MessageRecord[]>([]);
+
+    const fetchChannelMessagesMock = vi.fn(async () => ({
+      messages: [
+        messageFixture({
+          messageId: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+          authorId: "01ARZ3NDEKTSV4RRFFQ69G5FAA",
+          content: "older",
+          createdAtUnix: 1,
+        }),
+      ],
+      nextBefore: null,
+    }));
+
+    const controller = createRoot(() =>
+      createMessageHistoryController(
+        {
+          session,
+          activeGuildId,
+          activeChannelId,
+          canAccessActiveChannel,
+          nextBefore,
+          refreshMessagesState,
+          messageHistoryLoadTarget,
+          setMessages,
+          setNextBefore,
+          setShowLoadOlderButton: vi.fn(),
+          setMessageError: vi.fn(),
+          setRefreshMessagesState,
+          setMessageHistoryLoadTarget,
+          setEditingMessageId: vi.fn(),
+          setEditingDraft: vi.fn(),
+          setReactionState: vi.fn(),
+          setPendingReactionByKey: vi.fn(),
+          setOpenReactionPickerMessageId: vi.fn(),
+          setSearchResults: vi.fn(),
+          setSearchError: vi.fn(),
+          setSearchOpsStatus: vi.fn(),
+          setAttachmentStatus: vi.fn(),
+          setAttachmentError: vi.fn(),
+          setVoiceStatus: vi.fn(),
+          setVoiceError: vi.fn(),
+          captureScrollMetrics: vi.fn(() => null),
+          restoreScrollAfterPrepend: vi.fn(),
+          scrollMessageListToBottom: vi.fn(),
+        },
+        {
+          fetchChannelMessages: fetchChannelMessagesMock,
+        },
+      ),
+    );
+
+    await flush();
+    fetchChannelMessagesMock.mockClear();
+    setMessages([]);
+    setNextBefore(messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"));
+    setRefreshMessagesState({
+      phase: "running",
+      statusMessage: "",
+      errorMessage: "",
+    });
+    setMessageHistoryLoadTarget(null);
+
+    await controller.loadOlderMessages();
+
+    expect(fetchChannelMessagesMock).not.toHaveBeenCalled();
+    expect(messages()).toEqual([]);
+    expect(nextBefore()).toEqual(messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"));
+    expect(messageHistoryLoadTarget()).toBeNull();
+    expect(refreshMessagesState().phase).toBe("running");
+  });
 });

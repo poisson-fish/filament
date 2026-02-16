@@ -19,6 +19,7 @@ import {
   type AsyncOperationState,
 } from "../state/async-operation-state";
 import {
+  isMessageHistoryLoading,
   isMessageHistoryLoadingForTarget,
   type MessageHistoryLoadTarget,
 } from "../state/message-state";
@@ -152,16 +153,7 @@ export function createMessageHistoryController(
       !guildId ||
       !channelId ||
       !before ||
-      isMessageHistoryLoadingForTarget(
-        options.refreshMessagesState(),
-        options.messageHistoryLoadTarget(),
-        "refresh",
-      ) ||
-      isMessageHistoryLoadingForTarget(
-        options.refreshMessagesState(),
-        options.messageHistoryLoadTarget(),
-        "load-older",
-      )
+      isMessageHistoryLoading(options.refreshMessagesState())
     ) {
       return;
     }

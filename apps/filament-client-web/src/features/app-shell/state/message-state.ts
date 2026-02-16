@@ -14,12 +14,16 @@ import {
 
 export type MessageHistoryLoadTarget = "refresh" | "load-older";
 
+export function isMessageHistoryLoading(operation: AsyncOperationState): boolean {
+  return operation.phase === "running";
+}
+
 export function isMessageHistoryLoadingForTarget(
   operation: AsyncOperationState,
   activeLoadTarget: MessageHistoryLoadTarget | null,
   target: MessageHistoryLoadTarget,
 ): boolean {
-  return operation.phase === "running" && activeLoadTarget === target;
+  return isMessageHistoryLoading(operation) && activeLoadTarget === target;
 }
 
 export function createMessageState() {
