@@ -20,6 +20,7 @@ mod ingress_message_create;
 mod voice_sync_dispatch;
 mod presence_sync_dispatch;
 mod search_query_input;
+mod voice_cleanup_registry;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -91,9 +92,6 @@ use voice_presence::{
     collect_voice_snapshots, voice_channel_key,
 };
 use voice_registration::apply_voice_registration_transition;
-use voice_registry::{
-    remove_user_voice_participant_removals, take_expired_voice_participant_removals,
-};
 use search_validation::validate_search_query_limits;
 use connection_control::signal_slow_connections_close;
 use search_reconcile::compute_reconciliation;
@@ -104,7 +102,9 @@ use search_collect_guild::collect_indexed_messages_for_guild_in_memory;
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 use search_query_exec::run_search_query_against_index;
 use fanout_user_targets::connection_ids_for_user;
-use voice_cleanup_events::plan_voice_removal_broadcasts;
+use voice_cleanup_registry::{
+    disconnected_user_voice_removal_broadcasts, expired_voice_removal_broadcasts,
+};
 use search_schema::build_search_schema as build_search_schema_impl;
 use search_apply::apply_search_operation as apply_search_operation_impl;
 use message_prepare::prepare_message_body;
@@ -803,12 +803,12 @@ pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, even
 }
 
 async fn prune_expired_voice_participants(state: &AppState, now_unix: i64) {
-    let removed = {
+    let planned = {
         let mut voice = state.voice_participants.write().await;
-        take_expired_voice_participant_removals(&mut voice, now_unix)
+        expired_voice_removal_broadcasts(&mut voice, now_unix)
     };
 
-    for (channel_subscription_key, event) in plan_voice_removal_broadcasts(removed, now_unix) {
+    for (channel_subscription_key, event) in planned {
         broadcast_channel_event(state, &channel_subscription_key, &event).await;
     }
 }
@@ -876,14 +876,12 @@ async fn remove_disconnected_user_voice_participants(
     user_id: UserId,
     disconnected_at_unix: i64,
 ) {
-    let removed = {
+    let planned = {
         let mut voice = state.voice_participants.write().await;
-        remove_user_voice_participant_removals(&mut voice, user_id)
+        disconnected_user_voice_removal_broadcasts(&mut voice, user_id, disconnected_at_unix)
     };
 
-    for (channel_subscription_key, event) in
-        plan_voice_removal_broadcasts(removed, disconnected_at_unix)
-    {
+    for (channel_subscription_key, event) in planned {
         broadcast_channel_event(state, &channel_subscription_key, &event).await;
     }
 }
