@@ -421,6 +421,89 @@ describe("app shell voice controller", () => {
     expect(harness.voiceError()).toBe("Unable to join voice.");
   });
 
+  it("keeps succeeded join state when microphone activation fails while populating voice error", async () => {
+    const issueVoiceTokenMock = vi.fn(async () =>
+      voiceTokenFromResponse({
+        token: "T".repeat(96),
+        livekit_url: "wss://livekit.example.com",
+        room: "filament.voice.room",
+        identity: "u.identity.456",
+        can_publish: true,
+        can_subscribe: true,
+        publish_sources: ["microphone"],
+        expires_in_secs: 300,
+      }),
+    );
+    const setMicrophoneEnabled = vi.fn(async () => {
+      throw new Error("mic_failed");
+    });
+
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        dependencies: {
+          issueVoiceToken: issueVoiceTokenMock,
+          createRtcClient: () =>
+            createRtcClientMock({
+              setMicrophoneEnabled,
+            }),
+        },
+      }),
+    );
+
+    await harness.controller.joinVoiceChannel();
+
+    expect(setMicrophoneEnabled).toHaveBeenCalledWith(true);
+    expect(harness.voiceJoinState()).toEqual({
+      phase: "succeeded",
+      statusMessage: "Voice connected.",
+      errorMessage: "",
+    });
+    expect(harness.voiceStatus()).toBe("Voice connected.");
+    expect(harness.voiceError()).toBe("Connected, but microphone activation failed.");
+  });
+
+  it("clears stale voice error when a later join succeeds", async () => {
+    let joinAttempt = 0;
+    const issueVoiceTokenMock = vi.fn(async () => {
+      joinAttempt += 1;
+      if (joinAttempt === 1) {
+        throw new Error("denied");
+      }
+      return voiceTokenFromResponse({
+        token: "T".repeat(96),
+        livekit_url: "wss://livekit.example.com",
+        room: "filament.voice.room",
+        identity: "u.identity.789",
+        can_publish: true,
+        can_subscribe: true,
+        publish_sources: ["microphone"],
+        expires_in_secs: 300,
+      });
+    });
+
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        dependencies: {
+          issueVoiceToken: issueVoiceTokenMock,
+          createRtcClient: () => createRtcClientMock(),
+        },
+      }),
+    );
+
+    await harness.controller.joinVoiceChannel();
+    expect(harness.voiceJoinState().phase).toBe("failed");
+    expect(harness.voiceError()).toBe("Unable to join voice.");
+
+    await harness.controller.joinVoiceChannel();
+    expect(harness.voiceJoinState()).toEqual({
+      phase: "succeeded",
+      statusMessage: "Voice connected. Microphone enabled.",
+      errorMessage: "",
+    });
+    expect(harness.voiceStatus()).toBe("Voice connected. Microphone enabled.");
+    expect(harness.voiceError()).toBe("");
+  });
+
   it("resets stale voice join status and error when join preconditions are not met", async () => {
     const harness = createRoot(() =>
       createVoiceOperationsHarness({
