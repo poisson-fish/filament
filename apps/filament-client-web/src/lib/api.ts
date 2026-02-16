@@ -50,6 +50,7 @@ import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
 import { createFriendsApi } from "./api-friends";
 import { createMessagesApi } from "./api-messages";
+import { createSystemApi } from "./api-system";
 import { createVoiceApi } from "./api-voice";
 import { createWorkspaceApi } from "./api-workspace";
 
@@ -471,6 +472,13 @@ const workspaceApi = createWorkspaceApi({
   },
 });
 
+const systemApi = createSystemApi({
+  requestJson,
+  createApiError(status, code, message) {
+    return new ApiError(status, code, message);
+  },
+});
+
 export async function registerWithPassword(input: {
   username: Username;
   password: Password;
@@ -570,26 +578,11 @@ export async function removeFriend(
 }
 
 export async function fetchHealth(): Promise<{ status: "ok" }> {
-  const dto = await requestJson({
-    method: "GET",
-    path: "/health",
-  });
-  if (!dto || typeof dto !== "object" || (dto as { status?: unknown }).status !== "ok") {
-    throw new ApiError(500, "invalid_health_shape", "Unexpected health response.");
-  }
-  return { status: "ok" };
+  return systemApi.fetchHealth();
 }
 
 export async function echoMessage(input: { message: string }): Promise<string> {
-  const dto = await requestJson({
-    method: "POST",
-    path: "/echo",
-    body: { message: input.message },
-  });
-  if (!dto || typeof dto !== "object" || typeof (dto as { message?: unknown }).message !== "string") {
-    throw new ApiError(500, "invalid_echo_shape", "Unexpected echo response.");
-  }
-  return (dto as { message: string }).message;
+  return systemApi.echoMessage(input);
 }
 
 export async function createGuild(
