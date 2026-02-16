@@ -49,6 +49,9 @@ mod connection_control;
 mod voice_registration;
 mod search_reconcile;
 mod hydration_order;
+mod search_collect_all;
+mod search_collect_guild;
+mod search_indexed_message;
 
 use fanout_dispatch::dispatch_gateway_payload;
 use fanout_guild::dispatch_guild_payload;
@@ -71,6 +74,8 @@ use search_validation::validate_search_query_limits;
 use connection_control::signal_slow_connections_close;
 use search_reconcile::compute_reconciliation;
 use hydration_order::collect_hydrated_in_request_order;
+use search_collect_all::collect_all_indexed_messages_in_memory;
+use search_collect_guild::collect_indexed_messages_for_guild_in_memory;
 
 use super::{
     auth::{
@@ -658,14 +663,7 @@ pub(crate) fn apply_search_operation(
 }
 
 pub(crate) fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
-    IndexedMessage {
-        message_id: message.message_id.clone(),
-        guild_id: message.guild_id.clone(),
-        channel_id: message.channel_id.clone(),
-        author_id: message.author_id.clone(),
-        created_at_unix: message.created_at_unix,
-        content: message.content.clone(),
-    }
+    search_indexed_message::indexed_message_from_response(message)
 }
 
 pub(crate) fn validate_search_query(
@@ -755,22 +753,7 @@ pub(crate) async fn collect_all_indexed_messages(
     }
 
     let guilds = state.guilds.read().await;
-    let mut docs = Vec::new();
-    for (guild_id, guild) in &*guilds {
-        for (channel_id, channel) in &guild.channels {
-            for message in &channel.messages {
-                docs.push(IndexedMessage {
-                    message_id: message.id.clone(),
-                    guild_id: guild_id.clone(),
-                    channel_id: channel_id.clone(),
-                    author_id: message.author_id.to_string(),
-                    content: message.content.clone(),
-                    created_at_unix: message.created_at_unix,
-                });
-            }
-        }
-    }
-    Ok(docs)
+    Ok(collect_all_indexed_messages_in_memory(&guilds))
 }
 
 pub(crate) async fn collect_indexed_messages_for_guild(
@@ -819,26 +802,7 @@ pub(crate) async fn collect_indexed_messages_for_guild(
     }
 
     let guilds = state.guilds.read().await;
-    let Some(guild) = guilds.get(guild_id) else {
-        return Err(AuthFailure::NotFound);
-    };
-    let mut docs = Vec::new();
-    for (channel_id, channel) in &guild.channels {
-        for message in &channel.messages {
-            if docs.len() >= max_docs {
-                return Err(AuthFailure::InvalidRequest);
-            }
-            docs.push(IndexedMessage {
-                message_id: message.id.clone(),
-                guild_id: guild_id.to_owned(),
-                channel_id: channel_id.clone(),
-                author_id: message.author_id.to_string(),
-                content: message.content.clone(),
-                created_at_unix: message.created_at_unix,
-            });
-        }
-    }
-    Ok(docs)
+    collect_indexed_messages_for_guild_in_memory(&guilds, guild_id, max_docs)
 }
 
 pub(crate) async fn collect_index_message_ids_for_guild(
