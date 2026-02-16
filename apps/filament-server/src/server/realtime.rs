@@ -5,7 +5,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::anyhow;
@@ -34,6 +34,12 @@ use tantivy::{
 use tokio::sync::{mpsc, oneshot, watch};
 use ulid::Ulid;
 use uuid::Uuid;
+
+mod ingress_rate_limit;
+mod ingress_message;
+
+use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
+use ingress_rate_limit::allow_gateway_ingress;
 
 use super::{
     auth::{
@@ -173,26 +179,16 @@ pub(crate) async fn handle_gateway_connection(
             break;
         };
 
-        let payload: Vec<u8> = match message {
-            Message::Text(text) => {
-                if text.len() > state.runtime.max_gateway_event_bytes {
-                    disconnect_reason = "event_too_large";
-                    break;
-                }
-                text.as_bytes().to_vec()
-            }
-            Message::Binary(bytes) => {
-                if bytes.len() > state.runtime.max_gateway_event_bytes {
-                    disconnect_reason = "event_too_large";
-                    break;
-                }
-                bytes.to_vec()
-            }
-            Message::Close(_) => {
-                disconnect_reason = "client_close";
+        let payload: Vec<u8> = match decode_gateway_ingress_message(
+            message,
+            state.runtime.max_gateway_event_bytes,
+        ) {
+            GatewayIngressMessageDecode::Payload(payload) => payload,
+            GatewayIngressMessageDecode::Continue => continue,
+            GatewayIngressMessageDecode::Disconnect(reason) => {
+                disconnect_reason = reason;
                 break;
             }
-            Message::Ping(_) | Message::Pong(_) => continue,
         };
 
         if !allow_gateway_ingress(
@@ -1688,25 +1684,4 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
             gateway_events::presence_update(&guild_id, removed_presence.user_id, "offline");
         broadcast_guild_event(state, &guild_id, &update).await;
     }
-}
-
-pub(crate) fn allow_gateway_ingress(
-    ingress: &mut VecDeque<Instant>,
-    limit: u32,
-    window: Duration,
-) -> bool {
-    let now = Instant::now();
-    while ingress
-        .front()
-        .is_some_and(|oldest| now.duration_since(*oldest) > window)
-    {
-        let _ = ingress.pop_front();
-    }
-
-    if ingress.len() >= limit as usize {
-        return false;
-    }
-
-    ingress.push_back(now);
-    true
 }

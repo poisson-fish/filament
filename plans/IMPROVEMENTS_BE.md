@@ -72,6 +72,9 @@ Scope: `apps/filament-server`, `crates/filament-core`, `crates/filament-protocol
 | BE-06 | P1 | API surface governance | Router currently declares many routes inline; growth risks drift against docs/contracts | Add generated/validated route manifest checks tied to `docs/API.md` and gateway contract docs | CI catches undocumented route/event drift before merge |
 | BE-07 | P2 | Runtime state abstraction | `AppState` holds many maps/queues directly, increasing cognitive load and lock-scope risk | Introduce bounded state components (auth/session store, membership store, realtime registry) behind typed facades | Lower lock contention in hotspots and clearer ownership in code review |
 
+Item Status
+- BE-01: In progress status delta on 2026-02-15 (slices 1-2 completed: extracted gateway ingress rate-limit enforcement into `apps/filament-server/src/server/realtime/ingress_rate_limit.rs` with focused unit coverage, extracted gateway ingress websocket message decoding into `apps/filament-server/src/server/realtime/ingress_message.rs` with focused unit coverage, and rewired `apps/filament-server/src/server/realtime.rs` to delegate both paths while preserving fail-closed event-size and disconnect handling semantics).
+
 ### Recommended Iteration Order (Backend)
 1. BE-01 Realtime module decomposition
 2. BE-02 Event emitter modularization
@@ -83,3 +86,5 @@ Scope: `apps/filament-server`, `crates/filament-core`, `crates/filament-protocol
 
 ### Backend Iteration Log
 - 2026-02-12: Initial objective backend assessment captured; no server behavior changed in this pass.
+- 2026-02-15: BE-01 slice 1 completed. Extracted ingress rate-limit window handling from `apps/filament-server/src/server/realtime.rs` into `apps/filament-server/src/server/realtime/ingress_rate_limit.rs` and added focused unit tests covering under-limit allow, at-limit reject, and expired-entry eviction behavior. Targeted validation passed (`cargo test -p filament-server ingress_rate_limit` -> 3 passed, 0 failed).
+- 2026-02-15: BE-01 slice 2 completed. Extracted websocket ingress message decoding (text/binary payload caps plus close/ping handling) from `apps/filament-server/src/server/realtime.rs` into `apps/filament-server/src/server/realtime/ingress_message.rs` and added focused unit tests for payload decode, oversized binary fail-closed disconnect, close disconnect reason mapping, and ping passthrough. Targeted validation passed (`cargo test -p filament-server ingress_message` -> 4 passed, 0 failed).
