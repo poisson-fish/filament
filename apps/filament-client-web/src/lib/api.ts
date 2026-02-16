@@ -26,19 +26,10 @@ import {
   type FriendRequestCreateResult,
   type FriendRequestList,
   type MediaPublishSource,
-  type MessageContent,
-  type MessageHistory,
-  type MessageId,
-  type MessageRecord,
   type PublicGuildDirectory,
   type ModerationResult,
   type PermissionName,
-  type ReactionEmoji,
-  type ReactionRecord,
   type RoleName,
-  type SearchQuery,
-  type SearchReconcileResult,
-  type SearchResults,
   type ProfileRecord,
   type WorkspaceRoleId,
   type WorkspaceRoleName,
@@ -50,6 +41,7 @@ import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
 import { createAuthClient } from "./api-auth-client";
 import { createFriendsApi } from "./api-friends";
+import { createMessagesClient } from "./api-messages-client";
 import { createMessagesApi } from "./api-messages";
 import { createSystemApi } from "./api-system";
 import { createVoiceApi } from "./api-voice";
@@ -467,6 +459,10 @@ const messagesApi = createMessagesApi({
   },
 });
 
+const messagesClient = createMessagesClient({
+  messagesApi,
+});
+
 const voiceApi = createVoiceApi({
   requestJson,
 });
@@ -600,121 +596,19 @@ export async function fetchChannelPermissionSnapshot(
   return workspaceApi.fetchChannelPermissionSnapshot(session, guildId, channelId);
 }
 
-export async function fetchChannelMessages(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  input?: { limit?: number; before?: MessageId },
-): Promise<MessageHistory> {
-  return messagesApi.fetchChannelMessages(session, guildId, channelId, input);
-}
-
-export async function createChannelMessage(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  input: { content: MessageContent; attachmentIds?: AttachmentId[] },
-): Promise<MessageRecord> {
-  return messagesApi.createChannelMessage(session, guildId, channelId, input);
-}
-
-export async function editChannelMessage(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  messageId: MessageId,
-  input: { content: MessageContent },
-): Promise<MessageRecord> {
-  return messagesApi.editChannelMessage(session, guildId, channelId, messageId, input);
-}
-
-export async function deleteChannelMessage(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  messageId: MessageId,
-): Promise<void> {
-  await messagesApi.deleteChannelMessage(session, guildId, channelId, messageId);
-}
-
-export async function searchGuildMessages(
-  session: AuthSession,
-  guildId: GuildId,
-  input: { query: SearchQuery; limit?: number; channelId?: ChannelId },
-): Promise<SearchResults> {
-  return messagesApi.searchGuildMessages(session, guildId, input);
-}
-
-export async function rebuildGuildSearchIndex(
-  session: AuthSession,
-  guildId: GuildId,
-): Promise<void> {
-  await messagesApi.rebuildGuildSearchIndex(session, guildId);
-}
-
-export async function reconcileGuildSearchIndex(
-  session: AuthSession,
-  guildId: GuildId,
-): Promise<SearchReconcileResult> {
-  return messagesApi.reconcileGuildSearchIndex(session, guildId);
-}
-
-export async function addMessageReaction(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  messageId: MessageId,
-  emoji: ReactionEmoji,
-): Promise<ReactionRecord> {
-  return messagesApi.addMessageReaction(session, guildId, channelId, messageId, emoji);
-}
-
-export async function removeMessageReaction(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  messageId: MessageId,
-  emoji: ReactionEmoji,
-): Promise<ReactionRecord> {
-  return messagesApi.removeMessageReaction(session, guildId, channelId, messageId, emoji);
-}
-
-export async function uploadChannelAttachment(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  file: File,
-  filename: AttachmentFilename,
-): Promise<AttachmentRecord> {
-  return messagesApi.uploadChannelAttachment(session, guildId, channelId, file, filename);
-}
-
-export async function downloadChannelAttachment(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  attachmentId: AttachmentId,
-): Promise<{ bytes: Uint8Array; mimeType: string | null }> {
-  return messagesApi.downloadChannelAttachment(session, guildId, channelId, attachmentId);
-}
-
-export async function downloadChannelAttachmentPreview(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  attachmentId: AttachmentId,
-): Promise<{ bytes: Uint8Array; mimeType: string | null }> {
-  return messagesApi.downloadChannelAttachmentPreview(session, guildId, channelId, attachmentId);
-}
-
-export async function deleteChannelAttachment(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  attachmentId: AttachmentId,
-): Promise<void> {
-  await messagesApi.deleteChannelAttachment(session, guildId, channelId, attachmentId);
-}
+export const fetchChannelMessages = messagesClient.fetchChannelMessages;
+export const createChannelMessage = messagesClient.createChannelMessage;
+export const editChannelMessage = messagesClient.editChannelMessage;
+export const deleteChannelMessage = messagesClient.deleteChannelMessage;
+export const searchGuildMessages = messagesClient.searchGuildMessages;
+export const rebuildGuildSearchIndex = messagesClient.rebuildGuildSearchIndex;
+export const reconcileGuildSearchIndex = messagesClient.reconcileGuildSearchIndex;
+export const addMessageReaction = messagesClient.addMessageReaction;
+export const removeMessageReaction = messagesClient.removeMessageReaction;
+export const uploadChannelAttachment = messagesClient.uploadChannelAttachment;
+export const downloadChannelAttachment = messagesClient.downloadChannelAttachment;
+export const downloadChannelAttachmentPreview = messagesClient.downloadChannelAttachmentPreview;
+export const deleteChannelAttachment = messagesClient.deleteChannelAttachment;
 
 export async function addGuildMember(
   session: AuthSession,
