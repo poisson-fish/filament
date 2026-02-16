@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "check:app-shell-size": "node scripts/check-app-shell-size.mjs",
+    "lint:boundaries": "node scripts/check-import-boundaries.mjs --enforce",
+    "lint": "pnpm run lint:boundaries",
     "test": "vitest run",
     "test:watch": "vitest"
   },
