@@ -62,6 +62,85 @@ async function flush(): Promise<void> {
 }
 
 describe("app shell message history controller", () => {
+  it("clears stale message error when refresh resets without active channel context", async () => {
+    const [session] = createSignal(SESSION);
+    const [activeGuildId] = createSignal<ReturnType<typeof guildIdFromInput> | null>(null);
+    const [activeChannelId] = createSignal<ReturnType<typeof channelIdFromInput> | null>(null);
+    const [canAccessActiveChannel] = createSignal(true);
+    const [nextBefore, setNextBefore] = createSignal<
+      ReturnType<typeof messageIdFromInput> | null
+    >(messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"));
+    const [refreshMessagesState, setRefreshMessagesState] =
+      createSignal<AsyncOperationState>({
+        phase: "failed",
+        statusMessage: "",
+        errorMessage: "Unable to load messages.",
+      });
+    const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] =
+      createSignal<MessageHistoryLoadTarget | null>("refresh");
+    const [messages, setMessages] = createSignal<MessageRecord[]>([
+      messageFixture({
+        messageId: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+        authorId: "01ARZ3NDEKTSV4RRFFQ69G5FAA",
+        content: "stale",
+        createdAtUnix: 2,
+      }),
+    ]);
+    const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(true);
+    const [messageError, setMessageError] = createSignal("Unable to load messages.");
+
+    const controller = createRoot(() =>
+      createMessageHistoryController(
+        {
+          session,
+          activeGuildId,
+          activeChannelId,
+          canAccessActiveChannel,
+          nextBefore,
+          refreshMessagesState,
+          messageHistoryLoadTarget,
+          setMessages,
+          setNextBefore,
+          setShowLoadOlderButton,
+          setMessageError,
+          setRefreshMessagesState,
+          setMessageHistoryLoadTarget,
+          setEditingMessageId: vi.fn(),
+          setEditingDraft: vi.fn(),
+          setReactionState: vi.fn(),
+          setPendingReactionByKey: vi.fn(),
+          setOpenReactionPickerMessageId: vi.fn(),
+          setSearchResults: vi.fn(),
+          setSearchError: vi.fn(),
+          setSearchOpsStatus: vi.fn(),
+          setAttachmentStatus: vi.fn(),
+          setAttachmentError: vi.fn(),
+          setVoiceStatus: vi.fn(),
+          setVoiceError: vi.fn(),
+          captureScrollMetrics: vi.fn(() => null),
+          restoreScrollAfterPrepend: vi.fn(),
+          scrollMessageListToBottom: vi.fn(),
+        },
+        {
+          fetchChannelMessages: vi.fn(),
+        },
+      ),
+    );
+
+    await controller.refreshMessages();
+
+    expect(messages()).toEqual([]);
+    expect(nextBefore()).toBeNull();
+    expect(showLoadOlderButton()).toBe(false);
+    expect(messageHistoryLoadTarget()).toBeNull();
+    expect(messageError()).toBe("");
+    expect(refreshMessagesState()).toEqual({
+      phase: "idle",
+      statusMessage: "",
+      errorMessage: "",
+    });
+  });
+
   it("refreshes and loads older messages while preserving scroll restoration", async () => {
     const [session] = createSignal(SESSION);
     const [activeGuildId] = createSignal(GUILD_ID);

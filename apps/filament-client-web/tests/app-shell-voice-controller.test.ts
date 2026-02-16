@@ -37,6 +37,12 @@ const VOICE_CHANNEL = channelFromResponse({
   kind: "voice",
 });
 
+const TEXT_CHANNEL = channelFromResponse({
+  channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+  name: "general",
+  kind: "text",
+});
+
 function createRtcClientMock(overrides: Partial<RtcClient> = {}): RtcClient {
   return {
     snapshot: () => RTC_DISCONNECTED_SNAPSHOT,
@@ -411,6 +417,32 @@ describe("app shell voice controller", () => {
       statusMessage: "",
       errorMessage: "Unable to join voice.",
     });
+    expect(harness.voiceStatus()).toBe("");
+    expect(harness.voiceError()).toBe("Unable to join voice.");
+  });
+
+  it("resets stale voice join status and error when join preconditions are not met", async () => {
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        activeChannel: TEXT_CHANNEL,
+        initialVoiceJoinState: {
+          phase: "failed",
+          statusMessage: "Voice connected.",
+          errorMessage: "Unable to join voice.",
+        },
+      }),
+    );
+
+    await harness.controller.joinVoiceChannel();
+
+    expect(harness.voiceJoinState()).toEqual({
+      phase: "idle",
+      statusMessage: "",
+      errorMessage: "",
+    });
+    expect(harness.voiceStatus()).toBe("");
+    expect(harness.voiceError()).toBe("");
+    expect(harness.voiceJoinPhaseTransitions()).toEqual(["idle"]);
   });
 
   it("keeps running join state on duplicate join attempts", async () => {

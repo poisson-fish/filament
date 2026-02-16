@@ -78,6 +78,16 @@ export function createMessageHistoryController(
   };
   let historyRequestVersion = 0;
 
+  const applyRefreshMessagesTransition = (
+    event: Parameters<typeof reduceAsyncOperationState>[1],
+  ) => {
+    options.setRefreshMessagesState((existing) => {
+      const next = reduceAsyncOperationState(existing, event);
+      options.setMessageError(next.errorMessage);
+      return next;
+    });
+  };
+
   const refreshMessages = async (): Promise<void> => {
     const session = options.session();
     const guildId = options.activeGuildId();
@@ -87,21 +97,16 @@ export function createMessageHistoryController(
       options.setNextBefore(null);
       options.setShowLoadOlderButton(false);
       options.setMessageHistoryLoadTarget(null);
-      options.setRefreshMessagesState((existing) =>
-        reduceAsyncOperationState(existing, {
-          type: "reset",
-        }),
-      );
+      applyRefreshMessagesTransition({
+        type: "reset",
+      });
       return;
     }
 
     const requestVersion = ++historyRequestVersion;
-    options.setMessageError("");
-    options.setRefreshMessagesState((existing) =>
-      reduceAsyncOperationState(existing, {
-        type: "start",
-      }),
-    );
+    applyRefreshMessagesTransition({
+      type: "start",
+    });
     options.setMessageHistoryLoadTarget("refresh");
     try {
       const history = await deps.fetchChannelMessages(session, guildId, channelId, {
@@ -115,23 +120,18 @@ export function createMessageHistoryController(
       options.setEditingMessageId(null);
       options.setEditingDraft("");
       options.scrollMessageListToBottom();
-      options.setRefreshMessagesState((existing) =>
-        reduceAsyncOperationState(existing, {
-          type: "succeed",
-        }),
-      );
+      applyRefreshMessagesTransition({
+        type: "succeed",
+      });
     } catch (error) {
       if (requestVersion !== historyRequestVersion) {
         return;
       }
       const errorMessage = mapError(error, "Unable to load messages.");
-      options.setMessageError(errorMessage);
-      options.setRefreshMessagesState((existing) =>
-        reduceAsyncOperationState(existing, {
-          type: "fail",
-          errorMessage,
-        }),
-      );
+      applyRefreshMessagesTransition({
+        type: "fail",
+        errorMessage,
+      });
       options.setMessages([]);
       options.setNextBefore(null);
       options.setShowLoadOlderButton(false);
@@ -168,12 +168,9 @@ export function createMessageHistoryController(
 
     const requestVersion = historyRequestVersion;
     const previousScrollMetrics = options.captureScrollMetrics();
-    options.setMessageError("");
-    options.setRefreshMessagesState((existing) =>
-      reduceAsyncOperationState(existing, {
-        type: "start",
-      }),
-    );
+    applyRefreshMessagesTransition({
+      type: "start",
+    });
     options.setMessageHistoryLoadTarget("load-older");
     try {
       const history = await deps.fetchChannelMessages(session, guildId, channelId, {
@@ -188,23 +185,18 @@ export function createMessageHistoryController(
       );
       options.setNextBefore(history.nextBefore);
       options.restoreScrollAfterPrepend(previousScrollMetrics);
-      options.setRefreshMessagesState((existing) =>
-        reduceAsyncOperationState(existing, {
-          type: "succeed",
-        }),
-      );
+      applyRefreshMessagesTransition({
+        type: "succeed",
+      });
     } catch (error) {
       if (requestVersion !== historyRequestVersion) {
         return;
       }
       const errorMessage = mapError(error, "Unable to load older messages.");
-      options.setMessageError(errorMessage);
-      options.setRefreshMessagesState((existing) =>
-        reduceAsyncOperationState(existing, {
-          type: "fail",
-          errorMessage,
-        }),
-      );
+      applyRefreshMessagesTransition({
+        type: "fail",
+        errorMessage,
+      });
     } finally {
       if (requestVersion === historyRequestVersion) {
         options.setMessageHistoryLoadTarget(null);
@@ -235,11 +227,9 @@ export function createMessageHistoryController(
     options.setNextBefore(null);
     options.setShowLoadOlderButton(false);
     options.setMessageHistoryLoadTarget(null);
-    options.setRefreshMessagesState((existing) =>
-      reduceAsyncOperationState(existing, {
-        type: "reset",
-      }),
-    );
+    applyRefreshMessagesTransition({
+      type: "reset",
+    });
   });
 
   return {
