@@ -1,6 +1,9 @@
 mod voice_registration_events;
 mod hydration_in_memory;
 mod connection_subscriptions;
+mod subscription_insert;
+mod connection_registry;
+mod hydration_in_memory_attachments;
 mod search_batch_drain;
 mod search_enqueue;
 mod search_apply_batch;
@@ -76,7 +79,8 @@ use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecod
 use ingress_rate_limit::allow_gateway_ingress;
 use presence_disconnect::compute_disconnect_presence_outcome;
 use presence_subscribe::{
-    apply_presence_subscribe, try_enqueue_presence_sync_event, PresenceSyncEnqueueResult,
+    apply_presence_subscribe, build_presence_online_update,
+    try_enqueue_presence_sync_event, PresenceSyncEnqueueResult,
 };
 use voice_presence::{
     collect_voice_snapshots, try_enqueue_voice_sync_event, voice_channel_key,
@@ -105,6 +109,9 @@ use search_blocking::run_search_blocking_with_timeout;
 use voice_registration_events::plan_voice_registration_events;
 use hydration_in_memory::collect_hydrated_messages_in_memory;
 use connection_subscriptions::remove_connection_from_subscriptions;
+use subscription_insert::insert_connection_subscription;
+use connection_registry::remove_connection_state;
+use hydration_in_memory_attachments::apply_hydration_attachments;
 use search_batch_drain::drain_search_batch;
 use search_enqueue::enqueue_search_command;
 use search_apply_batch::apply_search_batch_with_ack;
@@ -760,9 +767,7 @@ pub(crate) async fn hydrate_messages_by_id(
 
     let attachment_map =
         attachment_map_for_messages_in_memory(state, guild_id, channel_id, message_ids).await;
-    for (id, message) in &mut by_id {
-        message.attachments = attachment_map.get(id).cloned().unwrap_or_default();
-    }
+    apply_hydration_attachments(&mut by_id, &attachment_map);
 
     let hydrated = collect_hydrated_in_request_order(by_id, message_ids);
     Ok(hydrated)
@@ -995,8 +1000,7 @@ pub(crate) async fn handle_presence_subscribe(
         }
     }
 
-    if result.became_online {
-        let update = gateway_events::presence_update(guild_id, user_id, "online");
+    if let Some(update) = build_presence_online_update(guild_id, user_id, result.became_online) {
         broadcast_guild_event(state, guild_id, &update).await;
     }
 }
@@ -1008,28 +1012,21 @@ pub(crate) async fn add_subscription(
     outbound_tx: mpsc::Sender<String>,
 ) {
     let mut subscriptions = state.subscriptions.write().await;
-    subscriptions
-        .entry(key)
-        .or_default()
-        .insert(connection_id, outbound_tx);
+    insert_connection_subscription(&mut subscriptions, connection_id, key, outbound_tx);
 }
 
 pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
-    let removed_presence = state
-        .connection_presence
-        .write()
-        .await
-        .remove(&connection_id);
-    state
-        .connection_controls
-        .write()
-        .await
-        .remove(&connection_id);
-    state
-        .connection_senders
-        .write()
-        .await
-        .remove(&connection_id);
+    let removed_presence = {
+        let mut presence = state.connection_presence.write().await;
+        let mut controls = state.connection_controls.write().await;
+        let mut senders = state.connection_senders.write().await;
+        remove_connection_state(
+            &mut presence,
+            &mut controls,
+            &mut senders,
+            connection_id,
+        )
+    };
 
     let mut subscriptions = state.subscriptions.write().await;
     remove_connection_from_subscriptions(&mut subscriptions, connection_id);
