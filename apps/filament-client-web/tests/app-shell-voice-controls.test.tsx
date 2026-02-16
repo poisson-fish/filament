@@ -15,6 +15,21 @@ const CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const TEXT_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
 const USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const REMOTE_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
+
+function deferred<T>() {
+  let resolve: ((value: T) => void) | undefined;
+  let reject: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return {
+    promise,
+    resolve: (value: T) => resolve?.(value),
+    reject: (reason?: unknown) => reject?.(reason),
+  };
+}
+
 type FixtureChannel = {
   channelId: string;
   name: string;
@@ -435,6 +450,7 @@ function createVoiceFixtureFetch(options?: {
   channels?: FixtureChannel[];
   voicePermissions?: string[];
   userLookupById?: Record<string, string>;
+  voiceTokenDelay?: Promise<void>;
   voiceTokenResponse?: {
     can_publish?: boolean;
     can_subscribe?: boolean;
@@ -455,6 +471,7 @@ function createVoiceFixtureFetch(options?: {
   const channelsById = new Map(channels.map((channel) => [channel.channelId, channel]));
   const userLookupById = options?.userLookupById ?? {};
   let voiceTokenBody: unknown = null;
+  let voiceTokenRequestCount = 0;
   const userLookupBodies: unknown[] = [];
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -540,7 +557,11 @@ function createVoiceFixtureFetch(options?: {
       channel?.kind === "voice" &&
       url.includes(`/guilds/${GUILD_ID}/channels/${channel.channelId}/voice/token`)
     ) {
+      voiceTokenRequestCount += 1;
       voiceTokenBody = init?.body ? JSON.parse(init.body as string) : null;
+      if (options?.voiceTokenDelay) {
+        await options.voiceTokenDelay;
+      }
       if (options?.voiceTokenError) {
         return jsonResponse({ error: options.voiceTokenError.code }, options.voiceTokenError.status);
       }
@@ -566,6 +587,7 @@ function createVoiceFixtureFetch(options?: {
   return {
     fetchMock,
     voiceTokenBody: () => voiceTokenBody,
+    voiceTokenRequestCount: () => voiceTokenRequestCount,
     userLookupBodies: () => userLookupBodies,
   };
 }
@@ -657,6 +679,33 @@ describe("app shell voice controls", () => {
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
     expect(rtcMock.setAudioInputDevice).toHaveBeenCalledWith("mic-pref-1");
     expect(rtcMock.setAudioOutputDevice).toHaveBeenCalledWith("spk-pref-1");
+  });
+
+  it("keeps join loading state stable on repeated clicks while voice join is running", async () => {
+    seedAuthenticatedWorkspace();
+    const voiceTokenGate = deferred<void>();
+    const fixture = createVoiceFixtureFetch({
+      voiceTokenDelay: voiceTokenGate.promise,
+    });
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    const joinButton = await screen.findByRole("button", { name: "Join Voice" });
+    fireEvent.click(joinButton);
+    const joiningButton = await screen.findByRole("button", { name: "Joining..." });
+    fireEvent.click(joiningButton);
+
+    expect(fixture.voiceTokenRequestCount()).toBe(1);
+    expect(screen.queryByRole("button", { name: "Join Voice" })).not.toBeInTheDocument();
+    expect(joiningButton).toBeDisabled();
+    expect(rtcMock.join).toHaveBeenCalledTimes(0);
+
+    voiceTokenGate.resolve(undefined);
+    await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Mute Mic" })).toBeInTheDocument();
   });
 
   it("supports mute/unmute and leave after joining", async () => {

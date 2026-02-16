@@ -1,4 +1,4 @@
-import { createMemo, createRoot, createSignal } from "solid-js";
+import { createMemo, createRoot, createSignal, type Setter } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { authSessionFromResponse } from "../src/domain/auth";
 import {
@@ -85,6 +85,7 @@ function createVoiceOperationsHarness(input?: {
   canToggleVoiceScreenShare?: boolean;
   audioInputDeviceId?: string | null;
   audioOutputDeviceId?: string | null;
+  initialVoiceJoinState?: AsyncOperationState;
 }) {
   const [session] = createSignal(SESSION);
   const [activeGuildId] = createSignal(GUILD_ID);
@@ -102,11 +103,25 @@ function createVoiceOperationsHarness(input?: {
 
   const [voiceStatus, setVoiceStatus] = createSignal("");
   const [voiceError, setVoiceError] = createSignal("");
-  const [voiceJoinState, setVoiceJoinState] = createSignal<AsyncOperationState>({
-    phase: "idle",
-    statusMessage: "",
-    errorMessage: "",
-  });
+  const [voiceJoinState, setVoiceJoinState] = createSignal<AsyncOperationState>(
+    input?.initialVoiceJoinState ?? {
+      phase: "idle",
+      statusMessage: "",
+      errorMessage: "",
+    },
+  );
+  const voiceJoinPhaseTransitions: AsyncOperationState["phase"][] = [];
+  const setVoiceJoinStateTracked: Setter<AsyncOperationState> = (value) => {
+    const resolveNext = (previous: AsyncOperationState): AsyncOperationState =>
+      typeof value === "function"
+        ? (value as (previous: AsyncOperationState) => AsyncOperationState)(previous)
+        : value;
+    return setVoiceJoinState((previous) => {
+      const next = resolveNext(previous);
+      voiceJoinPhaseTransitions.push(next.phase);
+      return next;
+    });
+  };
   const isJoiningVoice = createMemo(
     () => voiceJoinState().phase === "running",
   );
@@ -154,7 +169,7 @@ function createVoiceOperationsHarness(input?: {
       setRtcSnapshot,
       setVoiceStatus,
       setVoiceError,
-      setVoiceJoinState,
+      setVoiceJoinState: setVoiceJoinStateTracked,
       setLeavingVoice,
       setTogglingVoiceMic,
       setTogglingVoiceCamera,
@@ -174,6 +189,7 @@ function createVoiceOperationsHarness(input?: {
     voiceStatus,
     voiceError,
     voiceJoinState,
+    voiceJoinPhaseTransitions: () => [...voiceJoinPhaseTransitions],
     audioDevicesError,
     rtcSnapshot,
     voiceSessionChannelKey,
@@ -415,6 +431,7 @@ describe("app shell voice controller", () => {
     await harness.controller.joinVoiceChannel();
     expect(issueVoiceTokenMock).toHaveBeenCalledTimes(1);
     expect(harness.voiceJoinState().phase).toBe("running");
+    expect(harness.voiceJoinPhaseTransitions()).toEqual(["running"]);
 
     issueVoiceTokenGate.reject(new Error("denied"));
     await expect(firstJoin).resolves.toBeUndefined();
@@ -423,5 +440,6 @@ describe("app shell voice controller", () => {
       statusMessage: "",
       errorMessage: "Unable to join voice.",
     });
+    expect(harness.voiceJoinPhaseTransitions()).toEqual(["running", "failed"]);
   });
 });
