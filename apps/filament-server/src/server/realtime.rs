@@ -46,6 +46,9 @@ mod voice_presence;
 mod voice_registry;
 mod search_validation;
 mod connection_control;
+mod voice_registration;
+mod search_reconcile;
+mod hydration_order;
 
 use fanout_dispatch::dispatch_gateway_payload;
 use fanout_guild::dispatch_guild_payload;
@@ -55,9 +58,12 @@ use ingress_rate_limit::allow_gateway_ingress;
 use presence_disconnect::compute_disconnect_presence_outcome;
 use presence_subscribe::apply_presence_subscribe;
 use voice_presence::{collect_voice_snapshots, voice_channel_key, voice_snapshot_from_record};
+use voice_registration::apply_voice_registration_transition;
 use voice_registry::{remove_user_voice_participants, take_expired_voice_participants};
 use search_validation::validate_search_query_limits;
 use connection_control::signal_slow_connections_close;
+use search_reconcile::compute_reconciliation;
+use hydration_order::collect_hydrated_in_request_order;
 
 use super::{
     auth::{
@@ -67,7 +73,7 @@ use super::{
     core::{
         AppState, AuthContext, ConnectionControl, ConnectionPresence, IndexedMessage,
         MessageRecord, SearchCommand, SearchFields, SearchIndexState, SearchOperation,
-        SearchService, VoiceParticipant, VoiceStreamKind, DEFAULT_SEARCH_RESULT_LIMIT,
+        SearchService, VoiceStreamKind, DEFAULT_SEARCH_RESULT_LIMIT,
         MAX_TRACKED_VOICE_CHANNELS, MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
         SEARCH_INDEX_QUEUE_CAPACITY,
     },
@@ -886,20 +892,7 @@ pub(crate) async fn plan_search_reconciliation(
 ) -> Result<(Vec<IndexedMessage>, Vec<String>), AuthFailure> {
     let source_docs = collect_indexed_messages_for_guild(state, guild_id, max_docs).await?;
     let index_ids = collect_index_message_ids_for_guild(state, guild_id, max_docs).await?;
-    let source_ids: HashSet<String> = source_docs
-        .iter()
-        .map(|doc| doc.message_id.clone())
-        .collect();
-    let mut upserts: Vec<IndexedMessage> = source_docs
-        .into_iter()
-        .filter(|doc| !index_ids.contains(&doc.message_id))
-        .collect();
-    let mut delete_message_ids: Vec<String> = index_ids
-        .into_iter()
-        .filter(|message_id| !source_ids.contains(message_id))
-        .collect();
-    upserts.sort_by(|a, b| a.message_id.cmp(&b.message_id));
-    delete_message_ids.sort_unstable();
+    let (upserts, delete_message_ids) = compute_reconciliation(source_docs, index_ids);
     Ok((upserts, delete_message_ids))
 }
 
@@ -1049,12 +1042,7 @@ pub(crate) async fn hydrate_messages_by_id(
             message.reactions = reaction_map.get(id).cloned().unwrap_or_default();
         }
 
-        let mut hydrated = Vec::with_capacity(message_ids.len());
-        for message_id in message_ids {
-            if let Some(message) = by_id.remove(message_id) {
-                hydrated.push(message);
-            }
-        }
+        let hydrated = collect_hydrated_in_request_order(by_id, message_ids);
         return Ok(hydrated);
     }
 
@@ -1109,12 +1097,7 @@ pub(crate) async fn hydrate_messages_by_id(
         message.attachments = attachment_map.get(id).cloned().unwrap_or_default();
     }
 
-    let mut hydrated = Vec::with_capacity(message_ids.len());
-    for message_id in message_ids {
-        if let Some(message) = by_id.remove(message_id) {
-            hydrated.push(message);
-        }
-    }
+    let hydrated = collect_hydrated_in_request_order(by_id, message_ids);
     Ok(hydrated)
 }
 
@@ -1269,70 +1252,25 @@ pub(crate) async fn register_voice_participant_from_token(
     prune_expired_voice_participants(state, now_unix()).await;
     let now = now_unix();
     let key = voice_channel_key(guild_id, channel_id);
-    let mut removed = Vec::new();
-    let mut joined = None;
-    let mut updated = None;
-    let mut newly_published = Vec::new();
-    let mut unpublished = Vec::new();
-
-    {
+    let transition = {
         let mut channels = state.voice_participants.write().await;
-        for (existing_key, participants) in channels.iter_mut() {
-            if existing_key == &key {
-                continue;
-            }
-            if let Some(existing) = participants.remove(&user_id) {
-                removed.push((existing_key.clone(), existing));
-            }
-        }
-        channels.retain(|_, participants| !participants.is_empty());
-        if !channels.contains_key(&key) && channels.len() >= MAX_TRACKED_VOICE_CHANNELS {
-            return Err(AuthFailure::RateLimited);
-        }
-        let channel_participants = channels.entry(key.clone()).or_default();
-        if !channel_participants.contains_key(&user_id)
-            && channel_participants.len() >= MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL
-        {
-            return Err(AuthFailure::RateLimited);
-        }
-
-        let next_streams: HashSet<VoiceStreamKind> = publish_streams.iter().copied().collect();
-        let next_video = next_streams.contains(&VoiceStreamKind::Camera);
-        let next_screen = next_streams.contains(&VoiceStreamKind::ScreenShare);
-        if let Some(existing) = channel_participants.get_mut(&user_id) {
-            let prev_streams = existing.published_streams.clone();
-            for stream in next_streams.difference(&prev_streams) {
-                newly_published.push(*stream);
-            }
-            for stream in prev_streams.difference(&next_streams) {
-                unpublished.push(*stream);
-            }
-            existing.identity = identity.to_owned();
-            existing.updated_at_unix = now;
-            existing.expires_at_unix = expires_at_unix;
-            existing.is_video_enabled = next_video;
-            existing.is_screen_share_enabled = next_screen;
-            existing.published_streams = next_streams;
-            updated = Some(existing.clone());
-        } else {
-            let participant = VoiceParticipant {
-                user_id,
-                identity: identity.to_owned(),
-                joined_at_unix: now,
-                updated_at_unix: now,
-                expires_at_unix,
-                is_muted: false,
-                is_deafened: false,
-                is_speaking: false,
-                is_video_enabled: next_video,
-                is_screen_share_enabled: next_screen,
-                published_streams: next_streams.clone(),
-            };
-            joined = Some(participant.clone());
-            newly_published.extend(next_streams);
-            channel_participants.insert(user_id, participant);
-        }
-    }
+        apply_voice_registration_transition(
+            &mut channels,
+            &key,
+            user_id,
+            identity,
+            publish_streams,
+            expires_at_unix,
+            now,
+            MAX_TRACKED_VOICE_CHANNELS,
+            MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
+        )?
+    };
+    let removed = transition.removed;
+    let joined = transition.joined;
+    let updated = transition.updated;
+    let newly_published = transition.newly_published;
+    let unpublished = transition.unpublished;
 
     for (old_key, participant) in removed {
         let Some((old_guild_id, old_channel_id)) = old_key.split_once(':') else {
