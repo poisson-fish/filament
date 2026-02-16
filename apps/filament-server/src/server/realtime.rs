@@ -1,3 +1,7 @@
+mod voice_registration_events;
+mod hydration_in_memory;
+mod connection_subscriptions;
+mod search_batch_drain;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
@@ -68,7 +72,7 @@ use presence_subscribe::{
 };
 use voice_presence::{
     collect_voice_snapshots, try_enqueue_voice_sync_event, voice_channel_key,
-    voice_snapshot_from_record, OutboundEnqueueResult,
+    OutboundEnqueueResult,
 };
 use voice_registration::apply_voice_registration_transition;
 use voice_registry::{
@@ -90,6 +94,10 @@ use search_apply::apply_search_operation as apply_search_operation_impl;
 use message_prepare::prepare_message_body;
 use message_attachment_bind::bind_message_attachments_in_memory;
 use search_blocking::run_search_blocking_with_timeout;
+use voice_registration_events::plan_voice_registration_events;
+use hydration_in_memory::collect_hydrated_messages_in_memory;
+use connection_subscriptions::remove_connection_from_subscriptions;
+use search_batch_drain::drain_search_batch;
 
 use super::{
     auth::{
@@ -538,13 +546,7 @@ pub(crate) fn init_search_service() -> anyhow::Result<SearchService> {
         .name(String::from("filament-search-index"))
         .spawn(move || {
             while let Some(command) = rx.blocking_recv() {
-                let mut batch = vec![command];
-                while batch.len() < 128 {
-                    let Ok(next) = rx.try_recv() else {
-                        break;
-                    };
-                    batch.push(next);
-                }
+                let batch = drain_search_batch(command, &mut rx, 128);
                 let batch_result = apply_search_batch(&worker_state, batch);
                 if let Err(error) = batch_result {
                     tracing::error!(event = "search.index.batch", error = %error);
@@ -882,48 +884,7 @@ pub(crate) async fn hydrate_messages_by_id(
 
     let guilds = state.guilds.read().await;
     let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
-    let mut by_id = HashMap::new();
-    if let Some(channel_id) = channel_id {
-        let channel = guild
-            .channels
-            .get(channel_id)
-            .ok_or(AuthFailure::NotFound)?;
-        for message in &channel.messages {
-            by_id.insert(
-                message.id.clone(),
-                MessageResponse {
-                    message_id: message.id.clone(),
-                    guild_id: guild_id.to_owned(),
-                    channel_id: channel_id.to_owned(),
-                    author_id: message.author_id.to_string(),
-                    content: message.content.clone(),
-                    markdown_tokens: message.markdown_tokens.clone(),
-                    attachments: Vec::new(),
-                    reactions: reaction_summaries_from_users(&message.reactions),
-                    created_at_unix: message.created_at_unix,
-                },
-            );
-        }
-    } else {
-        for (channel_id, channel) in &guild.channels {
-            for message in &channel.messages {
-                by_id.insert(
-                    message.id.clone(),
-                    MessageResponse {
-                        message_id: message.id.clone(),
-                        guild_id: guild_id.to_owned(),
-                        channel_id: channel_id.clone(),
-                        author_id: message.author_id.to_string(),
-                        content: message.content.clone(),
-                        markdown_tokens: message.markdown_tokens.clone(),
-                        attachments: Vec::new(),
-                        reactions: reaction_summaries_from_users(&message.reactions),
-                        created_at_unix: message.created_at_unix,
-                    },
-                );
-            }
-        }
-    }
+    let mut by_id = collect_hydrated_messages_in_memory(guild, guild_id, channel_id)?;
 
     let attachment_map =
         attachment_map_for_messages_in_memory(state, guild_id, channel_id, message_ids).await;
@@ -1083,72 +1044,15 @@ pub(crate) async fn register_voice_participant_from_token(
             MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
         )?
     };
-    let removed = transition.removed;
-    let joined = transition.joined;
-    let updated = transition.updated;
-    let newly_published = transition.newly_published;
-    let unpublished = transition.unpublished;
-
-    for (old_key, participant) in removed {
-        let Some((old_guild_id, old_channel_id)) = old_key.split_once(':') else {
-            continue;
-        };
-        for stream in participant.published_streams {
-            let event = gateway_events::voice_stream_unpublish(
-                old_guild_id,
-                old_channel_id,
-                participant.user_id,
-                &participant.identity,
-                stream,
-                now,
-            );
-            broadcast_channel_event(state, &channel_key(old_guild_id, old_channel_id), &event)
-                .await;
-        }
-        let leave = gateway_events::voice_participant_leave(
-            old_guild_id,
-            old_channel_id,
-            participant.user_id,
-            &participant.identity,
-            now,
-        );
-        broadcast_channel_event(state, &channel_key(old_guild_id, old_channel_id), &leave).await;
-    }
-
-    if let Some(participant) = joined {
-        let event = gateway_events::voice_participant_join(
-            guild_id,
-            channel_id,
-            voice_snapshot_from_record(&participant),
-        );
-        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
-    }
-    if let Some(participant) = updated {
-        let event = gateway_events::voice_participant_update(
-            guild_id,
-            channel_id,
-            participant.user_id,
-            &participant.identity,
-            None,
-            None,
-            Some(participant.is_speaking),
-            Some(participant.is_video_enabled),
-            Some(participant.is_screen_share_enabled),
-            participant.updated_at_unix,
-        );
-        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
-    }
-    for stream in unpublished {
-        let event = gateway_events::voice_stream_unpublish(
-            guild_id, channel_id, user_id, identity, stream, now,
-        );
-        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
-    }
-    for stream in newly_published {
-        let event = gateway_events::voice_stream_publish(
-            guild_id, channel_id, user_id, identity, stream, now,
-        );
-        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+    for (subscription_key, event) in plan_voice_registration_events(
+        transition,
+        guild_id,
+        channel_id,
+        user_id,
+        identity,
+        now,
+    ) {
+        broadcast_channel_event(state, &subscription_key, &event).await;
     }
 
     Ok(())
@@ -1272,10 +1176,7 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
         .remove(&connection_id);
 
     let mut subscriptions = state.subscriptions.write().await;
-    subscriptions.retain(|_, listeners| {
-        listeners.remove(&connection_id);
-        !listeners.is_empty()
-    });
+    remove_connection_from_subscriptions(&mut subscriptions, connection_id);
     drop(subscriptions);
 
     let Some(removed_presence) = removed_presence else {
