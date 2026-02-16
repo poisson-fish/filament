@@ -1,18 +1,106 @@
-import { describe, expect, it } from "vitest";
-import { messageFromResponse, messageIdFromInput } from "../src/domain/chat";
+import { createRoot, createSignal } from "solid-js";
+import { describe, expect, it, vi } from "vitest";
+import { authSessionFromResponse } from "../src/domain/auth";
+import {
+  channelFromResponse,
+  channelIdFromInput,
+  guildIdFromInput,
+  messageFromResponse,
+  messageIdFromInput,
+} from "../src/domain/chat";
 import {
   clearReactionRecordsForMessage,
   collectMediaPreviewTargets,
+  createMessageActionsController,
   mediaPreviewRetryDelayMs,
   mergeComposerAttachmentSelection,
   nextMediaPreviewAttempt,
   retainRecordByAllowedIds,
   shouldRetryMediaPreview,
 } from "../src/features/app-shell/controllers/message-controller";
+import type { AsyncOperationState } from "../src/features/app-shell/state/async-operation-state";
 
 const GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+const SESSION = authSessionFromResponse({
+  access_token: "A".repeat(64),
+  refresh_token: "B".repeat(64),
+  expires_in_secs: 3600,
+});
+
+function createMessageActionsHarness(input?: {
+  activeGuildId?: ReturnType<typeof guildIdFromInput> | null;
+  activeChannelId?: ReturnType<typeof channelIdFromInput> | null;
+  composer?: string;
+  attachments?: File[];
+}) {
+  const [session] = createSignal(SESSION);
+  const [activeGuildId] = createSignal(input?.activeGuildId ?? null);
+  const [activeChannelId] = createSignal(input?.activeChannelId ?? null);
+  const [activeChannel] = createSignal(
+    channelFromResponse({
+      channel_id: CHANNEL_ID,
+      name: "incident-room",
+      kind: "text",
+    }),
+  );
+  const [composer] = createSignal(input?.composer ?? "");
+  const [, setComposer] = createSignal("");
+  const [composerAttachments] = createSignal(input?.attachments ?? []);
+  const [, setComposerAttachments] = createSignal<File[]>([]);
+  const [messageStatus, setMessageStatus] = createSignal("");
+  const [messageError, setMessageError] = createSignal("");
+  const [isSendingMessage, setSendingMessage] = createSignal(false);
+  const [sendMessageState, setSendMessageState] = createSignal<AsyncOperationState>({
+    phase: "idle",
+    statusMessage: "",
+    errorMessage: "",
+  });
+
+  const controller = createMessageActionsController({
+    session,
+    activeGuildId,
+    activeChannelId,
+    activeChannel,
+    canAccessActiveChannel: () => true,
+    composer,
+    setComposer,
+    composerAttachments,
+    setComposerAttachments,
+    composerAttachmentInputElement: () => undefined,
+    isSendingMessage,
+    setSendingMessage,
+    setSendMessageState,
+    setMessageStatus,
+    setMessageError,
+    setMessages: vi.fn(),
+    setAttachmentByChannel: vi.fn(),
+    isMessageListNearBottom: () => true,
+    scrollMessageListToBottom: vi.fn(),
+    editingMessageId: () => null,
+    setEditingMessageId: vi.fn(),
+    editingDraft: () => "",
+    setEditingDraft: vi.fn(),
+    isSavingEdit: () => false,
+    setSavingEdit: vi.fn(),
+    deletingMessageId: () => null,
+    setDeletingMessageId: vi.fn(),
+    reactionState: () => ({}),
+    setReactionState: vi.fn(),
+    pendingReactionByKey: () => ({}),
+    setPendingReactionByKey: vi.fn(),
+    openReactionPickerMessageId: () => null,
+    setOpenReactionPickerMessageId: vi.fn(),
+  });
+
+  return {
+    controller,
+    messageStatus,
+    messageError,
+    sendMessageState,
+  };
+}
 
 function messageWithAttachments(attachments: Array<{
   attachment_id: string;
@@ -156,6 +244,44 @@ describe("app shell message controller", () => {
 
     expect(cleared).toEqual({
       [`${secondMessageId}|👍`]: { count: 3, reacted: true },
+    });
+  });
+
+  it("sets failed send state when no channel is selected", async () => {
+    const harness = createRoot(() => createMessageActionsHarness());
+
+    await harness.controller.sendMessage({
+      preventDefault() {},
+    } as SubmitEvent);
+
+    expect(harness.messageError()).toBe("Select a channel first.");
+    expect(harness.sendMessageState()).toEqual({
+      phase: "failed",
+      statusMessage: "",
+      errorMessage: "Select a channel first.",
+    });
+  });
+
+  it("sets failed send state when composer has no content or attachments", async () => {
+    const harness = createRoot(() =>
+      createMessageActionsHarness({
+        activeGuildId: guildIdFromInput(GUILD_ID),
+        activeChannelId: channelIdFromInput(CHANNEL_ID),
+      }),
+    );
+
+    await harness.controller.sendMessage({
+      preventDefault() {},
+    } as SubmitEvent);
+
+    expect(harness.messageStatus()).toBe("");
+    expect(harness.messageError()).toBe(
+      "Message must include text or at least one attachment.",
+    );
+    expect(harness.sendMessageState()).toEqual({
+      phase: "failed",
+      statusMessage: "",
+      errorMessage: "Message must include text or at least one attachment.",
     });
   });
 });

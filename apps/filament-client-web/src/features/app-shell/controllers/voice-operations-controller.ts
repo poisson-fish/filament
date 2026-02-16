@@ -14,6 +14,10 @@ import {
   mapRtcError,
   mapVoiceJoinError,
 } from "../helpers";
+import {
+  reduceAsyncOperationState,
+  type AsyncOperationState,
+} from "../state/async-operation-state";
 import type { VoiceSessionCapabilities } from "../types";
 import { RTC_DISCONNECTED_SNAPSHOT } from "../config/ui-constants";
 
@@ -35,6 +39,7 @@ export interface VoiceOperationsControllerOptions {
   setRtcSnapshot: Setter<RtcSnapshot>;
   setVoiceStatus: Setter<string>;
   setVoiceError: Setter<string>;
+  setVoiceJoinState: Setter<AsyncOperationState>;
   setJoiningVoice: Setter<boolean>;
   setLeavingVoice: Setter<boolean>;
   setTogglingVoiceMic: Setter<boolean>;
@@ -164,12 +169,22 @@ export function createVoiceOperationsController(
       options.isJoiningVoice() ||
       options.isLeavingVoice()
     ) {
+      options.setVoiceJoinState((existing) =>
+        reduceAsyncOperationState(existing, {
+          type: "reset",
+        }),
+      );
       return;
     }
 
     options.setJoiningVoice(true);
     options.setVoiceError("");
     options.setVoiceStatus("");
+    options.setVoiceJoinState((existing) =>
+      reduceAsyncOperationState(existing, {
+        type: "start",
+      }),
+    );
     options.setVoiceSessionCapabilities(options.defaultVoiceSessionCapabilities);
     try {
       const requestedPublishSources: MediaPublishSource[] = ["microphone"];
@@ -214,18 +229,43 @@ export function createVoiceOperationsController(
         try {
           await client.setMicrophoneEnabled(true);
           options.setVoiceStatus("Voice connected. Microphone enabled.");
+          options.setVoiceJoinState((existing) =>
+            reduceAsyncOperationState(existing, {
+              type: "succeed",
+              statusMessage: "Voice connected. Microphone enabled.",
+            }),
+          );
         } catch (error) {
           options.setVoiceStatus("Voice connected.");
           options.setVoiceError(
             deps.mapRtcError(error, "Connected, but microphone activation failed."),
+          );
+          options.setVoiceJoinState((existing) =>
+            reduceAsyncOperationState(existing, {
+              type: "succeed",
+              statusMessage: "Voice connected.",
+            }),
           );
         }
         return;
       }
 
       options.setVoiceStatus("Voice connected in listen-only mode.");
+      options.setVoiceJoinState((existing) =>
+        reduceAsyncOperationState(existing, {
+          type: "succeed",
+          statusMessage: "Voice connected in listen-only mode.",
+        }),
+      );
     } catch (error) {
-      options.setVoiceError(deps.mapVoiceJoinError(error));
+      const errorMessage = deps.mapVoiceJoinError(error);
+      options.setVoiceError(errorMessage);
+      options.setVoiceJoinState((existing) =>
+        reduceAsyncOperationState(existing, {
+          type: "fail",
+          errorMessage,
+        }),
+      );
     } finally {
       options.setJoiningVoice(false);
     }

@@ -9,6 +9,7 @@ import {
   type MessageRecord,
 } from "../src/domain/chat";
 import { createMessageHistoryController } from "../src/features/app-shell/controllers/message-history-controller";
+import type { AsyncOperationState } from "../src/features/app-shell/state/async-operation-state";
 
 const SESSION = authSessionFromResponse({
   access_token: "A".repeat(64),
@@ -70,6 +71,12 @@ describe("app shell message history controller", () => {
     const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
     const [messageError, setMessageError] = createSignal("");
     const [isLoadingMessages, setLoadingMessages] = createSignal(false);
+    const [refreshMessagesState, setRefreshMessagesState] =
+      createSignal<AsyncOperationState>({
+        phase: "idle",
+        statusMessage: "",
+        errorMessage: "",
+      });
 
     const scrollToBottomMock = vi.fn();
     const captureScrollMetricsMock = vi.fn(() => ({
@@ -118,6 +125,7 @@ describe("app shell message history controller", () => {
           setNextBefore,
           setShowLoadOlderButton,
           setMessageError,
+          setRefreshMessagesState,
           setLoadingMessages,
           setLoadingOlder,
           setEditingMessageId: vi.fn(),
@@ -149,6 +157,11 @@ describe("app shell message history controller", () => {
     expect(messages().map((entry) => entry.content)).toEqual(["latest"]);
     expect(isLoadingMessages()).toBe(false);
     expect(messageError()).toBe("");
+    expect(refreshMessagesState()).toEqual({
+      phase: "succeeded",
+      statusMessage: "",
+      errorMessage: "",
+    });
     expect(scrollToBottomMock).toHaveBeenCalledTimes(1);
 
     await controller.loadOlderMessages();
@@ -159,6 +172,7 @@ describe("app shell message history controller", () => {
     expect(messages().map((entry) => entry.content)).toEqual(["older", "latest"]);
     expect(restoreScrollAfterPrependMock).toHaveBeenCalledTimes(1);
     expect(showLoadOlderButton()).toBe(false);
+    expect(refreshMessagesState().phase).toBe("succeeded");
   });
 
   it("ignores stale refresh responses after channel access reset", async () => {
@@ -173,6 +187,12 @@ describe("app shell message history controller", () => {
     const [messages, setMessages] = createSignal<MessageRecord[]>([]);
     const [messageError, setMessageError] = createSignal("");
     const [isLoadingMessages, setLoadingMessages] = createSignal(false);
+    const [refreshMessagesState, setRefreshMessagesState] =
+      createSignal<AsyncOperationState>({
+        phase: "idle",
+        statusMessage: "",
+        errorMessage: "",
+      });
 
     const pendingRefresh = deferred<{
       messages: MessageRecord[];
@@ -193,6 +213,7 @@ describe("app shell message history controller", () => {
           setNextBefore,
           setShowLoadOlderButton: vi.fn(),
           setMessageError,
+          setRefreshMessagesState,
           setLoadingMessages,
           setLoadingOlder,
           setEditingMessageId: vi.fn(),
@@ -236,5 +257,10 @@ describe("app shell message history controller", () => {
     expect(messageError()).toBe("");
     expect(isLoadingMessages()).toBe(false);
     expect(isLoadingOlder()).toBe(false);
+    expect(refreshMessagesState()).toEqual({
+      phase: "idle",
+      statusMessage: "",
+      errorMessage: "",
+    });
   });
 });

@@ -51,6 +51,16 @@ describe("app shell state factories", () => {
     expect(messageState.messages()).toEqual([]);
     expect(messageState.nextBefore()).toBeNull();
     expect(messageState.showLoadOlderButton()).toBe(false);
+    expect(messageState.sendMessageState()).toEqual({
+      phase: "idle",
+      statusMessage: "",
+      errorMessage: "",
+    });
+    expect(messageState.refreshMessagesState()).toEqual({
+      phase: "idle",
+      statusMessage: "",
+      errorMessage: "",
+    });
     expect(messageState.reactionState()).toEqual({});
     expect(messageState.pendingReactionByKey()).toEqual({});
     expect(messageState.openReactionPickerMessageId()).toBeNull();
@@ -86,6 +96,11 @@ describe("app shell state factories", () => {
     expect(voiceState.rtcSnapshot()).toEqual(RTC_DISCONNECTED_SNAPSHOT);
     expect(voiceState.voiceStatus()).toBe("");
     expect(voiceState.voiceError()).toBe("");
+    expect(voiceState.voiceJoinState()).toEqual({
+      phase: "idle",
+      statusMessage: "",
+      errorMessage: "",
+    });
     expect(voiceState.voiceSessionChannelKey()).toBeNull();
     expect(voiceState.voiceSessionStartedAtUnixMs()).toBeNull();
     expect(voiceState.voiceSessionCapabilities()).toEqual(DEFAULT_VOICE_SESSION_CAPABILITIES);

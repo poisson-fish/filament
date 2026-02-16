@@ -7,6 +7,10 @@ import type {
 } from "../../../domain/chat";
 import type { ReactionView } from "../helpers";
 import type { ReactionPickerOverlayPosition } from "../types";
+import {
+  createIdleAsyncOperationState,
+  type AsyncOperationState,
+} from "./async-operation-state";
 
 export function createMessageState() {
   const [composer, setComposer] = createSignal("");
@@ -15,6 +19,11 @@ export function createMessageState() {
   const [isLoadingMessages, setLoadingMessages] = createSignal(false);
   const [isLoadingOlder, setLoadingOlder] = createSignal(false);
   const [isSendingMessage, setSendingMessage] = createSignal(false);
+  const [sendMessageState, setSendMessageState] = createSignal<AsyncOperationState>(
+    createIdleAsyncOperationState(),
+  );
+  const [refreshMessagesState, setRefreshMessagesState] =
+    createSignal<AsyncOperationState>(createIdleAsyncOperationState());
   const [messages, setMessages] = createSignal<MessageRecord[]>([]);
   const [nextBefore, setNextBefore] = createSignal<MessageId | null>(null);
   const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
@@ -53,6 +62,10 @@ export function createMessageState() {
     setLoadingOlder,
     isSendingMessage,
     setSendingMessage,
+    sendMessageState,
+    setSendMessageState,
+    refreshMessagesState,
+    setRefreshMessagesState,
     messages,
     setMessages,
     nextBefore,

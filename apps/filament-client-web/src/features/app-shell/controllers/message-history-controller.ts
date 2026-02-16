@@ -14,6 +14,10 @@ import {
   normalizeMessageOrder,
   type ReactionView,
 } from "../helpers";
+import {
+  reduceAsyncOperationState,
+  type AsyncOperationState,
+} from "../state/async-operation-state";
 import type { MessageListScrollMetrics } from "./message-list-controller";
 
 export interface MessageHistoryControllerOptions {
@@ -27,6 +31,7 @@ export interface MessageHistoryControllerOptions {
   setNextBefore: Setter<MessageId | null>;
   setShowLoadOlderButton: Setter<boolean>;
   setMessageError: Setter<string>;
+  setRefreshMessagesState: Setter<AsyncOperationState>;
   setLoadingMessages: Setter<boolean>;
   setLoadingOlder: Setter<boolean>;
   setEditingMessageId: Setter<MessageId | null>;
@@ -79,11 +84,21 @@ export function createMessageHistoryController(
       options.setShowLoadOlderButton(false);
       options.setLoadingMessages(false);
       options.setLoadingOlder(false);
+      options.setRefreshMessagesState((existing) =>
+        reduceAsyncOperationState(existing, {
+          type: "reset",
+        }),
+      );
       return;
     }
 
     const requestVersion = ++historyRequestVersion;
     options.setMessageError("");
+    options.setRefreshMessagesState((existing) =>
+      reduceAsyncOperationState(existing, {
+        type: "start",
+      }),
+    );
     options.setLoadingMessages(true);
     try {
       const history = await deps.fetchChannelMessages(session, guildId, channelId, {
@@ -97,11 +112,23 @@ export function createMessageHistoryController(
       options.setEditingMessageId(null);
       options.setEditingDraft("");
       options.scrollMessageListToBottom();
+      options.setRefreshMessagesState((existing) =>
+        reduceAsyncOperationState(existing, {
+          type: "succeed",
+        }),
+      );
     } catch (error) {
       if (requestVersion !== historyRequestVersion) {
         return;
       }
-      options.setMessageError(mapError(error, "Unable to load messages."));
+      const errorMessage = mapError(error, "Unable to load messages.");
+      options.setMessageError(errorMessage);
+      options.setRefreshMessagesState((existing) =>
+        reduceAsyncOperationState(existing, {
+          type: "fail",
+          errorMessage,
+        }),
+      );
       options.setMessages([]);
       options.setNextBefore(null);
       options.setShowLoadOlderButton(false);
@@ -125,6 +152,11 @@ export function createMessageHistoryController(
     const previousScrollMetrics = options.captureScrollMetrics();
     options.setLoadingOlder(true);
     options.setMessageError("");
+    options.setRefreshMessagesState((existing) =>
+      reduceAsyncOperationState(existing, {
+        type: "start",
+      }),
+    );
     try {
       const history = await deps.fetchChannelMessages(session, guildId, channelId, {
         limit: 50,
@@ -138,11 +170,23 @@ export function createMessageHistoryController(
       );
       options.setNextBefore(history.nextBefore);
       options.restoreScrollAfterPrepend(previousScrollMetrics);
+      options.setRefreshMessagesState((existing) =>
+        reduceAsyncOperationState(existing, {
+          type: "succeed",
+        }),
+      );
     } catch (error) {
       if (requestVersion !== historyRequestVersion) {
         return;
       }
-      options.setMessageError(mapError(error, "Unable to load older messages."));
+      const errorMessage = mapError(error, "Unable to load older messages.");
+      options.setMessageError(errorMessage);
+      options.setRefreshMessagesState((existing) =>
+        reduceAsyncOperationState(existing, {
+          type: "fail",
+          errorMessage,
+        }),
+      );
     } finally {
       if (requestVersion === historyRequestVersion) {
         options.setLoadingOlder(false);
@@ -174,6 +218,11 @@ export function createMessageHistoryController(
     options.setShowLoadOlderButton(false);
     options.setLoadingMessages(false);
     options.setLoadingOlder(false);
+    options.setRefreshMessagesState((existing) =>
+      reduceAsyncOperationState(existing, {
+        type: "reset",
+      }),
+    );
   });
 
   return {

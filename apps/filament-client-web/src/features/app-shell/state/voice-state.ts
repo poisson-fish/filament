@@ -4,6 +4,10 @@ import type { VoiceSessionCapabilities } from "../types";
 import { loadVoiceDevicePreferences, type AudioDeviceOption, type VoiceDevicePreferences } from "../../../lib/voice-device-settings";
 import type { RtcSnapshot } from "../../../lib/rtc";
 import type { VoiceParticipantPayload } from "../../../lib/gateway";
+import {
+  createIdleAsyncOperationState,
+  type AsyncOperationState,
+} from "./async-operation-state";
 
 export const DEFAULT_VOICE_SESSION_CAPABILITIES: VoiceSessionCapabilities = {
   canSubscribe: false,
@@ -15,6 +19,9 @@ export function createVoiceState() {
   const [voiceStatus, setVoiceStatus] = createSignal("");
   const [voiceError, setVoiceError] = createSignal("");
   const [isJoiningVoice, setJoiningVoice] = createSignal(false);
+  const [voiceJoinState, setVoiceJoinState] = createSignal<AsyncOperationState>(
+    createIdleAsyncOperationState(),
+  );
   const [isLeavingVoice, setLeavingVoice] = createSignal(false);
   const [isTogglingVoiceMic, setTogglingVoiceMic] = createSignal(false);
   const [isTogglingVoiceCamera, setTogglingVoiceCamera] = createSignal(false);
@@ -47,6 +54,8 @@ export function createVoiceState() {
     setVoiceError,
     isJoiningVoice,
     setJoiningVoice,
+    voiceJoinState,
+    setVoiceJoinState,
     isLeavingVoice,
     setLeavingVoice,
     isTogglingVoiceMic,

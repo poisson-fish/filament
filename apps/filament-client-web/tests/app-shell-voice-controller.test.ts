@@ -20,6 +20,7 @@ import {
 import {
   DEFAULT_VOICE_SESSION_CAPABILITIES,
 } from "../src/features/app-shell/state/voice-state";
+import type { AsyncOperationState } from "../src/features/app-shell/state/async-operation-state";
 import { mediaDeviceIdFromInput } from "../src/lib/voice-device-settings";
 import type { RtcClient, RtcSnapshot } from "../src/lib/rtc";
 
@@ -83,6 +84,11 @@ function createVoiceOperationsHarness(input?: {
 
   const [voiceStatus, setVoiceStatus] = createSignal("");
   const [voiceError, setVoiceError] = createSignal("");
+  const [voiceJoinState, setVoiceJoinState] = createSignal<AsyncOperationState>({
+    phase: "idle",
+    statusMessage: "",
+    errorMessage: "",
+  });
   const [audioDevicesError, setAudioDevicesError] = createSignal("");
   const [rtcSnapshot, setRtcSnapshot] = createSignal<RtcSnapshot>(RTC_DISCONNECTED_SNAPSHOT);
   const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(
@@ -127,6 +133,7 @@ function createVoiceOperationsHarness(input?: {
       setRtcSnapshot,
       setVoiceStatus,
       setVoiceError,
+      setVoiceJoinState,
       setJoiningVoice,
       setLeavingVoice,
       setTogglingVoiceMic,
@@ -146,6 +153,7 @@ function createVoiceOperationsHarness(input?: {
     controller,
     voiceStatus,
     voiceError,
+    voiceJoinState,
     audioDevicesError,
     rtcSnapshot,
     voiceSessionChannelKey,
@@ -341,6 +349,31 @@ describe("app shell voice controller", () => {
     expect(harness.voiceSessionStartedAtUnixMs()).toBe(4242);
     expect(harness.voiceDurationClockUnixMs()).toBe(4242);
     expect(harness.voiceStatus()).toBe("Voice connected. Microphone enabled.");
+    expect(harness.voiceJoinState()).toEqual({
+      phase: "succeeded",
+      statusMessage: "Voice connected. Microphone enabled.",
+      errorMessage: "",
+    });
     expect(harness.audioDevicesError()).toBe("");
+  });
+
+  it("records failed join state when token issuance fails", async () => {
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        dependencies: {
+          issueVoiceToken: async () => {
+            throw new Error("denied");
+          },
+        },
+      }),
+    );
+
+    await harness.controller.joinVoiceChannel();
+
+    expect(harness.voiceJoinState()).toEqual({
+      phase: "failed",
+      statusMessage: "",
+      errorMessage: "Unable to join voice.",
+    });
   });
 });
