@@ -17,6 +17,9 @@ mod message_create_response;
 mod ingress_parse;
 mod ingress_subscribe;
 mod ingress_message_create;
+mod voice_sync_dispatch;
+mod presence_sync_dispatch;
+mod search_query_input;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -83,12 +86,9 @@ use ingress_rate_limit::allow_gateway_ingress;
 use presence_disconnect::compute_disconnect_presence_outcome;
 use presence_subscribe::{
     apply_presence_subscribe, build_presence_online_update,
-    presence_sync_dispatch_outcome, try_enqueue_presence_sync_event,
-    PresenceSyncDispatchOutcome,
 };
 use voice_presence::{
-    collect_voice_snapshots, try_enqueue_voice_sync_event, voice_channel_key,
-    voice_sync_dispatch_outcome, VoiceSyncDispatchOutcome,
+    collect_voice_snapshots, voice_channel_key,
 };
 use voice_registration::apply_voice_registration_transition;
 use voice_registry::{
@@ -134,6 +134,9 @@ use ingress_parse::{
     classify_ingress_command_parse_error, IngressCommandParseClassification,
 };
 use ingress_subscribe::execute_subscribe_command;
+use voice_sync_dispatch::dispatch_voice_sync_event;
+use presence_sync_dispatch::dispatch_presence_sync_event;
+use search_query_input::{effective_search_limit, normalize_search_query};
 
 use super::{
     auth::{
@@ -158,9 +161,8 @@ use super::{
     errors::AuthFailure,
     gateway_events::{self, GatewayEvent},
     metrics::{
-        record_gateway_event_dropped, record_gateway_event_emitted,
-        record_gateway_event_parse_rejected, record_gateway_event_unknown_received,
-        record_voice_sync_repair, record_ws_disconnect,
+        record_gateway_event_emitted, record_gateway_event_parse_rejected,
+        record_gateway_event_unknown_received, record_ws_disconnect,
     },
     types::{GatewayAuthQuery, MessageResponse, SearchQuery},
 };
@@ -539,10 +541,10 @@ pub(crate) fn validate_search_query(
     state: &AppState,
     query: &SearchQuery,
 ) -> Result<(), AuthFailure> {
-    let raw = query.q.trim();
-    let limit = query.limit.unwrap_or(DEFAULT_SEARCH_RESULT_LIMIT);
+    let raw = normalize_search_query(&query.q);
+    let limit = effective_search_limit(query.limit, DEFAULT_SEARCH_RESULT_LIMIT);
     validate_search_query_limits(
-        raw,
+        &raw,
         limit,
         state.runtime.search_query_max_chars,
         state.runtime.search_result_limit_max,
@@ -647,7 +649,7 @@ pub(crate) async fn run_search_query(
     raw_query: &str,
     limit: usize,
 ) -> Result<Vec<String>, AuthFailure> {
-    let query = raw_query.trim().to_owned();
+    let query = normalize_search_query(raw_query);
     let guild = guild_id.to_owned();
     let channel = channel_id.map(ToOwned::to_owned);
     let search_state = state.search.state.clone();
@@ -866,21 +868,7 @@ pub(crate) async fn handle_voice_subscribe(
 
     let sync_event =
         gateway_events::voice_participant_sync(guild_id, channel_id, participants, now_unix());
-    match voice_sync_dispatch_outcome(try_enqueue_voice_sync_event(
-        outbound_tx,
-        sync_event.payload,
-    )) {
-        VoiceSyncDispatchOutcome::EmittedAndRepaired => {
-            record_gateway_event_emitted("connection", sync_event.event_type);
-            record_voice_sync_repair("subscribe");
-        }
-        VoiceSyncDispatchOutcome::DroppedClosed => {
-            record_gateway_event_dropped("connection", sync_event.event_type, "closed");
-        }
-        VoiceSyncDispatchOutcome::DroppedFull => {
-            record_gateway_event_dropped("connection", sync_event.event_type, "full_queue");
-        }
-    }
+    dispatch_voice_sync_event(outbound_tx, sync_event);
 }
 
 async fn remove_disconnected_user_voice_participants(
@@ -916,20 +904,7 @@ pub(crate) async fn handle_presence_subscribe(
     };
 
     let snapshot_event = gateway_events::presence_sync(guild_id, result.snapshot_user_ids);
-    match presence_sync_dispatch_outcome(try_enqueue_presence_sync_event(
-        outbound_tx,
-        snapshot_event.payload,
-    )) {
-        PresenceSyncDispatchOutcome::Emitted => {
-            record_gateway_event_emitted("connection", snapshot_event.event_type)
-        }
-        PresenceSyncDispatchOutcome::DroppedClosed => {
-            record_gateway_event_dropped("connection", snapshot_event.event_type, "closed");
-        }
-        PresenceSyncDispatchOutcome::DroppedFull => {
-            record_gateway_event_dropped("connection", snapshot_event.event_type, "full_queue");
-        }
-    }
+    dispatch_presence_sync_event(outbound_tx, snapshot_event);
 
     if let Some(update) = build_presence_online_update(guild_id, user_id, result.became_online) {
         broadcast_guild_event(state, guild_id, &update).await;
