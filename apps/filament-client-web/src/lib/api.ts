@@ -45,7 +45,6 @@ import {
   type UserLookupRecord,
   type UserId,
   type VoiceTokenRecord,
-  profileFromResponse,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
@@ -57,7 +56,6 @@ import { createWorkspaceApi } from "./api-workspace";
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_ATTACHMENT_DOWNLOAD_BYTES = 26 * 1024 * 1024;
-const MAX_PROFILE_AVATAR_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 7_000;
 
 export class ApiError extends Error {
@@ -434,6 +432,7 @@ async function requestBinary(input: {
 
 const authApi = createAuthApi({
   requestJson,
+  requestJsonWithBody,
   requestNoContent,
   createApiError(status, code, message) {
     return new ApiError(status, code, message);
@@ -519,25 +518,7 @@ export async function uploadMyProfileAvatar(
   session: AuthSession,
   file: File,
 ): Promise<ProfileRecord> {
-  if (file.size < 1 || file.size > MAX_PROFILE_AVATAR_BYTES) {
-    throw new ApiError(
-      400,
-      "invalid_request",
-      "Avatar size must be within server limits.",
-    );
-  }
-  const headers: Record<string, string> = {};
-  if (file.type && file.type.length <= 128) {
-    headers["content-type"] = file.type;
-  }
-  const dto = await requestJsonWithBody({
-    method: "POST",
-    path: "/users/me/profile/avatar",
-    accessToken: session.accessToken,
-    headers,
-    body: file,
-  });
-  return profileFromResponse(dto);
+  return authApi.uploadMyProfileAvatar(session, file);
 }
 
 export function profileAvatarUrl(userId: UserId, avatarVersion: number): string {

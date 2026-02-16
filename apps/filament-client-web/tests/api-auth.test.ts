@@ -28,9 +28,11 @@ describe("api-auth", () => {
 
   it("registerWithPassword sends auth register request and accepts strict shape", async () => {
     const requestJson = vi.fn(async () => ({ accepted: true }));
+    const requestJsonWithBody = vi.fn(async () => null);
     const requestNoContent = vi.fn(async () => undefined);
     const api = createAuthApi({
       requestJson,
+      requestJsonWithBody,
       requestNoContent,
       createApiError: (status, code, message) => new MockApiError(status, code, message),
     });
@@ -55,6 +57,7 @@ describe("api-auth", () => {
   it("registerWithPassword fails closed on invalid response shape", async () => {
     const api = createAuthApi({
       requestJson: vi.fn(async () => ({ accepted: "yes" })),
+      requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
     });
@@ -78,6 +81,7 @@ describe("api-auth", () => {
         refresh_token: "B".repeat(64),
         expires_in_secs: 60,
       })),
+      requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
     });
@@ -98,6 +102,7 @@ describe("api-auth", () => {
     const requestNoContent = vi.fn(async () => undefined);
     const api = createAuthApi({
       requestJson: vi.fn(async () => null),
+      requestJsonWithBody: vi.fn(async () => null),
       requestNoContent,
       createApiError: (status, code, message) => new MockApiError(status, code, message),
     });
@@ -121,6 +126,7 @@ describe("api-auth", () => {
     }));
     const api = createAuthApi({
       requestJson,
+      requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
     });
@@ -147,6 +153,7 @@ describe("api-auth", () => {
   it("fetchMe fails closed on invalid profile shape", async () => {
     const api = createAuthApi({
       requestJson: vi.fn(async () => ({ user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV" })),
+      requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
     });
@@ -170,6 +177,7 @@ describe("api-auth", () => {
     }));
     const api = createAuthApi({
       requestJson,
+      requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
     });
@@ -202,6 +210,7 @@ describe("api-auth", () => {
     }));
     const api = createAuthApi({
       requestJson,
+      requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
     });
@@ -229,9 +238,71 @@ describe("api-auth", () => {
     });
   });
 
+  it("uploadMyProfileAvatar enforces strict size bounds", async () => {
+    const requestJsonWithBody = vi.fn(async () => null);
+    const api = createAuthApi({
+      requestJson: vi.fn(async () => null),
+      requestJsonWithBody,
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(
+      api.uploadMyProfileAvatar(
+        {
+          accessToken: accessTokenFromInput("A".repeat(64)),
+          refreshToken: refreshTokenFromInput("B".repeat(64)),
+          expiresAtUnix: 2_000_000_000,
+        },
+        new File([new Uint8Array(0)], "avatar.png", { type: "image/png" }),
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+
+    expect(requestJsonWithBody).not.toHaveBeenCalled();
+  });
+
+  it("uploadMyProfileAvatar sends authenticated body request and maps profile DTO", async () => {
+    const requestJsonWithBody = vi.fn(async () => ({
+      user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      username: "valid_user",
+      about_markdown: "Hello",
+      about_markdown_tokens: [],
+      avatar_version: 5,
+    }));
+
+    const api = createAuthApi({
+      requestJson: vi.fn(async () => null),
+      requestJsonWithBody,
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    const file = new File([new Uint8Array([1, 2, 3])], "avatar.png", { type: "image/png" });
+    const session = {
+      accessToken: accessTokenFromInput("A".repeat(64)),
+      refreshToken: refreshTokenFromInput("B".repeat(64)),
+      expiresAtUnix: 2_000_000_000,
+    };
+
+    await expect(api.uploadMyProfileAvatar(session, file)).resolves.toMatchObject({
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      avatarVersion: 5,
+    });
+    expect(requestJsonWithBody).toHaveBeenCalledWith({
+      method: "POST",
+      path: "/users/me/profile/avatar",
+      accessToken: "A".repeat(64),
+      headers: {
+        "content-type": "image/png",
+      },
+      body: file,
+    });
+  });
+
   it("lookupUsersByIds enforces 1-64 ids bounds", async () => {
     const api = createAuthApi({
       requestJson: vi.fn(async () => ({ users: [] })),
+      requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
     });

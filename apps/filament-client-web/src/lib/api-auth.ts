@@ -22,8 +22,19 @@ interface JsonRequest {
   accessToken?: AccessToken;
 }
 
+interface BodyRequest {
+  method: "POST" | "PATCH" | "DELETE";
+  path: string;
+  body: BodyInit;
+  accessToken?: AccessToken;
+  headers?: Record<string, string>;
+}
+
+const MAX_PROFILE_AVATAR_BYTES = 2 * 1024 * 1024;
+
 interface AuthApiDependencies {
   requestJson: (request: JsonRequest) => Promise<unknown>;
+  requestJsonWithBody: (request: BodyRequest) => Promise<unknown>;
   requestNoContent: (request: JsonRequest) => Promise<void>;
   createApiError: (status: number, code: string, message: string) => Error;
 }
@@ -46,6 +57,7 @@ export interface AuthApi {
     session: AuthSession,
     input: { username?: Username; aboutMarkdown?: string },
   ): Promise<ProfileRecord>;
+  uploadMyProfileAvatar(session: AuthSession, file: File): Promise<ProfileRecord>;
   lookupUsersByIds(session: AuthSession, userIds: UserId[]): Promise<UserLookupRecord[]>;
 }
 
@@ -177,6 +189,28 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
         path: "/users/me/profile",
         accessToken: session.accessToken,
         body,
+      });
+      return profileFromResponse(dto);
+    },
+
+    async uploadMyProfileAvatar(session, file) {
+      if (file.size < 1 || file.size > MAX_PROFILE_AVATAR_BYTES) {
+        throw input.createApiError(
+          400,
+          "invalid_request",
+          "Avatar size must be within server limits.",
+        );
+      }
+      const headers: Record<string, string> = {};
+      if (file.type && file.type.length <= 128) {
+        headers["content-type"] = file.type;
+      }
+      const dto = await input.requestJsonWithBody({
+        method: "POST",
+        path: "/users/me/profile/avatar",
+        accessToken: session.accessToken,
+        headers,
+        body: file,
       });
       return profileFromResponse(dto);
     },
