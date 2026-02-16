@@ -37,9 +37,13 @@ use uuid::Uuid;
 
 mod ingress_rate_limit;
 mod ingress_message;
+mod fanout_dispatch;
+mod voice_presence;
 
+use fanout_dispatch::dispatch_gateway_payload;
 use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
 use ingress_rate_limit::allow_gateway_ingress;
+use voice_presence::{voice_channel_key, voice_snapshot_from_record};
 
 use super::{
     auth::{
@@ -1114,34 +1118,6 @@ pub(crate) async fn hydrate_messages_by_id(
     Ok(hydrated)
 }
 
-fn dispatch_gateway_payload(
-    listeners: &mut HashMap<Uuid, mpsc::Sender<String>>,
-    payload: &str,
-    event_type: &'static str,
-    scope: &'static str,
-    slow_connections: &mut Vec<Uuid>,
-) -> usize {
-    let mut delivered = 0usize;
-    listeners.retain(
-        |connection_id, sender| match sender.try_send(payload.to_owned()) {
-            Ok(()) => {
-                delivered += 1;
-                true
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                record_gateway_event_dropped(scope, event_type, "closed");
-                false
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                record_gateway_event_dropped(scope, event_type, "full_queue");
-                slow_connections.push(*connection_id);
-                false
-            }
-        },
-    );
-    delivered
-}
-
 async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
     if slow_connections.is_empty() {
         return;
@@ -1283,26 +1259,6 @@ pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, even
         for _ in 0..delivered {
             record_gateway_event_emitted("user", event.event_type);
         }
-    }
-}
-
-fn voice_channel_key(guild_id: &str, channel_id: &str) -> String {
-    format!("{guild_id}:{channel_id}")
-}
-
-fn voice_snapshot_from_record(
-    participant: &VoiceParticipant,
-) -> gateway_events::VoiceParticipantSnapshot {
-    gateway_events::VoiceParticipantSnapshot {
-        user_id: participant.user_id,
-        identity: participant.identity.clone(),
-        joined_at_unix: participant.joined_at_unix,
-        updated_at_unix: participant.updated_at_unix,
-        is_muted: participant.is_muted,
-        is_deafened: participant.is_deafened,
-        is_speaking: participant.is_speaking,
-        is_video_enabled: participant.is_video_enabled,
-        is_screen_share_enabled: participant.is_screen_share_enabled,
     }
 }
 
