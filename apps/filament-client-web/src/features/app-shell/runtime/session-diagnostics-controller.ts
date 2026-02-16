@@ -8,6 +8,7 @@ import {
 } from "../../../lib/api";
 import { clearWorkspaceCache } from "../../../lib/workspace-cache";
 import { mapError } from "../helpers";
+import type { DiagnosticsEventType } from "../state/diagnostics-event-counters";
 
 export interface SessionDiagnosticsControllerOptions {
   session: Accessor<AuthSession | null>;
@@ -26,6 +27,7 @@ export interface SessionDiagnosticsControllerOptions {
   isEchoing: Accessor<boolean>;
   setEchoing: Setter<boolean>;
   echoInput: Accessor<string>;
+  recordDiagnosticsEvent: (eventType: DiagnosticsEventType) => void;
 }
 
 export interface SessionDiagnosticsControllerDependencies {
@@ -76,14 +78,17 @@ export function createSessionDiagnosticsController(
       const next = await deps.refreshAuthSession(session.refreshToken);
       options.setAuthenticatedSession(next);
       options.setSessionStatus("Session refreshed.");
+      options.recordDiagnosticsEvent("session_refresh_succeeded");
     } catch (error) {
       options.setSessionError(deps.mapError(error, "Unable to refresh session."));
+      options.recordDiagnosticsEvent("session_refresh_failed");
     } finally {
       options.setRefreshingSession(false);
     }
   };
 
   const logout = async (): Promise<void> => {
+    options.recordDiagnosticsEvent("logout_requested");
     await options.leaveVoiceChannel();
     await options.releaseRtcClient();
     const session = options.session();
@@ -108,8 +113,10 @@ export function createSessionDiagnosticsController(
     try {
       const health = await deps.fetchHealth();
       options.setHealthStatus(`Health: ${health.status}`);
+      options.recordDiagnosticsEvent("health_check_succeeded");
     } catch (error) {
       options.setDiagError(deps.mapError(error, "Health check failed."));
+      options.recordDiagnosticsEvent("health_check_failed");
     } finally {
       options.setCheckingHealth(false);
     }
@@ -126,8 +133,10 @@ export function createSessionDiagnosticsController(
     try {
       const echoed = await deps.echoMessage({ message: options.echoInput() });
       options.setHealthStatus(`Echo: ${echoed.slice(0, 60)}`);
+      options.recordDiagnosticsEvent("echo_succeeded");
     } catch (error) {
       options.setDiagError(deps.mapError(error, "Echo request failed."));
+      options.recordDiagnosticsEvent("echo_failed");
     } finally {
       options.setEchoing(false);
     }

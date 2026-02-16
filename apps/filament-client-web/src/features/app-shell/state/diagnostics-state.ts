@@ -1,5 +1,10 @@
 import { createSignal } from "solid-js";
 import type { RoleName } from "../../../domain/chat";
+import {
+  createInitialDiagnosticsEventCounts,
+  incrementDiagnosticsEventCount,
+  type DiagnosticsEventType,
+} from "./diagnostics-event-counters";
 
 export function createDiagnosticsState() {
   const [moderationUserIdInput, setModerationUserIdInput] = createSignal("");
@@ -21,6 +26,17 @@ export function createDiagnosticsState() {
   const [diagError, setDiagError] = createSignal("");
   const [isCheckingHealth, setCheckingHealth] = createSignal(false);
   const [isEchoing, setEchoing] = createSignal(false);
+  const [diagnosticsEventCounts, setDiagnosticsEventCounts] = createSignal(
+    createInitialDiagnosticsEventCounts(),
+  );
+
+  const recordDiagnosticsEvent = (eventType: DiagnosticsEventType) => {
+    setDiagnosticsEventCounts((counts) => incrementDiagnosticsEventCount(counts, eventType));
+  };
+
+  const resetDiagnosticsEventCounts = () => {
+    setDiagnosticsEventCounts(createInitialDiagnosticsEventCounts());
+  };
 
   return {
     moderationUserIdInput,
@@ -55,5 +71,8 @@ export function createDiagnosticsState() {
     setCheckingHealth,
     isEchoing,
     setEchoing,
+    diagnosticsEventCounts,
+    recordDiagnosticsEvent,
+    resetDiagnosticsEventCounts,
   };
 }

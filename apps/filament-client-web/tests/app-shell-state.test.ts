@@ -109,6 +109,15 @@ describe("app shell state factories", () => {
     expect(diagnosticsState.healthStatus()).toBe("");
     expect(diagnosticsState.echoInput()).toBe("hello filament");
     expect(diagnosticsState.diagError()).toBe("");
+    expect(diagnosticsState.diagnosticsEventCounts()).toEqual({
+      session_refresh_succeeded: 0,
+      session_refresh_failed: 0,
+      health_check_succeeded: 0,
+      health_check_failed: 0,
+      echo_succeeded: 0,
+      echo_failed: 0,
+      logout_requested: 0,
+    });
   });
 
   it("provides voice and overlay defaults", () => {

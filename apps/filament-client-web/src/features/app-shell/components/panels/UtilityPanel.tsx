@@ -1,9 +1,12 @@
 import { Show } from "solid-js";
+import type { DiagnosticsEventCounts } from "../../state/diagnostics-event-counters";
 
 export interface UtilityPanelProps {
   echoInput: string;
   healthStatus: string;
   diagError: string;
+  diagnosticsEventCounts: DiagnosticsEventCounts;
+  showDiagnosticsCounters: boolean;
   isCheckingHealth: boolean;
   isEchoing: boolean;
   onEchoInput: (value: string) => void;
@@ -37,6 +40,26 @@ export function UtilityPanel(props: UtilityPanelProps) {
       </Show>
       <Show when={props.diagError}>
         <p class="status error">{props.diagError}</p>
+      </Show>
+      <Show when={props.showDiagnosticsCounters}>
+        <div>
+          <p class="panel-note">Diagnostics counters (dev only)</p>
+          <p class="panel-note">
+            Session refresh: {props.diagnosticsEventCounts.session_refresh_succeeded} ok /{" "}
+            {props.diagnosticsEventCounts.session_refresh_failed} failed
+          </p>
+          <p class="panel-note">
+            Health checks: {props.diagnosticsEventCounts.health_check_succeeded} ok /{" "}
+            {props.diagnosticsEventCounts.health_check_failed} failed
+          </p>
+          <p class="panel-note">
+            Echo: {props.diagnosticsEventCounts.echo_succeeded} ok /{" "}
+            {props.diagnosticsEventCounts.echo_failed} failed
+          </p>
+          <p class="panel-note">
+            Logout requests: {props.diagnosticsEventCounts.logout_requested}
+          </p>
+        </div>
       </Show>
     </section>
   );

@@ -11,6 +11,16 @@ describe("app shell utility panel props", () => {
       echoInput: "ping",
       healthStatus: "ok",
       diagError: "",
+      diagnosticsEventCounts: {
+        session_refresh_succeeded: 1,
+        session_refresh_failed: 0,
+        health_check_succeeded: 2,
+        health_check_failed: 0,
+        echo_succeeded: 3,
+        echo_failed: 1,
+        logout_requested: 1,
+      },
+      showDiagnosticsCounters: true,
       isCheckingHealth: false,
       isEchoing: false,
       setEchoInput,
@@ -21,6 +31,8 @@ describe("app shell utility panel props", () => {
     expect(panelProps.echoInput).toBe("ping");
     expect(panelProps.healthStatus).toBe("ok");
     expect(panelProps.diagError).toBe("");
+    expect(panelProps.diagnosticsEventCounts.echo_succeeded).toBe(3);
+    expect(panelProps.showDiagnosticsCounters).toBe(true);
     expect(panelProps.isCheckingHealth).toBe(false);
     expect(panelProps.isEchoing).toBe(false);
 

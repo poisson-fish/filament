@@ -4,6 +4,7 @@ import {
   createSessionDiagnosticsController,
   type SessionDiagnosticsController,
 } from "./session-diagnostics-controller";
+import type { DiagnosticsEventType } from "../state/diagnostics-event-counters";
 
 export interface SessionDiagnosticsActionsOptions {
   session: Accessor<AuthSession | null>;
@@ -22,6 +23,7 @@ export interface SessionDiagnosticsActionsOptions {
   isEchoing: Accessor<boolean>;
   setEchoing: Setter<boolean>;
   echoInput: Accessor<string>;
+  recordDiagnosticsEvent: (eventType: DiagnosticsEventType) => void;
 }
 
 export interface SessionDiagnosticsActionsDependencies {
@@ -59,5 +61,6 @@ export function createSessionDiagnosticsActions(
     isEchoing: options.isEchoing,
     setEchoing: options.setEchoing,
     echoInput: options.echoInput,
+    recordDiagnosticsEvent: options.recordDiagnosticsEvent,
   });
 }

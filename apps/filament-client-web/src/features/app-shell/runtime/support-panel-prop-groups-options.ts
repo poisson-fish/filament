@@ -104,6 +104,8 @@ export interface SupportPanelPropGroupsStateOptions {
   echoInput: () => string;
   healthStatus: () => string;
   diagError: () => string;
+  diagnosticsEventCounts: () => SupportPanelPropGroupsOptions["utility"]["diagnosticsEventCounts"];
+  showDiagnosticsCounters: boolean;
   isCheckingHealth: () => boolean;
   isEchoing: () => boolean;
   setEchoInput: SupportPanelPropGroupsOptions["utility"]["setEchoInput"];
@@ -192,6 +194,8 @@ export function createSupportPanelPropGroupsOptions(
       echoInput: options.echoInput(),
       healthStatus: options.healthStatus(),
       diagError: options.diagError(),
+      diagnosticsEventCounts: options.diagnosticsEventCounts(),
+      showDiagnosticsCounters: options.showDiagnosticsCounters,
       isCheckingHealth: options.isCheckingHealth(),
       isEchoing: options.isEchoing(),
       setEchoInput: options.setEchoInput,

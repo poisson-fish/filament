@@ -541,6 +541,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     isEchoing: diagnosticsState.isEchoing,
     setEchoing: diagnosticsState.setEchoing,
     echoInput: diagnosticsState.echoInput,
+    recordDiagnosticsEvent: diagnosticsState.recordDiagnosticsEvent,
   });
 
   onCleanup(() => {
@@ -582,6 +583,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
       refreshAudioDeviceInventory,
       saveWorkspaceSettings,
       openOverlayPanel,
+      isDevelopmentMode: import.meta.env.DEV,
     },
     collaboration: {
       friendshipsState,

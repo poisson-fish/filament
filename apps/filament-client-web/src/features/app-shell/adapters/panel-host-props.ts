@@ -31,6 +31,7 @@ import type {
   SettingsCategory,
   VoiceSettingsSubmenu,
 } from "../types";
+import type { DiagnosticsEventCounts } from "../state/diagnostics-event-counters";
 
 export type PanelHostPropGroups = Pick<
   PanelHostProps,
@@ -236,6 +237,8 @@ export interface UtilityPanelBuilderOptions {
   echoInput: string;
   healthStatus: string;
   diagError: string;
+  diagnosticsEventCounts: DiagnosticsEventCounts;
+  showDiagnosticsCounters: boolean;
   isCheckingHealth: boolean;
   isEchoing: boolean;
   setEchoInput: (value: string) => void;
@@ -486,6 +489,8 @@ export function buildUtilityPanelProps(
     echoInput: options.echoInput,
     healthStatus: options.healthStatus,
     diagError: options.diagError,
+    diagnosticsEventCounts: options.diagnosticsEventCounts,
+    showDiagnosticsCounters: options.showDiagnosticsCounters,
     isCheckingHealth: options.isCheckingHealth,
     isEchoing: options.isEchoing,
     onEchoInput: options.setEchoInput,

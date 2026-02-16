@@ -72,6 +72,15 @@ describe("app shell support panel-host state options", () => {
     const echoInput = () => "ping";
     const healthStatus = () => "ok";
     const diagError = () => "";
+    const diagnosticsEventCounts = () => ({
+      session_refresh_succeeded: 1,
+      session_refresh_failed: 2,
+      health_check_succeeded: 3,
+      health_check_failed: 4,
+      echo_succeeded: 5,
+      echo_failed: 6,
+      logout_requested: 7,
+    });
     const isCheckingHealth = () => false;
     const isEchoing = () => false;
     const setEchoInput = vi.fn();
@@ -138,6 +147,7 @@ describe("app shell support panel-host state options", () => {
         echoInput,
         healthStatus,
         diagError,
+        diagnosticsEventCounts,
         isCheckingHealth,
         isEchoing,
         setEchoInput,
@@ -181,6 +191,7 @@ describe("app shell support panel-host state options", () => {
       refreshAudioDeviceInventory,
       saveWorkspaceSettings,
       openOverlayPanel,
+      isDevelopmentMode: true,
     });
 
     expect(stateOptions.publicGuildSearchQuery).toBe(publicGuildSearchQuery);
@@ -191,6 +202,8 @@ describe("app shell support panel-host state options", () => {
     expect(stateOptions.workspaceName).toBe(workspaceSettingsName);
     expect(stateOptions.roles).toBe(roles);
     expect(stateOptions.echoInput).toBe(echoInput);
+    expect(stateOptions.diagnosticsEventCounts).toBe(diagnosticsEventCounts);
+    expect(stateOptions.showDiagnosticsCounters).toBe(true);
 
     stateOptions.onOpenModerationPanel();
     expect(openOverlayPanel).toHaveBeenCalledWith("moderation");

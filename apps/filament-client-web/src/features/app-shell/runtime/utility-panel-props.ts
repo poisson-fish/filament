@@ -1,9 +1,12 @@
 import type { UtilityPanelBuilderOptions } from "../adapters/panel-host-props";
+import type { DiagnosticsEventCounts } from "../state/diagnostics-event-counters";
 
 export interface UtilityPanelPropsOptions {
   echoInput: string;
   healthStatus: string;
   diagError: string;
+  diagnosticsEventCounts: DiagnosticsEventCounts;
+  showDiagnosticsCounters: boolean;
   isCheckingHealth: boolean;
   isEchoing: boolean;
   setEchoInput: (value: string) => void;
@@ -18,6 +21,8 @@ export function createUtilityPanelProps(
     echoInput: options.echoInput,
     healthStatus: options.healthStatus,
     diagError: options.diagError,
+    diagnosticsEventCounts: options.diagnosticsEventCounts,
+    showDiagnosticsCounters: options.showDiagnosticsCounters,
     isCheckingHealth: options.isCheckingHealth,
     isEchoing: options.isEchoing,
     setEchoInput: options.setEchoInput,

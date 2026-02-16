@@ -21,6 +21,7 @@ describe("app shell session diagnostics actions", () => {
     const [diagError, setDiagError] = createSignal("");
     const [isEchoing, setEchoing] = createSignal(false);
     const [echoInput] = createSignal("ping");
+    const recordDiagnosticsEvent = vi.fn();
 
     const leaveVoiceChannel = vi.fn(async () => undefined);
     const releaseRtcClient = vi.fn(async () => undefined);
@@ -61,6 +62,7 @@ describe("app shell session diagnostics actions", () => {
         isEchoing,
         setEchoing,
         echoInput,
+        recordDiagnosticsEvent,
       },
       {
         createSessionDiagnosticsController: createSessionDiagnosticsControllerMock,
@@ -72,5 +74,10 @@ describe("app shell session diagnostics actions", () => {
     expect(leaveVoiceChannel).toHaveBeenCalledTimes(1);
     expect(releaseRtcClient).toHaveBeenCalledTimes(1);
     expect(sessionStatus()).toBe("wired");
+    expect(createSessionDiagnosticsControllerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recordDiagnosticsEvent,
+      }),
+    );
   });
 });

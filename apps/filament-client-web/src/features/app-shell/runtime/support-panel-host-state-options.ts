@@ -30,6 +30,7 @@ export interface SupportPanelHostStateOptions {
   refreshAudioDeviceInventory: (force: boolean) => Promise<void>;
   saveWorkspaceSettings: () => Promise<void>;
   openOverlayPanel: (panel: "moderation") => void;
+  isDevelopmentMode: boolean;
 }
 
 export function createSupportPanelHostStateOptions(
@@ -109,6 +110,8 @@ export function createSupportPanelHostStateOptions(
     echoInput: options.diagnosticsState.echoInput,
     healthStatus: options.diagnosticsState.healthStatus,
     diagError: options.diagnosticsState.diagError,
+    diagnosticsEventCounts: options.diagnosticsState.diagnosticsEventCounts,
+    showDiagnosticsCounters: options.isDevelopmentMode,
     isCheckingHealth: options.diagnosticsState.isCheckingHealth,
     isEchoing: options.diagnosticsState.isEchoing,
     setEchoInput: options.diagnosticsState.setEchoInput,
