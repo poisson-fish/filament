@@ -1,6 +1,10 @@
 import { For, Show } from "solid-js";
 import type { MessageId, MessageRecord } from "../../../../domain/chat";
 import { MessageRow, type MessageRowProps } from "./MessageRow";
+import {
+  resolveMessageListRenderWindow,
+  type ResolveMessageListRenderWindowInput,
+} from "./message-list-window";
 
 export interface MessageListProps extends Omit<MessageRowProps, "message"> {
   messages: MessageRecord[];
@@ -12,9 +16,21 @@ export interface MessageListProps extends Omit<MessageRowProps, "message"> {
   onLoadOlderMessages: () => Promise<void> | void;
   onListScroll: () => void;
   onListRef: (element: HTMLElement) => void;
+  maxRenderedMessages?: ResolveMessageListRenderWindowInput["maxRenderedMessages"];
 }
 
 export function MessageList(props: MessageListProps) {
+  const renderWindow = () =>
+    resolveMessageListRenderWindow({
+      messageCount: props.messages.length,
+      maxRenderedMessages: props.maxRenderedMessages,
+    });
+
+  const visibleMessages = () => {
+    const window = renderWindow();
+    return props.messages.slice(window.startIndex, window.endIndex);
+  };
+
   return (
     <section
       ref={props.onListRef}
@@ -33,7 +49,7 @@ export function MessageList(props: MessageListProps) {
         </button>
       </Show>
 
-      <For each={props.messages}>
+      <For each={visibleMessages()}>
         {(message) => (
           <MessageRow
             message={message}
