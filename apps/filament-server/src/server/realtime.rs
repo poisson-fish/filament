@@ -2,6 +2,8 @@ mod voice_registration_events;
 mod hydration_in_memory;
 mod connection_subscriptions;
 mod search_batch_drain;
+mod search_enqueue;
+mod search_apply_batch;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
@@ -29,7 +31,7 @@ use sqlx::Row;
 use tantivy::{
     schema::Schema,
 };
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, watch};
 use ulid::Ulid;
 use uuid::Uuid;
 
@@ -88,7 +90,7 @@ use search_collect_guild::collect_indexed_messages_for_guild_in_memory;
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 use search_query_exec::run_search_query_against_index;
 use fanout_user_targets::connection_ids_for_user;
-use voice_cleanup_events::build_voice_removal_events;
+use voice_cleanup_events::plan_voice_removal_broadcasts;
 use search_schema::build_search_schema as build_search_schema_impl;
 use search_apply::apply_search_operation as apply_search_operation_impl;
 use message_prepare::prepare_message_body;
@@ -98,6 +100,8 @@ use voice_registration_events::plan_voice_registration_events;
 use hydration_in_memory::collect_hydrated_messages_in_memory;
 use connection_subscriptions::remove_connection_from_subscriptions;
 use search_batch_drain::drain_search_batch;
+use search_enqueue::enqueue_search_command;
+use search_apply_batch::apply_search_batch_with_ack;
 
 use super::{
     auth::{
@@ -561,39 +565,7 @@ pub(crate) fn apply_search_batch(
     search: &Arc<SearchIndexState>,
     mut batch: Vec<SearchCommand>,
 ) -> anyhow::Result<()> {
-    let mut ops = Vec::with_capacity(batch.len());
-    let mut pending_acks = Vec::new();
-    for command in batch.drain(..) {
-        if let Some(ack) = command.ack {
-            pending_acks.push(ack);
-        }
-        ops.push(command.op);
-    }
-
-    let apply_result = (|| -> anyhow::Result<()> {
-        let mut writer = search.index.writer(50_000_000)?;
-        for op in ops {
-            apply_search_operation(search, &mut writer, op);
-        }
-        writer.commit()?;
-        search.reader.reload()?;
-        Ok(())
-    })();
-
-    match apply_result {
-        Ok(()) => {
-            for ack in pending_acks {
-                let _ = ack.send(Ok(()));
-            }
-            Ok(())
-        }
-        Err(error) => {
-            for ack in pending_acks {
-                let _ = ack.send(Err(AuthFailure::Internal));
-            }
-            Err(error)
-        }
-    }
+    apply_search_batch_with_ack(search, &mut batch, apply_search_operation)
 }
 
 pub(crate) fn apply_search_operation(
@@ -639,26 +611,7 @@ pub(crate) async fn enqueue_search_operation(
     op: SearchOperation,
     wait_for_apply: bool,
 ) -> Result<(), AuthFailure> {
-    if wait_for_apply {
-        let (ack_tx, ack_rx) = oneshot::channel();
-        state
-            .search
-            .tx
-            .send(SearchCommand {
-                op,
-                ack: Some(ack_tx),
-            })
-            .await
-            .map_err(|_| AuthFailure::Internal)?;
-        ack_rx.await.map_err(|_| AuthFailure::Internal)?
-    } else {
-        state
-            .search
-            .tx
-            .send(SearchCommand { op, ack: None })
-            .await
-            .map_err(|_| AuthFailure::Internal)
-    }
+    enqueue_search_command(&state.search.tx, op, wait_for_apply).await
 }
 
 pub(crate) async fn collect_all_indexed_messages(
@@ -1004,17 +957,8 @@ async fn prune_expired_voice_participants(state: &AppState, now_unix: i64) {
         take_expired_voice_participant_removals(&mut voice, now_unix)
     };
 
-    for removed in removed {
-        let channel_subscription_key = channel_key(&removed.guild_id, &removed.channel_id);
-        let events = build_voice_removal_events(
-            &removed.guild_id,
-            &removed.channel_id,
-            &removed.participant,
-            now_unix,
-        );
-        for event in events {
-            broadcast_channel_event(state, &channel_subscription_key, &event).await;
-        }
+    for (channel_subscription_key, event) in plan_voice_removal_broadcasts(removed, now_unix) {
+        broadcast_channel_event(state, &channel_subscription_key, &event).await;
     }
 }
 
@@ -1097,17 +1041,10 @@ async fn remove_disconnected_user_voice_participants(
         remove_user_voice_participant_removals(&mut voice, user_id)
     };
 
-    for removed in removed {
-        let channel_subscription_key = channel_key(&removed.guild_id, &removed.channel_id);
-        let events = build_voice_removal_events(
-            &removed.guild_id,
-            &removed.channel_id,
-            &removed.participant,
-            disconnected_at_unix,
-        );
-        for event in events {
-            broadcast_channel_event(state, &channel_subscription_key, &event).await;
-        }
+    for (channel_subscription_key, event) in
+        plan_voice_removal_broadcasts(removed, disconnected_at_unix)
+    {
+        broadcast_channel_event(state, &channel_subscription_key, &event).await;
     }
 }
 

@@ -1,6 +1,8 @@
 use crate::server::{
     core::VoiceParticipant,
+    auth::channel_key,
     gateway_events::{self, GatewayEvent},
+    realtime::voice_registry::VoiceParticipantRemoval,
 };
 
 pub(crate) fn build_voice_removal_events(
@@ -30,6 +32,25 @@ pub(crate) fn build_voice_removal_events(
     events
 }
 
+pub(crate) fn plan_voice_removal_broadcasts(
+    removals: Vec<VoiceParticipantRemoval>,
+    event_at_unix: i64,
+) -> Vec<(String, GatewayEvent)> {
+    let mut planned = Vec::new();
+    for removed in removals {
+        let subscription_key = channel_key(&removed.guild_id, &removed.channel_id);
+        for event in build_voice_removal_events(
+            &removed.guild_id,
+            &removed.channel_id,
+            &removed.participant,
+            event_at_unix,
+        ) {
+            planned.push((subscription_key.clone(), event));
+        }
+    }
+    planned
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -37,10 +58,11 @@ mod tests {
 
     use filament_core::UserId;
 
-    use super::build_voice_removal_events;
+    use super::{build_voice_removal_events, plan_voice_removal_broadcasts};
     use crate::server::{
         core::{VoiceParticipant, VoiceStreamKind},
         gateway_events::{VOICE_PARTICIPANT_LEAVE_EVENT, VOICE_STREAM_UNPUBLISH_EVENT},
+        realtime::voice_registry::VoiceParticipantRemoval,
     };
 
     fn participant(published_streams: HashSet<VoiceStreamKind>) -> VoiceParticipant {
@@ -88,5 +110,29 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, VOICE_PARTICIPANT_LEAVE_EVENT);
+    }
+
+    #[test]
+    fn plans_channel_scoped_broadcast_pairs_for_each_removal() {
+        let first = VoiceParticipantRemoval {
+            guild_id: String::from("g1"),
+            channel_id: String::from("c1"),
+            participant: participant(HashSet::from([VoiceStreamKind::Microphone])),
+        };
+        let second = VoiceParticipantRemoval {
+            guild_id: String::from("g1"),
+            channel_id: String::from("c2"),
+            participant: participant(HashSet::new()),
+        };
+
+        let planned = plan_voice_removal_broadcasts(vec![first, second], 12);
+
+        assert_eq!(planned.len(), 3);
+        assert_eq!(planned[0].0, "g1:c1");
+        assert_eq!(planned[1].0, "g1:c1");
+        assert_eq!(planned[2].0, "g1:c2");
+        assert_eq!(planned[0].1.event_type, VOICE_STREAM_UNPUBLISH_EVENT);
+        assert_eq!(planned[1].1.event_type, VOICE_PARTICIPANT_LEAVE_EVENT);
+        assert_eq!(planned[2].1.event_type, VOICE_PARTICIPANT_LEAVE_EVENT);
     }
 }
