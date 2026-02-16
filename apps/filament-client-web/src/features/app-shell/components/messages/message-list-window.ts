@@ -1,5 +1,6 @@
 export const DEFAULT_MESSAGE_LIST_RENDER_WINDOW_SIZE = 240;
 export const MAX_MESSAGE_LIST_RENDER_WINDOW_SIZE = 600;
+export const MESSAGE_LIST_PINNED_TO_LATEST_THRESHOLD_PX = 120;
 
 export interface MessageListRenderWindow {
   startIndex: number;
@@ -9,6 +10,7 @@ export interface MessageListRenderWindow {
 export interface ResolveMessageListRenderWindowInput {
   messageCount: number;
   maxRenderedMessages?: number;
+  mode?: "bounded" | "full";
 }
 
 function sanitizePositiveInteger(
@@ -34,6 +36,13 @@ export function resolveMessageListRenderWindow(
     return { startIndex: 0, endIndex: 0 };
   }
 
+  if (input.mode === "full") {
+    return {
+      startIndex: 0,
+      endIndex: messageCount,
+    };
+  }
+
   const maxRenderedMessages = sanitizePositiveInteger(
     input.maxRenderedMessages,
     DEFAULT_MESSAGE_LIST_RENDER_WINDOW_SIZE,
@@ -51,4 +60,12 @@ export function resolveMessageListRenderWindow(
     startIndex: messageCount - maxRenderedMessages,
     endIndex: messageCount,
   };
+}
+
+export function isMessageListPinnedToLatest(element: HTMLElement): boolean {
+  const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+  if (!Number.isFinite(distanceFromBottom)) {
+    return true;
+  }
+  return distanceFromBottom <= MESSAGE_LIST_PINNED_TO_LATEST_THRESHOLD_PX;
 }

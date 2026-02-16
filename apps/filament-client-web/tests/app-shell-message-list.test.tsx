@@ -1,4 +1,5 @@
 import { render, screen } from "@solidjs/testing-library";
+import { fireEvent } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import {
   channelIdFromInput,
@@ -95,6 +96,34 @@ describe("app shell message list", () => {
     expect(rows).toHaveLength(240);
     expect(screen.queryByText("message-0")).not.toBeInTheDocument();
     expect(screen.getByText("message-20")).toBeInTheDocument();
+    expect(screen.getByText("message-259")).toBeInTheDocument();
+  });
+
+  it("expands to full history when scrolled away from latest", async () => {
+    const messages = Array.from({ length: 260 }, (_, index) => messageFixture(index));
+    renderList(messages);
+
+    const listElement = document.querySelector(".message-list") as HTMLElement;
+    Object.defineProperty(listElement, "scrollHeight", {
+      configurable: true,
+      get: () => 2_000,
+    });
+    Object.defineProperty(listElement, "clientHeight", {
+      configurable: true,
+      get: () => 600,
+    });
+
+    listElement.scrollTop = 1_360;
+    await fireEvent.scroll(listElement);
+
+    expect(document.querySelectorAll(".message-row")).toHaveLength(240);
+
+    listElement.scrollTop = 100;
+    await fireEvent.scroll(listElement);
+
+    const rows = document.querySelectorAll(".message-row");
+    expect(rows).toHaveLength(260);
+    expect(screen.getByText("message-0")).toBeInTheDocument();
     expect(screen.getByText("message-259")).toBeInTheDocument();
   });
 });

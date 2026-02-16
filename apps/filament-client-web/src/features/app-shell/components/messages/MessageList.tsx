@@ -1,7 +1,8 @@
-import { For, Show } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 import type { MessageId, MessageRecord } from "../../../../domain/chat";
 import { MessageRow, type MessageRowProps } from "./MessageRow";
 import {
+  isMessageListPinnedToLatest,
   resolveMessageListRenderWindow,
   type ResolveMessageListRenderWindowInput,
 } from "./message-list-window";
@@ -20,10 +21,27 @@ export interface MessageListProps extends Omit<MessageRowProps, "message"> {
 }
 
 export function MessageList(props: MessageListProps) {
+  const [isPinnedToLatest, setIsPinnedToLatest] = createSignal(true);
+
+  const handleListRef = (element: HTMLElement) => {
+    props.onListRef(element);
+    setIsPinnedToLatest(isMessageListPinnedToLatest(element));
+  };
+
+  const handleListScroll = (event: Event) => {
+    props.onListScroll();
+    const element = event.currentTarget;
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+    setIsPinnedToLatest(isMessageListPinnedToLatest(element));
+  };
+
   const renderWindow = () =>
     resolveMessageListRenderWindow({
       messageCount: props.messages.length,
       maxRenderedMessages: props.maxRenderedMessages,
+      mode: isPinnedToLatest() ? "bounded" : "full",
     });
 
   const visibleMessages = () => {
@@ -33,10 +51,10 @@ export function MessageList(props: MessageListProps) {
 
   return (
     <section
-      ref={props.onListRef}
+      ref={handleListRef}
       class="message-list"
       aria-live="polite"
-      onScroll={props.onListScroll}
+      onScroll={handleListScroll}
     >
       <Show when={props.nextBefore && props.showLoadOlderButton}>
         <button
