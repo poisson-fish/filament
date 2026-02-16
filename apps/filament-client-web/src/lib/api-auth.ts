@@ -1,4 +1,5 @@
 import {
+  type AccessToken,
   type AuthSession,
   type CaptchaToken,
   type Password,
@@ -6,11 +7,16 @@ import {
   type Username,
   authSessionFromResponse,
 } from "../domain/auth";
+import {
+  type ProfileRecord,
+  profileFromResponse,
+} from "../domain/chat";
 
 interface JsonRequest {
   method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
+  accessToken?: AccessToken;
 }
 
 interface AuthApiDependencies {
@@ -31,6 +37,7 @@ export interface AuthApi {
   }): Promise<AuthSession>;
   refreshAuthSession(refreshToken: RefreshToken): Promise<AuthSession>;
   logoutAuthSession(refreshToken: RefreshToken): Promise<void>;
+  fetchMe(session: AuthSession): Promise<ProfileRecord>;
 }
 
 export function createAuthApi(input: AuthApiDependencies): AuthApi {
@@ -103,6 +110,39 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
         method: "POST",
         path: "/auth/logout",
         body: { refresh_token: refreshToken },
+      });
+    },
+
+    async fetchMe(session) {
+      const dto = await input.requestJson({
+        method: "GET",
+        path: "/auth/me",
+        accessToken: session.accessToken,
+      });
+
+      if (!dto || typeof dto !== "object") {
+        throw input.createApiError(500, "invalid_me_shape", "Unexpected profile response.");
+      }
+
+      const userId = (dto as { user_id?: unknown }).user_id;
+      const username = (dto as { username?: unknown }).username;
+      if (typeof userId !== "string" || typeof username !== "string") {
+        throw input.createApiError(500, "invalid_me_shape", "Unexpected profile response.");
+      }
+
+      const data = dto as {
+        about_markdown?: unknown;
+        about_markdown_tokens?: unknown;
+        avatar_version?: unknown;
+      };
+      return profileFromResponse({
+        user_id: userId,
+        username,
+        about_markdown: typeof data.about_markdown === "string" ? data.about_markdown : "",
+        about_markdown_tokens: Array.isArray(data.about_markdown_tokens)
+          ? data.about_markdown_tokens
+          : [],
+        avatar_version: Number.isInteger(data.avatar_version) ? data.avatar_version : 0,
       });
     },
   };

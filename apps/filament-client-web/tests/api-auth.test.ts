@@ -1,4 +1,5 @@
 import {
+  accessTokenFromInput,
   captchaTokenFromInput,
   passwordFromInput,
   refreshTokenFromInput,
@@ -107,5 +108,54 @@ describe("api-auth", () => {
       path: "/auth/logout",
       body: { refresh_token: "R".repeat(64) },
     });
+  });
+
+  it("fetchMe requests authenticated profile and maps strict DTO fields", async () => {
+    const requestJson = vi.fn(async () => ({
+      user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      username: "valid_user",
+      about_markdown: "Hello",
+      about_markdown_tokens: [],
+      avatar_version: 4,
+    }));
+    const api = createAuthApi({
+      requestJson,
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    const session = {
+      accessToken: accessTokenFromInput("A".repeat(64)),
+      refreshToken: refreshTokenFromInput("B".repeat(64)),
+      expiresAtUnix: 2_000_000_000,
+    };
+
+    await expect(api.fetchMe(session)).resolves.toMatchObject({
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      username: "valid_user",
+      aboutMarkdown: "Hello",
+      avatarVersion: 4,
+    });
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "GET",
+      path: "/auth/me",
+      accessToken: "A".repeat(64),
+    });
+  });
+
+  it("fetchMe fails closed on invalid profile shape", async () => {
+    const api = createAuthApi({
+      requestJson: vi.fn(async () => ({ user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV" })),
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(
+      api.fetchMe({
+        accessToken: accessTokenFromInput("A".repeat(64)),
+        refreshToken: refreshTokenFromInput("B".repeat(64)),
+        expiresAtUnix: 2_000_000_000,
+      }),
+    ).rejects.toMatchObject({ status: 500, code: "invalid_me_shape" });
   });
 });

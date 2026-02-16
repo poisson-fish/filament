@@ -499,35 +499,7 @@ export async function logoutAuthSession(refreshToken: RefreshToken): Promise<voi
 }
 
 export async function fetchMe(session: AuthSession): Promise<ProfileRecord> {
-  const dto = await requestJson({
-    method: "GET",
-    path: "/auth/me",
-    accessToken: session.accessToken,
-  });
-
-  if (!dto || typeof dto !== "object") {
-    throw new ApiError(500, "invalid_me_shape", "Unexpected profile response.");
-  }
-
-  const userId = (dto as { user_id?: unknown }).user_id;
-  const username = (dto as { username?: unknown }).username;
-  if (typeof userId !== "string" || typeof username !== "string") {
-    throw new ApiError(500, "invalid_me_shape", "Unexpected profile response.");
-  }
-  const data = dto as {
-    about_markdown?: unknown;
-    about_markdown_tokens?: unknown;
-    avatar_version?: unknown;
-  };
-  return profileFromResponse({
-    user_id: userId,
-    username,
-    about_markdown: typeof data.about_markdown === "string" ? data.about_markdown : "",
-    about_markdown_tokens: Array.isArray(data.about_markdown_tokens)
-      ? data.about_markdown_tokens
-      : [],
-    avatar_version: Number.isInteger(data.avatar_version) ? data.avatar_version : 0,
-  });
+  return authApi.fetchMe(session);
 }
 
 export async function fetchUserProfile(
