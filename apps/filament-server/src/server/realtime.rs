@@ -53,6 +53,9 @@ mod voice_cleanup_events;
 mod fanout_user_targets;
 mod search_schema;
 mod search_apply;
+mod message_prepare;
+mod message_attachment_bind;
+mod search_blocking;
 
 use fanout_dispatch::dispatch_gateway_payload;
 use fanout_guild::dispatch_guild_payload;
@@ -84,11 +87,14 @@ use fanout_user_targets::connection_ids_for_user;
 use voice_cleanup_events::build_voice_removal_events;
 use search_schema::build_search_schema as build_search_schema_impl;
 use search_apply::apply_search_operation as apply_search_operation_impl;
+use message_prepare::prepare_message_body;
+use message_attachment_bind::bind_message_attachments_in_memory;
+use search_blocking::run_search_blocking_with_timeout;
 
 use super::{
     auth::{
         authenticate_with_token, bearer_token, channel_key, extract_client_ip, now_unix,
-        validate_message_content, ClientIp,
+        ClientIp,
     },
     core::{
         AppState, AuthContext, ConnectionControl, ConnectionPresence, IndexedMessage,
@@ -385,18 +391,9 @@ pub(crate) async fn create_message_internal(
     attachment_ids: Vec<String>,
 ) -> Result<MessageResponse, AuthFailure> {
     let attachment_ids = parse_attachment_ids(attachment_ids)?;
-    if content.is_empty() {
-        if attachment_ids.is_empty() {
-            return Err(AuthFailure::InvalidRequest);
-        }
-    } else {
-        validate_message_content(&content)?;
-    }
-    let markdown_tokens = if content.is_empty() {
-        Vec::new()
-    } else {
-        tokenize_markdown(&content)
-    };
+    let prepared = prepare_message_body(content, !attachment_ids.is_empty())?;
+    let content = prepared.content;
+    let markdown_tokens = prepared.markdown_tokens;
     let (_, permissions) =
         channel_permission_snapshot(state, auth.user_id, guild_id, channel_id).await?;
     if !permissions.contains(Permission::CreateMessage) {
@@ -483,19 +480,14 @@ pub(crate) async fn create_message_internal(
     };
     if !attachment_ids.is_empty() {
         let mut attachments = state.attachments.write().await;
-        for attachment_id in &attachment_ids {
-            let Some(attachment) = attachments.get_mut(attachment_id) else {
-                return Err(AuthFailure::InvalidRequest);
-            };
-            if attachment.guild_id != guild_id
-                || attachment.channel_id != channel_id
-                || attachment.owner_id != auth.user_id
-                || attachment.message_id.is_some()
-            {
-                return Err(AuthFailure::InvalidRequest);
-            }
-            attachment.message_id = Some(message_id.clone());
-        }
+        bind_message_attachments_in_memory(
+            &mut attachments,
+            &attachment_ids,
+            &message_id,
+            guild_id,
+            channel_id,
+            auth.user_id,
+        )?;
     }
     channel.messages.push(record.clone());
     drop(guilds);
@@ -762,15 +754,10 @@ pub(crate) async fn collect_index_message_ids_for_guild(
     let search_state = state.search.state.clone();
     let timeout = state.runtime.search_query_timeout;
 
-    tokio::time::timeout(timeout, async move {
-        tokio::task::spawn_blocking(move || {
+    run_search_blocking_with_timeout(timeout, move || {
             collect_index_message_ids_for_guild_from_index(&search_state, &guild, max_docs)
-        })
-        .await
-        .map_err(|_| AuthFailure::Internal)?
     })
     .await
-    .map_err(|_| AuthFailure::InvalidRequest)?
 }
 
 pub(crate) async fn plan_search_reconciliation(
@@ -797,8 +784,7 @@ pub(crate) async fn run_search_query(
     let search_state = state.search.state.clone();
     let timeout = state.runtime.search_query_timeout;
 
-    tokio::time::timeout(timeout, async move {
-        tokio::task::spawn_blocking(move || {
+    run_search_blocking_with_timeout(timeout, move || {
             run_search_query_against_index(
                 &search_state,
                 &guild,
@@ -806,12 +792,8 @@ pub(crate) async fn run_search_query(
                 &query,
                 limit,
             )
-        })
-        .await
-        .map_err(|_| AuthFailure::Internal)?
     })
     .await
-    .map_err(|_| AuthFailure::InvalidRequest)?
 }
 
 #[allow(clippy::too_many_lines)]
