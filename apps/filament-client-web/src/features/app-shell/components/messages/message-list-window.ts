@@ -1,5 +1,7 @@
 export const DEFAULT_MESSAGE_LIST_RENDER_WINDOW_SIZE = 240;
 export const MAX_MESSAGE_LIST_RENDER_WINDOW_SIZE = 600;
+export const DEFAULT_MESSAGE_LIST_HISTORY_RENDER_WINDOW_SIZE = 900;
+export const MAX_MESSAGE_LIST_HISTORY_RENDER_WINDOW_SIZE = 1_800;
 export const MESSAGE_LIST_PINNED_TO_LATEST_THRESHOLD_PX = 120;
 
 export interface MessageListRenderWindow {
@@ -10,7 +12,8 @@ export interface MessageListRenderWindow {
 export interface ResolveMessageListRenderWindowInput {
   messageCount: number;
   maxRenderedMessages?: number;
-  mode?: "bounded" | "full";
+  maxHistoricalRenderedMessages?: number;
+  mode?: "bounded" | "history" | "full";
 }
 
 function sanitizePositiveInteger(
@@ -39,6 +42,26 @@ export function resolveMessageListRenderWindow(
   if (input.mode === "full") {
     return {
       startIndex: 0,
+      endIndex: messageCount,
+    };
+  }
+
+  if (input.mode === "history") {
+    const maxHistoricalRenderedMessages = sanitizePositiveInteger(
+      input.maxHistoricalRenderedMessages,
+      DEFAULT_MESSAGE_LIST_HISTORY_RENDER_WINDOW_SIZE,
+      MAX_MESSAGE_LIST_HISTORY_RENDER_WINDOW_SIZE,
+    );
+
+    if (messageCount <= maxHistoricalRenderedMessages) {
+      return {
+        startIndex: 0,
+        endIndex: messageCount,
+      };
+    }
+
+    return {
+      startIndex: messageCount - maxHistoricalRenderedMessages,
       endIndex: messageCount,
     };
   }

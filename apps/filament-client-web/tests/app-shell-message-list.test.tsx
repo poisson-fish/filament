@@ -37,6 +37,7 @@ function renderList(messages: MessageRecord[], maxRenderedMessages?: number): vo
     <MessageList
       messages={messages}
       maxRenderedMessages={maxRenderedMessages}
+      maxHistoricalRenderedMessages={900}
       nextBefore={null}
       showLoadOlderButton={false}
       isLoadingOlder={false}
@@ -125,5 +126,29 @@ describe("app shell message list", () => {
     expect(rows).toHaveLength(260);
     expect(screen.getByText("message-0")).toBeInTheDocument();
     expect(screen.getByText("message-259")).toBeInTheDocument();
+  });
+
+  it("keeps unpinned dense histories within capped history window", async () => {
+    const messages = Array.from({ length: 1_500 }, (_, index) => messageFixture(index));
+    renderList(messages);
+
+    const listElement = document.querySelector(".message-list") as HTMLElement;
+    Object.defineProperty(listElement, "scrollHeight", {
+      configurable: true,
+      get: () => 12_000,
+    });
+    Object.defineProperty(listElement, "clientHeight", {
+      configurable: true,
+      get: () => 800,
+    });
+
+    listElement.scrollTop = 100;
+    await fireEvent.scroll(listElement);
+
+    const rows = document.querySelectorAll(".message-row");
+    expect(rows).toHaveLength(900);
+    expect(screen.queryByText("message-599")).not.toBeInTheDocument();
+    expect(screen.getByText("message-600")).toBeInTheDocument();
+    expect(screen.getByText("message-1499")).toBeInTheDocument();
   });
 });

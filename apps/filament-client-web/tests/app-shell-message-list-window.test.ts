@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_MESSAGE_LIST_HISTORY_RENDER_WINDOW_SIZE,
   DEFAULT_MESSAGE_LIST_RENDER_WINDOW_SIZE,
   MAX_MESSAGE_LIST_RENDER_WINDOW_SIZE,
+  MAX_MESSAGE_LIST_HISTORY_RENDER_WINDOW_SIZE,
   isMessageListPinnedToLatest,
   MESSAGE_LIST_PINNED_TO_LATEST_THRESHOLD_PX,
   resolveMessageListRenderWindow,
@@ -70,6 +72,29 @@ describe("app shell message list render window", () => {
         mode: "full",
       }),
     ).toEqual({ startIndex: 0, endIndex: 1_000 });
+  });
+
+  it("returns a capped trailing window when render mode is history", () => {
+    expect(
+      resolveMessageListRenderWindow({
+        messageCount: 2_400,
+        mode: "history",
+      }),
+    ).toEqual({
+      startIndex: 2_400 - DEFAULT_MESSAGE_LIST_HISTORY_RENDER_WINDOW_SIZE,
+      endIndex: 2_400,
+    });
+
+    expect(
+      resolveMessageListRenderWindow({
+        messageCount: 2_400,
+        mode: "history",
+        maxHistoricalRenderedMessages: MAX_MESSAGE_LIST_HISTORY_RENDER_WINDOW_SIZE + 10,
+      }),
+    ).toEqual({
+      startIndex: 2_400 - MAX_MESSAGE_LIST_HISTORY_RENDER_WINDOW_SIZE,
+      endIndex: 2_400,
+    });
   });
 
   it("treats finite distance from bottom within threshold as pinned", () => {

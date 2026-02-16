@@ -18,6 +18,7 @@ export interface MessageListProps extends Omit<MessageRowProps, "message"> {
   onListScroll: () => void;
   onListRef: (element: HTMLElement) => void;
   maxRenderedMessages?: ResolveMessageListRenderWindowInput["maxRenderedMessages"];
+  maxHistoricalRenderedMessages?: ResolveMessageListRenderWindowInput["maxHistoricalRenderedMessages"];
 }
 
 export function MessageList(props: MessageListProps) {
@@ -41,7 +42,8 @@ export function MessageList(props: MessageListProps) {
     resolveMessageListRenderWindow({
       messageCount: props.messages.length,
       maxRenderedMessages: props.maxRenderedMessages,
-      mode: isPinnedToLatest() ? "bounded" : "full",
+      maxHistoricalRenderedMessages: props.maxHistoricalRenderedMessages,
+      mode: isPinnedToLatest() ? "bounded" : "history",
     });
 
   const visibleMessages = () => {
