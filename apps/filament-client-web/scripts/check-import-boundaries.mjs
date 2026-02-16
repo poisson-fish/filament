@@ -7,6 +7,41 @@ const DEFAULT_MODE = "warn";
 const VALID_MODES = new Set(["warn", "enforce"]);
 const SOURCE_ROOT = "src";
 const SOURCE_FILE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts"]);
+const DEFAULT_MAX_SCANNED_FILES = 2_000;
+
+function resolveSourceDirectory(webRootDir, sourceRoot) {
+  if (typeof sourceRoot !== "string" || sourceRoot.trim().length === 0) {
+    throw new Error("source root must be a non-empty relative path");
+  }
+
+  if (sourceRoot.startsWith("/")) {
+    throw new Error("source root must be relative to the web client root");
+  }
+
+  const sourceDir = resolve(webRootDir, sourceRoot);
+  const webRootPrefix = `${webRootDir}/`;
+  if (sourceDir !== webRootDir && !sourceDir.startsWith(webRootPrefix)) {
+    throw new Error("source root must stay within the web client root");
+  }
+
+  return sourceDir;
+}
+
+function resolveMaxScannedFiles(maxScannedFiles) {
+  if (Number.isInteger(maxScannedFiles) && maxScannedFiles > 0) {
+    return maxScannedFiles;
+  }
+
+  const envValue = process.env.FILAMENT_IMPORT_BOUNDARY_MAX_SCANNED_FILES;
+  if (typeof envValue === "string" && envValue.trim().length > 0) {
+    const parsed = Number.parseInt(envValue, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return DEFAULT_MAX_SCANNED_FILES;
+}
 
 function parseArgs(argv) {
   let modeArg = null;
@@ -70,9 +105,15 @@ function collectSourceFilePaths(directoryPath) {
   return filePaths;
 }
 
-export function runImportBoundaryCheck({ webRootDir, sourceRoot = SOURCE_ROOT }) {
-  const sourceDir = resolve(webRootDir, sourceRoot);
+export function runImportBoundaryCheck({ webRootDir, sourceRoot = SOURCE_ROOT, maxScannedFiles }) {
+  const sourceDir = resolveSourceDirectory(webRootDir, sourceRoot);
+  const scanCap = resolveMaxScannedFiles(maxScannedFiles);
   const absolutePaths = collectSourceFilePaths(sourceDir);
+
+  if (absolutePaths.length > scanCap) {
+    throw new Error(`source file scan cap exceeded: ${absolutePaths.length} > ${scanCap}`);
+  }
+
   const files = absolutePaths.map((absolutePath) => ({
     path: relative(webRootDir, absolutePath),
     content: readFileSync(absolutePath, "utf8"),
@@ -101,10 +142,20 @@ function runCli() {
   const sourceRoot =
     typeof args.sourceArg === "string" && args.sourceArg.trim().length > 0 ? args.sourceArg : SOURCE_ROOT;
 
-  const { scannedFiles, violations } = runImportBoundaryCheck({
-    webRootDir,
-    sourceRoot,
-  });
+  let scannedFiles = 0;
+  let violations = [];
+
+  try {
+    ({ scannedFiles, violations } = runImportBoundaryCheck({
+      webRootDir,
+      sourceRoot,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown import boundary scanner failure";
+    console.error(`[import-boundaries] ERROR: ${message}`);
+    process.exitCode = 1;
+    return;
+  }
 
   if (violations.length === 0) {
     console.log(

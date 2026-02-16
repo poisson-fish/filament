@@ -60,4 +60,48 @@ describe("check import boundaries", () => {
     expect(result.scannedFiles).toBe(3);
     expect(result.violations).toEqual([]);
   });
+
+  it("fails closed when source root escapes web root", () => {
+    const webRootDir = mkdtempSync(join(tmpdir(), "filament-boundary-check-"));
+    temporaryRoots.push(webRootDir);
+
+    writeFixture(webRootDir, "src/domain/chat.ts", 'import { x } from "./auth";\n');
+
+    expect(() =>
+      runImportBoundaryCheck({
+        webRootDir,
+        sourceRoot: "../outside",
+      }),
+    ).toThrow("source root must stay within the web client root");
+  });
+
+  it("fails closed when source root is absolute", () => {
+    const webRootDir = mkdtempSync(join(tmpdir(), "filament-boundary-check-"));
+    temporaryRoots.push(webRootDir);
+
+    writeFixture(webRootDir, "src/domain/chat.ts", 'import { x } from "./auth";\n');
+
+    expect(() =>
+      runImportBoundaryCheck({
+        webRootDir,
+        sourceRoot: "/tmp",
+      }),
+    ).toThrow("source root must be relative to the web client root");
+  });
+
+  it("fails closed when source file scan cap is exceeded", () => {
+    const webRootDir = mkdtempSync(join(tmpdir(), "filament-boundary-check-"));
+    temporaryRoots.push(webRootDir);
+
+    writeFixture(webRootDir, "src/domain/auth.ts", 'import { x } from "./user";\n');
+    writeFixture(webRootDir, "src/domain/user.ts", "export const user = true;\n");
+    writeFixture(webRootDir, "src/lib/api.ts", "export const api = true;\n");
+
+    expect(() =>
+      runImportBoundaryCheck({
+        webRootDir,
+        maxScannedFiles: 2,
+      }),
+    ).toThrow("source file scan cap exceeded: 3 > 2");
+  });
 });
