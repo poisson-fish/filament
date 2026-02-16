@@ -1,3 +1,4 @@
+use crate::server::core::VoiceParticipantsByChannel;
 use crate::server::{
     core::VoiceParticipant,
     gateway_events::{self, VoiceParticipantSnapshot},
@@ -23,14 +24,30 @@ pub(crate) fn voice_snapshot_from_record(
     }
 }
 
+pub(crate) fn collect_voice_snapshots(
+    voice: &VoiceParticipantsByChannel,
+    channel_key: &str,
+) -> Vec<VoiceParticipantSnapshot> {
+    let mut snapshots = Vec::new();
+    if let Some(channel_participants) = voice.get(channel_key) {
+        snapshots.extend(channel_participants.values().map(voice_snapshot_from_record));
+    }
+    snapshots.sort_by(|a, b| {
+        a.joined_at_unix
+            .cmp(&b.joined_at_unix)
+            .then(a.identity.cmp(&b.identity))
+    });
+    snapshots
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use filament_core::UserId;
 
-    use super::{voice_channel_key, voice_snapshot_from_record};
-    use crate::server::core::{VoiceParticipant, VoiceStreamKind};
+    use super::{collect_voice_snapshots, voice_channel_key, voice_snapshot_from_record};
+    use crate::server::core::{VoiceParticipant, VoiceParticipantsByChannel, VoiceStreamKind};
 
     #[test]
     fn voice_channel_key_uses_guild_and_channel_namespace() {
@@ -64,5 +81,62 @@ mod tests {
         assert!(snapshot.is_speaking);
         assert!(snapshot.is_video_enabled);
         assert!(!snapshot.is_screen_share_enabled);
+    }
+
+    #[test]
+    fn collect_voice_snapshots_returns_sorted_channel_snapshot() {
+        let first_user = UserId::new();
+        let second_user = UserId::new();
+        let mut voice: VoiceParticipantsByChannel = HashMap::new();
+        voice.insert(
+            String::from("g-main:c-lobby"),
+            HashMap::from([
+                (
+                    first_user,
+                    VoiceParticipant {
+                        user_id: first_user,
+                        identity: String::from("zeta"),
+                        joined_at_unix: 20,
+                        updated_at_unix: 20,
+                        expires_at_unix: 50,
+                        is_muted: false,
+                        is_deafened: false,
+                        is_speaking: false,
+                        is_video_enabled: false,
+                        is_screen_share_enabled: false,
+                        published_streams: HashSet::from([VoiceStreamKind::Microphone]),
+                    },
+                ),
+                (
+                    second_user,
+                    VoiceParticipant {
+                        user_id: second_user,
+                        identity: String::from("alpha"),
+                        joined_at_unix: 10,
+                        updated_at_unix: 10,
+                        expires_at_unix: 50,
+                        is_muted: false,
+                        is_deafened: false,
+                        is_speaking: false,
+                        is_video_enabled: false,
+                        is_screen_share_enabled: false,
+                        published_streams: HashSet::from([VoiceStreamKind::Camera]),
+                    },
+                ),
+            ]),
+        );
+
+        let snapshots = collect_voice_snapshots(&voice, "g-main:c-lobby");
+
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].user_id, second_user);
+        assert_eq!(snapshots[1].user_id, first_user);
+    }
+
+    #[test]
+    fn collect_voice_snapshots_returns_empty_for_missing_channel() {
+        let voice: VoiceParticipantsByChannel = HashMap::new();
+        let snapshots = collect_voice_snapshots(&voice, "g-main:c-missing");
+        assert!(snapshots.is_empty());
     }
 }

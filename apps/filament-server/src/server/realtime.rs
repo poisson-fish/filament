@@ -43,6 +43,9 @@ mod fanout_user;
 mod presence_disconnect;
 mod presence_subscribe;
 mod voice_presence;
+mod voice_registry;
+mod search_validation;
+mod connection_control;
 
 use fanout_dispatch::dispatch_gateway_payload;
 use fanout_guild::dispatch_guild_payload;
@@ -51,7 +54,10 @@ use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecod
 use ingress_rate_limit::allow_gateway_ingress;
 use presence_disconnect::compute_disconnect_presence_outcome;
 use presence_subscribe::apply_presence_subscribe;
-use voice_presence::{voice_channel_key, voice_snapshot_from_record};
+use voice_presence::{collect_voice_snapshots, voice_channel_key, voice_snapshot_from_record};
+use voice_registry::{remove_user_voice_participants, take_expired_voice_participants};
+use search_validation::validate_search_query_limits;
+use connection_control::signal_slow_connections_close;
 
 use super::{
     auth::{
@@ -62,8 +68,8 @@ use super::{
         AppState, AuthContext, ConnectionControl, ConnectionPresence, IndexedMessage,
         MessageRecord, SearchCommand, SearchFields, SearchIndexState, SearchOperation,
         SearchService, VoiceParticipant, VoiceStreamKind, DEFAULT_SEARCH_RESULT_LIMIT,
-        MAX_SEARCH_FUZZY, MAX_SEARCH_TERMS, MAX_SEARCH_WILDCARDS, MAX_TRACKED_VOICE_CHANNELS,
-        MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL, SEARCH_INDEX_QUEUE_CAPACITY,
+        MAX_TRACKED_VOICE_CHANNELS, MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
+        SEARCH_INDEX_QUEUE_CAPACITY,
     },
     db::ensure_db_schema,
     domain::{
@@ -654,27 +660,13 @@ pub(crate) fn validate_search_query(
     query: &SearchQuery,
 ) -> Result<(), AuthFailure> {
     let raw = query.q.trim();
-    if raw.is_empty() || raw.len() > state.runtime.search_query_max_chars {
-        return Err(AuthFailure::InvalidRequest);
-    }
     let limit = query.limit.unwrap_or(DEFAULT_SEARCH_RESULT_LIMIT);
-    if limit == 0 || limit > state.runtime.search_result_limit_max {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    if raw.split_whitespace().count() > MAX_SEARCH_TERMS {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    let wildcard_count = raw.matches('*').count() + raw.matches('?').count();
-    if wildcard_count > MAX_SEARCH_WILDCARDS {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    if raw.matches('~').count() > MAX_SEARCH_FUZZY {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    if raw.contains(':') {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    Ok(())
+    validate_search_query_limits(
+        raw,
+        limit,
+        state.runtime.search_query_max_chars,
+        state.runtime.search_result_limit_max,
+    )
 }
 
 pub(crate) async fn ensure_search_bootstrapped(state: &AppState) -> Result<(), AuthFailure> {
@@ -1132,11 +1124,7 @@ async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
     }
 
     let controls = state.connection_controls.read().await;
-    for connection_id in slow_connections {
-        if let Some(control) = controls.get(&connection_id) {
-            let _ = control.send(ConnectionControl::Close);
-        }
-    }
+    signal_slow_connections_close(&controls, slow_connections);
 }
 
 pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: &GatewayEvent) {
@@ -1238,20 +1226,10 @@ pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, even
 }
 
 async fn prune_expired_voice_participants(state: &AppState, now_unix: i64) {
-    let mut removed = Vec::new();
-    {
+    let removed = {
         let mut voice = state.voice_participants.write().await;
-        voice.retain(|channel_key, participants| {
-            participants.retain(|_, participant| {
-                if participant.expires_at_unix > now_unix {
-                    return true;
-                }
-                removed.push((channel_key.clone(), participant.clone()));
-                false
-            });
-            !participants.is_empty()
-        });
-    }
+        take_expired_voice_participants(&mut voice, now_unix)
+    };
 
     for (key, participant) in removed {
         let Some((guild_id, channel_id)) = key.split_once(':') else {
@@ -1431,20 +1409,7 @@ pub(crate) async fn handle_voice_subscribe(
     let key = voice_channel_key(guild_id, channel_id);
     let participants = {
         let voice = state.voice_participants.read().await;
-        let mut list = Vec::new();
-        if let Some(channel_participants) = voice.get(&key) {
-            list.extend(
-                channel_participants
-                    .values()
-                    .map(voice_snapshot_from_record),
-            );
-        }
-        list.sort_by(|a, b| {
-            a.joined_at_unix
-                .cmp(&b.joined_at_unix)
-                .then(a.identity.cmp(&b.identity))
-        });
-        list
+        collect_voice_snapshots(&voice, &key)
     };
 
     let sync_event =
@@ -1468,16 +1433,10 @@ async fn remove_disconnected_user_voice_participants(
     user_id: UserId,
     disconnected_at_unix: i64,
 ) {
-    let mut removed = Vec::new();
-    {
+    let removed = {
         let mut voice = state.voice_participants.write().await;
-        voice.retain(|channel_key, participants| {
-            if let Some(participant) = participants.remove(&user_id) {
-                removed.push((channel_key.clone(), participant));
-            }
-            !participants.is_empty()
-        });
-    }
+        remove_user_voice_participants(&mut voice, user_id)
+    };
 
     for (channel_key_value, participant) in removed {
         let Some((guild_id, channel_id)) = channel_key_value.split_once(':') else {
