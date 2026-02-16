@@ -8,8 +8,11 @@ mod subscribe_ack;
 mod hydration_merge;
 mod message_record;
 mod presence_disconnect_events;
+mod search_collect_db;
+mod hydration_db;
+mod message_create_response;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -28,10 +31,9 @@ use axum::{
     http::HeaderMap,
     response::IntoResponse,
 };
-use filament_core::{tokenize_markdown, Permission, UserId};
+use filament_core::{Permission, UserId};
 use filament_protocol::parse_envelope;
 use futures_util::{SinkExt, StreamExt};
-use sqlx::Row;
 use tantivy::{
     schema::Schema,
 };
@@ -110,6 +112,11 @@ use subscribe_ack::{try_enqueue_subscribed_event, SubscribeAckEnqueueResult};
 use hydration_merge::merge_hydration_maps;
 use message_record::{build_in_memory_message_record, build_message_response_from_record};
 use presence_disconnect_events::build_offline_presence_updates;
+use search_collect_db::{
+    collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows,
+};
+use hydration_db::collect_hydrated_messages_db;
+use message_create_response::build_db_created_message_response;
 
 use super::{
     auth::{
@@ -462,17 +469,16 @@ pub(crate) async fn create_message_internal(
             fetch_attachments_for_message_db(&mut tx, guild_id, channel_id, &message_id).await?;
         tx.commit().await.map_err(|_| AuthFailure::Internal)?;
 
-        let response = MessageResponse {
+        let response = build_db_created_message_response(
             message_id,
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            author_id: auth.user_id.to_string(),
+            guild_id,
+            channel_id,
+            auth.user_id,
             content,
             markdown_tokens,
             attachments,
-            reactions: Vec::new(),
             created_at_unix,
-        };
+        );
 
         let event = gateway_events::message_create(&response);
         broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
@@ -626,33 +632,14 @@ pub(crate) async fn collect_all_indexed_messages(
     state: &AppState,
 ) -> Result<Vec<IndexedMessage>, AuthFailure> {
     if let Some(pool) = &state.db_pool {
-        let rows = sqlx::query(
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
             "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
              FROM messages",
         )
         .fetch_all(pool)
         .await
         .map_err(|_| AuthFailure::Internal)?;
-        let mut docs = Vec::with_capacity(rows.len());
-        for row in rows {
-            docs.push(IndexedMessage {
-                message_id: row
-                    .try_get("message_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
-                channel_id: row
-                    .try_get("channel_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                author_id: row
-                    .try_get("author_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                content: row.try_get("content").map_err(|_| AuthFailure::Internal)?,
-                created_at_unix: row
-                    .try_get("created_at_unix")
-                    .map_err(|_| AuthFailure::Internal)?,
-            });
-        }
-        return Ok(docs);
+        return Ok(collect_all_indexed_messages_rows(rows));
     }
 
     let guilds = state.guilds.read().await;
@@ -667,7 +654,7 @@ pub(crate) async fn collect_indexed_messages_for_guild(
     if let Some(pool) = &state.db_pool {
         let limit =
             i64::try_from(max_docs.saturating_add(1)).map_err(|_| AuthFailure::InvalidRequest)?;
-        let rows = sqlx::query(
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
             "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
              FROM messages
              WHERE guild_id = $1
@@ -682,26 +669,7 @@ pub(crate) async fn collect_indexed_messages_for_guild(
         if rows.len() > max_docs {
             return Err(AuthFailure::InvalidRequest);
         }
-        let mut docs = Vec::with_capacity(rows.len());
-        for row in rows {
-            docs.push(IndexedMessage {
-                message_id: row
-                    .try_get("message_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
-                channel_id: row
-                    .try_get("channel_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                author_id: row
-                    .try_get("author_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                content: row.try_get("content").map_err(|_| AuthFailure::Internal)?,
-                created_at_unix: row
-                    .try_get("created_at_unix")
-                    .map_err(|_| AuthFailure::Internal)?,
-            });
-        }
-        return Ok(docs);
+        return Ok(collect_indexed_messages_for_guild_rows(rows));
     }
 
     let guilds = state.guilds.read().await;
@@ -771,62 +739,8 @@ pub(crate) async fn hydrate_messages_by_id(
     }
 
     if let Some(pool) = &state.db_pool {
-        let rows = if let Some(channel_id) = channel_id {
-            sqlx::query(
-                "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
-                 FROM messages
-                 WHERE guild_id = $1 AND channel_id = $2 AND message_id = ANY($3::text[])",
-            )
-            .bind(guild_id)
-            .bind(channel_id)
-            .bind(message_ids)
-            .fetch_all(pool)
-            .await
-            .map_err(|_| AuthFailure::Internal)?
-        } else {
-            sqlx::query(
-                "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
-                 FROM messages
-                 WHERE guild_id = $1 AND message_id = ANY($2::text[])",
-            )
-            .bind(guild_id)
-            .bind(message_ids)
-            .fetch_all(pool)
-            .await
-            .map_err(|_| AuthFailure::Internal)?
-        };
-
-        let mut by_id = HashMap::with_capacity(rows.len());
-        for row in rows {
-            let message_id: String = row
-                .try_get("message_id")
-                .map_err(|_| AuthFailure::Internal)?;
-            let guild_id: String = row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?;
-            let channel_id: String = row
-                .try_get("channel_id")
-                .map_err(|_| AuthFailure::Internal)?;
-            let author_id: String = row
-                .try_get("author_id")
-                .map_err(|_| AuthFailure::Internal)?;
-            let content: String = row.try_get("content").map_err(|_| AuthFailure::Internal)?;
-            let created_at_unix: i64 = row
-                .try_get("created_at_unix")
-                .map_err(|_| AuthFailure::Internal)?;
-            by_id.insert(
-                message_id.clone(),
-                MessageResponse {
-                    message_id,
-                    guild_id,
-                    channel_id,
-                    author_id,
-                    markdown_tokens: tokenize_markdown(&content),
-                    content,
-                    attachments: Vec::new(),
-                    reactions: Vec::new(),
-                    created_at_unix,
-                },
-            );
-        }
+        let mut by_id = collect_hydrated_messages_db(pool, guild_id, channel_id, message_ids)
+            .await?;
 
         let message_ids_ordered: Vec<String> = message_ids.to_vec();
         let attachment_map =
