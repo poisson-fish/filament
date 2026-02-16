@@ -42,6 +42,7 @@ import { createFriendsClient } from "./api-friends-client";
 import { createMessagesClient } from "./api-messages-client";
 import { createMessagesApi } from "./api-messages";
 import { createSystemApi } from "./api-system";
+import { createVoiceClient } from "./api-voice-client";
 import { createVoiceApi } from "./api-voice";
 import { createWorkspaceClient } from "./api-workspace-client";
 import { createWorkspaceApi } from "./api-workspace";
@@ -470,6 +471,10 @@ const voiceApi = createVoiceApi({
   requestJson,
 });
 
+const voiceClient = createVoiceClient({
+  voiceApi,
+});
+
 const workspaceApi = createWorkspaceApi({
   requestJson,
   createApiError(status, code, message) {
@@ -550,15 +555,4 @@ export const reorderGuildRoles = workspaceClient.reorderGuildRoles;
 export const assignGuildRole = workspaceClient.assignGuildRole;
 export const unassignGuildRole = workspaceClient.unassignGuildRole;
 
-export async function issueVoiceToken(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  input: {
-    canPublish?: boolean;
-    canSubscribe?: boolean;
-    publishSources?: MediaPublishSource[];
-  },
-): Promise<VoiceTokenRecord> {
-  return voiceApi.issueVoiceToken(session, guildId, channelId, input);
-}
+export const issueVoiceToken = voiceClient.issueVoiceToken;
