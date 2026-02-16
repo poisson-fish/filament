@@ -5,6 +5,7 @@ import {
   refreshTokenFromInput,
   usernameFromInput,
 } from "../src/domain/auth";
+import { userIdFromInput } from "../src/domain/chat";
 import { createAuthApi } from "../src/lib/api-auth";
 
 class MockApiError extends Error {
@@ -157,5 +158,93 @@ describe("api-auth", () => {
         expiresAtUnix: 2_000_000_000,
       }),
     ).rejects.toMatchObject({ status: 500, code: "invalid_me_shape" });
+  });
+
+  it("fetchUserProfile requests authenticated user profile by id", async () => {
+    const requestJson = vi.fn(async () => ({
+      user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      username: "target_user",
+      about_markdown: "Profile",
+      about_markdown_tokens: [],
+      avatar_version: 3,
+    }));
+    const api = createAuthApi({
+      requestJson,
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    const session = {
+      accessToken: accessTokenFromInput("A".repeat(64)),
+      refreshToken: refreshTokenFromInput("B".repeat(64)),
+      expiresAtUnix: 2_000_000_000,
+    };
+    const userId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+
+    await expect(api.fetchUserProfile(session, userId)).resolves.toMatchObject({
+      userId,
+      username: "target_user",
+    });
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "GET",
+      path: `/users/${userId}/profile`,
+      accessToken: "A".repeat(64),
+    });
+  });
+
+  it("updateMyProfile maps patch payload fields to server shape", async () => {
+    const requestJson = vi.fn(async () => ({
+      user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      username: "renamed_user",
+      about_markdown: "Updated",
+      about_markdown_tokens: [],
+      avatar_version: 1,
+    }));
+    const api = createAuthApi({
+      requestJson,
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await api.updateMyProfile(
+      {
+        accessToken: accessTokenFromInput("A".repeat(64)),
+        refreshToken: refreshTokenFromInput("B".repeat(64)),
+        expiresAtUnix: 2_000_000_000,
+      },
+      {
+        username: usernameFromInput("renamed_user"),
+        aboutMarkdown: "Updated",
+      },
+    );
+
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "PATCH",
+      path: "/users/me/profile",
+      accessToken: "A".repeat(64),
+      body: {
+        username: "renamed_user",
+        about_markdown: "Updated",
+      },
+    });
+  });
+
+  it("lookupUsersByIds enforces 1-64 ids bounds", async () => {
+    const api = createAuthApi({
+      requestJson: vi.fn(async () => ({ users: [] })),
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(
+      api.lookupUsersByIds(
+        {
+          accessToken: accessTokenFromInput("A".repeat(64)),
+          refreshToken: refreshTokenFromInput("B".repeat(64)),
+          expiresAtUnix: 2_000_000_000,
+        },
+        [],
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
   });
 });

@@ -46,7 +46,6 @@ import {
   type UserId,
   type VoiceTokenRecord,
   profileFromResponse,
-  userLookupListFromResponse,
 } from "../domain/chat";
 import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
@@ -506,32 +505,14 @@ export async function fetchUserProfile(
   session: AuthSession,
   userId: UserId,
 ): Promise<ProfileRecord> {
-  const dto = await requestJson({
-    method: "GET",
-    path: `/users/${userId}/profile`,
-    accessToken: session.accessToken,
-  });
-  return profileFromResponse(dto);
+  return authApi.fetchUserProfile(session, userId);
 }
 
 export async function updateMyProfile(
   session: AuthSession,
   input: { username?: Username; aboutMarkdown?: string },
 ): Promise<ProfileRecord> {
-  const body: Record<string, unknown> = {};
-  if (input.username) {
-    body.username = input.username;
-  }
-  if (typeof input.aboutMarkdown === "string") {
-    body.about_markdown = input.aboutMarkdown;
-  }
-  const dto = await requestJson({
-    method: "PATCH",
-    path: "/users/me/profile",
-    accessToken: session.accessToken,
-    body,
-  });
-  return profileFromResponse(dto);
+  return authApi.updateMyProfile(session, input);
 }
 
 export async function uploadMyProfileAvatar(
@@ -568,16 +549,7 @@ export async function lookupUsersByIds(
   session: AuthSession,
   userIds: UserId[],
 ): Promise<UserLookupRecord[]> {
-  if (userIds.length < 1 || userIds.length > 64) {
-    throw new ApiError(400, "invalid_request", "user_ids must contain 1-64 values.");
-  }
-  const dto = await requestJson({
-    method: "POST",
-    path: "/users/lookup",
-    accessToken: session.accessToken,
-    body: { user_ids: userIds },
-  });
-  return userLookupListFromResponse(dto);
+  return authApi.lookupUsersByIds(session, userIds);
 }
 
 export async function fetchFriends(session: AuthSession): Promise<FriendRecord[]> {

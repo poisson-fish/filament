@@ -8,8 +8,11 @@ import {
   authSessionFromResponse,
 } from "../domain/auth";
 import {
+  type UserId,
+  type UserLookupRecord,
   type ProfileRecord,
   profileFromResponse,
+  userLookupListFromResponse,
 } from "../domain/chat";
 
 interface JsonRequest {
@@ -38,6 +41,12 @@ export interface AuthApi {
   refreshAuthSession(refreshToken: RefreshToken): Promise<AuthSession>;
   logoutAuthSession(refreshToken: RefreshToken): Promise<void>;
   fetchMe(session: AuthSession): Promise<ProfileRecord>;
+  fetchUserProfile(session: AuthSession, userId: UserId): Promise<ProfileRecord>;
+  updateMyProfile(
+    session: AuthSession,
+    input: { username?: Username; aboutMarkdown?: string },
+  ): Promise<ProfileRecord>;
+  lookupUsersByIds(session: AuthSession, userIds: UserId[]): Promise<UserLookupRecord[]>;
 }
 
 export function createAuthApi(input: AuthApiDependencies): AuthApi {
@@ -144,6 +153,45 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
           : [],
         avatar_version: Number.isInteger(data.avatar_version) ? data.avatar_version : 0,
       });
+    },
+
+    async fetchUserProfile(session, userId) {
+      const dto = await input.requestJson({
+        method: "GET",
+        path: `/users/${userId}/profile`,
+        accessToken: session.accessToken,
+      });
+      return profileFromResponse(dto);
+    },
+
+    async updateMyProfile(session, payload) {
+      const body: Record<string, unknown> = {};
+      if (payload.username) {
+        body.username = payload.username;
+      }
+      if (typeof payload.aboutMarkdown === "string") {
+        body.about_markdown = payload.aboutMarkdown;
+      }
+      const dto = await input.requestJson({
+        method: "PATCH",
+        path: "/users/me/profile",
+        accessToken: session.accessToken,
+        body,
+      });
+      return profileFromResponse(dto);
+    },
+
+    async lookupUsersByIds(session, userIds) {
+      if (userIds.length < 1 || userIds.length > 64) {
+        throw input.createApiError(400, "invalid_request", "user_ids must contain 1-64 values.");
+      }
+      const dto = await input.requestJson({
+        method: "POST",
+        path: "/users/lookup",
+        accessToken: session.accessToken,
+        body: { user_ids: userIds },
+      });
+      return userLookupListFromResponse(dto);
     },
   };
 }
