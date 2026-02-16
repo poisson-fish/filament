@@ -41,6 +41,7 @@ import { createFriendsApi } from "./api-friends";
 import { createFriendsClient } from "./api-friends-client";
 import { createMessagesClient } from "./api-messages-client";
 import { createMessagesApi } from "./api-messages";
+import { createSystemClient } from "./api-system-client";
 import { createSystemApi } from "./api-system";
 import { createVoiceClient } from "./api-voice-client";
 import { createVoiceApi } from "./api-voice";
@@ -493,6 +494,10 @@ const systemApi = createSystemApi({
   },
 });
 
+const systemClient = createSystemClient({
+  systemApi,
+});
+
 export const registerWithPassword = authClient.registerWithPassword;
 export const loginWithPassword = authClient.loginWithPassword;
 export const refreshAuthSession = authClient.refreshAuthSession;
@@ -511,13 +516,8 @@ export const acceptFriendRequest = friendsClient.acceptFriendRequest;
 export const deleteFriendRequest = friendsClient.deleteFriendRequest;
 export const removeFriend = friendsClient.removeFriend;
 
-export async function fetchHealth(): Promise<{ status: "ok" }> {
-  return systemApi.fetchHealth();
-}
-
-export async function echoMessage(input: { message: string }): Promise<string> {
-  return systemApi.echoMessage(input);
-}
+export const fetchHealth = systemClient.fetchHealth;
+export const echoMessage = systemClient.echoMessage;
 
 export const createGuild = workspaceClient.createGuild;
 export const fetchGuilds = workspaceClient.fetchGuilds;
