@@ -160,13 +160,15 @@ export function createVoiceOperationsController(
     const session = options.session();
     const guildId = options.activeGuildId();
     const channel = options.activeChannel();
+    if (options.isJoiningVoice() || options.isLeavingVoice()) {
+      return;
+    }
+
     if (
       !session ||
       !guildId ||
       !channel ||
-      channel.kind !== "voice" ||
-      options.isJoiningVoice() ||
-      options.isLeavingVoice()
+      channel.kind !== "voice"
     ) {
       options.setVoiceJoinState((existing) =>
         reduceAsyncOperationState(existing, {

@@ -27,6 +27,7 @@ export interface MessageHistoryControllerOptions {
   activeChannelId: Accessor<ChannelId | null>;
   canAccessActiveChannel: Accessor<boolean>;
   nextBefore: Accessor<MessageId | null>;
+  isLoadingMessages: Accessor<boolean>;
   isLoadingOlder: Accessor<boolean>;
   setMessages: Setter<MessageRecord[]>;
   setNextBefore: Setter<MessageId | null>;
@@ -143,7 +144,14 @@ export function createMessageHistoryController(
     const guildId = options.activeGuildId();
     const channelId = options.activeChannelId();
     const before = options.nextBefore();
-    if (!session || !guildId || !channelId || !before || options.isLoadingOlder()) {
+    if (
+      !session ||
+      !guildId ||
+      !channelId ||
+      !before ||
+      options.isLoadingMessages() ||
+      options.isLoadingOlder()
+    ) {
       return;
     }
 

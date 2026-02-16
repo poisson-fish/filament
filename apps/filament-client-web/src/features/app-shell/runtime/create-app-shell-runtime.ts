@@ -450,6 +450,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     activeChannelId: workspaceChannelState.activeChannelId,
     canAccessActiveChannel: selectors.canAccessActiveChannel,
     nextBefore: messageState.nextBefore,
+    isLoadingMessages: messageState.isLoadingMessages,
     isLoadingOlder: messageState.isLoadingOlder,
     setMessages: messageState.setMessages,
     setNextBefore: messageState.setNextBefore,

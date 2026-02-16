@@ -56,6 +56,25 @@ function createRtcClientMock(overrides: Partial<RtcClient> = {}): RtcClient {
   };
 }
 
+function deferred<T>() {
+  let resolve: ((value: T) => void) | undefined;
+  let reject: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return {
+    promise,
+    resolve: (value: T) => resolve?.(value),
+    reject: (reason?: unknown) => reject?.(reason),
+  };
+}
+
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 function createVoiceOperationsHarness(input?: {
   dependencies?: Partial<VoiceOperationsControllerDependencies>;
   activeChannel?: ChannelRecord | null;
@@ -371,6 +390,34 @@ describe("app shell voice controller", () => {
 
     await harness.controller.joinVoiceChannel();
 
+    expect(harness.voiceJoinState()).toEqual({
+      phase: "failed",
+      statusMessage: "",
+      errorMessage: "Unable to join voice.",
+    });
+  });
+
+  it("keeps running join state on duplicate join attempts", async () => {
+    const issueVoiceTokenGate = deferred<ReturnType<typeof voiceTokenFromResponse>>();
+    const issueVoiceTokenMock = vi.fn(() => issueVoiceTokenGate.promise);
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        dependencies: {
+          issueVoiceToken: issueVoiceTokenMock,
+        },
+      }),
+    );
+
+    const firstJoin = harness.controller.joinVoiceChannel();
+    await flush();
+    expect(harness.voiceJoinState().phase).toBe("running");
+
+    await harness.controller.joinVoiceChannel();
+    expect(issueVoiceTokenMock).toHaveBeenCalledTimes(1);
+    expect(harness.voiceJoinState().phase).toBe("running");
+
+    issueVoiceTokenGate.reject(new Error("denied"));
+    await expect(firstJoin).resolves.toBeUndefined();
     expect(harness.voiceJoinState()).toEqual({
       phase: "failed",
       statusMessage: "",

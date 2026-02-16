@@ -68,6 +68,9 @@ describe("app shell message history controller", () => {
       ReturnType<typeof messageIdFromInput> | null
     >(messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"));
     const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] = createSignal<MessageHistoryLoadTarget | null>(null);
+    const isLoadingMessages = () =>
+      refreshMessagesState().phase === "running" &&
+      messageHistoryLoadTarget() === "refresh";
     const isLoadingOlder = () =>
       refreshMessagesState().phase === "running" &&
       messageHistoryLoadTarget() === "load-older";
@@ -123,6 +126,7 @@ describe("app shell message history controller", () => {
           activeChannelId,
           canAccessActiveChannel,
           nextBefore,
+          isLoadingMessages,
           isLoadingOlder,
           setMessages,
           setNextBefore,
@@ -192,6 +196,9 @@ describe("app shell message history controller", () => {
         errorMessage: "",
       });
     const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] = createSignal<MessageHistoryLoadTarget | null>(null);
+    const isLoadingMessages = () =>
+      refreshMessagesState().phase === "running" &&
+      messageHistoryLoadTarget() === "refresh";
     const isLoadingOlder = () =>
       refreshMessagesState().phase === "running" &&
       messageHistoryLoadTarget() === "load-older";
@@ -212,6 +219,7 @@ describe("app shell message history controller", () => {
           activeChannelId,
           canAccessActiveChannel,
           nextBefore,
+          isLoadingMessages,
           isLoadingOlder,
           setMessages,
           setNextBefore,
@@ -265,5 +273,83 @@ describe("app shell message history controller", () => {
       statusMessage: "",
       errorMessage: "",
     });
+  });
+
+  it("blocks load-older while refresh is already running", async () => {
+    const [session] = createSignal(SESSION);
+    const [activeGuildId] = createSignal(GUILD_ID);
+    const [activeChannelId] = createSignal(CHANNEL_ID);
+    const [canAccessActiveChannel] = createSignal(true);
+    const [nextBefore, setNextBefore] = createSignal<
+      ReturnType<typeof messageIdFromInput> | null
+    >(messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"));
+    const [refreshMessagesState, setRefreshMessagesState] =
+      createSignal<AsyncOperationState>({
+        phase: "idle",
+        statusMessage: "",
+        errorMessage: "",
+      });
+    const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] = createSignal<MessageHistoryLoadTarget | null>(null);
+    const isLoadingMessages = () =>
+      refreshMessagesState().phase === "running" &&
+      messageHistoryLoadTarget() === "refresh";
+    const isLoadingOlder = () =>
+      refreshMessagesState().phase === "running" &&
+      messageHistoryLoadTarget() === "load-older";
+
+    const pendingRefresh = deferred<{
+      messages: MessageRecord[];
+      nextBefore: ReturnType<typeof messageIdFromInput> | null;
+    }>();
+    const fetchChannelMessagesMock = vi.fn(() => pendingRefresh.promise);
+
+    const controller = createRoot(() =>
+      createMessageHistoryController(
+        {
+          session,
+          activeGuildId,
+          activeChannelId,
+          canAccessActiveChannel,
+          nextBefore,
+          isLoadingMessages,
+          isLoadingOlder,
+          setMessages: vi.fn(),
+          setNextBefore,
+          setShowLoadOlderButton: vi.fn(),
+          setMessageError: vi.fn(),
+          setRefreshMessagesState,
+          setMessageHistoryLoadTarget,
+          setEditingMessageId: vi.fn(),
+          setEditingDraft: vi.fn(),
+          setReactionState: vi.fn(),
+          setPendingReactionByKey: vi.fn(),
+          setOpenReactionPickerMessageId: vi.fn(),
+          setSearchResults: vi.fn(),
+          setSearchError: vi.fn(),
+          setSearchOpsStatus: vi.fn(),
+          setAttachmentStatus: vi.fn(),
+          setAttachmentError: vi.fn(),
+          setVoiceStatus: vi.fn(),
+          setVoiceError: vi.fn(),
+          captureScrollMetrics: vi.fn(() => null),
+          restoreScrollAfterPrepend: vi.fn(),
+          scrollMessageListToBottom: vi.fn(),
+        },
+        {
+          fetchChannelMessages: fetchChannelMessagesMock,
+        },
+      ),
+    );
+
+    await flush();
+    expect(fetchChannelMessagesMock).toHaveBeenCalledTimes(1);
+    expect(isLoadingMessages()).toBe(true);
+
+    await controller.loadOlderMessages();
+    expect(fetchChannelMessagesMock).toHaveBeenCalledTimes(1);
+    expect(isLoadingOlder()).toBe(false);
+
+    pendingRefresh.resolve({ messages: [], nextBefore: null });
+    await flush();
   });
 });
