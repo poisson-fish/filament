@@ -43,6 +43,7 @@ import { createMessagesClient } from "./api-messages-client";
 import { createMessagesApi } from "./api-messages";
 import { createSystemApi } from "./api-system";
 import { createVoiceApi } from "./api-voice";
+import { createWorkspaceClient } from "./api-workspace-client";
 import { createWorkspaceApi } from "./api-workspace";
 
 const DEFAULT_API_ORIGIN = "https://api.filament.local";
@@ -476,6 +477,10 @@ const workspaceApi = createWorkspaceApi({
   },
 });
 
+const workspaceClient = createWorkspaceClient({
+  workspaceApi,
+});
+
 const systemApi = createSystemApi({
   requestJson,
   createApiError(status, code, message) {
@@ -509,65 +514,14 @@ export async function echoMessage(input: { message: string }): Promise<string> {
   return systemApi.echoMessage(input);
 }
 
-export async function createGuild(
-  session: AuthSession,
-  input: { name: GuildName; visibility?: GuildVisibility },
-): Promise<{
-  guildId: GuildId;
-  name: GuildName;
-  visibility: GuildVisibility;
-}> {
-  return workspaceApi.createGuild(session, input);
-}
-
-export async function fetchGuilds(session: AuthSession): Promise<GuildRecord[]> {
-  return workspaceApi.fetchGuilds(session);
-}
-
-export async function updateGuild(
-  session: AuthSession,
-  guildId: GuildId,
-  input: { name: GuildName; visibility?: GuildVisibility },
-): Promise<GuildRecord> {
-  return workspaceApi.updateGuild(session, guildId, input);
-}
-
-export async function fetchPublicGuildDirectory(
-  session: AuthSession,
-  input?: { query?: string; limit?: number },
-): Promise<PublicGuildDirectory> {
-  return workspaceApi.fetchPublicGuildDirectory(session, input);
-}
-
-export async function joinPublicGuild(
-  session: AuthSession,
-  guildId: GuildId,
-): Promise<DirectoryJoinResult> {
-  return workspaceApi.joinPublicGuild(session, guildId);
-}
-
-export async function fetchGuildChannels(
-  session: AuthSession,
-  guildId: GuildId,
-): Promise<ChannelRecord[]> {
-  return workspaceApi.fetchGuildChannels(session, guildId);
-}
-
-export async function createChannel(
-  session: AuthSession,
-  guildId: GuildId,
-  input: { name: ChannelName; kind: ChannelKindName },
-): Promise<ChannelRecord> {
-  return workspaceApi.createChannel(session, guildId, input);
-}
-
-export async function fetchChannelPermissionSnapshot(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-): Promise<ChannelPermissionSnapshot> {
-  return workspaceApi.fetchChannelPermissionSnapshot(session, guildId, channelId);
-}
+export const createGuild = workspaceClient.createGuild;
+export const fetchGuilds = workspaceClient.fetchGuilds;
+export const updateGuild = workspaceClient.updateGuild;
+export const fetchPublicGuildDirectory = workspaceClient.fetchPublicGuildDirectory;
+export const joinPublicGuild = workspaceClient.joinPublicGuild;
+export const fetchGuildChannels = workspaceClient.fetchGuildChannels;
+export const createChannel = workspaceClient.createChannel;
+export const fetchChannelPermissionSnapshot = workspaceClient.fetchChannelPermissionSnapshot;
 
 export const fetchChannelMessages = messagesClient.fetchChannelMessages;
 export const createChannelMessage = messagesClient.createChannelMessage;
@@ -583,116 +537,18 @@ export const downloadChannelAttachment = messagesClient.downloadChannelAttachmen
 export const downloadChannelAttachmentPreview = messagesClient.downloadChannelAttachmentPreview;
 export const deleteChannelAttachment = messagesClient.deleteChannelAttachment;
 
-export async function addGuildMember(
-  session: AuthSession,
-  guildId: GuildId,
-  userId: UserId,
-): Promise<ModerationResult> {
-  return workspaceApi.addGuildMember(session, guildId, userId);
-}
-
-export async function updateGuildMemberRole(
-  session: AuthSession,
-  guildId: GuildId,
-  userId: UserId,
-  role: RoleName,
-): Promise<ModerationResult> {
-  return workspaceApi.updateGuildMemberRole(session, guildId, userId, role);
-}
-
-export async function kickGuildMember(
-  session: AuthSession,
-  guildId: GuildId,
-  userId: UserId,
-): Promise<ModerationResult> {
-  return workspaceApi.kickGuildMember(session, guildId, userId);
-}
-
-export async function banGuildMember(
-  session: AuthSession,
-  guildId: GuildId,
-  userId: UserId,
-): Promise<ModerationResult> {
-  return workspaceApi.banGuildMember(session, guildId, userId);
-}
-
-export async function setChannelRoleOverride(
-  session: AuthSession,
-  guildId: GuildId,
-  channelId: ChannelId,
-  role: RoleName,
-  input: {
-    allow: PermissionName[];
-    deny: PermissionName[];
-  },
-): Promise<ModerationResult> {
-  return workspaceApi.setChannelRoleOverride(session, guildId, channelId, role, input);
-}
-
-export async function fetchGuildRoles(
-  session: AuthSession,
-  guildId: GuildId,
-): Promise<GuildRoleList> {
-  return workspaceApi.fetchGuildRoles(session, guildId);
-}
-
-export async function createGuildRole(
-  session: AuthSession,
-  guildId: GuildId,
-  input: {
-    name: WorkspaceRoleName;
-    permissions: PermissionName[];
-    position?: number;
-  },
-): Promise<GuildRoleRecord> {
-  return workspaceApi.createGuildRole(session, guildId, input);
-}
-
-export async function updateGuildRole(
-  session: AuthSession,
-  guildId: GuildId,
-  roleId: WorkspaceRoleId,
-  input: {
-    name?: WorkspaceRoleName;
-    permissions?: PermissionName[];
-  },
-): Promise<GuildRoleRecord> {
-  return workspaceApi.updateGuildRole(session, guildId, roleId, input);
-}
-
-export async function deleteGuildRole(
-  session: AuthSession,
-  guildId: GuildId,
-  roleId: WorkspaceRoleId,
-): Promise<ModerationResult> {
-  return workspaceApi.deleteGuildRole(session, guildId, roleId);
-}
-
-export async function reorderGuildRoles(
-  session: AuthSession,
-  guildId: GuildId,
-  roleIds: WorkspaceRoleId[],
-): Promise<ModerationResult> {
-  return workspaceApi.reorderGuildRoles(session, guildId, roleIds);
-}
-
-export async function assignGuildRole(
-  session: AuthSession,
-  guildId: GuildId,
-  roleId: WorkspaceRoleId,
-  userId: UserId,
-): Promise<ModerationResult> {
-  return workspaceApi.assignGuildRole(session, guildId, roleId, userId);
-}
-
-export async function unassignGuildRole(
-  session: AuthSession,
-  guildId: GuildId,
-  roleId: WorkspaceRoleId,
-  userId: UserId,
-): Promise<ModerationResult> {
-  return workspaceApi.unassignGuildRole(session, guildId, roleId, userId);
-}
+export const addGuildMember = workspaceClient.addGuildMember;
+export const updateGuildMemberRole = workspaceClient.updateGuildMemberRole;
+export const kickGuildMember = workspaceClient.kickGuildMember;
+export const banGuildMember = workspaceClient.banGuildMember;
+export const setChannelRoleOverride = workspaceClient.setChannelRoleOverride;
+export const fetchGuildRoles = workspaceClient.fetchGuildRoles;
+export const createGuildRole = workspaceClient.createGuildRole;
+export const updateGuildRole = workspaceClient.updateGuildRole;
+export const deleteGuildRole = workspaceClient.deleteGuildRole;
+export const reorderGuildRoles = workspaceClient.reorderGuildRoles;
+export const assignGuildRole = workspaceClient.assignGuildRole;
+export const unassignGuildRole = workspaceClient.unassignGuildRole;
 
 export async function issueVoiceToken(
   session: AuthSession,
