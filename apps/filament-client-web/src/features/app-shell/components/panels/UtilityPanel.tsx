@@ -59,6 +59,10 @@ export function UtilityPanel(props: UtilityPanelProps) {
           <p class="panel-note">
             Logout requests: {props.diagnosticsEventCounts.logout_requested}
           </p>
+          <p class="panel-note">
+            Gateway connections: {props.diagnosticsEventCounts.gateway_connected} opened /{" "}
+            {props.diagnosticsEventCounts.gateway_disconnected} closed
+          </p>
         </div>
       </Show>
     </section>

@@ -69,6 +69,7 @@ export interface GatewayControllerOptions {
   setVoiceParticipantsByChannel: Setter<Record<string, VoiceParticipantPayload[]>>;
   isMessageListNearBottom: () => boolean;
   scrollMessageListToBottom: () => void;
+  onGatewayConnectionChange?: (isOpen: boolean) => void;
   onWorkspacePermissionsChanged?: (guildId: GuildId) => void;
   onWorkspaceModerationChanged?: (payload: WorkspaceIpBanSyncPayload) => void;
 }
@@ -511,7 +512,10 @@ export function createGatewayController(
       onReady: (payload) => {
         connectedUserId = payload.userId;
       },
-      onOpenStateChange: (isOpen) => options.setGatewayOnline(isOpen),
+      onOpenStateChange: (isOpen) => {
+        options.setGatewayOnline(isOpen);
+        options.onGatewayConnectionChange?.(isOpen);
+      },
       onMessageCreate: (message) => {
         if (message.guildId !== guildId || message.channelId !== channelId) {
           return;

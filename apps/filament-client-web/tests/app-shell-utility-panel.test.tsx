@@ -15,6 +15,8 @@ function baseProps(overrides: Partial<Parameters<typeof UtilityPanel>[0]> = {}) 
       echo_succeeded: 4,
       echo_failed: 1,
       logout_requested: 2,
+      gateway_connected: 5,
+      gateway_disconnected: 3,
     },
     showDiagnosticsCounters: false,
     isCheckingHealth: false,
@@ -50,6 +52,7 @@ describe("app shell utility panel", () => {
     expect(screen.getByText("Diagnostics counters (dev only)")).toBeInTheDocument();
     expect(screen.getByText("Session refresh: 2 ok / 1 failed")).toBeInTheDocument();
     expect(screen.getByText("Logout requests: 2")).toBeInTheDocument();
+    expect(screen.getByText("Gateway connections: 5 opened / 3 closed")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Health" }));
     expect(onRunHealthCheck).toHaveBeenCalledTimes(1);

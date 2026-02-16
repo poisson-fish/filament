@@ -275,6 +275,7 @@ describe("app shell gateway controller", () => {
     const scrollMessageListToBottomMock = vi.fn();
     const closeGatewayMock = vi.fn();
     const onWorkspacePermissionsChanged = vi.fn();
+    const onGatewayConnectionChange = vi.fn();
     let handlers: any = null;
     const connectGatewayMock = vi.fn((_token, _guildId, _channelId, nextHandlers) => {
       handlers = nextHandlers;
@@ -304,6 +305,7 @@ describe("app shell gateway controller", () => {
           setVoiceParticipantsByChannel,
           isMessageListNearBottom: () => true,
           scrollMessageListToBottom: scrollMessageListToBottomMock,
+          onGatewayConnectionChange,
           onWorkspacePermissionsChanged,
         },
         {
@@ -319,6 +321,7 @@ describe("app shell gateway controller", () => {
 
     handlers.onOpenStateChange(true);
     expect(gatewayOnline()).toBe(true);
+    expect(onGatewayConnectionChange).toHaveBeenCalledWith(true);
     handlers.onReady({
       userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
     });
@@ -534,5 +537,8 @@ describe("app shell gateway controller", () => {
     expect(closeGatewayMock).toHaveBeenCalledTimes(1);
     expect(gatewayOnline()).toBe(false);
     expect(onlineMembers()).toEqual([]);
+
+    handlers.onOpenStateChange(false);
+    expect(onGatewayConnectionChange).toHaveBeenCalledWith(false);
   });
 });

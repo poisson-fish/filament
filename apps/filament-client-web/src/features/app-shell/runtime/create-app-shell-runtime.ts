@@ -495,6 +495,11 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setVoiceParticipantsByChannel: voiceState.setVoiceParticipantsByChannel,
     isMessageListNearBottom: messageListController.isMessageListNearBottom,
     scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
+    onGatewayConnectionChange: (isOpen) => {
+      diagnosticsState.recordDiagnosticsEvent(
+        isOpen ? "gateway_connected" : "gateway_disconnected",
+      );
+    },
     refreshWorkspacePermissionStateFromGateway,
   });
 

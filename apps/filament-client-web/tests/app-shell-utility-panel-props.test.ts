@@ -19,6 +19,8 @@ describe("app shell utility panel props", () => {
         echo_succeeded: 3,
         echo_failed: 1,
         logout_requested: 1,
+        gateway_connected: 2,
+        gateway_disconnected: 1,
       },
       showDiagnosticsCounters: true,
       isCheckingHealth: false,

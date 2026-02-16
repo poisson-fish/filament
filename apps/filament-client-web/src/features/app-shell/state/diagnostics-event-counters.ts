@@ -8,6 +8,8 @@ export const DIAGNOSTICS_EVENT_TYPES = [
   "echo_succeeded",
   "echo_failed",
   "logout_requested",
+  "gateway_connected",
+  "gateway_disconnected",
 ] as const;
 
 export type DiagnosticsEventType = (typeof DIAGNOSTICS_EVENT_TYPES)[number];
@@ -23,6 +25,8 @@ export function createInitialDiagnosticsEventCounts(): DiagnosticsEventCounts {
     echo_succeeded: 0,
     echo_failed: 0,
     logout_requested: 0,
+    gateway_connected: 0,
+    gateway_disconnected: 0,
   };
 }
 

@@ -15,6 +15,8 @@ describe("app shell diagnostics event counters", () => {
       echo_succeeded: 0,
       echo_failed: 0,
       logout_requested: 0,
+      gateway_connected: 0,
+      gateway_disconnected: 0,
     });
   });
 

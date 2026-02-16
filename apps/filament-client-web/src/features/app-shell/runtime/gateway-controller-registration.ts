@@ -9,6 +9,7 @@ export interface GatewayControllerRegistrationOptions
   refreshWorkspacePermissionStateFromGateway: (
     guildId: GuildId,
   ) => Promise<void>;
+  onGatewayConnectionChange?: (isOpen: boolean) => void;
 }
 
 export interface GatewayControllerRegistrationDependencies {

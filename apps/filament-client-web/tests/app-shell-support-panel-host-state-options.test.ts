@@ -80,6 +80,8 @@ describe("app shell support panel-host state options", () => {
       echo_succeeded: 5,
       echo_failed: 6,
       logout_requested: 7,
+      gateway_connected: 8,
+      gateway_disconnected: 9,
     });
     const isCheckingHealth = () => false;
     const isEchoing = () => false;

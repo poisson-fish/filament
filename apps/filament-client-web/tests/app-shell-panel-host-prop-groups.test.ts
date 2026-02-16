@@ -169,6 +169,8 @@ describe("app shell panel host prop groups", () => {
             echo_succeeded: 0,
             echo_failed: 0,
             logout_requested: 0,
+            gateway_connected: 0,
+            gateway_disconnected: 0,
           },
           showDiagnosticsCounters: false,
           isCheckingHealth: false,
