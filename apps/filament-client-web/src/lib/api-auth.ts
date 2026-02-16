@@ -37,6 +37,7 @@ interface AuthApiDependencies {
   requestJsonWithBody: (request: BodyRequest) => Promise<unknown>;
   requestNoContent: (request: JsonRequest) => Promise<void>;
   createApiError: (status: number, code: string, message: string) => Error;
+  apiBaseUrl: () => string;
 }
 
 export interface AuthApi {
@@ -59,6 +60,7 @@ export interface AuthApi {
   ): Promise<ProfileRecord>;
   uploadMyProfileAvatar(session: AuthSession, file: File): Promise<ProfileRecord>;
   lookupUsersByIds(session: AuthSession, userIds: UserId[]): Promise<UserLookupRecord[]>;
+  profileAvatarUrl(userId: UserId, avatarVersion: number): string;
 }
 
 export function createAuthApi(input: AuthApiDependencies): AuthApi {
@@ -226,6 +228,10 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
         body: { user_ids: userIds },
       });
       return userLookupListFromResponse(dto);
+    },
+
+    profileAvatarUrl(userId, avatarVersion) {
+      return `${input.apiBaseUrl()}/users/${userId}/avatar?v=${Math.max(0, Math.trunc(avatarVersion))}`;
     },
   };
 }

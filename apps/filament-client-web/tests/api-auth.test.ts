@@ -35,6 +35,7 @@ describe("api-auth", () => {
       requestJsonWithBody,
       requestNoContent,
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     await api.registerWithPassword({
@@ -60,6 +61,7 @@ describe("api-auth", () => {
       requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     await expect(
@@ -84,6 +86,7 @@ describe("api-auth", () => {
       requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     await expect(
@@ -105,6 +108,7 @@ describe("api-auth", () => {
       requestJsonWithBody: vi.fn(async () => null),
       requestNoContent,
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     await api.logoutAuthSession(refreshTokenFromInput("R".repeat(64)));
@@ -129,6 +133,7 @@ describe("api-auth", () => {
       requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     const session = {
@@ -156,6 +161,7 @@ describe("api-auth", () => {
       requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     await expect(
@@ -180,6 +186,7 @@ describe("api-auth", () => {
       requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     const session = {
@@ -213,6 +220,7 @@ describe("api-auth", () => {
       requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     await api.updateMyProfile(
@@ -245,6 +253,7 @@ describe("api-auth", () => {
       requestJsonWithBody,
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     await expect(
@@ -275,6 +284,7 @@ describe("api-auth", () => {
       requestJsonWithBody,
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     const file = new File([new Uint8Array([1, 2, 3])], "avatar.png", { type: "image/png" });
@@ -305,6 +315,7 @@ describe("api-auth", () => {
       requestJsonWithBody: vi.fn(async () => null),
       requestNoContent: vi.fn(async () => undefined),
       createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
     });
 
     await expect(
@@ -317,5 +328,23 @@ describe("api-auth", () => {
         [],
       ),
     ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+  });
+
+  it("profileAvatarUrl normalizes version and uses configured base URL", () => {
+    const api = createAuthApi({
+      requestJson: vi.fn(async () => null),
+      requestJsonWithBody: vi.fn(async () => null),
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.example.test",
+    });
+
+    const userId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    expect(api.profileAvatarUrl(userId, -4.8)).toBe(
+      "https://api.example.test/users/01ARZ3NDEKTSV4RRFFQ69G5FAV/avatar?v=0",
+    );
+    expect(api.profileAvatarUrl(userId, 6.9)).toBe(
+      "https://api.example.test/users/01ARZ3NDEKTSV4RRFFQ69G5FAV/avatar?v=6",
+    );
   });
 });

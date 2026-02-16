@@ -438,6 +438,9 @@ const authApi = createAuthApi({
   createApiError(status, code, message) {
     return new ApiError(status, code, message);
   },
+  apiBaseUrl() {
+    return apiConfig().baseUrl;
+  },
 });
 
 const friendsApi = createFriendsApi({
@@ -530,8 +533,7 @@ export async function uploadMyProfileAvatar(
 }
 
 export function profileAvatarUrl(userId: UserId, avatarVersion: number): string {
-  const config = apiConfig();
-  return `${config.baseUrl}/users/${userId}/avatar?v=${Math.max(0, Math.trunc(avatarVersion))}`;
+  return authApi.profileAvatarUrl(userId, avatarVersion);
 }
 
 export async function lookupUsersByIds(
