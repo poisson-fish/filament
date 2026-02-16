@@ -56,10 +56,17 @@ use fanout_user::dispatch_user_payload;
 use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
 use ingress_rate_limit::allow_gateway_ingress;
 use presence_disconnect::compute_disconnect_presence_outcome;
-use presence_subscribe::apply_presence_subscribe;
-use voice_presence::{collect_voice_snapshots, voice_channel_key, voice_snapshot_from_record};
+use presence_subscribe::{
+    apply_presence_subscribe, try_enqueue_presence_sync_event, PresenceSyncEnqueueResult,
+};
+use voice_presence::{
+    collect_voice_snapshots, try_enqueue_voice_sync_event, voice_channel_key,
+    voice_snapshot_from_record, OutboundEnqueueResult,
+};
 use voice_registration::apply_voice_registration_transition;
-use voice_registry::{remove_user_voice_participants, take_expired_voice_participants};
+use voice_registry::{
+    remove_user_voice_participant_removals, take_expired_voice_participant_removals,
+};
 use search_validation::validate_search_query_limits;
 use connection_control::signal_slow_connections_close;
 use search_reconcile::compute_reconciliation;
@@ -1211,32 +1218,32 @@ pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, even
 async fn prune_expired_voice_participants(state: &AppState, now_unix: i64) {
     let removed = {
         let mut voice = state.voice_participants.write().await;
-        take_expired_voice_participants(&mut voice, now_unix)
+        take_expired_voice_participant_removals(&mut voice, now_unix)
     };
 
-    for (key, participant) in removed {
-        let Some((guild_id, channel_id)) = key.split_once(':') else {
-            continue;
-        };
+    for removed in removed {
+        let guild_id = removed.guild_id;
+        let channel_id = removed.channel_id;
+        let participant = removed.participant;
         for stream in participant.published_streams {
             let event = gateway_events::voice_stream_unpublish(
-                guild_id,
-                channel_id,
+                &guild_id,
+                &channel_id,
                 participant.user_id,
                 &participant.identity,
                 stream,
                 now_unix,
             );
-            broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+            broadcast_channel_event(state, &channel_key(&guild_id, &channel_id), &event).await;
         }
         let leave = gateway_events::voice_participant_leave(
-            guild_id,
-            channel_id,
+            &guild_id,
+            &channel_id,
             participant.user_id,
             &participant.identity,
             now_unix,
         );
-        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &leave).await;
+        broadcast_channel_event(state, &channel_key(&guild_id, &channel_id), &leave).await;
     }
 }
 
@@ -1352,15 +1359,15 @@ pub(crate) async fn handle_voice_subscribe(
 
     let sync_event =
         gateway_events::voice_participant_sync(guild_id, channel_id, participants, now_unix());
-    match outbound_tx.try_send(sync_event.payload) {
-        Ok(()) => {
+    match try_enqueue_voice_sync_event(outbound_tx, sync_event.payload) {
+        OutboundEnqueueResult::Enqueued => {
             record_gateway_event_emitted("connection", sync_event.event_type);
             record_voice_sync_repair("subscribe");
         }
-        Err(mpsc::error::TrySendError::Closed(_)) => {
+        OutboundEnqueueResult::Closed => {
             record_gateway_event_dropped("connection", sync_event.event_type, "closed");
         }
-        Err(mpsc::error::TrySendError::Full(_)) => {
+        OutboundEnqueueResult::Full => {
             record_gateway_event_dropped("connection", sync_event.event_type, "full_queue");
         }
     }
@@ -1373,32 +1380,33 @@ async fn remove_disconnected_user_voice_participants(
 ) {
     let removed = {
         let mut voice = state.voice_participants.write().await;
-        remove_user_voice_participants(&mut voice, user_id)
+        remove_user_voice_participant_removals(&mut voice, user_id)
     };
 
-    for (channel_key_value, participant) in removed {
-        let Some((guild_id, channel_id)) = channel_key_value.split_once(':') else {
-            continue;
-        };
+    for removed in removed {
+        let guild_id = removed.guild_id;
+        let channel_id = removed.channel_id;
+        let participant = removed.participant;
         for stream in participant.published_streams {
             let unpublish = gateway_events::voice_stream_unpublish(
-                guild_id,
-                channel_id,
+                &guild_id,
+                &channel_id,
                 participant.user_id,
                 &participant.identity,
                 stream,
                 disconnected_at_unix,
             );
-            broadcast_channel_event(state, &channel_key(guild_id, channel_id), &unpublish).await;
+            broadcast_channel_event(state, &channel_key(&guild_id, &channel_id), &unpublish)
+                .await;
         }
         let leave = gateway_events::voice_participant_leave(
-            guild_id,
-            channel_id,
+            &guild_id,
+            &channel_id,
             participant.user_id,
             &participant.identity,
             disconnected_at_unix,
         );
-        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &leave).await;
+        broadcast_channel_event(state, &channel_key(&guild_id, &channel_id), &leave).await;
     }
 }
 
@@ -1418,12 +1426,14 @@ pub(crate) async fn handle_presence_subscribe(
     };
 
     let snapshot_event = gateway_events::presence_sync(guild_id, result.snapshot_user_ids);
-    match outbound_tx.try_send(snapshot_event.payload) {
-        Ok(()) => record_gateway_event_emitted("connection", snapshot_event.event_type),
-        Err(mpsc::error::TrySendError::Closed(_)) => {
+    match try_enqueue_presence_sync_event(outbound_tx, snapshot_event.payload) {
+        PresenceSyncEnqueueResult::Enqueued => {
+            record_gateway_event_emitted("connection", snapshot_event.event_type)
+        }
+        PresenceSyncEnqueueResult::Closed => {
             record_gateway_event_dropped("connection", snapshot_event.event_type, "closed");
         }
-        Err(mpsc::error::TrySendError::Full(_)) => {
+        PresenceSyncEnqueueResult::Full => {
             record_gateway_event_dropped("connection", snapshot_event.event_type, "full_queue");
         }
     }

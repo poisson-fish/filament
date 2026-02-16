@@ -2,6 +2,29 @@ use filament_core::UserId;
 
 use crate::server::core::{VoiceParticipant, VoiceParticipantsByChannel};
 
+pub(crate) struct VoiceParticipantRemoval {
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) participant: VoiceParticipant,
+}
+
+pub(crate) fn take_expired_voice_participant_removals(
+    voice: &mut VoiceParticipantsByChannel,
+    now_unix: i64,
+) -> Vec<VoiceParticipantRemoval> {
+    take_expired_voice_participants(voice, now_unix)
+        .into_iter()
+        .filter_map(|(channel_key, participant)| {
+            let (guild_id, channel_id) = channel_key.split_once(':')?;
+            Some(VoiceParticipantRemoval {
+                guild_id: guild_id.to_owned(),
+                channel_id: channel_id.to_owned(),
+                participant,
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn take_expired_voice_participants(
     voice: &mut VoiceParticipantsByChannel,
     now_unix: i64,
@@ -34,13 +57,34 @@ pub(crate) fn remove_user_voice_participants(
     removed
 }
 
+pub(crate) fn remove_user_voice_participant_removals(
+    voice: &mut VoiceParticipantsByChannel,
+    user_id: UserId,
+) -> Vec<VoiceParticipantRemoval> {
+    remove_user_voice_participants(voice, user_id)
+        .into_iter()
+        .filter_map(|(channel_key, participant)| {
+            let (guild_id, channel_id) = channel_key.split_once(':')?;
+            Some(VoiceParticipantRemoval {
+                guild_id: guild_id.to_owned(),
+                channel_id: channel_id.to_owned(),
+                participant,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
 
     use filament_core::UserId;
 
-    use super::{remove_user_voice_participants, take_expired_voice_participants};
+    use super::{
+        remove_user_voice_participant_removals, remove_user_voice_participants,
+        take_expired_voice_participant_removals,
+        take_expired_voice_participants,
+    };
     use crate::server::core::{VoiceParticipant, VoiceParticipantsByChannel, VoiceStreamKind};
 
     fn participant(user_id: UserId, identity: &str, expires_at_unix: i64) -> VoiceParticipant {
@@ -113,5 +157,59 @@ mod tests {
         assert!(!voice.contains_key("g2:c2"));
         assert_eq!(voice["g2:c1"].len(), 1);
         assert!(voice["g2:c1"].contains_key(&other_user));
+    }
+
+    #[test]
+    fn expired_removals_include_only_parseable_channel_keys() {
+        let parseable_user = UserId::new();
+        let invalid_user = UserId::new();
+        let mut voice: VoiceParticipantsByChannel = HashMap::from([
+            (
+                String::from("g3:c1"),
+                HashMap::from([(parseable_user, participant(parseable_user, "parseable", 10))]),
+            ),
+            (
+                String::from("invalid"),
+                HashMap::from([(invalid_user, participant(invalid_user, "invalid", 10))]),
+            ),
+        ]);
+
+        let removals = take_expired_voice_participant_removals(&mut voice, 10);
+
+        assert_eq!(removals.len(), 1);
+        assert_eq!(removals[0].guild_id, "g3");
+        assert_eq!(removals[0].channel_id, "c1");
+        assert_eq!(removals[0].participant.user_id, parseable_user);
+        assert!(voice.is_empty());
+    }
+
+    #[test]
+    fn user_removals_include_only_parseable_channel_keys() {
+        let parseable_user = UserId::new();
+        let invalid_user = UserId::new();
+        let mut voice: VoiceParticipantsByChannel = HashMap::from([
+            (
+                String::from("g4:c1"),
+                HashMap::from([(parseable_user, participant(parseable_user, "parseable", 99))]),
+            ),
+            (
+                String::from("invalid"),
+                HashMap::from([(parseable_user, participant(parseable_user, "invalid", 99))]),
+            ),
+            (
+                String::from("g4:c2"),
+                HashMap::from([(invalid_user, participant(invalid_user, "other", 99))]),
+            ),
+        ]);
+
+        let removals = remove_user_voice_participant_removals(&mut voice, parseable_user);
+
+        assert_eq!(removals.len(), 1);
+        assert_eq!(removals[0].guild_id, "g4");
+        assert_eq!(removals[0].channel_id, "c1");
+        assert_eq!(removals[0].participant.user_id, parseable_user);
+        assert!(voice.contains_key("g4:c2"));
+        assert!(!voice.contains_key("g4:c1"));
+        assert!(!voice.contains_key("invalid"));
     }
 }

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use filament_core::UserId;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::server::core::ConnectionPresence;
@@ -8,6 +9,12 @@ use crate::server::core::ConnectionPresence;
 pub(crate) struct PresenceSubscribeResult {
     pub(crate) snapshot_user_ids: HashSet<String>,
     pub(crate) became_online: bool,
+}
+
+pub(crate) enum PresenceSyncEnqueueResult {
+    Enqueued,
+    Closed,
+    Full,
 }
 
 pub(crate) fn apply_presence_subscribe(
@@ -39,6 +46,17 @@ pub(crate) fn apply_presence_subscribe(
     })
 }
 
+pub(crate) fn try_enqueue_presence_sync_event(
+    outbound_tx: &mpsc::Sender<String>,
+    payload: String,
+) -> PresenceSyncEnqueueResult {
+    match outbound_tx.try_send(payload) {
+        Ok(()) => PresenceSyncEnqueueResult::Enqueued,
+        Err(mpsc::error::TrySendError::Closed(_)) => PresenceSyncEnqueueResult::Closed,
+        Err(mpsc::error::TrySendError::Full(_)) => PresenceSyncEnqueueResult::Full,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
@@ -46,7 +64,9 @@ mod tests {
     use filament_core::UserId;
     use uuid::Uuid;
 
-    use super::apply_presence_subscribe;
+    use super::{
+        apply_presence_subscribe, try_enqueue_presence_sync_event, PresenceSyncEnqueueResult,
+    };
     use crate::server::core::ConnectionPresence;
 
     #[test]
@@ -115,5 +135,39 @@ mod tests {
         );
 
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn enqueue_presence_sync_event_reports_enqueued() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
+
+        let result = try_enqueue_presence_sync_event(&tx, String::from("payload"));
+
+        assert!(matches!(result, PresenceSyncEnqueueResult::Enqueued));
+        let received = rx.try_recv().expect("payload should be queued");
+        assert_eq!(received, "payload");
+    }
+
+    #[test]
+    fn enqueue_presence_sync_event_reports_full() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
+        assert!(matches!(
+            try_enqueue_presence_sync_event(&tx, String::from("first")),
+            PresenceSyncEnqueueResult::Enqueued
+        ));
+
+        let result = try_enqueue_presence_sync_event(&tx, String::from("second"));
+
+        assert!(matches!(result, PresenceSyncEnqueueResult::Full));
+    }
+
+    #[test]
+    fn enqueue_presence_sync_event_reports_closed() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1);
+        drop(rx);
+
+        let result = try_enqueue_presence_sync_event(&tx, String::from("payload"));
+
+        assert!(matches!(result, PresenceSyncEnqueueResult::Closed));
     }
 }

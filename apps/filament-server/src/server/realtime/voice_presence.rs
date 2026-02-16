@@ -3,6 +3,13 @@ use crate::server::{
     core::VoiceParticipant,
     gateway_events::{self, VoiceParticipantSnapshot},
 };
+use tokio::sync::mpsc;
+
+pub(crate) enum OutboundEnqueueResult {
+    Enqueued,
+    Closed,
+    Full,
+}
 
 pub(crate) fn voice_channel_key(guild_id: &str, channel_id: &str) -> String {
     format!("{guild_id}:{channel_id}")
@@ -40,13 +47,27 @@ pub(crate) fn collect_voice_snapshots(
     snapshots
 }
 
+pub(crate) fn try_enqueue_voice_sync_event(
+    outbound_tx: &mpsc::Sender<String>,
+    payload: String,
+) -> OutboundEnqueueResult {
+    match outbound_tx.try_send(payload) {
+        Ok(()) => OutboundEnqueueResult::Enqueued,
+        Err(mpsc::error::TrySendError::Closed(_)) => OutboundEnqueueResult::Closed,
+        Err(mpsc::error::TrySendError::Full(_)) => OutboundEnqueueResult::Full,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
 
     use filament_core::UserId;
 
-    use super::{collect_voice_snapshots, voice_channel_key, voice_snapshot_from_record};
+    use super::{
+        collect_voice_snapshots, try_enqueue_voice_sync_event, voice_channel_key,
+        voice_snapshot_from_record, OutboundEnqueueResult,
+    };
     use crate::server::core::{VoiceParticipant, VoiceParticipantsByChannel, VoiceStreamKind};
 
     #[test]
@@ -138,5 +159,39 @@ mod tests {
         let voice: VoiceParticipantsByChannel = HashMap::new();
         let snapshots = collect_voice_snapshots(&voice, "g-main:c-missing");
         assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn enqueue_voice_sync_event_reports_enqueued() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
+
+        let result = try_enqueue_voice_sync_event(&tx, String::from("payload"));
+
+        assert!(matches!(result, OutboundEnqueueResult::Enqueued));
+        let received = rx.try_recv().expect("payload should be queued");
+        assert_eq!(received, "payload");
+    }
+
+    #[test]
+    fn enqueue_voice_sync_event_reports_full() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
+        assert!(matches!(
+            try_enqueue_voice_sync_event(&tx, String::from("first")),
+            OutboundEnqueueResult::Enqueued
+        ));
+
+        let result = try_enqueue_voice_sync_event(&tx, String::from("second"));
+
+        assert!(matches!(result, OutboundEnqueueResult::Full));
+    }
+
+    #[test]
+    fn enqueue_voice_sync_event_reports_closed() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1);
+        drop(rx);
+
+        let result = try_enqueue_voice_sync_event(&tx, String::from("payload"));
+
+        assert!(matches!(result, OutboundEnqueueResult::Closed));
     }
 }
