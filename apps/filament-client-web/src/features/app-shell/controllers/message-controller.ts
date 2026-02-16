@@ -47,6 +47,7 @@ import {
   type ReactionView,
 } from "../helpers";
 import {
+  type AsyncOperationEvent,
   reduceAsyncOperationState,
   type AsyncOperationState,
 } from "../state/async-operation-state";
@@ -261,46 +262,43 @@ export function createMessageActionsController(
     }
   };
 
+  const applySendMessageTransition = (event: AsyncOperationEvent) => {
+    options.setSendMessageState((existing) => {
+      const next = reduceAsyncOperationState(existing, event);
+      options.setMessageStatus(next.statusMessage);
+      options.setMessageError(next.errorMessage);
+      return next;
+    });
+  };
+
   const sendMessage = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault();
     const session = options.session();
     const guildId = options.activeGuildId();
     const channelId = options.activeChannelId();
     if (!session || !guildId || !channelId) {
-      options.setMessageError("Select a channel first.");
-      options.setSendMessageState((existing) =>
-        reduceAsyncOperationState(existing, {
-          type: "fail",
-          errorMessage: "Select a channel first.",
-        }),
-      );
+      applySendMessageTransition({
+        type: "fail",
+        errorMessage: "Select a channel first.",
+      });
       return;
     }
     if (options.isSendingMessage()) {
       return;
     }
 
-    options.setMessageError("");
-    options.setMessageStatus("");
-    options.setSendMessageState((existing) =>
-      reduceAsyncOperationState(existing, {
-        type: "start",
-      }),
-    );
+    applySendMessageTransition({
+      type: "start",
+    });
     let uploadedForMessage: AttachmentRecord[] = [];
     try {
       const draft = options.composer().trim();
       const selectedFiles = options.composerAttachments();
       if (draft.length === 0 && selectedFiles.length === 0) {
-        options.setMessageError(
-          "Message must include text or at least one attachment.",
-        );
-        options.setSendMessageState((existing) =>
-          reduceAsyncOperationState(existing, {
-            type: "fail",
-            errorMessage: "Message must include text or at least one attachment.",
-          }),
-        );
+        applySendMessageTransition({
+          type: "fail",
+          errorMessage: "Message must include text or at least one attachment.",
+        });
         return;
       }
       for (const file of selectedFiles) {
@@ -348,21 +346,14 @@ export function createMessageActionsController(
             [key]: [...uploadedForMessage, ...deduped],
           };
         });
-        options.setMessageStatus(
-          `Sent with ${uploadedForMessage.length} attachment${uploadedForMessage.length === 1 ? "" : "s"}.`,
-        );
-        options.setSendMessageState((existing) =>
-          reduceAsyncOperationState(existing, {
-            type: "succeed",
-            statusMessage: `Sent with ${uploadedForMessage.length} attachment${uploadedForMessage.length === 1 ? "" : "s"}.`,
-          }),
-        );
+        applySendMessageTransition({
+          type: "succeed",
+          statusMessage: `Sent with ${uploadedForMessage.length} attachment${uploadedForMessage.length === 1 ? "" : "s"}.`,
+        });
       } else {
-        options.setSendMessageState((existing) =>
-          reduceAsyncOperationState(existing, {
-            type: "succeed",
-          }),
-        );
+        applySendMessageTransition({
+          type: "succeed",
+        });
       }
     } catch (error) {
       if (uploadedForMessage.length > 0) {
@@ -373,13 +364,10 @@ export function createMessageActionsController(
         );
       }
       const errorMessage = mapError(error, "Unable to send message.");
-      options.setMessageError(errorMessage);
-      options.setSendMessageState((existing) =>
-        reduceAsyncOperationState(existing, {
-          type: "fail",
-          errorMessage,
-        }),
-      );
+      applySendMessageTransition({
+        type: "fail",
+        errorMessage,
+      });
     }
   };
 

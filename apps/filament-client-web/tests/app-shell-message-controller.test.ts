@@ -34,6 +34,8 @@ function createMessageActionsHarness(input?: {
   activeChannelId?: ReturnType<typeof channelIdFromInput> | null;
   composer?: string;
   attachments?: File[];
+  initialMessageStatus?: string;
+  initialMessageError?: string;
 }) {
   const [session] = createSignal(SESSION);
   const [activeGuildId] = createSignal(input?.activeGuildId ?? null);
@@ -49,8 +51,12 @@ function createMessageActionsHarness(input?: {
   const [, setComposer] = createSignal("");
   const [composerAttachments] = createSignal(input?.attachments ?? []);
   const [, setComposerAttachments] = createSignal<File[]>([]);
-  const [messageStatus, setMessageStatus] = createSignal("");
-  const [messageError, setMessageError] = createSignal("");
+  const [messageStatus, setMessageStatus] = createSignal(
+    input?.initialMessageStatus ?? "",
+  );
+  const [messageError, setMessageError] = createSignal(
+    input?.initialMessageError ?? "",
+  );
   const [sendMessageState, setSendMessageState] = createSignal<AsyncOperationState>({
     phase: "idle",
     statusMessage: "",
@@ -249,12 +255,17 @@ describe("app shell message controller", () => {
   });
 
   it("sets failed send state when no channel is selected", async () => {
-    const harness = createRoot(() => createMessageActionsHarness());
+    const harness = createRoot(() =>
+      createMessageActionsHarness({
+        initialMessageStatus: "Sent previously.",
+      }),
+    );
 
     await harness.controller.sendMessage({
       preventDefault() {},
     } as SubmitEvent);
 
+    expect(harness.messageStatus()).toBe("");
     expect(harness.messageError()).toBe("Select a channel first.");
     expect(harness.sendMessageState()).toEqual({
       phase: "failed",

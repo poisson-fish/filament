@@ -10,7 +10,10 @@ import {
 } from "../src/domain/chat";
 import { createMessageHistoryController } from "../src/features/app-shell/controllers/message-history-controller";
 import type { AsyncOperationState } from "../src/features/app-shell/state/async-operation-state";
-import type { MessageHistoryLoadTarget } from "../src/features/app-shell/state/message-state";
+import {
+  isMessageHistoryLoadingForTarget,
+  type MessageHistoryLoadTarget,
+} from "../src/features/app-shell/state/message-state";
 
 const SESSION = authSessionFromResponse({
   access_token: "A".repeat(64),
@@ -69,11 +72,17 @@ describe("app shell message history controller", () => {
     >(messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"));
     const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] = createSignal<MessageHistoryLoadTarget | null>(null);
     const isLoadingMessages = () =>
-      refreshMessagesState().phase === "running" &&
-      messageHistoryLoadTarget() === "refresh";
+      isMessageHistoryLoadingForTarget(
+        refreshMessagesState(),
+        messageHistoryLoadTarget(),
+        "refresh",
+      );
     const isLoadingOlder = () =>
-      refreshMessagesState().phase === "running" &&
-      messageHistoryLoadTarget() === "load-older";
+      isMessageHistoryLoadingForTarget(
+        refreshMessagesState(),
+        messageHistoryLoadTarget(),
+        "load-older",
+      );
     const [messages, setMessages] = createSignal<MessageRecord[]>([]);
     const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
     const [messageError, setMessageError] = createSignal("");
@@ -126,8 +135,8 @@ describe("app shell message history controller", () => {
           activeChannelId,
           canAccessActiveChannel,
           nextBefore,
-          isLoadingMessages,
-          isLoadingOlder,
+          refreshMessagesState,
+          messageHistoryLoadTarget,
           setMessages,
           setNextBefore,
           setShowLoadOlderButton,
@@ -197,11 +206,17 @@ describe("app shell message history controller", () => {
       });
     const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] = createSignal<MessageHistoryLoadTarget | null>(null);
     const isLoadingMessages = () =>
-      refreshMessagesState().phase === "running" &&
-      messageHistoryLoadTarget() === "refresh";
+      isMessageHistoryLoadingForTarget(
+        refreshMessagesState(),
+        messageHistoryLoadTarget(),
+        "refresh",
+      );
     const isLoadingOlder = () =>
-      refreshMessagesState().phase === "running" &&
-      messageHistoryLoadTarget() === "load-older";
+      isMessageHistoryLoadingForTarget(
+        refreshMessagesState(),
+        messageHistoryLoadTarget(),
+        "load-older",
+      );
     const [messages, setMessages] = createSignal<MessageRecord[]>([]);
     const [messageError, setMessageError] = createSignal("");
 
@@ -219,8 +234,8 @@ describe("app shell message history controller", () => {
           activeChannelId,
           canAccessActiveChannel,
           nextBefore,
-          isLoadingMessages,
-          isLoadingOlder,
+          refreshMessagesState,
+          messageHistoryLoadTarget,
           setMessages,
           setNextBefore,
           setShowLoadOlderButton: vi.fn(),
@@ -291,11 +306,17 @@ describe("app shell message history controller", () => {
       });
     const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] = createSignal<MessageHistoryLoadTarget | null>(null);
     const isLoadingMessages = () =>
-      refreshMessagesState().phase === "running" &&
-      messageHistoryLoadTarget() === "refresh";
+      isMessageHistoryLoadingForTarget(
+        refreshMessagesState(),
+        messageHistoryLoadTarget(),
+        "refresh",
+      );
     const isLoadingOlder = () =>
-      refreshMessagesState().phase === "running" &&
-      messageHistoryLoadTarget() === "load-older";
+      isMessageHistoryLoadingForTarget(
+        refreshMessagesState(),
+        messageHistoryLoadTarget(),
+        "load-older",
+      );
 
     const pendingRefresh = deferred<{
       messages: MessageRecord[];
@@ -311,8 +332,8 @@ describe("app shell message history controller", () => {
           activeChannelId,
           canAccessActiveChannel,
           nextBefore,
-          isLoadingMessages,
-          isLoadingOlder,
+          refreshMessagesState,
+          messageHistoryLoadTarget,
           setMessages: vi.fn(),
           setNextBefore,
           setShowLoadOlderButton: vi.fn(),

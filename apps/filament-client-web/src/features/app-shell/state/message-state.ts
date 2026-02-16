@@ -14,6 +14,14 @@ import {
 
 export type MessageHistoryLoadTarget = "refresh" | "load-older";
 
+export function isMessageHistoryLoadingForTarget(
+  operation: AsyncOperationState,
+  activeLoadTarget: MessageHistoryLoadTarget | null,
+  target: MessageHistoryLoadTarget,
+): boolean {
+  return operation.phase === "running" && activeLoadTarget === target;
+}
+
 export function createMessageState() {
   const [composer, setComposer] = createSignal("");
   const [messageStatus, setMessageStatus] = createSignal("");
@@ -30,13 +38,19 @@ export function createMessageState() {
     createSignal<MessageHistoryLoadTarget | null>(null);
   const isLoadingMessages = createMemo(
     () =>
-      refreshMessagesState().phase === "running" &&
-      messageHistoryLoadTarget() === "refresh",
+      isMessageHistoryLoadingForTarget(
+        refreshMessagesState(),
+        messageHistoryLoadTarget(),
+        "refresh",
+      ),
   );
   const isLoadingOlder = createMemo(
     () =>
-      refreshMessagesState().phase === "running" &&
-      messageHistoryLoadTarget() === "load-older",
+      isMessageHistoryLoadingForTarget(
+        refreshMessagesState(),
+        messageHistoryLoadTarget(),
+        "load-older",
+      ),
   );
   const [messages, setMessages] = createSignal<MessageRecord[]>([]);
   const [nextBefore, setNextBefore] = createSignal<MessageId | null>(null);

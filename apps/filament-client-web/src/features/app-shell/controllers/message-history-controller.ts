@@ -18,7 +18,10 @@ import {
   reduceAsyncOperationState,
   type AsyncOperationState,
 } from "../state/async-operation-state";
-import type { MessageHistoryLoadTarget } from "../state/message-state";
+import {
+  isMessageHistoryLoadingForTarget,
+  type MessageHistoryLoadTarget,
+} from "../state/message-state";
 import type { MessageListScrollMetrics } from "./message-list-controller";
 
 export interface MessageHistoryControllerOptions {
@@ -27,8 +30,8 @@ export interface MessageHistoryControllerOptions {
   activeChannelId: Accessor<ChannelId | null>;
   canAccessActiveChannel: Accessor<boolean>;
   nextBefore: Accessor<MessageId | null>;
-  isLoadingMessages: Accessor<boolean>;
-  isLoadingOlder: Accessor<boolean>;
+  refreshMessagesState: Accessor<AsyncOperationState>;
+  messageHistoryLoadTarget: Accessor<MessageHistoryLoadTarget | null>;
   setMessages: Setter<MessageRecord[]>;
   setNextBefore: Setter<MessageId | null>;
   setShowLoadOlderButton: Setter<boolean>;
@@ -149,8 +152,16 @@ export function createMessageHistoryController(
       !guildId ||
       !channelId ||
       !before ||
-      options.isLoadingMessages() ||
-      options.isLoadingOlder()
+      isMessageHistoryLoadingForTarget(
+        options.refreshMessagesState(),
+        options.messageHistoryLoadTarget(),
+        "refresh",
+      ) ||
+      isMessageHistoryLoadingForTarget(
+        options.refreshMessagesState(),
+        options.messageHistoryLoadTarget(),
+        "load-older",
+      )
     ) {
       return;
     }
