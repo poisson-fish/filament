@@ -22,9 +22,6 @@ import {
   type GuildRoleRecord,
   type GuildName,
   type GuildVisibility,
-  type FriendRecord,
-  type FriendRequestCreateResult,
-  type FriendRequestList,
   type MediaPublishSource,
   type PublicGuildDirectory,
   type ModerationResult,
@@ -41,6 +38,7 @@ import { bearerHeader } from "./session";
 import { createAuthApi } from "./api-auth";
 import { createAuthClient } from "./api-auth-client";
 import { createFriendsApi } from "./api-friends";
+import { createFriendsClient } from "./api-friends-client";
 import { createMessagesClient } from "./api-messages-client";
 import { createMessagesApi } from "./api-messages";
 import { createSystemApi } from "./api-system";
@@ -446,6 +444,10 @@ const friendsApi = createFriendsApi({
   },
 });
 
+const friendsClient = createFriendsClient({
+  friendsApi,
+});
+
 const messagesApi = createMessagesApi({
   requestJson,
   requestNoContent,
@@ -492,41 +494,12 @@ export const uploadMyProfileAvatar = authClient.uploadMyProfileAvatar;
 export const profileAvatarUrl = authClient.profileAvatarUrl;
 export const lookupUsersByIds = authClient.lookupUsersByIds;
 
-export async function fetchFriends(session: AuthSession): Promise<FriendRecord[]> {
-  return friendsApi.fetchFriends(session);
-}
-
-export async function fetchFriendRequests(session: AuthSession): Promise<FriendRequestList> {
-  return friendsApi.fetchFriendRequests(session);
-}
-
-export async function createFriendRequest(
-  session: AuthSession,
-  recipientUserId: UserId,
-): Promise<FriendRequestCreateResult> {
-  return friendsApi.createFriendRequest(session, recipientUserId);
-}
-
-export async function acceptFriendRequest(
-  session: AuthSession,
-  requestId: string,
-): Promise<void> {
-  await friendsApi.acceptFriendRequest(session, requestId);
-}
-
-export async function deleteFriendRequest(
-  session: AuthSession,
-  requestId: string,
-): Promise<void> {
-  await friendsApi.deleteFriendRequest(session, requestId);
-}
-
-export async function removeFriend(
-  session: AuthSession,
-  friendUserId: UserId,
-): Promise<void> {
-  await friendsApi.removeFriend(session, friendUserId);
-}
+export const fetchFriends = friendsClient.fetchFriends;
+export const fetchFriendRequests = friendsClient.fetchFriendRequests;
+export const createFriendRequest = friendsClient.createFriendRequest;
+export const acceptFriendRequest = friendsClient.acceptFriendRequest;
+export const deleteFriendRequest = friendsClient.deleteFriendRequest;
+export const removeFriend = friendsClient.removeFriend;
 
 export async function fetchHealth(): Promise<{ status: "ok" }> {
   return systemApi.fetchHealth();
