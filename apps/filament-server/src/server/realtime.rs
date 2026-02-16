@@ -14,6 +14,9 @@ mod presence_disconnect_events;
 mod search_collect_db;
 mod hydration_db;
 mod message_create_response;
+mod ingress_parse;
+mod ingress_subscribe;
+mod ingress_message_create;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -117,7 +120,6 @@ use hydration_in_memory_attachments::apply_hydration_attachments;
 use search_batch_drain::drain_search_batch;
 use search_enqueue::enqueue_search_command;
 use search_apply_batch::apply_search_batch_with_ack;
-use subscribe_ack::{try_enqueue_subscribed_event, SubscribeAckEnqueueResult};
 use hydration_merge::merge_hydration_maps;
 use message_record::{build_in_memory_message_record, build_message_response_from_record};
 use presence_disconnect_events::build_offline_presence_updates;
@@ -127,6 +129,11 @@ use search_collect_db::{
 };
 use hydration_db::collect_hydrated_messages_db;
 use message_create_response::build_db_created_message_response;
+use ingress_message_create::execute_message_create_command;
+use ingress_parse::{
+    classify_ingress_command_parse_error, IngressCommandParseClassification,
+};
+use ingress_subscribe::execute_subscribe_command;
 
 use super::{
     auth::{
@@ -144,9 +151,9 @@ use super::{
     domain::{
         attachment_map_for_messages_db, attachment_map_for_messages_in_memory,
         attachments_for_message_in_memory, bind_message_attachments_db,
-        channel_permission_snapshot, enforce_guild_ip_ban_for_request,
+        channel_permission_snapshot,
         fetch_attachments_for_message_db, parse_attachment_ids, reaction_map_for_messages_db,
-        reaction_summaries_from_users, user_can_write_channel,
+        reaction_summaries_from_users,
     },
     errors::AuthFailure,
     gateway_events::{self, GatewayEvent},
@@ -294,20 +301,11 @@ pub(crate) async fn handle_gateway_connection(
         let command = match parse_gateway_ingress_command(envelope) {
             Ok(command) => command,
             Err(error) => {
-                match &error {
-                    ingress_command::GatewayIngressCommandParseError::InvalidSubscribePayload => {
-                        record_gateway_event_parse_rejected(
-                            "ingress",
-                            "invalid_subscribe_payload",
-                        );
+                match classify_ingress_command_parse_error(&error) {
+                    IngressCommandParseClassification::ParseRejected(reason) => {
+                        record_gateway_event_parse_rejected("ingress", reason);
                     }
-                    ingress_command::GatewayIngressCommandParseError::InvalidMessageCreatePayload => {
-                        record_gateway_event_parse_rejected(
-                            "ingress",
-                            "invalid_message_create_payload",
-                        );
-                    }
-                    ingress_command::GatewayIngressCommandParseError::UnknownEventType(event_type) => {
+                    IngressCommandParseClassification::UnknownEventType(event_type) => {
                         record_gateway_event_unknown_received("ingress", event_type);
                     }
                 }
@@ -318,97 +316,30 @@ pub(crate) async fn handle_gateway_connection(
 
         match command {
             GatewayIngressCommand::Subscribe(subscribe) => {
-                if enforce_guild_ip_ban_for_request(
+                if let Err(reason) = execute_subscribe_command(
                     &state,
-                    &subscribe.guild_id,
+                    connection_id,
                     auth.user_id,
                     client_ip,
-                    "gateway.subscribe",
-                )
-                .await
-                .is_err()
-                {
-                    disconnect_reason = "ip_banned";
-                    break;
-                }
-                if !user_can_write_channel(
-                    &state,
-                    auth.user_id,
-                    &subscribe.guild_id,
-                    &subscribe.channel_id,
+                    subscribe,
+                    &outbound_tx,
                 )
                 .await
                 {
-                    disconnect_reason = "forbidden_channel";
+                    disconnect_reason = reason;
                     break;
                 }
-
-                add_subscription(
-                    &state,
-                    connection_id,
-                    channel_key(&subscribe.guild_id, &subscribe.channel_id),
-                    outbound_tx.clone(),
-                )
-                .await;
-                handle_presence_subscribe(
-                    &state,
-                    connection_id,
-                    auth.user_id,
-                    &subscribe.guild_id,
-                    &outbound_tx,
-                )
-                .await;
-
-                let subscribed_event =
-                    gateway_events::subscribed(&subscribe.guild_id, &subscribe.channel_id);
-                match try_enqueue_subscribed_event(&outbound_tx, subscribed_event.payload) {
-                    SubscribeAckEnqueueResult::Enqueued => {
-                        record_gateway_event_emitted("connection", subscribed_event.event_type);
-                    }
-                    SubscribeAckEnqueueResult::Rejected => {
-                        record_gateway_event_dropped(
-                            "connection",
-                            subscribed_event.event_type,
-                            "full_queue",
-                        );
-                        disconnect_reason = "outbound_queue_full";
-                        break;
-                    }
-                }
-                handle_voice_subscribe(
-                    &state,
-                    &subscribe.guild_id,
-                    &subscribe.channel_id,
-                    &outbound_tx,
-                )
-                .await;
             }
             GatewayIngressCommand::MessageCreate(request) => {
-                if enforce_guild_ip_ban_for_request(
-                    &state,
-                    &request.guild_id,
-                    auth.user_id,
-                    client_ip,
-                    "gateway.message_create",
-                )
-                .await
-                .is_err()
-                {
-                    disconnect_reason = "ip_banned";
-                    break;
-                }
-                if create_message_internal(
+                if let Err(reason) = execute_message_create_command(
                     &state,
                     &auth,
-                    &request.guild_id,
-                    &request.channel_id,
-                    request.content,
-                    request.attachment_ids.unwrap_or_default(),
+                    client_ip,
+                    request,
                 )
                 .await
-                .is_err()
                 {
-                    disconnect_reason = "message_rejected";
+                    disconnect_reason = reason;
                     break;
                 }
             }
