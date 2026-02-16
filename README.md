@@ -21,15 +21,26 @@ Implementation is actively tracked in `PLAN.md`.
 
 ## Architecture
 
-```text
-Web Client (SolidJS) ─────┐
-Desktop Client (Tauri) ───┼──> Reverse Proxy (Caddy) ──> filament-server (Rust, Axum)
-                          │                                  │
-                          │                                  ├─ PostgreSQL (source-of-truth)
-                          │                                  ├─ Tantivy (derived index/cache)
-                          │                                  ├─ Attachment storage (object_store/local volume)
-                          │                                  └─ LiveKit token issuance + policy enforcement
-                          └─────────────────────────────────────> LiveKit SFU (voice/video/screen)
+```mermaid
+flowchart LR
+  web[Web Client<br/>SolidJS]
+  desktop[Desktop Client<br/>Tauri + SolidJS]
+  caddy[Reverse Proxy<br/>Caddy]
+  server[filament-server<br/>Rust + Axum]
+  postgres[(PostgreSQL<br/>source of truth)]
+  tantivy[(Tantivy<br/>derived index/cache)]
+  attachments[(Attachment Storage<br/>object_store/local volume)]
+  livekit[LiveKit SFU<br/>voice/video/screen]
+
+  web --> caddy
+  desktop --> caddy
+  caddy --> server
+  server --> postgres
+  server --> tantivy
+  server --> attachments
+  server -->|token issuance + policy enforcement| livekit
+  web --> livekit
+  desktop --> livekit
 ```
 
 Design principles:
