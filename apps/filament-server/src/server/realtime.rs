@@ -46,6 +46,7 @@ use uuid::Uuid;
 
 mod ingress_rate_limit;
 mod ingress_message;
+mod fanout_channel;
 mod fanout_dispatch;
 mod fanout_guild;
 mod fanout_user;
@@ -72,7 +73,6 @@ mod message_prepare;
 mod message_attachment_bind;
 mod search_blocking;
 
-use fanout_dispatch::dispatch_gateway_payload;
 use fanout_guild::dispatch_guild_payload;
 use fanout_user::dispatch_user_payload;
 use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
@@ -80,11 +80,12 @@ use ingress_rate_limit::allow_gateway_ingress;
 use presence_disconnect::compute_disconnect_presence_outcome;
 use presence_subscribe::{
     apply_presence_subscribe, build_presence_online_update,
-    try_enqueue_presence_sync_event, PresenceSyncEnqueueResult,
+    presence_sync_dispatch_outcome, try_enqueue_presence_sync_event,
+    PresenceSyncDispatchOutcome,
 };
 use voice_presence::{
     collect_voice_snapshots, try_enqueue_voice_sync_event, voice_channel_key,
-    OutboundEnqueueResult,
+    voice_sync_dispatch_outcome, VoiceSyncDispatchOutcome,
 };
 use voice_registration::apply_voice_registration_transition;
 use voice_registry::{
@@ -107,6 +108,7 @@ use message_prepare::prepare_message_body;
 use message_attachment_bind::bind_message_attachments_in_memory;
 use search_blocking::run_search_blocking_with_timeout;
 use voice_registration_events::plan_voice_registration_events;
+use fanout_channel::dispatch_channel_payload;
 use hydration_in_memory::collect_hydrated_messages_in_memory;
 use connection_subscriptions::remove_connection_from_subscriptions;
 use subscription_insert::insert_connection_subscription;
@@ -121,6 +123,7 @@ use message_record::{build_in_memory_message_record, build_message_response_from
 use presence_disconnect_events::build_offline_presence_updates;
 use search_collect_db::{
     collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows,
+    enforce_guild_collect_doc_cap, guild_collect_fetch_limit,
 };
 use hydration_db::collect_hydrated_messages_db;
 use message_create_response::build_db_created_message_response;
@@ -659,8 +662,7 @@ pub(crate) async fn collect_indexed_messages_for_guild(
     max_docs: usize,
 ) -> Result<Vec<IndexedMessage>, AuthFailure> {
     if let Some(pool) = &state.db_pool {
-        let limit =
-            i64::try_from(max_docs.saturating_add(1)).map_err(|_| AuthFailure::InvalidRequest)?;
+        let limit = guild_collect_fetch_limit(max_docs)?;
         let rows = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
             "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
              FROM messages
@@ -673,9 +675,7 @@ pub(crate) async fn collect_indexed_messages_for_guild(
         .fetch_all(pool)
         .await
         .map_err(|_| AuthFailure::Internal)?;
-        if rows.len() > max_docs {
-            return Err(AuthFailure::InvalidRequest);
-        }
+        enforce_guild_collect_doc_cap(rows.len(), max_docs)?;
         return Ok(collect_indexed_messages_for_guild_rows(rows));
     }
 
@@ -784,20 +784,14 @@ async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
 
 pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: &GatewayEvent) {
     let mut slow_connections = Vec::new();
-    let mut delivered = 0usize;
     let mut subscriptions = state.subscriptions.write().await;
-    if let Some(listeners) = subscriptions.get_mut(key) {
-        delivered = dispatch_gateway_payload(
-            listeners,
-            &event.payload,
-            event.event_type,
-            "channel",
-            &mut slow_connections,
-        );
-        if listeners.is_empty() {
-            subscriptions.remove(key);
-        }
-    }
+    let delivered = dispatch_channel_payload(
+        &mut subscriptions,
+        key,
+        &event.payload,
+        event.event_type,
+        &mut slow_connections,
+    );
     drop(subscriptions);
 
     close_slow_connections(state, slow_connections).await;
@@ -941,15 +935,18 @@ pub(crate) async fn handle_voice_subscribe(
 
     let sync_event =
         gateway_events::voice_participant_sync(guild_id, channel_id, participants, now_unix());
-    match try_enqueue_voice_sync_event(outbound_tx, sync_event.payload) {
-        OutboundEnqueueResult::Enqueued => {
+    match voice_sync_dispatch_outcome(try_enqueue_voice_sync_event(
+        outbound_tx,
+        sync_event.payload,
+    )) {
+        VoiceSyncDispatchOutcome::EmittedAndRepaired => {
             record_gateway_event_emitted("connection", sync_event.event_type);
             record_voice_sync_repair("subscribe");
         }
-        OutboundEnqueueResult::Closed => {
+        VoiceSyncDispatchOutcome::DroppedClosed => {
             record_gateway_event_dropped("connection", sync_event.event_type, "closed");
         }
-        OutboundEnqueueResult::Full => {
+        VoiceSyncDispatchOutcome::DroppedFull => {
             record_gateway_event_dropped("connection", sync_event.event_type, "full_queue");
         }
     }
@@ -988,14 +985,17 @@ pub(crate) async fn handle_presence_subscribe(
     };
 
     let snapshot_event = gateway_events::presence_sync(guild_id, result.snapshot_user_ids);
-    match try_enqueue_presence_sync_event(outbound_tx, snapshot_event.payload) {
-        PresenceSyncEnqueueResult::Enqueued => {
+    match presence_sync_dispatch_outcome(try_enqueue_presence_sync_event(
+        outbound_tx,
+        snapshot_event.payload,
+    )) {
+        PresenceSyncDispatchOutcome::Emitted => {
             record_gateway_event_emitted("connection", snapshot_event.event_type)
         }
-        PresenceSyncEnqueueResult::Closed => {
+        PresenceSyncDispatchOutcome::DroppedClosed => {
             record_gateway_event_dropped("connection", snapshot_event.event_type, "closed");
         }
-        PresenceSyncEnqueueResult::Full => {
+        PresenceSyncDispatchOutcome::DroppedFull => {
             record_gateway_event_dropped("connection", snapshot_event.event_type, "full_queue");
         }
     }

@@ -18,6 +18,12 @@ pub(crate) enum PresenceSyncEnqueueResult {
     Full,
 }
 
+pub(crate) enum PresenceSyncDispatchOutcome {
+    Emitted,
+    DroppedClosed,
+    DroppedFull,
+}
+
 pub(crate) fn apply_presence_subscribe(
     presence: &mut HashMap<Uuid, ConnectionPresence>,
     connection_id: Uuid,
@@ -58,6 +64,16 @@ pub(crate) fn try_enqueue_presence_sync_event(
     }
 }
 
+pub(crate) fn presence_sync_dispatch_outcome(
+    result: PresenceSyncEnqueueResult,
+) -> PresenceSyncDispatchOutcome {
+    match result {
+        PresenceSyncEnqueueResult::Enqueued => PresenceSyncDispatchOutcome::Emitted,
+        PresenceSyncEnqueueResult::Closed => PresenceSyncDispatchOutcome::DroppedClosed,
+        PresenceSyncEnqueueResult::Full => PresenceSyncDispatchOutcome::DroppedFull,
+    }
+}
+
 pub(crate) fn build_presence_online_update(
     guild_id: &str,
     user_id: UserId,
@@ -79,7 +95,8 @@ mod tests {
 
     use super::{
         apply_presence_subscribe, build_presence_online_update,
-        try_enqueue_presence_sync_event, PresenceSyncEnqueueResult,
+        presence_sync_dispatch_outcome, try_enqueue_presence_sync_event,
+        PresenceSyncDispatchOutcome, PresenceSyncEnqueueResult,
     };
     use crate::server::core::ConnectionPresence;
 
@@ -205,5 +222,21 @@ mod tests {
         let update = build_presence_online_update("g-1", UserId::new(), false);
 
         assert!(update.is_none());
+    }
+
+    #[test]
+    fn presence_sync_dispatch_outcome_maps_all_enqueue_results() {
+        assert!(matches!(
+            presence_sync_dispatch_outcome(PresenceSyncEnqueueResult::Enqueued),
+            PresenceSyncDispatchOutcome::Emitted
+        ));
+        assert!(matches!(
+            presence_sync_dispatch_outcome(PresenceSyncEnqueueResult::Closed),
+            PresenceSyncDispatchOutcome::DroppedClosed
+        ));
+        assert!(matches!(
+            presence_sync_dispatch_outcome(PresenceSyncEnqueueResult::Full),
+            PresenceSyncDispatchOutcome::DroppedFull
+        ));
     }
 }

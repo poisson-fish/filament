@@ -1,4 +1,5 @@
 use crate::server::core::IndexedMessage;
+use crate::server::errors::AuthFailure;
 
 type IndexedMessageRow = (String, String, String, String, String, i64);
 
@@ -31,9 +32,27 @@ pub(crate) fn collect_indexed_messages_for_guild_rows(
     indexed_messages_from_rows(rows)
 }
 
+pub(crate) fn guild_collect_fetch_limit(max_docs: usize) -> Result<i64, AuthFailure> {
+    i64::try_from(max_docs.saturating_add(1)).map_err(|_| AuthFailure::InvalidRequest)
+}
+
+pub(crate) fn enforce_guild_collect_doc_cap(
+    row_count: usize,
+    max_docs: usize,
+) -> Result<(), AuthFailure> {
+    if row_count > max_docs {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows};
+    use super::{
+        collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows,
+        enforce_guild_collect_doc_cap, guild_collect_fetch_limit,
+    };
+    use crate::server::errors::AuthFailure;
 
     #[test]
     fn collect_all_indexed_messages_rows_maps_all_fields() {
@@ -88,5 +107,19 @@ mod tests {
 
         let ids: Vec<&str> = docs.iter().map(|doc| doc.message_id.as_str()).collect();
         assert_eq!(ids, vec!["newest", "older"]);
+    }
+
+    #[test]
+    fn guild_collect_fetch_limit_adds_one_for_fail_closed_cap_check() {
+        let limit = guild_collect_fetch_limit(50).expect("valid max docs should convert");
+        assert_eq!(limit, 51);
+    }
+
+    #[test]
+    fn enforce_guild_collect_doc_cap_rejects_over_cap_results() {
+        assert!(enforce_guild_collect_doc_cap(2, 2).is_ok());
+        let error = enforce_guild_collect_doc_cap(3, 2)
+            .expect_err("over-cap row count should fail closed");
+        assert!(matches!(error, AuthFailure::InvalidRequest));
     }
 }

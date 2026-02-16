@@ -11,6 +11,12 @@ pub(crate) enum OutboundEnqueueResult {
     Full,
 }
 
+pub(crate) enum VoiceSyncDispatchOutcome {
+    EmittedAndRepaired,
+    DroppedClosed,
+    DroppedFull,
+}
+
 pub(crate) fn voice_channel_key(guild_id: &str, channel_id: &str) -> String {
     format!("{guild_id}:{channel_id}")
 }
@@ -58,6 +64,16 @@ pub(crate) fn try_enqueue_voice_sync_event(
     }
 }
 
+pub(crate) fn voice_sync_dispatch_outcome(
+    result: OutboundEnqueueResult,
+) -> VoiceSyncDispatchOutcome {
+    match result {
+        OutboundEnqueueResult::Enqueued => VoiceSyncDispatchOutcome::EmittedAndRepaired,
+        OutboundEnqueueResult::Closed => VoiceSyncDispatchOutcome::DroppedClosed,
+        OutboundEnqueueResult::Full => VoiceSyncDispatchOutcome::DroppedFull,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
@@ -66,7 +82,8 @@ mod tests {
 
     use super::{
         collect_voice_snapshots, try_enqueue_voice_sync_event, voice_channel_key,
-        voice_snapshot_from_record, OutboundEnqueueResult,
+        voice_snapshot_from_record, voice_sync_dispatch_outcome,
+        OutboundEnqueueResult, VoiceSyncDispatchOutcome,
     };
     use crate::server::core::{VoiceParticipant, VoiceParticipantsByChannel, VoiceStreamKind};
 
@@ -193,5 +210,21 @@ mod tests {
         let result = try_enqueue_voice_sync_event(&tx, String::from("payload"));
 
         assert!(matches!(result, OutboundEnqueueResult::Closed));
+    }
+
+    #[test]
+    fn voice_sync_dispatch_outcome_maps_all_enqueue_results() {
+        assert!(matches!(
+            voice_sync_dispatch_outcome(OutboundEnqueueResult::Enqueued),
+            VoiceSyncDispatchOutcome::EmittedAndRepaired
+        ));
+        assert!(matches!(
+            voice_sync_dispatch_outcome(OutboundEnqueueResult::Closed),
+            VoiceSyncDispatchOutcome::DroppedClosed
+        ));
+        assert!(matches!(
+            voice_sync_dispatch_outcome(OutboundEnqueueResult::Full),
+            VoiceSyncDispatchOutcome::DroppedFull
+        ));
     }
 }
