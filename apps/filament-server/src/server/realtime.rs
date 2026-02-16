@@ -21,6 +21,8 @@ mod voice_sync_dispatch;
 mod presence_sync_dispatch;
 mod search_query_input;
 mod voice_cleanup_registry;
+mod message_store_in_memory;
+mod message_emit;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -137,10 +139,12 @@ use ingress_subscribe::execute_subscribe_command;
 use voice_sync_dispatch::dispatch_voice_sync_event;
 use presence_sync_dispatch::dispatch_presence_sync_event;
 use search_query_input::{effective_search_limit, normalize_search_query};
+use message_store_in_memory::append_message_record;
+use message_emit::emit_message_create_and_index;
 
 use super::{
     auth::{
-        authenticate_with_token, bearer_token, channel_key, extract_client_ip, now_unix,
+        authenticate_with_token, bearer_token, extract_client_ip, now_unix,
         ClientIp,
     },
     core::{
@@ -423,23 +427,9 @@ pub(crate) async fn create_message_internal(
             created_at_unix,
         );
 
-        let event = gateway_events::message_create(&response);
-        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
-        enqueue_search_operation(
-            state,
-            SearchOperation::Upsert(indexed_message_from_response(&response)),
-            true,
-        )
-        .await?;
+        emit_message_create_and_index(state, guild_id, channel_id, &response).await?;
         return Ok(response);
     }
-
-    let mut guilds = state.guilds.write().await;
-    let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
-    let channel = guild
-        .channels
-        .get_mut(channel_id)
-        .ok_or(AuthFailure::NotFound)?;
 
     let message_id = Ulid::new().to_string();
     let created_at_unix = now_unix();
@@ -462,8 +452,10 @@ pub(crate) async fn create_message_internal(
             auth.user_id,
         )?;
     }
-    channel.messages.push(record.clone());
-    drop(guilds);
+    {
+        let mut guilds = state.guilds.write().await;
+        append_message_record(&mut guilds, guild_id, channel_id, record.clone())?;
+    }
 
     let attachments = attachments_for_message_in_memory(state, &record.attachment_ids).await?;
     let response = build_message_response_from_record(
@@ -474,14 +466,7 @@ pub(crate) async fn create_message_internal(
         reaction_summaries_from_users(&record.reactions),
     );
 
-    let event = gateway_events::message_create(&response);
-    broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
-    enqueue_search_operation(
-        state,
-        SearchOperation::Upsert(indexed_message_from_response(&response)),
-        true,
-    )
-    .await?;
+    emit_message_create_and_index(state, guild_id, channel_id, &response).await?;
 
     Ok(response)
 }
