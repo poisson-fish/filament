@@ -23,8 +23,7 @@ use filament_protocol::parse_envelope;
 use futures_util::{SinkExt, StreamExt};
 use sqlx::Row;
 use tantivy::{
-    schema::{NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING},
-    TantivyDocument, Term,
+    schema::Schema,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use ulid::Ulid;
@@ -52,6 +51,8 @@ mod search_query_exec;
 mod ingress_command;
 mod voice_cleanup_events;
 mod fanout_user_targets;
+mod search_schema;
+mod search_apply;
 
 use fanout_dispatch::dispatch_gateway_payload;
 use fanout_guild::dispatch_guild_payload;
@@ -81,6 +82,8 @@ use search_collect_index_ids::collect_index_message_ids_for_guild as collect_ind
 use search_query_exec::run_search_query_against_index;
 use fanout_user_targets::connection_ids_for_user;
 use voice_cleanup_events::build_voice_removal_events;
+use search_schema::build_search_schema as build_search_schema_impl;
+use search_apply::apply_search_operation as apply_search_operation_impl;
 
 use super::{
     auth::{
@@ -523,29 +526,7 @@ pub(crate) async fn create_message_internal(
 }
 
 pub(crate) fn build_search_schema() -> (Schema, SearchFields) {
-    let mut schema_builder = Schema::builder();
-    let message_id = schema_builder.add_text_field("message_id", STRING | STORED);
-    let guild_id = schema_builder.add_text_field("guild_id", STRING | STORED);
-    let channel_id = schema_builder.add_text_field("channel_id", STRING | STORED);
-    let author_id = schema_builder.add_text_field("author_id", STRING | STORED);
-    let created_at_unix =
-        schema_builder.add_i64_field("created_at_unix", NumericOptions::default().set_stored());
-    let content_options = TextOptions::default()
-        .set_stored()
-        .set_indexing_options(TextFieldIndexing::default().set_tokenizer("default"));
-    let content = schema_builder.add_text_field("content", content_options);
-    let schema = schema_builder.build();
-    (
-        schema,
-        SearchFields {
-            message_id,
-            guild_id,
-            channel_id,
-            author_id,
-            created_at_unix,
-            content,
-        },
-    )
+    build_search_schema_impl()
 }
 
 pub(crate) fn init_search_service() -> anyhow::Result<SearchService> {
@@ -626,50 +607,7 @@ pub(crate) fn apply_search_operation(
     writer: &mut tantivy::IndexWriter,
     op: SearchOperation,
 ) {
-    fn upsert_doc(
-        search: &SearchIndexState,
-        writer: &mut tantivy::IndexWriter,
-        doc: IndexedMessage,
-    ) {
-        writer.delete_term(Term::from_field_text(
-            search.fields.message_id,
-            &doc.message_id,
-        ));
-        let mut tantivy_doc = TantivyDocument::default();
-        tantivy_doc.add_text(search.fields.message_id, doc.message_id);
-        tantivy_doc.add_text(search.fields.guild_id, doc.guild_id);
-        tantivy_doc.add_text(search.fields.channel_id, doc.channel_id);
-        tantivy_doc.add_text(search.fields.author_id, doc.author_id);
-        tantivy_doc.add_i64(search.fields.created_at_unix, doc.created_at_unix);
-        tantivy_doc.add_text(search.fields.content, doc.content);
-        let _ = writer.add_document(tantivy_doc);
-    }
-
-    match op {
-        SearchOperation::Upsert(doc) => {
-            upsert_doc(search, writer, doc);
-        }
-        SearchOperation::Delete { message_id } => {
-            writer.delete_term(Term::from_field_text(search.fields.message_id, &message_id));
-        }
-        SearchOperation::Rebuild { docs } => {
-            let _ = writer.delete_all_documents();
-            for doc in docs {
-                upsert_doc(search, writer, doc);
-            }
-        }
-        SearchOperation::Reconcile {
-            upserts,
-            delete_message_ids,
-        } => {
-            for message_id in delete_message_ids {
-                writer.delete_term(Term::from_field_text(search.fields.message_id, &message_id));
-            }
-            for doc in upserts {
-                upsert_doc(search, writer, doc);
-            }
-        }
-    }
+    apply_search_operation_impl(search, writer, op);
 }
 
 pub(crate) fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
