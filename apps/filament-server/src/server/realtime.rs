@@ -49,6 +49,9 @@ mod search_collect_guild;
 mod search_indexed_message;
 mod search_collect_index_ids;
 mod search_query_exec;
+mod ingress_command;
+mod voice_cleanup_events;
+mod fanout_user_targets;
 
 use fanout_dispatch::dispatch_gateway_payload;
 use fanout_guild::dispatch_guild_payload;
@@ -71,10 +74,13 @@ use search_validation::validate_search_query_limits;
 use connection_control::signal_slow_connections_close;
 use search_reconcile::compute_reconciliation;
 use hydration_order::collect_hydrated_in_request_order;
+use ingress_command::{parse_gateway_ingress_command, GatewayIngressCommand};
 use search_collect_all::collect_all_indexed_messages_in_memory;
 use search_collect_guild::collect_indexed_messages_for_guild_in_memory;
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 use search_query_exec::run_search_query_against_index;
+use fanout_user_targets::connection_ids_for_user;
+use voice_cleanup_events::build_voice_removal_events;
 
 use super::{
     auth::{
@@ -103,9 +109,7 @@ use super::{
         record_gateway_event_parse_rejected, record_gateway_event_unknown_received,
         record_voice_sync_repair, record_ws_disconnect,
     },
-    types::{
-        GatewayAuthQuery, GatewayMessageCreate, GatewaySubscribe, MessageResponse, SearchQuery,
-    },
+    types::{GatewayAuthQuery, MessageResponse, SearchQuery},
 };
 
 pub(crate) async fn gateway_ws(
@@ -241,13 +245,33 @@ pub(crate) async fn handle_gateway_connection(
             break;
         };
 
-        match envelope.t.as_str() {
-            "subscribe" => {
-                let Ok(subscribe) = serde_json::from_value::<GatewaySubscribe>(envelope.d) else {
-                    record_gateway_event_parse_rejected("ingress", "invalid_subscribe_payload");
-                    disconnect_reason = "invalid_subscribe_payload";
-                    break;
-                };
+        let command = match parse_gateway_ingress_command(envelope) {
+            Ok(command) => command,
+            Err(error) => {
+                match &error {
+                    ingress_command::GatewayIngressCommandParseError::InvalidSubscribePayload => {
+                        record_gateway_event_parse_rejected(
+                            "ingress",
+                            "invalid_subscribe_payload",
+                        );
+                    }
+                    ingress_command::GatewayIngressCommandParseError::InvalidMessageCreatePayload => {
+                        record_gateway_event_parse_rejected(
+                            "ingress",
+                            "invalid_message_create_payload",
+                        );
+                    }
+                    ingress_command::GatewayIngressCommandParseError::UnknownEventType(event_type) => {
+                        record_gateway_event_unknown_received("ingress", event_type);
+                    }
+                }
+                disconnect_reason = error.disconnect_reason();
+                break;
+            }
+        };
+
+        match command {
+            GatewayIngressCommand::Subscribe(subscribe) => {
                 if enforce_guild_ip_ban_for_request(
                     &state,
                     &subscribe.guild_id,
@@ -309,15 +333,7 @@ pub(crate) async fn handle_gateway_connection(
                 )
                 .await;
             }
-            "message_create" => {
-                let Ok(request) = serde_json::from_value::<GatewayMessageCreate>(envelope.d) else {
-                    record_gateway_event_parse_rejected(
-                        "ingress",
-                        "invalid_message_create_payload",
-                    );
-                    disconnect_reason = "invalid_message_create_payload";
-                    break;
-                };
+            GatewayIngressCommand::MessageCreate(request) => {
                 if enforce_guild_ip_ban_for_request(
                     &state,
                     &request.guild_id,
@@ -345,11 +361,6 @@ pub(crate) async fn handle_gateway_connection(
                     disconnect_reason = "message_rejected";
                     break;
                 }
-            }
-            _ => {
-                record_gateway_event_unknown_received("ingress", envelope.t.as_str());
-                disconnect_reason = "unknown_event";
-                break;
             }
         }
     }
@@ -1073,15 +1084,10 @@ pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, even
 
 #[allow(dead_code)]
 pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, event: &GatewayEvent) {
-    let connection_ids: Vec<Uuid> = state
-        .connection_presence
-        .read()
-        .await
-        .iter()
-        .filter_map(|(connection_id, presence)| {
-            (presence.user_id == user_id).then_some(*connection_id)
-        })
-        .collect();
+    let connection_ids = {
+        let presence = state.connection_presence.read().await;
+        connection_ids_for_user(&presence, user_id)
+    };
     if connection_ids.is_empty() {
         return;
     }
@@ -1118,28 +1124,16 @@ async fn prune_expired_voice_participants(state: &AppState, now_unix: i64) {
     };
 
     for removed in removed {
-        let guild_id = removed.guild_id;
-        let channel_id = removed.channel_id;
-        let participant = removed.participant;
-        for stream in participant.published_streams {
-            let event = gateway_events::voice_stream_unpublish(
-                &guild_id,
-                &channel_id,
-                participant.user_id,
-                &participant.identity,
-                stream,
-                now_unix,
-            );
-            broadcast_channel_event(state, &channel_key(&guild_id, &channel_id), &event).await;
-        }
-        let leave = gateway_events::voice_participant_leave(
-            &guild_id,
-            &channel_id,
-            participant.user_id,
-            &participant.identity,
+        let channel_subscription_key = channel_key(&removed.guild_id, &removed.channel_id);
+        let events = build_voice_removal_events(
+            &removed.guild_id,
+            &removed.channel_id,
+            &removed.participant,
             now_unix,
         );
-        broadcast_channel_event(state, &channel_key(&guild_id, &channel_id), &leave).await;
+        for event in events {
+            broadcast_channel_event(state, &channel_subscription_key, &event).await;
+        }
     }
 }
 
@@ -1280,29 +1274,16 @@ async fn remove_disconnected_user_voice_participants(
     };
 
     for removed in removed {
-        let guild_id = removed.guild_id;
-        let channel_id = removed.channel_id;
-        let participant = removed.participant;
-        for stream in participant.published_streams {
-            let unpublish = gateway_events::voice_stream_unpublish(
-                &guild_id,
-                &channel_id,
-                participant.user_id,
-                &participant.identity,
-                stream,
-                disconnected_at_unix,
-            );
-            broadcast_channel_event(state, &channel_key(&guild_id, &channel_id), &unpublish)
-                .await;
-        }
-        let leave = gateway_events::voice_participant_leave(
-            &guild_id,
-            &channel_id,
-            participant.user_id,
-            &participant.identity,
+        let channel_subscription_key = channel_key(&removed.guild_id, &removed.channel_id);
+        let events = build_voice_removal_events(
+            &removed.guild_id,
+            &removed.channel_id,
+            &removed.participant,
             disconnected_at_unix,
         );
-        broadcast_channel_event(state, &channel_key(&guild_id, &channel_id), &leave).await;
+        for event in events {
+            broadcast_channel_event(state, &channel_subscription_key, &event).await;
+        }
     }
 }
 

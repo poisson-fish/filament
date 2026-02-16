@@ -1,0 +1,92 @@
+use crate::server::{
+    core::VoiceParticipant,
+    gateway_events::{self, GatewayEvent},
+};
+
+pub(crate) fn build_voice_removal_events(
+    guild_id: &str,
+    channel_id: &str,
+    participant: &VoiceParticipant,
+    event_at_unix: i64,
+) -> Vec<GatewayEvent> {
+    let mut events = Vec::with_capacity(participant.published_streams.len().saturating_add(1));
+    for stream in &participant.published_streams {
+        events.push(gateway_events::voice_stream_unpublish(
+            guild_id,
+            channel_id,
+            participant.user_id,
+            &participant.identity,
+            *stream,
+            event_at_unix,
+        ));
+    }
+    events.push(gateway_events::voice_participant_leave(
+        guild_id,
+        channel_id,
+        participant.user_id,
+        &participant.identity,
+        event_at_unix,
+    ));
+    events
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use filament_core::UserId;
+
+    use super::build_voice_removal_events;
+    use crate::server::{
+        core::{VoiceParticipant, VoiceStreamKind},
+        gateway_events::{VOICE_PARTICIPANT_LEAVE_EVENT, VOICE_STREAM_UNPUBLISH_EVENT},
+    };
+
+    fn participant(published_streams: HashSet<VoiceStreamKind>) -> VoiceParticipant {
+        VoiceParticipant {
+            user_id: UserId::new(),
+            identity: String::from("voice-user"),
+            joined_at_unix: 5,
+            updated_at_unix: 6,
+            expires_at_unix: 99,
+            is_muted: false,
+            is_deafened: false,
+            is_speaking: false,
+            is_video_enabled: false,
+            is_screen_share_enabled: false,
+            published_streams,
+        }
+    }
+
+    #[test]
+    fn includes_unpublish_events_then_leave_when_streams_exist() {
+        let participant = participant(HashSet::from([
+            VoiceStreamKind::Microphone,
+            VoiceStreamKind::Camera,
+        ]));
+
+        let events = build_voice_removal_events("g1", "c1", &participant, 10);
+
+        assert_eq!(events.len(), 3);
+        let unpublish_count = events
+            .iter()
+            .filter(|event| event.event_type == VOICE_STREAM_UNPUBLISH_EVENT)
+            .count();
+        assert_eq!(unpublish_count, 2);
+        assert_eq!(
+            events.last().map(|event| event.event_type),
+            Some(VOICE_PARTICIPANT_LEAVE_EVENT)
+        );
+    }
+
+    #[test]
+    fn includes_only_leave_when_no_published_streams() {
+        let participant = participant(HashSet::new());
+
+        let events = build_voice_removal_events("g1", "c1", &participant, 10);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, VOICE_PARTICIPANT_LEAVE_EVENT);
+    }
+}
