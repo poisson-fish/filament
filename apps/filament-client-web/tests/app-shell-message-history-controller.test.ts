@@ -10,6 +10,7 @@ import {
 } from "../src/domain/chat";
 import { createMessageHistoryController } from "../src/features/app-shell/controllers/message-history-controller";
 import type { AsyncOperationState } from "../src/features/app-shell/state/async-operation-state";
+import type { MessageHistoryLoadTarget } from "../src/features/app-shell/state/message-state";
 
 const SESSION = authSessionFromResponse({
   access_token: "A".repeat(64),
@@ -66,11 +67,13 @@ describe("app shell message history controller", () => {
     const [nextBefore, setNextBefore] = createSignal<
       ReturnType<typeof messageIdFromInput> | null
     >(messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"));
-    const [isLoadingOlder, setLoadingOlder] = createSignal(false);
+    const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] = createSignal<MessageHistoryLoadTarget | null>(null);
+    const isLoadingOlder = () =>
+      refreshMessagesState().phase === "running" &&
+      messageHistoryLoadTarget() === "load-older";
     const [messages, setMessages] = createSignal<MessageRecord[]>([]);
     const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
     const [messageError, setMessageError] = createSignal("");
-    const [isLoadingMessages, setLoadingMessages] = createSignal(false);
     const [refreshMessagesState, setRefreshMessagesState] =
       createSignal<AsyncOperationState>({
         phase: "idle",
@@ -126,8 +129,7 @@ describe("app shell message history controller", () => {
           setShowLoadOlderButton,
           setMessageError,
           setRefreshMessagesState,
-          setLoadingMessages,
-          setLoadingOlder,
+          setMessageHistoryLoadTarget,
           setEditingMessageId: vi.fn(),
           setEditingDraft: vi.fn(),
           setReactionState: vi.fn(),
@@ -155,7 +157,7 @@ describe("app shell message history controller", () => {
       limit: 50,
     });
     expect(messages().map((entry) => entry.content)).toEqual(["latest"]);
-    expect(isLoadingMessages()).toBe(false);
+    expect(messageHistoryLoadTarget()).toBeNull();
     expect(messageError()).toBe("");
     expect(refreshMessagesState()).toEqual({
       phase: "succeeded",
@@ -183,16 +185,18 @@ describe("app shell message history controller", () => {
     const [nextBefore, setNextBefore] = createSignal<
       ReturnType<typeof messageIdFromInput> | null
     >(null);
-    const [isLoadingOlder, setLoadingOlder] = createSignal(false);
-    const [messages, setMessages] = createSignal<MessageRecord[]>([]);
-    const [messageError, setMessageError] = createSignal("");
-    const [isLoadingMessages, setLoadingMessages] = createSignal(false);
     const [refreshMessagesState, setRefreshMessagesState] =
       createSignal<AsyncOperationState>({
         phase: "idle",
         statusMessage: "",
         errorMessage: "",
       });
+    const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] = createSignal<MessageHistoryLoadTarget | null>(null);
+    const isLoadingOlder = () =>
+      refreshMessagesState().phase === "running" &&
+      messageHistoryLoadTarget() === "load-older";
+    const [messages, setMessages] = createSignal<MessageRecord[]>([]);
+    const [messageError, setMessageError] = createSignal("");
 
     const pendingRefresh = deferred<{
       messages: MessageRecord[];
@@ -214,8 +218,7 @@ describe("app shell message history controller", () => {
           setShowLoadOlderButton: vi.fn(),
           setMessageError,
           setRefreshMessagesState,
-          setLoadingMessages,
-          setLoadingOlder,
+          setMessageHistoryLoadTarget,
           setEditingMessageId: vi.fn(),
           setEditingDraft: vi.fn(),
           setReactionState: vi.fn(),
@@ -255,7 +258,7 @@ describe("app shell message history controller", () => {
     expect(messages()).toEqual([]);
     expect(nextBefore()).toBeNull();
     expect(messageError()).toBe("");
-    expect(isLoadingMessages()).toBe(false);
+    expect(messageHistoryLoadTarget()).toBeNull();
     expect(isLoadingOlder()).toBe(false);
     expect(refreshMessagesState()).toEqual({
       phase: "idle",

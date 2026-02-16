@@ -12,12 +12,12 @@ import {
   type AsyncOperationState,
 } from "./async-operation-state";
 
+export type MessageHistoryLoadTarget = "refresh" | "load-older";
+
 export function createMessageState() {
   const [composer, setComposer] = createSignal("");
   const [messageStatus, setMessageStatus] = createSignal("");
   const [messageError, setMessageError] = createSignal("");
-  const [isLoadingMessages, setLoadingMessages] = createSignal(false);
-  const [isLoadingOlder, setLoadingOlder] = createSignal(false);
   const [sendMessageState, setSendMessageState] = createSignal<AsyncOperationState>(
     createIdleAsyncOperationState(),
   );
@@ -26,6 +26,18 @@ export function createMessageState() {
   );
   const [refreshMessagesState, setRefreshMessagesState] =
     createSignal<AsyncOperationState>(createIdleAsyncOperationState());
+  const [messageHistoryLoadTarget, setMessageHistoryLoadTarget] =
+    createSignal<MessageHistoryLoadTarget | null>(null);
+  const isLoadingMessages = createMemo(
+    () =>
+      refreshMessagesState().phase === "running" &&
+      messageHistoryLoadTarget() === "refresh",
+  );
+  const isLoadingOlder = createMemo(
+    () =>
+      refreshMessagesState().phase === "running" &&
+      messageHistoryLoadTarget() === "load-older",
+  );
   const [messages, setMessages] = createSignal<MessageRecord[]>([]);
   const [nextBefore, setNextBefore] = createSignal<MessageId | null>(null);
   const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
@@ -59,14 +71,14 @@ export function createMessageState() {
     messageError,
     setMessageError,
     isLoadingMessages,
-    setLoadingMessages,
     isLoadingOlder,
-    setLoadingOlder,
     isSendingMessage,
     sendMessageState,
     setSendMessageState,
     refreshMessagesState,
     setRefreshMessagesState,
+    messageHistoryLoadTarget,
+    setMessageHistoryLoadTarget,
     messages,
     setMessages,
     nextBefore,

@@ -68,6 +68,20 @@ describe("app shell state factories", () => {
       statusMessage: "",
       errorMessage: "",
     });
+    expect(messageState.messageHistoryLoadTarget()).toBeNull();
+    expect(messageState.isLoadingMessages()).toBe(false);
+    expect(messageState.isLoadingOlder()).toBe(false);
+    messageState.setRefreshMessagesState({
+      phase: "running",
+      statusMessage: "",
+      errorMessage: "",
+    });
+    messageState.setMessageHistoryLoadTarget("refresh");
+    expect(messageState.isLoadingMessages()).toBe(true);
+    expect(messageState.isLoadingOlder()).toBe(false);
+    messageState.setMessageHistoryLoadTarget("load-older");
+    expect(messageState.isLoadingMessages()).toBe(false);
+    expect(messageState.isLoadingOlder()).toBe(true);
     expect(messageState.reactionState()).toEqual({});
     expect(messageState.pendingReactionByKey()).toEqual({});
     expect(messageState.openReactionPickerMessageId()).toBeNull();

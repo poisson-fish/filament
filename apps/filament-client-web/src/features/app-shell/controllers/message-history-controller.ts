@@ -18,6 +18,7 @@ import {
   reduceAsyncOperationState,
   type AsyncOperationState,
 } from "../state/async-operation-state";
+import type { MessageHistoryLoadTarget } from "../state/message-state";
 import type { MessageListScrollMetrics } from "./message-list-controller";
 
 export interface MessageHistoryControllerOptions {
@@ -32,8 +33,7 @@ export interface MessageHistoryControllerOptions {
   setShowLoadOlderButton: Setter<boolean>;
   setMessageError: Setter<string>;
   setRefreshMessagesState: Setter<AsyncOperationState>;
-  setLoadingMessages: Setter<boolean>;
-  setLoadingOlder: Setter<boolean>;
+  setMessageHistoryLoadTarget: Setter<MessageHistoryLoadTarget | null>;
   setEditingMessageId: Setter<MessageId | null>;
   setEditingDraft: Setter<string>;
   setReactionState: Setter<Record<string, ReactionView>>;
@@ -82,8 +82,7 @@ export function createMessageHistoryController(
       options.setMessages([]);
       options.setNextBefore(null);
       options.setShowLoadOlderButton(false);
-      options.setLoadingMessages(false);
-      options.setLoadingOlder(false);
+      options.setMessageHistoryLoadTarget(null);
       options.setRefreshMessagesState((existing) =>
         reduceAsyncOperationState(existing, {
           type: "reset",
@@ -99,7 +98,7 @@ export function createMessageHistoryController(
         type: "start",
       }),
     );
-    options.setLoadingMessages(true);
+    options.setMessageHistoryLoadTarget("refresh");
     try {
       const history = await deps.fetchChannelMessages(session, guildId, channelId, {
         limit: 50,
@@ -134,7 +133,7 @@ export function createMessageHistoryController(
       options.setShowLoadOlderButton(false);
     } finally {
       if (requestVersion === historyRequestVersion) {
-        options.setLoadingMessages(false);
+        options.setMessageHistoryLoadTarget(null);
       }
     }
   };
@@ -150,13 +149,13 @@ export function createMessageHistoryController(
 
     const requestVersion = historyRequestVersion;
     const previousScrollMetrics = options.captureScrollMetrics();
-    options.setLoadingOlder(true);
     options.setMessageError("");
     options.setRefreshMessagesState((existing) =>
       reduceAsyncOperationState(existing, {
         type: "start",
       }),
     );
+    options.setMessageHistoryLoadTarget("load-older");
     try {
       const history = await deps.fetchChannelMessages(session, guildId, channelId, {
         limit: 50,
@@ -189,7 +188,7 @@ export function createMessageHistoryController(
       );
     } finally {
       if (requestVersion === historyRequestVersion) {
-        options.setLoadingOlder(false);
+        options.setMessageHistoryLoadTarget(null);
       }
     }
   };
@@ -216,8 +215,7 @@ export function createMessageHistoryController(
     options.setMessages([]);
     options.setNextBefore(null);
     options.setShowLoadOlderButton(false);
-    options.setLoadingMessages(false);
-    options.setLoadingOlder(false);
+    options.setMessageHistoryLoadTarget(null);
     options.setRefreshMessagesState((existing) =>
       reduceAsyncOperationState(existing, {
         type: "reset",
