@@ -273,9 +273,15 @@ export function createMessageActionsController(
 
   const sendMessage = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault();
+    if (options.isSendingMessage()) {
+      return;
+    }
+
     const session = options.session();
     const guildId = options.activeGuildId();
     const channelId = options.activeChannelId();
+    const draft = options.composer().trim();
+    const selectedFiles = options.composerAttachments();
     if (!session || !guildId || !channelId) {
       applySendMessageTransition({
         type: "fail",
@@ -283,7 +289,11 @@ export function createMessageActionsController(
       });
       return;
     }
-    if (options.isSendingMessage()) {
+    if (draft.length === 0 && selectedFiles.length === 0) {
+      applySendMessageTransition({
+        type: "fail",
+        errorMessage: "Message must include text or at least one attachment.",
+      });
       return;
     }
 
@@ -292,15 +302,6 @@ export function createMessageActionsController(
     });
     let uploadedForMessage: AttachmentRecord[] = [];
     try {
-      const draft = options.composer().trim();
-      const selectedFiles = options.composerAttachments();
-      if (draft.length === 0 && selectedFiles.length === 0) {
-        applySendMessageTransition({
-          type: "fail",
-          errorMessage: "Message must include text or at least one attachment.",
-        });
-        return;
-      }
       for (const file of selectedFiles) {
         const filename = attachmentFilenameFromInput(file.name);
         const uploaded = await uploadChannelAttachment(

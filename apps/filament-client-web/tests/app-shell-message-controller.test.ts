@@ -36,6 +36,7 @@ function createMessageActionsHarness(input?: {
   attachments?: File[];
   initialMessageStatus?: string;
   initialMessageError?: string;
+  initialSendMessageState?: AsyncOperationState;
 }) {
   const [session] = createSignal(SESSION);
   const [activeGuildId] = createSignal(input?.activeGuildId ?? null);
@@ -57,11 +58,25 @@ function createMessageActionsHarness(input?: {
   const [messageError, setMessageError] = createSignal(
     input?.initialMessageError ?? "",
   );
-  const [sendMessageState, setSendMessageState] = createSignal<AsyncOperationState>({
-    phase: "idle",
-    statusMessage: "",
-    errorMessage: "",
-  });
+  const [sendMessageState, setSendMessageState] = createSignal<AsyncOperationState>(
+    input?.initialSendMessageState ?? {
+      phase: "idle",
+      statusMessage: "",
+      errorMessage: "",
+    },
+  );
+  const sendMessagePhaseTransitions: AsyncOperationState["phase"][] = [];
+  const setSendMessageStateTracked: typeof setSendMessageState = (value) => {
+    const resolveNext = (previous: AsyncOperationState): AsyncOperationState =>
+      typeof value === "function"
+        ? (value as (previous: AsyncOperationState) => AsyncOperationState)(previous)
+        : value;
+    return setSendMessageState((previous) => {
+      const next = resolveNext(previous);
+      sendMessagePhaseTransitions.push(next.phase);
+      return next;
+    });
+  };
   const isSendingMessage = createMemo(
     () => sendMessageState().phase === "running",
   );
@@ -78,7 +93,7 @@ function createMessageActionsHarness(input?: {
     setComposerAttachments,
     composerAttachmentInputElement: () => undefined,
     isSendingMessage,
-    setSendMessageState,
+    setSendMessageState: setSendMessageStateTracked,
     setMessageStatus,
     setMessageError,
     setMessages: vi.fn(),
@@ -106,6 +121,7 @@ function createMessageActionsHarness(input?: {
     messageStatus,
     messageError,
     sendMessageState,
+    sendMessagePhaseTransitions: () => [...sendMessagePhaseTransitions],
   };
 }
 
@@ -295,5 +311,32 @@ describe("app shell message controller", () => {
       statusMessage: "",
       errorMessage: "Message must include text or at least one attachment.",
     });
+    expect(harness.sendMessagePhaseTransitions()).toEqual(["failed"]);
+  });
+
+  it("does not overwrite running send state when a duplicate submit occurs without channel context", async () => {
+    const harness = createRoot(() =>
+      createMessageActionsHarness({
+        initialMessageStatus: "Sending...",
+        initialSendMessageState: {
+          phase: "running",
+          statusMessage: "Sending...",
+          errorMessage: "",
+        },
+      }),
+    );
+
+    await harness.controller.sendMessage({
+      preventDefault() {},
+    } as SubmitEvent);
+
+    expect(harness.messageStatus()).toBe("Sending...");
+    expect(harness.messageError()).toBe("");
+    expect(harness.sendMessageState()).toEqual({
+      phase: "running",
+      statusMessage: "Sending...",
+      errorMessage: "",
+    });
+    expect(harness.sendMessagePhaseTransitions()).toEqual([]);
   });
 });
