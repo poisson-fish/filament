@@ -23,12 +23,7 @@ use filament_protocol::parse_envelope;
 use futures_util::{SinkExt, StreamExt};
 use sqlx::Row;
 use tantivy::{
-    collector::{Count, TopDocs},
-    query::{BooleanQuery, Occur, QueryParser, TermQuery},
-    schema::{
-        IndexRecordOption, NumericOptions, Schema, TextFieldIndexing, TextOptions, Value, STORED,
-        STRING,
-    },
+    schema::{NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING},
     TantivyDocument, Term,
 };
 use tokio::sync::{mpsc, oneshot, watch};
@@ -52,6 +47,8 @@ mod hydration_order;
 mod search_collect_all;
 mod search_collect_guild;
 mod search_indexed_message;
+mod search_collect_index_ids;
+mod search_query_exec;
 
 use fanout_dispatch::dispatch_gateway_payload;
 use fanout_guild::dispatch_guild_payload;
@@ -76,6 +73,8 @@ use search_reconcile::compute_reconciliation;
 use hydration_order::collect_hydrated_in_request_order;
 use search_collect_all::collect_all_indexed_messages_in_memory;
 use search_collect_guild::collect_indexed_messages_for_guild_in_memory;
+use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
+use search_query_exec::run_search_query_against_index;
 
 use super::{
     auth::{
@@ -816,38 +815,7 @@ pub(crate) async fn collect_index_message_ids_for_guild(
 
     tokio::time::timeout(timeout, async move {
         tokio::task::spawn_blocking(move || {
-            let searcher = search_state.reader.searcher();
-            let guild_query = TermQuery::new(
-                Term::from_field_text(search_state.fields.guild_id, &guild),
-                IndexRecordOption::Basic,
-            );
-            let count = searcher
-                .search(&guild_query, &Count)
-                .map_err(|_| AuthFailure::Internal)?;
-            if count > max_docs {
-                return Err(AuthFailure::InvalidRequest);
-            }
-            if count == 0 {
-                return Ok(HashSet::new());
-            }
-
-            let top_docs = searcher
-                .search(&guild_query, &TopDocs::with_limit(count))
-                .map_err(|_| AuthFailure::Internal)?;
-            let mut message_ids = HashSet::with_capacity(top_docs.len());
-            for (_score, address) in top_docs {
-                let Ok(doc) = searcher.doc::<TantivyDocument>(address) else {
-                    continue;
-                };
-                let Some(value) = doc.get_first(search_state.fields.message_id) else {
-                    continue;
-                };
-                let Some(message_id) = value.as_str() else {
-                    continue;
-                };
-                message_ids.insert(message_id.to_owned());
-            }
-            Ok::<HashSet<String>, AuthFailure>(message_ids)
+            collect_index_message_ids_for_guild_from_index(&search_state, &guild, max_docs)
         })
         .await
         .map_err(|_| AuthFailure::Internal)?
@@ -882,49 +850,13 @@ pub(crate) async fn run_search_query(
 
     tokio::time::timeout(timeout, async move {
         tokio::task::spawn_blocking(move || {
-            let searcher = search_state.reader.searcher();
-            let parser =
-                QueryParser::for_index(&search_state.index, vec![search_state.fields.content]);
-            let parsed = parser
-                .parse_query(&query)
-                .map_err(|_| AuthFailure::InvalidRequest)?;
-            let mut clauses = vec![
-                (
-                    Occur::Must,
-                    Box::new(TermQuery::new(
-                        Term::from_field_text(search_state.fields.guild_id, &guild),
-                        IndexRecordOption::Basic,
-                    )) as Box<dyn tantivy::query::Query>,
-                ),
-                (Occur::Must, parsed),
-            ];
-            if let Some(channel_id) = channel {
-                clauses.push((
-                    Occur::Must,
-                    Box::new(TermQuery::new(
-                        Term::from_field_text(search_state.fields.channel_id, &channel_id),
-                        IndexRecordOption::Basic,
-                    )) as Box<dyn tantivy::query::Query>,
-                ));
-            }
-            let boolean_query = BooleanQuery::from(clauses);
-            let top_docs = searcher
-                .search(&boolean_query, &TopDocs::with_limit(limit))
-                .map_err(|_| AuthFailure::Internal)?;
-            let mut message_ids = Vec::with_capacity(top_docs.len());
-            for (_score, address) in top_docs {
-                let Ok(doc) = searcher.doc::<TantivyDocument>(address) else {
-                    continue;
-                };
-                let Some(value) = doc.get_first(search_state.fields.message_id) else {
-                    continue;
-                };
-                let Some(message_id) = value.as_str() else {
-                    continue;
-                };
-                message_ids.push(message_id.to_owned());
-            }
-            Ok::<Vec<String>, AuthFailure>(message_ids)
+            run_search_query_against_index(
+                &search_state,
+                &guild,
+                channel.as_deref(),
+                &query,
+                limit,
+            )
         })
         .await
         .map_err(|_| AuthFailure::Internal)?
