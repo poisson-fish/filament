@@ -38,11 +38,19 @@ use uuid::Uuid;
 mod ingress_rate_limit;
 mod ingress_message;
 mod fanout_dispatch;
+mod fanout_guild;
+mod fanout_user;
+mod presence_disconnect;
+mod presence_subscribe;
 mod voice_presence;
 
 use fanout_dispatch::dispatch_gateway_payload;
+use fanout_guild::dispatch_guild_payload;
+use fanout_user::dispatch_user_payload;
 use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
 use ingress_rate_limit::allow_gateway_ingress;
+use presence_disconnect::compute_disconnect_presence_outcome;
+use presence_subscribe::apply_presence_subscribe;
 use voice_presence::{voice_channel_key, voice_snapshot_from_record};
 
 use super::{
@@ -1165,36 +1173,14 @@ pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: 
 
 pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, event: &GatewayEvent) {
     let mut slow_connections = Vec::new();
-    let mut seen_connections = HashSet::new();
-    let mut delivered = 0usize;
     let mut subscriptions = state.subscriptions.write().await;
-    for (key, listeners) in subscriptions.iter_mut() {
-        if !key.starts_with(guild_id) || !key[guild_id.len()..].starts_with(':') {
-            continue;
-        }
-        let mut stale_connections = Vec::new();
-        for (connection_id, sender) in listeners.iter() {
-            if !seen_connections.insert(*connection_id) {
-                continue;
-            }
-            match sender.try_send(event.payload.clone()) {
-                Ok(()) => delivered += 1,
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    record_gateway_event_dropped("guild", event.event_type, "closed");
-                    stale_connections.push(*connection_id);
-                }
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    record_gateway_event_dropped("guild", event.event_type, "full_queue");
-                    slow_connections.push(*connection_id);
-                    stale_connections.push(*connection_id);
-                }
-            }
-        }
-        for connection_id in stale_connections {
-            listeners.remove(&connection_id);
-        }
-    }
-    subscriptions.retain(|_, listeners| !listeners.is_empty());
+    let delivered = dispatch_guild_payload(
+        &mut subscriptions,
+        guild_id,
+        &event.payload,
+        event.event_type,
+        &mut slow_connections,
+    );
     drop(subscriptions);
 
     close_slow_connections(state, slow_connections).await;
@@ -1227,25 +1213,14 @@ pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, even
     }
 
     let mut slow_connections = Vec::new();
-    let mut delivered = 0usize;
     let mut senders = state.connection_senders.write().await;
-    for connection_id in connection_ids {
-        let Some(sender) = senders.get(&connection_id) else {
-            continue;
-        };
-        match sender.try_send(event.payload.clone()) {
-            Ok(()) => delivered += 1,
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                record_gateway_event_dropped("user", event.event_type, "closed");
-                senders.remove(&connection_id);
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                record_gateway_event_dropped("user", event.event_type, "full_queue");
-                slow_connections.push(connection_id);
-                senders.remove(&connection_id);
-            }
-        }
-    }
+    let delivered = dispatch_user_payload(
+        &mut senders,
+        &connection_ids,
+        &event.payload,
+        event.event_type,
+        &mut slow_connections,
+    );
     drop(senders);
 
     close_slow_connections(state, slow_connections).await;
@@ -1537,28 +1512,15 @@ pub(crate) async fn handle_presence_subscribe(
     guild_id: &str,
     outbound_tx: &mpsc::Sender<String>,
 ) {
-    let (snapshot_user_ids, became_online) = {
+    let result = {
         let mut presence = state.connection_presence.write().await;
-        let guild = guild_id.to_owned();
-        let Some(existing) = presence.get(&connection_id) else {
-            return;
-        };
-        let already_subscribed = existing.guild_ids.contains(&guild);
-        let was_online = presence
-            .values()
-            .any(|entry| entry.user_id == user_id && entry.guild_ids.contains(&guild));
-        if let Some(connection) = presence.get_mut(&connection_id) {
-            connection.guild_ids.insert(guild.clone());
-        }
-        let snapshot = presence
-            .values()
-            .filter(|entry| entry.guild_ids.contains(&guild))
-            .map(|entry| entry.user_id.to_string())
-            .collect::<HashSet<_>>();
-        (snapshot, !was_online && !already_subscribed)
+        apply_presence_subscribe(&mut presence, connection_id, user_id, guild_id)
+    };
+    let Some(result) = result else {
+        return;
     };
 
-    let snapshot_event = gateway_events::presence_sync(guild_id, snapshot_user_ids);
+    let snapshot_event = gateway_events::presence_sync(guild_id, result.snapshot_user_ids);
     match outbound_tx.try_send(snapshot_event.payload) {
         Ok(()) => record_gateway_event_emitted("connection", snapshot_event.event_type),
         Err(mpsc::error::TrySendError::Closed(_)) => {
@@ -1569,7 +1531,7 @@ pub(crate) async fn handle_presence_subscribe(
         }
     }
 
-    if became_online {
+    if result.became_online {
         let update = gateway_events::presence_update(guild_id, user_id, "online");
         broadcast_guild_event(state, guild_id, &update).await;
     }
@@ -1615,27 +1577,17 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
     let Some(removed_presence) = removed_presence else {
         return;
     };
-    let remaining = state.connection_presence.read().await;
-    let mut offline_guilds = Vec::new();
-    let user_has_other_connections = remaining
-        .values()
-        .any(|entry| entry.user_id == removed_presence.user_id);
-    for guild_id in &removed_presence.guild_ids {
-        let still_online = remaining.values().any(|entry| {
-            entry.user_id == removed_presence.user_id && entry.guild_ids.contains(guild_id)
-        });
-        if !still_online {
-            offline_guilds.push(guild_id.clone());
-        }
-    }
-    drop(remaining);
+    let outcome = {
+        let remaining = state.connection_presence.read().await;
+        compute_disconnect_presence_outcome(&remaining, &removed_presence)
+    };
 
-    if !user_has_other_connections {
+    if !outcome.user_has_other_connections {
         remove_disconnected_user_voice_participants(state, removed_presence.user_id, now_unix())
             .await;
     }
 
-    for guild_id in offline_guilds {
+    for guild_id in outcome.offline_guilds {
         let update =
             gateway_events::presence_update(&guild_id, removed_presence.user_id, "offline");
         broadcast_guild_event(state, &guild_id, &update).await;
