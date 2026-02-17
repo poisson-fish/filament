@@ -109,7 +109,10 @@ mod tests {
 
         assert!(result.is_err());
         assert!(batch.is_empty());
-        assert!(matches!(ack_rx.blocking_recv(), Ok(Err(AuthFailure::Internal))));
+        assert!(matches!(
+            ack_rx.blocking_recv(),
+            Ok(Err(AuthFailure::Internal))
+        ));
         drop(writer_guard);
     }
 }

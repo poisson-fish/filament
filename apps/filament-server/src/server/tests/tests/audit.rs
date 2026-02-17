@@ -67,8 +67,7 @@ async fn guild_audit_endpoint_enforces_authz_and_returns_redacted_events() {
             && event.get("cidr").is_none()));
 
     let (moderator_status, moderator_payload) =
-        list_guild_audit_for_test(&app, &moderator_auth, "203.0.113.222", &guild_id, None)
-            .await;
+        list_guild_audit_for_test(&app, &moderator_auth, "203.0.113.222", &guild_id, None).await;
     assert_eq!(moderator_status, StatusCode::OK);
     assert!(moderator_payload.is_some());
 
@@ -109,8 +108,7 @@ async fn guild_audit_endpoint_supports_action_filter_and_cursor_pagination() {
     let owner_auth = register_and_login_as(&app, "owner_audit_filter", "203.0.113.226").await;
     let accepted_joiner =
         register_and_login_as(&app, "accepted_joiner_audit", "203.0.113.227").await;
-    let banned_joiner =
-        register_and_login_as(&app, "banned_joiner_audit", "203.0.113.228").await;
+    let banned_joiner = register_and_login_as(&app, "banned_joiner_audit", "203.0.113.228").await;
 
     let guild_id = create_guild_with_visibility_for_test(
         &app,

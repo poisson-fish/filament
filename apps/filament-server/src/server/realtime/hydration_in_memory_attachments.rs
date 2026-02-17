@@ -52,10 +52,8 @@ mod tests {
     #[test]
     fn assigns_attachments_when_message_id_exists_in_map() {
         let mut by_id = HashMap::from([(String::from("m1"), sample_message("m1"))]);
-        let attachment_map = HashMap::from([(
-            String::from("m1"),
-            vec![sample_attachment("m1", "att-1")],
-        )]);
+        let attachment_map =
+            HashMap::from([(String::from("m1"), vec![sample_attachment("m1", "att-1")])]);
 
         apply_hydration_attachments(&mut by_id, &attachment_map);
 

@@ -46,22 +46,30 @@ pub(crate) async fn execute_subscribe_command(
         outbound_tx.clone(),
     )
     .await;
-    handle_presence_subscribe(state, connection_id, user_id, &subscribe.guild_id, outbound_tx)
-        .await;
+    handle_presence_subscribe(
+        state,
+        connection_id,
+        user_id,
+        &subscribe.guild_id,
+        outbound_tx,
+    )
+    .await;
 
     let subscribed_event = gateway_events::subscribed(&subscribe.guild_id, &subscribe.channel_id);
     let enqueue_result = try_enqueue_subscribed_event(outbound_tx, subscribed_event.payload);
     if subscribe_ack_rejected(&enqueue_result) {
-        record_gateway_event_dropped(
-            "connection",
-            subscribed_event.event_type,
-            "full_queue",
-        );
+        record_gateway_event_dropped("connection", subscribed_event.event_type, "full_queue");
         return Err("outbound_queue_full");
     }
     record_gateway_event_emitted("connection", subscribed_event.event_type);
 
-    handle_voice_subscribe(state, &subscribe.guild_id, &subscribe.channel_id, outbound_tx).await;
+    handle_voice_subscribe(
+        state,
+        &subscribe.guild_id,
+        &subscribe.channel_id,
+        outbound_tx,
+    )
+    .await;
     Ok(())
 }
 
@@ -81,6 +89,8 @@ mod tests {
 
     #[test]
     fn subscribe_ack_rejected_returns_false_for_enqueued() {
-        assert!(!subscribe_ack_rejected(&SubscribeAckEnqueueResult::Enqueued));
+        assert!(!subscribe_ack_rejected(
+            &SubscribeAckEnqueueResult::Enqueued
+        ));
     }
 }

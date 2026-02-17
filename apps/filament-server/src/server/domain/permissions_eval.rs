@@ -6,10 +6,8 @@ use crate::server::core::{ChannelPermissionOverrideRecord, WorkspaceRoleRecord};
 use crate::server::errors::AuthFailure;
 use crate::server::permissions::{
     all_permissions, default_everyone_permissions, default_member_permissions,
-    default_moderator_permissions,
-    mask_permissions,
-    DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
-    SYSTEM_ROLE_WORKSPACE_OWNER,
+    default_moderator_permissions, mask_permissions, DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR,
+    SYSTEM_ROLE_EVERYONE, SYSTEM_ROLE_WORKSPACE_OWNER,
 };
 use ulid::Ulid;
 
@@ -75,9 +73,7 @@ pub(crate) struct InMemoryChannelOverrideSummary {
     pub(crate) member_overwrite: ChannelPermissionOverwrite,
 }
 
-pub(crate) fn role_ids_from_map(
-    roles: &HashMap<String, WorkspaceRoleRecord>,
-) -> Option<RoleIdSet> {
+pub(crate) fn role_ids_from_map(roles: &HashMap<String, WorkspaceRoleRecord>) -> Option<RoleIdSet> {
     let everyone = roles
         .values()
         .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE))
@@ -108,9 +104,7 @@ pub(crate) fn role_ids_from_map(
     })
 }
 
-pub(crate) fn ensure_required_roles(
-    roles: &mut HashMap<String, WorkspaceRoleRecord>,
-) -> RoleIdSet {
+pub(crate) fn ensure_required_roles(roles: &mut HashMap<String, WorkspaceRoleRecord>) -> RoleIdSet {
     let created_at_unix = now_unix();
     let everyone = roles
         .values()
@@ -261,16 +255,21 @@ pub(crate) fn sync_legacy_channel_overrides(
     }
 }
 
-pub(crate) fn i64_to_masked_permissions(
-    value: i64,
-) -> Result<(PermissionSet, u64), AuthFailure> {
+pub(crate) fn i64_to_masked_permissions(value: i64) -> Result<(PermissionSet, u64), AuthFailure> {
     let raw = u64::try_from(value).map_err(|_| AuthFailure::Internal)?;
     Ok(mask_permissions(raw))
 }
 
 pub(crate) fn role_records_from_db_rows(
     rows: Vec<GuildRoleDbRow>,
-) -> Result<(HashMap<String, WorkspaceRoleRecord>, u64, Vec<RoleMaskUpdate>), AuthFailure> {
+) -> Result<
+    (
+        HashMap<String, WorkspaceRoleRecord>,
+        u64,
+        Vec<RoleMaskUpdate>,
+    ),
+    AuthFailure,
+> {
     let mut roles: HashMap<String, WorkspaceRoleRecord> = HashMap::new();
     let mut unknown_bits_seen = 0_u64;
     let mut mask_updates = Vec::new();
@@ -681,32 +680,24 @@ pub(crate) fn finalize_channel_permissions(
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_guild_permissions, apply_channel_layers,
-        apply_legacy_role_assignment, ensure_required_roles,
-        finalize_channel_permissions, i64_to_masked_permissions,
-        resolve_db_channel_permissions,
-        resolve_in_memory_channel_permissions,
-        summarize_in_memory_guild_permissions,
-        merge_channel_overwrite, merge_legacy_channel_role_overrides,
-        merge_assigned_role_overrides,
-        guild_role_permission_inputs,
-        normalize_assigned_role_ids,
-        resolve_guild_permission_summary,
-        role_ids_from_map, role_records_from_db_rows,
-        summarize_in_memory_channel_overrides,
+        aggregate_guild_permissions, apply_channel_layers, apply_legacy_role_assignment,
+        ensure_required_roles, finalize_channel_permissions, guild_role_permission_inputs,
+        i64_to_masked_permissions, merge_assigned_role_overrides, merge_channel_overwrite,
+        merge_legacy_channel_role_overrides, normalize_assigned_role_ids,
+        resolve_db_channel_permissions, resolve_guild_permission_summary,
+        resolve_in_memory_channel_permissions, role_ids_from_map, role_records_from_db_rows,
         summarize_channel_overrides, summarize_guild_permissions,
+        summarize_in_memory_channel_overrides, summarize_in_memory_guild_permissions,
         sync_legacy_channel_overrides, sync_legacy_role_assignments,
     };
-    use crate::server::core::{ChannelPermissionOverrideRecord, WorkspaceRoleRecord};
     use crate::server::auth::now_unix;
+    use crate::server::core::{ChannelPermissionOverrideRecord, WorkspaceRoleRecord};
     use crate::server::errors::AuthFailure;
     use crate::server::permissions::{
         DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
         SYSTEM_ROLE_WORKSPACE_OWNER,
     };
-    use filament_core::{
-        ChannelPermissionOverwrite, Permission, PermissionSet, Role, UserId,
-    };
+    use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet, Role, UserId};
     use std::collections::{HashMap, HashSet};
 
     fn permission_set(values: &[Permission]) -> PermissionSet {
@@ -808,10 +799,7 @@ mod tests {
         let moderator_id = UserId::new();
         let stale_id = UserId::new();
 
-        let members = HashMap::from([
-            (member_id, Role::Member),
-            (moderator_id, Role::Moderator),
-        ]);
+        let members = HashMap::from([(member_id, Role::Member), (moderator_id, Role::Moderator)]);
         let role_ids = super::RoleIdSet {
             everyone: String::from("everyone"),
             workspace_owner: String::from("owner"),
@@ -882,33 +870,23 @@ mod tests {
             moderator: String::from("moderator"),
         };
 
-        sync_legacy_channel_overrides(
-            legacy_overrides,
-            &mut channel_overrides,
-            &role_ids,
-        );
+        sync_legacy_channel_overrides(legacy_overrides, &mut channel_overrides, &role_ids);
 
         let channel = channel_overrides
             .get("channel-1")
             .expect("channel overrides should exist");
-        assert!(
-            channel
-                .role_overrides
-                .get("member")
-                .is_some_and(|overwrite| overwrite.allow.contains(Permission::CreateMessage))
-        );
-        assert!(
-            channel
-                .role_overrides
-                .get("moderator")
-                .is_some_and(|overwrite| overwrite.allow.contains(Permission::DeleteMessage))
-        );
-        assert!(
-            channel
-                .role_overrides
-                .get("owner")
-                .is_some_and(|overwrite| overwrite.allow.contains(Permission::ManageRoles))
-        );
+        assert!(channel
+            .role_overrides
+            .get("member")
+            .is_some_and(|overwrite| overwrite.allow.contains(Permission::CreateMessage)));
+        assert!(channel
+            .role_overrides
+            .get("moderator")
+            .is_some_and(|overwrite| overwrite.allow.contains(Permission::DeleteMessage)));
+        assert!(channel
+            .role_overrides
+            .get("owner")
+            .is_some_and(|overwrite| overwrite.allow.contains(Permission::ManageRoles)));
     }
 
     #[test]
@@ -982,7 +960,9 @@ mod tests {
         assert!(!summary.is_workspace_owner);
         assert_eq!(summary.resolved_role, Role::Member);
         assert!(summary.guild_permissions.contains(Permission::ManageRoles));
-        assert!(summary.guild_permissions.contains(Permission::CreateMessage));
+        assert!(summary
+            .guild_permissions
+            .contains(Permission::CreateMessage));
     }
 
     #[test]
@@ -1050,8 +1030,12 @@ mod tests {
         let summary = resolve_guild_permission_summary(&roles, &assigned, &role_ids);
         assert_eq!(summary.resolved_role, Role::Member);
         assert!(!summary.is_workspace_owner);
-        assert!(summary.guild_permissions.contains(Permission::DeleteMessage));
-        assert!(summary.guild_permissions.contains(Permission::CreateMessage));
+        assert!(summary
+            .guild_permissions
+            .contains(Permission::DeleteMessage));
+        assert!(summary
+            .guild_permissions
+            .contains(Permission::CreateMessage));
     }
 
     #[test]
@@ -1457,10 +1441,8 @@ mod tests {
             },
         );
 
-        let assigned_role_ids =
-            HashSet::from([String::from("member"), String::from("moderator")]);
-        let merged =
-            merge_assigned_role_overrides(&role_overrides, &assigned_role_ids);
+        let assigned_role_ids = HashSet::from([String::from("member"), String::from("moderator")]);
+        let merged = merge_assigned_role_overrides(&role_overrides, &assigned_role_ids);
 
         assert!(merged.allow.contains(Permission::CreateMessage));
         assert!(merged.allow.contains(Permission::DeleteMessage));
@@ -1500,12 +1482,8 @@ mod tests {
         );
 
         let assigned = HashSet::from([String::from("member")]);
-        let summary = summarize_in_memory_channel_overrides(
-            &channel_override,
-            &assigned,
-            &role_ids,
-            user_id,
-        );
+        let summary =
+            summarize_in_memory_channel_overrides(&channel_override, &assigned, &role_ids, user_id);
 
         assert!(summary
             .everyone_overwrite
@@ -1587,7 +1565,9 @@ mod tests {
         );
 
         assert_eq!(summary.resolved_role, Role::Moderator);
-        assert!(summary.guild_permissions.contains(Permission::DeleteMessage));
+        assert!(summary
+            .guild_permissions
+            .contains(Permission::DeleteMessage));
     }
 
     #[test]

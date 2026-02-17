@@ -11,9 +11,8 @@ use crate::server::{
 };
 
 use super::{
-    apply_hydration_attachments, collect_hydrated_in_request_order,
-    collect_hydrated_messages_db, collect_hydrated_messages_in_memory,
-    merge_hydration_maps,
+    apply_hydration_attachments, collect_hydrated_in_request_order, collect_hydrated_messages_db,
+    collect_hydrated_messages_in_memory, merge_hydration_maps,
 };
 
 fn hydrate_in_request_order(
@@ -34,16 +33,15 @@ pub(crate) async fn hydrate_messages_by_id_runtime(
     }
 
     if let Some(pool) = &state.db_pool {
-        let mut by_id = collect_hydrated_messages_db(pool, guild_id, channel_id, message_ids)
-            .await?;
+        let mut by_id =
+            collect_hydrated_messages_db(pool, guild_id, channel_id, message_ids).await?;
 
         let message_ids_ordered: Vec<String> = message_ids.to_vec();
         let attachment_map =
             attachment_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered)
                 .await?;
         let reaction_map =
-            reaction_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered)
-                .await?;
+            reaction_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered).await?;
         merge_hydration_maps(&mut by_id, &attachment_map, &reaction_map);
 
         return Ok(hydrate_in_request_order(by_id, message_ids));
@@ -89,7 +87,10 @@ mod tests {
         let requested = vec![String::from("m2"), String::from("m1")];
 
         let hydrated = hydrate_in_request_order(by_id, &requested);
-        let ids: Vec<&str> = hydrated.iter().map(|entry| entry.message_id.as_str()).collect();
+        let ids: Vec<&str> = hydrated
+            .iter()
+            .map(|entry| entry.message_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["m2", "m1"]);
     }
 
@@ -100,7 +101,10 @@ mod tests {
         let requested = vec![String::from("missing"), String::from("m1")];
 
         let hydrated = hydrate_in_request_order(by_id, &requested);
-        let ids: Vec<&str> = hydrated.iter().map(|entry| entry.message_id.as_str()).collect();
+        let ids: Vec<&str> = hydrated
+            .iter()
+            .map(|entry| entry.message_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["m1"]);
     }
 }

@@ -28,8 +28,7 @@ use super::{
     presence_sync_dispatch::dispatch_presence_sync_event,
     subscription_insert::insert_connection_subscription,
     voice_cleanup_dispatch::{
-        broadcast_disconnected_user_voice_removals,
-        broadcast_expired_voice_removals,
+        broadcast_disconnected_user_voice_removals, broadcast_expired_voice_removals,
     },
     voice_presence::{collect_voice_snapshots, voice_channel_key},
     voice_registration::apply_voice_registration_transition,
@@ -138,14 +137,9 @@ pub(crate) async fn register_voice_participant_from_token(
             MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
         )?
     };
-    for (subscription_key, event) in plan_voice_registration_events(
-        transition,
-        guild_id,
-        channel_id,
-        user_id,
-        identity,
-        now,
-    ) {
+    for (subscription_key, event) in
+        plan_voice_registration_events(transition, guild_id, channel_id, user_id, identity, now)
+    {
         broadcast_channel_event(state, &subscription_key, &event).await;
     }
 
@@ -165,12 +159,8 @@ pub(crate) async fn handle_voice_subscribe(
         collect_voice_snapshots(&voice, &key)
     };
 
-    let sync_event = build_voice_subscribe_sync_event(
-        guild_id,
-        channel_id,
-        participants,
-        now_unix(),
-    );
+    let sync_event =
+        build_voice_subscribe_sync_event(guild_id, channel_id, participants, now_unix());
     dispatch_voice_sync_event(outbound_tx, sync_event);
 }
 
@@ -220,12 +210,7 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
         let mut presence = state.connection_presence.write().await;
         let mut controls = state.connection_controls.write().await;
         let mut senders = state.connection_senders.write().await;
-        remove_connection_state(
-            &mut presence,
-            &mut controls,
-            &mut senders,
-            connection_id,
-        )
+        remove_connection_state(&mut presence, &mut controls, &mut senders, connection_id)
     };
 
     let mut subscriptions = state.subscriptions.write().await;
@@ -239,8 +224,7 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
         let remaining = state.connection_presence.read().await;
         compute_disconnect_presence_outcome(&remaining, &removed_presence)
     };
-    let followups =
-        plan_disconnect_followups(outcome, removed_presence.user_id);
+    let followups = plan_disconnect_followups(outcome, removed_presence.user_id);
 
     if followups.remove_voice_participants {
         remove_disconnected_user_voice_participants(state, removed_presence.user_id, now_unix())

@@ -111,7 +111,11 @@ mod tests {
         errors::AuthFailure,
     };
 
-    fn participant(user_id: UserId, identity: &str, streams: HashSet<VoiceStreamKind>) -> VoiceParticipant {
+    fn participant(
+        user_id: UserId,
+        identity: &str,
+        streams: HashSet<VoiceStreamKind>,
+    ) -> VoiceParticipant {
         VoiceParticipant {
             user_id,
             identity: identity.to_owned(),
@@ -135,7 +139,11 @@ mod tests {
             String::from("g1:c1"),
             HashMap::from([(
                 existing_user,
-                participant(existing_user, "existing", HashSet::from([VoiceStreamKind::Microphone])),
+                participant(
+                    existing_user,
+                    "existing",
+                    HashSet::from([VoiceStreamKind::Microphone]),
+                ),
             )]),
         )]);
 
@@ -162,7 +170,11 @@ mod tests {
             String::from("g1:c1"),
             HashMap::from([(
                 existing_user,
-                participant(existing_user, "existing", HashSet::from([VoiceStreamKind::Microphone])),
+                participant(
+                    existing_user,
+                    "existing",
+                    HashSet::from([VoiceStreamKind::Microphone]),
+                ),
             )]),
         )]);
 
@@ -189,7 +201,11 @@ mod tests {
                 String::from("g1:c1"),
                 HashMap::from([(
                     target_user,
-                    participant(target_user, "old", HashSet::from([VoiceStreamKind::Microphone])),
+                    participant(
+                        target_user,
+                        "old",
+                        HashSet::from([VoiceStreamKind::Microphone]),
+                    ),
                 )]),
             ),
             (String::from("g1:c2"), HashMap::new()),

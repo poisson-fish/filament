@@ -26,10 +26,7 @@ pub(crate) fn validate_search_query_request(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        effective_search_limit, normalize_search_query,
-        validate_search_query_request,
-    };
+    use super::{effective_search_limit, normalize_search_query, validate_search_query_request};
     use crate::server::{errors::AuthFailure, types::SearchQuery};
 
     #[test]

@@ -9,7 +9,6 @@ pub(crate) enum GatewayIngressCommand {
     MessageCreate(GatewayMessageCreate),
 }
 
-
 #[derive(Debug)]
 pub(crate) enum GatewayIngressCommandParseError {
     InvalidSubscribePayload,
@@ -38,7 +37,9 @@ pub(crate) fn parse_gateway_ingress_command(
         "message_create" => serde_json::from_value::<GatewayMessageCreate>(envelope.d)
             .map(GatewayIngressCommand::MessageCreate)
             .map_err(|_| GatewayIngressCommandParseError::InvalidMessageCreatePayload),
-        _ => Err(GatewayIngressCommandParseError::UnknownEventType(event_type)),
+        _ => Err(GatewayIngressCommandParseError::UnknownEventType(
+            event_type,
+        )),
     }
 }
 
@@ -99,7 +100,10 @@ mod tests {
                 assert_eq!(request.guild_id, "g1");
                 assert_eq!(request.channel_id, "c1");
                 assert_eq!(request.content, "hello");
-                assert_eq!(request.attachment_ids.as_deref(), Some(&[String::from("a1")][..]));
+                assert_eq!(
+                    request.attachment_ids.as_deref(),
+                    Some(&[String::from("a1")][..])
+                );
             }
             GatewayIngressCommand::Subscribe(_) => {
                 panic!("expected message_create command");

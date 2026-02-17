@@ -2,23 +2,19 @@ use tokio::sync::mpsc;
 
 use crate::server::gateway_events::GatewayEvent;
 use crate::server::metrics::{
-    record_gateway_event_dropped, record_gateway_event_emitted,
-    record_voice_sync_repair,
+    record_gateway_event_dropped, record_gateway_event_emitted, record_voice_sync_repair,
 };
 
 use super::voice_presence::{
-    try_enqueue_voice_sync_event, voice_sync_dispatch_outcome,
-    VoiceSyncDispatchOutcome,
+    try_enqueue_voice_sync_event, voice_sync_dispatch_outcome, VoiceSyncDispatchOutcome,
 };
 
 pub(crate) fn dispatch_voice_sync_event(
     outbound_tx: &mpsc::Sender<String>,
     event: GatewayEvent,
 ) -> VoiceSyncDispatchOutcome {
-    let outcome = voice_sync_dispatch_outcome(try_enqueue_voice_sync_event(
-        outbound_tx,
-        event.payload,
-    ));
+    let outcome =
+        voice_sync_dispatch_outcome(try_enqueue_voice_sync_event(outbound_tx, event.payload));
     match outcome {
         VoiceSyncDispatchOutcome::EmittedAndRepaired => {
             record_gateway_event_emitted("connection", event.event_type);
@@ -52,7 +48,10 @@ mod tests {
             outcome,
             VoiceSyncDispatchOutcome::EmittedAndRepaired
         ));
-        assert_eq!(rx.try_recv().ok().as_deref(), Some(expected_payload.as_str()));
+        assert_eq!(
+            rx.try_recv().ok().as_deref(),
+            Some(expected_payload.as_str())
+        );
     }
 
     #[test]

@@ -134,7 +134,9 @@ pub(crate) async fn reaction_map_for_messages_db(
     let mut count_rows = Vec::with_capacity(rows.len());
     for row in rows {
         count_rows.push(ReactionCountDbRow {
-            message_id: row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
+            message_id: row
+                .try_get("message_id")
+                .map_err(|_| AuthFailure::Internal)?,
             emoji: row.try_get("emoji").map_err(|_| AuthFailure::Internal)?,
             count: row.try_get("count").map_err(|_| AuthFailure::Internal)?,
         });
@@ -145,11 +147,8 @@ pub(crate) async fn reaction_map_for_messages_db(
 #[cfg(test)]
 mod tests {
     use super::{
-        reaction_map_for_messages_db,
-        reaction_count_from_db_fields,
-        reaction_map_from_db_rows,
-        reaction_map_from_counts, reaction_summaries_from_users,
-        validate_reaction_emoji,
+        reaction_count_from_db_fields, reaction_map_for_messages_db, reaction_map_from_counts,
+        reaction_map_from_db_rows, reaction_summaries_from_users, validate_reaction_emoji,
     };
     use crate::server::errors::AuthFailure;
     use filament_core::UserId;
@@ -211,23 +210,15 @@ mod tests {
     #[test]
     fn reaction_map_from_counts_rejects_negative_count_fail_closed() {
         assert!(matches!(
-            reaction_map_from_counts(vec![(
-                String::from("m1"),
-                String::from("😀"),
-                -1,
-            )]),
+            reaction_map_from_counts(vec![(String::from("m1"), String::from("😀"), -1,)]),
             Err(AuthFailure::Internal)
         ));
     }
 
     #[test]
     fn reaction_count_from_db_fields_accepts_non_negative_count() {
-        let mapped = reaction_count_from_db_fields(
-            String::from("m1"),
-            String::from("🔥"),
-            2,
-        )
-        .expect("non-negative count should map");
+        let mapped = reaction_count_from_db_fields(String::from("m1"), String::from("🔥"), 2)
+            .expect("non-negative count should map");
         assert_eq!(mapped.0, "m1");
         assert_eq!(mapped.1, "🔥");
         assert_eq!(mapped.2, 2);
@@ -236,11 +227,7 @@ mod tests {
     #[test]
     fn reaction_count_from_db_fields_rejects_negative_count_fail_closed() {
         assert!(matches!(
-            reaction_count_from_db_fields(
-                String::from("m1"),
-                String::from("🔥"),
-                -1,
-            ),
+            reaction_count_from_db_fields(String::from("m1"), String::from("🔥"), -1,),
             Err(AuthFailure::Internal)
         ));
     }

@@ -2,9 +2,7 @@ use std::collections::HashSet;
 
 use crate::server::{core::AppState, errors::AuthFailure};
 
-use super::{
-    collect_index_message_ids_for_guild_from_index, run_search_blocking_with_timeout,
-};
+use super::{collect_index_message_ids_for_guild_from_index, run_search_blocking_with_timeout};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SearchIndexLookupInput {

@@ -105,14 +105,9 @@ async fn channel_permissions_endpoint_enforces_least_visibility() {
     )
     .await;
 
-    let (owner_status, owner_payload) = fetch_self_permissions_for_test(
-        &app,
-        &owner_auth,
-        "203.0.113.74",
-        &guild_id,
-        &channel_id,
-    )
-    .await;
+    let (owner_status, owner_payload) =
+        fetch_self_permissions_for_test(&app, &owner_auth, "203.0.113.74", &guild_id, &channel_id)
+            .await;
     assert_eq!(owner_status, StatusCode::OK);
     let owner_permissions_json = owner_payload.unwrap();
     assert_eq!(owner_permissions_json["role"], "owner");
@@ -127,14 +122,9 @@ async fn channel_permissions_endpoint_enforces_least_visibility() {
         .iter()
         .any(|permission| permission == "create_message"));
 
-    let (member_status, member_payload) = fetch_self_permissions_for_test(
-        &app,
-        &member_auth,
-        "203.0.113.75",
-        &guild_id,
-        &channel_id,
-    )
-    .await;
+    let (member_status, member_payload) =
+        fetch_self_permissions_for_test(&app, &member_auth, "203.0.113.75", &guild_id, &channel_id)
+            .await;
     assert_eq!(member_status, StatusCode::OK);
     let member_permissions_json = member_payload.unwrap();
     assert_eq!(member_permissions_json["role"], "member");
@@ -152,14 +142,9 @@ async fn channel_permissions_endpoint_enforces_least_visibility() {
     deny_member_create_message_for_test(&app, &owner_auth, "203.0.113.74", &guild_id, &channel_id)
         .await;
 
-    let (member_denied_status, _) = fetch_self_permissions_for_test(
-        &app,
-        &member_auth,
-        "203.0.113.75",
-        &guild_id,
-        &channel_id,
-    )
-    .await;
+    let (member_denied_status, _) =
+        fetch_self_permissions_for_test(&app, &member_auth, "203.0.113.75", &guild_id, &channel_id)
+            .await;
     assert_eq!(member_denied_status, StatusCode::FORBIDDEN);
 
     let (stranger_status, _) = fetch_self_permissions_for_test(
@@ -199,7 +184,10 @@ async fn guild_and_channel_list_endpoints_are_member_scoped() {
     )
     .await;
     assert_eq!(guild_list_status, StatusCode::OK);
-    let guilds = guild_list_payload.unwrap()["guilds"].as_array().unwrap().clone();
+    let guilds = guild_list_payload.unwrap()["guilds"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert_eq!(guilds.len(), 1);
     assert_eq!(guilds[0]["guild_id"].as_str().unwrap(), guild_a);
 

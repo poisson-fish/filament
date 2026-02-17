@@ -77,7 +77,10 @@ mod tests {
 
     fn commit_and_reload(search: &SearchIndexState, mut writer: tantivy::IndexWriter) {
         writer.commit().expect("commit should succeed");
-        search.reader.reload().expect("reader reload should succeed");
+        search
+            .reader
+            .reload()
+            .expect("reader reload should succeed");
     }
 
     fn upsert(
@@ -88,7 +91,10 @@ mod tests {
         content: &str,
         created_at_unix: i64,
     ) {
-        let mut writer = search.index.writer(50_000_000).expect("writer should initialize");
+        let mut writer = search
+            .index
+            .writer(50_000_000)
+            .expect("writer should initialize");
         apply_search_operation(
             search,
             &mut writer,
@@ -131,7 +137,9 @@ mod tests {
 
     fn total_doc_count(search: &SearchIndexState) -> usize {
         let searcher = search.reader.searcher();
-        searcher.search(&AllQuery, &Count).expect("count should succeed")
+        searcher
+            .search(&AllQuery, &Count)
+            .expect("count should succeed")
     }
 
     #[test]
@@ -149,7 +157,10 @@ mod tests {
         let search = test_search_state();
         upsert(&search, "m1", "g1", "c1", "hello", 1);
 
-        let mut writer = search.index.writer(50_000_000).expect("writer should initialize");
+        let mut writer = search
+            .index
+            .writer(50_000_000)
+            .expect("writer should initialize");
         apply_search_operation(
             &search,
             &mut writer,
@@ -168,7 +179,10 @@ mod tests {
         let search = test_search_state();
         upsert(&search, "m1", "g1", "c1", "old", 1);
 
-        let mut writer = search.index.writer(50_000_000).expect("writer should initialize");
+        let mut writer = search
+            .index
+            .writer(50_000_000)
+            .expect("writer should initialize");
         apply_search_operation(
             &search,
             &mut writer,

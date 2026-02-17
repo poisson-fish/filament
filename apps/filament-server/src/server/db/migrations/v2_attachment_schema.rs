@@ -1,7 +1,6 @@
 use sqlx::{Postgres, Transaction};
 
-const CREATE_ATTACHMENTS_TABLE_SQL: &str =
-    "CREATE TABLE IF NOT EXISTS attachments (
+const CREATE_ATTACHMENTS_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS attachments (
                     attachment_id TEXT PRIMARY KEY,
                     guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
                     channel_id TEXT NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
@@ -15,8 +14,7 @@ const CREATE_ATTACHMENTS_TABLE_SQL: &str =
                 )";
 const ADD_OBJECT_KEY_COLUMN_SQL: &str =
     "ALTER TABLE attachments ADD COLUMN IF NOT EXISTS object_key TEXT";
-const BACKFILL_OBJECT_KEY_SQL: &str =
-    "UPDATE attachments
+const BACKFILL_OBJECT_KEY_SQL: &str = "UPDATE attachments
                  SET object_key = CONCAT('attachments/', attachment_id)
                  WHERE object_key IS NULL OR object_key = ''";
 const OBJECT_KEY_NOT_NULL_SQL: &str =
@@ -26,23 +24,22 @@ const OBJECT_KEY_UNIQUE_INDEX_SQL: &str =
                     ON attachments(object_key)";
 const ADD_CREATED_AT_UNIX_COLUMN_SQL: &str =
     "ALTER TABLE attachments ADD COLUMN IF NOT EXISTS created_at_unix BIGINT";
-const BACKFILL_CREATED_AT_UNIX_SQL: &str =
-    "UPDATE attachments
+const BACKFILL_CREATED_AT_UNIX_SQL: &str = "UPDATE attachments
                  SET created_at_unix = 0
                  WHERE created_at_unix IS NULL";
 const CREATED_AT_UNIX_NOT_NULL_SQL: &str =
     "ALTER TABLE attachments ALTER COLUMN created_at_unix SET NOT NULL";
-const ATTACHMENTS_OWNER_INDEX_SQL: &str =
-    "CREATE INDEX IF NOT EXISTS idx_attachments_owner
+const ATTACHMENTS_OWNER_INDEX_SQL: &str = "CREATE INDEX IF NOT EXISTS idx_attachments_owner
                     ON attachments(owner_id)";
 const ADD_MESSAGE_ID_COLUMN_SQL: &str =
     "ALTER TABLE attachments
                  ADD COLUMN IF NOT EXISTS message_id TEXT NULL REFERENCES messages(message_id) ON DELETE SET NULL";
-const ATTACHMENTS_MESSAGE_INDEX_SQL: &str =
-    "CREATE INDEX IF NOT EXISTS idx_attachments_message
+const ATTACHMENTS_MESSAGE_INDEX_SQL: &str = "CREATE INDEX IF NOT EXISTS idx_attachments_message
                     ON attachments(message_id)";
 
-pub(crate) async fn apply_attachment_schema(tx: &mut Transaction<'_, Postgres>) -> Result<(), sqlx::Error> {
+pub(crate) async fn apply_attachment_schema(
+    tx: &mut Transaction<'_, Postgres>,
+) -> Result<(), sqlx::Error> {
     sqlx::query(CREATE_ATTACHMENTS_TABLE_SQL)
         .execute(&mut **tx)
         .await?;
@@ -50,7 +47,9 @@ pub(crate) async fn apply_attachment_schema(tx: &mut Transaction<'_, Postgres>) 
     sqlx::query(ADD_OBJECT_KEY_COLUMN_SQL)
         .execute(&mut **tx)
         .await?;
-    sqlx::query(BACKFILL_OBJECT_KEY_SQL).execute(&mut **tx).await?;
+    sqlx::query(BACKFILL_OBJECT_KEY_SQL)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query(OBJECT_KEY_NOT_NULL_SQL)
         .execute(&mut **tx)
         .await?;
@@ -85,7 +84,7 @@ mod tests {
     use super::{
         ADD_CREATED_AT_UNIX_COLUMN_SQL, ADD_MESSAGE_ID_COLUMN_SQL, ADD_OBJECT_KEY_COLUMN_SQL,
         ATTACHMENTS_MESSAGE_INDEX_SQL, ATTACHMENTS_OWNER_INDEX_SQL, BACKFILL_CREATED_AT_UNIX_SQL,
-        BACKFILL_OBJECT_KEY_SQL, CREATE_ATTACHMENTS_TABLE_SQL, CREATED_AT_UNIX_NOT_NULL_SQL,
+        BACKFILL_OBJECT_KEY_SQL, CREATED_AT_UNIX_NOT_NULL_SQL, CREATE_ATTACHMENTS_TABLE_SQL,
         OBJECT_KEY_NOT_NULL_SQL, OBJECT_KEY_UNIQUE_INDEX_SQL,
     };
 

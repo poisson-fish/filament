@@ -28,9 +28,7 @@ mod tests {
 
     use super::append_message_record;
     use crate::server::{
-        core::{
-            ChannelRecord, GuildRecord, GuildVisibility, MessageRecord,
-        },
+        core::{ChannelRecord, GuildRecord, GuildVisibility, MessageRecord},
         errors::AuthFailure,
     };
 

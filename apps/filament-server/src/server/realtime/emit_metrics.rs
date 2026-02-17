@@ -9,12 +9,7 @@ pub(crate) fn emit_gateway_delivery_metrics(
         return 0;
     }
 
-    tracing::debug!(
-        event = "gateway.event.emit",
-        scope,
-        event_type,
-        delivered
-    );
+    tracing::debug!(event = "gateway.event.emit", scope, event_type, delivered);
     for _ in 0..delivered {
         record_gateway_event_emitted(scope, event_type);
     }

@@ -43,7 +43,11 @@ pub(crate) fn collect_voice_snapshots(
 ) -> Vec<VoiceParticipantSnapshot> {
     let mut snapshots = Vec::new();
     if let Some(channel_participants) = voice.get(channel_key) {
-        snapshots.extend(channel_participants.values().map(voice_snapshot_from_record));
+        snapshots.extend(
+            channel_participants
+                .values()
+                .map(voice_snapshot_from_record),
+        );
     }
     snapshots.sort_by(|a, b| {
         a.joined_at_unix
@@ -82,8 +86,8 @@ mod tests {
 
     use super::{
         collect_voice_snapshots, try_enqueue_voice_sync_event, voice_channel_key,
-        voice_snapshot_from_record, voice_sync_dispatch_outcome,
-        OutboundEnqueueResult, VoiceSyncDispatchOutcome,
+        voice_snapshot_from_record, voice_sync_dispatch_outcome, OutboundEnqueueResult,
+        VoiceSyncDispatchOutcome,
     };
     use crate::server::core::{VoiceParticipant, VoiceParticipantsByChannel, VoiceStreamKind};
 

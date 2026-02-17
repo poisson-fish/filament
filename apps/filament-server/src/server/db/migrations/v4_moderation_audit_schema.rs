@@ -11,8 +11,7 @@ const CREATE_USER_IP_OBSERVATIONS_TABLE_SQL: &str =
 const CREATE_USER_IP_OBSERVATIONS_UNIQUE_INDEX_SQL: &str =
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ip_observations_user_ip_unique
                     ON user_ip_observations(user_id, ip_cidr)";
-const CREATE_GUILD_IP_BANS_TABLE_SQL: &str =
-    "CREATE TABLE IF NOT EXISTS guild_ip_bans (
+const CREATE_GUILD_IP_BANS_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS guild_ip_bans (
                     ban_id TEXT PRIMARY KEY,
                     guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
                     ip_cidr TEXT NOT NULL,
@@ -28,8 +27,7 @@ const CREATE_USER_IP_OBSERVATIONS_USER_LAST_SEEN_INDEX_SQL: &str =
 const CREATE_GUILD_IP_BANS_GUILD_CREATED_INDEX_SQL: &str =
     "CREATE INDEX IF NOT EXISTS idx_guild_ip_bans_guild_created
                     ON guild_ip_bans(guild_id, created_at_unix DESC)";
-const CREATE_AUDIT_LOGS_TABLE_SQL: &str =
-    "CREATE TABLE IF NOT EXISTS audit_logs (
+const CREATE_AUDIT_LOGS_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS audit_logs (
                     audit_id TEXT PRIMARY KEY,
                     guild_id TEXT NULL,
                     actor_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -82,10 +80,10 @@ pub(crate) async fn apply_moderation_audit_schema(
 #[cfg(test)]
 mod tests {
     use super::{
-        CREATE_AUDIT_LOGS_GUILD_ACTION_CREATED_INDEX_SQL, CREATE_AUDIT_LOGS_GUILD_CREATED_INDEX_SQL,
-        CREATE_AUDIT_LOGS_TABLE_SQL, CREATE_GUILD_IP_BANS_GUILD_CREATED_INDEX_SQL,
-        CREATE_GUILD_IP_BANS_TABLE_SQL, CREATE_USER_IP_OBSERVATIONS_TABLE_SQL,
-        CREATE_USER_IP_OBSERVATIONS_UNIQUE_INDEX_SQL,
+        CREATE_AUDIT_LOGS_GUILD_ACTION_CREATED_INDEX_SQL,
+        CREATE_AUDIT_LOGS_GUILD_CREATED_INDEX_SQL, CREATE_AUDIT_LOGS_TABLE_SQL,
+        CREATE_GUILD_IP_BANS_GUILD_CREATED_INDEX_SQL, CREATE_GUILD_IP_BANS_TABLE_SQL,
+        CREATE_USER_IP_OBSERVATIONS_TABLE_SQL, CREATE_USER_IP_OBSERVATIONS_UNIQUE_INDEX_SQL,
         CREATE_USER_IP_OBSERVATIONS_USER_LAST_SEEN_INDEX_SQL,
     };
 

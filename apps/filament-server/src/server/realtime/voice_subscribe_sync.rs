@@ -1,6 +1,4 @@
-use crate::server::{
-    gateway_events::{self, GatewayEvent, VoiceParticipantSnapshot},
-};
+use crate::server::gateway_events::{self, GatewayEvent, VoiceParticipantSnapshot};
 
 pub(crate) fn build_voice_subscribe_sync_event(
     guild_id: &str,
@@ -32,12 +30,7 @@ mod tests {
             is_screen_share_enabled: false,
         };
 
-        let event = build_voice_subscribe_sync_event(
-            "g1",
-            "c1",
-            vec![participant],
-            123,
-        );
+        let event = build_voice_subscribe_sync_event("g1", "c1", vec![participant], 123);
 
         assert_eq!(event.event_type, "voice_participant_sync");
         assert!(event.payload.contains("\"guild_id\":\"g1\""));

@@ -6,8 +6,8 @@ use crate::server::{
     types::{AttachmentPath, AttachmentResponse, MessageResponse},
 };
 use filament_core::UserId;
-use sqlx::Row;
 use sqlx::PgPool;
+use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
@@ -332,11 +332,21 @@ pub(crate) async fn find_attachment(
                 .map_err(|_| AuthFailure::Internal)?,
             owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
             filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
-            mime_type: row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
-            size_bytes: row.try_get("size_bytes").map_err(|_| AuthFailure::Internal)?,
-            sha256_hex: row.try_get("sha256_hex").map_err(|_| AuthFailure::Internal)?,
-            object_key: row.try_get("object_key").map_err(|_| AuthFailure::Internal)?,
-            message_id: row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
+            mime_type: row
+                .try_get("mime_type")
+                .map_err(|_| AuthFailure::Internal)?,
+            size_bytes: row
+                .try_get("size_bytes")
+                .map_err(|_| AuthFailure::Internal)?,
+            sha256_hex: row
+                .try_get("sha256_hex")
+                .map_err(|_| AuthFailure::Internal)?,
+            object_key: row
+                .try_get("object_key")
+                .map_err(|_| AuthFailure::Internal)?,
+            message_id: row
+                .try_get("message_id")
+                .map_err(|_| AuthFailure::Internal)?,
         });
     }
 
@@ -406,18 +416,30 @@ pub(crate) async fn attachment_map_for_messages_db(
 
     let mut map_rows = Vec::with_capacity(rows.len());
     for row in rows {
-        let message_id: Option<String> = row.try_get("message_id").map_err(|_| AuthFailure::Internal)?;
+        let message_id: Option<String> = row
+            .try_get("message_id")
+            .map_err(|_| AuthFailure::Internal)?;
         map_rows.push(AttachmentMapDbRow {
             message_id,
             response: AttachmentResponseDbRow {
-                attachment_id: row.try_get("attachment_id").map_err(|_| AuthFailure::Internal)?,
+                attachment_id: row
+                    .try_get("attachment_id")
+                    .map_err(|_| AuthFailure::Internal)?,
                 guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
-                channel_id: row.try_get("channel_id").map_err(|_| AuthFailure::Internal)?,
+                channel_id: row
+                    .try_get("channel_id")
+                    .map_err(|_| AuthFailure::Internal)?,
                 owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
                 filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
-                mime_type: row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
-                size_bytes: row.try_get("size_bytes").map_err(|_| AuthFailure::Internal)?,
-                sha256_hex: row.try_get("sha256_hex").map_err(|_| AuthFailure::Internal)?,
+                mime_type: row
+                    .try_get("mime_type")
+                    .map_err(|_| AuthFailure::Internal)?,
+                size_bytes: row
+                    .try_get("size_bytes")
+                    .map_err(|_| AuthFailure::Internal)?,
+                sha256_hex: row
+                    .try_get("sha256_hex")
+                    .map_err(|_| AuthFailure::Internal)?,
             },
         });
     }
@@ -427,25 +449,18 @@ pub(crate) async fn attachment_map_for_messages_db(
 #[cfg(test)]
 mod tests {
     use super::{
-        attachment_map_for_messages_in_memory,
-        attachment_map_from_db_rows,
-        attachment_map_from_db_records, attachment_map_from_records,
-        attachment_map_record_from_db_row,
-        attachment_usage_for_user,
-        attachment_record_from_db_row,
-        attachment_record_from_db_fields,
-        attachments_for_message_in_memory,
-        attachment_responses_from_db_rows,
-        attachment_response_from_db_row,
-        attachment_response_from_db_fields,
-        find_attachment,
-        attachment_response_from_record, attachment_usage_for_owner,
-        attachment_usage_total_from_db,
-        attachments_from_ids_in_memory, parse_attachment_ids,
+        attachment_map_for_messages_in_memory, attachment_map_from_db_records,
+        attachment_map_from_db_rows, attachment_map_from_records,
+        attachment_map_record_from_db_row, attachment_record_from_db_fields,
+        attachment_record_from_db_row, attachment_response_from_db_fields,
+        attachment_response_from_db_row, attachment_response_from_record,
+        attachment_responses_from_db_rows, attachment_usage_for_owner, attachment_usage_for_user,
+        attachment_usage_total_from_db, attachments_for_message_in_memory,
+        attachments_from_ids_in_memory, find_attachment, parse_attachment_ids,
         validate_attachment_filename,
     };
-    use crate::server::core::{AppConfig, AppState, AttachmentRecord};
     use crate::server::core::MAX_ATTACHMENTS_PER_MESSAGE;
+    use crate::server::core::{AppConfig, AppState, AttachmentRecord};
     use crate::server::errors::AuthFailure;
     use crate::server::types::{AttachmentPath, AttachmentResponse};
     use filament_core::UserId;
@@ -579,7 +594,10 @@ mod tests {
         assert_eq!(record.size_bytes, 2048);
         assert_eq!(record.sha256_hex, "abc123");
         assert_eq!(record.object_key, "objects/key");
-        assert_eq!(record.message_id.as_deref(), Some("01ARZ3NDEKTSV4RRFFQ69G5FCC"));
+        assert_eq!(
+            record.message_id.as_deref(),
+            Some("01ARZ3NDEKTSV4RRFFQ69G5FCC")
+        );
     }
 
     #[test]
@@ -601,7 +619,10 @@ mod tests {
         assert_eq!(record.attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
         assert_eq!(record.owner_id.to_string(), "01ARZ3NDEKTSV4RRFFQ69G5FBB");
         assert_eq!(record.object_key, "objects/key");
-        assert_eq!(record.message_id.as_deref(), Some("01ARZ3NDEKTSV4RRFFQ69G5FCC"));
+        assert_eq!(
+            record.message_id.as_deref(),
+            Some("01ARZ3NDEKTSV4RRFFQ69G5FCC")
+        );
     }
 
     #[test]
@@ -669,8 +690,7 @@ mod tests {
             },
         ];
 
-        let responses =
-            attachment_responses_from_db_rows(rows).expect("rows should convert");
+        let responses = attachment_responses_from_db_rows(rows).expect("rows should convert");
         assert_eq!(responses.len(), 2);
         assert_eq!(responses[0].attachment_id, "a-1");
         assert_eq!(responses[1].attachment_id, "a-2");
@@ -893,11 +913,9 @@ mod tests {
             },
         );
 
-        let responses = attachments_from_ids_in_memory(
-            &attachments,
-            &[second_id.clone(), first_id.clone()],
-        )
-        .expect("attachment IDs should resolve");
+        let responses =
+            attachments_from_ids_in_memory(&attachments, &[second_id.clone(), first_id.clone()])
+                .expect("attachment IDs should resolve");
 
         assert_eq!(responses.len(), 2);
         assert_eq!(responses[0].attachment_id, second_id);

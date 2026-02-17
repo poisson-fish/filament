@@ -81,9 +81,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_presence_subscribe, presence_sync_dispatch_outcome,
-        try_enqueue_presence_sync_event, PresenceSyncDispatchOutcome,
-        PresenceSyncEnqueueResult,
+        apply_presence_subscribe, presence_sync_dispatch_outcome, try_enqueue_presence_sync_event,
+        PresenceSyncDispatchOutcome, PresenceSyncEnqueueResult,
     };
     use crate::server::core::ConnectionPresence;
 
@@ -103,7 +102,10 @@ mod tests {
             .expect("connection presence should exist");
 
         assert!(result.became_online);
-        assert_eq!(result.snapshot_user_ids, HashSet::from([user_id.to_string()]));
+        assert_eq!(
+            result.snapshot_user_ids,
+            HashSet::from([user_id.to_string()])
+        );
         assert!(presence
             .get(&connection_id)
             .expect("connection should remain")
@@ -138,19 +140,17 @@ mod tests {
             .expect("connection presence should exist");
 
         assert!(!result.became_online);
-        assert_eq!(result.snapshot_user_ids, HashSet::from([user_id.to_string()]));
+        assert_eq!(
+            result.snapshot_user_ids,
+            HashSet::from([user_id.to_string()])
+        );
     }
 
     #[test]
     fn returns_none_when_connection_is_missing() {
         let mut presence = HashMap::new();
 
-        let result = apply_presence_subscribe(
-            &mut presence,
-            Uuid::new_v4(),
-            UserId::new(),
-            "g-1",
-        );
+        let result = apply_presence_subscribe(&mut presence, Uuid::new_v4(), UserId::new(), "g-1");
 
         assert!(result.is_none());
     }

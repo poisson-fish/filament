@@ -25,10 +25,8 @@ mod tests {
     fn builds_offline_update_for_each_guild() {
         let user_id = UserId::new();
 
-        let updates = build_offline_presence_updates(
-            vec![String::from("g1"), String::from("g2")],
-            user_id,
-        );
+        let updates =
+            build_offline_presence_updates(vec![String::from("g1"), String::from("g2")], user_id);
 
         assert_eq!(updates.len(), 2);
         assert_eq!(updates[0].0, "g1");

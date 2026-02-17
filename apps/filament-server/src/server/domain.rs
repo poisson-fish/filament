@@ -4,46 +4,32 @@ use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet, Role,
 use sqlx::{PgPool, Row};
 use ulid::Ulid;
 
-mod moderation;
 mod attachments;
+mod moderation;
 mod permissions_eval;
 mod reactions;
 
 pub(crate) use attachments::{
-    attach_message_media,
-    attachment_responses_from_db_rows,
-    parse_attachment_ids, validate_attachment_filename,
+    attach_message_media, attachment_responses_from_db_rows, parse_attachment_ids,
+    validate_attachment_filename,
 };
-pub(crate) use moderation::{
-    enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client,
-};
+pub(crate) use moderation::{enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client};
 pub(crate) use permissions_eval::{
-    ensure_required_roles,
-    resolve_guild_permission_summary,
-    resolve_db_channel_permissions,
-    resolve_in_memory_channel_permissions,
-    normalize_assigned_role_ids,
-    role_ids_from_map, role_records_from_db_rows,
-    summarize_in_memory_guild_permissions,
-    sync_legacy_channel_overrides,
-    sync_legacy_role_assignments,
+    ensure_required_roles, normalize_assigned_role_ids, resolve_db_channel_permissions,
+    resolve_guild_permission_summary, resolve_in_memory_channel_permissions, role_ids_from_map,
+    role_records_from_db_rows, summarize_in_memory_guild_permissions,
+    sync_legacy_channel_overrides, sync_legacy_role_assignments,
 };
 pub(crate) use reactions::{
-    attach_message_reactions,
-    reaction_summaries_from_users,
-    validate_reaction_emoji,
+    attach_message_reactions, reaction_summaries_from_users, validate_reaction_emoji,
 };
 
 use super::{
     auth::now_unix,
-    core::{
-        AppState, AttachmentRecord, ChannelPermissionOverrideRecord,
-    },
+    core::{AppState, AttachmentRecord, ChannelPermissionOverrideRecord},
     db::{ensure_db_schema, role_from_i16},
     errors::AuthFailure,
-    permissions::{
-        all_permissions, default_everyone_permissions,
-    },
+    permissions::{all_permissions, default_everyone_permissions},
     types::{AttachmentPath, AttachmentResponse, ReactionResponse},
 };
 
@@ -230,8 +216,7 @@ async fn resolve_channel_permissions_db(
         })
         .collect::<Result<Vec<_>, AuthFailure>>()?;
 
-    let (roles, unknown_bits_seen, role_mask_updates) =
-        role_records_from_db_rows(role_inputs)?;
+    let (roles, unknown_bits_seen, role_mask_updates) = role_records_from_db_rows(role_inputs)?;
     for update in role_mask_updates {
         sqlx::query(
             "UPDATE guild_roles
@@ -274,12 +259,8 @@ async fn resolve_channel_permissions_db(
         .into_iter()
         .map(|row| row.try_get("role_id").map_err(|_| AuthFailure::Internal))
         .collect::<Result<Vec<String>, AuthFailure>>()?;
-    let assigned_role_ids = normalize_assigned_role_ids(
-        assignment_role_ids,
-        &roles,
-        legacy_role,
-        &role_ids,
-    );
+    let assigned_role_ids =
+        normalize_assigned_role_ids(assignment_role_ids, &roles, legacy_role, &role_ids);
 
     let guild_permission_summary =
         resolve_guild_permission_summary(&roles, &assigned_role_ids, &role_ids);
@@ -336,12 +317,9 @@ async fn resolve_channel_permissions_db(
             })
         })
         .collect::<Result<Vec<_>, AuthFailure>>()?;
-    let legacy_inputs = if override_inputs
-        .iter()
-        .any(|input| {
-            input.target_kind != OVERRIDE_TARGET_ROLE
-                && input.target_kind != OVERRIDE_TARGET_MEMBER
-        }) {
+    let legacy_inputs = if override_inputs.iter().any(|input| {
+        input.target_kind != OVERRIDE_TARGET_ROLE && input.target_kind != OVERRIDE_TARGET_MEMBER
+    }) {
         let legacy_rows = sqlx::query(
             "SELECT role, allow_mask, deny_mask
              FROM channel_role_overrides
@@ -442,12 +420,8 @@ async fn resolve_channel_permissions_in_memory(
         .unwrap_or_default();
     drop(guild_assignments);
 
-    let guild_permission_summary = summarize_in_memory_guild_permissions(
-        roles,
-        &assigned_role_ids,
-        legacy_role,
-        &role_ids,
-    );
+    let guild_permission_summary =
+        summarize_in_memory_guild_permissions(roles, &assigned_role_ids, legacy_role, &role_ids);
     let guild_permissions = guild_permission_summary.guild_permissions;
     let is_workspace_owner = guild_permission_summary.is_workspace_owner;
     let resolved_role = guild_permission_summary.resolved_role;
@@ -630,25 +604,25 @@ pub(crate) fn rows_to_attachment_responses(
     let mut attachment_rows = Vec::with_capacity(rows.len());
     for row in rows {
         attachment_rows.push(attachments::AttachmentResponseDbRow {
-                attachment_id: row
-                    .try_get("attachment_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                guild_id: row
-                    .try_get("guild_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                channel_id: row
-                    .try_get("channel_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
-                filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
-                mime_type: row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
-                size_bytes: row
-                    .try_get("size_bytes")
-                    .map_err(|_| AuthFailure::Internal)?,
-                sha256_hex: row
-                    .try_get("sha256_hex")
-                    .map_err(|_| AuthFailure::Internal)?,
-            });
+            attachment_id: row
+                .try_get("attachment_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+            channel_id: row
+                .try_get("channel_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
+            filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
+            mime_type: row
+                .try_get("mime_type")
+                .map_err(|_| AuthFailure::Internal)?,
+            size_bytes: row
+                .try_get("size_bytes")
+                .map_err(|_| AuthFailure::Internal)?,
+            sha256_hex: row
+                .try_get("sha256_hex")
+                .map_err(|_| AuthFailure::Internal)?,
+        });
     }
     attachment_responses_from_db_rows(attachment_rows)
 }
@@ -759,5 +733,4 @@ mod tests {
         assert_eq!(resolved_role, Role::Owner);
         assert_eq!(permissions.bits(), all_permissions().bits());
     }
-
 }

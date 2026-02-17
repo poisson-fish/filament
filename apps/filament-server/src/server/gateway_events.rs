@@ -6,55 +6,30 @@ mod presence_voice;
 mod profile;
 mod workspace;
 
-pub(crate) use envelope::GatewayEvent;
 pub(crate) use connection::{ready, subscribed};
+pub(crate) use envelope::GatewayEvent;
 pub(crate) use friend::{
-    friend_remove,
-    friend_request_create,
-    friend_request_delete,
-    friend_request_update,
+    friend_remove, friend_request_create, friend_request_delete, friend_request_update,
 };
 pub(crate) use message_channel::{
-    channel_create,
-    message_create,
-    message_delete,
-    message_reaction,
-    message_update,
+    channel_create, message_create, message_delete, message_reaction, message_update,
 };
 pub(crate) use presence_voice::{
-    presence_sync,
-    presence_update,
-    voice_participant_join,
-    voice_participant_leave,
-    voice_participant_sync,
-    voice_participant_update,
-    voice_stream_publish,
-    voice_stream_unpublish,
+    presence_sync, presence_update, voice_participant_join, voice_participant_leave,
+    voice_participant_sync, voice_participant_update, voice_stream_publish, voice_stream_unpublish,
     VoiceParticipantSnapshot,
-};
-pub(crate) use profile::{profile_avatar_update, profile_update};
-pub(crate) use workspace::{
-    workspace_channel_override_update,
-    workspace_ip_ban_sync,
-    workspace_member_add,
-    workspace_member_ban,
-    workspace_member_remove,
-    workspace_member_update,
-    workspace_role_assignment_add,
-    workspace_role_assignment_remove,
-    workspace_role_create,
-    workspace_role_delete,
-    workspace_role_reorder,
-    workspace_role_update,
-    workspace_update,
 };
 #[cfg(test)]
 pub(crate) use presence_voice::{
-    VOICE_PARTICIPANT_JOIN_EVENT,
-    VOICE_PARTICIPANT_LEAVE_EVENT,
-    VOICE_PARTICIPANT_UPDATE_EVENT,
-    VOICE_STREAM_PUBLISH_EVENT,
-    VOICE_STREAM_UNPUBLISH_EVENT,
+    VOICE_PARTICIPANT_JOIN_EVENT, VOICE_PARTICIPANT_LEAVE_EVENT, VOICE_PARTICIPANT_UPDATE_EVENT,
+    VOICE_STREAM_PUBLISH_EVENT, VOICE_STREAM_UNPUBLISH_EVENT,
+};
+pub(crate) use profile::{profile_avatar_update, profile_update};
+pub(crate) use workspace::{
+    workspace_channel_override_update, workspace_ip_ban_sync, workspace_member_add,
+    workspace_member_ban, workspace_member_remove, workspace_member_update,
+    workspace_role_assignment_add, workspace_role_assignment_remove, workspace_role_create,
+    workspace_role_delete, workspace_role_reorder, workspace_role_update, workspace_update,
 };
 #[cfg(test)]
 mod tests {

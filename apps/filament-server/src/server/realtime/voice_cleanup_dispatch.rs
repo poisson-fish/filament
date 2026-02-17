@@ -5,15 +5,11 @@ use crate::server::core::AppState;
 use super::{
     broadcast_channel_event,
     voice_cleanup_registry::{
-        disconnected_user_voice_removal_broadcasts,
-        expired_voice_removal_broadcasts,
+        disconnected_user_voice_removal_broadcasts, expired_voice_removal_broadcasts,
     },
 };
 
-pub(crate) async fn broadcast_expired_voice_removals(
-    state: &AppState,
-    now_unix: i64,
-) {
+pub(crate) async fn broadcast_expired_voice_removals(state: &AppState, now_unix: i64) {
     let planned = {
         let mut voice = state.voice_participants.write().await;
         expired_voice_removal_broadcasts(&mut voice, now_unix)
@@ -41,9 +37,7 @@ pub(crate) async fn broadcast_disconnected_user_voice_removals(
 
 #[cfg(test)]
 mod tests {
-    use crate::server::{
-        gateway_events::{self, GatewayEvent},
-    };
+    use crate::server::gateway_events::{self, GatewayEvent};
 
     fn sample_planned() -> Vec<(String, GatewayEvent)> {
         vec![

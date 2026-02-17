@@ -1,41 +1,41 @@
-mod voice_registration_events;
-mod hydration_in_memory;
-mod connection_subscriptions;
-mod subscription_insert;
+mod connection_disconnect_followups;
 mod connection_registry;
-mod hydration_in_memory_attachments;
-mod search_batch_drain;
-mod search_enqueue;
-mod search_apply_batch;
-mod subscribe_ack;
-mod hydration_merge;
-mod message_record;
-mod presence_disconnect_events;
-mod search_collect_db;
+mod connection_runtime;
+mod connection_subscriptions;
+mod emit_metrics;
 mod hydration_db;
-mod message_create_response;
+mod hydration_in_memory;
+mod hydration_in_memory_attachments;
+mod hydration_merge;
+mod hydration_runtime;
+mod ingress_message_create;
 mod ingress_parse;
 mod ingress_subscribe;
-mod ingress_message_create;
-mod voice_sync_dispatch;
-mod presence_sync_dispatch;
-mod search_query_input;
-mod voice_cleanup_registry;
-mod message_store_in_memory;
+mod message_create_response;
 mod message_emit;
-mod connection_disconnect_followups;
-mod voice_subscribe_sync;
+mod message_record;
+mod message_store_in_memory;
+mod presence_disconnect_events;
 mod presence_subscribe_events;
+mod presence_sync_dispatch;
+mod search_apply_batch;
+mod search_batch_drain;
 mod search_bootstrap;
-mod emit_metrics;
-mod voice_cleanup_dispatch;
-mod search_index_lookup;
-mod search_reconciliation_plan;
-mod search_query_run;
+mod search_collect_db;
 mod search_collect_runtime;
-mod hydration_runtime;
+mod search_enqueue;
+mod search_index_lookup;
+mod search_query_input;
+mod search_query_run;
+mod search_reconciliation_plan;
 mod search_runtime;
-mod connection_runtime;
+mod subscribe_ack;
+mod subscription_insert;
+mod voice_cleanup_dispatch;
+mod voice_cleanup_registry;
+mod voice_registration_events;
+mod voice_subscribe_sync;
+mod voice_sync_dispatch;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -62,80 +62,68 @@ use tokio::sync::{mpsc, watch};
 use ulid::Ulid;
 use uuid::Uuid;
 
-mod ingress_rate_limit;
-mod ingress_message;
+mod connection_control;
 mod fanout_channel;
 mod fanout_dispatch;
 mod fanout_guild;
 mod fanout_user;
+mod fanout_user_targets;
+mod hydration_order;
+mod ingress_command;
+mod ingress_message;
+mod ingress_rate_limit;
+mod message_attachment_bind;
+mod message_prepare;
 mod presence_disconnect;
 mod presence_subscribe;
-mod voice_presence;
-mod voice_registry;
-mod search_validation;
-mod connection_control;
-mod voice_registration;
-mod search_reconcile;
-mod hydration_order;
+mod search_apply;
+mod search_blocking;
 mod search_collect_all;
 mod search_collect_guild;
-mod search_indexed_message;
 mod search_collect_index_ids;
+mod search_indexed_message;
 mod search_query_exec;
-mod ingress_command;
-mod voice_cleanup_events;
-mod fanout_user_targets;
+mod search_reconcile;
 mod search_schema;
-mod search_apply;
-mod message_prepare;
-mod message_attachment_bind;
-mod search_blocking;
+mod search_validation;
+mod voice_cleanup_events;
+mod voice_presence;
+mod voice_registration;
+mod voice_registry;
 
-use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
-use ingress_rate_limit::allow_gateway_ingress;
-use ingress_command::{parse_gateway_ingress_command, GatewayIngressCommand};
-use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
-use search_query_exec::run_search_query_against_index;
-use message_prepare::prepare_message_body;
-use message_attachment_bind::bind_message_attachments_in_memory;
-use search_blocking::run_search_blocking_with_timeout;
+pub(crate) use connection_runtime::{
+    add_subscription, broadcast_channel_event, broadcast_guild_event, broadcast_user_event,
+    handle_presence_subscribe, handle_voice_subscribe, register_voice_participant_from_token,
+    remove_connection,
+};
+use hydration_db::collect_hydrated_messages_db;
 use hydration_in_memory::collect_hydrated_messages_in_memory;
 use hydration_in_memory_attachments::apply_hydration_attachments;
 use hydration_merge::merge_hydration_maps;
-use message_record::{build_in_memory_message_record, build_message_response_from_record};
-use hydration_db::collect_hydrated_messages_db;
-use message_create_response::build_db_created_message_response;
-use ingress_message_create::execute_message_create_command;
-use ingress_parse::{
-    classify_ingress_command_parse_error, IngressCommandParseClassification,
-};
-use ingress_subscribe::execute_subscribe_command;
-use message_store_in_memory::append_message_record;
-use message_emit::emit_message_create_and_index;
-pub(crate) use search_index_lookup::collect_index_message_ids_for_guild;
-pub(crate) use search_reconciliation_plan::plan_search_reconciliation;
-pub(crate) use search_query_run::run_search_query;
 pub(crate) use hydration_order::collect_hydrated_in_request_order;
+use ingress_command::{parse_gateway_ingress_command, GatewayIngressCommand};
+use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
+use ingress_message_create::execute_message_create_command;
+use ingress_parse::{classify_ingress_command_parse_error, IngressCommandParseClassification};
+use ingress_rate_limit::allow_gateway_ingress;
+use ingress_subscribe::execute_subscribe_command;
+use message_attachment_bind::bind_message_attachments_in_memory;
+use message_create_response::build_db_created_message_response;
+use message_emit::emit_message_create_and_index;
+use message_prepare::prepare_message_body;
+use message_record::{build_in_memory_message_record, build_message_response_from_record};
+use message_store_in_memory::append_message_record;
+use search_blocking::run_search_blocking_with_timeout;
+use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
+pub(crate) use search_index_lookup::collect_index_message_ids_for_guild;
+use search_query_exec::run_search_query_against_index;
+pub(crate) use search_query_run::run_search_query;
 pub(crate) use search_reconcile::compute_reconciliation;
+pub(crate) use search_reconciliation_plan::plan_search_reconciliation;
 pub(crate) use search_runtime::{
-    collect_all_indexed_messages,
-    collect_indexed_messages_for_guild,
-    ensure_search_bootstrapped,
-    enqueue_search_operation,
-    hydrate_messages_by_id,
-    indexed_message_from_response,
-    init_search_service,
-    validate_search_query,
-};
-pub(crate) use connection_runtime::{
-    add_subscription,
-    broadcast_channel_event,
-    broadcast_guild_event,
-    broadcast_user_event,
-    handle_presence_subscribe,
-    handle_voice_subscribe,
-    register_voice_participant_from_token,
-    remove_connection,
+    collect_all_indexed_messages, collect_indexed_messages_for_guild, enqueue_search_operation,
+    ensure_search_bootstrapped, hydrate_messages_by_id, indexed_message_from_response,
+    init_search_service, validate_search_query,
 };
 
 #[allow(dead_code)]
@@ -144,18 +132,12 @@ pub(crate) fn build_search_schema() -> (tantivy::schema::Schema, super::core::Se
 }
 
 use super::{
-    auth::{
-        authenticate_with_token, bearer_token, extract_client_ip, now_unix,
-        ClientIp,
-    },
-    core::{
-        AppState, AuthContext, ConnectionControl, ConnectionPresence,
-    },
+    auth::{authenticate_with_token, bearer_token, extract_client_ip, now_unix, ClientIp},
+    core::{AppState, AuthContext, ConnectionControl, ConnectionPresence},
     db::ensure_db_schema,
     domain::{
         attachments_for_message_in_memory, bind_message_attachments_db,
-        channel_permission_snapshot,
-        fetch_attachments_for_message_db, parse_attachment_ids,
+        channel_permission_snapshot, fetch_attachments_for_message_db, parse_attachment_ids,
         reaction_summaries_from_users,
     },
     errors::AuthFailure,
@@ -273,17 +255,15 @@ pub(crate) async fn handle_gateway_connection(
             break;
         };
 
-        let payload: Vec<u8> = match decode_gateway_ingress_message(
-            message,
-            state.runtime.max_gateway_event_bytes,
-        ) {
-            GatewayIngressMessageDecode::Payload(payload) => payload,
-            GatewayIngressMessageDecode::Continue => continue,
-            GatewayIngressMessageDecode::Disconnect(reason) => {
-                disconnect_reason = reason;
-                break;
-            }
-        };
+        let payload: Vec<u8> =
+            match decode_gateway_ingress_message(message, state.runtime.max_gateway_event_bytes) {
+                GatewayIngressMessageDecode::Payload(payload) => payload,
+                GatewayIngressMessageDecode::Continue => continue,
+                GatewayIngressMessageDecode::Disconnect(reason) => {
+                    disconnect_reason = reason;
+                    break;
+                }
+            };
 
         if !allow_gateway_ingress(
             &mut ingress,
@@ -333,13 +313,8 @@ pub(crate) async fn handle_gateway_connection(
                 }
             }
             GatewayIngressCommand::MessageCreate(request) => {
-                if let Err(reason) = execute_message_create_command(
-                    &state,
-                    &auth,
-                    client_ip,
-                    request,
-                )
-                .await
+                if let Err(reason) =
+                    execute_message_create_command(&state, &auth, client_ip, request).await
                 {
                     disconnect_reason = reason;
                     break;

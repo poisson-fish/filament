@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use crate::server::{
-    core::GuildRecord,
-    domain::reaction_summaries_from_users,
-    errors::AuthFailure,
+    core::GuildRecord, domain::reaction_summaries_from_users, errors::AuthFailure,
     types::MessageResponse,
 };
 

@@ -466,8 +466,14 @@ mod tests {
             123,
             None,
         ));
-        assert_eq!(payload["updated_fields"]["name"], Value::from("Guild Prime"));
-        assert_eq!(payload["updated_fields"]["visibility"], Value::from("public"));
+        assert_eq!(
+            payload["updated_fields"]["name"],
+            Value::from("Guild Prime")
+        );
+        assert_eq!(
+            payload["updated_fields"]["visibility"],
+            Value::from("public")
+        );
     }
 
     #[test]

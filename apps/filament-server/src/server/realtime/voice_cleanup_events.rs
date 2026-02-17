@@ -1,6 +1,6 @@
 use crate::server::{
-    core::VoiceParticipant,
     auth::channel_key,
+    core::VoiceParticipant,
     gateway_events::{self, GatewayEvent},
     realtime::voice_registry::VoiceParticipantRemoval,
 };
@@ -50,7 +50,6 @@ pub(crate) fn plan_voice_removal_broadcasts(
     }
     planned
 }
-
 
 #[cfg(test)]
 mod tests {

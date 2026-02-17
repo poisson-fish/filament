@@ -2,10 +2,7 @@ use std::collections::HashMap;
 
 use filament_core::tokenize_markdown;
 
-use crate::server::{
-    errors::AuthFailure,
-    types::MessageResponse,
-};
+use crate::server::{errors::AuthFailure, types::MessageResponse};
 
 type HydratedMessageRow = (String, String, String, String, String, i64);
 

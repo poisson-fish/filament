@@ -57,10 +57,8 @@ mod tests {
             (String::from("m1"), message("m1")),
             (String::from("m2"), message("m2")),
         ]);
-        let attachment_map = HashMap::from([(
-            String::from("m1"),
-            vec![attachment("a1"), attachment("a2")],
-        )]);
+        let attachment_map =
+            HashMap::from([(String::from("m1"), vec![attachment("a1"), attachment("a2")])]);
         let reaction_map = HashMap::from([(
             String::from("m2"),
             vec![ReactionResponse {

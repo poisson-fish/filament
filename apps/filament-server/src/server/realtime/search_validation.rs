@@ -56,7 +56,13 @@ mod tests {
 
     #[test]
     fn rejects_abusive_query_patterns() {
-        assert!(validate_search_query_limits("a b c d e f g h i j k l m n o p q r s t u", 20, 256, 50).is_err());
+        assert!(validate_search_query_limits(
+            "a b c d e f g h i j k l m n o p q r s t u",
+            20,
+            256,
+            50
+        )
+        .is_err());
         assert!(validate_search_query_limits("a*b?c*d?e*f", 20, 256, 50).is_err());
         assert!(validate_search_query_limits("a~b~c~", 20, 256, 50).is_err());
         assert!(validate_search_query_limits("author:alice", 20, 256, 50).is_err());

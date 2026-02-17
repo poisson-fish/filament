@@ -47,14 +47,13 @@ mod tests {
         let mut senders = HashMap::new();
         senders.insert(connection_id, sender_tx);
 
-        let removed = remove_connection_state(
-            &mut presence,
-            &mut controls,
-            &mut senders,
-            connection_id,
-        );
+        let removed =
+            remove_connection_state(&mut presence, &mut controls, &mut senders, connection_id);
 
-        assert_eq!(removed.expect("presence should be removed").user_id, user_id);
+        assert_eq!(
+            removed.expect("presence should be removed").user_id,
+            user_id
+        );
         assert!(!presence.contains_key(&connection_id));
         assert!(!controls.contains_key(&connection_id));
         assert!(!senders.contains_key(&connection_id));

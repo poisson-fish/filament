@@ -39,10 +39,7 @@ mod tests {
 
         match decode_gateway_ingress_message(message, 256) {
             GatewayIngressMessageDecode::Payload(payload) => {
-                assert_eq!(
-                    payload,
-                    b"{\"v\":1,\"t\":\"subscribe\",\"d\":{}}".to_vec()
-                );
+                assert_eq!(payload, b"{\"v\":1,\"t\":\"subscribe\",\"d\":{}}".to_vec());
             }
             GatewayIngressMessageDecode::Continue => panic!("expected payload"),
             GatewayIngressMessageDecode::Disconnect(reason) => {

@@ -195,10 +195,8 @@ async fn backfill_role_assignments_for_guild(
     for row in members {
         let user_id: String = row.try_get("user_id")?;
         let role_value: i16 = row.try_get("role")?;
-        let role_id = target_role_id_by_key(
-            role_ids,
-            target_role_key_for_legacy_role_value(role_value),
-        );
+        let role_id =
+            target_role_id_by_key(role_ids, target_role_key_for_legacy_role_value(role_value));
         sqlx::query(
             "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
              VALUES ($1, $2, $3, $4)
@@ -277,10 +275,8 @@ async fn backfill_channel_role_overrides_for_guild(
     for row in rows {
         let channel_id: String = row.try_get("channel_id")?;
         let role_value: i16 = row.try_get("role")?;
-        let target_role_id = target_role_id_by_key(
-            role_ids,
-            target_role_key_for_legacy_role_value(role_value),
-        );
+        let target_role_id =
+            target_role_id_by_key(role_ids, target_role_key_for_legacy_role_value(role_value));
         let allow_mask: i64 = row.try_get("allow_mask")?;
         let deny_mask: i64 = row.try_get("deny_mask")?;
 

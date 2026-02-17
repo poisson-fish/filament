@@ -82,8 +82,7 @@ mod tests {
 
     use super::{
         remove_user_voice_participant_removals, remove_user_voice_participants,
-        take_expired_voice_participant_removals,
-        take_expired_voice_participants,
+        take_expired_voice_participant_removals, take_expired_voice_participants,
     };
     use crate::server::core::{VoiceParticipant, VoiceParticipantsByChannel, VoiceStreamKind};
 

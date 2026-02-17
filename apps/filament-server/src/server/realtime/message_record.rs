@@ -102,8 +102,13 @@ mod tests {
             count: 2,
         }];
 
-        let response =
-            build_message_response_from_record(&record, "g1", "c1", attachments.clone(), reactions.clone());
+        let response = build_message_response_from_record(
+            &record,
+            "g1",
+            "c1",
+            attachments.clone(),
+            reactions.clone(),
+        );
 
         assert_eq!(response.message_id, "m2");
         assert_eq!(response.guild_id, "g1");

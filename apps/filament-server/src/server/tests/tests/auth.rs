@@ -80,7 +80,10 @@ async fn auth_flow_register_login_me_refresh_logout_and_replay_detection() {
         ))
         .unwrap();
     let refresh_after_logout_response = app.oneshot(refresh_after_logout).await.unwrap();
-    assert_eq!(refresh_after_logout_response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        refresh_after_logout_response.status(),
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
@@ -88,9 +91,7 @@ async fn register_requires_valid_hcaptcha_when_enabled() {
     let verify_url = spawn_hcaptcha_stub(false).await;
     let app = build_router(&AppConfig {
         captcha_hcaptcha_site_key: Some(String::from("10000000-ffff-ffff-ffff-000000000001")),
-        captcha_hcaptcha_secret: Some(String::from(
-            "0x0000000000000000000000000000000000000000",
-        )),
+        captcha_hcaptcha_secret: Some(String::from("0x0000000000000000000000000000000000000000")),
         captcha_verify_url: verify_url,
         ..AppConfig::default()
     })
@@ -136,9 +137,7 @@ async fn register_accepts_valid_hcaptcha_when_enabled() {
     let verify_url = spawn_hcaptcha_stub(true).await;
     let app = build_router(&AppConfig {
         captcha_hcaptcha_site_key: Some(String::from("10000000-ffff-ffff-ffff-000000000001")),
-        captcha_hcaptcha_secret: Some(String::from(
-            "0x0000000000000000000000000000000000000000",
-        )),
+        captcha_hcaptcha_secret: Some(String::from("0x0000000000000000000000000000000000000000")),
         captcha_verify_url: verify_url,
         ..AppConfig::default()
     })
@@ -280,7 +279,9 @@ async fn auth_rate_limit_ignores_forwarded_headers_when_proxy_is_untrusted() {
 async fn auth_rate_limit_uses_forwarded_headers_for_trusted_proxy_peers() {
     let app = build_router(&AppConfig {
         auth_route_requests_per_minute: 1,
-        trusted_proxy_cidrs: vec![IpNetwork::try_from(String::from("10.0.0.0/8")).expect("valid cidr")],
+        trusted_proxy_cidrs: vec![
+            IpNetwork::try_from(String::from("10.0.0.0/8")).expect("valid cidr")
+        ],
         ..AppConfig::default()
     })
     .unwrap();

@@ -398,8 +398,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
     }
 
-    mod auth;
     mod audit;
+    mod auth;
     mod directory;
     mod friend;
     mod gateway;

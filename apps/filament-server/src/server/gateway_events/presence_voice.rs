@@ -338,8 +338,14 @@ mod tests {
             vec![snapshot(user_id)],
             99,
         ));
-        assert_eq!(payload["participants"][0]["user_id"], Value::from(user_id.to_string()));
-        assert_eq!(payload["participants"][0]["is_video_enabled"], Value::from(true));
+        assert_eq!(
+            payload["participants"][0]["user_id"],
+            Value::from(user_id.to_string())
+        );
+        assert_eq!(
+            payload["participants"][0]["is_video_enabled"],
+            Value::from(true)
+        );
     }
 
     #[test]

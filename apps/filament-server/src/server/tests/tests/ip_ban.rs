@@ -82,8 +82,7 @@ async fn guild_ip_ban_endpoints_add_list_remove_and_redact_payloads() {
     assert_eq!(owner_bans[0]["source_user_id"], target_user_id);
 
     let (moderator_list_status, moderator_list_payload) =
-        list_guild_ip_bans_for_test(&app, &moderator_auth, "203.0.113.241", &guild_id, None)
-            .await;
+        list_guild_ip_bans_for_test(&app, &moderator_auth, "203.0.113.241", &guild_id, None).await;
     assert_eq!(moderator_list_status, StatusCode::OK);
     assert!(moderator_list_payload.is_some());
 
@@ -96,22 +95,16 @@ async fn guild_ip_ban_endpoints_add_list_remove_and_redact_payloads() {
     );
 
     let (outsider_list_status, outsider_list_payload) =
-        list_guild_ip_bans_for_test(&app, &outsider_auth, "203.0.113.243", &guild_id, None)
-            .await;
+        list_guild_ip_bans_for_test(&app, &outsider_auth, "203.0.113.243", &guild_id, None).await;
     assert_eq!(outsider_list_status, StatusCode::FORBIDDEN);
     assert_eq!(
         outsider_list_payload.expect("outsider list payload")["error"],
         "forbidden"
     );
 
-    let (remove_status, remove_payload) = remove_guild_ip_ban_for_test(
-        &app,
-        &moderator_auth,
-        "203.0.113.241",
-        &guild_id,
-        &ban_id,
-    )
-    .await;
+    let (remove_status, remove_payload) =
+        remove_guild_ip_ban_for_test(&app, &moderator_auth, "203.0.113.241", &guild_id, &ban_id)
+            .await;
     assert_eq!(remove_status, StatusCode::OK);
     assert_eq!(remove_payload.expect("remove payload")["accepted"], true);
 
@@ -131,10 +124,8 @@ async fn guild_ip_ban_endpoints_add_list_remove_and_redact_payloads() {
 async fn directory_join_rejects_on_matching_guild_ip_ban() {
     let app = build_router(&AppConfig::default()).unwrap();
     let owner_auth = register_and_login_as(&app, "owner_join_ip_ban", "203.0.113.245").await;
-    let observed_auth =
-        register_and_login_as(&app, "observed_join_ip_ban", "203.0.113.246").await;
-    let blocked_auth =
-        register_and_login_as(&app, "blocked_join_ip_ban", "203.0.113.247").await;
+    let observed_auth = register_and_login_as(&app, "observed_join_ip_ban", "203.0.113.246").await;
+    let blocked_auth = register_and_login_as(&app, "blocked_join_ip_ban", "203.0.113.247").await;
 
     let guild_id = create_guild_with_visibility_for_test(
         &app,
@@ -176,8 +167,7 @@ async fn directory_join_rejects_on_matching_guild_ip_ban() {
 async fn guild_scoped_endpoints_reject_active_ip_bans_and_allow_after_expiry() {
     let app = build_router(&AppConfig::default()).unwrap();
     let owner_auth = register_and_login_as(&app, "owner_surface_ip_ban", "203.0.113.248").await;
-    let member_auth =
-        register_and_login_as(&app, "member_surface_ip_ban", "203.0.113.249").await;
+    let member_auth = register_and_login_as(&app, "member_surface_ip_ban", "203.0.113.249").await;
 
     let guild_id = create_guild_with_visibility_for_test(
         &app,
@@ -187,8 +177,7 @@ async fn guild_scoped_endpoints_reject_active_ip_bans_and_allow_after_expiry() {
         "public",
     )
     .await;
-    let channel_id =
-        create_channel_for_test(&app, &owner_auth, "203.0.113.248", &guild_id).await;
+    let channel_id = create_channel_for_test(&app, &owner_auth, "203.0.113.248", &guild_id).await;
     let member_user_id = user_id_from_me(&app, &member_auth, "203.0.113.249").await;
 
     let (join_status, _) =

@@ -47,7 +47,10 @@ async fn friendship_request_acceptance_and_list_management_work() {
     .await;
     assert_eq!(bob_requests_status, StatusCode::OK);
     let bob_requests_payload = bob_requests_payload.unwrap();
-    assert_eq!(bob_requests_payload["incoming"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        bob_requests_payload["incoming"].as_array().unwrap().len(),
+        1
+    );
     assert_eq!(
         bob_requests_payload["incoming"][0]["sender_user_id"]
             .as_str()
@@ -76,7 +79,13 @@ async fn friendship_request_acceptance_and_list_management_work() {
     )
     .await;
     assert_eq!(alice_friends_status, StatusCode::OK);
-    assert_eq!(alice_friends_payload.unwrap()["friends"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        alice_friends_payload.unwrap()["friends"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 
     let (bob_friends_status, bob_friends_payload) = authed_json_request(
         &app,
@@ -117,7 +126,10 @@ async fn friendship_request_acceptance_and_list_management_work() {
     .await;
     assert_eq!(alice_empty_status, StatusCode::OK);
     assert_eq!(
-        alice_empty_payload.unwrap()["friends"].as_array().unwrap().len(),
+        alice_empty_payload.unwrap()["friends"]
+            .as_array()
+            .unwrap()
+            .len(),
         0
     );
 }

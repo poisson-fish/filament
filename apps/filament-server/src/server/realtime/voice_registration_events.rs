@@ -6,8 +6,7 @@ use crate::server::{
 };
 
 use super::{
-    voice_presence::voice_snapshot_from_record,
-    voice_registration::VoiceRegistrationTransition,
+    voice_presence::voice_snapshot_from_record, voice_registration::VoiceRegistrationTransition,
 };
 
 pub(crate) fn plan_voice_registration_events(
@@ -188,10 +187,7 @@ mod tests {
             plan_voice_registration_events(transition, "g2", "c2", current_user, "current", 9);
 
         assert_eq!(planned.len(), 7);
-        let removed_key_events = planned
-            .iter()
-            .filter(|(key, _)| key == "g1:c1")
-            .count();
+        let removed_key_events = planned.iter().filter(|(key, _)| key == "g1:c1").count();
         assert_eq!(removed_key_events, 3);
 
         let join_count = planned
@@ -231,8 +227,7 @@ mod tests {
             unpublished: Vec::new(),
         };
 
-        let planned =
-            plan_voice_registration_events(transition, "g1", "c1", UserId::new(), "u", 5);
+        let planned = plan_voice_registration_events(transition, "g1", "c1", UserId::new(), "u", 5);
 
         assert!(planned.is_empty());
     }

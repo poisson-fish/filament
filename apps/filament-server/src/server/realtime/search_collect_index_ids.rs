@@ -54,9 +54,7 @@ mod tests {
 
     use super::collect_index_message_ids_for_guild;
     use crate::server::{
-        core::SearchIndexState,
-        errors::AuthFailure,
-        realtime::build_search_schema,
+        core::SearchIndexState, errors::AuthFailure, realtime::build_search_schema,
     };
 
     fn search_state_with_docs() -> SearchIndexState {

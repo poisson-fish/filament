@@ -13,13 +13,8 @@ pub(crate) fn dispatch_channel_payload(
 ) -> usize {
     let mut delivered = 0usize;
     if let Some(listeners) = subscriptions.get_mut(key) {
-        delivered = dispatch_gateway_payload(
-            listeners,
-            payload,
-            event_type,
-            "channel",
-            slow_connections,
-        );
+        delivered =
+            dispatch_gateway_payload(listeners, payload, event_type, "channel", slow_connections);
         if listeners.is_empty() {
             subscriptions.remove(key);
         }
@@ -41,7 +36,10 @@ mod tests {
         let keep_id = Uuid::new_v4();
         let (keep_sender, mut keep_receiver) = mpsc::channel::<String>(1);
 
-        let mut subscriptions = HashMap::from([(String::from("g1:c1"), HashMap::from([(keep_id, keep_sender)]))]);
+        let mut subscriptions = HashMap::from([(
+            String::from("g1:c1"),
+            HashMap::from([(keep_id, keep_sender)]),
+        )]);
         let mut slow_connections = Vec::new();
 
         let delivered = dispatch_channel_payload(

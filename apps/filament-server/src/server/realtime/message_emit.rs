@@ -6,9 +6,7 @@ use crate::server::{
     types::MessageResponse,
 };
 
-use super::{
-    broadcast_channel_event, enqueue_search_operation, indexed_message_from_response,
-};
+use super::{broadcast_channel_event, enqueue_search_operation, indexed_message_from_response};
 
 pub(crate) fn message_upsert_operation(response: &MessageResponse) -> SearchOperation {
     SearchOperation::Upsert(indexed_message_from_response(response))
@@ -30,10 +28,7 @@ mod tests {
     use filament_core::MarkdownToken;
 
     use super::message_upsert_operation;
-    use crate::server::{
-        core::SearchOperation,
-        types::MessageResponse,
-    };
+    use crate::server::{core::SearchOperation, types::MessageResponse};
 
     #[test]
     fn message_upsert_operation_maps_response_fields() {

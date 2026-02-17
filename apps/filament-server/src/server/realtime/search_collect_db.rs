@@ -118,8 +118,8 @@ mod tests {
     #[test]
     fn enforce_guild_collect_doc_cap_rejects_over_cap_results() {
         assert!(enforce_guild_collect_doc_cap(2, 2).is_ok());
-        let error = enforce_guild_collect_doc_cap(3, 2)
-            .expect_err("over-cap row count should fail closed");
+        let error =
+            enforce_guild_collect_doc_cap(3, 2).expect_err("over-cap row count should fail closed");
         assert!(matches!(error, AuthFailure::InvalidRequest));
     }
 }

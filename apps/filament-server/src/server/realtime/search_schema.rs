@@ -1,6 +1,4 @@
-use tantivy::schema::{
-    NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING,
-};
+use tantivy::schema::{NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING};
 
 use crate::server::core::SearchFields;
 

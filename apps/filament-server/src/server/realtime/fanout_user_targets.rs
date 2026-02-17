@@ -15,7 +15,6 @@ pub(crate) fn connection_ids_for_user(
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};

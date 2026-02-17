@@ -48,10 +48,8 @@ mod tests {
             (String::from("m3"), message("m3")),
         ]);
 
-        let ordered = collect_hydrated_in_request_order(
-            by_id,
-            &[String::from("m3"), String::from("m1")],
-        );
+        let ordered =
+            collect_hydrated_in_request_order(by_id, &[String::from("m3"), String::from("m1")]);
 
         let ids: Vec<String> = ordered.into_iter().map(|entry| entry.message_id).collect();
         assert_eq!(ids, vec![String::from("m3"), String::from("m1")]);

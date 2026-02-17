@@ -76,8 +76,20 @@ async fn channel_broadcast_targets_only_matching_subscription_key() {
     let state = AppState::new(&AppConfig::default()).unwrap();
     let (tx_target, mut rx_target) = mpsc::channel::<String>(2);
     let (tx_other, mut rx_other) = mpsc::channel::<String>(2);
-    add_subscription(&state, Uuid::new_v4(), channel_key("g", "c-target"), tx_target).await;
-    add_subscription(&state, Uuid::new_v4(), channel_key("g", "c-other"), tx_other).await;
+    add_subscription(
+        &state,
+        Uuid::new_v4(),
+        channel_key("g", "c-target"),
+        tx_target,
+    )
+    .await;
+    add_subscription(
+        &state,
+        Uuid::new_v4(),
+        channel_key("g", "c-other"),
+        tx_other,
+    )
+    .await;
 
     let event = gateway_events::subscribed("g", "c-target");
     broadcast_channel_event(&state, &channel_key("g", "c-target"), &event).await;
@@ -86,7 +98,10 @@ async fn channel_broadcast_targets_only_matching_subscription_key() {
     let target_value: Value = serde_json::from_str(&target_payload).unwrap();
     assert_eq!(target_value["d"]["channel_id"], "c-target");
     let other_result = tokio::time::timeout(Duration::from_millis(25), rx_other.recv()).await;
-    assert!(other_result.is_err(), "unexpected event on non-target channel");
+    assert!(
+        other_result.is_err(),
+        "unexpected event on non-target channel"
+    );
 }
 
 #[tokio::test]
@@ -102,7 +117,13 @@ async fn guild_broadcast_delivers_once_per_connection_and_skips_other_guilds() {
         tx_target.clone(),
     )
     .await;
-    add_subscription(&state, connection_id, channel_key("g-main", "c-2"), tx_target).await;
+    add_subscription(
+        &state,
+        connection_id,
+        channel_key("g-main", "c-2"),
+        tx_target,
+    )
+    .await;
     add_subscription(
         &state,
         Uuid::new_v4(),

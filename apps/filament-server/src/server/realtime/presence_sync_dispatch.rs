@@ -4,18 +4,15 @@ use crate::server::gateway_events::GatewayEvent;
 use crate::server::metrics::{record_gateway_event_dropped, record_gateway_event_emitted};
 
 use super::presence_subscribe::{
-    presence_sync_dispatch_outcome, try_enqueue_presence_sync_event,
-    PresenceSyncDispatchOutcome,
+    presence_sync_dispatch_outcome, try_enqueue_presence_sync_event, PresenceSyncDispatchOutcome,
 };
 
 pub(crate) fn dispatch_presence_sync_event(
     outbound_tx: &mpsc::Sender<String>,
     event: GatewayEvent,
 ) -> PresenceSyncDispatchOutcome {
-    let outcome = presence_sync_dispatch_outcome(try_enqueue_presence_sync_event(
-        outbound_tx,
-        event.payload,
-    ));
+    let outcome =
+        presence_sync_dispatch_outcome(try_enqueue_presence_sync_event(outbound_tx, event.payload));
     match outcome {
         PresenceSyncDispatchOutcome::Emitted => {
             record_gateway_event_emitted("connection", event.event_type)
@@ -47,7 +44,10 @@ mod tests {
         let outcome = dispatch_presence_sync_event(&tx, event);
 
         assert!(matches!(outcome, PresenceSyncDispatchOutcome::Emitted));
-        assert_eq!(rx.try_recv().ok().as_deref(), Some(expected_payload.as_str()));
+        assert_eq!(
+            rx.try_recv().ok().as_deref(),
+            Some(expected_payload.as_str())
+        );
     }
 
     #[test]

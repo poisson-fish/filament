@@ -6,28 +6,26 @@ use tokio::sync::mpsc;
 
 use crate::server::{
     core::{
-        AppState, IndexedMessage, SearchCommand, SearchFields, SearchIndexState,
-        SearchOperation, SearchService, DEFAULT_SEARCH_RESULT_LIMIT,
-        SEARCH_INDEX_QUEUE_CAPACITY,
+        AppState, IndexedMessage, SearchCommand, SearchFields, SearchIndexState, SearchOperation,
+        SearchService, DEFAULT_SEARCH_RESULT_LIMIT, SEARCH_INDEX_QUEUE_CAPACITY,
     },
     errors::AuthFailure,
     types::{MessageResponse, SearchQuery},
 };
 
 use super::{
+    hydration_runtime::hydrate_messages_by_id_runtime,
     search_apply::apply_search_operation as apply_search_operation_impl,
     search_apply_batch::apply_search_batch_with_ack,
+    search_batch_drain::drain_search_batch,
     search_bootstrap::build_search_rebuild_operation,
     search_collect_runtime::{
-        collect_all_indexed_messages_runtime,
-        collect_indexed_messages_for_guild_runtime,
+        collect_all_indexed_messages_runtime, collect_indexed_messages_for_guild_runtime,
     },
     search_enqueue::enqueue_search_command,
     search_indexed_message::indexed_message_from_response as indexed_message_from_response_impl,
     search_query_input::validate_search_query_request,
     search_schema::build_search_schema as build_search_schema_impl,
-    search_batch_drain::drain_search_batch,
-    hydration_runtime::hydrate_messages_by_id_runtime,
 };
 
 const SEARCH_WORKER_BATCH_LIMIT: usize = 128;

@@ -1,7 +1,4 @@
-use crate::server::{
-    core::IndexedMessage,
-    types::MessageResponse,
-};
+use crate::server::{core::IndexedMessage, types::MessageResponse};
 
 pub(crate) fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
     IndexedMessage {

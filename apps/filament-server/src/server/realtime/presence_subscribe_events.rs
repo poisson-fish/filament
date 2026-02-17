@@ -59,10 +59,7 @@ mod tests {
         let first_snapshot = UserId::new().to_string();
         let second_snapshot = UserId::new().to_string();
         let result = PresenceSubscribeResult {
-            snapshot_user_ids: HashSet::from([
-                first_snapshot.clone(),
-                second_snapshot.clone(),
-            ]),
+            snapshot_user_ids: HashSet::from([first_snapshot.clone(), second_snapshot.clone()]),
             became_online: false,
         };
 

@@ -187,5 +187,8 @@ async fn directory_join_route_enforces_per_user_rate_limit() {
     let (third_status, third_payload) =
         join_public_guild_for_test(&app, &joiner_auth, "203.0.113.217", &guild_id).await;
     assert_eq!(third_status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(third_payload.expect("rate limit payload")["error"], "rate_limited");
+    assert_eq!(
+        third_payload.expect("rate limit payload")["error"],
+        "rate_limited"
+    );
 }

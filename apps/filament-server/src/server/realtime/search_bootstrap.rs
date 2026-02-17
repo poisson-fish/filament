@@ -1,8 +1,6 @@
 use crate::server::core::{IndexedMessage, SearchOperation};
 
-pub(crate) fn build_search_rebuild_operation(
-    docs: Vec<IndexedMessage>,
-) -> SearchOperation {
+pub(crate) fn build_search_rebuild_operation(docs: Vec<IndexedMessage>) -> SearchOperation {
     SearchOperation::Rebuild { docs }
 }
 

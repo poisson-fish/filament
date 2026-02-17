@@ -6,8 +6,7 @@ use crate::server::{
     realtime::{
         voice_cleanup_events::plan_voice_removal_broadcasts,
         voice_registry::{
-            remove_user_voice_participant_removals,
-            take_expired_voice_participant_removals,
+            remove_user_voice_participant_removals, take_expired_voice_participant_removals,
         },
     },
 };
@@ -35,9 +34,7 @@ mod tests {
 
     use filament_core::UserId;
 
-    use super::{
-        disconnected_user_voice_removal_broadcasts, expired_voice_removal_broadcasts,
-    };
+    use super::{disconnected_user_voice_removal_broadcasts, expired_voice_removal_broadcasts};
     use crate::server::{
         core::{VoiceParticipant, VoiceParticipantsByChannel, VoiceStreamKind},
         gateway_events::{VOICE_PARTICIPANT_LEAVE_EVENT, VOICE_STREAM_UNPUBLISH_EVENT},

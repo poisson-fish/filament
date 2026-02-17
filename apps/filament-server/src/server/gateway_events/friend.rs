@@ -144,12 +144,7 @@ mod tests {
     #[test]
     fn friend_request_create_event_emits_recipient_username() {
         let payload = parse_payload(friend_request_create(
-            "req-1",
-            "user-1",
-            "alice",
-            "user-2",
-            "bob",
-            77,
+            "req-1", "user-1", "alice", "user-2", "bob", 77,
         ));
         assert_eq!(payload["recipient_username"], Value::from("bob"));
     }
@@ -157,13 +152,7 @@ mod tests {
     #[test]
     fn friend_request_update_event_emits_accepted_state() {
         let payload = parse_payload(friend_request_update(
-            "req-1",
-            "user-1",
-            "user-2",
-            "bob",
-            88,
-            89,
-            None,
+            "req-1", "user-1", "user-2", "bob", 88, 89, None,
         ));
         assert_eq!(payload["state"], Value::from("accepted"));
     }

@@ -102,9 +102,7 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         ));
     }
     if config.gateway_ingress_window.is_zero() {
-        return Err(anyhow!(
-            "gateway ingress window must be at least 1 second"
-        ));
+        return Err(anyhow!("gateway ingress window must be at least 1 second"));
     }
     if config.max_gateway_event_bytes > filament_protocol::MAX_EVENT_BYTES {
         return Err(anyhow!(
