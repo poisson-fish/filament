@@ -4,6 +4,8 @@ use filament_core::{ChannelKind, Permission, PermissionSet, Role};
 
 use self::migrations::v1_hierarchical_permissions::backfill_hierarchical_permission_schema;
 use self::migrations::v2_attachment_schema::apply_attachment_schema;
+use self::migrations::v3_social_graph_schema::apply_social_graph_schema;
+use self::migrations::v4_moderation_audit_schema::apply_moderation_audit_schema;
 pub(crate) use self::migrations::v1_hierarchical_permissions::seed_hierarchical_permissions_for_new_guild;
 
 use super::{
@@ -11,39 +13,6 @@ use super::{
     errors::AuthFailure,
 };
 
-const CREATE_USER_IP_OBSERVATIONS_TABLE_SQL: &str =
-    "CREATE TABLE IF NOT EXISTS user_ip_observations (
-                    observation_id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    ip_cidr TEXT NOT NULL,
-                    first_seen_at_unix BIGINT NOT NULL,
-                    last_seen_at_unix BIGINT NOT NULL
-                )";
-const CREATE_USER_IP_OBSERVATIONS_UNIQUE_INDEX_SQL: &str =
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ip_observations_user_ip_unique
-                    ON user_ip_observations(user_id, ip_cidr)";
-const CREATE_GUILD_IP_BANS_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS guild_ip_bans (
-                    ban_id TEXT PRIMARY KEY,
-                    guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
-                    ip_cidr TEXT NOT NULL,
-                    source_user_id TEXT NULL REFERENCES users(user_id) ON DELETE SET NULL,
-                    reason TEXT NOT NULL,
-                    created_by_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    created_at_unix BIGINT NOT NULL,
-                    expires_at_unix BIGINT NULL
-                )";
-const CREATE_USER_IP_OBSERVATIONS_USER_LAST_SEEN_INDEX_SQL: &str =
-    "CREATE INDEX IF NOT EXISTS idx_user_ip_observations_user_last_seen
-                    ON user_ip_observations(user_id, last_seen_at_unix DESC)";
-const CREATE_GUILD_IP_BANS_GUILD_CREATED_INDEX_SQL: &str =
-    "CREATE INDEX IF NOT EXISTS idx_guild_ip_bans_guild_created
-                    ON guild_ip_bans(guild_id, created_at_unix DESC)";
-const CREATE_AUDIT_LOGS_GUILD_CREATED_INDEX_SQL: &str =
-    "CREATE INDEX IF NOT EXISTS idx_audit_logs_guild_created
-                    ON audit_logs(guild_id, created_at_unix DESC)";
-const CREATE_AUDIT_LOGS_GUILD_ACTION_CREATED_INDEX_SQL: &str =
-    "CREATE INDEX IF NOT EXISTS idx_audit_logs_guild_action_created
-                    ON audit_logs(guild_id, action, created_at_unix DESC)";
 const CREATE_GUILD_ROLES_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS guild_roles (
                     role_id TEXT PRIMARY KEY,
                     guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
@@ -314,92 +283,8 @@ pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure
 
             apply_attachment_schema(&mut tx).await?;
 
-            sqlx::query(
-                "CREATE TABLE IF NOT EXISTS friendships (
-                    user_a_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    user_b_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    created_at_unix BIGINT NOT NULL,
-                    CHECK (user_a_id < user_b_id),
-                    PRIMARY KEY(user_a_id, user_b_id)
-                )",
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query(
-                "CREATE TABLE IF NOT EXISTS friendship_requests (
-                    request_id TEXT PRIMARY KEY,
-                    sender_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    recipient_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    created_at_unix BIGINT NOT NULL,
-                    CHECK (sender_user_id <> recipient_user_id)
-                )",
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS idx_friendship_requests_sender
-                    ON friendship_requests(sender_user_id)",
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS idx_friendship_requests_recipient
-                    ON friendship_requests(recipient_user_id)",
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query(
-                "CREATE TABLE IF NOT EXISTS guild_bans (
-                    guild_id TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
-                    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    banned_by_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    created_at_unix BIGINT NOT NULL,
-                    PRIMARY KEY(guild_id, user_id)
-                )",
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query(CREATE_USER_IP_OBSERVATIONS_TABLE_SQL)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(CREATE_USER_IP_OBSERVATIONS_UNIQUE_INDEX_SQL)
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query(CREATE_GUILD_IP_BANS_TABLE_SQL)
-            .execute(&mut *tx)
-            .await?;
-
-            sqlx::query(
-                "CREATE TABLE IF NOT EXISTS audit_logs (
-                    audit_id TEXT PRIMARY KEY,
-                    guild_id TEXT NULL,
-                    actor_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    target_user_id TEXT NULL,
-                    action TEXT NOT NULL,
-                    details_json TEXT NOT NULL,
-                    created_at_unix BIGINT NOT NULL
-                )",
-            )
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(CREATE_USER_IP_OBSERVATIONS_USER_LAST_SEEN_INDEX_SQL)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(CREATE_GUILD_IP_BANS_GUILD_CREATED_INDEX_SQL)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(CREATE_AUDIT_LOGS_GUILD_CREATED_INDEX_SQL)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(CREATE_AUDIT_LOGS_GUILD_ACTION_CREATED_INDEX_SQL)
-            .execute(&mut *tx)
-            .await?;
+            apply_social_graph_schema(&mut tx).await?;
+            apply_moderation_audit_schema(&mut tx).await?;
             sqlx::query(CREATE_GUILD_ROLES_GUILD_POSITION_INDEX_SQL)
                 .execute(&mut *tx)
                 .await?;
@@ -516,12 +401,8 @@ pub(crate) fn permission_list_from_set(value: PermissionSet) -> Vec<Permission> 
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_db_schema, CREATE_AUDIT_LOGS_GUILD_ACTION_CREATED_INDEX_SQL,
-        CREATE_AUDIT_LOGS_GUILD_CREATED_INDEX_SQL, CREATE_CHANNEL_PERMISSION_OVERRIDES_TABLE_SQL,
-        CREATE_GUILD_IP_BANS_GUILD_CREATED_INDEX_SQL, CREATE_GUILD_IP_BANS_TABLE_SQL,
+        ensure_db_schema, CREATE_CHANNEL_PERMISSION_OVERRIDES_TABLE_SQL,
         CREATE_GUILD_ROLES_TABLE_SQL, CREATE_GUILD_ROLE_MEMBERS_TABLE_SQL,
-        CREATE_USER_IP_OBSERVATIONS_TABLE_SQL, CREATE_USER_IP_OBSERVATIONS_UNIQUE_INDEX_SQL,
-        CREATE_USER_IP_OBSERVATIONS_USER_LAST_SEEN_INDEX_SQL,
     };
     use crate::server::core::{AppConfig, AppState};
 
@@ -538,17 +419,6 @@ mod tests {
 
     #[test]
     fn phase_one_schema_statements_define_required_tables_and_indexes() {
-        assert!(CREATE_USER_IP_OBSERVATIONS_TABLE_SQL.contains("user_ip_observations"));
-        assert!(CREATE_GUILD_IP_BANS_TABLE_SQL.contains("guild_ip_bans"));
-        assert!(CREATE_USER_IP_OBSERVATIONS_UNIQUE_INDEX_SQL
-            .contains("idx_user_ip_observations_user_ip_unique"));
-        assert!(CREATE_USER_IP_OBSERVATIONS_USER_LAST_SEEN_INDEX_SQL
-            .contains("idx_user_ip_observations_user_last_seen"));
-        assert!(CREATE_GUILD_IP_BANS_GUILD_CREATED_INDEX_SQL
-            .contains("idx_guild_ip_bans_guild_created"));
-        assert!(CREATE_AUDIT_LOGS_GUILD_CREATED_INDEX_SQL.contains("idx_audit_logs_guild_created"));
-        assert!(CREATE_AUDIT_LOGS_GUILD_ACTION_CREATED_INDEX_SQL
-            .contains("idx_audit_logs_guild_action_created"));
         assert!(CREATE_GUILD_ROLES_TABLE_SQL.contains("guild_roles"));
         assert!(CREATE_GUILD_ROLE_MEMBERS_TABLE_SQL.contains("guild_role_members"));
         assert!(
