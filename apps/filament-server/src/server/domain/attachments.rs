@@ -61,6 +61,54 @@ pub(crate) fn attachment_response_from_record(record: &AttachmentRecord) -> Atta
     }
 }
 
+pub(crate) fn attachment_response_from_db_fields(
+    attachment_id: String,
+    guild_id: String,
+    channel_id: String,
+    owner_id: String,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
+    sha256_hex: String,
+) -> Result<AttachmentResponse, AuthFailure> {
+    Ok(AttachmentResponse {
+        attachment_id,
+        guild_id,
+        channel_id,
+        owner_id,
+        filename,
+        mime_type,
+        size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
+        sha256_hex,
+    })
+}
+
+pub(crate) fn attachment_record_from_db_fields(
+    attachment_id: String,
+    guild_id: String,
+    channel_id: String,
+    owner_id: String,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
+    sha256_hex: String,
+    object_key: String,
+    message_id: Option<String>,
+) -> Result<AttachmentRecord, AuthFailure> {
+    Ok(AttachmentRecord {
+        attachment_id,
+        guild_id,
+        channel_id,
+        owner_id: UserId::try_from(owner_id).map_err(|_| AuthFailure::Internal)?,
+        filename,
+        mime_type,
+        size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
+        sha256_hex,
+        object_key,
+        message_id,
+    })
+}
+
 pub(crate) fn attachment_map_from_records<'a>(
     records: impl Iterator<Item = &'a AttachmentRecord>,
     guild_id: &str,
@@ -142,6 +190,8 @@ pub(crate) fn attachment_usage_for_owner<'a>(
 mod tests {
     use super::{
         attachment_map_from_db_records, attachment_map_from_records,
+        attachment_record_from_db_fields,
+        attachment_response_from_db_fields,
         attachment_response_from_record, attachment_usage_for_owner,
         attachments_from_ids_in_memory, parse_attachment_ids,
         validate_attachment_filename,
@@ -232,6 +282,73 @@ mod tests {
         assert_eq!(response.mime_type, record.mime_type);
         assert_eq!(response.size_bytes, record.size_bytes);
         assert_eq!(response.sha256_hex, record.sha256_hex);
+    }
+
+    #[test]
+    fn attachment_response_from_db_fields_maps_expected_fields() {
+        let response = attachment_response_from_db_fields(
+            String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            String::from("guild-1"),
+            String::from("channel-1"),
+            String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
+            String::from("report.png"),
+            String::from("image/png"),
+            2048,
+            String::from("abc123"),
+        )
+        .expect("db fields should map to attachment response");
+        assert_eq!(response.attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        assert_eq!(response.guild_id, "guild-1");
+        assert_eq!(response.channel_id, "channel-1");
+        assert_eq!(response.owner_id, "01ARZ3NDEKTSV4RRFFQ69G5FBB");
+        assert_eq!(response.filename, "report.png");
+        assert_eq!(response.mime_type, "image/png");
+        assert_eq!(response.size_bytes, 2048);
+        assert_eq!(response.sha256_hex, "abc123");
+    }
+
+    #[test]
+    fn attachment_record_from_db_fields_maps_expected_fields() {
+        let record = attachment_record_from_db_fields(
+            String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            String::from("guild-1"),
+            String::from("channel-1"),
+            String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
+            String::from("report.png"),
+            String::from("image/png"),
+            2048,
+            String::from("abc123"),
+            String::from("objects/key"),
+            Some(String::from("01ARZ3NDEKTSV4RRFFQ69G5FCC")),
+        )
+        .expect("db fields should map to attachment record");
+        assert_eq!(record.attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        assert_eq!(record.guild_id, "guild-1");
+        assert_eq!(record.channel_id, "channel-1");
+        assert_eq!(record.owner_id.to_string(), "01ARZ3NDEKTSV4RRFFQ69G5FBB");
+        assert_eq!(record.filename, "report.png");
+        assert_eq!(record.mime_type, "image/png");
+        assert_eq!(record.size_bytes, 2048);
+        assert_eq!(record.sha256_hex, "abc123");
+        assert_eq!(record.object_key, "objects/key");
+        assert_eq!(record.message_id.as_deref(), Some("01ARZ3NDEKTSV4RRFFQ69G5FCC"));
+    }
+
+    #[test]
+    fn attachment_response_from_db_fields_rejects_negative_size_fail_closed() {
+        assert!(matches!(
+            attachment_response_from_db_fields(
+                String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+                String::from("guild-1"),
+                String::from("channel-1"),
+                String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
+                String::from("report.png"),
+                String::from("image/png"),
+                -1,
+                String::from("abc123"),
+            ),
+            Err(AuthFailure::Internal)
+        ));
     }
 
     #[test]

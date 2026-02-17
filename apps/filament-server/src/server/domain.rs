@@ -12,6 +12,7 @@ mod reactions;
 pub(crate) use attachments::{
     attach_message_media, attachment_map_from_db_records,
     attachment_map_from_records, attachments_from_ids_in_memory,
+    attachment_record_from_db_fields, attachment_response_from_db_fields,
     attachment_usage_for_owner, parse_attachment_ids,
     validate_attachment_filename,
 };
@@ -25,7 +26,8 @@ pub(crate) use permissions_eval::{
 };
 pub(crate) use reactions::{
     attach_message_reactions, reaction_map_from_counts,
-    reaction_summaries_from_users, validate_reaction_emoji,
+    reaction_count_from_db_fields, reaction_summaries_from_users,
+    validate_reaction_emoji,
 };
 
 use super::{
@@ -798,34 +800,18 @@ pub(crate) async fn find_attachment(
         .await
         .map_err(|_| AuthFailure::Internal)?;
         let row = row.ok_or(AuthFailure::NotFound)?;
-        let owner_id: String = row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?;
-        let size_bytes: i64 = row
-            .try_get("size_bytes")
-            .map_err(|_| AuthFailure::Internal)?;
-        return Ok(AttachmentRecord {
-            attachment_id: row
-                .try_get("attachment_id")
-                .map_err(|_| AuthFailure::Internal)?,
-            guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
-            channel_id: row
-                .try_get("channel_id")
-                .map_err(|_| AuthFailure::Internal)?,
-            owner_id: UserId::try_from(owner_id).map_err(|_| AuthFailure::Internal)?,
-            filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
-            mime_type: row
-                .try_get("mime_type")
-                .map_err(|_| AuthFailure::Internal)?,
-            size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
-            sha256_hex: row
-                .try_get("sha256_hex")
-                .map_err(|_| AuthFailure::Internal)?,
-            object_key: row
-                .try_get("object_key")
-                .map_err(|_| AuthFailure::Internal)?,
-            message_id: row
-                .try_get("message_id")
-                .map_err(|_| AuthFailure::Internal)?,
-        });
+        return attachment_record_from_db_fields(
+            row.try_get("attachment_id").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("channel_id").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("size_bytes").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("sha256_hex").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("object_key").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
+        );
     }
     state
         .attachments
@@ -909,27 +895,16 @@ pub(crate) fn rows_to_attachment_responses(
 ) -> Result<Vec<AttachmentResponse>, AuthFailure> {
     let mut attachments = Vec::with_capacity(rows.len());
     for row in rows {
-        let size_bytes: i64 = row
-            .try_get("size_bytes")
-            .map_err(|_| AuthFailure::Internal)?;
-        attachments.push(AttachmentResponse {
-            attachment_id: row
-                .try_get("attachment_id")
-                .map_err(|_| AuthFailure::Internal)?,
-            guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
-            channel_id: row
-                .try_get("channel_id")
-                .map_err(|_| AuthFailure::Internal)?,
-            owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
-            filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
-            mime_type: row
-                .try_get("mime_type")
-                .map_err(|_| AuthFailure::Internal)?,
-            size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
-            sha256_hex: row
-                .try_get("sha256_hex")
-                .map_err(|_| AuthFailure::Internal)?,
-        });
+        attachments.push(attachment_response_from_db_fields(
+            row.try_get("attachment_id").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("channel_id").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("size_bytes").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("sha256_hex").map_err(|_| AuthFailure::Internal)?,
+        )?);
     }
     Ok(attachments)
 }
@@ -975,29 +950,18 @@ pub(crate) async fn attachment_map_for_messages_db(
         let message_id: Option<String> = row
             .try_get("message_id")
             .map_err(|_| AuthFailure::Internal)?;
-        let size_bytes: i64 = row
-            .try_get("size_bytes")
-            .map_err(|_| AuthFailure::Internal)?;
         records.push((
             message_id,
-            AttachmentResponse {
-                attachment_id: row
-                    .try_get("attachment_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
-                channel_id: row
-                    .try_get("channel_id")
-                    .map_err(|_| AuthFailure::Internal)?,
-                owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
-                filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
-                mime_type: row
-                    .try_get("mime_type")
-                    .map_err(|_| AuthFailure::Internal)?,
-                size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
-                sha256_hex: row
-                    .try_get("sha256_hex")
-                    .map_err(|_| AuthFailure::Internal)?,
-            },
+            attachment_response_from_db_fields(
+                row.try_get("attachment_id").map_err(|_| AuthFailure::Internal)?,
+                row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+                row.try_get("channel_id").map_err(|_| AuthFailure::Internal)?,
+                row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
+                row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
+                row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
+                row.try_get("size_bytes").map_err(|_| AuthFailure::Internal)?,
+                row.try_get("sha256_hex").map_err(|_| AuthFailure::Internal)?,
+            )?,
         ));
     }
     Ok(attachment_map_from_db_records(records))
@@ -1051,12 +1015,11 @@ pub(crate) async fn reaction_map_for_messages_db(
 
     let mut counts = Vec::with_capacity(rows.len());
     for row in rows {
-        let message_id: String = row
-            .try_get("message_id")
-            .map_err(|_| AuthFailure::Internal)?;
-        let emoji: String = row.try_get("emoji").map_err(|_| AuthFailure::Internal)?;
-        let count: i64 = row.try_get("count").map_err(|_| AuthFailure::Internal)?;
-        counts.push((message_id, emoji, count));
+        counts.push(reaction_count_from_db_fields(
+            row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("emoji").map_err(|_| AuthFailure::Internal)?,
+            row.try_get("count").map_err(|_| AuthFailure::Internal)?,
+        )?);
     }
     reaction_map_from_counts(counts)
 }

@@ -62,9 +62,21 @@ pub(crate) fn reaction_map_from_counts(
     Ok(by_message)
 }
 
+pub(crate) fn reaction_count_from_db_fields(
+    message_id: String,
+    emoji: String,
+    count: i64,
+) -> Result<(String, String, i64), AuthFailure> {
+    if count < 0 {
+        return Err(AuthFailure::Internal);
+    }
+    Ok((message_id, emoji, count))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
+        reaction_count_from_db_fields,
         reaction_map_from_counts, reaction_summaries_from_users,
         validate_reaction_emoji,
     };
@@ -132,6 +144,31 @@ mod tests {
                 String::from("😀"),
                 -1,
             )]),
+            Err(AuthFailure::Internal)
+        ));
+    }
+
+    #[test]
+    fn reaction_count_from_db_fields_accepts_non_negative_count() {
+        let mapped = reaction_count_from_db_fields(
+            String::from("m1"),
+            String::from("🔥"),
+            2,
+        )
+        .expect("non-negative count should map");
+        assert_eq!(mapped.0, "m1");
+        assert_eq!(mapped.1, "🔥");
+        assert_eq!(mapped.2, 2);
+    }
+
+    #[test]
+    fn reaction_count_from_db_fields_rejects_negative_count_fail_closed() {
+        assert!(matches!(
+            reaction_count_from_db_fields(
+                String::from("m1"),
+                String::from("🔥"),
+                -1,
+            ),
             Err(AuthFailure::Internal)
         ));
     }
