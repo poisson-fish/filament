@@ -44,7 +44,12 @@ async fn gateway_broadcasts_message_to_subscribed_connection() {
             role_overrides: HashMap::new(),
         },
     );
-    state.guilds.write().await.insert(guild_id.clone(), guild);
+    state
+        .membership_store
+        .guilds()
+        .write()
+        .await
+        .insert(guild_id.clone(), guild);
 
     let (tx, mut rx) = mpsc::channel::<String>(4);
     add_subscription(&state, Uuid::new_v4(), channel_key("g", "c"), tx).await;
@@ -160,35 +165,38 @@ async fn user_broadcast_targets_only_requested_authenticated_user() {
     let (tx_b, mut rx_b) = mpsc::channel::<String>(2);
 
     state
-        .connection_senders
+        .realtime_registry
+        .connection_senders()
         .write()
         .await
         .insert(connection_a1, tx_a1);
     state
-        .connection_senders
+        .realtime_registry
+        .connection_senders()
         .write()
         .await
         .insert(connection_a2, tx_a2);
     state
-        .connection_senders
+        .realtime_registry
+        .connection_senders()
         .write()
         .await
         .insert(connection_b, tx_b);
-    state.connection_presence.write().await.insert(
+    state.realtime_registry.connection_presence().write().await.insert(
         connection_a1,
         ConnectionPresence {
             user_id: user_a,
             guild_ids: std::collections::HashSet::new(),
         },
     );
-    state.connection_presence.write().await.insert(
+    state.realtime_registry.connection_presence().write().await.insert(
         connection_a2,
         ConnectionPresence {
             user_id: user_a,
             guild_ids: std::collections::HashSet::new(),
         },
     );
-    state.connection_presence.write().await.insert(
+    state.realtime_registry.connection_presence().write().await.insert(
         connection_b,
         ConnectionPresence {
             user_id: user_b,
@@ -221,12 +229,14 @@ async fn slow_consumer_signal_is_sent_when_outbound_queue_is_full() {
     let (tx, _rx) = mpsc::channel::<String>(1);
     let (control_tx, control_rx) = watch::channel(ConnectionControl::Open);
     state
-        .connection_controls
+        .realtime_registry
+        .connection_controls()
         .write()
         .await
         .insert(connection_id, control_tx);
     state
-        .subscriptions
+        .realtime_registry
+        .subscriptions()
         .write()
         .await
         .entry(channel_key("g", "c"))

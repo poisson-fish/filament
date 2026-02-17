@@ -124,7 +124,7 @@ pub(crate) async fn create_guild(
     let mut members = HashMap::new();
     members.insert(auth.user_id, Role::Owner);
 
-    let mut guilds = state.guilds.write().await;
+    let mut guilds = state.membership_store.guilds().write().await;
     let current_count = guilds
         .values()
         .filter(|record| record.created_by_user_id == auth.user_id)
@@ -199,7 +199,7 @@ pub(crate) async fn list_guilds(
         return Ok(Json(GuildListResponse { guilds }));
     }
 
-    let guilds = state.guilds.read().await;
+    let guilds = state.membership_store.guilds().read().await;
     let mut response = guilds
         .iter()
         .filter_map(|(guild_id, guild)| {
@@ -292,7 +292,7 @@ pub(crate) async fn update_guild(
             visibility: next_visibility,
         }
     } else {
-        let mut guilds = state.guilds.write().await;
+        let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -538,7 +538,13 @@ async fn enforce_audit_access(
         if !guild_exists {
             return Err(AuthFailure::NotFound);
         }
-    } else if !state.guilds.read().await.contains_key(guild_id) {
+    } else if !state
+        .membership_store
+        .guilds()
+        .read()
+        .await
+        .contains_key(guild_id)
+    {
         return Err(AuthFailure::NotFound);
     }
 
@@ -569,7 +575,13 @@ async fn enforce_guild_ip_ban_moderation_access(
         if !guild_exists {
             return Err(AuthFailure::NotFound);
         }
-    } else if !state.guilds.read().await.contains_key(guild_id) {
+    } else if !state
+        .membership_store
+        .guilds()
+        .read()
+        .await
+        .contains_key(guild_id)
+    {
         return Err(AuthFailure::NotFound);
     }
 
@@ -694,7 +706,7 @@ async fn guild_roles_in_memory(
     state: &AppState,
     guild_id: &str,
 ) -> Result<Vec<GuildRoleModel>, AuthFailure> {
-    let role_maps = state.guild_roles.read().await;
+    let role_maps = state.membership_store.guild_roles().read().await;
     let roles = role_maps.get(guild_id).ok_or(AuthFailure::NotFound)?;
     let mut list = roles
         .values()
@@ -762,7 +774,7 @@ async fn load_actor_role_context(
             .filter_map(|row| row.try_get::<String, _>("role_id").ok())
             .collect::<HashSet<_>>()
     } else {
-        let assignments = state.guild_role_assignments.read().await;
+        let assignments = state.membership_store.guild_role_assignments().read().await;
         assignments
             .get(guild_id)
             .and_then(|map| map.get(&user_id))
@@ -870,7 +882,7 @@ async fn sync_legacy_role_from_assignments_in_memory(
     user_id: UserId,
 ) -> Result<Role, AuthFailure> {
     let role_ids = {
-        let roles = state.guild_roles.read().await;
+        let roles = state.membership_store.guild_roles().read().await;
         let roles = roles.get(guild_id).ok_or(AuthFailure::NotFound)?;
         let mut workspace_owner = None;
         let mut moderator = None;
@@ -890,7 +902,7 @@ async fn sync_legacy_role_from_assignments_in_memory(
         )
     };
 
-    let assignments = state.guild_role_assignments.read().await;
+    let assignments = state.membership_store.guild_role_assignments().read().await;
     let assigned = assignments
         .get(guild_id)
         .and_then(|map| map.get(&user_id))
@@ -906,7 +918,7 @@ async fn sync_legacy_role_from_assignments_in_memory(
         Role::Member
     };
 
-    let mut guilds = state.guilds.write().await;
+    let mut guilds = state.membership_store.guilds().write().await;
     let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
     if let Some(role) = guild.members.get_mut(&user_id) {
         *role = legacy;
@@ -1203,7 +1215,7 @@ pub(crate) async fn create_guild_role(
         .await
         .map_err(|_| AuthFailure::Internal)?;
     } else {
-        let mut role_maps = state.guild_roles.write().await;
+        let mut role_maps = state.membership_store.guild_roles().write().await;
         let guild_roles = role_maps
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -1319,7 +1331,7 @@ pub(crate) async fn update_guild_role(
         .await
         .map_err(|_| AuthFailure::Internal)?;
     } else {
-        let mut role_maps = state.guild_roles.write().await;
+        let mut role_maps = state.membership_store.guild_roles().write().await;
         let role = role_maps
             .get_mut(&path.guild_id)
             .and_then(|roles| roles.get_mut(&role_id))
@@ -1423,7 +1435,7 @@ pub(crate) async fn delete_guild_role(
             return Err(AuthFailure::NotFound);
         }
     } else {
-        let mut role_maps = state.guild_roles.write().await;
+        let mut role_maps = state.membership_store.guild_roles().write().await;
         let roles = role_maps
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -1431,7 +1443,7 @@ pub(crate) async fn delete_guild_role(
             return Err(AuthFailure::NotFound);
         }
         drop(role_maps);
-        let mut assignments = state.guild_role_assignments.write().await;
+        let mut assignments = state.membership_store.guild_role_assignments().write().await;
         if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
             for assigned in guild_assignments.values_mut() {
                 assigned.remove(&role_id);
@@ -1515,7 +1527,7 @@ pub(crate) async fn reorder_guild_roles(
         }
         tx.commit().await.map_err(|_| AuthFailure::Internal)?;
     } else {
-        let mut role_maps = state.guild_roles.write().await;
+        let mut role_maps = state.membership_store.guild_roles().write().await;
         let roles = role_maps
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -1572,7 +1584,7 @@ async fn workspace_owner_count_in_memory(
     guild_id: &str,
 ) -> Result<usize, AuthFailure> {
     let workspace_owner_role_id = {
-        let role_maps = state.guild_roles.read().await;
+        let role_maps = state.membership_store.guild_roles().read().await;
         let roles = role_maps.get(guild_id).ok_or(AuthFailure::NotFound)?;
         roles
             .values()
@@ -1580,7 +1592,7 @@ async fn workspace_owner_count_in_memory(
             .map(|role| role.role_id.clone())
             .ok_or(AuthFailure::Internal)?
     };
-    let assignments = state.guild_role_assignments.read().await;
+    let assignments = state.membership_store.guild_role_assignments().read().await;
     Ok(assignments
         .get(guild_id)
         .into_iter()
@@ -1670,7 +1682,7 @@ pub(crate) async fn assign_guild_role(
         .map_err(|_| AuthFailure::Internal)?;
         let _ = sync_legacy_role_from_assignments_db(pool, &path.guild_id, target_user_id).await?;
     } else {
-        let mut guilds = state.guilds.write().await;
+        let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -1679,7 +1691,7 @@ pub(crate) async fn assign_guild_role(
         }
         drop(guilds);
 
-        let mut assignments = state.guild_role_assignments.write().await;
+        let mut assignments = state.membership_store.guild_role_assignments().write().await;
         let guild_assignments = assignments
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -1781,7 +1793,7 @@ pub(crate) async fn unassign_guild_role(
         {
             return Err(AuthFailure::Forbidden);
         }
-        let mut assignments = state.guild_role_assignments.write().await;
+        let mut assignments = state.membership_store.guild_role_assignments().write().await;
         let guild_assignments = assignments
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -2373,7 +2385,7 @@ pub(crate) async fn list_public_guilds(
         return Ok(Json(PublicGuildListResponse { guilds }));
     }
 
-    let guilds = state.guilds.read().await;
+    let guilds = state.membership_store.guilds().read().await;
     let query_term = needle
         .as_ref()
         .filter(|_| has_query)
@@ -2496,7 +2508,7 @@ async fn resolve_directory_join_outcome_in_memory(
 ) -> Result<DirectoryJoinOutcome, AuthFailure> {
     let ip_banned = guild_has_active_ip_ban(state, guild_id, client_ip).await?;
     let (visibility, user_banned, already_member) = {
-        let guilds = state.guilds.read().await;
+        let guilds = state.membership_store.guilds().read().await;
         let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
         (
             guild.visibility,
@@ -2531,7 +2543,7 @@ async fn resolve_directory_join_outcome_in_memory(
         return Ok(outcome);
     }
 
-    let mut guilds = state.guilds.write().await;
+    let mut guilds = state.membership_store.guilds().write().await;
     let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
     if let std::collections::hash_map::Entry::Vacant(entry) = guild.members.entry(user_id) {
         entry.insert(Role::Member);
@@ -2638,7 +2650,7 @@ pub(crate) async fn list_guild_channels(
         }
         entries
     } else {
-        let guilds = state.guilds.read().await;
+        let guilds = state.membership_store.guilds().read().await;
         let guild = guilds.get(&path.guild_id).ok_or(AuthFailure::NotFound)?;
         let mut entries = guild
             .channels
@@ -2721,7 +2733,7 @@ pub(crate) async fn create_channel(
             }
         })?;
     } else {
-        let mut guilds = state.guilds.write().await;
+        let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -2793,7 +2805,7 @@ pub(crate) async fn add_member(
         })?;
         added = insert.rows_affected() > 0;
     } else {
-        let mut guilds = state.guilds.write().await;
+        let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -2952,7 +2964,7 @@ pub(crate) async fn update_member_role(
             }
         }
     } else {
-        let mut guilds = state.guilds.write().await;
+        let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -2961,10 +2973,10 @@ pub(crate) async fn update_member_role(
         };
         *role = payload.role;
         drop(guilds);
-        let mut assignments = state.guild_role_assignments.write().await;
+        let mut assignments = state.membership_store.guild_role_assignments().write().await;
         if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
             let assigned = guild_assignments.entry(target_user_id).or_default();
-            let role_map = state.guild_roles.read().await;
+            let role_map = state.membership_store.guild_roles().read().await;
             let roles = role_map.get(&path.guild_id).ok_or(AuthFailure::NotFound)?;
             let workspace_owner_role_id = roles
                 .values()
@@ -3083,7 +3095,7 @@ pub(crate) async fn set_channel_role_override(
             return Err(AuthFailure::NotFound);
         }
     } else {
-        let mut guilds = state.guilds.write().await;
+        let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -3162,7 +3174,7 @@ pub(crate) async fn kick_member(
         .await
         .map_err(|_| AuthFailure::Internal)?;
     } else {
-        let mut guilds = state.guilds.write().await;
+        let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -3170,7 +3182,7 @@ pub(crate) async fn kick_member(
             return Err(AuthFailure::NotFound);
         }
         drop(guilds);
-        let mut assignments = state.guild_role_assignments.write().await;
+        let mut assignments = state.membership_store.guild_role_assignments().write().await;
         if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
             guild_assignments.remove(&target_user_id);
         }
@@ -3247,14 +3259,14 @@ pub(crate) async fn ban_member(
         .map_err(|_| AuthFailure::Internal)?;
         tx.commit().await.map_err(|_| AuthFailure::Internal)?;
     } else {
-        let mut guilds = state.guilds.write().await;
+        let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
         guild.members.remove(&target_user_id);
         guild.banned_members.insert(target_user_id);
         drop(guilds);
-        let mut assignments = state.guild_role_assignments.write().await;
+        let mut assignments = state.membership_store.guild_role_assignments().write().await;
         if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
             guild_assignments.remove(&target_user_id);
         }
@@ -3292,18 +3304,20 @@ pub(crate) async fn ban_member(
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_directory_join_outcome, join_outcome_response, maybe_record_join_ip_observation,
+        classify_directory_join_outcome, guild_roles_in_memory, join_outcome_response,
+        maybe_record_join_ip_observation, workspace_owner_count_in_memory,
         DirectoryJoinBanStatus, DirectoryJoinMembershipStatus, DirectoryJoinPolicyInput,
         DirectoryJoinVisibilityStatus,
     };
     use crate::server::{
         auth::resolve_client_ip,
-        core::{AppConfig, AppState},
+        core::{AppConfig, AppState, WorkspaceRoleRecord},
         directory_contract::DirectoryJoinOutcome,
         types::DirectoryJoinOutcomeResponse,
     };
     use axum::http::HeaderMap;
     use filament_core::UserId;
+    use std::collections::HashMap;
 
     #[test]
     fn directory_join_state_transition_precedence_is_stable() {
@@ -3402,5 +3416,94 @@ mod tests {
         assert!(*last_seen > 0);
         let writes = state.user_ip_observation_writes.read().await;
         assert_eq!(writes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn guild_roles_in_memory_reads_roles_through_membership_store() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        let guild_id = String::from("guild-roles-membership-store");
+
+        let mut roles = HashMap::new();
+        roles.insert(
+            String::from("member"),
+            WorkspaceRoleRecord {
+                role_id: String::from("member"),
+                name: String::from("Member"),
+                position: 1,
+                is_system: true,
+                system_key: Some(String::from("member")),
+                permissions_allow: filament_core::PermissionSet::empty(),
+                created_at_unix: 20,
+            },
+        );
+        roles.insert(
+            String::from("owner"),
+            WorkspaceRoleRecord {
+                role_id: String::from("owner"),
+                name: String::from("Owner"),
+                position: 9,
+                is_system: true,
+                system_key: Some(String::from("workspace_owner")),
+                permissions_allow: filament_core::PermissionSet::empty(),
+                created_at_unix: 10,
+            },
+        );
+
+        state
+            .membership_store
+            .guild_roles()
+            .write()
+            .await
+            .insert(guild_id.clone(), roles);
+
+        let listed = guild_roles_in_memory(&state, &guild_id)
+            .await
+            .expect("guild role listing should succeed");
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].role_id, "owner");
+        assert_eq!(listed[1].role_id, "member");
+    }
+
+    #[tokio::test]
+    async fn workspace_owner_count_in_memory_uses_membership_store_assignments() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        let guild_id = String::from("guild-owner-count-membership-store");
+        let owner_role_id = String::from("owner-role");
+        let owner_user = UserId::new();
+
+        state
+            .membership_store
+            .guild_roles()
+            .write()
+            .await
+            .insert(
+                guild_id.clone(),
+                HashMap::from([(
+                    owner_role_id.clone(),
+                    WorkspaceRoleRecord {
+                        role_id: owner_role_id.clone(),
+                        name: String::from("Owner"),
+                        position: 10,
+                        is_system: true,
+                        system_key: Some(String::from("workspace_owner")),
+                        permissions_allow: filament_core::PermissionSet::empty(),
+                        created_at_unix: 1,
+                    },
+                )]),
+            );
+        state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await
+            .insert(
+                guild_id.clone(),
+                HashMap::from([(owner_user, std::collections::HashSet::from([owner_role_id]))]),
+            );
+
+        let count = workspace_owner_count_in_memory(&state, &guild_id)
+            .await
+            .expect("workspace owner count should resolve");
+        assert_eq!(count, 1);
     }
 }

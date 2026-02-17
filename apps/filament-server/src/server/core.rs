@@ -286,8 +286,11 @@ pub struct AppState {
     pub(crate) media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) membership_store: MembershipStore,
+    #[allow(dead_code)]
     pub(crate) guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
+    #[allow(dead_code)]
     pub(crate) guild_roles: Arc<RwLock<GuildRoleMap>>,
+    #[allow(dead_code)]
     pub(crate) guild_role_assignments: Arc<RwLock<GuildRoleAssignmentMap>>,
     #[allow(dead_code)]
     pub(crate) guild_channel_permission_overrides: Arc<RwLock<GuildChannelPermissionOverrideMap>>,
@@ -862,7 +865,12 @@ mod tests {
         let state = AppState::new(&AppConfig::default()).expect("state should initialize");
         let guild_id = String::from("guild-membership-store");
 
-        state.guilds.write().await.insert(
+        state
+            .membership_store
+            .guilds()
+            .write()
+            .await
+            .insert(
             guild_id.clone(),
             GuildRecord {
                 name: String::from("guild"),
@@ -879,11 +887,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn membership_store_role_writes_update_legacy_role_map_field() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        let guild_id = String::from("guild-membership-store-roles");
+        let role_id = String::from("role-1");
+
+        state
+            .membership_store
+            .guild_roles()
+            .write()
+            .await
+            .insert(
+                guild_id.clone(),
+                HashMap::from([(
+                    role_id.clone(),
+                    WorkspaceRoleRecord {
+                        role_id: role_id.clone(),
+                        name: String::from("Member"),
+                        position: 1,
+                        is_system: false,
+                        system_key: None,
+                        permissions_allow: PermissionSet::empty(),
+                        created_at_unix: 1,
+                    },
+                )]),
+            );
+
+        let read = state.membership_store.guild_roles().read().await;
+        let role_map = read.get(&guild_id).expect("guild role map should exist");
+        assert!(role_map.contains_key(&role_id));
+    }
+
+    #[tokio::test]
     async fn realtime_registry_shares_backing_maps_with_app_state_fields() {
         let state = AppState::new(&AppConfig::default()).expect("state should initialize");
         let connection_id = Uuid::new_v4();
 
-        state.connection_presence.write().await.insert(
+        state
+            .realtime_registry
+            .connection_presence()
+            .write()
+            .await
+            .insert(
             connection_id,
             ConnectionPresence {
                 user_id: UserId::new(),

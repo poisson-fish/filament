@@ -653,7 +653,7 @@ async fn profile_observer_user_ids(
     }
     drop(friendships);
 
-    let guilds = state.guilds.read().await;
+    let guilds = state.membership_store.guilds().read().await;
     for guild in guilds.values() {
         if !guild.members.contains_key(&user_id) {
             continue;

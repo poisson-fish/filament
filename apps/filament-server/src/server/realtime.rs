@@ -431,7 +431,7 @@ pub(crate) async fn create_message_internal(
         )?;
     }
     {
-        let mut guilds = state.guilds.write().await;
+        let mut guilds = state.membership_store.guilds().write().await;
         append_message_record(&mut guilds, guild_id, channel_id, record.clone())?;
     }
 

@@ -246,7 +246,7 @@ pub(crate) async fn get_messages(
         }));
     }
 
-    let guilds = state.guilds.read().await;
+    let guilds = state.membership_store.guilds().read().await;
     let guild = guilds.get(&path.guild_id).ok_or(AuthFailure::NotFound)?;
     let channel = guild
         .channels
@@ -415,7 +415,7 @@ pub(crate) async fn edit_message(
         return Ok(Json(response));
     }
 
-    let mut guilds = state.guilds.write().await;
+    let mut guilds = state.membership_store.guilds().write().await;
     let guild = guilds
         .get_mut(&path.guild_id)
         .ok_or(AuthFailure::NotFound)?;
@@ -566,7 +566,7 @@ pub(crate) async fn delete_message(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let mut guilds = state.guilds.write().await;
+    let mut guilds = state.membership_store.guilds().write().await;
     let guild = guilds
         .get_mut(&path.guild_id)
         .ok_or(AuthFailure::NotFound)?;
@@ -682,7 +682,7 @@ pub(crate) async fn add_reaction(
         return Ok(Json(response));
     }
 
-    let mut guilds = state.guilds.write().await;
+    let mut guilds = state.membership_store.guilds().write().await;
     let guild = guilds
         .get_mut(&path.guild_id)
         .ok_or(AuthFailure::NotFound)?;
@@ -768,7 +768,7 @@ pub(crate) async fn remove_reaction(
         return Ok(Json(response));
     }
 
-    let mut guilds = state.guilds.write().await;
+    let mut guilds = state.membership_store.guilds().write().await;
     let guild = guilds
         .get_mut(&path.guild_id)
         .ok_or(AuthFailure::NotFound)?;

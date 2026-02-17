@@ -38,7 +38,7 @@ pub(crate) async fn collect_all_indexed_messages_runtime(
         return Ok(map_collect_all_rows(rows));
     }
 
-    let guilds = state.guilds.read().await;
+    let guilds = state.membership_store.guilds().read().await;
     Ok(collect_all_indexed_messages_in_memory(&guilds))
 }
 
@@ -64,7 +64,7 @@ pub(crate) async fn collect_indexed_messages_for_guild_runtime(
         return map_collect_guild_rows(rows, max_docs);
     }
 
-    let guilds = state.guilds.read().await;
+    let guilds = state.membership_store.guilds().read().await;
     collect_indexed_messages_for_guild_in_memory(&guilds, guild_id, max_docs)
 }
 

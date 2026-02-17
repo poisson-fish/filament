@@ -47,7 +47,7 @@ pub(crate) async fn hydrate_messages_by_id_runtime(
         return Ok(hydrate_in_request_order(by_id, message_ids));
     }
 
-    let guilds = state.guilds.read().await;
+    let guilds = state.membership_store.guilds().read().await;
     let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
     let mut by_id = collect_hydrated_messages_in_memory(guild, guild_id, channel_id)?;
 
