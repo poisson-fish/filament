@@ -32,6 +32,8 @@ mod voice_cleanup_dispatch;
 mod search_index_lookup;
 mod search_reconciliation_plan;
 mod search_query_run;
+mod search_collect_runtime;
+mod hydration_runtime;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -103,13 +105,10 @@ use voice_presence::{
     collect_voice_snapshots, voice_channel_key,
 };
 use voice_registration::apply_voice_registration_transition;
-use search_validation::validate_search_query_limits;
 use connection_control::signal_slow_connections_close;
 use search_reconcile::compute_reconciliation;
 use hydration_order::collect_hydrated_in_request_order;
 use ingress_command::{parse_gateway_ingress_command, GatewayIngressCommand};
-use search_collect_all::collect_all_indexed_messages_in_memory;
-use search_collect_guild::collect_indexed_messages_for_guild_in_memory;
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 use search_query_exec::run_search_query_against_index;
 use fanout_user_targets::connection_ids_for_user;
@@ -130,10 +129,6 @@ use search_enqueue::enqueue_search_command;
 use search_apply_batch::apply_search_batch_with_ack;
 use hydration_merge::merge_hydration_maps;
 use message_record::{build_in_memory_message_record, build_message_response_from_record};
-use search_collect_db::{
-    collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows,
-    enforce_guild_collect_doc_cap, guild_collect_fetch_limit,
-};
 use hydration_db::collect_hydrated_messages_db;
 use message_create_response::build_db_created_message_response;
 use ingress_message_create::execute_message_create_command;
@@ -143,7 +138,7 @@ use ingress_parse::{
 use ingress_subscribe::execute_subscribe_command;
 use voice_sync_dispatch::dispatch_voice_sync_event;
 use presence_sync_dispatch::dispatch_presence_sync_event;
-use search_query_input::{effective_search_limit, normalize_search_query};
+use search_query_input::validate_search_query_request;
 use message_store_in_memory::append_message_record;
 use message_emit::emit_message_create_and_index;
 use connection_disconnect_followups::plan_disconnect_followups;
@@ -158,6 +153,11 @@ use voice_cleanup_dispatch::{
 pub(crate) use search_index_lookup::collect_index_message_ids_for_guild;
 pub(crate) use search_reconciliation_plan::plan_search_reconciliation;
 pub(crate) use search_query_run::run_search_query;
+use search_collect_runtime::{
+    collect_all_indexed_messages_runtime,
+    collect_indexed_messages_for_guild_runtime,
+};
+use hydration_runtime::hydrate_messages_by_id_runtime;
 
 use super::{
     auth::{
@@ -173,10 +173,9 @@ use super::{
     },
     db::ensure_db_schema,
     domain::{
-        attachment_map_for_messages_db, attachment_map_for_messages_in_memory,
         attachments_for_message_in_memory, bind_message_attachments_db,
         channel_permission_snapshot,
-        fetch_attachments_for_message_db, parse_attachment_ids, reaction_map_for_messages_db,
+        fetch_attachments_for_message_db, parse_attachment_ids,
         reaction_summaries_from_users,
     },
     errors::AuthFailure,
@@ -543,11 +542,9 @@ pub(crate) fn validate_search_query(
     state: &AppState,
     query: &SearchQuery,
 ) -> Result<(), AuthFailure> {
-    let raw = normalize_search_query(&query.q);
-    let limit = effective_search_limit(query.limit, DEFAULT_SEARCH_RESULT_LIMIT);
-    validate_search_query_limits(
-        &raw,
-        limit,
+    validate_search_query_request(
+        query,
+        DEFAULT_SEARCH_RESULT_LIMIT,
         state.runtime.search_query_max_chars,
         state.runtime.search_result_limit_max,
     )
@@ -577,19 +574,7 @@ pub(crate) async fn enqueue_search_operation(
 pub(crate) async fn collect_all_indexed_messages(
     state: &AppState,
 ) -> Result<Vec<IndexedMessage>, AuthFailure> {
-    if let Some(pool) = &state.db_pool {
-        let rows = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
-            "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
-             FROM messages",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-        return Ok(collect_all_indexed_messages_rows(rows));
-    }
-
-    let guilds = state.guilds.read().await;
-    Ok(collect_all_indexed_messages_in_memory(&guilds))
+    collect_all_indexed_messages_runtime(state).await
 }
 
 pub(crate) async fn collect_indexed_messages_for_guild(
@@ -597,65 +582,16 @@ pub(crate) async fn collect_indexed_messages_for_guild(
     guild_id: &str,
     max_docs: usize,
 ) -> Result<Vec<IndexedMessage>, AuthFailure> {
-    if let Some(pool) = &state.db_pool {
-        let limit = guild_collect_fetch_limit(max_docs)?;
-        let rows = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
-            "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
-             FROM messages
-             WHERE guild_id = $1
-             ORDER BY created_at_unix DESC
-             LIMIT $2",
-        )
-        .bind(guild_id)
-        .bind(limit)
-        .fetch_all(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-        enforce_guild_collect_doc_cap(rows.len(), max_docs)?;
-        return Ok(collect_indexed_messages_for_guild_rows(rows));
-    }
-
-    let guilds = state.guilds.read().await;
-    collect_indexed_messages_for_guild_in_memory(&guilds, guild_id, max_docs)
+    collect_indexed_messages_for_guild_runtime(state, guild_id, max_docs).await
 }
 
-#[allow(clippy::too_many_lines)]
 pub(crate) async fn hydrate_messages_by_id(
     state: &AppState,
     guild_id: &str,
     channel_id: Option<&str>,
     message_ids: &[String],
 ) -> Result<Vec<MessageResponse>, AuthFailure> {
-    if message_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if let Some(pool) = &state.db_pool {
-        let mut by_id = collect_hydrated_messages_db(pool, guild_id, channel_id, message_ids)
-            .await?;
-
-        let message_ids_ordered: Vec<String> = message_ids.to_vec();
-        let attachment_map =
-            attachment_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered)
-                .await?;
-        let reaction_map =
-            reaction_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered).await?;
-        merge_hydration_maps(&mut by_id, &attachment_map, &reaction_map);
-
-        let hydrated = collect_hydrated_in_request_order(by_id, message_ids);
-        return Ok(hydrated);
-    }
-
-    let guilds = state.guilds.read().await;
-    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
-    let mut by_id = collect_hydrated_messages_in_memory(guild, guild_id, channel_id)?;
-
-    let attachment_map =
-        attachment_map_for_messages_in_memory(state, guild_id, channel_id, message_ids).await;
-    apply_hydration_attachments(&mut by_id, &attachment_map);
-
-    let hydrated = collect_hydrated_in_request_order(by_id, message_ids);
-    Ok(hydrated)
+    hydrate_messages_by_id_runtime(state, guild_id, channel_id, message_ids).await
 }
 
 async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
