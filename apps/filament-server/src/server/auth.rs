@@ -1,5 +1,6 @@
 use std::{
     net::IpAddr,
+    sync::atomic::Ordering,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -25,7 +26,10 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 
 use super::{
-    core::{AppConfig, AppState, AuthContext, CaptchaConfig, LiveKitConfig, ACCESS_TOKEN_TTL_SECS},
+    core::{
+        AppConfig, AppState, AuthContext, CaptchaConfig, LiveKitConfig,
+        ACCESS_TOKEN_TTL_SECS, RATE_LIMIT_SWEEP_INTERVAL_SECS,
+    },
     db::ensure_db_schema,
     directory_contract::IpNetwork,
     errors::AuthFailure,
@@ -35,6 +39,7 @@ use super::{
 const MAX_X_FORWARDED_FOR_HEADER_CHARS: usize = 512;
 const MAX_X_FORWARDED_FOR_ENTRY_CHARS: usize = 64;
 const UNKNOWN_CLIENT_IP: &str = "unknown";
+const RATE_LIMIT_WINDOW_SECS: i64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClientIpSource {
@@ -238,6 +243,63 @@ pub(crate) fn now_unix() -> i64 {
     i64::try_from(seconds).unwrap_or(i64::MAX)
 }
 
+async fn maybe_sweep_rate_limit_state(state: &AppState, now: i64) {
+    let last = state.rate_limit_last_sweep_unix.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < RATE_LIMIT_SWEEP_INTERVAL_SECS {
+        return;
+    }
+    if state
+        .rate_limit_last_sweep_unix
+        .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+
+    {
+        let mut hits = state.auth_route_hits.write().await;
+        hits.retain(|_, route_hits| {
+            route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
+            !route_hits.is_empty()
+        });
+    }
+    {
+        let mut hits = state.directory_join_ip_hits.write().await;
+        hits.retain(|_, route_hits| {
+            route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
+            !route_hits.is_empty()
+        });
+    }
+    {
+        let mut hits = state.directory_join_user_hits.write().await;
+        hits.retain(|_, route_hits| {
+            route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
+            !route_hits.is_empty()
+        });
+    }
+    {
+        let mut hits = state.media_token_hits.write().await;
+        hits.retain(|_, route_hits| {
+            route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
+            !route_hits.is_empty()
+        });
+    }
+    {
+        let mut hits = state.media_publish_hits.write().await;
+        hits.retain(|_, route_hits| {
+            route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
+            !route_hits.is_empty()
+        });
+    }
+    {
+        let mut leases = state.media_subscribe_leases.write().await;
+        leases.retain(|_, channel_leases| {
+            channel_leases.retain(|timestamp| *timestamp > now);
+            !channel_leases.is_empty()
+        });
+    }
+}
+
 pub(crate) fn outbound_event<T: Serialize>(event_type: &str, data: T) -> String {
     let envelope = Envelope {
         v: PROTOCOL_VERSION,
@@ -344,10 +406,11 @@ pub(crate) async fn enforce_auth_route_rate_limit(
     let ip = client_ip.normalized();
     let key = format!("{route}:{ip}");
     let now = now_unix();
+    maybe_sweep_rate_limit_state(state, now).await;
 
     let mut hits = state.auth_route_hits.write().await;
     let route_hits = hits.entry(key).or_default();
-    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < 60);
+    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
     let max_hits =
         usize::try_from(state.runtime.auth_route_requests_per_minute).unwrap_or(usize::MAX);
     if route_hits.len() >= max_hits {
@@ -370,10 +433,11 @@ pub(crate) async fn enforce_directory_join_rate_limit(
 ) -> Result<(), AuthFailure> {
     let ip = client_ip.normalized();
     let now = now_unix();
+    maybe_sweep_rate_limit_state(state, now).await;
     {
         let mut ip_hits = state.directory_join_ip_hits.write().await;
         let route_hits = ip_hits.entry(ip.clone()).or_default();
-        route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < 60);
+        route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
         let max_hits = usize::try_from(state.runtime.directory_join_requests_per_minute_per_ip)
             .unwrap_or(usize::MAX);
         if route_hits.len() >= max_hits {
@@ -391,7 +455,7 @@ pub(crate) async fn enforce_directory_join_rate_limit(
     let user_key = user_id.to_string();
     let mut user_hits = state.directory_join_user_hits.write().await;
     let route_hits = user_hits.entry(user_key.clone()).or_default();
-    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < 60);
+    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
     let max_hits = usize::try_from(state.runtime.directory_join_requests_per_minute_per_user)
         .unwrap_or(usize::MAX);
     if route_hits.len() >= max_hits {
@@ -417,10 +481,11 @@ pub(crate) async fn enforce_media_token_rate_limit(
     let ip = client_ip.normalized();
     let key = format!("{ip}:{}:{}:{}", user_id, path.guild_id, path.channel_id);
     let now = now_unix();
+    maybe_sweep_rate_limit_state(state, now).await;
 
     let mut hits = state.media_token_hits.write().await;
     let route_hits = hits.entry(key).or_default();
-    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < 60);
+    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
     let max_hits =
         usize::try_from(state.runtime.media_token_requests_per_minute).unwrap_or(usize::MAX);
     if route_hits.len() >= max_hits {
@@ -447,10 +512,11 @@ pub(crate) async fn enforce_media_publish_rate_limit(
     let ip = client_ip.normalized();
     let key = format!("{ip}:{}", media_channel_user_key(user_id, path));
     let now = now_unix();
+    maybe_sweep_rate_limit_state(state, now).await;
 
     let mut hits = state.media_publish_hits.write().await;
     let route_hits = hits.entry(key).or_default();
-    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < 60);
+    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
     let max_hits =
         usize::try_from(state.runtime.media_publish_requests_per_minute).unwrap_or(usize::MAX);
     if route_hits.len() >= max_hits {
@@ -475,6 +541,7 @@ pub(crate) async fn enforce_media_subscribe_cap(
 ) -> Result<(), AuthFailure> {
     let key = media_channel_user_key(user_id, path);
     let now = now_unix();
+    maybe_sweep_rate_limit_state(state, now).await;
     let expires_at = now
         .checked_add(i64::try_from(state.runtime.livekit_token_ttl.as_secs()).unwrap_or(i64::MAX))
         .unwrap_or(i64::MAX);
@@ -567,7 +634,8 @@ fn parse_forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_client_ip, ClientIpSource};
+    use super::{enforce_auth_route_rate_limit, resolve_client_ip, ClientIp, ClientIpSource};
+    use crate::server::core::{AppConfig, AppState};
     use crate::server::directory_contract::IpNetwork;
     use axum::http::HeaderMap;
 
@@ -657,6 +725,31 @@ mod tests {
                 .expect("peer ip should be present")
                 .to_string(),
             "10.2.0.8"
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_rate_limit_sweep_prunes_stale_keys() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        state
+            .auth_route_hits
+            .write()
+            .await
+            .insert(String::from("register:198.51.100.9"), vec![0]);
+
+        let client_ip = ClientIp::peer(Some("198.51.100.10".parse().expect("valid ip")));
+        enforce_auth_route_rate_limit(&state, client_ip, "register")
+            .await
+            .expect("rate limit should allow fresh key");
+
+        let hits = state.auth_route_hits.read().await;
+        assert!(
+            !hits.contains_key("register:198.51.100.9"),
+            "stale key should be swept"
+        );
+        assert!(
+            hits.contains_key("register:198.51.100.10"),
+            "fresh key should remain"
         );
     }
 }

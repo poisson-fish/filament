@@ -6,7 +6,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use reqwest::Client;
 use sqlx::Row;
 use ulid::Ulid;
 
@@ -44,10 +43,6 @@ pub(crate) async fn verify_captcha_token(
         .ok_or(AuthFailure::CaptchaFailed)
         .and_then(|raw| CaptchaToken::try_from(raw).map_err(|()| AuthFailure::CaptchaFailed))?;
 
-    let client = Client::builder()
-        .timeout(config.verify_timeout)
-        .build()
-        .map_err(|_| AuthFailure::Internal)?;
     let mut form_data = vec![
         ("secret", config.secret.clone()),
         ("response", token.as_str().to_owned()),
@@ -55,8 +50,10 @@ pub(crate) async fn verify_captcha_token(
     if let Some(remote_ip) = client_ip.ip() {
         form_data.push(("remoteip", remote_ip.to_string()));
     }
-    let response = client
+    let response = state
+        .http_client
         .post(&config.verify_url)
+        .timeout(config.verify_timeout)
         .form(&form_data)
         .send()
         .await

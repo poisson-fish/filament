@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
+    sync::atomic::AtomicI64,
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
@@ -61,6 +62,7 @@ pub const DEFAULT_MEDIA_SUBSCRIBE_TOKEN_CAP_PER_CHANNEL: usize = 3;
 pub const DEFAULT_MAX_CREATED_GUILDS_PER_USER: usize = 5;
 pub const DEFAULT_CAPTCHA_VERIFY_TIMEOUT_SECS: u64 = 3;
 pub const MAX_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
+pub(crate) const RATE_LIMIT_SWEEP_INTERVAL_SECS: i64 = 30;
 pub(crate) const MAX_CAPTCHA_TOKEN_CHARS: usize = 4096;
 pub(crate) const MIN_CAPTCHA_TOKEN_CHARS: usize = 20;
 pub(crate) const LOGIN_LOCK_THRESHOLD: u8 = 5;
@@ -285,6 +287,7 @@ pub struct AppState {
     pub(crate) media_token_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) rate_limit_last_sweep_unix: Arc<AtomicI64>,
     pub(crate) membership_store: MembershipStore,
     #[allow(dead_code)]
     pub(crate) guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
@@ -316,6 +319,7 @@ pub struct AppState {
     pub(crate) search_bootstrapped: Arc<OnceCell<()>>,
     pub(crate) runtime: Arc<RuntimeSecurityConfig>,
     pub(crate) livekit: Option<Arc<LiveKitConfig>>,
+    pub(crate) http_client: Arc<reqwest::Client>,
 }
 
 impl AppState {
@@ -343,6 +347,9 @@ impl AppState {
         let attachment_store = LocalFileSystem::new_with_prefix(&config.attachment_root)
             .map_err(|e| anyhow!("attachment store init failed: {e}"))?;
         let search = init_search_service().map_err(|e| anyhow!("search init failed: {e}"))?;
+        let http_client = reqwest::Client::builder()
+            .build()
+            .map_err(|e| anyhow!("http client init failed: {e}"))?;
         let guilds = Arc::new(RwLock::new(HashMap::new()));
         let guild_roles = Arc::new(RwLock::new(HashMap::new()));
         let guild_role_assignments = Arc::new(RwLock::new(HashMap::new()));
@@ -381,6 +388,7 @@ impl AppState {
             media_token_hits: Arc::new(RwLock::new(HashMap::new())),
             media_publish_hits: Arc::new(RwLock::new(HashMap::new())),
             media_subscribe_leases: Arc::new(RwLock::new(HashMap::new())),
+            rate_limit_last_sweep_unix: Arc::new(AtomicI64::new(0)),
             membership_store,
             guilds,
             guild_roles,
@@ -429,6 +437,7 @@ impl AppState {
                 captcha: captcha.map(Arc::new),
             }),
             livekit: livekit.map(Arc::new),
+            http_client: Arc::new(http_client),
         })
     }
 }
