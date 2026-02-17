@@ -1,4 +1,5 @@
-use filament_core::{ChannelPermissionOverwrite, PermissionSet};
+use filament_core::{ChannelPermissionOverwrite, PermissionSet, Role};
+use std::collections::{HashMap, HashSet};
 
 pub(crate) fn apply_channel_layers(
     base: PermissionSet,
@@ -27,10 +28,49 @@ fn normalize_layer(allow_bits: u64, deny_bits: u64) -> (u64, u64) {
     (allow_bits & !deny_bits, deny_bits)
 }
 
+pub(crate) fn apply_legacy_role_assignment(
+    assigned_role_ids: &mut HashSet<String>,
+    legacy_role: Role,
+    workspace_owner_role_id: &str,
+    moderator_role_id: &str,
+    member_role_id: &str,
+) {
+    match legacy_role {
+        Role::Owner => {
+            assigned_role_ids.insert(workspace_owner_role_id.to_owned());
+        }
+        Role::Moderator => {
+            assigned_role_ids.insert(moderator_role_id.to_owned());
+        }
+        Role::Member => {
+            assigned_role_ids.insert(member_role_id.to_owned());
+        }
+    }
+}
+
+pub(crate) fn aggregate_guild_permissions(
+    everyone_permissions: PermissionSet,
+    assigned_role_ids: &HashSet<String>,
+    role_permissions: &HashMap<String, PermissionSet>,
+) -> PermissionSet {
+    let mut guild_permissions = everyone_permissions;
+    for role_id in assigned_role_ids {
+        if let Some(allow_set) = role_permissions.get(role_id) {
+            guild_permissions =
+                PermissionSet::from_bits(guild_permissions.bits() | allow_set.bits());
+        }
+    }
+    guild_permissions
+}
+
 #[cfg(test)]
 mod tests {
-    use super::apply_channel_layers;
-    use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet};
+    use super::{
+        aggregate_guild_permissions, apply_channel_layers,
+        apply_legacy_role_assignment,
+    };
+    use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet, Role};
+    use std::collections::{HashMap, HashSet};
 
     fn permission_set(values: &[Permission]) -> PermissionSet {
         let mut set = PermissionSet::empty();
@@ -76,5 +116,38 @@ mod tests {
             member,
         );
         assert!(!resolved.contains(Permission::CreateMessage));
+    }
+
+    #[test]
+    fn apply_legacy_role_assignment_inserts_expected_role_id() {
+        let mut assigned = HashSet::new();
+        apply_legacy_role_assignment(&mut assigned, Role::Moderator, "owner", "mod", "member");
+
+        assert!(assigned.contains("mod"));
+        assert!(!assigned.contains("owner"));
+        assert!(!assigned.contains("member"));
+    }
+
+    #[test]
+    fn aggregate_guild_permissions_unions_assigned_role_masks() {
+        let everyone = permission_set(&[Permission::ManageRoles]);
+        let mut assigned = HashSet::new();
+        assigned.insert(String::from("member"));
+        assigned.insert(String::from("moderator"));
+
+        let mut role_permissions = HashMap::new();
+        role_permissions.insert(
+            String::from("member"),
+            permission_set(&[Permission::CreateMessage]),
+        );
+        role_permissions.insert(
+            String::from("moderator"),
+            permission_set(&[Permission::DeleteMessage]),
+        );
+
+        let aggregated = aggregate_guild_permissions(everyone, &assigned, &role_permissions);
+        assert!(aggregated.contains(Permission::ManageRoles));
+        assert!(aggregated.contains(Permission::CreateMessage));
+        assert!(aggregated.contains(Permission::DeleteMessage));
     }
 }

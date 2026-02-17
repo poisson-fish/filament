@@ -1,7 +1,7 @@
 use ulid::Ulid;
 
 use crate::server::{
-    core::MAX_ATTACHMENTS_PER_MESSAGE,
+    core::{AttachmentRecord, MAX_ATTACHMENTS_PER_MESSAGE},
     errors::AuthFailure,
     types::{AttachmentResponse, MessageResponse},
 };
@@ -47,11 +47,65 @@ pub(crate) fn attach_message_media(
     }
 }
 
+pub(crate) fn attachment_response_from_record(record: &AttachmentRecord) -> AttachmentResponse {
+    AttachmentResponse {
+        attachment_id: record.attachment_id.clone(),
+        guild_id: record.guild_id.clone(),
+        channel_id: record.channel_id.clone(),
+        owner_id: record.owner_id.to_string(),
+        filename: record.filename.clone(),
+        mime_type: record.mime_type.clone(),
+        size_bytes: record.size_bytes,
+        sha256_hex: record.sha256_hex.clone(),
+    }
+}
+
+pub(crate) fn attachment_map_from_records<'a>(
+    records: impl Iterator<Item = &'a AttachmentRecord>,
+    guild_id: &str,
+    channel_id: Option<&str>,
+    message_ids: &[String],
+) -> HashMap<String, Vec<AttachmentResponse>> {
+    if message_ids.is_empty() {
+        return HashMap::new();
+    }
+
+    let wanted: HashSet<&str> = message_ids.iter().map(String::as_str).collect();
+    let mut by_message: HashMap<String, Vec<AttachmentResponse>> = HashMap::new();
+    for record in records {
+        let Some(message_id) = record.message_id.as_deref() else {
+            continue;
+        };
+        if record.guild_id != guild_id {
+            continue;
+        }
+        if channel_id.is_some_and(|cid| cid != record.channel_id) {
+            continue;
+        }
+        if !wanted.contains(message_id) {
+            continue;
+        }
+        by_message
+            .entry(message_id.to_owned())
+            .or_default()
+            .push(attachment_response_from_record(record));
+    }
+    for values in by_message.values_mut() {
+        values.sort_by(|a, b| a.attachment_id.cmp(&b.attachment_id));
+    }
+    by_message
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_attachment_ids, validate_attachment_filename};
+    use super::{
+        attachment_map_from_records, attachment_response_from_record,
+        parse_attachment_ids, validate_attachment_filename,
+    };
+    use crate::server::core::AttachmentRecord;
     use crate::server::core::MAX_ATTACHMENTS_PER_MESSAGE;
     use crate::server::errors::AuthFailure;
+    use filament_core::UserId;
     use ulid::Ulid;
 
     #[test]
@@ -105,5 +159,104 @@ mod tests {
             validate_attachment_filename(value.clone()).expect("name should be accepted"),
             value
         );
+    }
+
+    #[test]
+    fn attachment_response_from_record_maps_expected_fields() {
+        let owner_id = UserId::new();
+        let record = AttachmentRecord {
+            attachment_id: Ulid::new().to_string(),
+            guild_id: Ulid::new().to_string(),
+            channel_id: Ulid::new().to_string(),
+            owner_id,
+            filename: String::from("report.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 2048,
+            sha256_hex: String::from("abc123"),
+            object_key: String::from("objects/key"),
+            message_id: Some(Ulid::new().to_string()),
+        };
+
+        let response = attachment_response_from_record(&record);
+        assert_eq!(response.attachment_id, record.attachment_id);
+        assert_eq!(response.guild_id, record.guild_id);
+        assert_eq!(response.channel_id, record.channel_id);
+        assert_eq!(response.owner_id, owner_id.to_string());
+        assert_eq!(response.filename, record.filename);
+        assert_eq!(response.mime_type, record.mime_type);
+        assert_eq!(response.size_bytes, record.size_bytes);
+        assert_eq!(response.sha256_hex, record.sha256_hex);
+    }
+
+    #[test]
+    fn attachment_map_from_records_filters_and_sorts_by_attachment_id() {
+        let owner_id = UserId::new();
+        let keep_message = Ulid::new().to_string();
+        let other_message = Ulid::new().to_string();
+        let guild_id = Ulid::new().to_string();
+        let channel_id = Ulid::new().to_string();
+
+        let record_a = AttachmentRecord {
+            attachment_id: String::from("02ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            guild_id: guild_id.clone(),
+            channel_id: channel_id.clone(),
+            owner_id,
+            filename: String::from("b.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 2,
+            sha256_hex: String::from("b"),
+            object_key: String::from("k2"),
+            message_id: Some(keep_message.clone()),
+        };
+        let record_b = AttachmentRecord {
+            attachment_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            guild_id: guild_id.clone(),
+            channel_id: channel_id.clone(),
+            owner_id,
+            filename: String::from("a.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 1,
+            sha256_hex: String::from("a"),
+            object_key: String::from("k1"),
+            message_id: Some(keep_message.clone()),
+        };
+        let other_guild = AttachmentRecord {
+            attachment_id: Ulid::new().to_string(),
+            guild_id: Ulid::new().to_string(),
+            channel_id: channel_id.clone(),
+            owner_id,
+            filename: String::from("skip.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 3,
+            sha256_hex: String::from("c"),
+            object_key: String::from("k3"),
+            message_id: Some(keep_message.clone()),
+        };
+        let other_message_record = AttachmentRecord {
+            attachment_id: Ulid::new().to_string(),
+            guild_id: guild_id.clone(),
+            channel_id: channel_id.clone(),
+            owner_id,
+            filename: String::from("skip2.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 4,
+            sha256_hex: String::from("d"),
+            object_key: String::from("k4"),
+            message_id: Some(other_message.clone()),
+        };
+
+        let rows = vec![record_a, record_b, other_guild, other_message_record];
+        let map = attachment_map_from_records(
+            rows.iter(),
+            &guild_id,
+            Some(&channel_id),
+            std::slice::from_ref(&keep_message),
+        );
+
+        assert_eq!(map.len(), 1);
+        let kept = map.get(&keep_message).expect("message should be present");
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        assert_eq!(kept[1].attachment_id, "02ARZ3NDEKTSV4RRFFQ69G5FAV");
     }
 }

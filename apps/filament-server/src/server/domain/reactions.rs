@@ -43,9 +43,31 @@ pub(crate) fn validate_reaction_emoji(value: &str) -> Result<(), AuthFailure> {
     Ok(())
 }
 
+pub(crate) fn reaction_map_from_counts(
+    counts: Vec<(String, String, i64)>,
+) -> Result<HashMap<String, Vec<ReactionResponse>>, AuthFailure> {
+    let mut by_message: HashMap<String, Vec<ReactionResponse>> = HashMap::new();
+    for (message_id, emoji, count) in counts {
+        by_message
+            .entry(message_id)
+            .or_default()
+            .push(ReactionResponse {
+                emoji,
+                count: usize::try_from(count).map_err(|_| AuthFailure::Internal)?,
+            });
+    }
+    for reactions in by_message.values_mut() {
+        reactions.sort_by(|left, right| left.emoji.cmp(&right.emoji));
+    }
+    Ok(by_message)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{reaction_summaries_from_users, validate_reaction_emoji};
+    use super::{
+        reaction_map_from_counts, reaction_summaries_from_users,
+        validate_reaction_emoji,
+    };
     use crate::server::errors::AuthFailure;
     use filament_core::UserId;
     use std::collections::{HashMap, HashSet};
@@ -80,5 +102,37 @@ mod tests {
     #[test]
     fn validate_reaction_emoji_accepts_compact_emoji() {
         assert!(validate_reaction_emoji("🔥").is_ok());
+    }
+
+    #[test]
+    fn reaction_map_from_counts_sorts_reactions_and_groups_by_message() {
+        let map = reaction_map_from_counts(vec![
+            (String::from("m1"), String::from("😄"), 1),
+            (String::from("m1"), String::from("😀"), 2),
+            (String::from("m2"), String::from("🔥"), 3),
+        ])
+        .expect("counts should map");
+
+        let m1 = map.get("m1").expect("m1 should exist");
+        assert_eq!(m1.len(), 2);
+        assert_eq!(m1[0].emoji, "😀");
+        assert_eq!(m1[1].emoji, "😄");
+
+        let m2 = map.get("m2").expect("m2 should exist");
+        assert_eq!(m2.len(), 1);
+        assert_eq!(m2[0].emoji, "🔥");
+        assert_eq!(m2[0].count, 3);
+    }
+
+    #[test]
+    fn reaction_map_from_counts_rejects_negative_count_fail_closed() {
+        assert!(matches!(
+            reaction_map_from_counts(vec![(
+                String::from("m1"),
+                String::from("😀"),
+                -1,
+            )]),
+            Err(AuthFailure::Internal)
+        ));
     }
 }

@@ -10,14 +10,20 @@ mod permissions_eval;
 mod reactions;
 
 pub(crate) use attachments::{
-    attach_message_media, parse_attachment_ids, validate_attachment_filename,
+    attach_message_media, attachment_map_from_records,
+    attachment_response_from_record, parse_attachment_ids,
+    validate_attachment_filename,
 };
 pub(crate) use moderation::{
     enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client,
 };
-pub(crate) use permissions_eval::apply_channel_layers;
+pub(crate) use permissions_eval::{
+    aggregate_guild_permissions, apply_channel_layers,
+    apply_legacy_role_assignment,
+};
 pub(crate) use reactions::{
-    attach_message_reactions, reaction_summaries_from_users, validate_reaction_emoji,
+    attach_message_reactions, reaction_map_from_counts,
+    reaction_summaries_from_users, validate_reaction_emoji,
 };
 
 use super::{
@@ -454,27 +460,23 @@ async fn resolve_channel_permissions_db(
         }
     }
 
-    match legacy_role {
-        Role::Owner => {
-            assigned_role_ids.insert(role_ids.workspace_owner.clone());
-        }
-        Role::Moderator => {
-            assigned_role_ids.insert(role_ids.moderator.clone());
-        }
-        Role::Member => {
-            assigned_role_ids.insert(role_ids.member.clone());
-        }
-    }
+    apply_legacy_role_assignment(
+        &mut assigned_role_ids,
+        legacy_role,
+        &role_ids.workspace_owner,
+        &role_ids.moderator,
+        &role_ids.member,
+    );
 
-    let mut guild_permissions = roles
+    let everyone_permissions = roles
         .get(&role_ids.everyone)
         .map_or_else(default_everyone_permissions, |role| role.permissions_allow);
-    for role_id in &assigned_role_ids {
-        if let Some(role) = roles.get(role_id) {
-            guild_permissions =
-                PermissionSet::from_bits(guild_permissions.bits() | role.permissions_allow.bits());
-        }
-    }
+    let role_permissions = roles
+        .iter()
+        .map(|(role_id, role)| (role_id.clone(), role.permissions_allow))
+        .collect();
+    let mut guild_permissions =
+        aggregate_guild_permissions(everyone_permissions, &assigned_role_ids, &role_permissions);
 
     let is_workspace_owner = assigned_role_ids.contains(&role_ids.workspace_owner);
     if is_workspace_owner {
@@ -702,27 +704,23 @@ async fn resolve_channel_permissions_in_memory(
     drop(guild_assignments);
 
     let mut assigned_role_ids = assigned_role_ids;
-    match legacy_role {
-        Role::Owner => {
-            assigned_role_ids.insert(role_ids.workspace_owner.clone());
-        }
-        Role::Moderator => {
-            assigned_role_ids.insert(role_ids.moderator.clone());
-        }
-        Role::Member => {
-            assigned_role_ids.insert(role_ids.member.clone());
-        }
-    }
+    apply_legacy_role_assignment(
+        &mut assigned_role_ids,
+        legacy_role,
+        &role_ids.workspace_owner,
+        &role_ids.moderator,
+        &role_ids.member,
+    );
 
-    let mut guild_permissions = roles
+    let everyone_permissions = roles
         .get(&role_ids.everyone)
         .map_or_else(default_everyone_permissions, |role| role.permissions_allow);
-    for role_id in &assigned_role_ids {
-        if let Some(role) = roles.get(role_id) {
-            guild_permissions =
-                PermissionSet::from_bits(guild_permissions.bits() | role.permissions_allow.bits());
-        }
-    }
+    let role_permissions = roles
+        .iter()
+        .map(|(role_id, role)| (role_id.clone(), role.permissions_allow))
+        .collect();
+    let mut guild_permissions =
+        aggregate_guild_permissions(everyone_permissions, &assigned_role_ids, &role_permissions);
 
     let is_workspace_owner = assigned_role_ids.contains(&role_ids.workspace_owner);
     if is_workspace_owner {
@@ -1005,16 +1003,7 @@ pub(crate) async fn attachments_for_message_in_memory(
         let Some(record) = attachments.get(attachment_id) else {
             return Err(AuthFailure::InvalidRequest);
         };
-        out.push(AttachmentResponse {
-            attachment_id: record.attachment_id.clone(),
-            guild_id: record.guild_id.clone(),
-            channel_id: record.channel_id.clone(),
-            owner_id: record.owner_id.to_string(),
-            filename: record.filename.clone(),
-            mime_type: record.mime_type.clone(),
-            size_bytes: record.size_bytes,
-            sha256_hex: record.sha256_hex.clone(),
-        });
+        out.push(attachment_response_from_record(record));
     }
     Ok(out)
 }
@@ -1127,43 +1116,8 @@ pub(crate) async fn attachment_map_for_messages_in_memory(
     channel_id: Option<&str>,
     message_ids: &[String],
 ) -> HashMap<String, Vec<AttachmentResponse>> {
-    if message_ids.is_empty() {
-        return HashMap::new();
-    }
-    let wanted: HashSet<&str> = message_ids.iter().map(String::as_str).collect();
     let attachments = state.attachments.read().await;
-    let mut by_message: HashMap<String, Vec<AttachmentResponse>> = HashMap::new();
-    for record in attachments.values() {
-        let Some(message_id) = record.message_id.as_deref() else {
-            continue;
-        };
-        if record.guild_id != guild_id {
-            continue;
-        }
-        if channel_id.is_some_and(|cid| cid != record.channel_id) {
-            continue;
-        }
-        if !wanted.contains(message_id) {
-            continue;
-        }
-        by_message
-            .entry(message_id.to_owned())
-            .or_default()
-            .push(AttachmentResponse {
-                attachment_id: record.attachment_id.clone(),
-                guild_id: record.guild_id.clone(),
-                channel_id: record.channel_id.clone(),
-                owner_id: record.owner_id.to_string(),
-                filename: record.filename.clone(),
-                mime_type: record.mime_type.clone(),
-                size_bytes: record.size_bytes,
-                sha256_hex: record.sha256_hex.clone(),
-            });
-    }
-    for values in by_message.values_mut() {
-        values.sort_by(|a, b| a.attachment_id.cmp(&b.attachment_id));
-    }
-    by_message
+    attachment_map_from_records(attachments.values(), guild_id, channel_id, message_ids)
 }
 
 pub(crate) async fn reaction_map_for_messages_db(
@@ -1202,25 +1156,16 @@ pub(crate) async fn reaction_map_for_messages_db(
         .map_err(|_| AuthFailure::Internal)?
     };
 
-    let mut by_message: HashMap<String, Vec<ReactionResponse>> = HashMap::new();
+    let mut counts = Vec::with_capacity(rows.len());
     for row in rows {
         let message_id: String = row
             .try_get("message_id")
             .map_err(|_| AuthFailure::Internal)?;
         let emoji: String = row.try_get("emoji").map_err(|_| AuthFailure::Internal)?;
         let count: i64 = row.try_get("count").map_err(|_| AuthFailure::Internal)?;
-        by_message
-            .entry(message_id)
-            .or_default()
-            .push(ReactionResponse {
-                emoji,
-                count: usize::try_from(count).map_err(|_| AuthFailure::Internal)?,
-            });
+        counts.push((message_id, emoji, count));
     }
-    for reactions in by_message.values_mut() {
-        reactions.sort_by(|left, right| left.emoji.cmp(&right.emoji));
-    }
-    Ok(by_message)
+    reaction_map_from_counts(counts)
 }
 
 pub(crate) async fn write_audit_log(
