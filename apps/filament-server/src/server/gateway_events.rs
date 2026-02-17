@@ -1,29 +1,42 @@
-use std::collections::HashSet;
-
 use filament_core::UserId;
 use serde::Serialize;
 
-use super::{
-    auth::outbound_event,
-    core::{GuildVisibility, VoiceStreamKind},
-    types::{ChannelResponse, MessageResponse},
-};
+mod connection;
+mod envelope;
+mod message_channel;
+mod presence_voice;
 
-pub(crate) const READY_EVENT: &str = "ready";
-pub(crate) const SUBSCRIBED_EVENT: &str = "subscribed";
-pub(crate) const MESSAGE_CREATE_EVENT: &str = "message_create";
-pub(crate) const MESSAGE_UPDATE_EVENT: &str = "message_update";
-pub(crate) const MESSAGE_DELETE_EVENT: &str = "message_delete";
-pub(crate) const MESSAGE_REACTION_EVENT: &str = "message_reaction";
-pub(crate) const CHANNEL_CREATE_EVENT: &str = "channel_create";
-pub(crate) const PRESENCE_SYNC_EVENT: &str = "presence_sync";
-pub(crate) const PRESENCE_UPDATE_EVENT: &str = "presence_update";
-pub(crate) const VOICE_PARTICIPANT_SYNC_EVENT: &str = "voice_participant_sync";
-pub(crate) const VOICE_PARTICIPANT_JOIN_EVENT: &str = "voice_participant_join";
-pub(crate) const VOICE_PARTICIPANT_LEAVE_EVENT: &str = "voice_participant_leave";
-pub(crate) const VOICE_PARTICIPANT_UPDATE_EVENT: &str = "voice_participant_update";
-pub(crate) const VOICE_STREAM_PUBLISH_EVENT: &str = "voice_stream_publish";
-pub(crate) const VOICE_STREAM_UNPUBLISH_EVENT: &str = "voice_stream_unpublish";
+use super::core::GuildVisibility;
+
+pub(crate) use envelope::GatewayEvent;
+use envelope::build_event;
+pub(crate) use connection::{ready, subscribed};
+pub(crate) use message_channel::{
+    channel_create,
+    message_create,
+    message_delete,
+    message_reaction,
+    message_update,
+};
+pub(crate) use presence_voice::{
+    presence_sync,
+    presence_update,
+    voice_participant_join,
+    voice_participant_leave,
+    voice_participant_sync,
+    voice_participant_update,
+    voice_stream_publish,
+    voice_stream_unpublish,
+    VoiceParticipantSnapshot,
+};
+#[cfg(test)]
+pub(crate) use presence_voice::{
+    VOICE_PARTICIPANT_JOIN_EVENT,
+    VOICE_PARTICIPANT_LEAVE_EVENT,
+    VOICE_PARTICIPANT_UPDATE_EVENT,
+    VOICE_STREAM_PUBLISH_EVENT,
+    VOICE_STREAM_UNPUBLISH_EVENT,
+};
 pub(crate) const WORKSPACE_UPDATE_EVENT: &str = "workspace_update";
 pub(crate) const WORKSPACE_MEMBER_ADD_EVENT: &str = "workspace_member_add";
 pub(crate) const WORKSPACE_MEMBER_UPDATE_EVENT: &str = "workspace_member_update";
@@ -44,161 +57,6 @@ pub(crate) const FRIEND_REQUEST_CREATE_EVENT: &str = "friend_request_create";
 pub(crate) const FRIEND_REQUEST_UPDATE_EVENT: &str = "friend_request_update";
 pub(crate) const FRIEND_REQUEST_DELETE_EVENT: &str = "friend_request_delete";
 pub(crate) const FRIEND_REMOVE_EVENT: &str = "friend_remove";
-
-pub(crate) struct GatewayEvent {
-    pub(crate) event_type: &'static str,
-    pub(crate) payload: String,
-}
-
-#[derive(Serialize)]
-struct ReadyPayload {
-    user_id: String,
-}
-
-#[derive(Serialize)]
-struct SubscribedPayload<'a> {
-    guild_id: &'a str,
-    channel_id: &'a str,
-}
-
-#[derive(Serialize)]
-struct MessageReactionPayload<'a> {
-    guild_id: &'a str,
-    channel_id: &'a str,
-    message_id: &'a str,
-    emoji: &'a str,
-    count: usize,
-}
-
-#[derive(Serialize)]
-struct MessageUpdatePayload<'a> {
-    guild_id: &'a str,
-    channel_id: &'a str,
-    message_id: &'a str,
-    updated_fields: MessageUpdateFieldsPayload<'a>,
-    updated_at_unix: i64,
-}
-
-#[derive(Serialize)]
-struct MessageUpdateFieldsPayload<'a> {
-    content: &'a str,
-    markdown_tokens: &'a [filament_core::MarkdownToken],
-}
-
-#[derive(Serialize)]
-struct MessageDeletePayload<'a> {
-    guild_id: &'a str,
-    channel_id: &'a str,
-    message_id: &'a str,
-    deleted_at_unix: i64,
-}
-
-#[derive(Serialize)]
-struct ChannelCreatePayload<'a> {
-    guild_id: &'a str,
-    channel: ChannelCreateChannelPayload<'a>,
-}
-
-#[derive(Serialize)]
-struct ChannelCreateChannelPayload<'a> {
-    channel_id: &'a str,
-    name: &'a str,
-    kind: filament_core::ChannelKind,
-}
-
-#[derive(Serialize)]
-struct PresenceSyncPayload {
-    guild_id: String,
-    user_ids: HashSet<String>,
-}
-
-#[derive(Serialize)]
-struct PresenceUpdatePayload {
-    guild_id: String,
-    user_id: String,
-    status: &'static str,
-}
-
-#[derive(Serialize)]
-struct VoiceParticipantSyncPayload {
-    guild_id: String,
-    channel_id: String,
-    participants: Vec<VoiceParticipantPayload>,
-    synced_at_unix: i64,
-}
-
-#[derive(Serialize)]
-struct VoiceParticipantPayload {
-    user_id: String,
-    identity: String,
-    joined_at_unix: i64,
-    updated_at_unix: i64,
-    is_muted: bool,
-    is_deafened: bool,
-    is_speaking: bool,
-    is_video_enabled: bool,
-    is_screen_share_enabled: bool,
-}
-
-#[derive(Serialize)]
-struct VoiceParticipantJoinPayload {
-    guild_id: String,
-    channel_id: String,
-    participant: VoiceParticipantPayload,
-}
-
-#[derive(Serialize)]
-struct VoiceParticipantLeavePayload {
-    guild_id: String,
-    channel_id: String,
-    user_id: String,
-    identity: String,
-    left_at_unix: i64,
-}
-
-#[derive(Serialize)]
-struct VoiceParticipantUpdatePayload {
-    guild_id: String,
-    channel_id: String,
-    user_id: String,
-    identity: String,
-    updated_fields: VoiceParticipantUpdatedFieldsPayload,
-    updated_at_unix: i64,
-}
-
-#[derive(Serialize)]
-struct VoiceParticipantUpdatedFieldsPayload {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_muted: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_deafened: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_speaking: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_video_enabled: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_screen_share_enabled: Option<bool>,
-}
-
-#[derive(Serialize)]
-struct VoiceStreamPublishPayload {
-    guild_id: String,
-    channel_id: String,
-    user_id: String,
-    identity: String,
-    stream: VoiceStreamKind,
-    published_at_unix: i64,
-}
-
-#[derive(Serialize)]
-struct VoiceStreamUnpublishPayload {
-    guild_id: String,
-    channel_id: String,
-    user_id: String,
-    identity: String,
-    stream: VoiceStreamKind,
-    unpublished_at_unix: i64,
-}
 
 #[derive(Serialize)]
 struct WorkspaceUpdatePayload<'a> {
@@ -429,291 +287,6 @@ struct FriendRemovePayload<'a> {
     removed_at_unix: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor_user_id: Option<String>,
-}
-
-fn build_event<T: Serialize>(event_type: &'static str, payload: T) -> GatewayEvent {
-    GatewayEvent {
-        event_type,
-        payload: outbound_event(event_type, payload),
-    }
-}
-
-pub(crate) fn ready(user_id: UserId) -> GatewayEvent {
-    build_event(
-        READY_EVENT,
-        ReadyPayload {
-            user_id: user_id.to_string(),
-        },
-    )
-}
-
-pub(crate) fn subscribed(guild_id: &str, channel_id: &str) -> GatewayEvent {
-    build_event(
-        SUBSCRIBED_EVENT,
-        SubscribedPayload {
-            guild_id,
-            channel_id,
-        },
-    )
-}
-
-pub(crate) fn message_create(message: &MessageResponse) -> GatewayEvent {
-    build_event(MESSAGE_CREATE_EVENT, message)
-}
-
-pub(crate) fn message_reaction(
-    guild_id: &str,
-    channel_id: &str,
-    message_id: &str,
-    emoji: &str,
-    count: usize,
-) -> GatewayEvent {
-    build_event(
-        MESSAGE_REACTION_EVENT,
-        MessageReactionPayload {
-            guild_id,
-            channel_id,
-            message_id,
-            emoji,
-            count,
-        },
-    )
-}
-
-pub(crate) fn message_update(
-    guild_id: &str,
-    channel_id: &str,
-    message_id: &str,
-    content: &str,
-    markdown_tokens: &[filament_core::MarkdownToken],
-    updated_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        MESSAGE_UPDATE_EVENT,
-        MessageUpdatePayload {
-            guild_id,
-            channel_id,
-            message_id,
-            updated_fields: MessageUpdateFieldsPayload {
-                content,
-                markdown_tokens,
-            },
-            updated_at_unix,
-        },
-    )
-}
-
-pub(crate) fn message_delete(
-    guild_id: &str,
-    channel_id: &str,
-    message_id: &str,
-    deleted_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        MESSAGE_DELETE_EVENT,
-        MessageDeletePayload {
-            guild_id,
-            channel_id,
-            message_id,
-            deleted_at_unix,
-        },
-    )
-}
-
-pub(crate) fn channel_create(guild_id: &str, channel: &ChannelResponse) -> GatewayEvent {
-    build_event(
-        CHANNEL_CREATE_EVENT,
-        ChannelCreatePayload {
-            guild_id,
-            channel: ChannelCreateChannelPayload {
-                channel_id: channel.channel_id.as_str(),
-                name: channel.name.as_str(),
-                kind: channel.kind,
-            },
-        },
-    )
-}
-
-pub(crate) fn presence_sync(guild_id: &str, user_ids: HashSet<String>) -> GatewayEvent {
-    build_event(
-        PRESENCE_SYNC_EVENT,
-        PresenceSyncPayload {
-            guild_id: guild_id.to_owned(),
-            user_ids,
-        },
-    )
-}
-
-pub(crate) fn presence_update(
-    guild_id: &str,
-    user_id: UserId,
-    status: &'static str,
-) -> GatewayEvent {
-    build_event(
-        PRESENCE_UPDATE_EVENT,
-        PresenceUpdatePayload {
-            guild_id: guild_id.to_owned(),
-            user_id: user_id.to_string(),
-            status,
-        },
-    )
-}
-
-pub(crate) fn voice_participant_sync(
-    guild_id: &str,
-    channel_id: &str,
-    participants: Vec<VoiceParticipantSnapshot>,
-    synced_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        VOICE_PARTICIPANT_SYNC_EVENT,
-        VoiceParticipantSyncPayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            participants: participants
-                .into_iter()
-                .map(VoiceParticipantPayload::from)
-                .collect(),
-            synced_at_unix,
-        },
-    )
-}
-
-pub(crate) fn voice_participant_join(
-    guild_id: &str,
-    channel_id: &str,
-    participant: VoiceParticipantSnapshot,
-) -> GatewayEvent {
-    build_event(
-        VOICE_PARTICIPANT_JOIN_EVENT,
-        VoiceParticipantJoinPayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            participant: VoiceParticipantPayload::from(participant),
-        },
-    )
-}
-
-pub(crate) fn voice_participant_leave(
-    guild_id: &str,
-    channel_id: &str,
-    user_id: UserId,
-    identity: &str,
-    left_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        VOICE_PARTICIPANT_LEAVE_EVENT,
-        VoiceParticipantLeavePayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            user_id: user_id.to_string(),
-            identity: identity.to_owned(),
-            left_at_unix,
-        },
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn voice_participant_update(
-    guild_id: &str,
-    channel_id: &str,
-    user_id: UserId,
-    identity: &str,
-    is_muted: Option<bool>,
-    is_deafened: Option<bool>,
-    is_speaking: Option<bool>,
-    is_video_enabled: Option<bool>,
-    is_screen_share_enabled: Option<bool>,
-    updated_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        VOICE_PARTICIPANT_UPDATE_EVENT,
-        VoiceParticipantUpdatePayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            user_id: user_id.to_string(),
-            identity: identity.to_owned(),
-            updated_fields: VoiceParticipantUpdatedFieldsPayload {
-                is_muted,
-                is_deafened,
-                is_speaking,
-                is_video_enabled,
-                is_screen_share_enabled,
-            },
-            updated_at_unix,
-        },
-    )
-}
-
-pub(crate) fn voice_stream_publish(
-    guild_id: &str,
-    channel_id: &str,
-    user_id: UserId,
-    identity: &str,
-    stream: VoiceStreamKind,
-    published_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        VOICE_STREAM_PUBLISH_EVENT,
-        VoiceStreamPublishPayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            user_id: user_id.to_string(),
-            identity: identity.to_owned(),
-            stream,
-            published_at_unix,
-        },
-    )
-}
-
-pub(crate) fn voice_stream_unpublish(
-    guild_id: &str,
-    channel_id: &str,
-    user_id: UserId,
-    identity: &str,
-    stream: VoiceStreamKind,
-    unpublished_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        VOICE_STREAM_UNPUBLISH_EVENT,
-        VoiceStreamUnpublishPayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            user_id: user_id.to_string(),
-            identity: identity.to_owned(),
-            stream,
-            unpublished_at_unix,
-        },
-    )
-}
-
-#[derive(Clone)]
-pub(crate) struct VoiceParticipantSnapshot {
-    pub(crate) user_id: UserId,
-    pub(crate) identity: String,
-    pub(crate) joined_at_unix: i64,
-    pub(crate) updated_at_unix: i64,
-    pub(crate) is_muted: bool,
-    pub(crate) is_deafened: bool,
-    pub(crate) is_speaking: bool,
-    pub(crate) is_video_enabled: bool,
-    pub(crate) is_screen_share_enabled: bool,
-}
-
-impl From<VoiceParticipantSnapshot> for VoiceParticipantPayload {
-    fn from(value: VoiceParticipantSnapshot) -> Self {
-        Self {
-            user_id: value.user_id.to_string(),
-            identity: value.identity,
-            joined_at_unix: value.joined_at_unix,
-            updated_at_unix: value.updated_at_unix,
-            is_muted: value.is_muted,
-            is_deafened: value.is_deafened,
-            is_speaking: value.is_speaking,
-            is_video_enabled: value.is_video_enabled,
-            is_screen_share_enabled: value.is_screen_share_enabled,
-        }
-    }
 }
 
 pub(crate) fn workspace_update(
@@ -1093,6 +666,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::server::core::VoiceStreamKind;
     use crate::server::types::{ChannelResponse, MessageResponse};
 
     fn parse_event(event: &GatewayEvent) -> Value {
