@@ -4,7 +4,7 @@ use std::{
 };
 
 use axum::{body::Body, http::Request, http::StatusCode};
-use filament_server::{build_router, AppConfig};
+use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -26,8 +26,8 @@ fn postgres_url() -> Option<String> {
     env::var("FILAMENT_TEST_DATABASE_URL").ok()
 }
 
-fn test_app(database_url: String) -> axum::Router {
-    build_router(&AppConfig {
+async fn test_app(database_url: String) -> axum::Router {
+    build_router_with_db_bootstrap(&AppConfig {
         max_body_bytes: 1024 * 64,
         request_timeout: Duration::from_secs(2),
         rate_limit_requests_per_minute: 200,
@@ -35,6 +35,7 @@ fn test_app(database_url: String) -> axum::Router {
         database_url: Some(database_url),
         ..AppConfig::default()
     })
+    .await
     .expect("router should build")
 }
 
@@ -234,7 +235,7 @@ async fn postgres_search_reconcile_repairs_missing_and_orphan_docs() {
         return;
     };
 
-    let app = test_app(database_url.clone());
+    let app = test_app(database_url.clone()).await;
     let db_pool = PgPool::connect(&database_url)
         .await
         .expect("postgres pool should connect");

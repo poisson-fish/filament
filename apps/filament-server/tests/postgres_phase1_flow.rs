@@ -1,7 +1,7 @@
 use std::{env, time::Duration};
 
 use axum::{body::Body, http::Request, http::StatusCode};
-use filament_server::{build_router, AppConfig};
+use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -23,8 +23,8 @@ fn postgres_url() -> Option<String> {
     env::var("FILAMENT_TEST_DATABASE_URL").ok()
 }
 
-fn test_app(database_url: String) -> axum::Router {
-    build_router(&AppConfig {
+async fn test_app(database_url: String) -> axum::Router {
+    build_router_with_db_bootstrap(&AppConfig {
         max_body_bytes: 1024 * 32,
         request_timeout: Duration::from_secs(2),
         rate_limit_requests_per_minute: 200,
@@ -36,6 +36,7 @@ fn test_app(database_url: String) -> axum::Router {
         database_url: Some(database_url),
         ..AppConfig::default()
     })
+    .await
     .expect("router should build")
 }
 
@@ -440,7 +441,7 @@ async fn postgres_backed_phase1_auth_and_realtime_text_flow() {
         return;
     };
 
-    let app = test_app(database_url);
+    let app = test_app(database_url).await;
     let suffix = Ulid::new().to_string().to_lowercase();
     let username = format!("pg_{}", &suffix[..20]);
     let wrong_password = "definitely-wrong-password";
@@ -479,7 +480,7 @@ async fn postgres_backed_first_public_workspace_creator_can_create_initial_chann
         return;
     };
 
-    let app = test_app(database_url);
+    let app = test_app(database_url).await;
     let suffix = Ulid::new().to_string().to_lowercase();
     let username = format!("public_{}", &suffix[..20]);
     let password = "super-secure-password";
@@ -543,7 +544,7 @@ async fn postgres_backed_channel_kind_round_trips_and_defaults_to_text() {
         return;
     };
 
-    let app = test_app(database_url);
+    let app = test_app(database_url).await;
     let suffix = Ulid::new().to_string().to_lowercase();
     let username = format!("kind_{}", &suffix[..20]);
     let password = "super-secure-password";
@@ -647,7 +648,7 @@ async fn postgres_backed_user_lookup_batch_endpoint_returns_valid_users() {
         return;
     };
 
-    let app = test_app(database_url);
+    let app = test_app(database_url).await;
     let suffix = Ulid::new().to_string().to_lowercase();
     let alice_username = format!("alice_{}", &suffix[..20]);
     let bob_username = format!("bob_{}", &suffix[..20]);
