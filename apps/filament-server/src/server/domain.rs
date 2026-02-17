@@ -10,7 +10,8 @@ mod permissions_eval;
 mod reactions;
 
 pub(crate) use attachments::{
-    attach_message_media, attachment_map_from_records,
+    attach_message_media, attachment_map_from_db_records,
+    attachment_map_from_records,
     attachment_response_from_record, parse_attachment_ids,
     validate_attachment_filename,
 };
@@ -19,7 +20,8 @@ pub(crate) use moderation::{
 };
 pub(crate) use permissions_eval::{
     aggregate_guild_permissions, apply_channel_layers,
-    apply_legacy_role_assignment,
+    apply_legacy_role_assignment, i64_to_masked_permissions,
+    merge_channel_overwrite, role_ids_from_map,
 };
 pub(crate) use reactions::{
     attach_message_reactions, reaction_map_from_counts,
@@ -35,7 +37,7 @@ use super::{
     errors::AuthFailure,
     permissions::{
         all_permissions, default_everyone_permissions, default_member_permissions,
-        default_moderator_permissions, mask_permissions, membership_to_legacy_role,
+        default_moderator_permissions, membership_to_legacy_role,
         DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
         SYSTEM_ROLE_WORKSPACE_OWNER,
     },
@@ -57,55 +59,11 @@ pub(crate) async fn user_can_write_channel(
 const OVERRIDE_TARGET_ROLE: i16 = 0;
 const OVERRIDE_TARGET_MEMBER: i16 = 1;
 
-#[derive(Debug)]
-struct RoleIdSet {
-    everyone: String,
-    workspace_owner: String,
-    member: String,
-    moderator: String,
-}
-
 fn is_server_owner(state: &AppState, user_id: UserId) -> bool {
     state
         .runtime
         .server_owner_user_id
         .is_some_and(|owner| owner == user_id)
-}
-
-fn i64_to_masked_permissions(value: i64) -> Result<(PermissionSet, u64), AuthFailure> {
-    let raw = u64::try_from(value).map_err(|_| AuthFailure::Internal)?;
-    Ok(mask_permissions(raw))
-}
-
-fn role_ids_from_map(roles: &HashMap<String, WorkspaceRoleRecord>) -> Option<RoleIdSet> {
-    let everyone = roles
-        .values()
-        .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE))
-        .map(|role| role.role_id.clone())?;
-    let workspace_owner = roles
-        .values()
-        .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER))
-        .map(|role| role.role_id.clone())?;
-    let member = roles
-        .values()
-        .find(|role| {
-            role.system_key.as_deref() == Some(DEFAULT_ROLE_MEMBER)
-                || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MEMBER)
-        })
-        .map(|role| role.role_id.clone())?;
-    let moderator = roles
-        .values()
-        .find(|role| {
-            role.system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR)
-                || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MODERATOR)
-        })
-        .map(|role| role.role_id.clone())?;
-    Some(RoleIdSet {
-        everyone,
-        workspace_owner,
-        member,
-        moderator,
-    })
 }
 
 async fn ensure_in_memory_permission_model_for_guild(
@@ -548,14 +506,7 @@ async fn resolve_channel_permissions_db(
                 if target_id == role_ids.everyone {
                     everyone_overwrite = overwrite;
                 } else if assigned_role_ids.contains(&target_id) {
-                    role_overwrite = ChannelPermissionOverwrite {
-                        allow: PermissionSet::from_bits(
-                            role_overwrite.allow.bits() | overwrite.allow.bits(),
-                        ),
-                        deny: PermissionSet::from_bits(
-                            role_overwrite.deny.bits() | overwrite.deny.bits(),
-                        ),
-                    };
+                    role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
                 }
             }
             OVERRIDE_TARGET_MEMBER => {
@@ -596,38 +547,17 @@ async fn resolve_channel_permissions_db(
             match role {
                 Role::Member => {
                     if assigned_role_ids.contains(&role_ids.member) {
-                        role_overwrite = ChannelPermissionOverwrite {
-                            allow: PermissionSet::from_bits(
-                                role_overwrite.allow.bits() | overwrite.allow.bits(),
-                            ),
-                            deny: PermissionSet::from_bits(
-                                role_overwrite.deny.bits() | overwrite.deny.bits(),
-                            ),
-                        };
+                        role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
                     }
                 }
                 Role::Moderator => {
                     if assigned_role_ids.contains(&role_ids.moderator) {
-                        role_overwrite = ChannelPermissionOverwrite {
-                            allow: PermissionSet::from_bits(
-                                role_overwrite.allow.bits() | overwrite.allow.bits(),
-                            ),
-                            deny: PermissionSet::from_bits(
-                                role_overwrite.deny.bits() | overwrite.deny.bits(),
-                            ),
-                        };
+                        role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
                     }
                 }
                 Role::Owner => {
                     if assigned_role_ids.contains(&role_ids.workspace_owner) {
-                        role_overwrite = ChannelPermissionOverwrite {
-                            allow: PermissionSet::from_bits(
-                                role_overwrite.allow.bits() | overwrite.allow.bits(),
-                            ),
-                            deny: PermissionSet::from_bits(
-                                role_overwrite.deny.bits() | overwrite.deny.bits(),
-                            ),
-                        };
+                        role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
                     }
                 }
             }
@@ -751,12 +681,7 @@ async fn resolve_channel_permissions_in_memory(
     let mut role_overwrite = ChannelPermissionOverwrite::default();
     for role_id in &assigned_role_ids {
         if let Some(overwrite) = channel_override.role_overrides.get(role_id).copied() {
-            role_overwrite = ChannelPermissionOverwrite {
-                allow: PermissionSet::from_bits(
-                    role_overwrite.allow.bits() | overwrite.allow.bits(),
-                ),
-                deny: PermissionSet::from_bits(role_overwrite.deny.bits() | overwrite.deny.bits()),
-            };
+            role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
         }
     }
     let member_overwrite = channel_override
@@ -1074,21 +999,17 @@ pub(crate) async fn attachment_map_for_messages_db(
         .map_err(|_| AuthFailure::Internal)?
     };
 
-    let mut by_message: HashMap<String, Vec<AttachmentResponse>> = HashMap::new();
+    let mut records = Vec::with_capacity(rows.len());
     for row in rows {
         let message_id: Option<String> = row
             .try_get("message_id")
             .map_err(|_| AuthFailure::Internal)?;
-        let Some(message_id) = message_id else {
-            continue;
-        };
         let size_bytes: i64 = row
             .try_get("size_bytes")
             .map_err(|_| AuthFailure::Internal)?;
-        by_message
-            .entry(message_id)
-            .or_default()
-            .push(AttachmentResponse {
+        records.push((
+            message_id,
+            AttachmentResponse {
                 attachment_id: row
                     .try_get("attachment_id")
                     .map_err(|_| AuthFailure::Internal)?,
@@ -1105,9 +1026,10 @@ pub(crate) async fn attachment_map_for_messages_db(
                 sha256_hex: row
                     .try_get("sha256_hex")
                     .map_err(|_| AuthFailure::Internal)?,
-            });
+            },
+        ));
     }
-    Ok(by_message)
+    Ok(attachment_map_from_db_records(records))
 }
 
 pub(crate) async fn attachment_map_for_messages_in_memory(

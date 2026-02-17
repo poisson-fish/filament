@@ -96,15 +96,30 @@ pub(crate) fn attachment_map_from_records<'a>(
     by_message
 }
 
+pub(crate) fn attachment_map_from_db_records(
+    records: Vec<(Option<String>, AttachmentResponse)>,
+) -> HashMap<String, Vec<AttachmentResponse>> {
+    let mut by_message: HashMap<String, Vec<AttachmentResponse>> = HashMap::new();
+    for (message_id, response) in records {
+        let Some(message_id) = message_id else {
+            continue;
+        };
+        by_message.entry(message_id).or_default().push(response);
+    }
+    by_message
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        attachment_map_from_records, attachment_response_from_record,
+        attachment_map_from_db_records, attachment_map_from_records,
+        attachment_response_from_record,
         parse_attachment_ids, validate_attachment_filename,
     };
     use crate::server::core::AttachmentRecord;
     use crate::server::core::MAX_ATTACHMENTS_PER_MESSAGE;
     use crate::server::errors::AuthFailure;
+    use crate::server::types::AttachmentResponse;
     use filament_core::UserId;
     use ulid::Ulid;
 
@@ -258,5 +273,41 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
         assert_eq!(kept[1].attachment_id, "02ARZ3NDEKTSV4RRFFQ69G5FAV");
+    }
+
+    #[test]
+    fn attachment_map_from_db_records_groups_by_message_and_skips_null_message_id() {
+        let entry_a = AttachmentResponse {
+            attachment_id: String::from("att-a"),
+            guild_id: String::from("g1"),
+            channel_id: String::from("c1"),
+            owner_id: UserId::new().to_string(),
+            filename: String::from("a.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 1,
+            sha256_hex: String::from("hash-a"),
+        };
+        let entry_b = AttachmentResponse {
+            attachment_id: String::from("att-b"),
+            guild_id: String::from("g1"),
+            channel_id: String::from("c1"),
+            owner_id: UserId::new().to_string(),
+            filename: String::from("b.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 2,
+            sha256_hex: String::from("hash-b"),
+        };
+
+        let map = attachment_map_from_db_records(vec![
+            (Some(String::from("m1")), entry_a.clone()),
+            (None, entry_b.clone()),
+            (Some(String::from("m1")), entry_b),
+        ]);
+
+        assert_eq!(map.len(), 1);
+        let grouped = map.get("m1").expect("m1 should be present");
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].attachment_id, entry_a.attachment_id);
+        assert_eq!(grouped[1].attachment_id, "att-b");
     }
 }

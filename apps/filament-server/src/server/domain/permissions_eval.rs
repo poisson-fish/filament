@@ -1,6 +1,62 @@
 use filament_core::{ChannelPermissionOverwrite, PermissionSet, Role};
 use std::collections::{HashMap, HashSet};
 
+use crate::server::core::WorkspaceRoleRecord;
+use crate::server::errors::AuthFailure;
+use crate::server::permissions::{
+    mask_permissions,
+    DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
+    SYSTEM_ROLE_WORKSPACE_OWNER,
+};
+
+#[derive(Debug)]
+pub(crate) struct RoleIdSet {
+    pub(crate) everyone: String,
+    pub(crate) workspace_owner: String,
+    pub(crate) member: String,
+    pub(crate) moderator: String,
+}
+
+pub(crate) fn role_ids_from_map(
+    roles: &HashMap<String, WorkspaceRoleRecord>,
+) -> Option<RoleIdSet> {
+    let everyone = roles
+        .values()
+        .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE))
+        .map(|role| role.role_id.clone())?;
+    let workspace_owner = roles
+        .values()
+        .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER))
+        .map(|role| role.role_id.clone())?;
+    let member = roles
+        .values()
+        .find(|role| {
+            role.system_key.as_deref() == Some(DEFAULT_ROLE_MEMBER)
+                || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MEMBER)
+        })
+        .map(|role| role.role_id.clone())?;
+    let moderator = roles
+        .values()
+        .find(|role| {
+            role.system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR)
+                || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MODERATOR)
+        })
+        .map(|role| role.role_id.clone())?;
+    Some(RoleIdSet {
+        everyone,
+        workspace_owner,
+        member,
+        moderator,
+    })
+}
+
+pub(crate) fn i64_to_masked_permissions(
+    value: i64,
+) -> Result<(PermissionSet, u64), AuthFailure> {
+    let raw = u64::try_from(value).map_err(|_| AuthFailure::Internal)?;
+    Ok(mask_permissions(raw))
+}
+
 pub(crate) fn apply_channel_layers(
     base: PermissionSet,
     everyone: ChannelPermissionOverwrite,
@@ -22,6 +78,16 @@ pub(crate) fn apply_channel_layers(
     bits &= !member_deny;
     bits |= member_allow;
     PermissionSet::from_bits(bits)
+}
+
+pub(crate) fn merge_channel_overwrite(
+    aggregate: ChannelPermissionOverwrite,
+    overwrite: ChannelPermissionOverwrite,
+) -> ChannelPermissionOverwrite {
+    ChannelPermissionOverwrite {
+        allow: PermissionSet::from_bits(aggregate.allow.bits() | overwrite.allow.bits()),
+        deny: PermissionSet::from_bits(aggregate.deny.bits() | overwrite.deny.bits()),
+    }
 }
 
 fn normalize_layer(allow_bits: u64, deny_bits: u64) -> (u64, u64) {
@@ -67,8 +133,12 @@ pub(crate) fn aggregate_guild_permissions(
 mod tests {
     use super::{
         aggregate_guild_permissions, apply_channel_layers,
-        apply_legacy_role_assignment,
+        apply_legacy_role_assignment, i64_to_masked_permissions,
+        merge_channel_overwrite, role_ids_from_map,
     };
+    use crate::server::core::WorkspaceRoleRecord;
+    use crate::server::auth::now_unix;
+    use crate::server::errors::AuthFailure;
     use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet, Role};
     use std::collections::{HashMap, HashSet};
 
@@ -149,5 +219,106 @@ mod tests {
         assert!(aggregated.contains(Permission::ManageRoles));
         assert!(aggregated.contains(Permission::CreateMessage));
         assert!(aggregated.contains(Permission::DeleteMessage));
+    }
+
+    #[test]
+    fn role_ids_from_map_extracts_expected_system_roles() {
+        let created_at_unix = now_unix();
+        let mut roles = HashMap::new();
+        roles.insert(
+            String::from("r-everyone"),
+            WorkspaceRoleRecord {
+                role_id: String::from("r-everyone"),
+                name: String::from("@everyone"),
+                position: 0,
+                is_system: true,
+                system_key: Some(String::from("everyone")),
+                permissions_allow: PermissionSet::empty(),
+                created_at_unix,
+            },
+        );
+        roles.insert(
+            String::from("r-owner"),
+            WorkspaceRoleRecord {
+                role_id: String::from("r-owner"),
+                name: String::from("workspace_owner"),
+                position: 10_000,
+                is_system: true,
+                system_key: Some(String::from("workspace_owner")),
+                permissions_allow: PermissionSet::empty(),
+                created_at_unix,
+            },
+        );
+        roles.insert(
+            String::from("r-member"),
+            WorkspaceRoleRecord {
+                role_id: String::from("r-member"),
+                name: String::from("member"),
+                position: 1,
+                is_system: false,
+                system_key: Some(String::from("member")),
+                permissions_allow: PermissionSet::empty(),
+                created_at_unix,
+            },
+        );
+        roles.insert(
+            String::from("r-mod"),
+            WorkspaceRoleRecord {
+                role_id: String::from("r-mod"),
+                name: String::from("moderator"),
+                position: 2,
+                is_system: false,
+                system_key: Some(String::from("moderator")),
+                permissions_allow: PermissionSet::empty(),
+                created_at_unix,
+            },
+        );
+
+        let ids = role_ids_from_map(&roles).expect("role ids should be resolved");
+        assert_eq!(ids.everyone, "r-everyone");
+        assert_eq!(ids.workspace_owner, "r-owner");
+        assert_eq!(ids.member, "r-member");
+        assert_eq!(ids.moderator, "r-mod");
+    }
+
+    #[test]
+    fn i64_to_masked_permissions_rejects_negative_input_fail_closed() {
+        assert!(matches!(
+            i64_to_masked_permissions(-1),
+            Err(AuthFailure::Internal)
+        ));
+    }
+
+    #[test]
+    fn i64_to_masked_permissions_masks_unknown_bits() {
+        let unknown_bit = 1_u64 << 60;
+        let mut known = PermissionSet::empty();
+        known.insert(Permission::CreateMessage);
+        let raw_bits = known.bits() | unknown_bit;
+        let raw_i64 = i64::try_from(raw_bits).expect("test bits should fit i64");
+
+        let (masked, unknown) = i64_to_masked_permissions(raw_i64)
+            .expect("masking should succeed for non-negative values");
+
+        assert!(masked.contains(Permission::CreateMessage));
+        assert_eq!(unknown, unknown_bit);
+    }
+
+    #[test]
+    fn merge_channel_overwrite_unions_allow_and_deny_masks() {
+        let left = ChannelPermissionOverwrite {
+            allow: permission_set(&[Permission::CreateMessage]),
+            deny: permission_set(&[Permission::DeleteMessage]),
+        };
+        let right = ChannelPermissionOverwrite {
+            allow: permission_set(&[Permission::DeleteMessage]),
+            deny: permission_set(&[Permission::CreateMessage]),
+        };
+
+        let merged = merge_channel_overwrite(left, right);
+        assert!(merged.allow.contains(Permission::CreateMessage));
+        assert!(merged.allow.contains(Permission::DeleteMessage));
+        assert!(merged.deny.contains(Permission::CreateMessage));
+        assert!(merged.deny.contains(Permission::DeleteMessage));
     }
 }
