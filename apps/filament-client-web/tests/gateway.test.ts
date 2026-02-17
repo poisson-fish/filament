@@ -1510,4 +1510,42 @@ describe("gateway payload parsing", () => {
     expect(onOpenStateChange).toHaveBeenCalledWith(true);
     expect(socket.readyState).toBe(MockWebSocket.CLOSED);
   });
+
+  it("sends subscribe events for all configured channel subscriptions", () => {
+    const { socket, client } = createOpenGateway();
+    const voiceChannelId = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
+
+    client.setSubscribedChannels(DEFAULT_GUILD_ID, [
+      DEFAULT_CHANNEL_ID,
+      voiceChannelId,
+      voiceChannelId,
+    ]);
+
+    expect(socket.sent).toEqual([
+      JSON.stringify({
+        v: 1,
+        t: "subscribe",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+        },
+      }),
+      JSON.stringify({
+        v: 1,
+        t: "subscribe",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: DEFAULT_CHANNEL_ID,
+        },
+      }),
+      JSON.stringify({
+        v: 1,
+        t: "subscribe",
+        d: {
+          guild_id: DEFAULT_GUILD_ID,
+          channel_id: voiceChannelId,
+        },
+      }),
+    ]);
+  });
 });

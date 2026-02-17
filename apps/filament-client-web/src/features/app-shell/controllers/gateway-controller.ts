@@ -54,6 +54,7 @@ export interface GatewayControllerOptions {
   session: Accessor<AuthSession | null>;
   activeGuildId: Accessor<GuildId | null>;
   activeChannelId: Accessor<ChannelId | null>;
+  workspaces: Accessor<WorkspaceRecord[]>;
   canAccessActiveChannel: Accessor<boolean>;
   setGatewayOnline: Setter<boolean>;
   setOnlineMembers: Setter<string[]>;
@@ -75,6 +76,7 @@ export interface GatewayControllerOptions {
 }
 
 interface GatewayClient {
+  setSubscribedChannels: (guildId: GuildId, channelIds: ReadonlyArray<ChannelId>) => void;
   close: () => void;
 }
 
@@ -222,6 +224,30 @@ export function applyWorkspaceUpdate(
     guildName: payload.updatedFields.name ?? workspace.guildName,
     visibility: payload.updatedFields.visibility ?? workspace.visibility,
   }));
+}
+
+function gatewaySubscriptionChannelIds(
+  workspaces: WorkspaceRecord[],
+  guildId: GuildId,
+  activeChannelId: ChannelId,
+): ChannelId[] {
+  const channels: ChannelId[] = [activeChannelId];
+  const workspace = workspaces.find((entry) => entry.guildId === guildId);
+  if (!workspace) {
+    return channels;
+  }
+
+  for (const channel of workspace.channels) {
+    if (channel.kind !== "voice") {
+      continue;
+    }
+    if (channel.channelId === activeChannelId) {
+      continue;
+    }
+    channels.push(channel.channelId);
+  }
+
+  return channels;
 }
 
 function voiceChannelKey(guildId: GuildId, channelId: ChannelId): string {
@@ -713,6 +739,17 @@ export function createGatewayController(
           applyVoiceStreamUnpublishedState(existing, payload),
         );
       },
+    });
+
+    createEffect(() => {
+      gateway.setSubscribedChannels(
+        guildId,
+        gatewaySubscriptionChannelIds(
+          options.workspaces(),
+          guildId,
+          channelId,
+        ),
+      );
     });
 
     onCleanup(() => gateway.close());

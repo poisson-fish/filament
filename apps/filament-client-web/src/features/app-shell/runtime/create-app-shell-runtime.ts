@@ -480,6 +480,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     session: auth.session,
     activeGuildId: workspaceChannelState.activeGuildId,
     activeChannelId: workspaceChannelState.activeChannelId,
+    workspaces: workspaceChannelState.workspaces,
     canAccessActiveChannel: selectors.canAccessActiveChannel,
     setGatewayOnline: profileState.setGatewayOnline,
     setOnlineMembers: profileState.setOnlineMembers,

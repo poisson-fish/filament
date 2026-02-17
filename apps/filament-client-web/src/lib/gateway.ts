@@ -20,6 +20,7 @@ export * from "./gateway-contracts";
 
 interface GatewayClient {
   updateSubscription: (guildId: GuildId, channelId: ChannelId) => void;
+  setSubscribedChannels: (guildId: GuildId, channelIds: ReadonlyArray<ChannelId>) => void;
   close: () => void;
 }
 
@@ -54,6 +55,47 @@ function sendEnvelope(socket: WebSocket, type: string, data: unknown): void {
   socket.send(JSON.stringify({ v: 1, t: type, d: data }));
 }
 
+function sendSubscribeEnvelopes(
+  socket: WebSocket,
+  guildId: GuildId,
+  channelIds: ReadonlyArray<ChannelId>,
+): void {
+  for (const subscribedChannelId of channelIds) {
+    sendEnvelope(socket, "subscribe", {
+      guild_id: guildId,
+      channel_id: subscribedChannelId,
+    });
+  }
+}
+
+function uniqueChannelIds(channelIds: ReadonlyArray<ChannelId>): ChannelId[] {
+  const seen = new Set<string>();
+  const unique: ChannelId[] = [];
+  for (const channelId of channelIds) {
+    if (seen.has(channelId)) {
+      continue;
+    }
+    seen.add(channelId);
+    unique.push(channelId);
+  }
+  return unique;
+}
+
+function sameChannelList(
+  left: ReadonlyArray<ChannelId>,
+  right: ReadonlyArray<ChannelId>,
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function connectGateway(
   accessToken: AccessToken,
   guildId: GuildId,
@@ -64,6 +106,7 @@ export function connectGateway(
     handlers.onOpenStateChange?.(false);
     return {
       updateSubscription: () => {},
+      setSubscribedChannels: () => {},
       close: () => {},
     };
   }
@@ -71,9 +114,28 @@ export function connectGateway(
   let socket: WebSocket | null = null;
   let currentGuildId = guildId;
   let currentChannelId = channelId;
+  let currentSubscribedChannelIds: ChannelId[] = [channelId];
   let isClosed = false;
   let retryDelay = 1000;
   let reconnectTimer: number | null = null;
+
+  const setCurrentSubscriptions = (
+    nextGuildId: GuildId,
+    nextChannelIds: ReadonlyArray<ChannelId>,
+  ): boolean => {
+    const deduped = uniqueChannelIds(nextChannelIds);
+    const normalized =
+      deduped.length > 0
+        ? deduped
+        : [nextChannelIds[0] ?? currentChannelId ?? channelId];
+    const changed =
+      nextGuildId !== currentGuildId ||
+      !sameChannelList(currentSubscribedChannelIds, normalized);
+    currentGuildId = nextGuildId;
+    currentChannelId = normalized[0] ?? channelId;
+    currentSubscribedChannelIds = normalized;
+    return changed;
+  };
 
   const handleMessage = (event: MessageEvent) => {
     if (typeof event.data !== "string") {
@@ -102,10 +164,11 @@ export function connectGateway(
       retryDelay = 1000;
       handlers.onOpenStateChange?.(true);
       if (socket && socket.readyState === WebSocket.OPEN) {
-        sendEnvelope(socket, "subscribe", {
-          guild_id: currentGuildId,
-          channel_id: currentChannelId,
-        });
+        sendSubscribeEnvelopes(
+          socket,
+          currentGuildId,
+          currentSubscribedChannelIds,
+        );
       }
     };
 
@@ -124,13 +187,29 @@ export function connectGateway(
 
   return {
     updateSubscription: (nextGuildId, nextChannelId) => {
-      currentGuildId = nextGuildId;
-      currentChannelId = nextChannelId;
+      const changed = setCurrentSubscriptions(nextGuildId, [nextChannelId]);
+      if (!changed) {
+        return;
+      }
       if (socket && socket.readyState === WebSocket.OPEN) {
-        sendEnvelope(socket, "subscribe", {
-          guild_id: currentGuildId,
-          channel_id: currentChannelId,
-        });
+        sendSubscribeEnvelopes(
+          socket,
+          currentGuildId,
+          currentSubscribedChannelIds,
+        );
+      }
+    },
+    setSubscribedChannels: (nextGuildId, nextChannelIds) => {
+      const changed = setCurrentSubscriptions(nextGuildId, nextChannelIds);
+      if (!changed) {
+        return;
+      }
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        sendSubscribeEnvelopes(
+          socket,
+          currentGuildId,
+          currentSubscribedChannelIds,
+        );
       }
     },
     close: () => {

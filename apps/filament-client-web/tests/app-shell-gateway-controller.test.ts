@@ -35,6 +35,7 @@ const SESSION = authSessionFromResponse({
 
 const GUILD_ID = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
 const CHANNEL_ID = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW");
+const VOICE_CHANNEL_ID = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
 const MESSAGE_ID = messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAA");
 const THUMBS_UP = reactionEmojiFromInput("👍");
 
@@ -240,6 +241,11 @@ describe("app shell gateway controller", () => {
             name: "incident-room",
             kind: "text",
           }),
+            channelFromResponse({
+              channel_id: VOICE_CHANNEL_ID,
+              name: "ops-voice",
+              kind: "voice",
+            }),
         ],
       },
     ]);
@@ -274,12 +280,14 @@ describe("app shell gateway controller", () => {
 
     const scrollMessageListToBottomMock = vi.fn();
     const closeGatewayMock = vi.fn();
+    const setSubscribedChannelsMock = vi.fn();
     const onWorkspacePermissionsChanged = vi.fn();
     const onGatewayConnectionChange = vi.fn();
     let handlers: any = null;
     const connectGatewayMock = vi.fn((_token, _guildId, _channelId, nextHandlers) => {
       handlers = nextHandlers;
       return {
+        setSubscribedChannels: setSubscribedChannelsMock,
         close: closeGatewayMock,
       };
     });
@@ -290,6 +298,7 @@ describe("app shell gateway controller", () => {
           session,
           activeGuildId,
           activeChannelId,
+          workspaces,
           canAccessActiveChannel,
           setGatewayOnline,
           setOnlineMembers,
@@ -315,6 +324,10 @@ describe("app shell gateway controller", () => {
     );
 
     expect(connectGatewayMock).toHaveBeenCalledTimes(1);
+    expect(setSubscribedChannelsMock).toHaveBeenCalledWith(GUILD_ID, [
+      CHANNEL_ID,
+      VOICE_CHANNEL_ID,
+    ]);
     if (!handlers) {
       throw new Error("missing handlers");
     }
@@ -474,6 +487,7 @@ describe("app shell gateway controller", () => {
     });
     expect(workspaces()[0]?.channels.map((entry) => entry.name)).toEqual([
       "incident-room",
+      "ops-voice",
       "voice-bridge",
     ]);
     expect(workspaces()[0]?.guildName).toBe("Ops Oncall");

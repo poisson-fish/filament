@@ -37,6 +37,7 @@ describe("app shell gateway controller registration", () => {
     const [, setGatewayOnline] = createSignal(false);
     const [, setOnlineMembers] = createSignal<string[]>([]);
     const [, setWorkspaces] = createSignal<WorkspaceRecord[]>([]);
+    const [workspaces] = createSignal<WorkspaceRecord[]>([]);
     const [, setMessages] = createSignal<MessageRecord[]>([]);
     const [, setReactionState] = createSignal<Record<string, ReactionView>>({});
     const [, setResolvedUsernames] = createSignal<Record<string, string>>({});
@@ -65,6 +66,7 @@ describe("app shell gateway controller registration", () => {
         session,
         activeGuildId: guildId,
         activeChannelId: channelId,
+        workspaces,
         canAccessActiveChannel,
         setGatewayOnline,
         setOnlineMembers,
