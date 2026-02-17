@@ -13,7 +13,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            rust:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'apps/filament-server/**'
+              - 'apps/filament-client-desktop/src-tauri/**'
+              - 'crates/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/security.yml'
+              - '.github/workflows/codeql.yml'
+            web:
+              - 'apps/filament-client-web/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/security.yml'
+
   rust:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -37,6 +68,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: clippy,rustfmt
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -45,13 +79,20 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy (deny warnings in CI)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Unit and integration tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets --locked
 
-  web:
+  web-tests:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_index: [1, 2]
+        shard_total: [2]
     defaults:
       run:
         working-directory: apps/filament-client-web
@@ -78,11 +119,33 @@ jobs:
       - name: App shell size guardrail (enforced)
         run: FILAMENT_APP_SHELL_SIZE_MODE=enforce FILAMENT_APP_SHELL_SIZE_STAGE=D npm run check:app-shell-size
 
-      - name: Web tests
-        run: npm test
+      - name: Web tests (sharded)
+        run: npx vitest run --shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}
 
       - name: Operator permission fixture tests
+        if: matrix.shard_index == 1
         run: npx vitest run tests/app-shell-operator-permissions.test.tsx
+
+  web-build:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/filament-client-web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/filament-client-web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
 
       - name: Build web client
         run: npm run build

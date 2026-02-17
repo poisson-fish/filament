@@ -7,14 +7,45 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            rust:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'apps/filament-server/**'
+              - 'apps/filament-client-desktop/src-tauri/**'
+              - 'crates/**'
+              - 'cargo-deny.toml'
+              - '.github/workflows/security.yml'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/codeql.yml'
+            web:
+              - 'apps/filament-client-web/**'
+              - '.github/workflows/security.yml'
+              - '.github/workflows/ci.yml'
+
   audit-deny:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,6 +53,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: clippy,rustfmt
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -37,12 +71,14 @@ jobs:
           tool: cargo-deny
 
       - name: RustSec advisory audit
-        run: cargo audit
+        run: cargo audit --locked
 
       - name: License/source/bans policy
-        run: cargo deny check --config cargo-deny.toml
+        run: cargo deny check --locked --config cargo-deny.toml
 
   web-audit:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -65,6 +101,8 @@ jobs:
         run: npm audit --audit-level=high
 
   sbom:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
