@@ -49,6 +49,7 @@ export interface AuthApi {
   loginWithPassword(input: {
     username: Username;
     password: Password;
+    captchaToken?: CaptchaToken;
   }): Promise<AuthSession>;
   refreshAuthSession(refreshToken: RefreshToken): Promise<AuthSession>;
   logoutAuthSession(refreshToken: RefreshToken): Promise<void>;
@@ -96,6 +97,7 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
         body: {
           username: payload.username,
           password: payload.password,
+          ...(payload.captchaToken ? { captcha_token: payload.captchaToken } : {}),
         },
       });
 

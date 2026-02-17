@@ -101,6 +101,37 @@ describe("api-auth", () => {
     });
   });
 
+  it("loginWithPassword includes captcha token when provided", async () => {
+    const requestJson = vi.fn(async () => ({
+      access_token: "A".repeat(64),
+      refresh_token: "B".repeat(64),
+      expires_in_secs: 60,
+    }));
+    const api = createAuthApi({
+      requestJson,
+      requestJsonWithBody: vi.fn(async () => null),
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
+    });
+
+    await api.loginWithPassword({
+      username: usernameFromInput("valid_user"),
+      password: passwordFromInput("supersecure123"),
+      captchaToken: captchaTokenFromInput("C".repeat(24)),
+    });
+
+    expect(requestJson).toHaveBeenCalledWith({
+      method: "POST",
+      path: "/auth/login",
+      body: {
+        username: "valid_user",
+        password: "supersecure123",
+        captcha_token: "C".repeat(24),
+      },
+    });
+  });
+
   it("logoutAuthSession delegates to no-content request primitive", async () => {
     const requestNoContent = vi.fn(async () => undefined);
     const api = createAuthApi({

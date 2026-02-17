@@ -44,12 +44,15 @@ export function LoginPage() {
   const [isSubmitting, setSubmitting] = createSignal(false);
   const [statusMessage, setStatusMessage] = createSignal("");
   const [errorMessage, setErrorMessage] = createSignal("");
+  const [loginCaptchaRequired, setLoginCaptchaRequired] = createSignal(false);
   const [captchaReady, setCaptchaReady] = createSignal(false);
   const [captchaToken, setCaptchaToken] = createSignal("");
   const [captchaError, setCaptchaError] = createSignal("");
   let captchaContainer: HTMLDivElement | undefined;
   let captchaWidgetId: string | null = null;
   const siteKey = hcaptchaSiteKey();
+  const shouldRenderCaptcha = () =>
+    siteKey !== null && (isRegisterMode() || loginCaptchaRequired());
 
   const resetCaptcha = () => {
     setCaptchaToken("");
@@ -59,7 +62,7 @@ export function LoginPage() {
   };
 
   createEffect(() => {
-    if (!siteKey || !isRegisterMode() || !captchaContainer || captchaWidgetId) {
+    if (!shouldRenderCaptcha() || !captchaContainer || captchaWidgetId || !siteKey) {
       return;
     }
     void (async () => {
@@ -110,12 +113,10 @@ export function LoginPage() {
     try {
       const validatedUsername = usernameFromInput(username().trim());
       const validatedPassword = passwordFromInput(password());
+      const validatedCaptchaToken =
+        shouldRenderCaptcha() ? captchaTokenFromInput(captchaToken()) : undefined;
 
       if (isRegisterMode()) {
-        const validatedCaptchaToken =
-          siteKey !== null
-            ? captchaTokenFromInput(captchaToken())
-            : undefined;
         await registerWithPassword({
           username: validatedUsername,
           password: validatedPassword,
@@ -128,11 +129,21 @@ export function LoginPage() {
         const session = await loginWithPassword({
           username: validatedUsername,
           password: validatedPassword,
+          captchaToken: validatedCaptchaToken,
         });
         auth.setAuthenticatedSession(session);
         navigate("/app", { replace: true });
       }
     } catch (error) {
+      if (error instanceof ApiError && error.code === "captcha_failed") {
+        if (!isRegisterMode()) {
+          setLoginCaptchaRequired(true);
+          if (siteKey === null) {
+            setCaptchaError("Captcha is required by server but site key is missing in web config.");
+          }
+        }
+        resetCaptcha();
+      }
       setErrorMessage(mapApiError(error));
     } finally {
       setSubmitting(false);
@@ -201,7 +212,7 @@ export function LoginPage() {
             />
           </label>
 
-          <Show when={isRegisterMode() && siteKey !== null}>
+          <Show when={shouldRenderCaptcha()}>
             <div class="captcha-block">
               <div
                 class="h-captcha"

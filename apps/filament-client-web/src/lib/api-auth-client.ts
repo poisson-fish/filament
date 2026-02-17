@@ -25,6 +25,7 @@ export interface AuthClient {
   loginWithPassword(input: {
     username: Username;
     password: Password;
+    captchaToken?: CaptchaToken;
   }): Promise<AuthSession>;
   refreshAuthSession(refreshToken: RefreshToken): Promise<AuthSession>;
   logoutAuthSession(refreshToken: RefreshToken): Promise<void>;
