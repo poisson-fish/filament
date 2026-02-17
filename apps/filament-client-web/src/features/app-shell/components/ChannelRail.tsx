@@ -327,7 +327,13 @@ export function ChannelRail(props: ChannelRailProps) {
                                     <Show
                                       when={props.userIdFromVoiceIdentity(entry.identity)}
                                       fallback={
-                                        <span class="voice-tree-avatar" aria-hidden="true">
+                                        <span
+                                          classList={{
+                                            "voice-tree-avatar": true,
+                                            "voice-tree-avatar-speaking": entry.isSpeaking,
+                                          }}
+                                          aria-hidden="true"
+                                        >
                                           <span class="voice-tree-avatar-fallback">
                                             {actorAvatarGlyph(props.actorLabel(entry.identity))}
                                           </span>
@@ -341,7 +347,12 @@ export function ChannelRail(props: ChannelRailProps) {
                                           aria-label={`Open ${props.voiceParticipantLabel(entry.identity, entry.isLocal)} profile`}
                                           onClick={() => props.onOpenUserProfile(participantUserId())}
                                         >
-                                          <span class="voice-tree-avatar">
+                                          <span
+                                            classList={{
+                                              "voice-tree-avatar": true,
+                                              "voice-tree-avatar-speaking": entry.isSpeaking,
+                                            }}
+                                          >
                                             <span class="voice-tree-avatar-fallback" aria-hidden="true">
                                               {actorAvatarGlyph(props.actorLabel(entry.identity))}
                                             </span>
@@ -362,20 +373,12 @@ export function ChannelRail(props: ChannelRailProps) {
                                         </button>
                                       )}
                                     </Show>
-                                    <span
-                                      classList={{
-                                        "voice-channel-presence-name": true,
-                                        "voice-channel-presence-name-speaking": entry.isSpeaking,
-                                      }}
-                                    >
+                                    <span class="voice-channel-presence-name">
                                       {props.voiceParticipantLabel(entry.identity, entry.isLocal)}
                                     </span>
                                     <span class="voice-channel-presence-badges">
-                                      <Show when={entry.hasCamera}>
-                                        <span class="voice-participant-media-badge video">Video</span>
-                                      </Show>
-                                      <Show when={entry.hasScreenShare}>
-                                        <span class="voice-participant-media-badge screen">Share</span>
+                                      <Show when={entry.hasCamera || entry.hasScreenShare}>
+                                        <span class="voice-participant-media-badge">LIVE</span>
                                       </Show>
                                     </span>
                                   </li>

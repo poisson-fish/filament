@@ -6,8 +6,8 @@ use crate::server::{
     realtime::{
         voice_cleanup_events::plan_voice_removal_broadcasts,
         voice_registry::{
-            remove_channel_user_voice_participant_removal,
-            remove_user_voice_participant_removals, take_expired_voice_participant_removals,
+            remove_channel_user_voice_participant_removal, remove_user_voice_participant_removals,
+            take_expired_voice_participant_removals,
         },
     },
 };
@@ -36,9 +36,10 @@ pub(crate) fn channel_user_voice_removal_broadcasts(
     user_id: UserId,
     removed_at_unix: i64,
 ) -> Vec<(String, GatewayEvent)> {
-    let removed = remove_channel_user_voice_participant_removal(voice, guild_id, channel_id, user_id)
-        .into_iter()
-        .collect::<Vec<_>>();
+    let removed =
+        remove_channel_user_voice_participant_removal(voice, guild_id, channel_id, user_id)
+            .into_iter()
+            .collect::<Vec<_>>();
     plan_voice_removal_broadcasts(removed, removed_at_unix)
 }
 

@@ -1521,7 +1521,7 @@ select {
 }
 
 .voice-channel-presence-participant-speaking {
-  border-color: #4f8e64;
+  border-color: transparent;
 }
 
 .voice-channel-presence-name {
@@ -1533,10 +1533,6 @@ select {
   text-overflow: ellipsis;
 }
 
-.voice-channel-presence-name-speaking {
-  color: #9df3b1;
-}
-
 .voice-channel-presence-badges {
   display: flex;
   align-items: center;
@@ -1545,27 +1541,15 @@ select {
 }
 
 .voice-participant-media-badge {
-  border: 1px solid #55617a;
+  border: 1px solid rgba(255, 116, 120, 0.72);
   border-radius: 999px;
-  background: #2e3644;
-  color: #cfdbf1;
+  background: rgba(180, 52, 59, 0.88);
+  color: #ffe7e9;
   padding: 0.08rem 0.34rem;
   font-size: 0.64rem;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   line-height: 1.2;
-}
-
-.voice-participant-media-badge.video {
-  border-color: #5273a3;
-  background: rgba(60, 95, 148, 0.28);
-  color: #d6e8ff;
-}
-
-.voice-participant-media-badge.screen {
-  border-color: #4e8f98;
-  background: rgba(58, 121, 136, 0.28);
-  color: #c8f4fb;
 }
 
 .voice-channel-stream-hints {
@@ -1689,7 +1673,7 @@ select {
 }
 
 .message-row:hover {
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(255, 255, 255, 0.024);
 }
 
 .message-row span {
@@ -2685,7 +2669,12 @@ select {
 }
 
 .voice-channel-presence-participant-speaking {
-  background: rgba(56, 163, 108, 0.12);
+  background: transparent;
+}
+
+.voice-tree-avatar-speaking {
+  border-color: #5fd084;
+  box-shadow: 0 0 0 1px rgba(95, 208, 132, 0.34);
 }
 
 .voice-channel-presence-name {
@@ -2961,7 +2950,7 @@ select {
 }
 
 .message-row:hover {
-  background: rgba(12, 14, 18, 0.5);
+  background: rgba(255, 255, 255, 0.026);
 }
 
 .message-avatar {

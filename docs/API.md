@@ -391,6 +391,12 @@ Permission enum values:
   - Response `200`:
     - `{ "token", "livekit_url", "room", "identity", "can_publish", "can_subscribe", "publish_sources", "expires_in_secs" }`
 
+### Voice Leave
+- `POST /guilds/{guild_id}/channels/{channel_id}/voice/leave`
+  - Auth required
+  - Request: none
+  - Response `200`: `{ "accepted": true }`
+
 ### RTC Client UX Behavior (Web)
 - Voice controls are only shown for channels with `kind: "voice"` and effective `create_message` access.
 - Web client call states are surfaced as `connecting`, `connected`, `reconnecting`, and `error`.

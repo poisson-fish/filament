@@ -280,13 +280,9 @@ mod tests {
             HashMap::from([(target_user, participant(target_user, "target", 120))]),
         )]);
 
-        let removed = remove_channel_user_voice_participant_removal(
-            &mut voice,
-            "g6",
-            "c1",
-            target_user,
-        )
-        .expect("participant should be removed from scoped channel");
+        let removed =
+            remove_channel_user_voice_participant_removal(&mut voice, "g6", "c1", target_user)
+                .expect("participant should be removed from scoped channel");
 
         assert_eq!(removed.guild_id, "g6");
         assert_eq!(removed.channel_id, "c1");

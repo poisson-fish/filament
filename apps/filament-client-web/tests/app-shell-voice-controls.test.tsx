@@ -939,7 +939,7 @@ describe("app shell voice controls", () => {
     });
   });
 
-  it("highlights active speakers and clears highlight after returning to idle", async () => {
+  it("shows a speaking ring on participant avatars and clears it after returning to idle", async () => {
     seedAuthenticatedWorkspace();
     const fixture = createVoiceFixtureFetch();
     vi.stubGlobal("fetch", fixture.fetchMock);
@@ -952,20 +952,20 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
 
-    expect(await screen.findByText("u.remote.1")).not.toHaveClass("voice-channel-presence-name-speaking");
+    const remoteAvatar = () =>
+      screen.getByText("u.remote.1").closest("li")?.querySelector(".voice-tree-avatar") ?? null;
+
+    await waitFor(() => expect(remoteAvatar()).not.toBeNull());
+    expect(remoteAvatar()).not.toHaveClass("voice-tree-avatar-speaking");
 
     rtcMock.setActiveSpeakerIdentities(["u.remote.1"]);
-    await waitFor(() =>
-      expect(screen.getByText("u.remote.1")).toHaveClass("voice-channel-presence-name-speaking"),
-    );
+    await waitFor(() => expect(remoteAvatar()).toHaveClass("voice-tree-avatar-speaking"));
 
     rtcMock.setActiveSpeakerIdentities([]);
-    await waitFor(() =>
-      expect(screen.getByText("u.remote.1")).not.toHaveClass("voice-channel-presence-name-speaking"),
-    );
+    await waitFor(() => expect(remoteAvatar()).not.toHaveClass("voice-tree-avatar-speaking"));
   });
 
-  it("shows live video and screen-share badges next to participants in the channel rail", async () => {
+  it("shows a single LIVE badge next to streaming participants in the channel rail", async () => {
     seedAuthenticatedWorkspace();
     const fixture = createVoiceFixtureFetch();
     vi.stubGlobal("fetch", fixture.fetchMock);
@@ -1002,8 +1002,9 @@ describe("app shell voice controls", () => {
     );
 
     await waitFor(() => expect(screen.getByText("u.remote.1")).toBeInTheDocument());
-    expect(screen.getAllByText("Video").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Share").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("LIVE").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Video")).not.toBeInTheDocument();
+    expect(screen.queryByText("Share")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Voice stream tiles")).not.toBeInTheDocument();
   });
 
