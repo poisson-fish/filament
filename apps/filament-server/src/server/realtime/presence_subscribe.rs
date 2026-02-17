@@ -5,7 +5,6 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::server::core::ConnectionPresence;
-use crate::server::gateway_events::{self, GatewayEvent};
 
 pub(crate) struct PresenceSubscribeResult {
     pub(crate) snapshot_user_ids: HashSet<String>,
@@ -74,18 +73,6 @@ pub(crate) fn presence_sync_dispatch_outcome(
     }
 }
 
-pub(crate) fn build_presence_online_update(
-    guild_id: &str,
-    user_id: UserId,
-    became_online: bool,
-) -> Option<GatewayEvent> {
-    if !became_online {
-        return None;
-    }
-
-    Some(gateway_events::presence_update(guild_id, user_id, "online"))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
@@ -94,9 +81,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_presence_subscribe, build_presence_online_update,
-        presence_sync_dispatch_outcome, try_enqueue_presence_sync_event,
-        PresenceSyncDispatchOutcome, PresenceSyncEnqueueResult,
+        apply_presence_subscribe, presence_sync_dispatch_outcome,
+        try_enqueue_presence_sync_event, PresenceSyncDispatchOutcome,
+        PresenceSyncEnqueueResult,
     };
     use crate::server::core::ConnectionPresence;
 
@@ -200,28 +187,6 @@ mod tests {
         let result = try_enqueue_presence_sync_event(&tx, String::from("payload"));
 
         assert!(matches!(result, PresenceSyncEnqueueResult::Closed));
-    }
-
-    #[test]
-    fn builds_online_update_only_when_transitioned_online() {
-        let guild_id = "g-1";
-        let user_id = UserId::new();
-
-        let update = build_presence_online_update(guild_id, user_id, true)
-            .expect("online transition should produce an update");
-
-        assert_eq!(update.event_type, "presence_update");
-        assert!(update.payload.contains("\"status\":\"online\""));
-        assert!(update
-            .payload
-            .contains(&format!("\"user_id\":\"{}\"", user_id)));
-    }
-
-    #[test]
-    fn returns_none_when_presence_did_not_transition_online() {
-        let update = build_presence_online_update("g-1", UserId::new(), false);
-
-        assert!(update.is_none());
     }
 
     #[test]

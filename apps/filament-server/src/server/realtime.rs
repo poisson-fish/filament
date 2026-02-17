@@ -23,6 +23,10 @@ mod search_query_input;
 mod voice_cleanup_registry;
 mod message_store_in_memory;
 mod message_emit;
+mod connection_disconnect_followups;
+mod voice_subscribe_sync;
+mod presence_subscribe_events;
+mod search_bootstrap;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -88,7 +92,7 @@ use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecod
 use ingress_rate_limit::allow_gateway_ingress;
 use presence_disconnect::compute_disconnect_presence_outcome;
 use presence_subscribe::{
-    apply_presence_subscribe, build_presence_online_update,
+    apply_presence_subscribe,
 };
 use voice_presence::{
     collect_voice_snapshots, voice_channel_key,
@@ -124,7 +128,6 @@ use search_enqueue::enqueue_search_command;
 use search_apply_batch::apply_search_batch_with_ack;
 use hydration_merge::merge_hydration_maps;
 use message_record::{build_in_memory_message_record, build_message_response_from_record};
-use presence_disconnect_events::build_offline_presence_updates;
 use search_collect_db::{
     collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows,
     enforce_guild_collect_doc_cap, guild_collect_fetch_limit,
@@ -141,6 +144,10 @@ use presence_sync_dispatch::dispatch_presence_sync_event;
 use search_query_input::{effective_search_limit, normalize_search_query};
 use message_store_in_memory::append_message_record;
 use message_emit::emit_message_create_and_index;
+use connection_disconnect_followups::plan_disconnect_followups;
+use voice_subscribe_sync::build_voice_subscribe_sync_event;
+use presence_subscribe_events::build_presence_subscribe_events;
+use search_bootstrap::build_search_rebuild_operation;
 
 use super::{
     auth::{
@@ -541,7 +548,8 @@ pub(crate) async fn ensure_search_bootstrapped(state: &AppState) -> Result<(), A
         .search_bootstrapped
         .get_or_try_init(|| async move {
             let docs = collect_all_indexed_messages(state).await?;
-            enqueue_search_operation(state, SearchOperation::Rebuild { docs }, true).await?;
+            let rebuild = build_search_rebuild_operation(docs);
+            enqueue_search_operation(state, rebuild, true).await?;
             Ok(())
         })
         .await?;
@@ -851,8 +859,12 @@ pub(crate) async fn handle_voice_subscribe(
         collect_voice_snapshots(&voice, &key)
     };
 
-    let sync_event =
-        gateway_events::voice_participant_sync(guild_id, channel_id, participants, now_unix());
+    let sync_event = build_voice_subscribe_sync_event(
+        guild_id,
+        channel_id,
+        participants,
+        now_unix(),
+    );
     dispatch_voice_sync_event(outbound_tx, sync_event);
 }
 
@@ -886,10 +898,10 @@ pub(crate) async fn handle_presence_subscribe(
         return;
     };
 
-    let snapshot_event = gateway_events::presence_sync(guild_id, result.snapshot_user_ids);
-    dispatch_presence_sync_event(outbound_tx, snapshot_event);
+    let events = build_presence_subscribe_events(guild_id, user_id, result);
+    dispatch_presence_sync_event(outbound_tx, events.snapshot);
 
-    if let Some(update) = build_presence_online_update(guild_id, user_id, result.became_online) {
+    if let Some(update) = events.online_update {
         broadcast_guild_event(state, guild_id, &update).await;
     }
 }
@@ -928,15 +940,15 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
         let remaining = state.connection_presence.read().await;
         compute_disconnect_presence_outcome(&remaining, &removed_presence)
     };
+    let followups =
+        plan_disconnect_followups(outcome, removed_presence.user_id);
 
-    if !outcome.user_has_other_connections {
+    if followups.remove_voice_participants {
         remove_disconnected_user_voice_participants(state, removed_presence.user_id, now_unix())
             .await;
     }
 
-    for (guild_id, update) in
-        build_offline_presence_updates(outcome.offline_guilds, removed_presence.user_id)
-    {
+    for (guild_id, update) in followups.offline_updates {
         broadcast_guild_event(state, &guild_id, &update).await;
     }
 }
