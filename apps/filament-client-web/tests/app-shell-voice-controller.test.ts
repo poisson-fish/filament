@@ -532,14 +532,17 @@ describe("app shell voice controller", () => {
 
   it("resets voice join state when leaving voice session", async () => {
     const leave = vi.fn(async () => {});
+    const leaveVoiceChannelApi = vi.fn(async () => {});
     const harness = createRoot(() =>
       createVoiceOperationsHarness({
+        initialVoiceSessionChannelKey: `${GUILD_ID}|${VOICE_CHANNEL.channelId}`,
         initialVoiceJoinState: {
           phase: "failed",
           statusMessage: "",
           errorMessage: "Unable to join voice.",
         },
         dependencies: {
+          leaveVoiceChannel: leaveVoiceChannelApi,
           createRtcClient: () =>
             createRtcClientMock({
               leave,
@@ -552,6 +555,11 @@ describe("app shell voice controller", () => {
     await harness.controller.leaveVoiceChannel("Left voice channel.");
 
     expect(leave).toHaveBeenCalledTimes(1);
+    expect(leaveVoiceChannelApi).toHaveBeenCalledWith(
+      SESSION,
+      GUILD_ID,
+      VOICE_CHANNEL.channelId,
+    );
     expect(harness.voiceJoinState()).toEqual({
       phase: "idle",
       statusMessage: "",

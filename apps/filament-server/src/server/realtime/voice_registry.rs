@@ -57,6 +57,21 @@ pub(crate) fn remove_user_voice_participants(
     removed
 }
 
+pub(crate) fn remove_channel_user_voice_participant(
+    voice: &mut VoiceParticipantsByChannel,
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+) -> Option<(String, VoiceParticipant)> {
+    let channel_key = format!("{guild_id}:{channel_id}");
+    let participants = voice.get_mut(&channel_key)?;
+    let participant = participants.remove(&user_id)?;
+    if participants.is_empty() {
+        voice.remove(&channel_key);
+    }
+    Some((channel_key, participant))
+}
+
 pub(crate) fn remove_user_voice_participant_removals(
     voice: &mut VoiceParticipantsByChannel,
     user_id: UserId,
@@ -74,6 +89,26 @@ pub(crate) fn remove_user_voice_participant_removals(
         .collect()
 }
 
+pub(crate) fn remove_channel_user_voice_participant_removal(
+    voice: &mut VoiceParticipantsByChannel,
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+) -> Option<VoiceParticipantRemoval> {
+    remove_channel_user_voice_participant(voice, guild_id, channel_id, user_id).map(
+        |(channel_key, participant)| {
+            let (parsed_guild_id, parsed_channel_id) = channel_key
+                .split_once(':')
+                .expect("channel key constructed from guild and channel id must parse");
+            VoiceParticipantRemoval {
+                guild_id: parsed_guild_id.to_owned(),
+                channel_id: parsed_channel_id.to_owned(),
+                participant,
+            }
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
@@ -81,6 +116,7 @@ mod tests {
     use filament_core::UserId;
 
     use super::{
+        remove_channel_user_voice_participant, remove_channel_user_voice_participant_removal,
         remove_user_voice_participant_removals, remove_user_voice_participants,
         take_expired_voice_participant_removals, take_expired_voice_participants,
     };
@@ -210,5 +246,56 @@ mod tests {
         assert!(voice.contains_key("g4:c2"));
         assert!(!voice.contains_key("g4:c1"));
         assert!(!voice.contains_key("invalid"));
+    }
+
+    #[test]
+    fn channel_user_removal_removes_only_target_channel_participant() {
+        let target_user = UserId::new();
+        let other_user = UserId::new();
+        let mut voice: VoiceParticipantsByChannel = HashMap::from([
+            (
+                String::from("g5:c1"),
+                HashMap::from([
+                    (target_user, participant(target_user, "target", 120)),
+                    (other_user, participant(other_user, "other", 120)),
+                ]),
+            ),
+            (
+                String::from("g5:c2"),
+                HashMap::from([(target_user, participant(target_user, "target-2", 120))]),
+            ),
+        ]);
+
+        let removed = remove_channel_user_voice_participant(&mut voice, "g5", "c1", target_user)
+            .expect("participant should be removed from the targeted channel");
+
+        assert_eq!(removed.0, "g5:c1");
+        assert_eq!(removed.1.user_id, target_user);
+        assert_eq!(voice["g5:c1"].len(), 1);
+        assert!(voice["g5:c1"].contains_key(&other_user));
+        assert_eq!(voice["g5:c2"].len(), 1);
+        assert!(voice["g5:c2"].contains_key(&target_user));
+    }
+
+    #[test]
+    fn channel_user_removal_returns_scoped_removal_payload() {
+        let target_user = UserId::new();
+        let mut voice: VoiceParticipantsByChannel = HashMap::from([(
+            String::from("g6:c1"),
+            HashMap::from([(target_user, participant(target_user, "target", 120))]),
+        )]);
+
+        let removed = remove_channel_user_voice_participant_removal(
+            &mut voice,
+            "g6",
+            "c1",
+            target_user,
+        )
+        .expect("participant should be removed from scoped channel");
+
+        assert_eq!(removed.guild_id, "g6");
+        assert_eq!(removed.channel_id, "c1");
+        assert_eq!(removed.participant.user_id, target_user);
+        assert!(voice.is_empty());
     }
 }

@@ -41,7 +41,10 @@ use super::{
             set_channel_role_override, unassign_guild_role, update_guild, update_guild_role,
             update_member_role, upsert_guild_ip_bans_by_user,
         },
-        media::{delete_attachment, download_attachment, issue_voice_token, upload_attachment},
+        media::{
+            delete_attachment, download_attachment, issue_voice_token, leave_voice_channel,
+            upload_attachment,
+        },
         messages::{
             add_reaction, create_message, delete_message, edit_message, get_channel_permissions,
             get_messages, remove_reaction,
@@ -127,6 +130,10 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     (
         "POST",
         "/guilds/{guild_id}/channels/{channel_id}/voice/token",
+    ),
+    (
+        "POST",
+        "/guilds/{guild_id}/channels/{channel_id}/voice/leave",
     ),
     ("GET", "/guilds/{guild_id}/search"),
     ("POST", "/guilds/{guild_id}/search/rebuild"),
@@ -385,6 +392,10 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/voice/token",
             post(issue_voice_token),
+        )
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/voice/leave",
+            post(leave_voice_channel),
         )
         .route("/guilds/{guild_id}/search", get(search_messages))
         .route(

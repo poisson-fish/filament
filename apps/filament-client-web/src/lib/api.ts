@@ -49,6 +49,7 @@ const messagesClient = createMessagesClient({
 
 const voiceApi = createVoiceApi({
   requestJson: transport.requestJson,
+  requestNoContent: transport.requestNoContent,
 });
 
 const voiceClient = createVoiceClient({
@@ -133,3 +134,4 @@ export const assignGuildRole = workspaceClient.assignGuildRole;
 export const unassignGuildRole = workspaceClient.unassignGuildRole;
 
 export const issueVoiceToken = voiceClient.issueVoiceToken;
+export const leaveVoiceChannel = voiceClient.leaveVoiceChannel;

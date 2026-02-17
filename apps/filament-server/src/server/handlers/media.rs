@@ -30,7 +30,7 @@ use crate::server::{
         write_audit_log,
     },
     errors::AuthFailure,
-    realtime::register_voice_participant_from_token,
+    realtime::{register_voice_participant_from_token, remove_voice_participant_for_channel},
     types::{
         AttachmentPath, AttachmentResponse, ChannelPath, MediaPublishSource, UploadAttachmentQuery,
         VoiceTokenRequest, VoiceTokenResponse,
@@ -476,4 +476,37 @@ pub(crate) async fn issue_voice_token(
         publish_sources: grants.can_publish_sources.clone(),
         expires_in_secs: state.runtime.livekit_token_ttl.as_secs(),
     }))
+}
+
+pub(crate) async fn leave_voice_channel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(path): Path<ChannelPath>,
+) -> Result<StatusCode, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "voice.leave",
+    )
+    .await?;
+
+    remove_voice_participant_for_channel(
+        &state,
+        auth.user_id,
+        &path.guild_id,
+        &path.channel_id,
+        now_unix(),
+    )
+    .await;
+
+    Ok(StatusCode::NO_CONTENT)
 }

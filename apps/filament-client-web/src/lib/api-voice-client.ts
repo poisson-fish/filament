@@ -22,12 +22,20 @@ export interface VoiceClient {
       publishSources?: MediaPublishSource[];
     },
   ): Promise<VoiceTokenRecord>;
+  leaveVoiceChannel(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+  ): Promise<void>;
 }
 
 export function createVoiceClient(input: VoiceClientDependencies): VoiceClient {
   return {
     issueVoiceToken(session, guildId, channelId, payload) {
       return input.voiceApi.issueVoiceToken(session, guildId, channelId, payload);
+    },
+    leaveVoiceChannel(session, guildId, channelId) {
+      return input.voiceApi.leaveVoiceChannel(session, guildId, channelId);
     },
   };
 }

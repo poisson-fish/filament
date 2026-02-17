@@ -6,7 +6,10 @@ import type {
   MediaPublishSource,
   VoiceTokenRecord,
 } from "../../../domain/chat";
-import { issueVoiceToken } from "../../../lib/api";
+import {
+  issueVoiceToken,
+  leaveVoiceChannel as leaveVoiceChannelApi,
+} from "../../../lib/api";
 import { createRtcClient, type RtcClient, type RtcSnapshot } from "../../../lib/rtc";
 import type { VoiceDevicePreferences } from "../../../lib/voice-device-settings";
 import {
@@ -64,6 +67,11 @@ export interface VoiceOperationsControllerDependencies {
       publishSources?: MediaPublishSource[];
     },
   ) => Promise<VoiceTokenRecord>;
+  leaveVoiceChannel: (
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelRecord["channelId"],
+  ) => Promise<void>;
   createRtcClient: () => RtcClient;
   channelKey: (guildId: GuildId, channelId: ChannelRecord["channelId"]) => string;
   mapRtcError: (error: unknown, fallback: string) => string;
@@ -84,6 +92,7 @@ export interface VoiceOperationsController {
 
 const DEFAULT_VOICE_OPERATIONS_CONTROLLER_DEPENDENCIES: VoiceOperationsControllerDependencies = {
   issueVoiceToken,
+  leaveVoiceChannel: leaveVoiceChannelApi,
   createRtcClient,
   channelKey,
   mapRtcError,
@@ -152,9 +161,21 @@ export function createVoiceOperationsController(
       return;
     }
     options.setLeavingVoice(true);
+    const connectedChannelKey = options.voiceSessionChannelKey();
+    const session = options.session();
     try {
       if (rtcClient) {
         await rtcClient.leave();
+      }
+      if (session && connectedChannelKey) {
+        const [guildId, channelId] = connectedChannelKey.split("|");
+        if (guildId && channelId) {
+          await deps.leaveVoiceChannel(
+            session,
+            guildId as GuildId,
+            channelId as ChannelRecord["channelId"],
+          );
+        }
       }
     } catch {
       // Local session teardown is deterministic even if leave fails.

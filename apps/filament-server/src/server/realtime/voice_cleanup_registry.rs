@@ -6,6 +6,7 @@ use crate::server::{
     realtime::{
         voice_cleanup_events::plan_voice_removal_broadcasts,
         voice_registry::{
+            remove_channel_user_voice_participant_removal,
             remove_user_voice_participant_removals, take_expired_voice_participant_removals,
         },
     },
@@ -28,13 +29,29 @@ pub(crate) fn disconnected_user_voice_removal_broadcasts(
     plan_voice_removal_broadcasts(removed, disconnected_at_unix)
 }
 
+pub(crate) fn channel_user_voice_removal_broadcasts(
+    voice: &mut VoiceParticipantsByChannel,
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+    removed_at_unix: i64,
+) -> Vec<(String, GatewayEvent)> {
+    let removed = remove_channel_user_voice_participant_removal(voice, guild_id, channel_id, user_id)
+        .into_iter()
+        .collect::<Vec<_>>();
+    plan_voice_removal_broadcasts(removed, removed_at_unix)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
 
     use filament_core::UserId;
 
-    use super::{disconnected_user_voice_removal_broadcasts, expired_voice_removal_broadcasts};
+    use super::{
+        channel_user_voice_removal_broadcasts, disconnected_user_voice_removal_broadcasts,
+        expired_voice_removal_broadcasts,
+    };
     use crate::server::{
         core::{VoiceParticipant, VoiceParticipantsByChannel, VoiceStreamKind},
         gateway_events::{VOICE_PARTICIPANT_LEAVE_EVENT, VOICE_STREAM_UNPUBLISH_EVENT},
@@ -123,5 +140,37 @@ mod tests {
 
         assert!(planned.is_empty());
         assert!(voice.is_empty());
+    }
+
+    #[test]
+    fn channel_scoped_cleanup_removes_target_user_only_from_target_channel() {
+        let target_user = UserId::new();
+        let other_user = UserId::new();
+        let mut voice: VoiceParticipantsByChannel = HashMap::from([
+            (
+                String::from("g2:c1"),
+                HashMap::from([
+                    (target_user, participant(target_user, "alice", 50)),
+                    (other_user, participant(other_user, "bob", 50)),
+                ]),
+            ),
+            (
+                String::from("g2:c2"),
+                HashMap::from([(target_user, participant(target_user, "alice-other", 50))]),
+            ),
+        ]);
+
+        let planned =
+            channel_user_voice_removal_broadcasts(&mut voice, "g2", "c1", target_user, 10);
+
+        assert_eq!(planned.len(), 2);
+        assert_eq!(planned[0].0, "g2:c1");
+        assert_eq!(planned[1].0, "g2:c1");
+        assert_eq!(planned[0].1.event_type, VOICE_STREAM_UNPUBLISH_EVENT);
+        assert_eq!(planned[1].1.event_type, VOICE_PARTICIPANT_LEAVE_EVENT);
+        assert_eq!(voice["g2:c1"].len(), 1);
+        assert!(voice["g2:c1"].contains_key(&other_user));
+        assert_eq!(voice["g2:c2"].len(), 1);
+        assert!(voice["g2:c2"].contains_key(&target_user));
     }
 }

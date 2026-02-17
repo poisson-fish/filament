@@ -286,3 +286,50 @@ async fn voice_token_enforces_channel_permissions_and_rate_limits() {
         StatusCode::TOO_MANY_REQUESTS
     );
 }
+
+#[tokio::test]
+async fn voice_leave_endpoint_is_available_and_idempotent() {
+    let app = test_app(20);
+    let owner = register_and_login(&app, "phase5_owner3", "203.0.113.154").await;
+    let channel = create_channel_context(&app, &owner, "203.0.113.154", "Phase 5 Guild C").await;
+
+    let issue_token = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/voice/token",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.154")
+        .body(Body::from(json!({}).to_string()))
+        .expect("voice token request should build");
+    let issue_token_response = app.clone().oneshot(issue_token).await.unwrap();
+    assert_eq!(issue_token_response.status(), StatusCode::OK);
+
+    let first_leave = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/voice/leave",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("x-forwarded-for", "203.0.113.154")
+        .body(Body::empty())
+        .expect("voice leave request should build");
+    let first_leave_response = app.clone().oneshot(first_leave).await.unwrap();
+    assert_eq!(first_leave_response.status(), StatusCode::NO_CONTENT);
+
+    let second_leave = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/voice/leave",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("x-forwarded-for", "203.0.113.154")
+        .body(Body::empty())
+        .expect("second voice leave request should build");
+    let second_leave_response = app.clone().oneshot(second_leave).await.unwrap();
+    assert_eq!(second_leave_response.status(), StatusCode::NO_CONTENT);
+}

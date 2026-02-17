@@ -30,6 +30,7 @@ use super::{
     voice_cleanup_dispatch::{
         broadcast_disconnected_user_voice_removals, broadcast_expired_voice_removals,
     },
+    voice_cleanup_registry::channel_user_voice_removal_broadcasts,
     voice_presence::{collect_voice_snapshots, voice_channel_key},
     voice_registration::apply_voice_registration_transition,
     voice_registration_events::plan_voice_registration_events,
@@ -144,6 +145,29 @@ pub(crate) async fn register_voice_participant_from_token(
     }
 
     Ok(())
+}
+
+pub(crate) async fn remove_voice_participant_for_channel(
+    state: &AppState,
+    user_id: UserId,
+    guild_id: &str,
+    channel_id: &str,
+    removed_at_unix: i64,
+) {
+    let planned = {
+        let mut voice = state.realtime_registry.voice_participants().write().await;
+        channel_user_voice_removal_broadcasts(
+            &mut voice,
+            guild_id,
+            channel_id,
+            user_id,
+            removed_at_unix,
+        )
+    };
+
+    for (channel_subscription_key, event) in planned {
+        broadcast_channel_event(state, &channel_subscription_key, &event).await;
+    }
 }
 
 pub(crate) async fn handle_voice_subscribe(

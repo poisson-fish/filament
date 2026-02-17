@@ -26,8 +26,9 @@ describe("api-voice", () => {
       publish_sources: ["microphone"],
       expires_in_secs: 300,
     }));
+    const requestNoContent = vi.fn(async () => {});
 
-    const api = createVoiceApi({ requestJson });
+    const api = createVoiceApi({ requestJson, requestNoContent });
 
     await expect(
       api.issueVoiceToken(session, guildId, channelId, {
@@ -66,10 +67,25 @@ describe("api-voice", () => {
         publish_sources: ["microphone"],
         expires_in_secs: 0,
       })),
+      requestNoContent: vi.fn(async () => {}),
     });
 
     await expect(api.issueVoiceToken(session, guildId, channelId, {})).rejects.toThrow(
       "expires_in_secs",
     );
+  });
+
+  it("leaveVoiceChannel issues no-content request to scoped endpoint", async () => {
+    const requestJson = vi.fn(async () => ({}));
+    const requestNoContent = vi.fn(async () => {});
+    const api = createVoiceApi({ requestJson, requestNoContent });
+
+    await expect(api.leaveVoiceChannel(session, guildId, channelId)).resolves.toBeUndefined();
+
+    expect(requestNoContent).toHaveBeenCalledWith({
+      method: "POST",
+      path: `/guilds/${guildId}/channels/${channelId}/voice/leave`,
+      accessToken: session.accessToken,
+    });
   });
 });

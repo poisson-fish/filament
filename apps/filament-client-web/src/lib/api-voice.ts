@@ -19,6 +19,7 @@ interface JsonRequest {
 
 interface VoiceApiDependencies {
   requestJson: (request: JsonRequest) => Promise<unknown>;
+  requestNoContent: (request: JsonRequest) => Promise<void>;
 }
 
 export interface VoiceApi {
@@ -32,6 +33,11 @@ export interface VoiceApi {
       publishSources?: MediaPublishSource[];
     },
   ): Promise<VoiceTokenRecord>;
+  leaveVoiceChannel(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+  ): Promise<void>;
 }
 
 export function createVoiceApi(input: VoiceApiDependencies): VoiceApi {
@@ -49,6 +55,13 @@ export function createVoiceApi(input: VoiceApiDependencies): VoiceApi {
       });
 
       return voiceTokenFromResponse(dto);
+    },
+    async leaveVoiceChannel(session, guildId, channelId) {
+      await input.requestNoContent({
+        method: "POST",
+        path: `/guilds/${guildId}/channels/${channelId}/voice/leave`,
+        accessToken: session.accessToken,
+      });
     },
   };
 }
