@@ -96,15 +96,10 @@ pub(crate) fn remove_channel_user_voice_participant_removal(
     user_id: UserId,
 ) -> Option<VoiceParticipantRemoval> {
     remove_channel_user_voice_participant(voice, guild_id, channel_id, user_id).map(
-        |(channel_key, participant)| {
-            let (parsed_guild_id, parsed_channel_id) = channel_key
-                .split_once(':')
-                .expect("channel key constructed from guild and channel id must parse");
-            VoiceParticipantRemoval {
-                guild_id: parsed_guild_id.to_owned(),
-                channel_id: parsed_channel_id.to_owned(),
-                participant,
-            }
+        |(_, participant)| VoiceParticipantRemoval {
+            guild_id: guild_id.to_owned(),
+            channel_id: channel_id.to_owned(),
+            participant,
         },
     )
 }
