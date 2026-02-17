@@ -1,4 +1,5 @@
 pub(crate) mod auth;
+pub(crate) mod auth_repository;
 pub(crate) mod core;
 pub(crate) mod db;
 pub mod directory_contract;
