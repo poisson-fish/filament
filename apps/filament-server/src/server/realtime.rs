@@ -29,6 +29,9 @@ mod presence_subscribe_events;
 mod search_bootstrap;
 mod emit_metrics;
 mod voice_cleanup_dispatch;
+mod search_index_lookup;
+mod search_reconciliation_plan;
+mod search_query_run;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -152,6 +155,9 @@ use voice_cleanup_dispatch::{
     broadcast_disconnected_user_voice_removals,
     broadcast_expired_voice_removals,
 };
+pub(crate) use search_index_lookup::collect_index_message_ids_for_guild;
+pub(crate) use search_reconciliation_plan::plan_search_reconciliation;
+pub(crate) use search_query_run::run_search_query;
 
 use super::{
     auth::{
@@ -611,57 +617,6 @@ pub(crate) async fn collect_indexed_messages_for_guild(
 
     let guilds = state.guilds.read().await;
     collect_indexed_messages_for_guild_in_memory(&guilds, guild_id, max_docs)
-}
-
-pub(crate) async fn collect_index_message_ids_for_guild(
-    state: &AppState,
-    guild_id: &str,
-    max_docs: usize,
-) -> Result<HashSet<String>, AuthFailure> {
-    let guild = guild_id.to_owned();
-    let search_state = state.search.state.clone();
-    let timeout = state.runtime.search_query_timeout;
-
-    run_search_blocking_with_timeout(timeout, move || {
-            collect_index_message_ids_for_guild_from_index(&search_state, &guild, max_docs)
-    })
-    .await
-}
-
-pub(crate) async fn plan_search_reconciliation(
-    state: &AppState,
-    guild_id: &str,
-    max_docs: usize,
-) -> Result<(Vec<IndexedMessage>, Vec<String>), AuthFailure> {
-    let source_docs = collect_indexed_messages_for_guild(state, guild_id, max_docs).await?;
-    let index_ids = collect_index_message_ids_for_guild(state, guild_id, max_docs).await?;
-    let (upserts, delete_message_ids) = compute_reconciliation(source_docs, index_ids);
-    Ok((upserts, delete_message_ids))
-}
-
-pub(crate) async fn run_search_query(
-    state: &AppState,
-    guild_id: &str,
-    channel_id: Option<&str>,
-    raw_query: &str,
-    limit: usize,
-) -> Result<Vec<String>, AuthFailure> {
-    let query = normalize_search_query(raw_query);
-    let guild = guild_id.to_owned();
-    let channel = channel_id.map(ToOwned::to_owned);
-    let search_state = state.search.state.clone();
-    let timeout = state.runtime.search_query_timeout;
-
-    run_search_blocking_with_timeout(timeout, move || {
-            run_search_query_against_index(
-                &search_state,
-                &guild,
-                channel.as_deref(),
-                &query,
-                limit,
-            )
-    })
-    .await
 }
 
 #[allow(clippy::too_many_lines)]
