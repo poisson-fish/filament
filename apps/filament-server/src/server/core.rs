@@ -285,16 +285,24 @@ pub struct AppState {
     pub(crate) media_token_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) membership_store: MembershipStore,
     pub(crate) guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
     pub(crate) guild_roles: Arc<RwLock<GuildRoleMap>>,
     pub(crate) guild_role_assignments: Arc<RwLock<GuildRoleAssignmentMap>>,
+    #[allow(dead_code)]
     pub(crate) guild_channel_permission_overrides: Arc<RwLock<GuildChannelPermissionOverrideMap>>,
     pub(crate) user_ip_observations: Arc<RwLock<HashMap<(UserId, IpNetwork), i64>>>,
     pub(crate) guild_ip_bans: Arc<RwLock<GuildIpBanMap>>,
+    pub(crate) realtime_registry: RealtimeRegistry,
+    #[allow(dead_code)]
     pub(crate) subscriptions: Arc<RwLock<Subscriptions>>,
+    #[allow(dead_code)]
     pub(crate) connection_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>>,
+    #[allow(dead_code)]
     pub(crate) connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
+    #[allow(dead_code)]
     pub(crate) connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
+    #[allow(dead_code)]
     pub(crate) voice_participants: Arc<RwLock<VoiceParticipantsByChannel>>,
     pub(crate) attachment_store: Arc<LocalFileSystem>,
     pub(crate) attachments: Arc<RwLock<HashMap<String, AttachmentRecord>>>,
@@ -332,6 +340,28 @@ impl AppState {
         let attachment_store = LocalFileSystem::new_with_prefix(&config.attachment_root)
             .map_err(|e| anyhow!("attachment store init failed: {e}"))?;
         let search = init_search_service().map_err(|e| anyhow!("search init failed: {e}"))?;
+        let guilds = Arc::new(RwLock::new(HashMap::new()));
+        let guild_roles = Arc::new(RwLock::new(HashMap::new()));
+        let guild_role_assignments = Arc::new(RwLock::new(HashMap::new()));
+        let guild_channel_permission_overrides = Arc::new(RwLock::new(HashMap::new()));
+        let subscriptions = Arc::new(RwLock::new(HashMap::new()));
+        let connection_senders = Arc::new(RwLock::new(HashMap::new()));
+        let connection_controls = Arc::new(RwLock::new(HashMap::new()));
+        let connection_presence = Arc::new(RwLock::new(HashMap::new()));
+        let voice_participants = Arc::new(RwLock::new(HashMap::new()));
+        let membership_store = MembershipStore::new(
+            guilds.clone(),
+            guild_roles.clone(),
+            guild_role_assignments.clone(),
+            guild_channel_permission_overrides.clone(),
+        );
+        let realtime_registry = RealtimeRegistry::new(
+            subscriptions.clone(),
+            connection_senders.clone(),
+            connection_controls.clone(),
+            connection_presence.clone(),
+            voice_participants.clone(),
+        );
 
         Ok(Self {
             db_pool,
@@ -348,17 +378,19 @@ impl AppState {
             media_token_hits: Arc::new(RwLock::new(HashMap::new())),
             media_publish_hits: Arc::new(RwLock::new(HashMap::new())),
             media_subscribe_leases: Arc::new(RwLock::new(HashMap::new())),
-            guilds: Arc::new(RwLock::new(HashMap::new())),
-            guild_roles: Arc::new(RwLock::new(HashMap::new())),
-            guild_role_assignments: Arc::new(RwLock::new(HashMap::new())),
-            guild_channel_permission_overrides: Arc::new(RwLock::new(HashMap::new())),
+            membership_store,
+            guilds,
+            guild_roles,
+            guild_role_assignments,
+            guild_channel_permission_overrides,
             user_ip_observations: Arc::new(RwLock::new(HashMap::new())),
             guild_ip_bans: Arc::new(RwLock::new(HashMap::new())),
-            subscriptions: Arc::new(RwLock::new(HashMap::new())),
-            connection_senders: Arc::new(RwLock::new(HashMap::new())),
-            connection_controls: Arc::new(RwLock::new(HashMap::new())),
-            connection_presence: Arc::new(RwLock::new(HashMap::new())),
-            voice_participants: Arc::new(RwLock::new(HashMap::new())),
+            realtime_registry,
+            subscriptions,
+            connection_senders,
+            connection_controls,
+            connection_presence,
+            voice_participants,
             attachment_store: Arc::new(attachment_store),
             attachments: Arc::new(RwLock::new(HashMap::new())),
             friendship_requests: Arc::new(RwLock::new(HashMap::new())),
@@ -395,6 +427,97 @@ impl AppState {
             }),
             livekit: livekit.map(Arc::new),
         })
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct MembershipStore {
+    guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
+    guild_roles: Arc<RwLock<GuildRoleMap>>,
+    guild_role_assignments: Arc<RwLock<GuildRoleAssignmentMap>>,
+    guild_channel_permission_overrides: Arc<RwLock<GuildChannelPermissionOverrideMap>>,
+}
+
+impl MembershipStore {
+    pub(crate) fn new(
+        guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
+        guild_roles: Arc<RwLock<GuildRoleMap>>,
+        guild_role_assignments: Arc<RwLock<GuildRoleAssignmentMap>>,
+        guild_channel_permission_overrides: Arc<RwLock<GuildChannelPermissionOverrideMap>>,
+    ) -> Self {
+        Self {
+            guilds,
+            guild_roles,
+            guild_role_assignments,
+            guild_channel_permission_overrides,
+        }
+    }
+
+    pub(crate) fn guilds(&self) -> &Arc<RwLock<HashMap<String, GuildRecord>>> {
+        &self.guilds
+    }
+
+    pub(crate) fn guild_roles(&self) -> &Arc<RwLock<GuildRoleMap>> {
+        &self.guild_roles
+    }
+
+    pub(crate) fn guild_role_assignments(&self) -> &Arc<RwLock<GuildRoleAssignmentMap>> {
+        &self.guild_role_assignments
+    }
+
+    pub(crate) fn guild_channel_permission_overrides(
+        &self,
+    ) -> &Arc<RwLock<GuildChannelPermissionOverrideMap>> {
+        &self.guild_channel_permission_overrides
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct RealtimeRegistry {
+    subscriptions: Arc<RwLock<Subscriptions>>,
+    connection_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>>,
+    connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
+    connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
+    voice_participants: Arc<RwLock<VoiceParticipantsByChannel>>,
+}
+
+impl RealtimeRegistry {
+    pub(crate) fn new(
+        subscriptions: Arc<RwLock<Subscriptions>>,
+        connection_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>>,
+        connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
+        connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
+        voice_participants: Arc<RwLock<VoiceParticipantsByChannel>>,
+    ) -> Self {
+        Self {
+            subscriptions,
+            connection_senders,
+            connection_controls,
+            connection_presence,
+            voice_participants,
+        }
+    }
+
+    pub(crate) fn subscriptions(&self) -> &Arc<RwLock<Subscriptions>> {
+        &self.subscriptions
+    }
+
+    pub(crate) fn connection_senders(&self) -> &Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>> {
+        &self.connection_senders
+    }
+
+    pub(crate) fn connection_controls(
+        &self,
+    ) -> &Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>> {
+        &self.connection_controls
+    }
+
+    pub(crate) fn connection_presence(&self) -> &Arc<RwLock<HashMap<Uuid, ConnectionPresence>>> {
+        &self.connection_presence
+    }
+
+    pub(crate) fn voice_participants(&self) -> &Arc<RwLock<VoiceParticipantsByChannel>> {
+        &self.voice_participants
     }
 }
 
@@ -732,5 +855,43 @@ mod tests {
 
         let replay = store.revoke_if_replayed_token(initial_hash).await;
         assert_eq!(replay.as_deref(), Some(session_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn membership_store_shares_backing_maps_with_app_state_fields() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        let guild_id = String::from("guild-membership-store");
+
+        state.guilds.write().await.insert(
+            guild_id.clone(),
+            GuildRecord {
+                name: String::from("guild"),
+                visibility: GuildVisibility::Private,
+                created_by_user_id: UserId::new(),
+                members: HashMap::new(),
+                banned_members: HashSet::new(),
+                channels: HashMap::new(),
+            },
+        );
+
+        let read = state.membership_store.guilds().read().await;
+        assert!(read.contains_key(&guild_id));
+    }
+
+    #[tokio::test]
+    async fn realtime_registry_shares_backing_maps_with_app_state_fields() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        let connection_id = Uuid::new_v4();
+
+        state.connection_presence.write().await.insert(
+            connection_id,
+            ConnectionPresence {
+                user_id: UserId::new(),
+                guild_ids: HashSet::new(),
+            },
+        );
+
+        let presence = state.realtime_registry.connection_presence().read().await;
+        assert!(presence.contains_key(&connection_id));
     }
 }

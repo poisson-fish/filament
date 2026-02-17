@@ -42,13 +42,13 @@ async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
         return;
     }
 
-    let controls = state.connection_controls.read().await;
+    let controls = state.realtime_registry.connection_controls().read().await;
     signal_slow_connections_close(&controls, slow_connections);
 }
 
 pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: &GatewayEvent) {
     let mut slow_connections = Vec::new();
-    let mut subscriptions = state.subscriptions.write().await;
+    let mut subscriptions = state.realtime_registry.subscriptions().write().await;
     let delivered = dispatch_channel_payload(
         &mut subscriptions,
         key,
@@ -64,7 +64,7 @@ pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: 
 
 pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, event: &GatewayEvent) {
     let mut slow_connections = Vec::new();
-    let mut subscriptions = state.subscriptions.write().await;
+    let mut subscriptions = state.realtime_registry.subscriptions().write().await;
     let delivered = dispatch_guild_payload(
         &mut subscriptions,
         guild_id,
@@ -85,7 +85,7 @@ fn should_skip_user_broadcast(connection_ids: &[Uuid]) -> bool {
 #[allow(dead_code)]
 pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, event: &GatewayEvent) {
     let connection_ids = {
-        let presence = state.connection_presence.read().await;
+        let presence = state.realtime_registry.connection_presence().read().await;
         connection_ids_for_user(&presence, user_id)
     };
     if should_skip_user_broadcast(&connection_ids) {
@@ -93,7 +93,7 @@ pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, even
     }
 
     let mut slow_connections = Vec::new();
-    let mut senders = state.connection_senders.write().await;
+    let mut senders = state.realtime_registry.connection_senders().write().await;
     let delivered = dispatch_user_payload(
         &mut senders,
         &connection_ids,
@@ -124,7 +124,7 @@ pub(crate) async fn register_voice_participant_from_token(
     let now = now_unix();
     let key = voice_channel_key(guild_id, channel_id);
     let transition = {
-        let mut channels = state.voice_participants.write().await;
+        let mut channels = state.realtime_registry.voice_participants().write().await;
         apply_voice_registration_transition(
             &mut channels,
             &key,
@@ -155,7 +155,7 @@ pub(crate) async fn handle_voice_subscribe(
     prune_expired_voice_participants(state, now_unix()).await;
     let key = voice_channel_key(guild_id, channel_id);
     let participants = {
-        let voice = state.voice_participants.read().await;
+        let voice = state.realtime_registry.voice_participants().read().await;
         collect_voice_snapshots(&voice, &key)
     };
 
@@ -180,7 +180,7 @@ pub(crate) async fn handle_presence_subscribe(
     outbound_tx: &mpsc::Sender<String>,
 ) {
     let result = {
-        let mut presence = state.connection_presence.write().await;
+        let mut presence = state.realtime_registry.connection_presence().write().await;
         apply_presence_subscribe(&mut presence, connection_id, user_id, guild_id)
     };
     let Some(result) = result else {
@@ -201,19 +201,19 @@ pub(crate) async fn add_subscription(
     key: String,
     outbound_tx: mpsc::Sender<String>,
 ) {
-    let mut subscriptions = state.subscriptions.write().await;
+    let mut subscriptions = state.realtime_registry.subscriptions().write().await;
     insert_connection_subscription(&mut subscriptions, connection_id, key, outbound_tx);
 }
 
 pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
     let removed_presence = {
-        let mut presence = state.connection_presence.write().await;
-        let mut controls = state.connection_controls.write().await;
-        let mut senders = state.connection_senders.write().await;
+        let mut presence = state.realtime_registry.connection_presence().write().await;
+        let mut controls = state.realtime_registry.connection_controls().write().await;
+        let mut senders = state.realtime_registry.connection_senders().write().await;
         remove_connection_state(&mut presence, &mut controls, &mut senders, connection_id)
     };
 
-    let mut subscriptions = state.subscriptions.write().await;
+    let mut subscriptions = state.realtime_registry.subscriptions().write().await;
     remove_connection_from_subscriptions(&mut subscriptions, connection_id);
     drop(subscriptions);
 
@@ -221,7 +221,7 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
         return;
     };
     let outcome = {
-        let remaining = state.connection_presence.read().await;
+        let remaining = state.realtime_registry.connection_presence().read().await;
         compute_disconnect_presence_outcome(&remaining, &removed_presence)
     };
     let followups = plan_disconnect_followups(outcome, removed_presence.user_id);

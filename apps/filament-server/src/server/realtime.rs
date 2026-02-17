@@ -186,17 +186,24 @@ pub(crate) async fn handle_gateway_connection(
     let (outbound_tx, mut outbound_rx) =
         mpsc::channel::<String>(state.runtime.gateway_outbound_queue);
     state
-        .connection_senders
+        .realtime_registry
+        .connection_senders()
         .write()
         .await
         .insert(connection_id, outbound_tx.clone());
     let (control_tx, mut control_rx) = watch::channel(ConnectionControl::Open);
     state
-        .connection_controls
+        .realtime_registry
+        .connection_controls()
         .write()
         .await
         .insert(connection_id, control_tx);
-    state.connection_presence.write().await.insert(
+    state
+        .realtime_registry
+        .connection_presence()
+        .write()
+        .await
+        .insert(
         connection_id,
         ConnectionPresence {
             user_id: auth.user_id,

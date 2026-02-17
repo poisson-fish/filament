@@ -60,8 +60,8 @@ async fn ensure_in_memory_permission_model_for_guild(
     guild_id: &str,
 ) -> Result<(), AuthFailure> {
     let (members, legacy_overrides) = {
-        let guilds = state.guilds.read().await;
-        let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+        let guilds = state.membership_store.guilds().read().await;
+            let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
         let members = guild.members.clone();
         let mut overrides: HashMap<String, HashMap<Role, ChannelPermissionOverwrite>> =
             HashMap::new();
@@ -72,19 +72,23 @@ async fn ensure_in_memory_permission_model_for_guild(
     };
 
     let role_ids = {
-        let mut guild_roles = state.guild_roles.write().await;
+        let mut guild_roles = state.membership_store.guild_roles().write().await;
         let roles = guild_roles.entry(guild_id.to_owned()).or_default();
         ensure_required_roles(roles)
     };
 
     {
-        let mut role_assignments = state.guild_role_assignments.write().await;
+        let mut role_assignments = state.membership_store.guild_role_assignments().write().await;
         let guild_assignments = role_assignments.entry(guild_id.to_owned()).or_default();
         sync_legacy_role_assignments(&members, guild_assignments, &role_ids);
     }
 
     {
-        let mut channel_overrides = state.guild_channel_permission_overrides.write().await;
+        let mut channel_overrides = state
+            .membership_store
+            .guild_channel_permission_overrides()
+            .write()
+            .await;
         let guild_channel_overrides = channel_overrides.entry(guild_id.to_owned()).or_default();
         sync_legacy_channel_overrides(legacy_overrides, guild_channel_overrides, &role_ids);
     }
@@ -382,7 +386,7 @@ async fn resolve_channel_permissions_in_memory(
 ) -> Result<(Role, PermissionSet), AuthFailure> {
     ensure_in_memory_permission_model_for_guild(state, guild_id).await?;
 
-    let guilds = state.guilds.read().await;
+    let guilds = state.membership_store.guilds().read().await;
     let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
 
     if is_server_owner(state, user_id) {
@@ -409,11 +413,11 @@ async fn resolve_channel_permissions_in_memory(
     }
     drop(guilds);
 
-    let guild_roles = state.guild_roles.read().await;
+    let guild_roles = state.membership_store.guild_roles().read().await;
     let roles = guild_roles.get(guild_id).ok_or(AuthFailure::Forbidden)?;
     let role_ids = role_ids_from_map(roles).ok_or(AuthFailure::Forbidden)?;
 
-    let guild_assignments = state.guild_role_assignments.read().await;
+    let guild_assignments = state.membership_store.guild_role_assignments().read().await;
     let assigned_role_ids = guild_assignments
         .get(guild_id)
         .and_then(|assignments| assignments.get(&user_id).cloned())
@@ -430,7 +434,11 @@ async fn resolve_channel_permissions_in_memory(
         return Ok((resolved_role, guild_permissions));
     };
 
-    let channel_overrides = state.guild_channel_permission_overrides.read().await;
+    let channel_overrides = state
+        .membership_store
+        .guild_channel_permission_overrides()
+        .read()
+        .await;
     let channel_override = channel_overrides
         .get(guild_id)
         .and_then(|guild_overrides| guild_overrides.get(channel_id))
@@ -507,7 +515,7 @@ pub(crate) async fn member_role_in_guild(
             .map(|(role, _)| role);
     }
 
-    let guilds = state.guilds.read().await;
+    let guilds = state.membership_store.guilds().read().await;
     let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
     if !guild.members.contains_key(&user_id) {
         return Err(AuthFailure::NotFound);
@@ -714,7 +722,7 @@ mod tests {
         let state = AppState::new(&config).expect("state initializes");
         let guild_id = String::from("01ARZ3NDEKTSV4RRFFQ69G5FFF");
 
-        state.guilds.write().await.insert(
+        state.membership_store.guilds().write().await.insert(
             guild_id.clone(),
             GuildRecord {
                 name: String::from("phase7"),

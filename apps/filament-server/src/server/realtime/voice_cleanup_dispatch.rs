@@ -11,7 +11,7 @@ use super::{
 
 pub(crate) async fn broadcast_expired_voice_removals(state: &AppState, now_unix: i64) {
     let planned = {
-        let mut voice = state.voice_participants.write().await;
+        let mut voice = state.realtime_registry.voice_participants().write().await;
         expired_voice_removal_broadcasts(&mut voice, now_unix)
     };
 
@@ -26,7 +26,7 @@ pub(crate) async fn broadcast_disconnected_user_voice_removals(
     disconnected_at_unix: i64,
 ) {
     let planned = {
-        let mut voice = state.voice_participants.write().await;
+        let mut voice = state.realtime_registry.voice_participants().write().await;
         disconnected_user_voice_removal_broadcasts(&mut voice, user_id, disconnected_at_unix)
     };
 
