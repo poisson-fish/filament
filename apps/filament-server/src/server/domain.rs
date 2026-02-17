@@ -4,14 +4,28 @@ use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet, Role,
 use sqlx::{PgPool, Row};
 use ulid::Ulid;
 
+mod moderation;
+mod attachments;
+mod permissions_eval;
+mod reactions;
+
+pub(crate) use attachments::{
+    attach_message_media, parse_attachment_ids, validate_attachment_filename,
+};
+pub(crate) use moderation::{
+    enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client,
+};
+pub(crate) use permissions_eval::apply_channel_layers;
+pub(crate) use reactions::{
+    attach_message_reactions, reaction_summaries_from_users, validate_reaction_emoji,
+};
+
 use super::{
-    auth::{now_unix, ClientIp},
+    auth::now_unix,
     core::{
         AppState, AttachmentRecord, ChannelPermissionOverrideRecord, WorkspaceRoleRecord,
-        MAX_ATTACHMENTS_PER_MESSAGE, MAX_REACTION_EMOJI_CHARS,
     },
     db::{ensure_db_schema, role_from_i16},
-    directory_contract::IpNetwork,
     errors::AuthFailure,
     permissions::{
         all_permissions, default_everyone_permissions, default_member_permissions,
@@ -19,7 +33,7 @@ use super::{
         DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
         SYSTEM_ROLE_WORKSPACE_OWNER,
     },
-    types::{AttachmentPath, AttachmentResponse, MessageResponse, ReactionResponse},
+    types::{AttachmentPath, AttachmentResponse, ReactionResponse},
 };
 
 pub(crate) async fn user_can_write_channel(
@@ -32,80 +46,6 @@ pub(crate) async fn user_can_write_channel(
         .await
         .ok()
         .is_some_and(|(_, permissions)| permissions.contains(Permission::CreateMessage))
-}
-
-pub(crate) async fn guild_has_active_ip_ban_for_client(
-    state: &AppState,
-    guild_id: &str,
-    client_ip: ClientIp,
-) -> Result<bool, AuthFailure> {
-    let Some(ip) = client_ip.ip() else {
-        return Ok(false);
-    };
-    let now = now_unix();
-
-    if let Some(pool) = &state.db_pool {
-        let rows = sqlx::query(
-            "SELECT ip_cidr
-             FROM guild_ip_bans
-             WHERE guild_id = $1
-               AND (expires_at_unix IS NULL OR expires_at_unix > $2)
-             ORDER BY created_at_unix DESC
-             LIMIT $3",
-        )
-        .bind(guild_id)
-        .bind(now)
-        .bind(
-            i64::try_from(state.runtime.guild_ip_ban_max_entries)
-                .map_err(|_| AuthFailure::Internal)?,
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-        for row in rows {
-            let cidr: String = row.try_get("ip_cidr").map_err(|_| AuthFailure::Internal)?;
-            let Ok(network) = IpNetwork::try_from(cidr) else {
-                continue;
-            };
-            if network.contains(ip) {
-                return Ok(true);
-            }
-        }
-        return Ok(false);
-    }
-
-    let bans = state.guild_ip_bans.read().await;
-    let Some(guild_bans) = bans.get(guild_id) else {
-        return Ok(false);
-    };
-    Ok(guild_bans.iter().any(|entry| {
-        entry.expires_at_unix.is_none_or(|expires| expires > now) && entry.ip_network.contains(ip)
-    }))
-}
-
-pub(crate) async fn enforce_guild_ip_ban_for_request(
-    state: &AppState,
-    guild_id: &str,
-    user_id: UserId,
-    client_ip: ClientIp,
-    surface: &'static str,
-) -> Result<(), AuthFailure> {
-    if !guild_has_active_ip_ban_for_client(state, guild_id, client_ip).await? {
-        return Ok(());
-    }
-    write_audit_log(
-        state,
-        Some(guild_id.to_owned()),
-        user_id,
-        Some(user_id),
-        "moderation.ip_ban.hit",
-        serde_json::json!({
-            "surface": surface,
-            "client_ip_source": client_ip.source().as_str(),
-        }),
-    )
-    .await?;
-    Err(AuthFailure::Forbidden)
 }
 
 const OVERRIDE_TARGET_ROLE: i16 = 0;
@@ -160,33 +100,6 @@ fn role_ids_from_map(roles: &HashMap<String, WorkspaceRoleRecord>) -> Option<Rol
         member,
         moderator,
     })
-}
-
-fn normalize_layer(allow_bits: u64, deny_bits: u64) -> (u64, u64) {
-    (allow_bits & !deny_bits, deny_bits)
-}
-
-fn apply_channel_layers(
-    base: PermissionSet,
-    everyone: ChannelPermissionOverwrite,
-    role_aggregate: ChannelPermissionOverwrite,
-    member: ChannelPermissionOverwrite,
-) -> PermissionSet {
-    let mut bits = base.bits();
-    let (everyone_allow, everyone_deny) =
-        normalize_layer(everyone.allow.bits(), everyone.deny.bits());
-    bits &= !everyone_deny;
-    bits |= everyone_allow;
-
-    let (role_allow, role_deny) =
-        normalize_layer(role_aggregate.allow.bits(), role_aggregate.deny.bits());
-    bits &= !role_deny;
-    bits |= role_allow;
-
-    let (member_allow, member_deny) = normalize_layer(member.allow.bits(), member.deny.bits());
-    bits &= !member_deny;
-    bits |= member_allow;
-    PermissionSet::from_bits(bits)
 }
 
 async fn ensure_in_memory_permission_model_for_guild(
@@ -1020,24 +933,6 @@ pub(crate) async fn find_attachment(
         .ok_or(AuthFailure::NotFound)
 }
 
-pub(crate) fn parse_attachment_ids(value: Vec<String>) -> Result<Vec<String>, AuthFailure> {
-    if value.len() > MAX_ATTACHMENTS_PER_MESSAGE {
-        return Err(AuthFailure::InvalidRequest);
-    }
-
-    let mut deduped = Vec::with_capacity(value.len());
-    let mut seen = HashSet::with_capacity(value.len());
-    for attachment_id in value {
-        if Ulid::from_string(&attachment_id).is_err() {
-            return Err(AuthFailure::InvalidRequest);
-        }
-        if seen.insert(attachment_id.clone()) {
-            deduped.push(attachment_id);
-        }
-    }
-    Ok(deduped)
-}
-
 pub(crate) async fn bind_message_attachments_db(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     attachment_ids: &[String],
@@ -1271,44 +1166,6 @@ pub(crate) async fn attachment_map_for_messages_in_memory(
     by_message
 }
 
-pub(crate) fn attach_message_media(
-    messages: &mut [MessageResponse],
-    attachment_map: &HashMap<String, Vec<AttachmentResponse>>,
-) {
-    for message in messages {
-        message.attachments = attachment_map
-            .get(&message.message_id)
-            .cloned()
-            .unwrap_or_default();
-    }
-}
-
-pub(crate) fn attach_message_reactions(
-    messages: &mut [MessageResponse],
-    reaction_map: &HashMap<String, Vec<ReactionResponse>>,
-) {
-    for message in messages {
-        message.reactions = reaction_map
-            .get(&message.message_id)
-            .cloned()
-            .unwrap_or_default();
-    }
-}
-
-pub(crate) fn reaction_summaries_from_users(
-    reactions: &HashMap<String, HashSet<UserId>>,
-) -> Vec<ReactionResponse> {
-    let mut summaries = Vec::with_capacity(reactions.len());
-    for (emoji, users) in reactions {
-        summaries.push(ReactionResponse {
-            emoji: emoji.clone(),
-            count: users.len(),
-        });
-    }
-    summaries.sort_by(|left, right| left.emoji.cmp(&right.emoji));
-    summaries
-}
-
 pub(crate) async fn reaction_map_for_messages_db(
     pool: &PgPool,
     guild_id: &str,
@@ -1366,26 +1223,6 @@ pub(crate) async fn reaction_map_for_messages_db(
     Ok(by_message)
 }
 
-pub(crate) fn validate_attachment_filename(value: String) -> Result<String, AuthFailure> {
-    if value.is_empty() || value.len() > 128 {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    if value.contains('/') || value.contains('\\') || value.contains('\0') {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    Ok(value)
-}
-
-pub(crate) fn validate_reaction_emoji(value: &str) -> Result<(), AuthFailure> {
-    if value.is_empty() || value.chars().count() > MAX_REACTION_EMOJI_CHARS {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    if value.chars().any(char::is_whitespace) {
-        return Err(AuthFailure::InvalidRequest);
-    }
-    Ok(())
-}
-
 pub(crate) async fn write_audit_log(
     state: &AppState,
     guild_id: Option<String>,
@@ -1428,90 +1265,13 @@ pub(crate) async fn write_audit_log(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_channel_layers, guild_has_active_ip_ban_for_client, guild_permission_snapshot,
-    };
+    use super::guild_permission_snapshot;
     use crate::server::{
-        auth::resolve_client_ip,
-        core::{AppConfig, AppState, GuildIpBanRecord, GuildRecord, GuildVisibility},
-        directory_contract::IpNetwork,
+        core::{AppConfig, AppState, GuildRecord, GuildVisibility},
         permissions::all_permissions,
     };
-    use axum::http::HeaderMap;
-    use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet, Role, UserId};
+    use filament_core::{Role, UserId};
     use std::collections::{HashMap, HashSet};
-    use ulid::Ulid;
-
-    fn permission_set(values: &[Permission]) -> PermissionSet {
-        let mut set = PermissionSet::empty();
-        for value in values {
-            set.insert(*value);
-        }
-        set
-    }
-
-    #[tokio::test]
-    async fn guild_ip_ban_matching_handles_ipv4_and_ipv6_host_observations() {
-        let state = AppState::new(&AppConfig::default()).expect("state initializes");
-        let guild_id = String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV");
-        let source_user_id = UserId::new();
-        let now = crate::server::auth::now_unix();
-
-        state.guild_ip_bans.write().await.insert(
-            guild_id.clone(),
-            vec![
-                GuildIpBanRecord {
-                    ban_id: Ulid::new().to_string(),
-                    ip_network: IpNetwork::host("203.0.113.41".parse().expect("ipv4 parses")),
-                    source_user_id: Some(source_user_id),
-                    reason: String::from("ipv4 host"),
-                    created_at_unix: now,
-                    expires_at_unix: None,
-                },
-                GuildIpBanRecord {
-                    ban_id: Ulid::new().to_string(),
-                    ip_network: IpNetwork::host("2001:db8::42".parse().expect("ipv6 parses")),
-                    source_user_id: Some(source_user_id),
-                    reason: String::from("ipv6 host"),
-                    created_at_unix: now,
-                    expires_at_unix: None,
-                },
-            ],
-        );
-
-        let headers = HeaderMap::new();
-        let ipv4_client = resolve_client_ip(
-            &headers,
-            Some("203.0.113.41".parse().expect("peer ip parses")),
-            &[],
-        );
-        let ipv6_client = resolve_client_ip(
-            &headers,
-            Some("2001:db8::42".parse().expect("peer ip parses")),
-            &[],
-        );
-        let other_client = resolve_client_ip(
-            &headers,
-            Some("198.51.100.91".parse().expect("peer ip parses")),
-            &[],
-        );
-
-        assert!(
-            guild_has_active_ip_ban_for_client(&state, &guild_id, ipv4_client)
-                .await
-                .expect("ipv4 check succeeds")
-        );
-        assert!(
-            guild_has_active_ip_ban_for_client(&state, &guild_id, ipv6_client)
-                .await
-                .expect("ipv6 check succeeds")
-        );
-        assert!(
-            !guild_has_active_ip_ban_for_client(&state, &guild_id, other_client)
-                .await
-                .expect("non-matching check succeeds")
-        );
-    }
 
     #[tokio::test]
     async fn server_owner_bypass_grants_all_permissions_without_membership() {
@@ -1542,41 +1302,4 @@ mod tests {
         assert_eq!(permissions.bits(), all_permissions().bits());
     }
 
-    #[test]
-    fn apply_channel_layers_follows_locked_precedence() {
-        let base = permission_set(&[Permission::CreateMessage, Permission::DeleteMessage]);
-        let everyone = ChannelPermissionOverwrite {
-            allow: PermissionSet::empty(),
-            deny: permission_set(&[Permission::CreateMessage]),
-        };
-        let roles = ChannelPermissionOverwrite {
-            allow: permission_set(&[Permission::CreateMessage]),
-            deny: permission_set(&[Permission::DeleteMessage]),
-        };
-        let member = ChannelPermissionOverwrite {
-            allow: permission_set(&[Permission::DeleteMessage]),
-            deny: permission_set(&[Permission::CreateMessage]),
-        };
-
-        let resolved = apply_channel_layers(base, everyone, roles, member);
-        assert!(!resolved.contains(Permission::CreateMessage));
-        assert!(resolved.contains(Permission::DeleteMessage));
-    }
-
-    #[test]
-    fn apply_channel_layers_prefers_deny_when_same_layer_conflicts() {
-        let base = permission_set(&[Permission::CreateMessage]);
-        let member = ChannelPermissionOverwrite {
-            allow: permission_set(&[Permission::CreateMessage]),
-            deny: permission_set(&[Permission::CreateMessage]),
-        };
-
-        let resolved = apply_channel_layers(
-            base,
-            ChannelPermissionOverwrite::default(),
-            ChannelPermissionOverwrite::default(),
-            member,
-        );
-        assert!(!resolved.contains(Permission::CreateMessage));
-    }
 }
