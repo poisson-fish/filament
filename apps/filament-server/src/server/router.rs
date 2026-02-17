@@ -52,6 +52,110 @@ use super::{
     types::{echo, health, metrics, slow},
 };
 
+#[cfg(test)]
+pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
+    ("GET", "/health"),
+    ("GET", "/metrics"),
+    ("POST", "/echo"),
+    ("GET", "/slow"),
+    ("POST", "/auth/register"),
+    ("POST", "/auth/login"),
+    ("POST", "/auth/refresh"),
+    ("POST", "/auth/logout"),
+    ("GET", "/auth/me"),
+    ("PATCH", "/users/me/profile"),
+    ("GET", "/users/{user_id}/profile"),
+    ("GET", "/users/{user_id}/avatar"),
+    ("POST", "/users/lookup"),
+    ("GET", "/friends"),
+    ("DELETE", "/friends/{friend_user_id}"),
+    ("POST", "/friends/requests"),
+    ("GET", "/friends/requests"),
+    ("POST", "/friends/requests/{request_id}/accept"),
+    ("DELETE", "/friends/requests/{request_id}"),
+    ("POST", "/guilds"),
+    ("GET", "/guilds"),
+    ("PATCH", "/guilds/{guild_id}"),
+    ("GET", "/guilds/public"),
+    ("POST", "/guilds/{guild_id}/join"),
+    ("GET", "/guilds/{guild_id}/audit"),
+    ("GET", "/guilds/{guild_id}/roles"),
+    ("POST", "/guilds/{guild_id}/roles"),
+    ("POST", "/guilds/{guild_id}/roles/reorder"),
+    ("PATCH", "/guilds/{guild_id}/roles/{role_id}"),
+    ("DELETE", "/guilds/{guild_id}/roles/{role_id}"),
+    (
+        "POST",
+        "/guilds/{guild_id}/roles/{role_id}/members/{user_id}",
+    ),
+    (
+        "DELETE",
+        "/guilds/{guild_id}/roles/{role_id}/members/{user_id}",
+    ),
+    ("GET", "/guilds/{guild_id}/ip-bans"),
+    ("POST", "/guilds/{guild_id}/ip-bans/by-user"),
+    ("DELETE", "/guilds/{guild_id}/ip-bans/{ban_id}"),
+    ("POST", "/guilds/{guild_id}/channels"),
+    ("GET", "/guilds/{guild_id}/channels"),
+    (
+        "GET",
+        "/guilds/{guild_id}/channels/{channel_id}/permissions/self",
+    ),
+    (
+        "POST",
+        "/guilds/{guild_id}/channels/{channel_id}/overrides/{role}",
+    ),
+    (
+        "POST",
+        "/guilds/{guild_id}/channels/{channel_id}/messages",
+    ),
+    (
+        "GET",
+        "/guilds/{guild_id}/channels/{channel_id}/messages",
+    ),
+    (
+        "PATCH",
+        "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}",
+    ),
+    (
+        "DELETE",
+        "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}",
+    ),
+    (
+        "POST",
+        "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}",
+    ),
+    (
+        "DELETE",
+        "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}",
+    ),
+    (
+        "POST",
+        "/guilds/{guild_id}/channels/{channel_id}/voice/token",
+    ),
+    ("GET", "/guilds/{guild_id}/search"),
+    ("POST", "/guilds/{guild_id}/search/rebuild"),
+    ("POST", "/guilds/{guild_id}/search/reconcile"),
+    (
+        "GET",
+        "/guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}",
+    ),
+    (
+        "DELETE",
+        "/guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}",
+    ),
+    ("POST", "/guilds/{guild_id}/members/{user_id}"),
+    ("PATCH", "/guilds/{guild_id}/members/{user_id}"),
+    ("POST", "/guilds/{guild_id}/members/{user_id}/kick"),
+    ("POST", "/guilds/{guild_id}/members/{user_id}/ban"),
+    ("GET", "/gateway/ws"),
+    (
+        "POST",
+        "/guilds/{guild_id}/channels/{channel_id}/attachments",
+    ),
+    ("POST", "/users/me/profile/avatar"),
+];
+
 #[derive(Clone)]
 struct TrustedClientIpKeyExtractor {
     trusted_proxy_cidrs: Arc<Vec<super::directory_contract::IpNetwork>>,

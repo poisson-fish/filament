@@ -155,6 +155,24 @@ This section locks response semantics and limits for upcoming directory-join/aud
     - `{ "users": [{ "user_id": "...", "username": "..." }] }`
   - Missing users are omitted from `users`
 
+### Profile
+- `PATCH /users/me/profile`
+  - Auth required
+  - Request: `{ "about"?: "..." }`
+  - `about` max length `512` chars
+  - Response `200`: `{ "user_id": "...", "username": "...", "about": "...", "avatar_url": "..." | null, "avatar_version": <number> }`
+- `GET /users/{user_id}/profile`
+  - Auth required
+  - Response `200`: same shape as profile update/read model
+- `GET /users/{user_id}/avatar`
+  - Auth required
+  - Response `200`: raw avatar bytes with image content type
+- `POST /users/me/profile/avatar`
+  - Auth required
+  - Raw binary body upload (not multipart)
+  - MIME is sniffed from bytes; unsupported or mismatched image type is rejected
+  - Response `200`: `{ "avatar_version": <number> }`
+
 ### Friendships
 - `GET /friends`
   - Auth required
@@ -227,6 +245,31 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Least-visibility gate: requires effective `create_message` permission in the channel
   - Response `200`:
     - `{ "role": "owner|moderator|member", "permissions": [Permission...] }`
+- `GET /guilds/{guild_id}/roles`
+  - Auth required; requester must be a guild member
+  - Response `200`:
+    - `{ "roles": [{ "role_id": "...", "name": "...", "permissions": [Permission...], "priority": <number>, "is_system": <bool> }] }`
+- `POST /guilds/{guild_id}/roles`
+  - Auth required; requires `manage_roles`
+  - Request: `{ "name": "...", "permissions": [Permission...] }`
+  - Response `200`: `{ "role_id": "...", "name": "...", "permissions": [Permission...], "priority": <number>, "is_system": false }`
+- `POST /guilds/{guild_id}/roles/reorder`
+  - Auth required; requires `manage_roles`
+  - Request: `{ "role_ids": ["<role_id>", ...] }`
+  - Response `200`: `{ "accepted": true }`
+- `PATCH /guilds/{guild_id}/roles/{role_id}`
+  - Auth required; requires `manage_roles`
+  - Request: `{ "name"?: "...", "permissions"?: [Permission...] }`
+  - Response `200`: updated role payload
+- `DELETE /guilds/{guild_id}/roles/{role_id}`
+  - Auth required; requires `manage_roles`
+  - Response `204 No Content`
+- `POST /guilds/{guild_id}/roles/{role_id}/members/{user_id}`
+  - Auth required; requires `manage_roles`
+  - Response `200`: `{ "accepted": true }`
+- `DELETE /guilds/{guild_id}/roles/{role_id}/members/{user_id}`
+  - Auth required; requires `manage_roles`
+  - Response `200`: `{ "accepted": true }`
 
 ### Messages
 - `POST /guilds/{guild_id}/channels/{channel_id}/messages`

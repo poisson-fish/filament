@@ -12,7 +12,7 @@ mod tests {
             add_subscription, broadcast_channel_event, broadcast_guild_event, broadcast_user_event,
             create_message_internal,
         },
-        router::build_router,
+        router::{build_router, ROUTE_MANIFEST},
         types::AuthResponse,
     };
     use axum::{body::Body, extract::connect_info::ConnectInfo, http::Request, http::StatusCode};
@@ -400,6 +400,7 @@ mod tests {
 
     mod audit;
     mod auth;
+    mod contract;
     mod directory;
     mod friend;
     mod gateway;

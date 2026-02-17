@@ -6,6 +6,44 @@ mod presence_voice;
 mod profile;
 mod workspace;
 
+#[cfg(test)]
+pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
+    connection::READY_EVENT,
+    connection::SUBSCRIBED_EVENT,
+    message_channel::MESSAGE_CREATE_EVENT,
+    message_channel::MESSAGE_UPDATE_EVENT,
+    message_channel::MESSAGE_DELETE_EVENT,
+    message_channel::MESSAGE_REACTION_EVENT,
+    message_channel::CHANNEL_CREATE_EVENT,
+    presence_voice::PRESENCE_SYNC_EVENT,
+    presence_voice::PRESENCE_UPDATE_EVENT,
+    presence_voice::VOICE_PARTICIPANT_SYNC_EVENT,
+    presence_voice::VOICE_PARTICIPANT_JOIN_EVENT,
+    presence_voice::VOICE_PARTICIPANT_LEAVE_EVENT,
+    presence_voice::VOICE_PARTICIPANT_UPDATE_EVENT,
+    presence_voice::VOICE_STREAM_PUBLISH_EVENT,
+    presence_voice::VOICE_STREAM_UNPUBLISH_EVENT,
+    workspace::WORKSPACE_UPDATE_EVENT,
+    workspace::WORKSPACE_MEMBER_ADD_EVENT,
+    workspace::WORKSPACE_MEMBER_UPDATE_EVENT,
+    workspace::WORKSPACE_MEMBER_REMOVE_EVENT,
+    workspace::WORKSPACE_MEMBER_BAN_EVENT,
+    workspace::WORKSPACE_ROLE_CREATE_EVENT,
+    workspace::WORKSPACE_ROLE_UPDATE_EVENT,
+    workspace::WORKSPACE_ROLE_DELETE_EVENT,
+    workspace::WORKSPACE_ROLE_REORDER_EVENT,
+    workspace::WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT,
+    workspace::WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT,
+    workspace::WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT,
+    workspace::WORKSPACE_IP_BAN_SYNC_EVENT,
+    profile::PROFILE_UPDATE_EVENT,
+    profile::PROFILE_AVATAR_UPDATE_EVENT,
+    friend::FRIEND_REQUEST_CREATE_EVENT,
+    friend::FRIEND_REQUEST_UPDATE_EVENT,
+    friend::FRIEND_REQUEST_DELETE_EVENT,
+    friend::FRIEND_REMOVE_EVENT,
+];
+
 pub(crate) use connection::{ready, subscribed};
 pub(crate) use envelope::GatewayEvent;
 pub(crate) use friend::{
