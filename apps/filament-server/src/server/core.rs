@@ -63,6 +63,8 @@ pub const DEFAULT_MAX_CREATED_GUILDS_PER_USER: usize = 5;
 pub const DEFAULT_CAPTCHA_VERIFY_TIMEOUT_SECS: u64 = 3;
 pub const MAX_LIVEKIT_TOKEN_TTL_SECS: u64 = 5 * 60;
 pub(crate) const RATE_LIMIT_SWEEP_INTERVAL_SECS: i64 = 30;
+pub(crate) const AUTH_SESSION_SWEEP_INTERVAL_SECS: i64 = 60;
+pub(crate) const REFRESH_REPLAY_RETENTION_SECS: i64 = REFRESH_TOKEN_TTL_SECS + 60 * 60;
 pub(crate) const MAX_CAPTCHA_TOKEN_CHARS: usize = 4096;
 pub(crate) const MIN_CAPTCHA_TOKEN_CHARS: usize = 20;
 pub(crate) const LOGIN_LOCK_THRESHOLD: u8 = 5;
@@ -288,6 +290,7 @@ pub struct AppState {
     pub(crate) media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) rate_limit_last_sweep_unix: Arc<AtomicI64>,
+    pub(crate) auth_session_last_sweep_unix: Arc<AtomicI64>,
     pub(crate) membership_store: MembershipStore,
     #[allow(dead_code)]
     pub(crate) guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
@@ -389,6 +392,7 @@ impl AppState {
             media_publish_hits: Arc::new(RwLock::new(HashMap::new())),
             media_subscribe_leases: Arc::new(RwLock::new(HashMap::new())),
             rate_limit_last_sweep_unix: Arc::new(AtomicI64::new(0)),
+            auth_session_last_sweep_unix: Arc::new(AtomicI64::new(0)),
             membership_store,
             guilds,
             guild_roles,
@@ -536,7 +540,13 @@ impl RealtimeRegistry {
 #[derive(Clone, Default)]
 pub(crate) struct SessionStore {
     sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
-    used_refresh_tokens: Arc<RwLock<HashMap<[u8; 32], String>>>,
+    used_refresh_tokens: Arc<RwLock<HashMap<[u8; 32], UsedRefreshTokenRecord>>>,
+}
+
+#[derive(Debug, Clone)]
+struct UsedRefreshTokenRecord {
+    session_id: String,
+    used_at_unix: i64,
 }
 
 impl SessionStore {
@@ -554,7 +564,7 @@ impl SessionStore {
             .read()
             .await
             .get(&token_hash)
-            .cloned();
+            .map(|record| record.session_id.clone());
         if let Some(session_id) = replayed_session_id.clone() {
             if let Some(session) = self.sessions.write().await.get_mut(&session_id) {
                 session.revoked = true;
@@ -586,11 +596,42 @@ impl SessionStore {
             (session.user_id, previous_hash)
         };
 
-        self.used_refresh_tokens
-            .write()
-            .await
-            .insert(previous_hash.1, session_id.to_owned());
+        self.used_refresh_tokens.write().await.insert(
+            previous_hash.1,
+            UsedRefreshTokenRecord {
+                session_id: session_id.to_owned(),
+                used_at_unix: now_unix,
+            },
+        );
         Ok(previous_hash.0)
+    }
+
+    pub(crate) async fn prune_expired(
+        &self,
+        now_unix: i64,
+        replay_retention_secs: i64,
+    ) -> (usize, usize) {
+        let active_session_ids = {
+            let mut sessions = self.sessions.write().await;
+            let before = sessions.len();
+            sessions.retain(|_, session| session.expires_at_unix >= now_unix);
+            let removed = before.saturating_sub(sessions.len());
+            let active_session_ids = sessions.keys().cloned().collect::<HashSet<_>>();
+            (removed, active_session_ids)
+        };
+
+        let replay_cutoff = now_unix.saturating_sub(replay_retention_secs);
+        let removed_replays = {
+            let mut used_refresh_tokens = self.used_refresh_tokens.write().await;
+            let before = used_refresh_tokens.len();
+            used_refresh_tokens.retain(|_, record| {
+                record.used_at_unix >= replay_cutoff
+                    && active_session_ids.1.contains(record.session_id.as_str())
+            });
+            before.saturating_sub(used_refresh_tokens.len())
+        };
+
+        (active_session_ids.0, removed_replays)
     }
 
     pub(crate) async fn validate_refresh_token(
@@ -867,6 +908,99 @@ mod tests {
 
         let replay = store.revoke_if_replayed_token(initial_hash).await;
         assert_eq!(replay.as_deref(), Some(session_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn session_store_prune_expired_is_idempotent_and_preserves_active_replay_detection() {
+        let store = SessionStore::new();
+        let user_id = UserId::new();
+        let active_session = String::from("session-active");
+        let expired_session = String::from("session-expired");
+        let active_initial_hash = [10_u8; 32];
+        let expired_initial_hash = [20_u8; 32];
+
+        store
+            .insert(
+                active_session.clone(),
+                SessionRecord {
+                    user_id,
+                    refresh_token_hash: active_initial_hash,
+                    expires_at_unix: 2_000,
+                    revoked: false,
+                },
+            )
+            .await;
+        store
+            .insert(
+                expired_session.clone(),
+                SessionRecord {
+                    user_id,
+                    refresh_token_hash: expired_initial_hash,
+                    expires_at_unix: 900,
+                    revoked: false,
+                },
+            )
+            .await;
+
+        store
+            .rotate_refresh_hash(
+                &active_session,
+                active_initial_hash,
+                [11_u8; 32],
+                950,
+                2_000,
+            )
+            .await
+            .expect("active rotation should succeed");
+        store
+            .rotate_refresh_hash(
+                &expired_session,
+                expired_initial_hash,
+                [21_u8; 32],
+                800,
+                900,
+            )
+            .await
+            .expect("expired-session rotation should succeed before expiry");
+
+        let first = store.prune_expired(1_000, 300).await;
+        assert_eq!(first, (1, 1));
+
+        let preserved_replay = store.revoke_if_replayed_token(active_initial_hash).await;
+        assert_eq!(preserved_replay.as_deref(), Some(active_session.as_str()));
+
+        let second = store.prune_expired(1_000, 300).await;
+        assert_eq!(second, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn session_store_prune_expired_removes_replay_records_past_retention() {
+        let store = SessionStore::new();
+        let user_id = UserId::new();
+        let session_id = String::from("session-retention");
+        let initial_hash = [30_u8; 32];
+
+        store
+            .insert(
+                session_id.clone(),
+                SessionRecord {
+                    user_id,
+                    refresh_token_hash: initial_hash,
+                    expires_at_unix: 5_000,
+                    revoked: false,
+                },
+            )
+            .await;
+
+        store
+            .rotate_refresh_hash(&session_id, initial_hash, [31_u8; 32], 100, 5_000)
+            .await
+            .expect("rotation should succeed");
+
+        let pruned = store.prune_expired(500, 200).await;
+        assert_eq!(pruned, (0, 1));
+        let replay = store.revoke_if_replayed_token(initial_hash).await;
+        assert!(replay.is_none());
     }
 
     #[tokio::test]

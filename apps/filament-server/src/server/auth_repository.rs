@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use sqlx::{PgPool, Row};
 
 use filament_core::{UserId, Username};
@@ -5,7 +7,8 @@ use filament_core::{UserId, Username};
 use crate::server::{
     auth::{hash_refresh_token, verify_password},
     core::{
-        AppState, SessionRecord, LOGIN_LOCK_SECS, LOGIN_LOCK_THRESHOLD, REFRESH_TOKEN_TTL_SECS,
+        AppState, SessionRecord, AUTH_SESSION_SWEEP_INTERVAL_SECS, LOGIN_LOCK_SECS,
+        LOGIN_LOCK_THRESHOLD, REFRESH_REPLAY_RETENTION_SECS, REFRESH_TOKEN_TTL_SECS,
     },
     errors::AuthFailure,
 };
@@ -68,13 +71,71 @@ pub(crate) trait AuthPersistence {
 }
 
 pub(crate) struct PostgresAuthRepository<'a> {
+    state: &'a AppState,
     pool: &'a PgPool,
 }
 
 impl<'a> PostgresAuthRepository<'a> {
-    pub(crate) fn new(pool: &'a PgPool) -> Self {
-        Self { pool }
+    pub(crate) fn new(state: &'a AppState, pool: &'a PgPool) -> Self {
+        Self { state, pool }
     }
+
+    async fn prune_expired_auth_state(&self, now_unix: i64) -> Result<(), AuthFailure> {
+        sqlx::query("DELETE FROM sessions WHERE expires_at_unix < $1")
+            .bind(now_unix)
+            .execute(self.pool)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+
+        let replay_cutoff = now_unix.saturating_sub(REFRESH_REPLAY_RETENTION_SECS);
+        sqlx::query(
+            "DELETE FROM used_refresh_tokens urt
+             WHERE urt.used_at_unix < $1
+                OR NOT EXISTS (
+                    SELECT 1 FROM sessions s WHERE s.session_id = urt.session_id
+                )",
+        )
+        .bind(replay_cutoff)
+        .execute(self.pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        Ok(())
+    }
+}
+
+async fn maybe_sweep_auth_state(repo_state: &AppState, now_unix: i64) -> Result<(), AuthFailure> {
+    let last = repo_state
+        .auth_session_last_sweep_unix
+        .load(Ordering::Relaxed);
+    if now_unix.saturating_sub(last) < AUTH_SESSION_SWEEP_INTERVAL_SECS {
+        return Ok(());
+    }
+    if repo_state
+        .auth_session_last_sweep_unix
+        .compare_exchange(last, now_unix, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return Ok(());
+    }
+
+    if repo_state.db_pool.is_some() {
+        let repo = PostgresAuthRepository::new(
+            repo_state,
+            repo_state
+                .db_pool
+                .as_ref()
+                .expect("db pool checked as present"),
+        );
+        repo.prune_expired_auth_state(now_unix).await?;
+        return Ok(());
+    }
+
+    let _ = repo_state
+        .session_store
+        .prune_expired(now_unix, REFRESH_REPLAY_RETENTION_SECS)
+        .await;
+    Ok(())
 }
 
 impl AuthPersistence for PostgresAuthRepository<'_> {
@@ -105,6 +166,8 @@ impl AuthPersistence for PostgresAuthRepository<'_> {
         dummy_password_hash: &str,
         now_unix: i64,
     ) -> Result<Option<UserId>, AuthFailure> {
+        maybe_sweep_auth_state(self.state, now_unix).await?;
+
         let row = sqlx::query(
             "SELECT user_id, password_hash, failed_logins, locked_until_unix
              FROM users WHERE username = $1",
@@ -190,6 +253,10 @@ impl AuthPersistence for PostgresAuthRepository<'_> {
         refresh_token: &str,
         now_unix: i64,
     ) -> Result<RefreshCheck, RefreshCheckError> {
+        maybe_sweep_auth_state(self.state, now_unix)
+            .await
+            .map_err(|_| RefreshCheckError::Internal)?;
+
         let presented_hash = hash_refresh_token(refresh_token);
         if let Some(row) =
             sqlx::query("SELECT session_id FROM used_refresh_tokens WHERE token_hash = $1")
@@ -260,9 +327,11 @@ impl AuthPersistence for PostgresAuthRepository<'_> {
         session_id: &str,
         presented_hash: [u8; 32],
         next_hash: [u8; 32],
-        _now_unix: i64,
+        now_unix: i64,
         next_expires_at_unix: i64,
     ) -> Result<(), AuthFailure> {
+        maybe_sweep_auth_state(self.state, now_unix).await?;
+
         sqlx::query(
             "UPDATE sessions SET refresh_token_hash = $2, expires_at_unix = $3 WHERE session_id = $1",
         )
@@ -274,11 +343,12 @@ impl AuthPersistence for PostgresAuthRepository<'_> {
         .map_err(|_| AuthFailure::Internal)?;
 
         sqlx::query(
-            "INSERT INTO used_refresh_tokens (token_hash, session_id) VALUES ($1, $2)
+            "INSERT INTO used_refresh_tokens (token_hash, session_id, used_at_unix) VALUES ($1, $2, $3)
              ON CONFLICT (token_hash) DO NOTHING",
         )
         .bind(presented_hash.as_slice())
         .bind(session_id)
+        .bind(now_unix)
         .execute(self.pool)
         .await
         .map_err(|_| AuthFailure::Internal)?;
@@ -365,6 +435,8 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
         dummy_password_hash: &str,
         now_unix: i64,
     ) -> Result<Option<UserId>, AuthFailure> {
+        maybe_sweep_auth_state(self.state, now_unix).await?;
+
         let mut users = self.state.users.write().await;
         let mut user_id = None;
         let mut verified = false;
@@ -427,6 +499,10 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
         refresh_token: &str,
         now_unix: i64,
     ) -> Result<RefreshCheck, RefreshCheckError> {
+        maybe_sweep_auth_state(self.state, now_unix)
+            .await
+            .map_err(|_| RefreshCheckError::Internal)?;
+
         let presented_hash = hash_refresh_token(refresh_token);
         if let Some(session_id) = self
             .state
@@ -467,6 +543,8 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
         now_unix: i64,
         next_expires_at_unix: i64,
     ) -> Result<(), AuthFailure> {
+        maybe_sweep_auth_state(self.state, now_unix).await?;
+
         self.state
             .session_store
             .rotate_refresh_hash(
@@ -502,7 +580,7 @@ pub(crate) enum AuthRepository<'a> {
 impl AuthRepository<'_> {
     pub(crate) fn from_state(state: &AppState) -> AuthRepository<'_> {
         if let Some(pool) = &state.db_pool {
-            AuthRepository::Postgres(PostgresAuthRepository::new(pool))
+            AuthRepository::Postgres(PostgresAuthRepository::new(state, pool))
         } else {
             AuthRepository::InMemory(InMemoryAuthRepository::new(state))
         }

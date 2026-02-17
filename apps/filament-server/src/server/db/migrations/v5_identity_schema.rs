@@ -49,8 +49,15 @@ const CREATE_SESSIONS_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS sessions (
 const CREATE_USED_REFRESH_TOKENS_TABLE_SQL: &str =
     "CREATE TABLE IF NOT EXISTS used_refresh_tokens (
                     token_hash BYTEA PRIMARY KEY,
-                    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE
+                    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                    used_at_unix BIGINT NOT NULL DEFAULT 0
                 )";
+const ADD_USED_REFRESH_TOKENS_USED_AT_COLUMN_SQL: &str =
+    "ALTER TABLE used_refresh_tokens ADD COLUMN IF NOT EXISTS used_at_unix BIGINT";
+const BACKFILL_USED_REFRESH_TOKENS_USED_AT_SQL: &str =
+    "UPDATE used_refresh_tokens SET used_at_unix = 0 WHERE used_at_unix IS NULL";
+const USED_REFRESH_TOKENS_USED_AT_NOT_NULL_SQL: &str =
+    "ALTER TABLE used_refresh_tokens ALTER COLUMN used_at_unix SET NOT NULL";
 
 pub(crate) async fn apply_identity_schema(
     tx: &mut Transaction<'_, Postgres>,
@@ -103,6 +110,15 @@ pub(crate) async fn apply_identity_schema(
     sqlx::query(CREATE_USED_REFRESH_TOKENS_TABLE_SQL)
         .execute(&mut **tx)
         .await?;
+    sqlx::query(ADD_USED_REFRESH_TOKENS_USED_AT_COLUMN_SQL)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(BACKFILL_USED_REFRESH_TOKENS_USED_AT_SQL)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(USED_REFRESH_TOKENS_USED_AT_NOT_NULL_SQL)
+        .execute(&mut **tx)
+        .await?;
 
     Ok(())
 }
@@ -113,9 +129,11 @@ mod tests {
         ABOUT_MARKDOWN_DEFAULT_SQL, ABOUT_MARKDOWN_NOT_NULL_SQL, ADD_ABOUT_MARKDOWN_COLUMN_SQL,
         ADD_AVATAR_MIME_TYPE_COLUMN_SQL, ADD_AVATAR_OBJECT_KEY_COLUMN_SQL,
         ADD_AVATAR_SHA256_HEX_COLUMN_SQL, ADD_AVATAR_SIZE_BYTES_COLUMN_SQL,
-        ADD_AVATAR_VERSION_COLUMN_SQL, AVATAR_VERSION_DEFAULT_SQL, AVATAR_VERSION_NOT_NULL_SQL,
-        BACKFILL_ABOUT_MARKDOWN_SQL, BACKFILL_AVATAR_VERSION_SQL, CREATE_SESSIONS_TABLE_SQL,
-        CREATE_USED_REFRESH_TOKENS_TABLE_SQL, CREATE_USERS_TABLE_SQL,
+        ADD_AVATAR_VERSION_COLUMN_SQL, ADD_USED_REFRESH_TOKENS_USED_AT_COLUMN_SQL,
+        AVATAR_VERSION_DEFAULT_SQL, AVATAR_VERSION_NOT_NULL_SQL, BACKFILL_ABOUT_MARKDOWN_SQL,
+        BACKFILL_AVATAR_VERSION_SQL, BACKFILL_USED_REFRESH_TOKENS_USED_AT_SQL,
+        CREATE_SESSIONS_TABLE_SQL, CREATE_USED_REFRESH_TOKENS_TABLE_SQL, CREATE_USERS_TABLE_SQL,
+        USED_REFRESH_TOKENS_USED_AT_NOT_NULL_SQL,
     };
 
     #[test]
@@ -136,5 +154,10 @@ mod tests {
         assert!(CREATE_SESSIONS_TABLE_SQL.contains("CREATE TABLE IF NOT EXISTS sessions"));
         assert!(CREATE_USED_REFRESH_TOKENS_TABLE_SQL
             .contains("CREATE TABLE IF NOT EXISTS used_refresh_tokens"));
+        assert!(ADD_USED_REFRESH_TOKENS_USED_AT_COLUMN_SQL
+            .contains("ADD COLUMN IF NOT EXISTS used_at_unix BIGINT"));
+        assert!(BACKFILL_USED_REFRESH_TOKENS_USED_AT_SQL
+            .contains("SET used_at_unix = 0 WHERE used_at_unix IS NULL"));
+        assert!(USED_REFRESH_TOKENS_USED_AT_NOT_NULL_SQL.contains("used_at_unix SET NOT NULL"));
     }
 }
