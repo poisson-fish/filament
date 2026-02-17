@@ -1,4 +1,5 @@
 use filament_core::UserId;
+use sqlx::{PgPool, Row};
 
 use crate::server::{
     core::MAX_REACTION_EMOJI_CHARS,
@@ -94,9 +95,57 @@ pub(crate) fn reaction_map_from_db_rows(
     reaction_map_from_counts(counts)
 }
 
+pub(crate) async fn reaction_map_for_messages_db(
+    pool: &PgPool,
+    guild_id: &str,
+    channel_id: Option<&str>,
+    message_ids: &[String],
+) -> Result<HashMap<String, Vec<ReactionResponse>>, AuthFailure> {
+    if message_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = if let Some(channel_id) = channel_id {
+        sqlx::query(
+            "SELECT message_id, emoji, COUNT(*) AS count
+             FROM message_reactions
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = ANY($3::text[])
+             GROUP BY message_id, emoji",
+        )
+        .bind(guild_id)
+        .bind(channel_id)
+        .bind(message_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    } else {
+        sqlx::query(
+            "SELECT message_id, emoji, COUNT(*) AS count
+             FROM message_reactions
+             WHERE guild_id = $1 AND message_id = ANY($2::text[])
+             GROUP BY message_id, emoji",
+        )
+        .bind(guild_id)
+        .bind(message_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    };
+
+    let mut count_rows = Vec::with_capacity(rows.len());
+    for row in rows {
+        count_rows.push(ReactionCountDbRow {
+            message_id: row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
+            emoji: row.try_get("emoji").map_err(|_| AuthFailure::Internal)?,
+            count: row.try_get("count").map_err(|_| AuthFailure::Internal)?,
+        });
+    }
+    reaction_map_from_db_rows(count_rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
+        reaction_map_for_messages_db,
         reaction_count_from_db_fields,
         reaction_map_from_db_rows,
         reaction_map_from_counts, reaction_summaries_from_users,
@@ -104,6 +153,7 @@ mod tests {
     };
     use crate::server::errors::AuthFailure;
     use filament_core::UserId;
+    use sqlx::PgPool;
     use std::collections::{HashMap, HashSet};
 
     #[test]
@@ -237,5 +287,15 @@ mod tests {
             }]),
             Err(AuthFailure::Internal)
         ));
+    }
+
+    #[tokio::test]
+    async fn reaction_map_for_messages_db_short_circuits_empty_ids() {
+        let pool = PgPool::connect_lazy("postgres://local/ignored")
+            .expect("lazy pool should build without network");
+        let mapped = reaction_map_for_messages_db(&pool, "guild", None, &[])
+            .await
+            .expect("empty ids should short-circuit");
+        assert!(mapped.is_empty());
     }
 }

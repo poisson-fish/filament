@@ -10,14 +10,9 @@ mod permissions_eval;
 mod reactions;
 
 pub(crate) use attachments::{
-    attachment_map_from_db_rows,
     attach_message_media,
-    attachment_record_from_db_row,
-    attachment_map_from_records, attachments_from_ids_in_memory,
     attachment_responses_from_db_rows,
-    attachment_usage_total_from_db,
-    attachment_usage_for_owner, parse_attachment_ids,
-    validate_attachment_filename,
+    parse_attachment_ids, validate_attachment_filename,
 };
 pub(crate) use moderation::{
     enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client,
@@ -34,7 +29,7 @@ pub(crate) use permissions_eval::{
     sync_legacy_role_assignments,
 };
 pub(crate) use reactions::{
-    attach_message_reactions, reaction_map_from_db_rows,
+    attach_message_reactions,
     reaction_summaries_from_users,
     validate_reaction_emoji,
 };
@@ -553,64 +548,14 @@ pub(crate) async fn attachment_usage_for_user(
     state: &AppState,
     user_id: UserId,
 ) -> Result<u64, AuthFailure> {
-    if let Some(pool) = &state.db_pool {
-        let row = sqlx::query(
-            "SELECT COALESCE(SUM(size_bytes)::BIGINT, 0) AS total FROM attachments WHERE owner_id = $1",
-        )
-        .bind(user_id.to_string())
-        .fetch_one(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-        let total: i64 = row.try_get("total").map_err(|_| AuthFailure::Internal)?;
-        return attachment_usage_total_from_db(total);
-    }
-
-    let attachments = state.attachments.read().await;
-    Ok(attachment_usage_for_owner(attachments.values(), user_id))
+    attachments::attachment_usage_for_user(state, user_id).await
 }
 
 pub(crate) async fn find_attachment(
     state: &AppState,
     path: &AttachmentPath,
 ) -> Result<AttachmentRecord, AuthFailure> {
-    if let Some(pool) = &state.db_pool {
-        let row = sqlx::query(
-            "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, object_key, message_id
-             FROM attachments
-             WHERE attachment_id = $1 AND guild_id = $2 AND channel_id = $3",
-        )
-        .bind(&path.attachment_id)
-        .bind(&path.guild_id)
-        .bind(&path.channel_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-        let row = row.ok_or(AuthFailure::NotFound)?;
-        return attachment_record_from_db_row(attachments::AttachmentDbRow {
-            attachment_id: row
-                .try_get("attachment_id")
-                .map_err(|_| AuthFailure::Internal)?,
-            guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
-            channel_id: row
-                .try_get("channel_id")
-                .map_err(|_| AuthFailure::Internal)?,
-            owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
-            filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
-            mime_type: row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
-            size_bytes: row.try_get("size_bytes").map_err(|_| AuthFailure::Internal)?,
-            sha256_hex: row.try_get("sha256_hex").map_err(|_| AuthFailure::Internal)?,
-            object_key: row.try_get("object_key").map_err(|_| AuthFailure::Internal)?,
-            message_id: row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
-        });
-    }
-    state
-        .attachments
-        .read()
-        .await
-        .get(&path.attachment_id)
-        .filter(|record| record.guild_id == path.guild_id && record.channel_id == path.channel_id)
-        .cloned()
-        .ok_or(AuthFailure::NotFound)
+    attachments::find_attachment(state, path).await
 }
 
 pub(crate) async fn bind_message_attachments_db(
@@ -676,8 +621,7 @@ pub(crate) async fn attachments_for_message_in_memory(
     state: &AppState,
     attachment_ids: &[String],
 ) -> Result<Vec<AttachmentResponse>, AuthFailure> {
-    let attachments = state.attachments.read().await;
-    attachments_from_ids_in_memory(&attachments, attachment_ids)
+    attachments::attachments_for_message_in_memory(state, attachment_ids).await
 }
 
 pub(crate) fn rows_to_attachment_responses(
@@ -715,72 +659,7 @@ pub(crate) async fn attachment_map_for_messages_db(
     channel_id: Option<&str>,
     message_ids: &[String],
 ) -> Result<HashMap<String, Vec<AttachmentResponse>>, AuthFailure> {
-    if message_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let rows = if let Some(channel_id) = channel_id {
-        sqlx::query(
-            "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, message_id
-             FROM attachments
-             WHERE guild_id = $1 AND channel_id = $2 AND message_id = ANY($3::text[])
-             ORDER BY created_at_unix ASC, attachment_id ASC",
-        )
-        .bind(guild_id)
-        .bind(channel_id)
-        .bind(message_ids)
-        .fetch_all(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?
-    } else {
-        sqlx::query(
-            "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, message_id
-             FROM attachments
-             WHERE guild_id = $1 AND message_id = ANY($2::text[])
-             ORDER BY created_at_unix ASC, attachment_id ASC",
-        )
-        .bind(guild_id)
-        .bind(message_ids)
-        .fetch_all(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?
-    };
-
-    let mut map_rows = Vec::with_capacity(rows.len());
-    for row in rows {
-        let message_id: Option<String> = row
-            .try_get("message_id")
-            .map_err(|_| AuthFailure::Internal)?;
-        map_rows.push(attachments::AttachmentMapDbRow {
-                message_id,
-                response: attachments::AttachmentResponseDbRow {
-                    attachment_id: row
-                        .try_get("attachment_id")
-                        .map_err(|_| AuthFailure::Internal)?,
-                    guild_id: row
-                        .try_get("guild_id")
-                        .map_err(|_| AuthFailure::Internal)?,
-                    channel_id: row
-                        .try_get("channel_id")
-                        .map_err(|_| AuthFailure::Internal)?,
-                    owner_id: row
-                        .try_get("owner_id")
-                        .map_err(|_| AuthFailure::Internal)?,
-                    filename: row
-                        .try_get("filename")
-                        .map_err(|_| AuthFailure::Internal)?,
-                    mime_type: row
-                        .try_get("mime_type")
-                        .map_err(|_| AuthFailure::Internal)?,
-                    size_bytes: row
-                        .try_get("size_bytes")
-                        .map_err(|_| AuthFailure::Internal)?,
-                    sha256_hex: row
-                        .try_get("sha256_hex")
-                        .map_err(|_| AuthFailure::Internal)?,
-                },
-            });
-    }
-    attachment_map_from_db_rows(map_rows)
+    attachments::attachment_map_for_messages_db(pool, guild_id, channel_id, message_ids).await
 }
 
 pub(crate) async fn attachment_map_for_messages_in_memory(
@@ -789,8 +668,8 @@ pub(crate) async fn attachment_map_for_messages_in_memory(
     channel_id: Option<&str>,
     message_ids: &[String],
 ) -> HashMap<String, Vec<AttachmentResponse>> {
-    let attachments = state.attachments.read().await;
-    attachment_map_from_records(attachments.values(), guild_id, channel_id, message_ids)
+    attachments::attachment_map_for_messages_in_memory(state, guild_id, channel_id, message_ids)
+        .await
 }
 
 pub(crate) async fn reaction_map_for_messages_db(
@@ -799,45 +678,7 @@ pub(crate) async fn reaction_map_for_messages_db(
     channel_id: Option<&str>,
     message_ids: &[String],
 ) -> Result<HashMap<String, Vec<ReactionResponse>>, AuthFailure> {
-    if message_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let rows = if let Some(channel_id) = channel_id {
-        sqlx::query(
-            "SELECT message_id, emoji, COUNT(*) AS count
-             FROM message_reactions
-             WHERE guild_id = $1 AND channel_id = $2 AND message_id = ANY($3::text[])
-             GROUP BY message_id, emoji",
-        )
-        .bind(guild_id)
-        .bind(channel_id)
-        .bind(message_ids)
-        .fetch_all(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?
-    } else {
-        sqlx::query(
-            "SELECT message_id, emoji, COUNT(*) AS count
-             FROM message_reactions
-             WHERE guild_id = $1 AND message_id = ANY($2::text[])
-             GROUP BY message_id, emoji",
-        )
-        .bind(guild_id)
-        .bind(message_ids)
-        .fetch_all(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?
-    };
-
-    let mut count_rows = Vec::with_capacity(rows.len());
-    for row in rows {
-        count_rows.push(reactions::ReactionCountDbRow {
-            message_id: row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
-            emoji: row.try_get("emoji").map_err(|_| AuthFailure::Internal)?,
-            count: row.try_get("count").map_err(|_| AuthFailure::Internal)?,
-        });
-    }
-    reaction_map_from_db_rows(count_rows)
+    reactions::reaction_map_for_messages_db(pool, guild_id, channel_id, message_ids).await
 }
 
 pub(crate) async fn write_audit_log(

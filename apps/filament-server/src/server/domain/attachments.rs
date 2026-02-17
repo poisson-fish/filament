@@ -1,11 +1,13 @@
 use ulid::Ulid;
 
 use crate::server::{
-    core::{AttachmentRecord, MAX_ATTACHMENTS_PER_MESSAGE},
+    core::{AppState, AttachmentRecord, MAX_ATTACHMENTS_PER_MESSAGE},
     errors::AuthFailure,
-    types::{AttachmentResponse, MessageResponse},
+    types::{AttachmentPath, AttachmentResponse, MessageResponse},
 };
 use filament_core::UserId;
+use sqlx::Row;
+use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
@@ -283,26 +285,169 @@ pub(crate) fn attachment_usage_total_from_db(total: i64) -> Result<u64, AuthFail
     u64::try_from(total).map_err(|_| AuthFailure::Internal)
 }
 
+pub(crate) async fn attachment_usage_for_user(
+    state: &AppState,
+    user_id: UserId,
+) -> Result<u64, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "SELECT COALESCE(SUM(size_bytes)::BIGINT, 0) AS total FROM attachments WHERE owner_id = $1",
+        )
+        .bind(user_id.to_string())
+        .fetch_one(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let total: i64 = row.try_get("total").map_err(|_| AuthFailure::Internal)?;
+        return attachment_usage_total_from_db(total);
+    }
+
+    let attachments = state.attachments.read().await;
+    Ok(attachment_usage_for_owner(attachments.values(), user_id))
+}
+
+pub(crate) async fn find_attachment(
+    state: &AppState,
+    path: &AttachmentPath,
+) -> Result<AttachmentRecord, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, object_key, message_id
+             FROM attachments
+             WHERE attachment_id = $1 AND guild_id = $2 AND channel_id = $3",
+        )
+        .bind(&path.attachment_id)
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let row = row.ok_or(AuthFailure::NotFound)?;
+        return attachment_record_from_db_row(AttachmentDbRow {
+            attachment_id: row
+                .try_get("attachment_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+            channel_id: row
+                .try_get("channel_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
+            filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
+            mime_type: row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
+            size_bytes: row.try_get("size_bytes").map_err(|_| AuthFailure::Internal)?,
+            sha256_hex: row.try_get("sha256_hex").map_err(|_| AuthFailure::Internal)?,
+            object_key: row.try_get("object_key").map_err(|_| AuthFailure::Internal)?,
+            message_id: row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
+        });
+    }
+
+    state
+        .attachments
+        .read()
+        .await
+        .get(&path.attachment_id)
+        .filter(|record| record.guild_id == path.guild_id && record.channel_id == path.channel_id)
+        .cloned()
+        .ok_or(AuthFailure::NotFound)
+}
+
+pub(crate) async fn attachments_for_message_in_memory(
+    state: &AppState,
+    attachment_ids: &[String],
+) -> Result<Vec<AttachmentResponse>, AuthFailure> {
+    let attachments = state.attachments.read().await;
+    attachments_from_ids_in_memory(&attachments, attachment_ids)
+}
+
+pub(crate) async fn attachment_map_for_messages_in_memory(
+    state: &AppState,
+    guild_id: &str,
+    channel_id: Option<&str>,
+    message_ids: &[String],
+) -> HashMap<String, Vec<AttachmentResponse>> {
+    let attachments = state.attachments.read().await;
+    attachment_map_from_records(attachments.values(), guild_id, channel_id, message_ids)
+}
+
+pub(crate) async fn attachment_map_for_messages_db(
+    pool: &PgPool,
+    guild_id: &str,
+    channel_id: Option<&str>,
+    message_ids: &[String],
+) -> Result<HashMap<String, Vec<AttachmentResponse>>, AuthFailure> {
+    if message_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = if let Some(channel_id) = channel_id {
+        sqlx::query(
+            "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, message_id
+             FROM attachments
+             WHERE guild_id = $1 AND channel_id = $2 AND message_id = ANY($3::text[])
+             ORDER BY created_at_unix ASC, attachment_id ASC",
+        )
+        .bind(guild_id)
+        .bind(channel_id)
+        .bind(message_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    } else {
+        sqlx::query(
+            "SELECT attachment_id, guild_id, channel_id, owner_id, filename, mime_type, size_bytes, sha256_hex, message_id
+             FROM attachments
+             WHERE guild_id = $1 AND message_id = ANY($2::text[])
+             ORDER BY created_at_unix ASC, attachment_id ASC",
+        )
+        .bind(guild_id)
+        .bind(message_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+    };
+
+    let mut map_rows = Vec::with_capacity(rows.len());
+    for row in rows {
+        let message_id: Option<String> = row.try_get("message_id").map_err(|_| AuthFailure::Internal)?;
+        map_rows.push(AttachmentMapDbRow {
+            message_id,
+            response: AttachmentResponseDbRow {
+                attachment_id: row.try_get("attachment_id").map_err(|_| AuthFailure::Internal)?,
+                guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
+                channel_id: row.try_get("channel_id").map_err(|_| AuthFailure::Internal)?,
+                owner_id: row.try_get("owner_id").map_err(|_| AuthFailure::Internal)?,
+                filename: row.try_get("filename").map_err(|_| AuthFailure::Internal)?,
+                mime_type: row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
+                size_bytes: row.try_get("size_bytes").map_err(|_| AuthFailure::Internal)?,
+                sha256_hex: row.try_get("sha256_hex").map_err(|_| AuthFailure::Internal)?,
+            },
+        });
+    }
+    attachment_map_from_db_rows(map_rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
+        attachment_map_for_messages_in_memory,
         attachment_map_from_db_rows,
         attachment_map_from_db_records, attachment_map_from_records,
         attachment_map_record_from_db_row,
+        attachment_usage_for_user,
         attachment_record_from_db_row,
         attachment_record_from_db_fields,
+        attachments_for_message_in_memory,
         attachment_responses_from_db_rows,
         attachment_response_from_db_row,
         attachment_response_from_db_fields,
+        find_attachment,
         attachment_response_from_record, attachment_usage_for_owner,
         attachment_usage_total_from_db,
         attachments_from_ids_in_memory, parse_attachment_ids,
         validate_attachment_filename,
     };
-    use crate::server::core::AttachmentRecord;
+    use crate::server::core::{AppConfig, AppState, AttachmentRecord};
     use crate::server::core::MAX_ATTACHMENTS_PER_MESSAGE;
     use crate::server::errors::AuthFailure;
-    use crate::server::types::AttachmentResponse;
+    use crate::server::types::{AttachmentPath, AttachmentResponse};
     use filament_core::UserId;
     use std::collections::HashMap;
     use ulid::Ulid;
@@ -819,5 +964,138 @@ mod tests {
     fn attachment_usage_for_owner_returns_zero_for_no_matches() {
         let usage = attachment_usage_for_owner([].iter(), UserId::new());
         assert_eq!(usage, 0);
+    }
+
+    #[tokio::test]
+    async fn attachment_usage_for_user_uses_in_memory_records() {
+        let state = AppState::new(&AppConfig::default()).expect("state initializes");
+        let owner_id = UserId::new();
+        let other_owner = UserId::new();
+
+        state.attachments.write().await.insert(
+            Ulid::new().to_string(),
+            AttachmentRecord {
+                attachment_id: Ulid::new().to_string(),
+                guild_id: Ulid::new().to_string(),
+                channel_id: Ulid::new().to_string(),
+                owner_id,
+                filename: String::from("one.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 128,
+                sha256_hex: String::from("abc"),
+                object_key: String::from("obj-1"),
+                message_id: None,
+            },
+        );
+        state.attachments.write().await.insert(
+            Ulid::new().to_string(),
+            AttachmentRecord {
+                attachment_id: Ulid::new().to_string(),
+                guild_id: Ulid::new().to_string(),
+                channel_id: Ulid::new().to_string(),
+                owner_id: other_owner,
+                filename: String::from("two.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 256,
+                sha256_hex: String::from("def"),
+                object_key: String::from("obj-2"),
+                message_id: None,
+            },
+        );
+
+        let usage = attachment_usage_for_user(&state, owner_id)
+            .await
+            .expect("usage should resolve");
+        assert_eq!(usage, 128);
+    }
+
+    #[tokio::test]
+    async fn find_attachment_in_memory_requires_matching_path_scope() {
+        let state = AppState::new(&AppConfig::default()).expect("state initializes");
+        let owner_id = UserId::new();
+        let attachment_id = Ulid::new().to_string();
+        let guild_id = Ulid::new().to_string();
+        let channel_id = Ulid::new().to_string();
+
+        state.attachments.write().await.insert(
+            attachment_id.clone(),
+            AttachmentRecord {
+                attachment_id: attachment_id.clone(),
+                guild_id: guild_id.clone(),
+                channel_id: channel_id.clone(),
+                owner_id,
+                filename: String::from("three.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 64,
+                sha256_hex: String::from("ghi"),
+                object_key: String::from("obj-3"),
+                message_id: None,
+            },
+        );
+
+        let found = find_attachment(
+            &state,
+            &AttachmentPath {
+                guild_id: guild_id.clone(),
+                channel_id: channel_id.clone(),
+                attachment_id: attachment_id.clone(),
+            },
+        )
+        .await
+        .expect("matching path should resolve");
+        assert_eq!(found.attachment_id, attachment_id.clone());
+
+        let mismatched = find_attachment(
+            &state,
+            &AttachmentPath {
+                guild_id,
+                channel_id: Ulid::new().to_string(),
+                attachment_id,
+            },
+        )
+        .await;
+        assert!(matches!(mismatched, Err(AuthFailure::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn attachments_for_message_in_memory_rejects_unknown_attachment_ids() {
+        let state = AppState::new(&AppConfig::default()).expect("state initializes");
+        let missing = vec![Ulid::new().to_string()];
+        let resolved = attachments_for_message_in_memory(&state, &missing).await;
+        assert!(matches!(resolved, Err(AuthFailure::InvalidRequest)));
+    }
+
+    #[tokio::test]
+    async fn attachment_map_for_messages_in_memory_filters_by_scope() {
+        let state = AppState::new(&AppConfig::default()).expect("state initializes");
+        let owner_id = UserId::new();
+        let guild_id = Ulid::new().to_string();
+        let channel_id = Ulid::new().to_string();
+        let message_id = Ulid::new().to_string();
+
+        state.attachments.write().await.insert(
+            Ulid::new().to_string(),
+            AttachmentRecord {
+                attachment_id: Ulid::new().to_string(),
+                guild_id: guild_id.clone(),
+                channel_id: channel_id.clone(),
+                owner_id,
+                filename: String::from("four.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 42,
+                sha256_hex: String::from("jkl"),
+                object_key: String::from("obj-4"),
+                message_id: Some(message_id.clone()),
+            },
+        );
+
+        let map = attachment_map_for_messages_in_memory(
+            &state,
+            &guild_id,
+            Some(&channel_id),
+            std::slice::from_ref(&message_id),
+        )
+        .await;
+        assert_eq!(map.get(&message_id).map(Vec::len), Some(1));
     }
 }
