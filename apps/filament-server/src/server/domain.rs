@@ -10,11 +10,11 @@ mod permissions_eval;
 mod reactions;
 
 pub(crate) use attachments::{
-    attach_message_media, attachment_map_from_db_records,
-    attachment_map_record_from_db_row,
+    attachment_map_from_db_rows,
+    attach_message_media,
     attachment_record_from_db_row,
     attachment_map_from_records, attachments_from_ids_in_memory,
-    attachment_response_from_db_row,
+    attachment_responses_from_db_rows,
     attachment_usage_total_from_db,
     attachment_usage_for_owner, parse_attachment_ids,
     validate_attachment_filename,
@@ -26,17 +26,18 @@ pub(crate) use permissions_eval::{
     apply_legacy_role_assignment, ensure_required_roles,
     finalize_channel_permissions,
     guild_role_permission_inputs,
-    merge_assigned_role_overrides,
+    resolve_guild_permission_summary,
     merge_legacy_channel_role_overrides,
     normalize_assigned_role_ids,
     role_ids_from_map, role_records_from_db_rows,
+    summarize_in_memory_channel_overrides,
     summarize_channel_overrides,
     summarize_guild_permissions, sync_legacy_channel_overrides,
     sync_legacy_role_assignments,
 };
 pub(crate) use reactions::{
-    attach_message_reactions, reaction_map_from_counts,
-    reaction_count_from_db_fields, reaction_summaries_from_users,
+    attach_message_reactions, reaction_map_from_db_rows,
+    reaction_summaries_from_users,
     validate_reaction_emoji,
 };
 
@@ -287,15 +288,8 @@ async fn resolve_channel_permissions_db(
         &role_ids,
     );
 
-    let (everyone_permissions, role_permissions) =
-        guild_role_permission_inputs(&roles, &role_ids.everyone);
-    let guild_permission_summary = summarize_guild_permissions(
-        everyone_permissions,
-        &assigned_role_ids,
-        &role_permissions,
-        &role_ids.workspace_owner,
-        &role_ids.moderator,
-    );
+    let guild_permission_summary =
+        resolve_guild_permission_summary(&roles, &assigned_role_ids, &role_ids);
     let guild_permissions = guild_permission_summary.guild_permissions;
     let is_workspace_owner = guild_permission_summary.is_workspace_owner;
     let resolved_role = guild_permission_summary.resolved_role;
@@ -496,20 +490,15 @@ async fn resolve_channel_permissions_in_memory(
         .cloned()
         .unwrap_or_else(ChannelPermissionOverrideRecord::default);
 
-    let everyone_overwrite = channel_override
-        .role_overrides
-        .get(&role_ids.everyone)
-        .copied()
-        .unwrap_or_default();
-    let role_overwrite = merge_assigned_role_overrides(
-        &channel_override.role_overrides,
+    let override_summary = summarize_in_memory_channel_overrides(
+        &channel_override,
         &assigned_role_ids,
+        &role_ids,
+        user_id,
     );
-    let member_overwrite = channel_override
-        .member_overrides
-        .get(&user_id)
-        .copied()
-        .unwrap_or_default();
+    let everyone_overwrite = override_summary.everyone_overwrite;
+    let role_overwrite = override_summary.role_overwrite;
+    let member_overwrite = override_summary.member_overwrite;
 
     let permissions = finalize_channel_permissions(
         guild_permissions,
@@ -725,10 +714,9 @@ pub(crate) async fn attachments_for_message_in_memory(
 pub(crate) fn rows_to_attachment_responses(
     rows: Vec<sqlx::postgres::PgRow>,
 ) -> Result<Vec<AttachmentResponse>, AuthFailure> {
-    let mut attachments = Vec::with_capacity(rows.len());
+    let mut attachment_rows = Vec::with_capacity(rows.len());
     for row in rows {
-        attachments.push(attachment_response_from_db_row(
-            attachments::AttachmentResponseDbRow {
+        attachment_rows.push(attachments::AttachmentResponseDbRow {
                 attachment_id: row
                     .try_get("attachment_id")
                     .map_err(|_| AuthFailure::Internal)?,
@@ -747,10 +735,9 @@ pub(crate) fn rows_to_attachment_responses(
                 sha256_hex: row
                     .try_get("sha256_hex")
                     .map_err(|_| AuthFailure::Internal)?,
-            },
-        )?);
+            });
     }
-    Ok(attachments)
+    attachment_responses_from_db_rows(attachment_rows)
 }
 
 pub(crate) async fn attachment_map_for_messages_db(
@@ -789,13 +776,12 @@ pub(crate) async fn attachment_map_for_messages_db(
         .map_err(|_| AuthFailure::Internal)?
     };
 
-    let mut records = Vec::with_capacity(rows.len());
+    let mut map_rows = Vec::with_capacity(rows.len());
     for row in rows {
         let message_id: Option<String> = row
             .try_get("message_id")
             .map_err(|_| AuthFailure::Internal)?;
-        records.push(attachment_map_record_from_db_row(
-            attachments::AttachmentMapDbRow {
+        map_rows.push(attachments::AttachmentMapDbRow {
                 message_id,
                 response: attachments::AttachmentResponseDbRow {
                     attachment_id: row
@@ -823,10 +809,9 @@ pub(crate) async fn attachment_map_for_messages_db(
                         .try_get("sha256_hex")
                         .map_err(|_| AuthFailure::Internal)?,
                 },
-            },
-        )?);
+            });
     }
-    Ok(attachment_map_from_db_records(records))
+    attachment_map_from_db_rows(map_rows)
 }
 
 pub(crate) async fn attachment_map_for_messages_in_memory(
@@ -875,15 +860,15 @@ pub(crate) async fn reaction_map_for_messages_db(
         .map_err(|_| AuthFailure::Internal)?
     };
 
-    let mut counts = Vec::with_capacity(rows.len());
+    let mut count_rows = Vec::with_capacity(rows.len());
     for row in rows {
-        counts.push(reaction_count_from_db_fields(
-            row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
-            row.try_get("emoji").map_err(|_| AuthFailure::Internal)?,
-            row.try_get("count").map_err(|_| AuthFailure::Internal)?,
-        )?);
+        count_rows.push(reactions::ReactionCountDbRow {
+            message_id: row.try_get("message_id").map_err(|_| AuthFailure::Internal)?,
+            emoji: row.try_get("emoji").map_err(|_| AuthFailure::Internal)?,
+            count: row.try_get("count").map_err(|_| AuthFailure::Internal)?,
+        });
     }
-    reaction_map_from_counts(counts)
+    reaction_map_from_db_rows(count_rows)
 }
 
 pub(crate) async fn write_audit_log(

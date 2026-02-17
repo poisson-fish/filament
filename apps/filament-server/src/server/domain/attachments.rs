@@ -182,6 +182,26 @@ pub(crate) fn attachment_map_record_from_db_row(
     ))
 }
 
+pub(crate) fn attachment_responses_from_db_rows(
+    rows: Vec<AttachmentResponseDbRow>,
+) -> Result<Vec<AttachmentResponse>, AuthFailure> {
+    let mut responses = Vec::with_capacity(rows.len());
+    for row in rows {
+        responses.push(attachment_response_from_db_row(row)?);
+    }
+    Ok(responses)
+}
+
+pub(crate) fn attachment_map_from_db_rows(
+    rows: Vec<AttachmentMapDbRow>,
+) -> Result<HashMap<String, Vec<AttachmentResponse>>, AuthFailure> {
+    let mut records = Vec::with_capacity(rows.len());
+    for row in rows {
+        records.push(attachment_map_record_from_db_row(row)?);
+    }
+    Ok(attachment_map_from_db_records(records))
+}
+
 pub(crate) fn attachment_map_from_records<'a>(
     records: impl Iterator<Item = &'a AttachmentRecord>,
     guild_id: &str,
@@ -266,10 +286,12 @@ pub(crate) fn attachment_usage_total_from_db(total: i64) -> Result<u64, AuthFail
 #[cfg(test)]
 mod tests {
     use super::{
+        attachment_map_from_db_rows,
         attachment_map_from_db_records, attachment_map_from_records,
         attachment_map_record_from_db_row,
         attachment_record_from_db_row,
         attachment_record_from_db_fields,
+        attachment_responses_from_db_rows,
         attachment_response_from_db_row,
         attachment_response_from_db_fields,
         attachment_response_from_record, attachment_usage_for_owner,
@@ -475,6 +497,76 @@ mod tests {
 
         assert_eq!(mapped.0.as_deref(), Some("message-1"));
         assert_eq!(mapped.1.attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    }
+
+    #[test]
+    fn attachment_responses_from_db_rows_maps_all_rows_in_order() {
+        let rows = vec![
+            super::AttachmentResponseDbRow {
+                attachment_id: String::from("a-1"),
+                guild_id: String::from("guild-1"),
+                channel_id: String::from("channel-1"),
+                owner_id: UserId::new().to_string(),
+                filename: String::from("first.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 1,
+                sha256_hex: String::from("hash-1"),
+            },
+            super::AttachmentResponseDbRow {
+                attachment_id: String::from("a-2"),
+                guild_id: String::from("guild-1"),
+                channel_id: String::from("channel-1"),
+                owner_id: UserId::new().to_string(),
+                filename: String::from("second.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 2,
+                sha256_hex: String::from("hash-2"),
+            },
+        ];
+
+        let responses =
+            attachment_responses_from_db_rows(rows).expect("rows should convert");
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].attachment_id, "a-1");
+        assert_eq!(responses[1].attachment_id, "a-2");
+    }
+
+    #[test]
+    fn attachment_map_from_db_rows_groups_by_message_and_skips_none() {
+        let rows = vec![
+            super::AttachmentMapDbRow {
+                message_id: Some(String::from("m-1")),
+                response: super::AttachmentResponseDbRow {
+                    attachment_id: String::from("a-1"),
+                    guild_id: String::from("guild-1"),
+                    channel_id: String::from("channel-1"),
+                    owner_id: UserId::new().to_string(),
+                    filename: String::from("first.png"),
+                    mime_type: String::from("image/png"),
+                    size_bytes: 1,
+                    sha256_hex: String::from("hash-1"),
+                },
+            },
+            super::AttachmentMapDbRow {
+                message_id: None,
+                response: super::AttachmentResponseDbRow {
+                    attachment_id: String::from("a-2"),
+                    guild_id: String::from("guild-1"),
+                    channel_id: String::from("channel-1"),
+                    owner_id: UserId::new().to_string(),
+                    filename: String::from("second.png"),
+                    mime_type: String::from("image/png"),
+                    size_bytes: 2,
+                    sha256_hex: String::from("hash-2"),
+                },
+            },
+        ];
+
+        let grouped = attachment_map_from_db_rows(rows).expect("rows should map");
+        assert_eq!(grouped.len(), 1);
+        let m1 = grouped.get("m-1").expect("message key should exist");
+        assert_eq!(m1.len(), 1);
+        assert_eq!(m1[0].attachment_id, "a-1");
     }
 
     #[test]

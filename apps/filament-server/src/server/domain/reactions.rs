@@ -7,6 +7,13 @@ use crate::server::{
 };
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug)]
+pub(crate) struct ReactionCountDbRow {
+    pub(crate) message_id: String,
+    pub(crate) emoji: String,
+    pub(crate) count: i64,
+}
+
 pub(crate) fn attach_message_reactions(
     messages: &mut [MessageResponse],
     reaction_map: &HashMap<String, Vec<ReactionResponse>>,
@@ -73,10 +80,25 @@ pub(crate) fn reaction_count_from_db_fields(
     Ok((message_id, emoji, count))
 }
 
+pub(crate) fn reaction_map_from_db_rows(
+    rows: Vec<ReactionCountDbRow>,
+) -> Result<HashMap<String, Vec<ReactionResponse>>, AuthFailure> {
+    let mut counts = Vec::with_capacity(rows.len());
+    for row in rows {
+        counts.push(reaction_count_from_db_fields(
+            row.message_id,
+            row.emoji,
+            row.count,
+        )?);
+    }
+    reaction_map_from_counts(counts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         reaction_count_from_db_fields,
+        reaction_map_from_db_rows,
         reaction_map_from_counts, reaction_summaries_from_users,
         validate_reaction_emoji,
     };
@@ -169,6 +191,50 @@ mod tests {
                 String::from("🔥"),
                 -1,
             ),
+            Err(AuthFailure::Internal)
+        ));
+    }
+
+    #[test]
+    fn reaction_map_from_db_rows_maps_and_sorts_by_message() {
+        let map = reaction_map_from_db_rows(vec![
+            super::ReactionCountDbRow {
+                message_id: String::from("m1"),
+                emoji: String::from("😄"),
+                count: 1,
+            },
+            super::ReactionCountDbRow {
+                message_id: String::from("m1"),
+                emoji: String::from("😀"),
+                count: 2,
+            },
+            super::ReactionCountDbRow {
+                message_id: String::from("m2"),
+                emoji: String::from("🔥"),
+                count: 3,
+            },
+        ])
+        .expect("rows should map");
+
+        let m1 = map.get("m1").expect("m1 should exist");
+        assert_eq!(m1.len(), 2);
+        assert_eq!(m1[0].emoji, "😀");
+        assert_eq!(m1[1].emoji, "😄");
+
+        let m2 = map.get("m2").expect("m2 should exist");
+        assert_eq!(m2.len(), 1);
+        assert_eq!(m2[0].emoji, "🔥");
+        assert_eq!(m2[0].count, 3);
+    }
+
+    #[test]
+    fn reaction_map_from_db_rows_rejects_negative_count_fail_closed() {
+        assert!(matches!(
+            reaction_map_from_db_rows(vec![super::ReactionCountDbRow {
+                message_id: String::from("m1"),
+                emoji: String::from("🔥"),
+                count: -1,
+            }]),
             Err(AuthFailure::Internal)
         ));
     }
