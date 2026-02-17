@@ -27,10 +27,9 @@ use sqlx::Row;
 
 use super::{
     core::{
-        AppConfig, AppState, AuthContext, CaptchaConfig, LiveKitConfig,
-        ACCESS_TOKEN_TTL_SECS, RATE_LIMIT_SWEEP_INTERVAL_SECS,
+        AppConfig, AppState, AuthContext, CaptchaConfig, LiveKitConfig, ACCESS_TOKEN_TTL_SECS,
+        RATE_LIMIT_SWEEP_INTERVAL_SECS,
     },
-    db::ensure_db_schema,
     directory_contract::IpNetwork,
     errors::AuthFailure,
     types::{ChannelPath, MediaPublishSource},
@@ -182,7 +181,6 @@ pub(crate) async fn authenticate_with_token(
     state: &AppState,
     access_token: &str,
 ) -> Result<AuthContext, AuthFailure> {
-    ensure_db_schema(state).await?;
     let claims = verify_access_token(state, access_token).map_err(|_| AuthFailure::Unauthorized)?;
     let user_id = claims
         .get_claim("sub")

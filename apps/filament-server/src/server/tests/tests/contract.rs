@@ -52,9 +52,12 @@ fn parse_documented_gateway_events(gateway_doc: &str) -> BTreeSet<String> {
         .filter_map(|line| line.split('`').next())
         .filter(|event| {
             !event.is_empty()
-                && event
-                    .chars()
-                    .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_' || character == '.')
+                && event.chars().all(|character| {
+                    character.is_ascii_lowercase()
+                        || character.is_ascii_digit()
+                        || character == '_'
+                        || character == '.'
+                })
         })
         .map(ToOwned::to_owned)
         .collect()

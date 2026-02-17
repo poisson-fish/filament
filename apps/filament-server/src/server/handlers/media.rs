@@ -24,7 +24,6 @@ use crate::server::{
         enforce_media_token_rate_limit, extract_client_ip, now_unix,
     },
     core::{AppState, AttachmentRecord, MAX_MIME_SNIFF_BYTES},
-    db::ensure_db_schema,
     domain::{
         attachment_usage_for_user, channel_permission_snapshot, enforce_guild_ip_ban_for_request,
         find_attachment, user_can_write_channel, user_role_in_guild, validate_attachment_filename,
@@ -47,7 +46,6 @@ pub(crate) async fn upload_attachment(
     Query(query): Query<UploadAttachmentQuery>,
     body: Body,
 ) -> Result<Json<AttachmentResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -225,7 +223,6 @@ pub(crate) async fn download_attachment(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<AttachmentPath>,
 ) -> Result<Response, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -280,7 +277,6 @@ pub(crate) async fn delete_attachment(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<AttachmentPath>,
 ) -> Result<StatusCode, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -329,7 +325,6 @@ pub(crate) async fn issue_voice_token(
     Path(path): Path<ChannelPath>,
     Json(payload): Json<VoiceTokenRequest>,
 ) -> Result<Json<VoiceTokenResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,

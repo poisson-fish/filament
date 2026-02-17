@@ -182,27 +182,42 @@ async fn user_broadcast_targets_only_requested_authenticated_user() {
         .write()
         .await
         .insert(connection_b, tx_b);
-    state.realtime_registry.connection_presence().write().await.insert(
-        connection_a1,
-        ConnectionPresence {
-            user_id: user_a,
-            guild_ids: std::collections::HashSet::new(),
-        },
-    );
-    state.realtime_registry.connection_presence().write().await.insert(
-        connection_a2,
-        ConnectionPresence {
-            user_id: user_a,
-            guild_ids: std::collections::HashSet::new(),
-        },
-    );
-    state.realtime_registry.connection_presence().write().await.insert(
-        connection_b,
-        ConnectionPresence {
-            user_id: user_b,
-            guild_ids: std::collections::HashSet::new(),
-        },
-    );
+    state
+        .realtime_registry
+        .connection_presence()
+        .write()
+        .await
+        .insert(
+            connection_a1,
+            ConnectionPresence {
+                user_id: user_a,
+                guild_ids: std::collections::HashSet::new(),
+            },
+        );
+    state
+        .realtime_registry
+        .connection_presence()
+        .write()
+        .await
+        .insert(
+            connection_a2,
+            ConnectionPresence {
+                user_id: user_a,
+                guild_ids: std::collections::HashSet::new(),
+            },
+        );
+    state
+        .realtime_registry
+        .connection_presence()
+        .write()
+        .await
+        .insert(
+            connection_b,
+            ConnectionPresence {
+                user_id: user_b,
+                guild_ids: std::collections::HashSet::new(),
+            },
+        );
 
     let event = gateway_events::ready(user_a);
     broadcast_user_event(&state, user_a, &event).await;

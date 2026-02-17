@@ -21,7 +21,6 @@ use crate::server::{
         AppState, SessionRecord, UserRecord, ACCESS_TOKEN_TTL_SECS, LOGIN_LOCK_SECS,
         LOGIN_LOCK_THRESHOLD, MAX_USER_LOOKUP_IDS, REFRESH_TOKEN_TTL_SECS,
     },
-    db::ensure_db_schema,
     errors::AuthFailure,
     types::{
         AuthResponse, CaptchaToken, HcaptchaVerifyResponse, LoginRequest, MeResponse,
@@ -80,7 +79,6 @@ pub(crate) async fn register(
         connect_info.as_ref().map(|value| value.0 .0.ip()),
     );
     enforce_auth_route_rate_limit(&state, client_ip, "register").await?;
-    ensure_db_schema(&state).await?;
     verify_captcha_token(&state, client_ip, payload.captcha_token).await?;
 
     let username = Username::try_from(payload.username).map_err(|_| AuthFailure::InvalidRequest)?;
@@ -155,7 +153,6 @@ pub(crate) async fn login(
         connect_info.as_ref().map(|value| value.0 .0.ip()),
     );
     enforce_auth_route_rate_limit(&state, client_ip, "login").await?;
-    ensure_db_schema(&state).await?;
 
     let username = Username::try_from(payload.username).map_err(|_| AuthFailure::Unauthorized)?;
     validate_password(&payload.password).map_err(|_| AuthFailure::Unauthorized)?;
@@ -336,7 +333,6 @@ pub(crate) async fn refresh(
         connect_info.as_ref().map(|value| value.0 .0.ip()),
     );
     enforce_auth_route_rate_limit(&state, client_ip, "refresh").await?;
-    ensure_db_schema(&state).await?;
 
     if payload.refresh_token.is_empty() || payload.refresh_token.len() > 512 {
         tracing::warn!(event = "auth.refresh", outcome = "invalid_token_format");
@@ -488,8 +484,6 @@ pub(crate) async fn logout(
     State(state): State<AppState>,
     Json(payload): Json<RefreshRequest>,
 ) -> Result<StatusCode, AuthFailure> {
-    ensure_db_schema(&state).await?;
-
     if payload.refresh_token.is_empty() || payload.refresh_token.len() > 512 {
         tracing::warn!(event = "auth.logout", outcome = "invalid_token_format");
         return Err(AuthFailure::Unauthorized);

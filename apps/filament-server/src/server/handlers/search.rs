@@ -9,7 +9,6 @@ use std::net::SocketAddr;
 use crate::server::{
     auth::{authenticate, extract_client_ip},
     core::{AppState, SearchOperation, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_RECONCILE_DOCS},
-    db::ensure_db_schema,
     domain::{enforce_guild_ip_ban_for_request, guild_permission_snapshot},
     errors::AuthFailure,
     realtime::{
@@ -28,7 +27,6 @@ pub(crate) async fn search_messages(
     Path(path): Path<GuildPath>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -75,7 +73,6 @@ pub(crate) async fn rebuild_search_index(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
 ) -> Result<StatusCode, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -107,7 +104,6 @@ pub(crate) async fn reconcile_search_index(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
 ) -> Result<Json<SearchReconcileResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,

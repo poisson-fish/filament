@@ -134,7 +134,6 @@ pub(crate) fn build_search_schema() -> (tantivy::schema::Schema, super::core::Se
 use super::{
     auth::{authenticate_with_token, bearer_token, extract_client_ip, now_unix, ClientIp},
     core::{AppState, AuthContext, ConnectionControl, ConnectionPresence},
-    db::ensure_db_schema,
     domain::{
         attachments_for_message_in_memory, bind_message_attachments_db,
         channel_permission_snapshot, fetch_attachments_for_message_db, parse_attachment_ids,
@@ -204,12 +203,12 @@ pub(crate) async fn handle_gateway_connection(
         .write()
         .await
         .insert(
-        connection_id,
-        ConnectionPresence {
-            user_id: auth.user_id,
-            guild_ids: HashSet::new(),
-        },
-    );
+            connection_id,
+            ConnectionPresence {
+                user_id: auth.user_id,
+                guild_ids: HashSet::new(),
+            },
+        );
 
     let ready_event = gateway_events::ready(auth.user_id);
     let _ = outbound_tx.send(ready_event.payload).await;
@@ -357,7 +356,6 @@ pub(crate) async fn create_message_internal(
     }
 
     if let Some(pool) = &state.db_pool {
-        ensure_db_schema(state).await?;
         let message_id = Ulid::new().to_string();
         let created_at_unix = now_unix();
         let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;

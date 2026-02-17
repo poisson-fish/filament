@@ -26,6 +26,7 @@ use tower_http::{
 use super::{
     auth::resolve_client_ip,
     core::{AppConfig, AppState, MAX_LIVEKIT_TOKEN_TTL_SECS},
+    db::ensure_db_schema,
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
         friends::{
@@ -105,14 +106,8 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
         "POST",
         "/guilds/{guild_id}/channels/{channel_id}/overrides/{role}",
     ),
-    (
-        "POST",
-        "/guilds/{guild_id}/channels/{channel_id}/messages",
-    ),
-    (
-        "GET",
-        "/guilds/{guild_id}/channels/{channel_id}/messages",
-    ),
+    ("POST", "/guilds/{guild_id}/channels/{channel_id}/messages"),
+    ("GET", "/guilds/{guild_id}/channels/{channel_id}/messages"),
     (
         "PATCH",
         "/guilds/{guild_id}/channels/{channel_id}/messages/{message_id}",
@@ -190,6 +185,28 @@ impl KeyExtractor for TrustedClientIpKeyExtractor {
 /// Returns an error if configured security limits are invalid.
 #[allow(clippy::too_many_lines)]
 pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
+    validate_router_config(config)?;
+
+    let app_state = AppState::new(config)?;
+    build_router_with_state(config, app_state)
+}
+
+/// Build the axum router and fail-fast if database schema bootstrap fails.
+///
+/// # Errors
+/// Returns an error if configured security limits are invalid or schema bootstrap fails.
+pub async fn build_router_with_db_bootstrap(config: &AppConfig) -> anyhow::Result<Router> {
+    validate_router_config(config)?;
+
+    let app_state = AppState::new(config)?;
+    ensure_db_schema(&app_state)
+        .await
+        .map_err(|_| anyhow!("database schema bootstrap failed"))?;
+
+    build_router_with_state(config, app_state)
+}
+
+fn validate_router_config(config: &AppConfig) -> anyhow::Result<()> {
     if config.rate_limit_requests_per_minute == 0 {
         return Err(anyhow!(
             "global rate limit must be at least 1 request per minute"
@@ -265,6 +282,11 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
         ));
     }
 
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
+fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::Result<Router> {
     let governor_config = Arc::new(
         GovernorConfigBuilder::default()
             .period(Duration::from_secs(60))
@@ -275,7 +297,6 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
             .finish()
             .ok_or_else(|| anyhow!("invalid governor configuration"))?,
     );
-    let app_state = AppState::new(config)?;
     let request_id_header = HeaderName::from_static("x-request-id");
     let governor_layer = GovernorLayer::new(governor_config);
 
@@ -412,4 +433,24 @@ pub fn build_router(config: &AppConfig) -> anyhow::Result<Router> {
                 ))
                 .layer(governor_layer),
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_router_with_db_bootstrap;
+    use crate::server::core::AppConfig;
+
+    #[tokio::test]
+    async fn build_router_with_db_bootstrap_fails_fast_when_schema_init_fails() {
+        let result = build_router_with_db_bootstrap(&AppConfig {
+            database_url: Some(String::from("postgres://127.0.0.1:1/filament")),
+            ..AppConfig::default()
+        })
+        .await;
+
+        assert!(
+            result.is_err(),
+            "schema bootstrap failure should fail router startup"
+        );
+    }
 }

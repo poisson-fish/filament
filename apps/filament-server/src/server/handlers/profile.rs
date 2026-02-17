@@ -19,7 +19,6 @@ use crate::server::{
         AppState, ProfileAvatarRecord, MAX_MIME_SNIFF_BYTES, MAX_PROFILE_AVATAR_MIME_CHARS,
         MAX_PROFILE_AVATAR_OBJECT_KEY_CHARS,
     },
-    db::ensure_db_schema,
     errors::AuthFailure,
     gateway_events,
     realtime::broadcast_user_event,
@@ -33,7 +32,6 @@ pub(crate) async fn update_my_profile(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(payload): Json<UpdateProfileRequest>,
 ) -> Result<Json<UserProfileResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -179,7 +177,6 @@ pub(crate) async fn get_user_profile(
     headers: HeaderMap,
     Path(path): Path<UserPath>,
 ) -> Result<Json<UserProfileResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let _auth = authenticate(&state, &headers).await?;
     let user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
 
@@ -207,7 +204,6 @@ pub(crate) async fn upload_my_avatar(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     body: Body,
 ) -> Result<Json<UserProfileResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -360,7 +356,6 @@ pub(crate) async fn download_user_avatar(
     State(state): State<AppState>,
     Path(path): Path<UserPath>,
 ) -> Result<Response, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
     let avatar = if let Some(pool) = &state.db_pool {
         let row = sqlx::query(

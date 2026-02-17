@@ -874,12 +874,7 @@ mod tests {
         let state = AppState::new(&AppConfig::default()).expect("state should initialize");
         let guild_id = String::from("guild-membership-store");
 
-        state
-            .membership_store
-            .guilds()
-            .write()
-            .await
-            .insert(
+        state.membership_store.guilds().write().await.insert(
             guild_id.clone(),
             GuildRecord {
                 name: String::from("guild"),
@@ -901,26 +896,21 @@ mod tests {
         let guild_id = String::from("guild-membership-store-roles");
         let role_id = String::from("role-1");
 
-        state
-            .membership_store
-            .guild_roles()
-            .write()
-            .await
-            .insert(
-                guild_id.clone(),
-                HashMap::from([(
-                    role_id.clone(),
-                    WorkspaceRoleRecord {
-                        role_id: role_id.clone(),
-                        name: String::from("Member"),
-                        position: 1,
-                        is_system: false,
-                        system_key: None,
-                        permissions_allow: PermissionSet::empty(),
-                        created_at_unix: 1,
-                    },
-                )]),
-            );
+        state.membership_store.guild_roles().write().await.insert(
+            guild_id.clone(),
+            HashMap::from([(
+                role_id.clone(),
+                WorkspaceRoleRecord {
+                    role_id: role_id.clone(),
+                    name: String::from("Member"),
+                    position: 1,
+                    is_system: false,
+                    system_key: None,
+                    permissions_allow: PermissionSet::empty(),
+                    created_at_unix: 1,
+                },
+            )]),
+        );
 
         let read = state.membership_store.guild_roles().read().await;
         let role_map = read.get(&guild_id).expect("guild role map should exist");
@@ -938,12 +928,12 @@ mod tests {
             .write()
             .await
             .insert(
-            connection_id,
-            ConnectionPresence {
-                user_id: UserId::new(),
-                guild_ids: HashSet::new(),
-            },
-        );
+                connection_id,
+                ConnectionPresence {
+                    user_id: UserId::new(),
+                    guild_ids: HashSet::new(),
+                },
+            );
 
         let presence = state.realtime_registry.connection_presence().read().await;
         assert!(presence.contains_key(&connection_id));

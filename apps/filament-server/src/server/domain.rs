@@ -27,7 +27,7 @@ pub(crate) use reactions::{
 use super::{
     auth::now_unix,
     core::{AppState, AttachmentRecord, ChannelPermissionOverrideRecord},
-    db::{ensure_db_schema, role_from_i16},
+    db::role_from_i16,
     errors::AuthFailure,
     permissions::{all_permissions, default_everyone_permissions},
     types::{AttachmentPath, AttachmentResponse, ReactionResponse},
@@ -61,7 +61,7 @@ async fn ensure_in_memory_permission_model_for_guild(
 ) -> Result<(), AuthFailure> {
     let (members, legacy_overrides) = {
         let guilds = state.membership_store.guilds().read().await;
-            let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+        let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
         let members = guild.members.clone();
         let mut overrides: HashMap<String, HashMap<Role, ChannelPermissionOverwrite>> =
             HashMap::new();
@@ -78,7 +78,11 @@ async fn ensure_in_memory_permission_model_for_guild(
     };
 
     {
-        let mut role_assignments = state.membership_store.guild_role_assignments().write().await;
+        let mut role_assignments = state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await;
         let guild_assignments = role_assignments.entry(guild_id.to_owned()).or_default();
         sync_legacy_role_assignments(&members, guild_assignments, &role_ids);
     }
@@ -135,10 +139,6 @@ async fn resolve_channel_permissions_db(
     guild_id: &str,
     channel_id: Option<&str>,
 ) -> Result<(Role, PermissionSet), AuthFailure> {
-    if ensure_db_schema(state).await.is_err() {
-        return Err(AuthFailure::Internal);
-    }
-
     if is_server_owner(state, user_id) {
         if let Some(channel_id) = channel_id {
             let exists = sqlx::query(

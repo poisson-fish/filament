@@ -21,7 +21,7 @@ use crate::server::{
     },
     core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
     db::{
-        channel_kind_from_i16, channel_kind_to_i16, ensure_db_schema, permission_set_from_list,
+        channel_kind_from_i16, channel_kind_to_i16, permission_set_from_list,
         permission_set_to_i64, role_to_i16, seed_hierarchical_permissions_for_new_guild,
         visibility_from_i16, visibility_to_i16,
     },
@@ -59,7 +59,6 @@ pub(crate) async fn create_guild(
     headers: HeaderMap,
     Json(payload): Json<CreateGuildRequest>,
 ) -> Result<Json<GuildResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let name = GuildName::try_from(payload.name).map_err(|_| AuthFailure::InvalidRequest)?;
     let visibility = payload.visibility.unwrap_or(GuildVisibility::Private);
@@ -164,7 +163,6 @@ pub(crate) async fn list_guilds(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<GuildListResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
 
     if let Some(pool) = &state.db_pool {
@@ -227,7 +225,6 @@ pub(crate) async fn update_guild(
     Path(path): Path<GuildPath>,
     Json(payload): Json<UpdateGuildRequest>,
 ) -> Result<Json<GuildResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
     if !permissions.contains(Permission::ManageRoles) {
@@ -1102,7 +1099,6 @@ pub(crate) async fn list_guild_audit(
     Path(path): Path<GuildPath>,
     Query(query): Query<AuditListQueryDto>,
 ) -> Result<Json<GuildAuditListResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let audit_query =
         AuditListQuery::try_from_with_limit_max(query, state.runtime.audit_list_limit_max)
@@ -1139,7 +1135,6 @@ pub(crate) async fn list_guild_roles(
     headers: HeaderMap,
     Path(path): Path<GuildPath>,
 ) -> Result<Json<GuildRoleListResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
     if !permissions.contains(Permission::ManageWorkspaceRoles)
@@ -1165,7 +1160,6 @@ pub(crate) async fn create_guild_role(
     Path(path): Path<GuildPath>,
     Json(payload): Json<CreateGuildRoleRequest>,
 ) -> Result<Json<GuildRoleResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let context = load_actor_role_context(
         &state,
@@ -1277,7 +1271,6 @@ pub(crate) async fn update_guild_role(
     Path(path): Path<GuildRolePath>,
     Json(payload): Json<UpdateGuildRoleRequest>,
 ) -> Result<Json<GuildRoleResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let role_id = parse_role_id(path.role_id)?;
     if payload.name.is_none() && payload.permissions.is_none() {
@@ -1394,7 +1387,6 @@ pub(crate) async fn delete_guild_role(
     headers: HeaderMap,
     Path(path): Path<GuildRolePath>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let role_id = parse_role_id(path.role_id)?;
     let context = load_actor_role_context(
@@ -1443,7 +1435,11 @@ pub(crate) async fn delete_guild_role(
             return Err(AuthFailure::NotFound);
         }
         drop(role_maps);
-        let mut assignments = state.membership_store.guild_role_assignments().write().await;
+        let mut assignments = state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await;
         if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
             for assigned in guild_assignments.values_mut() {
                 assigned.remove(&role_id);
@@ -1478,7 +1474,6 @@ pub(crate) async fn reorder_guild_roles(
     Path(path): Path<GuildPath>,
     Json(payload): Json<ReorderGuildRolesRequest>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let context = load_actor_role_context(
         &state,
@@ -1606,7 +1601,6 @@ pub(crate) async fn assign_guild_role(
     headers: HeaderMap,
     Path(path): Path<GuildRoleMemberPath>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let role_id = parse_role_id(path.role_id)?;
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
@@ -1691,7 +1685,11 @@ pub(crate) async fn assign_guild_role(
         }
         drop(guilds);
 
-        let mut assignments = state.membership_store.guild_role_assignments().write().await;
+        let mut assignments = state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await;
         let guild_assignments = assignments
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -1734,7 +1732,6 @@ pub(crate) async fn unassign_guild_role(
     headers: HeaderMap,
     Path(path): Path<GuildRoleMemberPath>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let role_id = parse_role_id(path.role_id)?;
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
@@ -1793,7 +1790,11 @@ pub(crate) async fn unassign_guild_role(
         {
             return Err(AuthFailure::Forbidden);
         }
-        let mut assignments = state.membership_store.guild_role_assignments().write().await;
+        let mut assignments = state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await;
         let guild_assignments = assignments
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
@@ -2072,7 +2073,6 @@ pub(crate) async fn list_guild_ip_bans(
     Path(path): Path<GuildPath>,
     Query(query): Query<GuildIpBanListQueryDto>,
 ) -> Result<Json<GuildIpBanListResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let query = GuildIpBanListQuery::try_from(query)
         .map_err(map_directory_contract_error_to_auth_failure)?;
@@ -2093,7 +2093,6 @@ pub(crate) async fn upsert_guild_ip_bans_by_user(
     Path(path): Path<GuildPath>,
     Json(payload): Json<GuildIpBanByUserRequestDto>,
 ) -> Result<Json<GuildIpBanApplyResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let request = GuildIpBanByUserRequest::try_from(payload)
         .map_err(map_directory_contract_error_to_auth_failure)?;
@@ -2259,7 +2258,6 @@ pub(crate) async fn remove_guild_ip_ban(
     headers: HeaderMap,
     Path(path): Path<GuildIpBanPath>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let ban_id = GuildIpBanId::try_from(path.ban_id)
         .map_err(map_directory_contract_error_to_auth_failure)?;
@@ -2330,7 +2328,6 @@ pub(crate) async fn list_public_guilds(
     headers: HeaderMap,
     Query(query): Query<PublicGuildListQuery>,
 ) -> Result<Json<PublicGuildListResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let _auth = authenticate(&state, &headers).await?;
 
     let limit = query.limit.unwrap_or(DEFAULT_PUBLIC_GUILD_LIST_LIMIT);
@@ -2559,7 +2556,6 @@ pub(crate) async fn join_public_guild(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
 ) -> Result<Json<DirectoryJoinResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -2606,7 +2602,6 @@ pub(crate) async fn list_guild_channels(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
 ) -> Result<Json<ChannelListResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -2690,7 +2685,6 @@ pub(crate) async fn create_channel(
     Path(path): Path<GuildPath>,
     Json(payload): Json<CreateChannelRequest>,
 ) -> Result<Json<ChannelResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -2765,7 +2759,6 @@ pub(crate) async fn add_member(
     headers: HeaderMap,
     Path(path): Path<MemberPath>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let (_, actor_permissions) =
         guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
@@ -2841,7 +2834,6 @@ pub(crate) async fn update_member_role(
     Path(path): Path<MemberPath>,
     Json(payload): Json<UpdateMemberRoleRequest>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
@@ -2973,7 +2965,11 @@ pub(crate) async fn update_member_role(
         };
         *role = payload.role;
         drop(guilds);
-        let mut assignments = state.membership_store.guild_role_assignments().write().await;
+        let mut assignments = state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await;
         if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
             let assigned = guild_assignments.entry(target_user_id).or_default();
             let role_map = state.membership_store.guild_roles().read().await;
@@ -3044,7 +3040,6 @@ pub(crate) async fn set_channel_role_override(
     Path(path): Path<ChannelRolePath>,
     Json(payload): Json<UpdateChannelRoleOverrideRequest>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -3142,7 +3137,6 @@ pub(crate) async fn kick_member(
     headers: HeaderMap,
     Path(path): Path<MemberPath>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     if !has_permission(actor_role, Permission::BanMember) {
@@ -3182,7 +3176,11 @@ pub(crate) async fn kick_member(
             return Err(AuthFailure::NotFound);
         }
         drop(guilds);
-        let mut assignments = state.membership_store.guild_role_assignments().write().await;
+        let mut assignments = state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await;
         if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
             guild_assignments.remove(&target_user_id);
         }
@@ -3215,7 +3213,6 @@ pub(crate) async fn ban_member(
     headers: HeaderMap,
     Path(path): Path<MemberPath>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     if !has_permission(actor_role, Permission::BanMember) {
@@ -3266,7 +3263,11 @@ pub(crate) async fn ban_member(
         guild.members.remove(&target_user_id);
         guild.banned_members.insert(target_user_id);
         drop(guilds);
-        let mut assignments = state.membership_store.guild_role_assignments().write().await;
+        let mut assignments = state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await;
         if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
             guild_assignments.remove(&target_user_id);
         }
@@ -3305,9 +3306,8 @@ pub(crate) async fn ban_member(
 mod tests {
     use super::{
         classify_directory_join_outcome, guild_roles_in_memory, join_outcome_response,
-        maybe_record_join_ip_observation, workspace_owner_count_in_memory,
-        DirectoryJoinBanStatus, DirectoryJoinMembershipStatus, DirectoryJoinPolicyInput,
-        DirectoryJoinVisibilityStatus,
+        maybe_record_join_ip_observation, workspace_owner_count_in_memory, DirectoryJoinBanStatus,
+        DirectoryJoinMembershipStatus, DirectoryJoinPolicyInput, DirectoryJoinVisibilityStatus,
     };
     use crate::server::{
         auth::resolve_client_ip,
@@ -3471,26 +3471,21 @@ mod tests {
         let owner_role_id = String::from("owner-role");
         let owner_user = UserId::new();
 
-        state
-            .membership_store
-            .guild_roles()
-            .write()
-            .await
-            .insert(
-                guild_id.clone(),
-                HashMap::from([(
-                    owner_role_id.clone(),
-                    WorkspaceRoleRecord {
-                        role_id: owner_role_id.clone(),
-                        name: String::from("Owner"),
-                        position: 10,
-                        is_system: true,
-                        system_key: Some(String::from("workspace_owner")),
-                        permissions_allow: filament_core::PermissionSet::empty(),
-                        created_at_unix: 1,
-                    },
-                )]),
-            );
+        state.membership_store.guild_roles().write().await.insert(
+            guild_id.clone(),
+            HashMap::from([(
+                owner_role_id.clone(),
+                WorkspaceRoleRecord {
+                    role_id: owner_role_id.clone(),
+                    name: String::from("Owner"),
+                    position: 10,
+                    is_system: true,
+                    system_key: Some(String::from("workspace_owner")),
+                    permissions_allow: filament_core::PermissionSet::empty(),
+                    created_at_unix: 1,
+                },
+            )]),
+        );
         state
             .membership_store
             .guild_role_assignments()

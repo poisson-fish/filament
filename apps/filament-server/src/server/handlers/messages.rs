@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use crate::server::{
     auth::{authenticate, channel_key, extract_client_ip, now_unix, validate_message_content},
     core::{AppState, SearchOperation, MAX_HISTORY_LIMIT},
-    db::{ensure_db_schema, permission_list_from_set},
+    db::permission_list_from_set,
     domain::{
         attach_message_media, attach_message_reactions, attachment_map_for_messages_db,
         attachment_map_for_messages_in_memory, attachments_for_message_in_memory,
@@ -153,7 +153,6 @@ pub(crate) async fn get_messages(
     Path(path): Path<ChannelPath>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<MessageHistoryResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -310,7 +309,6 @@ pub(crate) async fn edit_message(
     Path(path): Path<MessagePath>,
     Json(payload): Json<EditMessageRequest>,
 ) -> Result<Json<MessageResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -462,7 +460,6 @@ pub(crate) async fn delete_message(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<MessagePath>,
 ) -> Result<StatusCode, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -618,7 +615,6 @@ pub(crate) async fn add_reaction(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ReactionPath>,
 ) -> Result<Json<ReactionResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -712,7 +708,6 @@ pub(crate) async fn remove_reaction(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<ReactionPath>,
 ) -> Result<Json<ReactionResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let client_ip = extract_client_ip(
         &state,
         &headers,

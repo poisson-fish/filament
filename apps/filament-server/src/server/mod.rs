@@ -16,4 +16,4 @@ pub(crate) mod types;
 
 pub use core::{AppConfig, MAX_LIVEKIT_TOKEN_TTL_SECS};
 pub use errors::init_tracing;
-pub use router::build_router;
+pub use router::{build_router, build_router_with_db_bootstrap};

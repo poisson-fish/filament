@@ -10,7 +10,6 @@ use ulid::Ulid;
 use crate::server::{
     auth::{authenticate, now_unix},
     core::{AppState, FriendshipRequestRecord},
-    db::ensure_db_schema,
     errors::AuthFailure,
     gateway_events,
     realtime::broadcast_user_event,
@@ -37,7 +36,6 @@ pub(crate) async fn create_friend_request(
     headers: HeaderMap,
     Json(payload): Json<CreateFriendRequest>,
 ) -> Result<Json<FriendshipRequestCreateResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let recipient_user_id =
         UserId::try_from(payload.recipient_user_id).map_err(|_| AuthFailure::InvalidRequest)?;
@@ -164,7 +162,6 @@ pub(crate) async fn list_friend_requests(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<FriendshipRequestListResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let auth_user_id = auth.user_id.to_string();
 
@@ -291,7 +288,6 @@ pub(crate) async fn accept_friend_request(
     headers: HeaderMap,
     Path(path): Path<FriendRequestPath>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
 
     if let Some(pool) = &state.db_pool {
@@ -424,7 +420,6 @@ pub(crate) async fn delete_friend_request(
     headers: HeaderMap,
     Path(path): Path<FriendRequestPath>,
 ) -> Result<StatusCode, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
 
     if let Some(pool) = &state.db_pool {
@@ -486,7 +481,6 @@ pub(crate) async fn list_friends(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<FriendListResponse>, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let auth_user_id = auth.user_id.to_string();
 
@@ -551,7 +545,6 @@ pub(crate) async fn remove_friend(
     headers: HeaderMap,
     Path(path): Path<FriendPath>,
 ) -> Result<StatusCode, AuthFailure> {
-    ensure_db_schema(&state).await?;
     let auth = authenticate(&state, &headers).await?;
     let friend_user_id =
         UserId::try_from(path.friend_user_id).map_err(|_| AuthFailure::InvalidRequest)?;

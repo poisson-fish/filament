@@ -6,7 +6,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use filament_core::UserId;
-use filament_server::{build_router, directory_contract::IpNetwork, init_tracing, AppConfig};
+use filament_server::{
+    build_router_with_db_bootstrap, directory_contract::IpNetwork, init_tracing, AppConfig,
+};
 use tokio::net::TcpListener;
 
 fn parse_usize_env_or_default(var_name: &str, default: usize) -> anyhow::Result<usize> {
@@ -212,7 +214,7 @@ async fn main() -> anyhow::Result<()> {
         database_url: Some(database_url),
         ..AppConfig::default()
     };
-    let app = build_router(&app_config)?;
+    let app = build_router_with_db_bootstrap(&app_config).await?;
     let addr = std::env::var("FILAMENT_BIND_ADDR")
         .unwrap_or_else(|_| String::from("0.0.0.0:3000"))
         .parse::<SocketAddr>()
