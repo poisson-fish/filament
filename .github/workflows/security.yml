@@ -71,10 +71,10 @@ jobs:
           tool: cargo-deny
 
       - name: RustSec advisory audit
-        run: cargo audit --locked
+        run: cargo audit
 
       - name: License/source/bans policy
-        run: cargo deny check --locked --config cargo-deny.toml
+        run: cargo deny check --config cargo-deny.toml
 
   web-audit:
     needs: changes

@@ -42,24 +42,24 @@ mod tests {
 
     use super::*;
 
-        fn parse_payload(event: &GatewayEvent) -> Value {
+    fn parse_payload(event: &GatewayEvent) -> Value {
         let value: Value =
             serde_json::from_str(&event.payload).expect("gateway event payload should be valid");
         assert_eq!(value["v"], Value::from(1));
-            assert_eq!(value["t"], Value::from(event.event_type));
+        assert_eq!(value["t"], Value::from(event.event_type));
         value["d"].clone()
     }
 
     #[test]
     fn ready_event_contains_authenticated_user_id() {
         let user_id = UserId::new();
-            let payload = parse_payload(&ready(user_id));
+        let payload = parse_payload(&ready(user_id));
         assert_eq!(payload["user_id"], Value::from(user_id.to_string()));
     }
 
     #[test]
     fn subscribed_event_contains_guild_and_channel_scope() {
-            let payload = parse_payload(&subscribed("guild-1", "channel-1"));
+        let payload = parse_payload(&subscribed("guild-1", "channel-1"));
         assert_eq!(payload["guild_id"], Value::from("guild-1"));
         assert_eq!(payload["channel_id"], Value::from("channel-1"));
     }

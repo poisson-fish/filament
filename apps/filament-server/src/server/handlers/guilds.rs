@@ -1308,7 +1308,9 @@ pub(crate) async fn update_guild_role(
     let next_permissions = payload
         .permissions
         .as_ref()
-        .map_or(current.permissions, |values| permission_set_from_list(values));
+        .map_or(current.permissions, |values| {
+            permission_set_from_list(values)
+        });
 
     if let Some(pool) = &state.db_pool {
         sqlx::query(
