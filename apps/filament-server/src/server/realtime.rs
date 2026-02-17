@@ -34,6 +34,8 @@ mod search_reconciliation_plan;
 mod search_query_run;
 mod search_collect_runtime;
 mod hydration_runtime;
+mod search_runtime;
+mod connection_runtime;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -44,7 +46,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::anyhow;
 use axum::{
     extract::{
         connect_info::ConnectInfo,
@@ -54,12 +55,9 @@ use axum::{
     http::HeaderMap,
     response::IntoResponse,
 };
-use filament_core::{Permission, UserId};
+use filament_core::Permission;
 use filament_protocol::parse_envelope;
 use futures_util::{SinkExt, StreamExt};
-use tantivy::{
-    schema::Schema,
-};
 use tokio::sync::{mpsc, watch};
 use ulid::Ulid;
 use uuid::Uuid;
@@ -93,40 +91,16 @@ mod message_prepare;
 mod message_attachment_bind;
 mod search_blocking;
 
-use fanout_guild::dispatch_guild_payload;
-use fanout_user::dispatch_user_payload;
 use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
 use ingress_rate_limit::allow_gateway_ingress;
-use presence_disconnect::compute_disconnect_presence_outcome;
-use presence_subscribe::{
-    apply_presence_subscribe,
-};
-use voice_presence::{
-    collect_voice_snapshots, voice_channel_key,
-};
-use voice_registration::apply_voice_registration_transition;
-use connection_control::signal_slow_connections_close;
-use search_reconcile::compute_reconciliation;
-use hydration_order::collect_hydrated_in_request_order;
 use ingress_command::{parse_gateway_ingress_command, GatewayIngressCommand};
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 use search_query_exec::run_search_query_against_index;
-use fanout_user_targets::connection_ids_for_user;
-use search_schema::build_search_schema as build_search_schema_impl;
-use search_apply::apply_search_operation as apply_search_operation_impl;
 use message_prepare::prepare_message_body;
 use message_attachment_bind::bind_message_attachments_in_memory;
 use search_blocking::run_search_blocking_with_timeout;
-use voice_registration_events::plan_voice_registration_events;
-use fanout_channel::dispatch_channel_payload;
 use hydration_in_memory::collect_hydrated_messages_in_memory;
-use connection_subscriptions::remove_connection_from_subscriptions;
-use subscription_insert::insert_connection_subscription;
-use connection_registry::remove_connection_state;
 use hydration_in_memory_attachments::apply_hydration_attachments;
-use search_batch_drain::drain_search_batch;
-use search_enqueue::enqueue_search_command;
-use search_apply_batch::apply_search_batch_with_ack;
 use hydration_merge::merge_hydration_maps;
 use message_record::{build_in_memory_message_record, build_message_response_from_record};
 use hydration_db::collect_hydrated_messages_db;
@@ -136,28 +110,38 @@ use ingress_parse::{
     classify_ingress_command_parse_error, IngressCommandParseClassification,
 };
 use ingress_subscribe::execute_subscribe_command;
-use voice_sync_dispatch::dispatch_voice_sync_event;
-use presence_sync_dispatch::dispatch_presence_sync_event;
-use search_query_input::validate_search_query_request;
 use message_store_in_memory::append_message_record;
 use message_emit::emit_message_create_and_index;
-use connection_disconnect_followups::plan_disconnect_followups;
-use voice_subscribe_sync::build_voice_subscribe_sync_event;
-use presence_subscribe_events::build_presence_subscribe_events;
-use search_bootstrap::build_search_rebuild_operation;
-use emit_metrics::emit_gateway_delivery_metrics;
-use voice_cleanup_dispatch::{
-    broadcast_disconnected_user_voice_removals,
-    broadcast_expired_voice_removals,
-};
 pub(crate) use search_index_lookup::collect_index_message_ids_for_guild;
 pub(crate) use search_reconciliation_plan::plan_search_reconciliation;
 pub(crate) use search_query_run::run_search_query;
-use search_collect_runtime::{
-    collect_all_indexed_messages_runtime,
-    collect_indexed_messages_for_guild_runtime,
+pub(crate) use hydration_order::collect_hydrated_in_request_order;
+pub(crate) use search_reconcile::compute_reconciliation;
+pub(crate) use search_runtime::{
+    collect_all_indexed_messages,
+    collect_indexed_messages_for_guild,
+    ensure_search_bootstrapped,
+    enqueue_search_operation,
+    hydrate_messages_by_id,
+    indexed_message_from_response,
+    init_search_service,
+    validate_search_query,
 };
-use hydration_runtime::hydrate_messages_by_id_runtime;
+pub(crate) use connection_runtime::{
+    add_subscription,
+    broadcast_channel_event,
+    broadcast_guild_event,
+    broadcast_user_event,
+    handle_presence_subscribe,
+    handle_voice_subscribe,
+    register_voice_participant_from_token,
+    remove_connection,
+};
+
+#[allow(dead_code)]
+pub(crate) fn build_search_schema() -> (tantivy::schema::Schema, super::core::SearchFields) {
+    search_runtime::build_search_schema()
+}
 
 use super::{
     auth::{
@@ -165,11 +149,7 @@ use super::{
         ClientIp,
     },
     core::{
-        AppState, AuthContext, ConnectionControl, ConnectionPresence, IndexedMessage,
-        SearchCommand, SearchFields, SearchIndexState, SearchOperation,
-        SearchService, VoiceStreamKind, DEFAULT_SEARCH_RESULT_LIMIT,
-        MAX_TRACKED_VOICE_CHANNELS, MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
-        SEARCH_INDEX_QUEUE_CAPACITY,
+        AppState, AuthContext, ConnectionControl, ConnectionPresence,
     },
     db::ensure_db_schema,
     domain::{
@@ -179,12 +159,12 @@ use super::{
         reaction_summaries_from_users,
     },
     errors::AuthFailure,
-    gateway_events::{self, GatewayEvent},
+    gateway_events::{self},
     metrics::{
         record_gateway_event_emitted, record_gateway_event_parse_rejected,
         record_gateway_event_unknown_received, record_ws_disconnect,
     },
-    types::{GatewayAuthQuery, MessageResponse, SearchQuery},
+    types::{GatewayAuthQuery, MessageResponse},
 };
 
 pub(crate) async fn gateway_ws(
@@ -485,321 +465,4 @@ pub(crate) async fn create_message_internal(
     emit_message_create_and_index(state, guild_id, channel_id, &response).await?;
 
     Ok(response)
-}
-
-pub(crate) fn build_search_schema() -> (Schema, SearchFields) {
-    build_search_schema_impl()
-}
-
-pub(crate) fn init_search_service() -> anyhow::Result<SearchService> {
-    let (schema, fields) = build_search_schema();
-    let index = tantivy::Index::create_in_ram(schema);
-    let reader = index
-        .reader()
-        .map_err(|e| anyhow!("search reader init failed: {e}"))?;
-    let state = Arc::new(SearchIndexState {
-        index,
-        reader,
-        fields,
-    });
-    let (tx, mut rx) = mpsc::channel::<SearchCommand>(SEARCH_INDEX_QUEUE_CAPACITY);
-    let worker_state = state.clone();
-    std::thread::Builder::new()
-        .name(String::from("filament-search-index"))
-        .spawn(move || {
-            while let Some(command) = rx.blocking_recv() {
-                let batch = drain_search_batch(command, &mut rx, 128);
-                let batch_result = apply_search_batch(&worker_state, batch);
-                if let Err(error) = batch_result {
-                    tracing::error!(event = "search.index.batch", error = %error);
-                }
-            }
-        })
-        .map_err(|e| anyhow!("search worker spawn failed: {e}"))?;
-    Ok(SearchService { tx, state })
-}
-
-pub(crate) fn apply_search_batch(
-    search: &Arc<SearchIndexState>,
-    mut batch: Vec<SearchCommand>,
-) -> anyhow::Result<()> {
-    apply_search_batch_with_ack(search, &mut batch, apply_search_operation)
-}
-
-pub(crate) fn apply_search_operation(
-    search: &SearchIndexState,
-    writer: &mut tantivy::IndexWriter,
-    op: SearchOperation,
-) {
-    apply_search_operation_impl(search, writer, op);
-}
-
-pub(crate) fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
-    search_indexed_message::indexed_message_from_response(message)
-}
-
-pub(crate) fn validate_search_query(
-    state: &AppState,
-    query: &SearchQuery,
-) -> Result<(), AuthFailure> {
-    validate_search_query_request(
-        query,
-        DEFAULT_SEARCH_RESULT_LIMIT,
-        state.runtime.search_query_max_chars,
-        state.runtime.search_result_limit_max,
-    )
-}
-
-pub(crate) async fn ensure_search_bootstrapped(state: &AppState) -> Result<(), AuthFailure> {
-    state
-        .search_bootstrapped
-        .get_or_try_init(|| async move {
-            let docs = collect_all_indexed_messages(state).await?;
-            let rebuild = build_search_rebuild_operation(docs);
-            enqueue_search_operation(state, rebuild, true).await?;
-            Ok(())
-        })
-        .await?;
-    Ok(())
-}
-
-pub(crate) async fn enqueue_search_operation(
-    state: &AppState,
-    op: SearchOperation,
-    wait_for_apply: bool,
-) -> Result<(), AuthFailure> {
-    enqueue_search_command(&state.search.tx, op, wait_for_apply).await
-}
-
-pub(crate) async fn collect_all_indexed_messages(
-    state: &AppState,
-) -> Result<Vec<IndexedMessage>, AuthFailure> {
-    collect_all_indexed_messages_runtime(state).await
-}
-
-pub(crate) async fn collect_indexed_messages_for_guild(
-    state: &AppState,
-    guild_id: &str,
-    max_docs: usize,
-) -> Result<Vec<IndexedMessage>, AuthFailure> {
-    collect_indexed_messages_for_guild_runtime(state, guild_id, max_docs).await
-}
-
-pub(crate) async fn hydrate_messages_by_id(
-    state: &AppState,
-    guild_id: &str,
-    channel_id: Option<&str>,
-    message_ids: &[String],
-) -> Result<Vec<MessageResponse>, AuthFailure> {
-    hydrate_messages_by_id_runtime(state, guild_id, channel_id, message_ids).await
-}
-
-async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
-    if slow_connections.is_empty() {
-        return;
-    }
-
-    let controls = state.connection_controls.read().await;
-    signal_slow_connections_close(&controls, slow_connections);
-}
-
-pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: &GatewayEvent) {
-    let mut slow_connections = Vec::new();
-    let mut subscriptions = state.subscriptions.write().await;
-    let delivered = dispatch_channel_payload(
-        &mut subscriptions,
-        key,
-        &event.payload,
-        event.event_type,
-        &mut slow_connections,
-    );
-    drop(subscriptions);
-
-    close_slow_connections(state, slow_connections).await;
-    emit_gateway_delivery_metrics("channel", event.event_type, delivered);
-}
-
-pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, event: &GatewayEvent) {
-    let mut slow_connections = Vec::new();
-    let mut subscriptions = state.subscriptions.write().await;
-    let delivered = dispatch_guild_payload(
-        &mut subscriptions,
-        guild_id,
-        &event.payload,
-        event.event_type,
-        &mut slow_connections,
-    );
-    drop(subscriptions);
-
-    close_slow_connections(state, slow_connections).await;
-    emit_gateway_delivery_metrics("guild", event.event_type, delivered);
-}
-
-#[allow(dead_code)]
-pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, event: &GatewayEvent) {
-    let connection_ids = {
-        let presence = state.connection_presence.read().await;
-        connection_ids_for_user(&presence, user_id)
-    };
-    if connection_ids.is_empty() {
-        return;
-    }
-
-    let mut slow_connections = Vec::new();
-    let mut senders = state.connection_senders.write().await;
-    let delivered = dispatch_user_payload(
-        &mut senders,
-        &connection_ids,
-        &event.payload,
-        event.event_type,
-        &mut slow_connections,
-    );
-    drop(senders);
-
-    close_slow_connections(state, slow_connections).await;
-    emit_gateway_delivery_metrics("user", event.event_type, delivered);
-}
-
-async fn prune_expired_voice_participants(state: &AppState, now_unix: i64) {
-    broadcast_expired_voice_removals(state, now_unix).await;
-}
-
-pub(crate) async fn register_voice_participant_from_token(
-    state: &AppState,
-    user_id: UserId,
-    guild_id: &str,
-    channel_id: &str,
-    identity: &str,
-    publish_streams: &[VoiceStreamKind],
-    expires_at_unix: i64,
-) -> Result<(), AuthFailure> {
-    prune_expired_voice_participants(state, now_unix()).await;
-    let now = now_unix();
-    let key = voice_channel_key(guild_id, channel_id);
-    let transition = {
-        let mut channels = state.voice_participants.write().await;
-        apply_voice_registration_transition(
-            &mut channels,
-            &key,
-            user_id,
-            identity,
-            publish_streams,
-            expires_at_unix,
-            now,
-            MAX_TRACKED_VOICE_CHANNELS,
-            MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
-        )?
-    };
-    for (subscription_key, event) in plan_voice_registration_events(
-        transition,
-        guild_id,
-        channel_id,
-        user_id,
-        identity,
-        now,
-    ) {
-        broadcast_channel_event(state, &subscription_key, &event).await;
-    }
-
-    Ok(())
-}
-
-pub(crate) async fn handle_voice_subscribe(
-    state: &AppState,
-    guild_id: &str,
-    channel_id: &str,
-    outbound_tx: &mpsc::Sender<String>,
-) {
-    prune_expired_voice_participants(state, now_unix()).await;
-    let key = voice_channel_key(guild_id, channel_id);
-    let participants = {
-        let voice = state.voice_participants.read().await;
-        collect_voice_snapshots(&voice, &key)
-    };
-
-    let sync_event = build_voice_subscribe_sync_event(
-        guild_id,
-        channel_id,
-        participants,
-        now_unix(),
-    );
-    dispatch_voice_sync_event(outbound_tx, sync_event);
-}
-
-async fn remove_disconnected_user_voice_participants(
-    state: &AppState,
-    user_id: UserId,
-    disconnected_at_unix: i64,
-) {
-    broadcast_disconnected_user_voice_removals(state, user_id, disconnected_at_unix).await;
-}
-
-pub(crate) async fn handle_presence_subscribe(
-    state: &AppState,
-    connection_id: Uuid,
-    user_id: UserId,
-    guild_id: &str,
-    outbound_tx: &mpsc::Sender<String>,
-) {
-    let result = {
-        let mut presence = state.connection_presence.write().await;
-        apply_presence_subscribe(&mut presence, connection_id, user_id, guild_id)
-    };
-    let Some(result) = result else {
-        return;
-    };
-
-    let events = build_presence_subscribe_events(guild_id, user_id, result);
-    dispatch_presence_sync_event(outbound_tx, events.snapshot);
-
-    if let Some(update) = events.online_update {
-        broadcast_guild_event(state, guild_id, &update).await;
-    }
-}
-
-pub(crate) async fn add_subscription(
-    state: &AppState,
-    connection_id: Uuid,
-    key: String,
-    outbound_tx: mpsc::Sender<String>,
-) {
-    let mut subscriptions = state.subscriptions.write().await;
-    insert_connection_subscription(&mut subscriptions, connection_id, key, outbound_tx);
-}
-
-pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
-    let removed_presence = {
-        let mut presence = state.connection_presence.write().await;
-        let mut controls = state.connection_controls.write().await;
-        let mut senders = state.connection_senders.write().await;
-        remove_connection_state(
-            &mut presence,
-            &mut controls,
-            &mut senders,
-            connection_id,
-        )
-    };
-
-    let mut subscriptions = state.subscriptions.write().await;
-    remove_connection_from_subscriptions(&mut subscriptions, connection_id);
-    drop(subscriptions);
-
-    let Some(removed_presence) = removed_presence else {
-        return;
-    };
-    let outcome = {
-        let remaining = state.connection_presence.read().await;
-        compute_disconnect_presence_outcome(&remaining, &removed_presence)
-    };
-    let followups =
-        plan_disconnect_followups(outcome, removed_presence.user_id);
-
-    if followups.remove_voice_participants {
-        remove_disconnected_user_voice_participants(state, removed_presence.user_id, now_unix())
-            .await;
-    }
-
-    for (guild_id, update) in followups.offline_updates {
-        broadcast_guild_event(state, &guild_id, &update).await;
-    }
 }
