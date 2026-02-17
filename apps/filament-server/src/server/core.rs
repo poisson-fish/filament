@@ -292,27 +292,9 @@ pub struct AppState {
     pub(crate) rate_limit_last_sweep_unix: Arc<AtomicI64>,
     pub(crate) auth_session_last_sweep_unix: Arc<AtomicI64>,
     pub(crate) membership_store: MembershipStore,
-    #[allow(dead_code)]
-    pub(crate) guilds: Arc<RwLock<HashMap<String, GuildRecord>>>,
-    #[allow(dead_code)]
-    pub(crate) guild_roles: Arc<RwLock<GuildRoleMap>>,
-    #[allow(dead_code)]
-    pub(crate) guild_role_assignments: Arc<RwLock<GuildRoleAssignmentMap>>,
-    #[allow(dead_code)]
-    pub(crate) guild_channel_permission_overrides: Arc<RwLock<GuildChannelPermissionOverrideMap>>,
     pub(crate) user_ip_observations: Arc<RwLock<HashMap<(UserId, IpNetwork), i64>>>,
     pub(crate) guild_ip_bans: Arc<RwLock<GuildIpBanMap>>,
     pub(crate) realtime_registry: RealtimeRegistry,
-    #[allow(dead_code)]
-    pub(crate) subscriptions: Arc<RwLock<Subscriptions>>,
-    #[allow(dead_code)]
-    pub(crate) connection_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>>,
-    #[allow(dead_code)]
-    pub(crate) connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
-    #[allow(dead_code)]
-    pub(crate) connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
-    #[allow(dead_code)]
-    pub(crate) voice_participants: Arc<RwLock<VoiceParticipantsByChannel>>,
     pub(crate) attachment_store: Arc<LocalFileSystem>,
     pub(crate) attachments: Arc<RwLock<HashMap<String, AttachmentRecord>>>,
     pub(crate) friendship_requests: Arc<RwLock<HashMap<String, FriendshipRequestRecord>>>,
@@ -394,18 +376,9 @@ impl AppState {
             rate_limit_last_sweep_unix: Arc::new(AtomicI64::new(0)),
             auth_session_last_sweep_unix: Arc::new(AtomicI64::new(0)),
             membership_store,
-            guilds,
-            guild_roles,
-            guild_role_assignments,
-            guild_channel_permission_overrides,
             user_ip_observations: Arc::new(RwLock::new(HashMap::new())),
             guild_ip_bans: Arc::new(RwLock::new(HashMap::new())),
             realtime_registry,
-            subscriptions,
-            connection_senders,
-            connection_controls,
-            connection_presence,
-            voice_participants,
             attachment_store: Arc::new(attachment_store),
             attachments: Arc::new(RwLock::new(HashMap::new())),
             friendship_requests: Arc::new(RwLock::new(HashMap::new())),
@@ -1004,7 +977,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn membership_store_shares_backing_maps_with_app_state_fields() {
+    async fn membership_store_provides_guild_map_access() {
         let state = AppState::new(&AppConfig::default()).expect("state should initialize");
         let guild_id = String::from("guild-membership-store");
 
@@ -1025,7 +998,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn membership_store_role_writes_update_legacy_role_map_field() {
+    async fn membership_store_provides_role_map_access() {
         let state = AppState::new(&AppConfig::default()).expect("state should initialize");
         let guild_id = String::from("guild-membership-store-roles");
         let role_id = String::from("role-1");
@@ -1052,7 +1025,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realtime_registry_shares_backing_maps_with_app_state_fields() {
+    async fn realtime_registry_provides_presence_map_access() {
         let state = AppState::new(&AppConfig::default()).expect("state should initialize");
         let connection_id = Uuid::new_v4();
 
