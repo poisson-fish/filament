@@ -977,6 +977,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_store_replay_cleanup_lifecycle_preserves_detection_until_retention_cutoff() {
+        let store = SessionStore::new();
+        let user_id = UserId::new();
+        let session_id = String::from("session-replay-lifecycle");
+        let initial_hash = [40_u8; 32];
+
+        store
+            .insert(
+                session_id.clone(),
+                SessionRecord {
+                    user_id,
+                    refresh_token_hash: initial_hash,
+                    expires_at_unix: 10_000,
+                    revoked: false,
+                },
+            )
+            .await;
+
+        store
+            .rotate_refresh_hash(&session_id, initial_hash, [41_u8; 32], 100, 10_000)
+            .await
+            .expect("rotation should succeed");
+
+        let first = store.prune_expired(250, 200).await;
+        assert_eq!(first, (0, 0));
+        let replay_before_cutoff = store.revoke_if_replayed_token(initial_hash).await;
+        assert_eq!(replay_before_cutoff.as_deref(), Some(session_id.as_str()));
+
+        let boundary = store.prune_expired(300, 200).await;
+        assert_eq!(boundary, (0, 0));
+        let replay_at_cutoff = store.revoke_if_replayed_token(initial_hash).await;
+        assert_eq!(replay_at_cutoff.as_deref(), Some(session_id.as_str()));
+
+        let past_cutoff = store.prune_expired(301, 200).await;
+        assert_eq!(past_cutoff, (0, 1));
+        let replay_after_cutoff = store.revoke_if_replayed_token(initial_hash).await;
+        assert!(replay_after_cutoff.is_none());
+    }
+
+    #[tokio::test]
     async fn membership_store_provides_guild_map_access() {
         let state = AppState::new(&AppConfig::default()).expect("state should initialize");
         let guild_id = String::from("guild-membership-store");

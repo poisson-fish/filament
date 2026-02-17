@@ -750,4 +750,83 @@ mod tests {
             "fresh key should remain"
         );
     }
+
+    #[tokio::test]
+    async fn rate_limit_sweep_keeps_maps_bounded_under_many_unique_stale_keys() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+
+        {
+            let mut auth_hits = state.auth_route_hits.write().await;
+            for index in 0..256 {
+                auth_hits.insert(format!("register:198.51.100.{index}"), vec![0]);
+            }
+        }
+        {
+            let mut ip_hits = state.directory_join_ip_hits.write().await;
+            for index in 0..256 {
+                ip_hits.insert(format!("198.51.101.{index}"), vec![0]);
+            }
+        }
+        {
+            let mut user_hits = state.directory_join_user_hits.write().await;
+            for index in 0..256 {
+                user_hits.insert(format!("user-{index}"), vec![0]);
+            }
+        }
+        {
+            let mut token_hits = state.media_token_hits.write().await;
+            for index in 0..256 {
+                token_hits.insert(format!("token-key-{index}"), vec![0]);
+            }
+        }
+        {
+            let mut publish_hits = state.media_publish_hits.write().await;
+            for index in 0..256 {
+                publish_hits.insert(format!("publish-key-{index}"), vec![0]);
+            }
+        }
+        {
+            let mut subscribe_leases = state.media_subscribe_leases.write().await;
+            for index in 0..256 {
+                subscribe_leases.insert(format!("lease-key-{index}"), vec![0]);
+            }
+        }
+
+        let client_ip = ClientIp::peer(Some("203.0.113.25".parse().expect("valid ip")));
+        enforce_auth_route_rate_limit(&state, client_ip, "register")
+            .await
+            .expect("fresh key should be accepted");
+
+        let auth_hits = state.auth_route_hits.read().await;
+        assert_eq!(auth_hits.len(), 1, "stale auth keys should be fully swept");
+        drop(auth_hits);
+
+        let ip_hits = state.directory_join_ip_hits.read().await;
+        assert!(ip_hits.is_empty(), "stale directory ip keys should be swept");
+        drop(ip_hits);
+
+        let user_hits = state.directory_join_user_hits.read().await;
+        assert!(
+            user_hits.is_empty(),
+            "stale directory user keys should be swept"
+        );
+        drop(user_hits);
+
+        let token_hits = state.media_token_hits.read().await;
+        assert!(token_hits.is_empty(), "stale media token keys should be swept");
+        drop(token_hits);
+
+        let publish_hits = state.media_publish_hits.read().await;
+        assert!(
+            publish_hits.is_empty(),
+            "stale media publish keys should be swept"
+        );
+        drop(publish_hits);
+
+        let subscribe_leases = state.media_subscribe_leases.read().await;
+        assert!(
+            subscribe_leases.is_empty(),
+            "expired subscribe leases should be swept"
+        );
+    }
 }
