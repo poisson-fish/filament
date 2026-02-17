@@ -802,7 +802,10 @@ mod tests {
         drop(auth_hits);
 
         let ip_hits = state.directory_join_ip_hits.read().await;
-        assert!(ip_hits.is_empty(), "stale directory ip keys should be swept");
+        assert!(
+            ip_hits.is_empty(),
+            "stale directory ip keys should be swept"
+        );
         drop(ip_hits);
 
         let user_hits = state.directory_join_user_hits.read().await;
@@ -813,7 +816,10 @@ mod tests {
         drop(user_hits);
 
         let token_hits = state.media_token_hits.read().await;
-        assert!(token_hits.is_empty(), "stale media token keys should be swept");
+        assert!(
+            token_hits.is_empty(),
+            "stale media token keys should be swept"
+        );
         drop(token_hits);
 
         let publish_hits = state.media_publish_hits.read().await;

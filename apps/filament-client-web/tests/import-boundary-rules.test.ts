@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  classifySourceLayer,
-  collectImportBoundaryViolations,
-  extractImportSpecifiers,
-  resolveProjectImportTarget,
-} from "../scripts/import-boundary-rules.mjs";
+// @ts-expect-error typed via runtime Node script contract.
+import { classifySourceLayer, collectImportBoundaryViolations, extractImportSpecifiers, resolveProjectImportTarget } from "../scripts/import-boundary-rules.mjs";
 
 describe("import boundary rules", () => {
   it("classifies source layers from src-relative paths", () => {

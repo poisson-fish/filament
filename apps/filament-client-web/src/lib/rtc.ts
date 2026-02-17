@@ -979,7 +979,6 @@ class RtcClientImpl implements RtcClient {
 
     const audioElement = document.createElement("audio");
     audioElement.autoplay = true;
-    audioElement.playsInline = true;
     audioElement.dataset.trackSid = trackSid;
     audioElement.style.display = "none";
 

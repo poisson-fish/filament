@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
+// @ts-expect-error typed via runtime Node script contract.
 import { runImportBoundaryCheck } from "../scripts/check-import-boundaries.mjs";
 
 function writeFixture(webRootDir: string, relativePath: string, content: string): void {
