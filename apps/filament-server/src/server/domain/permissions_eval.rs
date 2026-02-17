@@ -53,6 +53,13 @@ pub(crate) struct ChannelOverrideDbRow {
 }
 
 #[derive(Debug)]
+pub(crate) struct LegacyChannelRoleOverrideDbRow {
+    pub(crate) role: i16,
+    pub(crate) allow_mask: i64,
+    pub(crate) deny_mask: i64,
+}
+
+#[derive(Debug)]
 pub(crate) struct ChannelOverrideSummary {
     pub(crate) everyone_overwrite: ChannelPermissionOverwrite,
     pub(crate) role_overwrite: ChannelPermissionOverwrite,
@@ -313,6 +320,20 @@ pub(crate) fn normalize_assigned_role_ids(
     assigned_role_ids
 }
 
+pub(crate) fn guild_role_permission_inputs(
+    roles: &HashMap<String, WorkspaceRoleRecord>,
+    everyone_role_id: &str,
+) -> (PermissionSet, HashMap<String, PermissionSet>) {
+    let everyone_permissions = roles
+        .get(everyone_role_id)
+        .map_or_else(default_everyone_permissions, |role| role.permissions_allow);
+    let role_permissions = roles
+        .iter()
+        .map(|(role_id, role)| (role_id.clone(), role.permissions_allow))
+        .collect();
+    (everyone_permissions, role_permissions)
+}
+
 pub(crate) fn summarize_channel_overrides(
     rows: Vec<ChannelOverrideDbRow>,
     assigned_role_ids: &HashSet<String>,
@@ -359,6 +380,54 @@ pub(crate) fn summarize_channel_overrides(
         used_new_overrides,
         unknown_override_bits,
     })
+}
+
+pub(crate) fn merge_legacy_channel_role_overrides(
+    base_role_overwrite: ChannelPermissionOverwrite,
+    rows: Vec<LegacyChannelRoleOverrideDbRow>,
+    assigned_role_ids: &HashSet<String>,
+    role_ids: &RoleIdSet,
+) -> Result<ChannelPermissionOverwrite, AuthFailure> {
+    let mut role_overwrite = base_role_overwrite;
+
+    for row in rows {
+        let role = crate::server::db::role_from_i16(row.role).unwrap_or(Role::Member);
+        let (allow, _) = i64_to_masked_permissions(row.allow_mask)?;
+        let (deny, _) = i64_to_masked_permissions(row.deny_mask)?;
+        let overwrite = ChannelPermissionOverwrite { allow, deny };
+        match role {
+            Role::Member => {
+                if assigned_role_ids.contains(&role_ids.member) {
+                    role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
+                }
+            }
+            Role::Moderator => {
+                if assigned_role_ids.contains(&role_ids.moderator) {
+                    role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
+                }
+            }
+            Role::Owner => {
+                if assigned_role_ids.contains(&role_ids.workspace_owner) {
+                    role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
+                }
+            }
+        }
+    }
+
+    Ok(role_overwrite)
+}
+
+pub(crate) fn merge_assigned_role_overrides(
+    role_overrides: &HashMap<String, ChannelPermissionOverwrite>,
+    assigned_role_ids: &HashSet<String>,
+) -> ChannelPermissionOverwrite {
+    let mut role_overwrite = ChannelPermissionOverwrite::default();
+    for role_id in assigned_role_ids {
+        if let Some(overwrite) = role_overrides.get(role_id).copied() {
+            role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
+        }
+    }
+    role_overwrite
 }
 
 pub(crate) fn apply_channel_layers(
@@ -485,7 +554,10 @@ mod tests {
         aggregate_guild_permissions, apply_channel_layers,
         apply_legacy_role_assignment, ensure_required_roles,
         finalize_channel_permissions, i64_to_masked_permissions,
-        merge_channel_overwrite, normalize_assigned_role_ids,
+        merge_channel_overwrite, merge_legacy_channel_role_overrides,
+        merge_assigned_role_overrides,
+        guild_role_permission_inputs,
+        normalize_assigned_role_ids,
         role_ids_from_map, role_records_from_db_rows,
         summarize_channel_overrides, summarize_guild_permissions,
         sync_legacy_channel_overrides, sync_legacy_role_assignments,
@@ -994,6 +1066,44 @@ mod tests {
     }
 
     #[test]
+    fn guild_role_permission_inputs_returns_everyone_default_and_role_map() {
+        let created_at_unix = now_unix();
+        let roles = HashMap::from([
+            (
+                String::from("everyone"),
+                WorkspaceRoleRecord {
+                    role_id: String::from("everyone"),
+                    name: String::from("@everyone"),
+                    position: 0,
+                    is_system: true,
+                    system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
+                    permissions_allow: permission_set(&[Permission::DeleteMessage]),
+                    created_at_unix,
+                },
+            ),
+            (
+                String::from("member"),
+                WorkspaceRoleRecord {
+                    role_id: String::from("member"),
+                    name: String::from("member"),
+                    position: 1,
+                    is_system: false,
+                    system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
+                    permissions_allow: permission_set(&[Permission::CreateMessage]),
+                    created_at_unix,
+                },
+            ),
+        ]);
+
+        let (everyone_permissions, role_permissions) =
+            guild_role_permission_inputs(&roles, "everyone");
+        assert!(everyone_permissions.contains(Permission::DeleteMessage));
+        assert!(role_permissions
+            .get("member")
+            .is_some_and(|set| set.contains(Permission::CreateMessage)));
+    }
+
+    #[test]
     fn summarize_channel_overrides_merges_roles_and_member_targets() {
         let role_ids = super::RoleIdSet {
             everyone: String::from("everyone"),
@@ -1046,5 +1156,110 @@ mod tests {
             .deny
             .contains(Permission::CreateMessage));
         assert!(summary.used_new_overrides);
+    }
+
+    #[test]
+    fn merge_legacy_channel_role_overrides_applies_only_assigned_legacy_roles() {
+        let role_ids = super::RoleIdSet {
+            everyone: String::from("everyone"),
+            workspace_owner: String::from("owner"),
+            member: String::from("member"),
+            moderator: String::from("moderator"),
+        };
+        let assigned = HashSet::from([String::from("member"), String::from("moderator")]);
+        let member_allow = i64::try_from(permission_set(&[Permission::CreateMessage]).bits())
+            .expect("test mask should fit i64");
+        let moderator_allow = i64::try_from(permission_set(&[Permission::DeleteMessage]).bits())
+            .expect("test mask should fit i64");
+        let owner_allow = i64::try_from(permission_set(&[Permission::ManageRoles]).bits())
+            .expect("test mask should fit i64");
+
+        let merged = merge_legacy_channel_role_overrides(
+            ChannelPermissionOverwrite::default(),
+            vec![
+                super::LegacyChannelRoleOverrideDbRow {
+                    role: 0,
+                    allow_mask: member_allow,
+                    deny_mask: 0,
+                },
+                super::LegacyChannelRoleOverrideDbRow {
+                    role: 1,
+                    allow_mask: moderator_allow,
+                    deny_mask: 0,
+                },
+                super::LegacyChannelRoleOverrideDbRow {
+                    role: 2,
+                    allow_mask: owner_allow,
+                    deny_mask: 0,
+                },
+            ],
+            &assigned,
+            &role_ids,
+        )
+        .expect("legacy role overrides should merge");
+
+        assert!(merged.allow.contains(Permission::CreateMessage));
+        assert!(merged.allow.contains(Permission::DeleteMessage));
+        assert!(!merged.allow.contains(Permission::ManageRoles));
+    }
+
+    #[test]
+    fn merge_legacy_channel_role_overrides_rejects_negative_masks_fail_closed() {
+        let role_ids = super::RoleIdSet {
+            everyone: String::from("everyone"),
+            workspace_owner: String::from("owner"),
+            member: String::from("member"),
+            moderator: String::from("moderator"),
+        };
+        let assigned = HashSet::from([String::from("member")]);
+
+        assert!(matches!(
+            merge_legacy_channel_role_overrides(
+                ChannelPermissionOverwrite::default(),
+                vec![super::LegacyChannelRoleOverrideDbRow {
+                    role: 0,
+                    allow_mask: -1,
+                    deny_mask: 0,
+                }],
+                &assigned,
+                &role_ids,
+            ),
+            Err(AuthFailure::Internal)
+        ));
+    }
+
+    #[test]
+    fn merge_assigned_role_overrides_combines_only_assigned_entries() {
+        let mut role_overrides = HashMap::new();
+        role_overrides.insert(
+            String::from("member"),
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::CreateMessage]),
+                deny: PermissionSet::empty(),
+            },
+        );
+        role_overrides.insert(
+            String::from("moderator"),
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::DeleteMessage]),
+                deny: PermissionSet::empty(),
+            },
+        );
+        role_overrides.insert(
+            String::from("owner"),
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::ManageRoles]),
+                deny: PermissionSet::empty(),
+            },
+        );
+
+        let assigned_role_ids =
+            HashSet::from([String::from("member"), String::from("moderator")]);
+        let merged =
+            merge_assigned_role_overrides(&role_overrides, &assigned_role_ids);
+
+        assert!(merged.allow.contains(Permission::CreateMessage));
+        assert!(merged.allow.contains(Permission::DeleteMessage));
+        assert!(!merged.allow.contains(Permission::ManageRoles));
     }
 }

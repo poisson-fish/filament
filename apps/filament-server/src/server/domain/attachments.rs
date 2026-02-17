@@ -109,6 +109,33 @@ pub(crate) fn attachment_record_from_db_fields(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn attachment_map_record_from_db_fields(
+    message_id: Option<String>,
+    attachment_id: String,
+    guild_id: String,
+    channel_id: String,
+    owner_id: String,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
+    sha256_hex: String,
+) -> Result<(Option<String>, AttachmentResponse), AuthFailure> {
+    Ok((
+        message_id,
+        attachment_response_from_db_fields(
+            attachment_id,
+            guild_id,
+            channel_id,
+            owner_id,
+            filename,
+            mime_type,
+            size_bytes,
+            sha256_hex,
+        )?,
+    ))
+}
+
 pub(crate) fn attachment_map_from_records<'a>(
     records: impl Iterator<Item = &'a AttachmentRecord>,
     guild_id: &str,
@@ -190,6 +217,7 @@ pub(crate) fn attachment_usage_for_owner<'a>(
 mod tests {
     use super::{
         attachment_map_from_db_records, attachment_map_from_records,
+        attachment_map_record_from_db_fields,
         attachment_record_from_db_fields,
         attachment_response_from_db_fields,
         attachment_response_from_record, attachment_usage_for_owner,
@@ -332,6 +360,45 @@ mod tests {
         assert_eq!(record.sha256_hex, "abc123");
         assert_eq!(record.object_key, "objects/key");
         assert_eq!(record.message_id.as_deref(), Some("01ARZ3NDEKTSV4RRFFQ69G5FCC"));
+    }
+
+    #[test]
+    fn attachment_map_record_from_db_fields_maps_message_and_response() {
+        let mapped = attachment_map_record_from_db_fields(
+            Some(String::from("message-1")),
+            String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            String::from("guild-1"),
+            String::from("channel-1"),
+            String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
+            String::from("report.png"),
+            String::from("image/png"),
+            2048,
+            String::from("abc123"),
+        )
+        .expect("db fields should map to attachment map record");
+
+        assert_eq!(mapped.0.as_deref(), Some("message-1"));
+        assert_eq!(mapped.1.attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        assert_eq!(mapped.1.owner_id, "01ARZ3NDEKTSV4RRFFQ69G5FBB");
+        assert_eq!(mapped.1.size_bytes, 2048);
+    }
+
+    #[test]
+    fn attachment_map_record_from_db_fields_rejects_negative_size_fail_closed() {
+        assert!(matches!(
+            attachment_map_record_from_db_fields(
+                Some(String::from("message-1")),
+                String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+                String::from("guild-1"),
+                String::from("channel-1"),
+                String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
+                String::from("report.png"),
+                String::from("image/png"),
+                -1,
+                String::from("abc123"),
+            ),
+            Err(AuthFailure::Internal)
+        ));
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod reactions;
 
 pub(crate) use attachments::{
     attach_message_media, attachment_map_from_db_records,
+    attachment_map_record_from_db_fields,
     attachment_map_from_records, attachments_from_ids_in_memory,
     attachment_record_from_db_fields, attachment_response_from_db_fields,
     attachment_usage_for_owner, parse_attachment_ids,
@@ -21,8 +22,11 @@ pub(crate) use moderation::{
 };
 pub(crate) use permissions_eval::{
     apply_legacy_role_assignment, ensure_required_roles,
-    finalize_channel_permissions, i64_to_masked_permissions,
-    merge_channel_overwrite, normalize_assigned_role_ids,
+    finalize_channel_permissions,
+    guild_role_permission_inputs,
+    merge_assigned_role_overrides,
+    merge_legacy_channel_role_overrides,
+    normalize_assigned_role_ids,
     role_ids_from_map, role_records_from_db_rows,
     summarize_channel_overrides,
     summarize_guild_permissions, sync_legacy_channel_overrides,
@@ -281,13 +285,8 @@ async fn resolve_channel_permissions_db(
         &role_ids,
     );
 
-    let everyone_permissions = roles
-        .get(&role_ids.everyone)
-        .map_or_else(default_everyone_permissions, |role| role.permissions_allow);
-    let role_permissions = roles
-        .iter()
-        .map(|(role_id, role)| (role_id.clone(), role.permissions_allow))
-        .collect();
+    let (everyone_permissions, role_permissions) =
+        guild_role_permission_inputs(&roles, &role_ids.everyone);
     let guild_permission_summary = summarize_guild_permissions(
         everyone_permissions,
         &assigned_role_ids,
@@ -374,36 +373,26 @@ async fn resolve_channel_permissions_db(
         .await
         .map_err(|_| AuthFailure::Internal)?;
 
-        for row in legacy_rows {
-            let role_value: i16 = row.try_get("role").map_err(|_| AuthFailure::Internal)?;
-            let role = role_from_i16(role_value).unwrap_or(Role::Member);
-            let allow_mask: i64 = row
-                .try_get("allow_mask")
-                .map_err(|_| AuthFailure::Internal)?;
-            let deny_mask: i64 = row
-                .try_get("deny_mask")
-                .map_err(|_| AuthFailure::Internal)?;
-            let (allow, _) = i64_to_masked_permissions(allow_mask)?;
-            let (deny, _) = i64_to_masked_permissions(deny_mask)?;
-            let overwrite = ChannelPermissionOverwrite { allow, deny };
-            match role {
-                Role::Member => {
-                    if assigned_role_ids.contains(&role_ids.member) {
-                        role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
-                    }
-                }
-                Role::Moderator => {
-                    if assigned_role_ids.contains(&role_ids.moderator) {
-                        role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
-                    }
-                }
-                Role::Owner => {
-                    if assigned_role_ids.contains(&role_ids.workspace_owner) {
-                        role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
-                    }
-                }
-            }
-        }
+        let legacy_inputs = legacy_rows
+            .into_iter()
+            .map(|row| {
+                Ok(permissions_eval::LegacyChannelRoleOverrideDbRow {
+                    role: row.try_get("role").map_err(|_| AuthFailure::Internal)?,
+                    allow_mask: row
+                        .try_get("allow_mask")
+                        .map_err(|_| AuthFailure::Internal)?,
+                    deny_mask: row
+                        .try_get("deny_mask")
+                        .map_err(|_| AuthFailure::Internal)?,
+                })
+            })
+            .collect::<Result<Vec<_>, AuthFailure>>()?;
+        role_overwrite = merge_legacy_channel_role_overrides(
+            role_overwrite,
+            legacy_inputs,
+            &assigned_role_ids,
+            &role_ids,
+        )?;
     }
     maybe_audit_unknown_permission_bits(
         state,
@@ -481,13 +470,8 @@ async fn resolve_channel_permissions_in_memory(
         &role_ids.member,
     );
 
-    let everyone_permissions = roles
-        .get(&role_ids.everyone)
-        .map_or_else(default_everyone_permissions, |role| role.permissions_allow);
-    let role_permissions = roles
-        .iter()
-        .map(|(role_id, role)| (role_id.clone(), role.permissions_allow))
-        .collect();
+    let (everyone_permissions, role_permissions) =
+        guild_role_permission_inputs(roles, &role_ids.everyone);
     let guild_permission_summary = summarize_guild_permissions(
         everyone_permissions,
         &assigned_role_ids,
@@ -515,12 +499,10 @@ async fn resolve_channel_permissions_in_memory(
         .get(&role_ids.everyone)
         .copied()
         .unwrap_or_default();
-    let mut role_overwrite = ChannelPermissionOverwrite::default();
-    for role_id in &assigned_role_ids {
-        if let Some(overwrite) = channel_override.role_overrides.get(role_id).copied() {
-            role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
-        }
-    }
+    let role_overwrite = merge_assigned_role_overrides(
+        &channel_override.role_overrides,
+        &assigned_role_ids,
+    );
     let member_overwrite = channel_override
         .member_overrides
         .get(&user_id)
@@ -794,9 +776,8 @@ pub(crate) async fn attachment_map_for_messages_db(
         let message_id: Option<String> = row
             .try_get("message_id")
             .map_err(|_| AuthFailure::Internal)?;
-        records.push((
+        records.push(attachment_map_record_from_db_fields(
             message_id,
-            attachment_response_from_db_fields(
                 row.try_get("attachment_id").map_err(|_| AuthFailure::Internal)?,
                 row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
                 row.try_get("channel_id").map_err(|_| AuthFailure::Internal)?,
@@ -805,8 +786,7 @@ pub(crate) async fn attachment_map_for_messages_db(
                 row.try_get("mime_type").map_err(|_| AuthFailure::Internal)?,
                 row.try_get("size_bytes").map_err(|_| AuthFailure::Internal)?,
                 row.try_get("sha256_hex").map_err(|_| AuthFailure::Internal)?,
-            )?,
-        ));
+            )?);
     }
     Ok(attachment_map_from_db_records(records))
 }
