@@ -17,6 +17,13 @@ pub(crate) struct RoleIdSet {
     pub(crate) moderator: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct GuildPermissionSummary {
+    pub(crate) resolved_role: Role,
+    pub(crate) guild_permissions: PermissionSet,
+    pub(crate) is_workspace_owner: bool,
+}
+
 pub(crate) fn role_ids_from_map(
     roles: &HashMap<String, WorkspaceRoleRecord>,
 ) -> Option<RoleIdSet> {
@@ -129,12 +136,59 @@ pub(crate) fn aggregate_guild_permissions(
     guild_permissions
 }
 
+pub(crate) fn summarize_guild_permissions(
+    everyone_permissions: PermissionSet,
+    assigned_role_ids: &HashSet<String>,
+    role_permissions: &HashMap<String, PermissionSet>,
+    workspace_owner_role_id: &str,
+    moderator_role_id: &str,
+) -> GuildPermissionSummary {
+    let mut guild_permissions =
+        aggregate_guild_permissions(everyone_permissions, assigned_role_ids, role_permissions);
+
+    let is_workspace_owner = assigned_role_ids.contains(workspace_owner_role_id);
+    if is_workspace_owner {
+        guild_permissions = crate::server::permissions::all_permissions();
+    }
+
+    let resolved_role = crate::server::permissions::membership_to_legacy_role(
+        assigned_role_ids,
+        workspace_owner_role_id,
+        moderator_role_id,
+    );
+
+    GuildPermissionSummary {
+        resolved_role,
+        guild_permissions,
+        is_workspace_owner,
+    }
+}
+
+pub(crate) fn finalize_channel_permissions(
+    guild_permissions: PermissionSet,
+    is_workspace_owner: bool,
+    everyone_overwrite: ChannelPermissionOverwrite,
+    role_overwrite: ChannelPermissionOverwrite,
+    member_overwrite: ChannelPermissionOverwrite,
+) -> PermissionSet {
+    if is_workspace_owner {
+        return crate::server::permissions::all_permissions();
+    }
+    apply_channel_layers(
+        guild_permissions,
+        everyone_overwrite,
+        role_overwrite,
+        member_overwrite,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         aggregate_guild_permissions, apply_channel_layers,
-        apply_legacy_role_assignment, i64_to_masked_permissions,
-        merge_channel_overwrite, role_ids_from_map,
+        apply_legacy_role_assignment, finalize_channel_permissions,
+        i64_to_masked_permissions, merge_channel_overwrite, role_ids_from_map,
+        summarize_guild_permissions,
     };
     use crate::server::core::WorkspaceRoleRecord;
     use crate::server::auth::now_unix;
@@ -219,6 +273,92 @@ mod tests {
         assert!(aggregated.contains(Permission::ManageRoles));
         assert!(aggregated.contains(Permission::CreateMessage));
         assert!(aggregated.contains(Permission::DeleteMessage));
+    }
+
+    #[test]
+    fn summarize_guild_permissions_marks_workspace_owner_and_grants_all() {
+        let everyone = permission_set(&[Permission::CreateMessage]);
+        let mut assigned = HashSet::new();
+        assigned.insert(String::from("owner"));
+
+        let mut role_permissions = HashMap::new();
+        role_permissions.insert(String::from("owner"), PermissionSet::empty());
+
+        let summary = summarize_guild_permissions(
+            everyone,
+            &assigned,
+            &role_permissions,
+            "owner",
+            "moderator",
+        );
+
+        assert!(summary.is_workspace_owner);
+        assert_eq!(summary.resolved_role, Role::Owner);
+        assert_eq!(
+            summary.guild_permissions.bits(),
+            crate::server::permissions::all_permissions().bits()
+        );
+    }
+
+    #[test]
+    fn summarize_guild_permissions_uses_aggregated_permissions_for_non_owner() {
+        let everyone = permission_set(&[Permission::ManageRoles]);
+        let mut assigned = HashSet::new();
+        assigned.insert(String::from("member"));
+
+        let mut role_permissions = HashMap::new();
+        role_permissions.insert(
+            String::from("member"),
+            permission_set(&[Permission::CreateMessage]),
+        );
+
+        let summary = summarize_guild_permissions(
+            everyone,
+            &assigned,
+            &role_permissions,
+            "owner",
+            "moderator",
+        );
+
+        assert!(!summary.is_workspace_owner);
+        assert_eq!(summary.resolved_role, Role::Member);
+        assert!(summary.guild_permissions.contains(Permission::ManageRoles));
+        assert!(summary.guild_permissions.contains(Permission::CreateMessage));
+    }
+
+    #[test]
+    fn finalize_channel_permissions_returns_all_for_workspace_owner() {
+        let resolved = finalize_channel_permissions(
+            permission_set(&[Permission::CreateMessage]),
+            true,
+            ChannelPermissionOverwrite::default(),
+            ChannelPermissionOverwrite::default(),
+            ChannelPermissionOverwrite::default(),
+        );
+
+        assert_eq!(
+            resolved.bits(),
+            crate::server::permissions::all_permissions().bits()
+        );
+    }
+
+    #[test]
+    fn finalize_channel_permissions_applies_layers_for_non_owner() {
+        let base = permission_set(&[Permission::CreateMessage]);
+        let everyone = ChannelPermissionOverwrite {
+            allow: PermissionSet::empty(),
+            deny: permission_set(&[Permission::CreateMessage]),
+        };
+
+        let resolved = finalize_channel_permissions(
+            base,
+            false,
+            everyone,
+            ChannelPermissionOverwrite::default(),
+            ChannelPermissionOverwrite::default(),
+        );
+
+        assert!(!resolved.contains(Permission::CreateMessage));
     }
 
     #[test]

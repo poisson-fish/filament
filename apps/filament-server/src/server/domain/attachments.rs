@@ -5,6 +5,7 @@ use crate::server::{
     errors::AuthFailure,
     types::{AttachmentResponse, MessageResponse},
 };
+use filament_core::UserId;
 use std::collections::{HashMap, HashSet};
 
 pub(crate) fn parse_attachment_ids(value: Vec<String>) -> Result<Vec<String>, AuthFailure> {
@@ -109,18 +110,48 @@ pub(crate) fn attachment_map_from_db_records(
     by_message
 }
 
+pub(crate) fn attachments_from_ids_in_memory(
+    attachments: &HashMap<String, AttachmentRecord>,
+    attachment_ids: &[String],
+) -> Result<Vec<AttachmentResponse>, AuthFailure> {
+    if attachment_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut out = Vec::with_capacity(attachment_ids.len());
+    for attachment_id in attachment_ids {
+        let Some(record) = attachments.get(attachment_id) else {
+            return Err(AuthFailure::InvalidRequest);
+        };
+        out.push(attachment_response_from_record(record));
+    }
+    Ok(out)
+}
+
+pub(crate) fn attachment_usage_for_owner<'a>(
+    records: impl Iterator<Item = &'a AttachmentRecord>,
+    owner_id: UserId,
+) -> u64 {
+    records
+        .filter(|record| record.owner_id == owner_id)
+        .map(|record| record.size_bytes)
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         attachment_map_from_db_records, attachment_map_from_records,
-        attachment_response_from_record,
-        parse_attachment_ids, validate_attachment_filename,
+        attachment_response_from_record, attachment_usage_for_owner,
+        attachments_from_ids_in_memory, parse_attachment_ids,
+        validate_attachment_filename,
     };
     use crate::server::core::AttachmentRecord;
     use crate::server::core::MAX_ATTACHMENTS_PER_MESSAGE;
     use crate::server::errors::AuthFailure;
     use crate::server::types::AttachmentResponse;
     use filament_core::UserId;
+    use std::collections::HashMap;
     use ulid::Ulid;
 
     #[test]
@@ -309,5 +340,116 @@ mod tests {
         assert_eq!(grouped.len(), 2);
         assert_eq!(grouped[0].attachment_id, entry_a.attachment_id);
         assert_eq!(grouped[1].attachment_id, "att-b");
+    }
+
+    #[test]
+    fn attachments_from_ids_in_memory_returns_ordered_responses() {
+        let owner_id = UserId::new();
+        let first_id = Ulid::new().to_string();
+        let second_id = Ulid::new().to_string();
+
+        let mut attachments = HashMap::new();
+        attachments.insert(
+            first_id.clone(),
+            AttachmentRecord {
+                attachment_id: first_id.clone(),
+                guild_id: String::from("g1"),
+                channel_id: String::from("c1"),
+                owner_id,
+                filename: String::from("a.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 10,
+                sha256_hex: String::from("hash-a"),
+                object_key: String::from("obj-a"),
+                message_id: None,
+            },
+        );
+        attachments.insert(
+            second_id.clone(),
+            AttachmentRecord {
+                attachment_id: second_id.clone(),
+                guild_id: String::from("g1"),
+                channel_id: String::from("c1"),
+                owner_id,
+                filename: String::from("b.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 20,
+                sha256_hex: String::from("hash-b"),
+                object_key: String::from("obj-b"),
+                message_id: None,
+            },
+        );
+
+        let responses = attachments_from_ids_in_memory(
+            &attachments,
+            &[second_id.clone(), first_id.clone()],
+        )
+        .expect("attachment IDs should resolve");
+
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].attachment_id, second_id);
+        assert_eq!(responses[1].attachment_id, first_id);
+    }
+
+    #[test]
+    fn attachments_from_ids_in_memory_rejects_missing_id_fail_closed() {
+        let attachments = HashMap::new();
+        assert!(matches!(
+            attachments_from_ids_in_memory(&attachments, &[Ulid::new().to_string()]),
+            Err(AuthFailure::InvalidRequest)
+        ));
+    }
+
+    #[test]
+    fn attachment_usage_for_owner_sums_only_matching_owner_records() {
+        let owner_id = UserId::new();
+        let other_owner = UserId::new();
+        let records = vec![
+            AttachmentRecord {
+                attachment_id: Ulid::new().to_string(),
+                guild_id: String::from("g1"),
+                channel_id: String::from("c1"),
+                owner_id,
+                filename: String::from("a.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 10,
+                sha256_hex: String::from("ha"),
+                object_key: String::from("oa"),
+                message_id: None,
+            },
+            AttachmentRecord {
+                attachment_id: Ulid::new().to_string(),
+                guild_id: String::from("g1"),
+                channel_id: String::from("c1"),
+                owner_id,
+                filename: String::from("b.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 15,
+                sha256_hex: String::from("hb"),
+                object_key: String::from("ob"),
+                message_id: None,
+            },
+            AttachmentRecord {
+                attachment_id: Ulid::new().to_string(),
+                guild_id: String::from("g1"),
+                channel_id: String::from("c1"),
+                owner_id: other_owner,
+                filename: String::from("c.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 99,
+                sha256_hex: String::from("hc"),
+                object_key: String::from("oc"),
+                message_id: None,
+            },
+        ];
+
+        let usage = attachment_usage_for_owner(records.iter(), owner_id);
+        assert_eq!(usage, 25);
+    }
+
+    #[test]
+    fn attachment_usage_for_owner_returns_zero_for_no_matches() {
+        let usage = attachment_usage_for_owner([].iter(), UserId::new());
+        assert_eq!(usage, 0);
     }
 }

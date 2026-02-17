@@ -11,17 +11,17 @@ mod reactions;
 
 pub(crate) use attachments::{
     attach_message_media, attachment_map_from_db_records,
-    attachment_map_from_records,
-    attachment_response_from_record, parse_attachment_ids,
+    attachment_map_from_records, attachments_from_ids_in_memory,
+    attachment_usage_for_owner, parse_attachment_ids,
     validate_attachment_filename,
 };
 pub(crate) use moderation::{
     enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client,
 };
 pub(crate) use permissions_eval::{
-    aggregate_guild_permissions, apply_channel_layers,
-    apply_legacy_role_assignment, i64_to_masked_permissions,
-    merge_channel_overwrite, role_ids_from_map,
+    apply_legacy_role_assignment, finalize_channel_permissions,
+    i64_to_masked_permissions, merge_channel_overwrite,
+    role_ids_from_map, summarize_guild_permissions,
 };
 pub(crate) use reactions::{
     attach_message_reactions, reaction_map_from_counts,
@@ -37,9 +37,8 @@ use super::{
     errors::AuthFailure,
     permissions::{
         all_permissions, default_everyone_permissions, default_member_permissions,
-        default_moderator_permissions, membership_to_legacy_role,
-        DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
-        SYSTEM_ROLE_WORKSPACE_OWNER,
+        default_moderator_permissions, DEFAULT_ROLE_MEMBER,
+        DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE, SYSTEM_ROLE_WORKSPACE_OWNER,
     },
     types::{AttachmentPath, AttachmentResponse, ReactionResponse},
 };
@@ -433,19 +432,16 @@ async fn resolve_channel_permissions_db(
         .iter()
         .map(|(role_id, role)| (role_id.clone(), role.permissions_allow))
         .collect();
-    let mut guild_permissions =
-        aggregate_guild_permissions(everyone_permissions, &assigned_role_ids, &role_permissions);
-
-    let is_workspace_owner = assigned_role_ids.contains(&role_ids.workspace_owner);
-    if is_workspace_owner {
-        guild_permissions = all_permissions();
-    }
-
-    let resolved_role = membership_to_legacy_role(
+    let guild_permission_summary = summarize_guild_permissions(
+        everyone_permissions,
         &assigned_role_ids,
+        &role_permissions,
         &role_ids.workspace_owner,
         &role_ids.moderator,
     );
+    let guild_permissions = guild_permission_summary.guild_permissions;
+    let is_workspace_owner = guild_permission_summary.is_workspace_owner;
+    let resolved_role = guild_permission_summary.resolved_role;
 
     let Some(channel_id) = channel_id else {
         return Ok((resolved_role, guild_permissions));
@@ -572,16 +568,13 @@ async fn resolve_channel_permissions_db(
     )
     .await;
 
-    let permissions = if is_workspace_owner {
-        all_permissions()
-    } else {
-        apply_channel_layers(
-            guild_permissions,
-            everyone_overwrite,
-            role_overwrite,
-            member_overwrite,
-        )
-    };
+    let permissions = finalize_channel_permissions(
+        guild_permissions,
+        is_workspace_owner,
+        everyone_overwrite,
+        role_overwrite,
+        member_overwrite,
+    );
 
     Ok((resolved_role, permissions))
 }
@@ -649,18 +642,16 @@ async fn resolve_channel_permissions_in_memory(
         .iter()
         .map(|(role_id, role)| (role_id.clone(), role.permissions_allow))
         .collect();
-    let mut guild_permissions =
-        aggregate_guild_permissions(everyone_permissions, &assigned_role_ids, &role_permissions);
-
-    let is_workspace_owner = assigned_role_ids.contains(&role_ids.workspace_owner);
-    if is_workspace_owner {
-        guild_permissions = all_permissions();
-    }
-    let resolved_role = membership_to_legacy_role(
+    let guild_permission_summary = summarize_guild_permissions(
+        everyone_permissions,
         &assigned_role_ids,
+        &role_permissions,
         &role_ids.workspace_owner,
         &role_ids.moderator,
     );
+    let guild_permissions = guild_permission_summary.guild_permissions;
+    let is_workspace_owner = guild_permission_summary.is_workspace_owner;
+    let resolved_role = guild_permission_summary.resolved_role;
 
     let Some(channel_id) = channel_id else {
         return Ok((resolved_role, guild_permissions));
@@ -690,16 +681,13 @@ async fn resolve_channel_permissions_in_memory(
         .copied()
         .unwrap_or_default();
 
-    let permissions = if is_workspace_owner {
-        all_permissions()
-    } else {
-        apply_channel_layers(
-            guild_permissions,
-            everyone_overwrite,
-            role_overwrite,
-            member_overwrite,
-        )
-    };
+    let permissions = finalize_channel_permissions(
+        guild_permissions,
+        is_workspace_owner,
+        everyone_overwrite,
+        role_overwrite,
+        member_overwrite,
+    );
     Ok((resolved_role, permissions))
 }
 
@@ -789,15 +777,8 @@ pub(crate) async fn attachment_usage_for_user(
         return u64::try_from(total).map_err(|_| AuthFailure::Internal);
     }
 
-    let usage = state
-        .attachments
-        .read()
-        .await
-        .values()
-        .filter(|record| record.owner_id == user_id)
-        .map(|record| record.size_bytes)
-        .sum();
-    Ok(usage)
+    let attachments = state.attachments.read().await;
+    Ok(attachment_usage_for_owner(attachments.values(), user_id))
 }
 
 pub(crate) async fn find_attachment(
@@ -919,18 +900,8 @@ pub(crate) async fn attachments_for_message_in_memory(
     state: &AppState,
     attachment_ids: &[String],
 ) -> Result<Vec<AttachmentResponse>, AuthFailure> {
-    if attachment_ids.is_empty() {
-        return Ok(Vec::new());
-    }
     let attachments = state.attachments.read().await;
-    let mut out = Vec::with_capacity(attachment_ids.len());
-    for attachment_id in attachment_ids {
-        let Some(record) = attachments.get(attachment_id) else {
-            return Err(AuthFailure::InvalidRequest);
-        };
-        out.push(attachment_response_from_record(record));
-    }
-    Ok(out)
+    attachments_from_ids_in_memory(&attachments, attachment_ids)
 }
 
 pub(crate) fn rows_to_attachment_responses(
