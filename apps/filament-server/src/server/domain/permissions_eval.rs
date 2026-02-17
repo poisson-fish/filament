@@ -67,6 +67,7 @@ pub(crate) struct ChannelOverrideSummary {
 }
 
 #[derive(Debug)]
+#[allow(clippy::struct_field_names)]
 pub(crate) struct InMemoryChannelOverrideSummary {
     pub(crate) everyone_overwrite: ChannelPermissionOverwrite,
     pub(crate) role_overwrite: ChannelPermissionOverwrite,
@@ -104,97 +105,107 @@ pub(crate) fn role_ids_from_map(roles: &HashMap<String, WorkspaceRoleRecord>) ->
     })
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn ensure_required_roles(roles: &mut HashMap<String, WorkspaceRoleRecord>) -> RoleIdSet {
     let created_at_unix = now_unix();
-    let everyone = roles
+
+    let everyone_existing = roles
         .values()
         .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE))
-        .map(|role| role.role_id.clone())
-        .unwrap_or_else(|| {
-            let role_id = Ulid::new().to_string();
-            roles.insert(
-                role_id.clone(),
-                WorkspaceRoleRecord {
-                    role_id: role_id.clone(),
-                    name: String::from("@everyone"),
-                    position: 0,
-                    is_system: true,
-                    system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
-                    permissions_allow: default_everyone_permissions(),
-                    created_at_unix,
-                },
-            );
-            role_id
-        });
+        .map(|role| role.role_id.clone());
+    let everyone = if let Some(role_id) = everyone_existing {
+        role_id
+    } else {
+        let role_id = Ulid::new().to_string();
+        roles.insert(
+            role_id.clone(),
+            WorkspaceRoleRecord {
+                role_id: role_id.clone(),
+                name: String::from("@everyone"),
+                position: 0,
+                is_system: true,
+                system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
+                permissions_allow: default_everyone_permissions(),
+                created_at_unix,
+            },
+        );
+        role_id
+    };
 
-    let workspace_owner = roles
+    let workspace_owner_existing = roles
         .values()
         .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER))
-        .map(|role| role.role_id.clone())
-        .unwrap_or_else(|| {
-            let role_id = Ulid::new().to_string();
-            roles.insert(
-                role_id.clone(),
-                WorkspaceRoleRecord {
-                    role_id: role_id.clone(),
-                    name: String::from("workspace_owner"),
-                    position: 10_000,
-                    is_system: true,
-                    system_key: Some(String::from(SYSTEM_ROLE_WORKSPACE_OWNER)),
-                    permissions_allow: all_permissions(),
-                    created_at_unix,
-                },
-            );
-            role_id
-        });
+        .map(|role| role.role_id.clone());
+    let workspace_owner = if let Some(role_id) = workspace_owner_existing {
+        role_id
+    } else {
+        let role_id = Ulid::new().to_string();
+        roles.insert(
+            role_id.clone(),
+            WorkspaceRoleRecord {
+                role_id: role_id.clone(),
+                name: String::from("workspace_owner"),
+                position: 10_000,
+                is_system: true,
+                system_key: Some(String::from(SYSTEM_ROLE_WORKSPACE_OWNER)),
+                permissions_allow: all_permissions(),
+                created_at_unix,
+            },
+        );
+        role_id
+    };
 
-    let moderator = roles
+    let moderator_existing = roles
         .values()
         .find(|role| {
             role.system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR)
                 || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MODERATOR)
         })
-        .map(|role| role.role_id.clone())
-        .unwrap_or_else(|| {
-            let role_id = Ulid::new().to_string();
-            roles.insert(
-                role_id.clone(),
-                WorkspaceRoleRecord {
-                    role_id: role_id.clone(),
-                    name: String::from(DEFAULT_ROLE_MODERATOR),
-                    position: 100,
-                    is_system: false,
-                    system_key: Some(String::from(DEFAULT_ROLE_MODERATOR)),
-                    permissions_allow: default_moderator_permissions(),
-                    created_at_unix,
-                },
-            );
-            role_id
-        });
+        .map(|role| role.role_id.clone());
+    let moderator = if let Some(role_id) = moderator_existing {
+        role_id
+    } else {
+        let role_id = Ulid::new().to_string();
+        roles.insert(
+            role_id.clone(),
+            WorkspaceRoleRecord {
+                role_id: role_id.clone(),
+                name: String::from(DEFAULT_ROLE_MODERATOR),
+                position: 100,
+                is_system: false,
+                system_key: Some(String::from(DEFAULT_ROLE_MODERATOR)),
+                permissions_allow: default_moderator_permissions(),
+                created_at_unix,
+            },
+        );
+        role_id
+    };
 
-    let member = roles
+    let member_existing = roles
         .values()
         .find(|role| {
             role.system_key.as_deref() == Some(DEFAULT_ROLE_MEMBER)
                 || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MEMBER)
         })
-        .map(|role| role.role_id.clone())
-        .unwrap_or_else(|| {
-            let role_id = Ulid::new().to_string();
-            roles.insert(
-                role_id.clone(),
-                WorkspaceRoleRecord {
-                    role_id: role_id.clone(),
-                    name: String::from(DEFAULT_ROLE_MEMBER),
-                    position: 1,
-                    is_system: false,
-                    system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
-                    permissions_allow: default_member_permissions(),
-                    created_at_unix,
-                },
-            );
-            role_id
-        });
+        .map(|role| role.role_id.clone());
+    let member = if let Some(role_id) = member_existing {
+        role_id
+    } else {
+        let role_id = Ulid::new().to_string();
+        roles.insert(
+            role_id.clone(),
+            WorkspaceRoleRecord {
+                role_id: role_id.clone(),
+                name: String::from(DEFAULT_ROLE_MEMBER),
+                position: 1,
+                is_system: false,
+                system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
+                permissions_allow: default_member_permissions(),
+                created_at_unix,
+            },
+        );
+        role_id
+    };
 
     RoleIdSet {
         everyone,
@@ -260,6 +271,7 @@ pub(crate) fn i64_to_masked_permissions(value: i64) -> Result<(PermissionSet, u6
     Ok(mask_permissions(raw))
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn role_records_from_db_rows(
     rows: Vec<GuildRoleDbRow>,
 ) -> Result<
@@ -454,6 +466,7 @@ pub(crate) fn resolve_in_memory_channel_permissions(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_db_channel_permissions(
     guild_permissions: PermissionSet,
     is_workspace_owner: bool,

@@ -138,7 +138,7 @@ mod tests {
 
     use super::*;
 
-    fn parse_payload(event: GatewayEvent) -> Value {
+    fn parse_payload(event: &GatewayEvent) -> Value {
         let value: Value =
             serde_json::from_str(&event.payload).expect("gateway event payload should be valid");
         assert_eq!(value["v"], Value::from(1));
@@ -163,13 +163,13 @@ mod tests {
             created_at_unix: 1,
         };
 
-        let payload = parse_payload(message_create(&message));
+        let payload = parse_payload(&message_create(&message));
         assert_eq!(payload["message_id"], Value::from("msg-1"));
     }
 
     #[test]
     fn message_update_event_emits_updated_fields() {
-        let payload = parse_payload(message_update(
+        let payload = parse_payload(&message_update(
             "guild-1",
             "channel-1",
             "msg-1",
@@ -191,7 +191,7 @@ mod tests {
             kind: ChannelKind::Text,
         };
 
-        let payload = parse_payload(channel_create("guild-1", &channel));
+        let payload = parse_payload(&channel_create("guild-1", &channel));
         assert_eq!(payload["guild_id"], Value::from("guild-1"));
         assert_eq!(payload["channel"]["name"], Value::from("general"));
     }

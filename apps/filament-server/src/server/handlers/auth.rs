@@ -125,9 +125,7 @@ pub(crate) async fn login(
             now,
         )
         .await?;
-    let user_id = if let Some(user_id) = user_id {
-        user_id
-    } else {
+    let Some(user_id) = user_id else {
         tracing::warn!(event = "auth.login", outcome = "invalid_credentials");
         return Err(AuthFailure::Unauthorized);
     };

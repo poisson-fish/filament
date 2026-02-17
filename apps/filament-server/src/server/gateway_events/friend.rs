@@ -133,7 +133,7 @@ mod tests {
 
     use super::*;
 
-    fn parse_payload(event: GatewayEvent) -> Value {
+    fn parse_payload(event: &GatewayEvent) -> Value {
         let value: Value =
             serde_json::from_str(&event.payload).expect("gateway event payload should be valid");
         assert_eq!(value["v"], Value::from(1));
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn friend_request_create_event_emits_recipient_username() {
-        let payload = parse_payload(friend_request_create(
+        let payload = parse_payload(&friend_request_create(
             "req-1", "user-1", "alice", "user-2", "bob", 77,
         ));
         assert_eq!(payload["recipient_username"], Value::from("bob"));
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn friend_request_update_event_emits_accepted_state() {
-        let payload = parse_payload(friend_request_update(
+        let payload = parse_payload(&friend_request_update(
             "req-1", "user-1", "user-2", "bob", 88, 89, None,
         ));
         assert_eq!(payload["state"], Value::from("accepted"));
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn friend_remove_event_emits_removed_timestamp() {
-        let payload = parse_payload(friend_remove("user-1", "user-2", 99, None));
+        let payload = parse_payload(&friend_remove("user-1", "user-2", 99, None));
         assert_eq!(payload["removed_at_unix"], Value::from(99));
     }
 }

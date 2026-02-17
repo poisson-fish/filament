@@ -23,6 +23,7 @@ fn now_unix() -> i64 {
 }
 
 #[derive(Debug)]
+#[allow(clippy::struct_field_names)]
 struct SeededGuildRoleIds {
     workspace_owner_role_id: String,
     member_role_id: String,
@@ -44,7 +45,7 @@ fn target_role_key_for_legacy_role_value(role_value: i16) -> TargetRoleKey {
     }
 }
 
-fn target_role_id_by_key<'a>(role_ids: &'a SeededGuildRoleIds, key: TargetRoleKey) -> &'a str {
+fn target_role_id_by_key(role_ids: &SeededGuildRoleIds, key: TargetRoleKey) -> &str {
     match key {
         TargetRoleKey::WorkspaceOwner => &role_ids.workspace_owner_role_id,
         TargetRoleKey::Member => &role_ids.member_role_id,
@@ -52,6 +53,7 @@ fn target_role_id_by_key<'a>(role_ids: &'a SeededGuildRoleIds, key: TargetRoleKe
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn ensure_seed_roles_for_guild(
     tx: &mut Transaction<'_, Postgres>,
     guild_id: &str,

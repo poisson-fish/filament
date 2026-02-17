@@ -36,7 +36,7 @@ mod tests {
         assert!(updates[0]
             .1
             .payload
-            .contains(&format!("\"user_id\":\"{}\"", user_id)));
+            .contains(&format!("\"user_id\":\"{user_id}\"")));
     }
 
     #[test]

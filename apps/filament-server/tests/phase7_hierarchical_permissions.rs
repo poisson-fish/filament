@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_lines)]
+
 use std::time::Duration;
 
 use axum::{body::Body, http::Request, http::StatusCode};

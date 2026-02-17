@@ -119,6 +119,12 @@ impl std::fmt::Display for WorkspaceRoleId {
     }
 }
 
+/// Validates and normalizes a workspace role display name.
+///
+/// # Errors
+///
+/// Returns `DirectoryContractError::RoleName` when the input is empty after trimming,
+/// exceeds `MAX_WORKSPACE_ROLE_NAME_CHARS`, or contains ASCII control characters.
 pub fn validate_workspace_role_name(value: &str) -> Result<String, DirectoryContractError> {
     let normalized = value.trim();
     if normalized.is_empty() || normalized.len() > MAX_WORKSPACE_ROLE_NAME_CHARS {

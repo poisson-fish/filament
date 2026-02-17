@@ -64,7 +64,7 @@ pub(crate) fn try_enqueue_presence_sync_event(
 }
 
 pub(crate) fn presence_sync_dispatch_outcome(
-    result: PresenceSyncEnqueueResult,
+    result: &PresenceSyncEnqueueResult,
 ) -> PresenceSyncDispatchOutcome {
     match result {
         PresenceSyncEnqueueResult::Enqueued => PresenceSyncDispatchOutcome::Emitted,
@@ -192,15 +192,15 @@ mod tests {
     #[test]
     fn presence_sync_dispatch_outcome_maps_all_enqueue_results() {
         assert!(matches!(
-            presence_sync_dispatch_outcome(PresenceSyncEnqueueResult::Enqueued),
+            presence_sync_dispatch_outcome(&PresenceSyncEnqueueResult::Enqueued),
             PresenceSyncDispatchOutcome::Emitted
         ));
         assert!(matches!(
-            presence_sync_dispatch_outcome(PresenceSyncEnqueueResult::Closed),
+            presence_sync_dispatch_outcome(&PresenceSyncEnqueueResult::Closed),
             PresenceSyncDispatchOutcome::DroppedClosed
         ));
         assert!(matches!(
-            presence_sync_dispatch_outcome(PresenceSyncEnqueueResult::Full),
+            presence_sync_dispatch_outcome(&PresenceSyncEnqueueResult::Full),
             PresenceSyncDispatchOutcome::DroppedFull
         ));
     }

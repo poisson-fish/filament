@@ -588,10 +588,10 @@ async fn enforce_guild_ip_ban_moderation_access(
         Err(AuthFailure::NotFound) => return Err(AuthFailure::NotFound),
         Err(error) => return Err(error),
     };
-    if !permissions.contains(Permission::ManageIpBans) {
-        Err(AuthFailure::Forbidden)
-    } else {
+    if permissions.contains(Permission::ManageIpBans) {
         Ok(())
+    } else {
+        Err(AuthFailure::Forbidden)
     }
 }
 
@@ -1265,6 +1265,7 @@ pub(crate) async fn create_guild_role(
     }))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn update_guild_role(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1307,8 +1308,7 @@ pub(crate) async fn update_guild_role(
     let next_permissions = payload
         .permissions
         .as_ref()
-        .map(|values| permission_set_from_list(values))
-        .unwrap_or(current.permissions);
+        .map_or(current.permissions, |values| permission_set_from_list(values));
 
     if let Some(pool) = &state.db_pool {
         sqlx::query(
@@ -1329,7 +1329,7 @@ pub(crate) async fn update_guild_role(
             .get_mut(&path.guild_id)
             .and_then(|roles| roles.get_mut(&role_id))
             .ok_or(AuthFailure::NotFound)?;
-        role.name = next_name.clone();
+        role.name.clone_from(&next_name);
         role.permissions_allow = next_permissions;
     }
 
@@ -1596,6 +1596,7 @@ async fn workspace_owner_count_in_memory(
         .count())
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn assign_guild_role(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2087,6 +2088,7 @@ pub(crate) async fn list_guild_ip_bans(
     Ok(Json(response))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn upsert_guild_ip_bans_by_user(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2828,6 +2830,7 @@ pub(crate) async fn add_member(
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn update_member_role(
     State(state): State<AppState>,
     headers: HeaderMap,

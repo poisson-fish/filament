@@ -1,3 +1,10 @@
+#![allow(
+    clippy::question_mark,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::useless_conversion
+)]
+
 use std::{net::SocketAddr, time::Duration};
 
 use axum::{body::Body, extract::connect_info::ConnectInfo, http::Request, http::StatusCode};

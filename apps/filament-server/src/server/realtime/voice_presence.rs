@@ -69,7 +69,7 @@ pub(crate) fn try_enqueue_voice_sync_event(
 }
 
 pub(crate) fn voice_sync_dispatch_outcome(
-    result: OutboundEnqueueResult,
+    result: &OutboundEnqueueResult,
 ) -> VoiceSyncDispatchOutcome {
     match result {
         OutboundEnqueueResult::Enqueued => VoiceSyncDispatchOutcome::EmittedAndRepaired,
@@ -219,15 +219,15 @@ mod tests {
     #[test]
     fn voice_sync_dispatch_outcome_maps_all_enqueue_results() {
         assert!(matches!(
-            voice_sync_dispatch_outcome(OutboundEnqueueResult::Enqueued),
+            voice_sync_dispatch_outcome(&OutboundEnqueueResult::Enqueued),
             VoiceSyncDispatchOutcome::EmittedAndRepaired
         ));
         assert!(matches!(
-            voice_sync_dispatch_outcome(OutboundEnqueueResult::Closed),
+            voice_sync_dispatch_outcome(&OutboundEnqueueResult::Closed),
             VoiceSyncDispatchOutcome::DroppedClosed
         ));
         assert!(matches!(
-            voice_sync_dispatch_outcome(OutboundEnqueueResult::Full),
+            voice_sync_dispatch_outcome(&OutboundEnqueueResult::Full),
             VoiceSyncDispatchOutcome::DroppedFull
         ));
     }

@@ -308,6 +308,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn new(config: &AppConfig) -> anyhow::Result<Self> {
         let mut key_bytes = [0_u8; 32];
         OsRng.fill_bytes(&mut key_bytes);
@@ -778,6 +779,7 @@ pub(crate) enum VoiceStreamKind {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct VoiceParticipant {
     pub(crate) user_id: UserId,
     pub(crate) identity: String,

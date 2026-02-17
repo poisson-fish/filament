@@ -717,8 +717,10 @@ mod tests {
     async fn server_owner_bypass_grants_all_permissions_without_membership() {
         let server_owner = UserId::new();
         let guild_creator = UserId::new();
-        let mut config = AppConfig::default();
-        config.server_owner_user_id = Some(server_owner);
+        let config = AppConfig {
+            server_owner_user_id: Some(server_owner),
+            ..AppConfig::default()
+        };
         let state = AppState::new(&config).expect("state initializes");
         let guild_id = String::from("01ARZ3NDEKTSV4RRFFQ69G5FFF");
 

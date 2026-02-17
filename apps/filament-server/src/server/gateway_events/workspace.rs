@@ -449,7 +449,7 @@ mod tests {
 
     use super::*;
 
-    fn parse_payload(event: GatewayEvent) -> Value {
+    fn parse_payload(event: &GatewayEvent) -> Value {
         let value: Value =
             serde_json::from_str(&event.payload).expect("gateway event payload should be valid");
         assert_eq!(value["v"], Value::from(1));
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn workspace_update_event_emits_updated_fields() {
-        let payload = parse_payload(workspace_update(
+        let payload = parse_payload(&workspace_update(
             "guild-1",
             Some("Guild Prime"),
             Some(GuildVisibility::Public),
@@ -479,7 +479,7 @@ mod tests {
     #[test]
     fn workspace_role_create_event_emits_role_payload() {
         let user_id = UserId::new();
-        let payload = parse_payload(workspace_role_create(
+        let payload = parse_payload(&workspace_role_create(
             "guild-1",
             "role-1",
             "ops",
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn workspace_channel_override_event_emits_allow_and_deny_arrays() {
-        let payload = parse_payload(workspace_channel_override_update(
+        let payload = parse_payload(&workspace_channel_override_update(
             "guild-1",
             "channel-1",
             Role::Moderator,

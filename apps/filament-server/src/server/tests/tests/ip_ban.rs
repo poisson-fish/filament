@@ -1,6 +1,7 @@
 use super::*;
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn guild_ip_ban_endpoints_add_list_remove_and_redact_payloads() {
     let app = build_router(&AppConfig::default()).unwrap();
     let owner_auth = register_and_login_as(&app, "owner_ip_ban", "203.0.113.240").await;
@@ -164,6 +165,7 @@ async fn directory_join_rejects_on_matching_guild_ip_ban() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn guild_scoped_endpoints_reject_active_ip_bans_and_allow_after_expiry() {
     let app = build_router(&AppConfig::default()).unwrap();
     let owner_auth = register_and_login_as(&app, "owner_surface_ip_ban", "203.0.113.248").await;

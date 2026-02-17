@@ -2,6 +2,7 @@ use filament_core::{MarkdownToken, UserId};
 
 use crate::server::types::{AttachmentResponse, MessageResponse};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_db_created_message_response(
     message_id: String,
     guild_id: &str,

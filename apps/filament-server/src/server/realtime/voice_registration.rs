@@ -15,6 +15,7 @@ pub(crate) struct VoiceRegistrationTransition {
     pub(crate) unpublished: Vec<VoiceStreamKind>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_voice_registration_transition(
     channels: &mut VoiceParticipantsByChannel,
     key: &str,
@@ -64,7 +65,7 @@ pub(crate) fn apply_voice_registration_transition(
         for stream in prev_streams.difference(&next_streams) {
             unpublished.push(*stream);
         }
-        existing.identity = identity.to_owned();
+        identity.clone_into(&mut existing.identity);
         existing.updated_at_unix = now_unix;
         existing.expires_at_unix = expires_at_unix;
         existing.is_video_enabled = next_video;
@@ -229,7 +230,7 @@ mod tests {
         assert!(result.updated.is_none());
         assert!(result.joined.is_some());
         assert_eq!(result.newly_published.len(), 2);
-        assert!(channels.get("g1:c1").is_none());
+        assert!(!channels.contains_key("g1:c1"));
         assert!(channels
             .get("g1:c2")
             .and_then(|participants| participants.get(&target_user))

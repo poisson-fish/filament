@@ -95,6 +95,7 @@ pub(crate) fn attachment_response_from_record(record: &AttachmentRecord) -> Atta
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn attachment_response_from_db_fields(
     attachment_id: String,
     guild_id: String,
@@ -117,6 +118,7 @@ pub(crate) fn attachment_response_from_db_fields(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn attachment_record_from_db_fields(
     attachment_id: String,
     guild_id: String,
@@ -824,7 +826,7 @@ mod tests {
             message_id: Some(other_message.clone()),
         };
 
-        let rows = vec![record_a, record_b, other_guild, other_message_record];
+        let rows = [record_a, record_b, other_guild, other_message_record];
         let map = attachment_map_from_records(
             rows.iter(),
             &guild_id,
@@ -935,7 +937,7 @@ mod tests {
     fn attachment_usage_for_owner_sums_only_matching_owner_records() {
         let owner_id = UserId::new();
         let other_owner = UserId::new();
-        let records = vec![
+        let records = [
             AttachmentRecord {
                 attachment_id: Ulid::new().to_string(),
                 guild_id: String::from("g1"),

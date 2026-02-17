@@ -56,8 +56,9 @@ mod tests {
             GatewayIngressMessageDecode::Disconnect(reason) => {
                 assert_eq!(reason, "event_too_large");
             }
-            GatewayIngressMessageDecode::Payload(_) => panic!("expected disconnect"),
-            GatewayIngressMessageDecode::Continue => panic!("expected disconnect"),
+            GatewayIngressMessageDecode::Payload(_) | GatewayIngressMessageDecode::Continue => {
+                panic!("expected disconnect")
+            }
         }
     }
 
@@ -69,8 +70,9 @@ mod tests {
             GatewayIngressMessageDecode::Disconnect(reason) => {
                 assert_eq!(reason, "client_close");
             }
-            GatewayIngressMessageDecode::Payload(_) => panic!("expected disconnect"),
-            GatewayIngressMessageDecode::Continue => panic!("expected disconnect"),
+            GatewayIngressMessageDecode::Payload(_) | GatewayIngressMessageDecode::Continue => {
+                panic!("expected disconnect")
+            }
         }
     }
 

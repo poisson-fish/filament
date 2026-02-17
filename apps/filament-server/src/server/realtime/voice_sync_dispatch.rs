@@ -13,8 +13,8 @@ pub(crate) fn dispatch_voice_sync_event(
     outbound_tx: &mpsc::Sender<String>,
     event: GatewayEvent,
 ) -> VoiceSyncDispatchOutcome {
-    let outcome =
-        voice_sync_dispatch_outcome(try_enqueue_voice_sync_event(outbound_tx, event.payload));
+    let enqueue_result = try_enqueue_voice_sync_event(outbound_tx, event.payload);
+    let outcome = voice_sync_dispatch_outcome(&enqueue_result);
     match outcome {
         VoiceSyncDispatchOutcome::EmittedAndRepaired => {
             record_gateway_event_emitted("connection", event.event_type);

@@ -37,6 +37,7 @@ struct VoiceParticipantSyncPayload {
 }
 
 #[derive(Serialize)]
+#[allow(clippy::struct_excessive_bools)]
 struct VoiceParticipantPayload {
     user_id: String,
     identity: String,
@@ -76,6 +77,7 @@ struct VoiceParticipantUpdatePayload {
 }
 
 #[derive(Serialize)]
+#[allow(clippy::struct_field_names)]
 struct VoiceParticipantUpdatedFieldsPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     is_muted: Option<bool>,
@@ -110,6 +112,7 @@ struct VoiceStreamUnpublishPayload {
 }
 
 #[derive(Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct VoiceParticipantSnapshot {
     pub(crate) user_id: UserId,
     pub(crate) identity: String,
@@ -298,7 +301,7 @@ mod tests {
 
     use super::*;
 
-    fn parse_payload(event: GatewayEvent) -> Value {
+    fn parse_payload(event: &GatewayEvent) -> Value {
         let value: Value =
             serde_json::from_str(&event.payload).expect("gateway event payload should be valid");
         assert_eq!(value["v"], Value::from(1));
@@ -323,7 +326,7 @@ mod tests {
     #[test]
     fn presence_update_event_emits_status_and_user() {
         let user_id = UserId::new();
-        let payload = parse_payload(presence_update("guild-1", user_id, "online"));
+        let payload = parse_payload(&presence_update("guild-1", user_id, "online"));
         assert_eq!(payload["guild_id"], Value::from("guild-1"));
         assert_eq!(payload["user_id"], Value::from(user_id.to_string()));
         assert_eq!(payload["status"], Value::from("online"));
@@ -332,7 +335,7 @@ mod tests {
     #[test]
     fn voice_participant_sync_event_emits_participant_fields() {
         let user_id = UserId::new();
-        let payload = parse_payload(voice_participant_sync(
+        let payload = parse_payload(&voice_participant_sync(
             "guild-1",
             "channel-1",
             vec![snapshot(user_id)],
@@ -351,7 +354,7 @@ mod tests {
     #[test]
     fn voice_stream_publish_event_emits_stream_kind() {
         let user_id = UserId::new();
-        let payload = parse_payload(voice_stream_publish(
+        let payload = parse_payload(&voice_stream_publish(
             "guild-1",
             "channel-1",
             user_id,

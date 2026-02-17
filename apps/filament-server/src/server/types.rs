@@ -342,6 +342,7 @@ pub(crate) struct GuildRolePath {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(clippy::struct_field_names)]
 pub(crate) struct GuildRoleMemberPath {
     pub(crate) guild_id: String,
     pub(crate) role_id: String,

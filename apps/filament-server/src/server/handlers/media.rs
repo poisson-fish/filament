@@ -449,14 +449,10 @@ pub(crate) async fn issue_voice_token(
         .ok_or(AuthFailure::Internal)?;
     let publish_streams = effective_sources
         .iter()
-        .filter_map(|source| match source {
-            MediaPublishSource::Microphone => {
-                Some(crate::server::core::VoiceStreamKind::Microphone)
-            }
-            MediaPublishSource::Camera => Some(crate::server::core::VoiceStreamKind::Camera),
-            MediaPublishSource::ScreenShare => {
-                Some(crate::server::core::VoiceStreamKind::ScreenShare)
-            }
+        .map(|source| match source {
+            MediaPublishSource::Microphone => crate::server::core::VoiceStreamKind::Microphone,
+            MediaPublishSource::Camera => crate::server::core::VoiceStreamKind::Camera,
+            MediaPublishSource::ScreenShare => crate::server::core::VoiceStreamKind::ScreenShare,
         })
         .collect::<Vec<_>>();
     register_voice_participant_from_token(

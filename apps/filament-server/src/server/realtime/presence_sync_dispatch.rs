@@ -11,11 +11,11 @@ pub(crate) fn dispatch_presence_sync_event(
     outbound_tx: &mpsc::Sender<String>,
     event: GatewayEvent,
 ) -> PresenceSyncDispatchOutcome {
-    let outcome =
-        presence_sync_dispatch_outcome(try_enqueue_presence_sync_event(outbound_tx, event.payload));
+    let enqueue_result = try_enqueue_presence_sync_event(outbound_tx, event.payload);
+    let outcome = presence_sync_dispatch_outcome(&enqueue_result);
     match outcome {
         PresenceSyncDispatchOutcome::Emitted => {
-            record_gateway_event_emitted("connection", event.event_type)
+            record_gateway_event_emitted("connection", event.event_type);
         }
         PresenceSyncDispatchOutcome::DroppedClosed => {
             record_gateway_event_dropped("connection", event.event_type, "closed");

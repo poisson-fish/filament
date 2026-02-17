@@ -72,7 +72,7 @@ mod tests {
 
     use super::*;
 
-    fn parse_payload(event: GatewayEvent) -> Value {
+    fn parse_payload(event: &GatewayEvent) -> Value {
         let value: Value =
             serde_json::from_str(&event.payload).expect("gateway event payload should be valid");
         assert_eq!(value["v"], Value::from(1));
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn profile_update_event_emits_profile_fields() {
-        let payload = parse_payload(profile_update(
+        let payload = parse_payload(&profile_update(
             "user-1",
             Some("alice"),
             Some("about"),
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn profile_avatar_update_event_emits_avatar_version() {
-        let payload = parse_payload(profile_avatar_update("user-1", 3, 55));
+        let payload = parse_payload(&profile_avatar_update("user-1", 3, 55));
         assert_eq!(payload["avatar_version"], Value::from(3));
         assert_eq!(payload["updated_at_unix"], Value::from(55));
     }

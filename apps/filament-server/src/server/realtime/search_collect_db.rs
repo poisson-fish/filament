@@ -12,8 +12,8 @@ fn indexed_messages_from_rows(rows: Vec<IndexedMessageRow>) -> Vec<IndexedMessag
                     guild_id,
                     channel_id,
                     author_id,
-                    content,
                     created_at_unix,
+                    content,
                 }
             },
         )

@@ -32,6 +32,7 @@ impl std::fmt::Display for AuthFailure {
 }
 
 impl IntoResponse for AuthFailure {
+    #[allow(clippy::too_many_lines)]
     fn into_response(self) -> axum::response::Response {
         match self {
             Self::Unauthorized => record_auth_failure("unauthorized"),

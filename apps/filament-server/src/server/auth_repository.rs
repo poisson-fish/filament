@@ -119,14 +119,8 @@ async fn maybe_sweep_auth_state(repo_state: &AppState, now_unix: i64) -> Result<
         return Ok(());
     }
 
-    if repo_state.db_pool.is_some() {
-        let repo = PostgresAuthRepository::new(
-            repo_state,
-            repo_state
-                .db_pool
-                .as_ref()
-                .expect("db pool checked as present"),
-        );
+    if let Some(pool) = &repo_state.db_pool {
+        let repo = PostgresAuthRepository::new(repo_state, pool);
         repo.prune_expired_auth_state(now_unix).await?;
         return Ok(());
     }
@@ -525,7 +519,7 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
             .session_store
             .validate_refresh_token(&session_id, presented_hash, now_unix)
             .await
-            .map_err(|_| RefreshCheckError::Unauthorized {
+            .map_err(|()| RefreshCheckError::Unauthorized {
                 session_id: session_id.clone(),
             })?;
         Ok(RefreshCheck {
@@ -555,7 +549,7 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
                 next_expires_at_unix,
             )
             .await
-            .map_err(|_| AuthFailure::Unauthorized)?;
+            .map_err(|()| AuthFailure::Unauthorized)?;
         Ok(())
     }
 
@@ -568,7 +562,7 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
             .session_store
             .revoke_with_token(session_id, token_hash)
             .await
-            .map_err(|_| AuthFailure::Unauthorized)
+            .map_err(|()| AuthFailure::Unauthorized)
     }
 }
 

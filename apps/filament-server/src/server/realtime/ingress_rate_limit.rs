@@ -47,8 +47,14 @@ mod tests {
     fn rejects_when_at_limit_inside_window() {
         let mut ingress = VecDeque::new();
         let now = Instant::now();
-        ingress.push_back(now - Duration::from_millis(50));
-        ingress.push_back(now - Duration::from_millis(10));
+        ingress.push_back(
+            now.checked_sub(Duration::from_millis(50))
+                .expect("instant subtraction should succeed"),
+        );
+        ingress.push_back(
+            now.checked_sub(Duration::from_millis(10))
+                .expect("instant subtraction should succeed"),
+        );
 
         assert!(!allow_gateway_ingress(
             &mut ingress,
@@ -61,7 +67,10 @@ mod tests {
     fn evicts_expired_entries_before_checking_limit() {
         let mut ingress = VecDeque::new();
         let now = Instant::now();
-        ingress.push_back(now - Duration::from_secs(2));
+        ingress.push_back(
+            now.checked_sub(Duration::from_secs(2))
+                .expect("instant subtraction should succeed"),
+        );
 
         assert!(allow_gateway_ingress(
             &mut ingress,
