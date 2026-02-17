@@ -427,6 +427,33 @@ describe("app shell gateway controller", () => {
     });
     expect(voiceParticipantsByChannel()[`${GUILD_ID}|${CHANNEL_ID}`]).toEqual([]);
 
+    handlers.onVoiceParticipantSync({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      participants: [
+        {
+          userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+          identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session.current",
+          joinedAtUnix: 6,
+          updatedAtUnix: 6,
+          isMuted: false,
+          isDeafened: false,
+          isSpeaking: false,
+          isVideoEnabled: false,
+          isScreenShareEnabled: false,
+        },
+      ],
+      syncedAtUnix: 6,
+    });
+    handlers.onVoiceParticipantLeave({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session.stale",
+      leftAtUnix: 7,
+    });
+    expect(voiceParticipantsByChannel()[`${GUILD_ID}|${CHANNEL_ID}`]).toEqual([]);
+
     handlers.onMessageReaction({
       guildId: GUILD_ID,
       channelId: CHANNEL_ID,

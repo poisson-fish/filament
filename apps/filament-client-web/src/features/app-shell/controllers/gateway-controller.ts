@@ -304,8 +304,8 @@ function applyVoiceParticipantLeaveState(
   }
   const next = participants.filter(
     (entry) =>
-      entry.identity !== payload.identity &&
-      !(entry.userId === payload.userId && entry.identity === payload.identity),
+      entry.userId !== payload.userId &&
+      entry.identity !== payload.identity,
   );
   if (next.length === participants.length) {
     return existing;
