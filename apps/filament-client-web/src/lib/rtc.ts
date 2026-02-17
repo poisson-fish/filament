@@ -110,6 +110,12 @@ interface TrackPublicationLike {
   source?: unknown;
 }
 
+interface AudioTrackLike {
+  kind?: unknown;
+  attach?(element?: HTMLMediaElement): unknown;
+  detach?(element?: HTMLMediaElement): unknown;
+}
+
 interface RemoteParticipantLike {
   identity?: unknown;
   trackPublications: Map<string, TrackPublicationLike>;
@@ -237,6 +243,25 @@ function readTrackSource(input: unknown): RtcVideoSource | null {
   }
   const source = (input as { source?: unknown }).source;
   return sourceFromUnknown(source);
+}
+
+function readTrackKind(input: unknown): "audio" | "video" | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const kind = (input as { kind?: unknown }).kind;
+  if (kind === "audio" || kind === "video") {
+    return kind;
+  }
+  return null;
+}
+
+function readTrackSourceRaw(input: unknown): string | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const source = (input as { source?: unknown }).source;
+  return typeof source === "string" ? source : null;
 }
 
 function toRtcConnectionStatus(state: ConnectionState): RtcConnectionStatus {
@@ -376,6 +401,7 @@ class RtcClientImpl implements RtcClient {
   private readonly participants = new Map<string, TrackedParticipant>();
   private readonly videoTracksByKey = new Map<string, TrackedVideoTrack>();
   private readonly videoTrackKeyBySid = new Map<string, string>();
+  private readonly remoteAudioElementsByTrackSid = new Map<string, HTMLMediaElement>();
   private readonly activeSpeakerIdentities = new Set<string>();
   private readonly pendingSpeakerOnTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingSpeakerOffTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -752,6 +778,7 @@ class RtcClientImpl implements RtcClient {
       if (room !== this.activeRoom || !this.isRemoteParticipantLike(participant)) {
         return;
       }
+      this.removeRemoteAudioTracksForParticipant(participant);
       const identity = readIdentity(participant);
       if (!identity) {
         return;
@@ -767,15 +794,17 @@ class RtcClientImpl implements RtcClient {
         return;
       }
       this.addTrackSubscription(participant, publication);
+      this.attachRemoteAudioTrack(publication, track);
       this.upsertRemoteVideoTrack(participant, publication, track);
       this.emitSnapshot();
     });
 
-    register(RoomEvent.TrackUnsubscribed, (_track, publication, participant) => {
+    register(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
       if (room !== this.activeRoom || !this.isRemoteParticipantLike(participant)) {
         return;
       }
       this.removeTrackSubscription(participant, publication);
+      this.detachRemoteAudioTrack(publication, track);
       this.removeVideoTrackByPublication(publication);
       this.emitSnapshot();
     });
@@ -784,6 +813,7 @@ class RtcClientImpl implements RtcClient {
       if (room !== this.activeRoom || !this.isRemoteParticipantLike(participant)) {
         return;
       }
+      this.detachRemoteAudioTrack(publication);
       this.removeVideoTrackByPublication(publication);
       this.emitSnapshot();
     });
@@ -927,6 +957,73 @@ class RtcClientImpl implements RtcClient {
       isLocal,
     });
     this.videoTrackKeyBySid.set(trackSid, key);
+  }
+
+  private attachRemoteAudioTrack(publication: unknown, track: unknown): void {
+    const trackSid = readTrackSid(publication) ?? readTrackSid(track);
+    if (!trackSid || this.remoteAudioElementsByTrackSid.has(trackSid)) {
+      return;
+    }
+    const kind = readTrackKind(track) ?? readTrackKind(publication);
+    const source = readTrackSourceRaw(publication) ?? readTrackSourceRaw(track);
+    if (kind !== "audio" && source !== "microphone") {
+      return;
+    }
+    if (typeof document === "undefined" || !document.body || !track || typeof track !== "object") {
+      return;
+    }
+    const audioTrack = track as AudioTrackLike;
+    if (typeof audioTrack.attach !== "function") {
+      return;
+    }
+
+    const audioElement = document.createElement("audio");
+    audioElement.autoplay = true;
+    audioElement.playsInline = true;
+    audioElement.dataset.trackSid = trackSid;
+    audioElement.style.display = "none";
+
+    let attachedElement: HTMLMediaElement;
+    try {
+      const attached = audioTrack.attach(audioElement);
+      attachedElement = attached instanceof HTMLMediaElement ? attached : audioElement;
+    } catch {
+      return;
+    }
+
+    attachedElement.muted = false;
+    if (!attachedElement.isConnected && document.body) {
+      document.body.appendChild(attachedElement);
+    }
+    this.remoteAudioElementsByTrackSid.set(trackSid, attachedElement);
+  }
+
+  private detachRemoteAudioTrack(publication: unknown, track?: unknown): void {
+    const trackSid = readTrackSid(publication) ?? readTrackSid(track);
+    if (!trackSid) {
+      return;
+    }
+    const attachedElement = this.remoteAudioElementsByTrackSid.get(trackSid);
+    if (!attachedElement) {
+      return;
+    }
+    if (track && typeof track === "object") {
+      const audioTrack = track as AudioTrackLike;
+      if (typeof audioTrack.detach === "function") {
+        try {
+          audioTrack.detach(attachedElement);
+        } catch {
+        }
+      }
+    }
+    attachedElement.remove();
+    this.remoteAudioElementsByTrackSid.delete(trackSid);
+  }
+
+  private removeRemoteAudioTracksForParticipant(participant: RemoteParticipantLike): void {
+    for (const publication of participant.trackPublications.values()) {
+      this.detachRemoteAudioTrack(publication);
+    }
   }
 
   private videoTrackIdentityKey(
@@ -1156,6 +1253,10 @@ class RtcClientImpl implements RtcClient {
     this.participants.clear();
     this.videoTracksByKey.clear();
     this.videoTrackKeyBySid.clear();
+    for (const attachedElement of this.remoteAudioElementsByTrackSid.values()) {
+      attachedElement.remove();
+    }
+    this.remoteAudioElementsByTrackSid.clear();
     this.localParticipantIdentity = null;
     this.isMicrophoneEnabled = false;
     this.isCameraEnabled = false;

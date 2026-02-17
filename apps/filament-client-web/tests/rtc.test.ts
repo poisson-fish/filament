@@ -24,6 +24,12 @@ interface MockTrackPublication {
   source?: "camera" | "screen_share" | "microphone";
 }
 
+interface MockAudioTrack {
+  kind: "audio";
+  attach: ReturnType<typeof vi.fn>;
+  detach: ReturnType<typeof vi.fn>;
+}
+
 function buildTrackPublication(
   trackSid: string,
   source?: "camera" | "screen_share" | "microphone",
@@ -43,6 +49,14 @@ function buildRemoteParticipant(
   return {
     identity,
     trackPublications,
+  };
+}
+
+function buildAudioTrack(): MockAudioTrack {
+  return {
+    kind: "audio",
+    attach: vi.fn((element?: HTMLMediaElement) => element ?? document.createElement("audio")),
+    detach: vi.fn(),
   };
 }
 
@@ -505,6 +519,31 @@ describe("rtc client lifecycle", () => {
       "local:local-user:screen_share",
       "remote:alpha:screen_share",
     ]);
+  });
+
+  it("attaches remote microphone tracks for playback and detaches on unsubscribe", async () => {
+    document.body.innerHTML = "";
+
+    const room = new MockRoom();
+    const client = createRtcClient({
+      roomFactory: () => room,
+    });
+    const alpha = buildRemoteParticipant("alpha");
+
+    await client.join({ livekitUrl: validUrl, token: validToken });
+    room.emit(RoomEvent.ParticipantConnected, alpha);
+
+    const publication = buildTrackPublication("AUD1", "microphone");
+    const audioTrack = buildAudioTrack();
+    room.emit(RoomEvent.TrackSubscribed, audioTrack, publication, alpha);
+
+    expect(audioTrack.attach).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('audio[data-track-sid="AUD1"]')).not.toBeNull();
+
+    room.emit(RoomEvent.TrackUnsubscribed, audioTrack, publication, alpha);
+
+    expect(audioTrack.detach).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('audio[data-track-sid="AUD1"]')).toBeNull();
   });
 
   it("removes all listeners on destroy", async () => {
