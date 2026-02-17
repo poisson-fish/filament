@@ -305,15 +305,18 @@ pub(crate) async fn login(
     let (access_token, refresh_token, refresh_hash) =
         issue_tokens(&state, user_id, &username_text, &session_id)
             .map_err(|_| AuthFailure::Internal)?;
-    state.sessions.write().await.insert(
-        session_id,
-        SessionRecord {
-            user_id,
-            refresh_token_hash: refresh_hash,
-            expires_at_unix: now + REFRESH_TOKEN_TTL_SECS,
-            revoked: false,
-        },
-    );
+    state
+        .session_store
+        .insert(
+            session_id,
+            SessionRecord {
+                user_id,
+                refresh_token_hash: refresh_hash,
+                expires_at_unix: now + REFRESH_TOKEN_TTL_SECS,
+                revoked: false,
+            },
+        )
+        .await;
     tracing::info!(event = "auth.login", outcome = "success", user_id = %user_id);
 
     Ok(Json(AuthResponse {
@@ -436,15 +439,10 @@ pub(crate) async fn refresh(
 
     let token_hash = hash_refresh_token(&payload.refresh_token);
     if let Some(session_id) = state
-        .used_refresh_tokens
-        .read()
+        .session_store
+        .revoke_if_replayed_token(token_hash)
         .await
-        .get(&token_hash)
-        .cloned()
     {
-        if let Some(session) = state.sessions.write().await.get_mut(&session_id) {
-            session.revoked = true;
-        }
         tracing::warn!(event = "auth.refresh", outcome = "replay_detected", session_id = %session_id);
         return Err(AuthFailure::Unauthorized);
     }
@@ -456,35 +454,29 @@ pub(crate) async fn refresh(
         .ok_or(AuthFailure::Unauthorized)?
         .to_owned();
 
-    let mut sessions = state.sessions.write().await;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or(AuthFailure::Unauthorized)?;
-    if session.revoked
-        || session.expires_at_unix < now_unix()
-        || session.refresh_token_hash != token_hash
-    {
-        tracing::warn!(event = "auth.refresh", outcome = "rejected", session_id = %session_id);
-        return Err(AuthFailure::Unauthorized);
-    }
-
-    let user_id = session.user_id;
+    let now = now_unix();
+    let user_id = state
+        .session_store
+        .validate_refresh_token(&session_id, token_hash, now)
+        .await
+        .map_err(|_| AuthFailure::Unauthorized)?;
     let username = find_username_by_user_id(&state, user_id)
         .await
         .ok_or(AuthFailure::Unauthorized)?;
 
-    let old_hash = session.refresh_token_hash;
     let (access_token, refresh_token, refresh_hash) =
         issue_tokens(&state, user_id, &username, &session_id).map_err(|_| AuthFailure::Internal)?;
-    session.refresh_token_hash = refresh_hash;
-    session.expires_at_unix = now_unix() + REFRESH_TOKEN_TTL_SECS;
-    drop(sessions);
-
     state
-        .used_refresh_tokens
-        .write()
+        .session_store
+        .rotate_refresh_hash(
+            &session_id,
+            token_hash,
+            refresh_hash,
+            now,
+            now + REFRESH_TOKEN_TTL_SECS,
+        )
         .await
-        .insert(old_hash, session_id.clone());
+        .map_err(|_| AuthFailure::Unauthorized)?;
 
     tracing::info!(event = "auth.refresh", outcome = "success", session_id = %session_id, user_id = %user_id);
 
@@ -547,16 +539,15 @@ pub(crate) async fn logout(
         .ok_or(AuthFailure::Unauthorized)?
         .to_owned();
     let token_hash = hash_refresh_token(&payload.refresh_token);
-    let mut sessions = state.sessions.write().await;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or(AuthFailure::Unauthorized)?;
-    if session.refresh_token_hash != token_hash {
-        tracing::warn!(event = "auth.logout", outcome = "hash_mismatch", session_id = %session_id);
-        return Err(AuthFailure::Unauthorized);
-    }
-    session.revoked = true;
-    tracing::info!(event = "auth.logout", outcome = "success", session_id = %session_id, user_id = %session.user_id);
+    let user_id = state
+        .session_store
+        .revoke_with_token(&session_id, token_hash)
+        .await
+        .map_err(|_| {
+            tracing::warn!(event = "auth.logout", outcome = "hash_mismatch", session_id = %session_id);
+            AuthFailure::Unauthorized
+        })?;
+    tracing::info!(event = "auth.logout", outcome = "success", session_id = %session_id, user_id = %user_id);
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -275,8 +275,7 @@ pub struct AppState {
     pub(crate) db_init: Arc<OnceCell<()>>,
     pub(crate) users: Arc<RwLock<HashMap<String, UserRecord>>>,
     pub(crate) user_ids: Arc<RwLock<HashMap<String, String>>>,
-    pub(crate) sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
-    pub(crate) used_refresh_tokens: Arc<RwLock<HashMap<[u8; 32], String>>>,
+    pub(crate) session_store: SessionStore,
     pub(crate) token_key: Arc<SymmetricKey<V4>>,
     pub(crate) dummy_password_hash: Arc<String>,
     pub(crate) auth_route_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
@@ -339,8 +338,7 @@ impl AppState {
             db_init: Arc::new(OnceCell::new()),
             users: Arc::new(RwLock::new(HashMap::new())),
             user_ids: Arc::new(RwLock::new(HashMap::new())),
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-            used_refresh_tokens: Arc::new(RwLock::new(HashMap::new())),
+            session_store: SessionStore::new(),
             token_key: Arc::new(token_key),
             dummy_password_hash: Arc::new(dummy_password_hash),
             auth_route_hits: Arc::new(RwLock::new(HashMap::new())),
@@ -397,6 +395,98 @@ impl AppState {
             }),
             livekit: livekit.map(Arc::new),
         })
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct SessionStore {
+    sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
+    used_refresh_tokens: Arc<RwLock<HashMap<[u8; 32], String>>>,
+}
+
+impl SessionStore {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) async fn insert(&self, session_id: String, record: SessionRecord) {
+        self.sessions.write().await.insert(session_id, record);
+    }
+
+    pub(crate) async fn revoke_if_replayed_token(&self, token_hash: [u8; 32]) -> Option<String> {
+        let replayed_session_id = self
+            .used_refresh_tokens
+            .read()
+            .await
+            .get(&token_hash)
+            .cloned();
+        if let Some(session_id) = replayed_session_id.clone() {
+            if let Some(session) = self.sessions.write().await.get_mut(&session_id) {
+                session.revoked = true;
+            }
+        }
+        replayed_session_id
+    }
+
+    pub(crate) async fn rotate_refresh_hash(
+        &self,
+        session_id: &str,
+        token_hash: [u8; 32],
+        next_hash: [u8; 32],
+        now_unix: i64,
+        next_expires_at_unix: i64,
+    ) -> Result<UserId, ()> {
+        let previous_hash = {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions.get_mut(session_id).ok_or(())?;
+            if session.revoked
+                || session.expires_at_unix < now_unix
+                || session.refresh_token_hash != token_hash
+            {
+                return Err(());
+            }
+            let previous_hash = session.refresh_token_hash;
+            session.refresh_token_hash = next_hash;
+            session.expires_at_unix = next_expires_at_unix;
+            (session.user_id, previous_hash)
+        };
+
+        self.used_refresh_tokens
+            .write()
+            .await
+            .insert(previous_hash.1, session_id.to_owned());
+        Ok(previous_hash.0)
+    }
+
+    pub(crate) async fn validate_refresh_token(
+        &self,
+        session_id: &str,
+        token_hash: [u8; 32],
+        now_unix: i64,
+    ) -> Result<UserId, ()> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(session_id).ok_or(())?;
+        if session.revoked
+            || session.expires_at_unix < now_unix
+            || session.refresh_token_hash != token_hash
+        {
+            return Err(());
+        }
+        Ok(session.user_id)
+    }
+
+    pub(crate) async fn revoke_with_token(
+        &self,
+        session_id: &str,
+        token_hash: [u8; 32],
+    ) -> Result<UserId, ()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(session_id).ok_or(())?;
+        if session.refresh_token_hash != token_hash {
+            return Err(());
+        }
+        session.revoked = true;
+        Ok(session.user_id)
     }
 }
 
@@ -551,4 +641,96 @@ pub(crate) struct VoiceParticipant {
     pub(crate) is_video_enabled: bool,
     pub(crate) is_screen_share_enabled: bool,
     pub(crate) published_streams: HashSet<VoiceStreamKind>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_store_replay_detection_revokes_session() {
+        let store = SessionStore::new();
+        let user_id = UserId::new();
+        let initial_hash = [1_u8; 32];
+        let replay_hash = [9_u8; 32];
+        let session_id = String::from("session-1");
+        store
+            .insert(
+                session_id.clone(),
+                SessionRecord {
+                    user_id,
+                    refresh_token_hash: initial_hash,
+                    expires_at_unix: i64::MAX,
+                    revoked: false,
+                },
+            )
+            .await;
+        let _ = store
+            .rotate_refresh_hash(&session_id, initial_hash, replay_hash, 0, i64::MAX)
+            .await
+            .expect("rotation should succeed");
+
+        let replay = store.revoke_if_replayed_token(initial_hash).await;
+        assert_eq!(replay.as_deref(), Some(session_id.as_str()));
+        let second_rotate = store
+            .rotate_refresh_hash(&session_id, replay_hash, [2_u8; 32], 0, i64::MAX)
+            .await;
+        assert!(second_rotate.is_err());
+    }
+
+    #[tokio::test]
+    async fn session_store_revoke_with_token_rejects_hash_mismatch() {
+        let store = SessionStore::new();
+        let user_id = UserId::new();
+        let session_id = String::from("session-2");
+        store
+            .insert(
+                session_id.clone(),
+                SessionRecord {
+                    user_id,
+                    refresh_token_hash: [3_u8; 32],
+                    expires_at_unix: i64::MAX,
+                    revoked: false,
+                },
+            )
+            .await;
+
+        let rejected = store.revoke_with_token(&session_id, [4_u8; 32]).await;
+        assert!(rejected.is_err());
+    }
+
+    #[tokio::test]
+    async fn session_store_validate_and_rotate_refresh_hash() {
+        let store = SessionStore::new();
+        let user_id = UserId::new();
+        let initial_hash = [5_u8; 32];
+        let rotated_hash = [6_u8; 32];
+        let session_id = String::from("session-3");
+        store
+            .insert(
+                session_id.clone(),
+                SessionRecord {
+                    user_id,
+                    refresh_token_hash: initial_hash,
+                    expires_at_unix: 100,
+                    revoked: false,
+                },
+            )
+            .await;
+
+        let validated = store
+            .validate_refresh_token(&session_id, initial_hash, 50)
+            .await
+            .expect("token should validate");
+        assert_eq!(validated, user_id);
+
+        let rotated = store
+            .rotate_refresh_hash(&session_id, initial_hash, rotated_hash, 50, 200)
+            .await
+            .expect("rotation should succeed");
+        assert_eq!(rotated, user_id);
+
+        let replay = store.revoke_if_replayed_token(initial_hash).await;
+        assert_eq!(replay.as_deref(), Some(session_id.as_str()));
+    }
 }
