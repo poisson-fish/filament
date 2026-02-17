@@ -27,6 +27,8 @@ mod connection_disconnect_followups;
 mod voice_subscribe_sync;
 mod presence_subscribe_events;
 mod search_bootstrap;
+mod emit_metrics;
+mod voice_cleanup_dispatch;
 use std::{
     collections::{HashSet, VecDeque},
     net::SocketAddr,
@@ -108,9 +110,6 @@ use search_collect_guild::collect_indexed_messages_for_guild_in_memory;
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 use search_query_exec::run_search_query_against_index;
 use fanout_user_targets::connection_ids_for_user;
-use voice_cleanup_registry::{
-    disconnected_user_voice_removal_broadcasts, expired_voice_removal_broadcasts,
-};
 use search_schema::build_search_schema as build_search_schema_impl;
 use search_apply::apply_search_operation as apply_search_operation_impl;
 use message_prepare::prepare_message_body;
@@ -148,6 +147,11 @@ use connection_disconnect_followups::plan_disconnect_followups;
 use voice_subscribe_sync::build_voice_subscribe_sync_event;
 use presence_subscribe_events::build_presence_subscribe_events;
 use search_bootstrap::build_search_rebuild_operation;
+use emit_metrics::emit_gateway_delivery_metrics;
+use voice_cleanup_dispatch::{
+    broadcast_disconnected_user_voice_removals,
+    broadcast_expired_voice_removals,
+};
 
 use super::{
     auth::{
@@ -721,17 +725,7 @@ pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: 
     drop(subscriptions);
 
     close_slow_connections(state, slow_connections).await;
-    if delivered > 0 {
-        tracing::debug!(
-            event = "gateway.event.emit",
-            scope = "channel",
-            event_type = event.event_type,
-            delivered
-        );
-        for _ in 0..delivered {
-            record_gateway_event_emitted("channel", event.event_type);
-        }
-    }
+    emit_gateway_delivery_metrics("channel", event.event_type, delivered);
 }
 
 pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, event: &GatewayEvent) {
@@ -747,17 +741,7 @@ pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, even
     drop(subscriptions);
 
     close_slow_connections(state, slow_connections).await;
-    if delivered > 0 {
-        tracing::debug!(
-            event = "gateway.event.emit",
-            scope = "guild",
-            event_type = event.event_type,
-            delivered
-        );
-        for _ in 0..delivered {
-            record_gateway_event_emitted("guild", event.event_type);
-        }
-    }
+    emit_gateway_delivery_metrics("guild", event.event_type, delivered);
 }
 
 #[allow(dead_code)]
@@ -782,28 +766,11 @@ pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, even
     drop(senders);
 
     close_slow_connections(state, slow_connections).await;
-    if delivered > 0 {
-        tracing::debug!(
-            event = "gateway.event.emit",
-            scope = "user",
-            event_type = event.event_type,
-            delivered
-        );
-        for _ in 0..delivered {
-            record_gateway_event_emitted("user", event.event_type);
-        }
-    }
+    emit_gateway_delivery_metrics("user", event.event_type, delivered);
 }
 
 async fn prune_expired_voice_participants(state: &AppState, now_unix: i64) {
-    let planned = {
-        let mut voice = state.voice_participants.write().await;
-        expired_voice_removal_broadcasts(&mut voice, now_unix)
-    };
-
-    for (channel_subscription_key, event) in planned {
-        broadcast_channel_event(state, &channel_subscription_key, &event).await;
-    }
+    broadcast_expired_voice_removals(state, now_unix).await;
 }
 
 pub(crate) async fn register_voice_participant_from_token(
@@ -873,14 +840,7 @@ async fn remove_disconnected_user_voice_participants(
     user_id: UserId,
     disconnected_at_unix: i64,
 ) {
-    let planned = {
-        let mut voice = state.voice_participants.write().await;
-        disconnected_user_voice_removal_broadcasts(&mut voice, user_id, disconnected_at_unix)
-    };
-
-    for (channel_subscription_key, event) in planned {
-        broadcast_channel_event(state, &channel_subscription_key, &event).await;
-    }
+    broadcast_disconnected_user_voice_removals(state, user_id, disconnected_at_unix).await;
 }
 
 pub(crate) async fn handle_presence_subscribe(
