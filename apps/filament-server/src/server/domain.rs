@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet, Role, UserId};
 use sqlx::{PgPool, Row};
@@ -22,7 +22,9 @@ pub(crate) use moderation::{
 pub(crate) use permissions_eval::{
     apply_legacy_role_assignment, ensure_required_roles,
     finalize_channel_permissions, i64_to_masked_permissions,
-    merge_channel_overwrite, role_ids_from_map,
+    merge_channel_overwrite, normalize_assigned_role_ids,
+    role_ids_from_map, role_records_from_db_rows,
+    summarize_channel_overrides,
     summarize_guild_permissions, sync_legacy_channel_overrides,
     sync_legacy_role_assignments,
 };
@@ -35,7 +37,7 @@ pub(crate) use reactions::{
 use super::{
     auth::now_unix,
     core::{
-        AppState, AttachmentRecord, ChannelPermissionOverrideRecord, WorkspaceRoleRecord,
+        AppState, AttachmentRecord, ChannelPermissionOverrideRecord,
     },
     db::{ensure_db_schema, role_from_i16},
     errors::AuthFailure,
@@ -208,46 +210,40 @@ async fn resolve_channel_permissions_db(
     .await
     .map_err(|_| AuthFailure::Internal)?;
 
-    let mut roles: HashMap<String, WorkspaceRoleRecord> = HashMap::new();
-    let mut unknown_bits_seen = 0_u64;
-    for row in role_rows {
-        let role_id: String = row.try_get("role_id").map_err(|_| AuthFailure::Internal)?;
-        let permissions_allow_mask: i64 = row
-            .try_get("permissions_allow_mask")
-            .map_err(|_| AuthFailure::Internal)?;
-        let (permissions_allow, unknown_bits) = i64_to_masked_permissions(permissions_allow_mask)?;
-        if unknown_bits > 0 {
-            unknown_bits_seen |= unknown_bits;
-            let masked_i64 =
-                i64::try_from(permissions_allow.bits()).map_err(|_| AuthFailure::Internal)?;
-            sqlx::query(
-                "UPDATE guild_roles
-                 SET permissions_allow_mask = $3
-                 WHERE guild_id = $1 AND role_id = $2",
-            )
-            .bind(guild_id)
-            .bind(&role_id)
-            .bind(masked_i64)
-            .execute(pool)
-            .await
-            .map_err(|_| AuthFailure::Internal)?;
-        }
-        roles.insert(
-            role_id.clone(),
-            WorkspaceRoleRecord {
-                role_id,
+    let role_inputs = role_rows
+        .into_iter()
+        .map(|row| {
+            Ok(permissions_eval::GuildRoleDbRow {
+                role_id: row.try_get("role_id").map_err(|_| AuthFailure::Internal)?,
                 name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
                 position: row.try_get("position").map_err(|_| AuthFailure::Internal)?,
+                permissions_allow_mask: row
+                    .try_get("permissions_allow_mask")
+                    .map_err(|_| AuthFailure::Internal)?,
                 is_system: row
                     .try_get("is_system")
                     .map_err(|_| AuthFailure::Internal)?,
                 system_key: row
                     .try_get("system_key")
                     .map_err(|_| AuthFailure::Internal)?,
-                permissions_allow,
-                created_at_unix: 0,
-            },
-        );
+            })
+        })
+        .collect::<Result<Vec<_>, AuthFailure>>()?;
+
+    let (roles, unknown_bits_seen, role_mask_updates) =
+        role_records_from_db_rows(role_inputs)?;
+    for update in role_mask_updates {
+        sqlx::query(
+            "UPDATE guild_roles
+             SET permissions_allow_mask = $3
+             WHERE guild_id = $1 AND role_id = $2",
+        )
+        .bind(guild_id)
+        .bind(update.role_id)
+        .bind(update.masked_permissions_allow)
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
     }
     maybe_audit_unknown_permission_bits(
         state,
@@ -274,20 +270,15 @@ async fn resolve_channel_permissions_db(
     .await
     .map_err(|_| AuthFailure::Internal)?;
 
-    let mut assigned_role_ids = HashSet::new();
-    for row in assignment_rows {
-        let role_id: String = row.try_get("role_id").map_err(|_| AuthFailure::Internal)?;
-        if roles.contains_key(&role_id) {
-            assigned_role_ids.insert(role_id);
-        }
-    }
-
-    apply_legacy_role_assignment(
-        &mut assigned_role_ids,
+    let assignment_role_ids = assignment_rows
+        .into_iter()
+        .map(|row| row.try_get("role_id").map_err(|_| AuthFailure::Internal))
+        .collect::<Result<Vec<String>, AuthFailure>>()?;
+    let assigned_role_ids = normalize_assigned_role_ids(
+        assignment_role_ids,
+        &roles,
         legacy_role,
-        &role_ids.workspace_owner,
-        &role_ids.moderator,
-        &role_ids.member,
+        &role_ids,
     );
 
     let everyone_permissions = roles
@@ -327,10 +318,6 @@ async fn resolve_channel_permissions_db(
         return Err(AuthFailure::NotFound);
     }
 
-    let mut everyone_overwrite = ChannelPermissionOverwrite::default();
-    let mut role_overwrite = ChannelPermissionOverwrite::default();
-    let mut member_overwrite = ChannelPermissionOverwrite::default();
-
     let override_rows = sqlx::query(
         "SELECT target_kind, target_id, allow_mask, deny_mask
          FROM channel_permission_overrides
@@ -342,44 +329,38 @@ async fn resolve_channel_permissions_db(
     .await
     .map_err(|_| AuthFailure::Internal)?;
 
-    let mut used_new_overrides = !override_rows.is_empty();
-    let mut unknown_override_bits = 0_u64;
-    for row in override_rows {
-        let target_kind: i16 = row
-            .try_get("target_kind")
-            .map_err(|_| AuthFailure::Internal)?;
-        let target_id: String = row
-            .try_get("target_id")
-            .map_err(|_| AuthFailure::Internal)?;
-        let allow_mask: i64 = row
-            .try_get("allow_mask")
-            .map_err(|_| AuthFailure::Internal)?;
-        let deny_mask: i64 = row
-            .try_get("deny_mask")
-            .map_err(|_| AuthFailure::Internal)?;
-        let (allow, unknown_allow) = i64_to_masked_permissions(allow_mask)?;
-        let (deny, unknown_deny) = i64_to_masked_permissions(deny_mask)?;
-        unknown_override_bits |= unknown_allow | unknown_deny;
-        let overwrite = ChannelPermissionOverwrite { allow, deny };
-
-        match target_kind {
-            OVERRIDE_TARGET_ROLE => {
-                if target_id == role_ids.everyone {
-                    everyone_overwrite = overwrite;
-                } else if assigned_role_ids.contains(&target_id) {
-                    role_overwrite = merge_channel_overwrite(role_overwrite, overwrite);
-                }
-            }
-            OVERRIDE_TARGET_MEMBER => {
-                if target_id == user_id.to_string() {
-                    member_overwrite = overwrite;
-                }
-            }
-            _ => {
-                used_new_overrides = false;
-            }
-        }
-    }
+    let override_inputs = override_rows
+        .into_iter()
+        .map(|row| {
+            Ok(permissions_eval::ChannelOverrideDbRow {
+                target_kind: row
+                    .try_get("target_kind")
+                    .map_err(|_| AuthFailure::Internal)?,
+                target_id: row
+                    .try_get("target_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                allow_mask: row
+                    .try_get("allow_mask")
+                    .map_err(|_| AuthFailure::Internal)?,
+                deny_mask: row
+                    .try_get("deny_mask")
+                    .map_err(|_| AuthFailure::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, AuthFailure>>()?;
+    let override_summary = summarize_channel_overrides(
+        override_inputs,
+        &assigned_role_ids,
+        &role_ids,
+        user_id,
+        OVERRIDE_TARGET_ROLE,
+        OVERRIDE_TARGET_MEMBER,
+    )?;
+    let everyone_overwrite = override_summary.everyone_overwrite;
+    let mut role_overwrite = override_summary.role_overwrite;
+    let member_overwrite = override_summary.member_overwrite;
+    let used_new_overrides = override_summary.used_new_overrides;
+    let unknown_override_bits = override_summary.unknown_override_bits;
 
     if !used_new_overrides {
         let legacy_rows = sqlx::query(
