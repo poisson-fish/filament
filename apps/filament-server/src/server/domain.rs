@@ -20,9 +20,11 @@ pub(crate) use moderation::{
     enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client,
 };
 pub(crate) use permissions_eval::{
-    apply_legacy_role_assignment, finalize_channel_permissions,
-    i64_to_masked_permissions, merge_channel_overwrite,
-    role_ids_from_map, summarize_guild_permissions,
+    apply_legacy_role_assignment, ensure_required_roles,
+    finalize_channel_permissions, i64_to_masked_permissions,
+    merge_channel_overwrite, role_ids_from_map,
+    summarize_guild_permissions, sync_legacy_channel_overrides,
+    sync_legacy_role_assignments,
 };
 pub(crate) use reactions::{
     attach_message_reactions, reaction_map_from_counts,
@@ -38,9 +40,7 @@ use super::{
     db::{ensure_db_schema, role_from_i16},
     errors::AuthFailure,
     permissions::{
-        all_permissions, default_everyone_permissions, default_member_permissions,
-        default_moderator_permissions, DEFAULT_ROLE_MEMBER,
-        DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE, SYSTEM_ROLE_WORKSPACE_OWNER,
+        all_permissions, default_everyone_permissions,
     },
     types::{AttachmentPath, AttachmentResponse, ReactionResponse},
 };
@@ -83,159 +83,22 @@ async fn ensure_in_memory_permission_model_for_guild(
         (members, overrides)
     };
 
-    let (everyone_role_id, workspace_owner_role_id, member_role_id, moderator_role_id) = {
+    let role_ids = {
         let mut guild_roles = state.guild_roles.write().await;
         let roles = guild_roles.entry(guild_id.to_owned()).or_default();
-
-        let everyone_role_id = roles
-            .values()
-            .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE))
-            .map(|role| role.role_id.clone())
-            .unwrap_or_else(|| {
-                let role_id = Ulid::new().to_string();
-                roles.insert(
-                    role_id.clone(),
-                    WorkspaceRoleRecord {
-                        role_id: role_id.clone(),
-                        name: String::from("@everyone"),
-                        position: 0,
-                        is_system: true,
-                        system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
-                        permissions_allow: default_everyone_permissions(),
-                        created_at_unix: now_unix(),
-                    },
-                );
-                role_id
-            });
-
-        let workspace_owner_role_id = roles
-            .values()
-            .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER))
-            .map(|role| role.role_id.clone())
-            .unwrap_or_else(|| {
-                let role_id = Ulid::new().to_string();
-                roles.insert(
-                    role_id.clone(),
-                    WorkspaceRoleRecord {
-                        role_id: role_id.clone(),
-                        name: String::from("workspace_owner"),
-                        position: 10_000,
-                        is_system: true,
-                        system_key: Some(String::from(SYSTEM_ROLE_WORKSPACE_OWNER)),
-                        permissions_allow: all_permissions(),
-                        created_at_unix: now_unix(),
-                    },
-                );
-                role_id
-            });
-
-        let moderator_role_id = roles
-            .values()
-            .find(|role| {
-                role.system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR)
-                    || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MODERATOR)
-            })
-            .map(|role| role.role_id.clone())
-            .unwrap_or_else(|| {
-                let role_id = Ulid::new().to_string();
-                roles.insert(
-                    role_id.clone(),
-                    WorkspaceRoleRecord {
-                        role_id: role_id.clone(),
-                        name: String::from(DEFAULT_ROLE_MODERATOR),
-                        position: 100,
-                        is_system: false,
-                        system_key: Some(String::from(DEFAULT_ROLE_MODERATOR)),
-                        permissions_allow: default_moderator_permissions(),
-                        created_at_unix: now_unix(),
-                    },
-                );
-                role_id
-            });
-
-        let member_role_id = roles
-            .values()
-            .find(|role| {
-                role.system_key.as_deref() == Some(DEFAULT_ROLE_MEMBER)
-                    || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MEMBER)
-            })
-            .map(|role| role.role_id.clone())
-            .unwrap_or_else(|| {
-                let role_id = Ulid::new().to_string();
-                roles.insert(
-                    role_id.clone(),
-                    WorkspaceRoleRecord {
-                        role_id: role_id.clone(),
-                        name: String::from(DEFAULT_ROLE_MEMBER),
-                        position: 1,
-                        is_system: false,
-                        system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
-                        permissions_allow: default_member_permissions(),
-                        created_at_unix: now_unix(),
-                    },
-                );
-                role_id
-            });
-
-        (
-            everyone_role_id,
-            workspace_owner_role_id,
-            member_role_id,
-            moderator_role_id,
-        )
+        ensure_required_roles(roles)
     };
 
     {
         let mut role_assignments = state.guild_role_assignments.write().await;
         let guild_assignments = role_assignments.entry(guild_id.to_owned()).or_default();
-        guild_assignments.retain(|member, _| members.contains_key(member));
-        for (member_id, legacy_role) in &members {
-            let assigned = guild_assignments.entry(*member_id).or_default();
-            assigned.retain(|role_id| {
-                role_id != &workspace_owner_role_id
-                    && role_id != &moderator_role_id
-                    && role_id != &member_role_id
-            });
-            match legacy_role {
-                Role::Owner => {
-                    assigned.insert(workspace_owner_role_id.clone());
-                }
-                Role::Moderator => {
-                    assigned.insert(moderator_role_id.clone());
-                }
-                Role::Member => {
-                    assigned.insert(member_role_id.clone());
-                }
-            }
-            // `@everyone` is implicit during resolution and does not need assignment rows.
-            let _ = &everyone_role_id;
-        }
+        sync_legacy_role_assignments(&members, guild_assignments, &role_ids);
     }
 
     {
         let mut channel_overrides = state.guild_channel_permission_overrides.write().await;
         let guild_channel_overrides = channel_overrides.entry(guild_id.to_owned()).or_default();
-        for (channel_id, legacy) in legacy_overrides {
-            let channel_entry = guild_channel_overrides.entry(channel_id).or_default();
-            if let Some(overwrite) = legacy.get(&Role::Member).copied() {
-                channel_entry
-                    .role_overrides
-                    .entry(member_role_id.clone())
-                    .or_insert(overwrite);
-            }
-            if let Some(overwrite) = legacy.get(&Role::Moderator).copied() {
-                channel_entry
-                    .role_overrides
-                    .entry(moderator_role_id.clone())
-                    .or_insert(overwrite);
-            }
-            if let Some(overwrite) = legacy.get(&Role::Owner).copied() {
-                channel_entry
-                    .role_overrides
-                    .entry(workspace_owner_role_id.clone())
-                    .or_insert(overwrite);
-            }
-        }
+        sync_legacy_channel_overrides(legacy_overrides, guild_channel_overrides, &role_ids);
     }
 
     Ok(())

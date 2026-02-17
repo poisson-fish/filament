@@ -1,13 +1,17 @@
-use filament_core::{ChannelPermissionOverwrite, PermissionSet, Role};
+use filament_core::{ChannelPermissionOverwrite, PermissionSet, Role, UserId};
 use std::collections::{HashMap, HashSet};
 
-use crate::server::core::WorkspaceRoleRecord;
+use crate::server::auth::now_unix;
+use crate::server::core::{ChannelPermissionOverrideRecord, WorkspaceRoleRecord};
 use crate::server::errors::AuthFailure;
 use crate::server::permissions::{
+    all_permissions, default_everyone_permissions, default_member_permissions,
+    default_moderator_permissions,
     mask_permissions,
     DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
     SYSTEM_ROLE_WORKSPACE_OWNER,
 };
+use ulid::Ulid;
 
 #[derive(Debug)]
 pub(crate) struct RoleIdSet {
@@ -55,6 +59,159 @@ pub(crate) fn role_ids_from_map(
         member,
         moderator,
     })
+}
+
+pub(crate) fn ensure_required_roles(
+    roles: &mut HashMap<String, WorkspaceRoleRecord>,
+) -> RoleIdSet {
+    let created_at_unix = now_unix();
+    let everyone = roles
+        .values()
+        .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE))
+        .map(|role| role.role_id.clone())
+        .unwrap_or_else(|| {
+            let role_id = Ulid::new().to_string();
+            roles.insert(
+                role_id.clone(),
+                WorkspaceRoleRecord {
+                    role_id: role_id.clone(),
+                    name: String::from("@everyone"),
+                    position: 0,
+                    is_system: true,
+                    system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
+                    permissions_allow: default_everyone_permissions(),
+                    created_at_unix,
+                },
+            );
+            role_id
+        });
+
+    let workspace_owner = roles
+        .values()
+        .find(|role| role.system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER))
+        .map(|role| role.role_id.clone())
+        .unwrap_or_else(|| {
+            let role_id = Ulid::new().to_string();
+            roles.insert(
+                role_id.clone(),
+                WorkspaceRoleRecord {
+                    role_id: role_id.clone(),
+                    name: String::from("workspace_owner"),
+                    position: 10_000,
+                    is_system: true,
+                    system_key: Some(String::from(SYSTEM_ROLE_WORKSPACE_OWNER)),
+                    permissions_allow: all_permissions(),
+                    created_at_unix,
+                },
+            );
+            role_id
+        });
+
+    let moderator = roles
+        .values()
+        .find(|role| {
+            role.system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR)
+                || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MODERATOR)
+        })
+        .map(|role| role.role_id.clone())
+        .unwrap_or_else(|| {
+            let role_id = Ulid::new().to_string();
+            roles.insert(
+                role_id.clone(),
+                WorkspaceRoleRecord {
+                    role_id: role_id.clone(),
+                    name: String::from(DEFAULT_ROLE_MODERATOR),
+                    position: 100,
+                    is_system: false,
+                    system_key: Some(String::from(DEFAULT_ROLE_MODERATOR)),
+                    permissions_allow: default_moderator_permissions(),
+                    created_at_unix,
+                },
+            );
+            role_id
+        });
+
+    let member = roles
+        .values()
+        .find(|role| {
+            role.system_key.as_deref() == Some(DEFAULT_ROLE_MEMBER)
+                || role.name.eq_ignore_ascii_case(DEFAULT_ROLE_MEMBER)
+        })
+        .map(|role| role.role_id.clone())
+        .unwrap_or_else(|| {
+            let role_id = Ulid::new().to_string();
+            roles.insert(
+                role_id.clone(),
+                WorkspaceRoleRecord {
+                    role_id: role_id.clone(),
+                    name: String::from(DEFAULT_ROLE_MEMBER),
+                    position: 1,
+                    is_system: false,
+                    system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
+                    permissions_allow: default_member_permissions(),
+                    created_at_unix,
+                },
+            );
+            role_id
+        });
+
+    RoleIdSet {
+        everyone,
+        workspace_owner,
+        member,
+        moderator,
+    }
+}
+
+pub(crate) fn sync_legacy_role_assignments(
+    members: &HashMap<UserId, Role>,
+    guild_assignments: &mut HashMap<UserId, HashSet<String>>,
+    role_ids: &RoleIdSet,
+) {
+    guild_assignments.retain(|member, _| members.contains_key(member));
+    for (member_id, legacy_role) in members {
+        let assigned = guild_assignments.entry(*member_id).or_default();
+        assigned.retain(|role_id| {
+            role_id != &role_ids.workspace_owner
+                && role_id != &role_ids.moderator
+                && role_id != &role_ids.member
+        });
+        apply_legacy_role_assignment(
+            assigned,
+            *legacy_role,
+            &role_ids.workspace_owner,
+            &role_ids.moderator,
+            &role_ids.member,
+        );
+    }
+}
+
+pub(crate) fn sync_legacy_channel_overrides(
+    legacy_overrides: HashMap<String, HashMap<Role, ChannelPermissionOverwrite>>,
+    guild_channel_overrides: &mut HashMap<String, ChannelPermissionOverrideRecord>,
+    role_ids: &RoleIdSet,
+) {
+    for (channel_id, legacy) in legacy_overrides {
+        let channel_entry = guild_channel_overrides.entry(channel_id).or_default();
+        if let Some(overwrite) = legacy.get(&Role::Member).copied() {
+            channel_entry
+                .role_overrides
+                .entry(role_ids.member.clone())
+                .or_insert(overwrite);
+        }
+        if let Some(overwrite) = legacy.get(&Role::Moderator).copied() {
+            channel_entry
+                .role_overrides
+                .entry(role_ids.moderator.clone())
+                .or_insert(overwrite);
+        }
+        if let Some(overwrite) = legacy.get(&Role::Owner).copied() {
+            channel_entry
+                .role_overrides
+                .entry(role_ids.workspace_owner.clone())
+                .or_insert(overwrite);
+        }
+    }
 }
 
 pub(crate) fn i64_to_masked_permissions(
@@ -186,14 +343,22 @@ pub(crate) fn finalize_channel_permissions(
 mod tests {
     use super::{
         aggregate_guild_permissions, apply_channel_layers,
-        apply_legacy_role_assignment, finalize_channel_permissions,
-        i64_to_masked_permissions, merge_channel_overwrite, role_ids_from_map,
-        summarize_guild_permissions,
+        apply_legacy_role_assignment, ensure_required_roles,
+        finalize_channel_permissions, i64_to_masked_permissions,
+        merge_channel_overwrite, role_ids_from_map,
+        summarize_guild_permissions, sync_legacy_channel_overrides,
+        sync_legacy_role_assignments,
     };
-    use crate::server::core::WorkspaceRoleRecord;
+    use crate::server::core::{ChannelPermissionOverrideRecord, WorkspaceRoleRecord};
     use crate::server::auth::now_unix;
     use crate::server::errors::AuthFailure;
-    use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet, Role};
+    use crate::server::permissions::{
+        DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
+        SYSTEM_ROLE_WORKSPACE_OWNER,
+    };
+    use filament_core::{
+        ChannelPermissionOverwrite, Permission, PermissionSet, Role, UserId,
+    };
     use std::collections::{HashMap, HashSet};
 
     fn permission_set(values: &[Permission]) -> PermissionSet {
@@ -250,6 +415,152 @@ mod tests {
         assert!(assigned.contains("mod"));
         assert!(!assigned.contains("owner"));
         assert!(!assigned.contains("member"));
+    }
+
+    #[test]
+    fn ensure_required_roles_inserts_missing_system_and_default_roles() {
+        let mut roles = HashMap::new();
+
+        let role_ids = ensure_required_roles(&mut roles);
+        assert_eq!(roles.len(), 4);
+
+        let everyone = roles
+            .get(&role_ids.everyone)
+            .expect("everyone role should exist");
+        assert_eq!(everyone.system_key.as_deref(), Some(SYSTEM_ROLE_EVERYONE));
+
+        let owner = roles
+            .get(&role_ids.workspace_owner)
+            .expect("workspace owner role should exist");
+        assert_eq!(
+            owner.system_key.as_deref(),
+            Some(SYSTEM_ROLE_WORKSPACE_OWNER)
+        );
+
+        let member = roles
+            .get(&role_ids.member)
+            .expect("member role should exist");
+        assert!(
+            member.system_key.as_deref() == Some(DEFAULT_ROLE_MEMBER)
+                || member.name.eq_ignore_ascii_case(DEFAULT_ROLE_MEMBER)
+        );
+
+        let moderator = roles
+            .get(&role_ids.moderator)
+            .expect("moderator role should exist");
+        assert!(
+            moderator.system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR)
+                || moderator.name.eq_ignore_ascii_case(DEFAULT_ROLE_MODERATOR)
+        );
+    }
+
+    #[test]
+    fn sync_legacy_role_assignments_prunes_stale_and_applies_legacy_roles() {
+        let member_id = UserId::new();
+        let moderator_id = UserId::new();
+        let stale_id = UserId::new();
+
+        let members = HashMap::from([
+            (member_id, Role::Member),
+            (moderator_id, Role::Moderator),
+        ]);
+        let role_ids = super::RoleIdSet {
+            everyone: String::from("everyone"),
+            workspace_owner: String::from("owner"),
+            member: String::from("member"),
+            moderator: String::from("moderator"),
+        };
+
+        let mut assignments = HashMap::from([
+            (
+                member_id,
+                HashSet::from([
+                    String::from("custom"),
+                    String::from("owner"),
+                    String::from("member"),
+                ]),
+            ),
+            (stale_id, HashSet::from([String::from("member")])),
+        ]);
+
+        sync_legacy_role_assignments(&members, &mut assignments, &role_ids);
+
+        assert!(!assignments.contains_key(&stale_id));
+        let member_roles = assignments
+            .get(&member_id)
+            .expect("member assignment should exist");
+        assert!(member_roles.contains("custom"));
+        assert!(member_roles.contains("member"));
+        assert!(!member_roles.contains("owner"));
+
+        let moderator_roles = assignments
+            .get(&moderator_id)
+            .expect("moderator assignment should exist");
+        assert!(moderator_roles.contains("moderator"));
+    }
+
+    #[test]
+    fn sync_legacy_channel_overrides_maps_member_moderator_owner_roles() {
+        let mut legacy_channel = HashMap::new();
+        legacy_channel.insert(
+            Role::Member,
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::CreateMessage]),
+                deny: PermissionSet::empty(),
+            },
+        );
+        legacy_channel.insert(
+            Role::Moderator,
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::DeleteMessage]),
+                deny: PermissionSet::empty(),
+            },
+        );
+        legacy_channel.insert(
+            Role::Owner,
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::ManageRoles]),
+                deny: PermissionSet::empty(),
+            },
+        );
+
+        let legacy_overrides = HashMap::from([(String::from("channel-1"), legacy_channel)]);
+        let mut channel_overrides: HashMap<String, ChannelPermissionOverrideRecord> =
+            HashMap::new();
+        let role_ids = super::RoleIdSet {
+            everyone: String::from("everyone"),
+            workspace_owner: String::from("owner"),
+            member: String::from("member"),
+            moderator: String::from("moderator"),
+        };
+
+        sync_legacy_channel_overrides(
+            legacy_overrides,
+            &mut channel_overrides,
+            &role_ids,
+        );
+
+        let channel = channel_overrides
+            .get("channel-1")
+            .expect("channel overrides should exist");
+        assert!(
+            channel
+                .role_overrides
+                .get("member")
+                .is_some_and(|overwrite| overwrite.allow.contains(Permission::CreateMessage))
+        );
+        assert!(
+            channel
+                .role_overrides
+                .get("moderator")
+                .is_some_and(|overwrite| overwrite.allow.contains(Permission::DeleteMessage))
+        );
+        assert!(
+            channel
+                .role_overrides
+                .get("owner")
+                .is_some_and(|overwrite| overwrite.allow.contains(Permission::ManageRoles))
+        );
     }
 
     #[test]
