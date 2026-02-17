@@ -23,16 +23,14 @@ pub(crate) use moderation::{
     enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client,
 };
 pub(crate) use permissions_eval::{
-    apply_legacy_role_assignment, ensure_required_roles,
-    finalize_channel_permissions,
-    guild_role_permission_inputs,
+    ensure_required_roles,
     resolve_guild_permission_summary,
-    merge_legacy_channel_role_overrides,
+    resolve_db_channel_permissions,
+    resolve_in_memory_channel_permissions,
     normalize_assigned_role_ids,
     role_ids_from_map, role_records_from_db_rows,
-    summarize_in_memory_channel_overrides,
-    summarize_channel_overrides,
-    summarize_guild_permissions, sync_legacy_channel_overrides,
+    summarize_in_memory_guild_permissions,
+    sync_legacy_channel_overrides,
     sync_legacy_role_assignments,
 };
 pub(crate) use reactions::{
@@ -343,21 +341,12 @@ async fn resolve_channel_permissions_db(
             })
         })
         .collect::<Result<Vec<_>, AuthFailure>>()?;
-    let override_summary = summarize_channel_overrides(
-        override_inputs,
-        &assigned_role_ids,
-        &role_ids,
-        user_id,
-        OVERRIDE_TARGET_ROLE,
-        OVERRIDE_TARGET_MEMBER,
-    )?;
-    let everyone_overwrite = override_summary.everyone_overwrite;
-    let mut role_overwrite = override_summary.role_overwrite;
-    let member_overwrite = override_summary.member_overwrite;
-    let used_new_overrides = override_summary.used_new_overrides;
-    let unknown_override_bits = override_summary.unknown_override_bits;
-
-    if !used_new_overrides {
+    let legacy_inputs = if override_inputs
+        .iter()
+        .any(|input| {
+            input.target_kind != OVERRIDE_TARGET_ROLE
+                && input.target_kind != OVERRIDE_TARGET_MEMBER
+        }) {
         let legacy_rows = sqlx::query(
             "SELECT role, allow_mask, deny_mask
              FROM channel_role_overrides
@@ -383,13 +372,22 @@ async fn resolve_channel_permissions_db(
                 })
             })
             .collect::<Result<Vec<_>, AuthFailure>>()?;
-        role_overwrite = merge_legacy_channel_role_overrides(
-            role_overwrite,
-            legacy_inputs,
-            &assigned_role_ids,
-            &role_ids,
-        )?;
-    }
+        Some(legacy_inputs)
+    } else {
+        None
+    };
+
+    let (permissions, unknown_override_bits) = resolve_db_channel_permissions(
+        guild_permissions,
+        is_workspace_owner,
+        override_inputs,
+        legacy_inputs,
+        &assigned_role_ids,
+        &role_ids,
+        user_id,
+        OVERRIDE_TARGET_ROLE,
+        OVERRIDE_TARGET_MEMBER,
+    )?;
     maybe_audit_unknown_permission_bits(
         state,
         guild_id,
@@ -398,14 +396,6 @@ async fn resolve_channel_permissions_db(
         "permissions.resolve.channel_overrides",
     )
     .await;
-
-    let permissions = finalize_channel_permissions(
-        guild_permissions,
-        is_workspace_owner,
-        everyone_overwrite,
-        role_overwrite,
-        member_overwrite,
-    );
 
     Ok((resolved_role, permissions))
 }
@@ -457,23 +447,11 @@ async fn resolve_channel_permissions_in_memory(
         .unwrap_or_default();
     drop(guild_assignments);
 
-    let mut assigned_role_ids = assigned_role_ids;
-    apply_legacy_role_assignment(
-        &mut assigned_role_ids,
-        legacy_role,
-        &role_ids.workspace_owner,
-        &role_ids.moderator,
-        &role_ids.member,
-    );
-
-    let (everyone_permissions, role_permissions) =
-        guild_role_permission_inputs(roles, &role_ids.everyone);
-    let guild_permission_summary = summarize_guild_permissions(
-        everyone_permissions,
+    let guild_permission_summary = summarize_in_memory_guild_permissions(
+        roles,
         &assigned_role_ids,
-        &role_permissions,
-        &role_ids.workspace_owner,
-        &role_ids.moderator,
+        legacy_role,
+        &role_ids,
     );
     let guild_permissions = guild_permission_summary.guild_permissions;
     let is_workspace_owner = guild_permission_summary.is_workspace_owner;
@@ -490,22 +468,13 @@ async fn resolve_channel_permissions_in_memory(
         .cloned()
         .unwrap_or_else(ChannelPermissionOverrideRecord::default);
 
-    let override_summary = summarize_in_memory_channel_overrides(
+    let permissions = resolve_in_memory_channel_permissions(
+        guild_permissions,
+        is_workspace_owner,
         &channel_override,
         &assigned_role_ids,
         &role_ids,
         user_id,
-    );
-    let everyone_overwrite = override_summary.everyone_overwrite;
-    let role_overwrite = override_summary.role_overwrite;
-    let member_overwrite = override_summary.member_overwrite;
-
-    let permissions = finalize_channel_permissions(
-        guild_permissions,
-        is_workspace_owner,
-        everyone_overwrite,
-        role_overwrite,
-        member_overwrite,
     );
     Ok((resolved_role, permissions))
 }

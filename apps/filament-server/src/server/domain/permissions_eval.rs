@@ -415,6 +415,87 @@ pub(crate) fn summarize_in_memory_channel_overrides(
     }
 }
 
+pub(crate) fn summarize_in_memory_guild_permissions(
+    roles: &HashMap<String, WorkspaceRoleRecord>,
+    assigned_role_ids: &HashSet<String>,
+    legacy_role: Role,
+    role_ids: &RoleIdSet,
+) -> GuildPermissionSummary {
+    let mut normalized_assigned_role_ids = assigned_role_ids.clone();
+    apply_legacy_role_assignment(
+        &mut normalized_assigned_role_ids,
+        legacy_role,
+        &role_ids.workspace_owner,
+        &role_ids.moderator,
+        &role_ids.member,
+    );
+    resolve_guild_permission_summary(roles, &normalized_assigned_role_ids, role_ids)
+}
+
+pub(crate) fn resolve_in_memory_channel_permissions(
+    guild_permissions: PermissionSet,
+    is_workspace_owner: bool,
+    channel_override: &ChannelPermissionOverrideRecord,
+    assigned_role_ids: &HashSet<String>,
+    role_ids: &RoleIdSet,
+    user_id: UserId,
+) -> PermissionSet {
+    let override_summary = summarize_in_memory_channel_overrides(
+        channel_override,
+        assigned_role_ids,
+        role_ids,
+        user_id,
+    );
+    finalize_channel_permissions(
+        guild_permissions,
+        is_workspace_owner,
+        override_summary.everyone_overwrite,
+        override_summary.role_overwrite,
+        override_summary.member_overwrite,
+    )
+}
+
+pub(crate) fn resolve_db_channel_permissions(
+    guild_permissions: PermissionSet,
+    is_workspace_owner: bool,
+    override_rows: Vec<ChannelOverrideDbRow>,
+    legacy_override_rows: Option<Vec<LegacyChannelRoleOverrideDbRow>>,
+    assigned_role_ids: &HashSet<String>,
+    role_ids: &RoleIdSet,
+    user_id: UserId,
+    override_target_role: i16,
+    override_target_member: i16,
+) -> Result<(PermissionSet, u64), AuthFailure> {
+    let override_summary = summarize_channel_overrides(
+        override_rows,
+        assigned_role_ids,
+        role_ids,
+        user_id,
+        override_target_role,
+        override_target_member,
+    )?;
+
+    let role_overwrite = if override_summary.used_new_overrides {
+        override_summary.role_overwrite
+    } else {
+        merge_legacy_channel_role_overrides(
+            override_summary.role_overwrite,
+            legacy_override_rows.unwrap_or_default(),
+            assigned_role_ids,
+            role_ids,
+        )?
+    };
+
+    let permissions = finalize_channel_permissions(
+        guild_permissions,
+        is_workspace_owner,
+        override_summary.everyone_overwrite,
+        role_overwrite,
+        override_summary.member_overwrite,
+    );
+    Ok((permissions, override_summary.unknown_override_bits))
+}
+
 pub(crate) fn merge_legacy_channel_role_overrides(
     base_role_overwrite: ChannelPermissionOverwrite,
     rows: Vec<LegacyChannelRoleOverrideDbRow>,
@@ -603,6 +684,9 @@ mod tests {
         aggregate_guild_permissions, apply_channel_layers,
         apply_legacy_role_assignment, ensure_required_roles,
         finalize_channel_permissions, i64_to_masked_permissions,
+        resolve_db_channel_permissions,
+        resolve_in_memory_channel_permissions,
+        summarize_in_memory_guild_permissions,
         merge_channel_overwrite, merge_legacy_channel_role_overrides,
         merge_assigned_role_overrides,
         guild_role_permission_inputs,
@@ -1435,5 +1519,176 @@ mod tests {
             .member_overwrite
             .deny
             .contains(Permission::CreateMessage));
+    }
+
+    #[test]
+    fn summarize_in_memory_guild_permissions_applies_legacy_role_before_resolution() {
+        let role_ids = super::RoleIdSet {
+            everyone: String::from("everyone"),
+            workspace_owner: String::from("owner"),
+            member: String::from("member"),
+            moderator: String::from("moderator"),
+        };
+        let mut roles = HashMap::new();
+        roles.insert(
+            role_ids.everyone.clone(),
+            WorkspaceRoleRecord {
+                role_id: role_ids.everyone.clone(),
+                name: String::from("@everyone"),
+                position: 0,
+                is_system: true,
+                system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
+                permissions_allow: permission_set(&[]),
+                created_at_unix: now_unix(),
+            },
+        );
+        roles.insert(
+            role_ids.member.clone(),
+            WorkspaceRoleRecord {
+                role_id: role_ids.member.clone(),
+                name: String::from(DEFAULT_ROLE_MEMBER),
+                position: 1,
+                is_system: false,
+                system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
+                permissions_allow: permission_set(&[Permission::CreateMessage]),
+                created_at_unix: now_unix(),
+            },
+        );
+        roles.insert(
+            role_ids.moderator.clone(),
+            WorkspaceRoleRecord {
+                role_id: role_ids.moderator.clone(),
+                name: String::from(DEFAULT_ROLE_MODERATOR),
+                position: 2,
+                is_system: false,
+                system_key: Some(String::from(DEFAULT_ROLE_MODERATOR)),
+                permissions_allow: permission_set(&[Permission::DeleteMessage]),
+                created_at_unix: now_unix(),
+            },
+        );
+        roles.insert(
+            role_ids.workspace_owner.clone(),
+            WorkspaceRoleRecord {
+                role_id: role_ids.workspace_owner.clone(),
+                name: String::from("workspace_owner"),
+                position: 10,
+                is_system: true,
+                system_key: Some(String::from(SYSTEM_ROLE_WORKSPACE_OWNER)),
+                permissions_allow: crate::server::permissions::all_permissions(),
+                created_at_unix: now_unix(),
+            },
+        );
+
+        let summary = summarize_in_memory_guild_permissions(
+            &roles,
+            &HashSet::new(),
+            Role::Moderator,
+            &role_ids,
+        );
+
+        assert_eq!(summary.resolved_role, Role::Moderator);
+        assert!(summary.guild_permissions.contains(Permission::DeleteMessage));
+    }
+
+    #[test]
+    fn resolve_in_memory_channel_permissions_applies_override_layers() {
+        let role_ids = super::RoleIdSet {
+            everyone: String::from("everyone"),
+            workspace_owner: String::from("owner"),
+            member: String::from("member"),
+            moderator: String::from("moderator"),
+        };
+        let mut assigned = HashSet::new();
+        assigned.insert(role_ids.workspace_owner.clone());
+        assigned.insert(role_ids.member.clone());
+        assigned.insert(role_ids.moderator.clone());
+
+        let user_id = UserId::new();
+        let mut channel_override = ChannelPermissionOverrideRecord::default();
+        channel_override.role_overrides.insert(
+            role_ids.everyone.clone(),
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[]),
+                deny: permission_set(&[Permission::CreateMessage]),
+            },
+        );
+        channel_override.role_overrides.insert(
+            role_ids.member.clone(),
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[]),
+                deny: permission_set(&[Permission::DeleteMessage]),
+            },
+        );
+        channel_override.member_overrides.insert(
+            user_id,
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::CreateMessage]),
+                deny: permission_set(&[]),
+            },
+        );
+
+        let resolved = resolve_in_memory_channel_permissions(
+            permission_set(&[Permission::CreateMessage, Permission::DeleteMessage]),
+            false,
+            &channel_override,
+            &assigned,
+            &role_ids,
+            user_id,
+        );
+
+        assert!(resolved.contains(Permission::CreateMessage));
+        assert!(!resolved.contains(Permission::DeleteMessage));
+    }
+
+    #[test]
+    fn resolve_db_channel_permissions_falls_back_to_legacy_overrides_when_new_are_invalid() {
+        let role_ids = super::RoleIdSet {
+            everyone: String::from("everyone"),
+            workspace_owner: String::from("owner"),
+            member: String::from("member"),
+            moderator: String::from("moderator"),
+        };
+        let mut assigned = HashSet::new();
+        assigned.insert(role_ids.member.clone());
+
+        let (resolved, unknown_bits) = resolve_db_channel_permissions(
+            permission_set(&[Permission::CreateMessage]),
+            false,
+            vec![super::ChannelOverrideDbRow {
+                target_kind: 99,
+                target_id: String::from("ignored"),
+                allow_mask: i64::try_from(PermissionSet::empty().bits()).expect("fits"),
+                deny_mask: i64::try_from(PermissionSet::empty().bits()).expect("fits"),
+            }],
+            Some(vec![
+                super::LegacyChannelRoleOverrideDbRow {
+                    role: 0,
+                    allow_mask: i64::try_from(PermissionSet::empty().bits()).expect("fits"),
+                    deny_mask: i64::try_from(permission_set(&[Permission::CreateMessage]).bits())
+                        .expect("fits"),
+                },
+                super::LegacyChannelRoleOverrideDbRow {
+                    role: 1,
+                    allow_mask: i64::try_from(PermissionSet::empty().bits()).expect("fits"),
+                    deny_mask: i64::try_from(permission_set(&[Permission::CreateMessage]).bits())
+                        .expect("fits"),
+                },
+                super::LegacyChannelRoleOverrideDbRow {
+                    role: 2,
+                    allow_mask: i64::try_from(PermissionSet::empty().bits()).expect("fits"),
+                    deny_mask: i64::try_from(permission_set(&[Permission::CreateMessage]).bits())
+                        .expect("fits"),
+                },
+            ]),
+            &assigned,
+            &role_ids,
+            UserId::new(),
+            0,
+            1,
+        )
+        .expect("resolution should succeed");
+
+        assert!(!resolved.contains(Permission::CreateMessage));
+        assert_eq!(unknown_bits, 0);
     }
 }
