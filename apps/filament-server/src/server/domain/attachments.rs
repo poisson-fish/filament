@@ -8,6 +8,38 @@ use crate::server::{
 use filament_core::UserId;
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug)]
+pub(crate) struct AttachmentDbRow {
+    pub(crate) attachment_id: String,
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) owner_id: String,
+    pub(crate) filename: String,
+    pub(crate) mime_type: String,
+    pub(crate) size_bytes: i64,
+    pub(crate) sha256_hex: String,
+    pub(crate) object_key: String,
+    pub(crate) message_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct AttachmentResponseDbRow {
+    pub(crate) attachment_id: String,
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) owner_id: String,
+    pub(crate) filename: String,
+    pub(crate) mime_type: String,
+    pub(crate) size_bytes: i64,
+    pub(crate) sha256_hex: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct AttachmentMapDbRow {
+    pub(crate) message_id: Option<String>,
+    pub(crate) response: AttachmentResponseDbRow,
+}
+
 pub(crate) fn parse_attachment_ids(value: Vec<String>) -> Result<Vec<String>, AuthFailure> {
     if value.len() > MAX_ATTACHMENTS_PER_MESSAGE {
         return Err(AuthFailure::InvalidRequest);
@@ -109,30 +141,44 @@ pub(crate) fn attachment_record_from_db_fields(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn attachment_map_record_from_db_fields(
-    message_id: Option<String>,
-    attachment_id: String,
-    guild_id: String,
-    channel_id: String,
-    owner_id: String,
-    filename: String,
-    mime_type: String,
-    size_bytes: i64,
-    sha256_hex: String,
+pub(crate) fn attachment_record_from_db_row(
+    row: AttachmentDbRow,
+) -> Result<AttachmentRecord, AuthFailure> {
+    attachment_record_from_db_fields(
+        row.attachment_id,
+        row.guild_id,
+        row.channel_id,
+        row.owner_id,
+        row.filename,
+        row.mime_type,
+        row.size_bytes,
+        row.sha256_hex,
+        row.object_key,
+        row.message_id,
+    )
+}
+
+pub(crate) fn attachment_response_from_db_row(
+    row: AttachmentResponseDbRow,
+) -> Result<AttachmentResponse, AuthFailure> {
+    attachment_response_from_db_fields(
+        row.attachment_id,
+        row.guild_id,
+        row.channel_id,
+        row.owner_id,
+        row.filename,
+        row.mime_type,
+        row.size_bytes,
+        row.sha256_hex,
+    )
+}
+
+pub(crate) fn attachment_map_record_from_db_row(
+    row: AttachmentMapDbRow,
 ) -> Result<(Option<String>, AttachmentResponse), AuthFailure> {
     Ok((
-        message_id,
-        attachment_response_from_db_fields(
-            attachment_id,
-            guild_id,
-            channel_id,
-            owner_id,
-            filename,
-            mime_type,
-            size_bytes,
-            sha256_hex,
-        )?,
+        row.message_id,
+        attachment_response_from_db_row(row.response)?,
     ))
 }
 
@@ -213,14 +259,21 @@ pub(crate) fn attachment_usage_for_owner<'a>(
         .sum()
 }
 
+pub(crate) fn attachment_usage_total_from_db(total: i64) -> Result<u64, AuthFailure> {
+    u64::try_from(total).map_err(|_| AuthFailure::Internal)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         attachment_map_from_db_records, attachment_map_from_records,
-        attachment_map_record_from_db_fields,
+        attachment_map_record_from_db_row,
+        attachment_record_from_db_row,
         attachment_record_from_db_fields,
+        attachment_response_from_db_row,
         attachment_response_from_db_fields,
         attachment_response_from_record, attachment_usage_for_owner,
+        attachment_usage_total_from_db,
         attachments_from_ids_in_memory, parse_attachment_ids,
         validate_attachment_filename,
     };
@@ -363,42 +416,81 @@ mod tests {
     }
 
     #[test]
-    fn attachment_map_record_from_db_fields_maps_message_and_response() {
-        let mapped = attachment_map_record_from_db_fields(
-            Some(String::from("message-1")),
-            String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
-            String::from("guild-1"),
-            String::from("channel-1"),
-            String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
-            String::from("report.png"),
-            String::from("image/png"),
-            2048,
-            String::from("abc123"),
-        )
-        .expect("db fields should map to attachment map record");
+    fn attachment_record_from_db_row_maps_expected_fields() {
+        let record = attachment_record_from_db_row(super::AttachmentDbRow {
+            attachment_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            guild_id: String::from("guild-1"),
+            channel_id: String::from("channel-1"),
+            owner_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
+            filename: String::from("report.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 2048,
+            sha256_hex: String::from("abc123"),
+            object_key: String::from("objects/key"),
+            message_id: Some(String::from("01ARZ3NDEKTSV4RRFFQ69G5FCC")),
+        })
+        .expect("db row should map to attachment record");
 
-        assert_eq!(mapped.0.as_deref(), Some("message-1"));
-        assert_eq!(mapped.1.attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
-        assert_eq!(mapped.1.owner_id, "01ARZ3NDEKTSV4RRFFQ69G5FBB");
-        assert_eq!(mapped.1.size_bytes, 2048);
+        assert_eq!(record.attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        assert_eq!(record.owner_id.to_string(), "01ARZ3NDEKTSV4RRFFQ69G5FBB");
+        assert_eq!(record.object_key, "objects/key");
+        assert_eq!(record.message_id.as_deref(), Some("01ARZ3NDEKTSV4RRFFQ69G5FCC"));
     }
 
     #[test]
-    fn attachment_map_record_from_db_fields_rejects_negative_size_fail_closed() {
+    fn attachment_response_from_db_row_maps_expected_fields() {
+        let response = attachment_response_from_db_row(super::AttachmentResponseDbRow {
+            attachment_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            guild_id: String::from("guild-1"),
+            channel_id: String::from("channel-1"),
+            owner_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
+            filename: String::from("report.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 2048,
+            sha256_hex: String::from("abc123"),
+        })
+        .expect("db row should map to response");
+
+        assert_eq!(response.attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        assert_eq!(response.owner_id, "01ARZ3NDEKTSV4RRFFQ69G5FBB");
+        assert_eq!(response.size_bytes, 2048);
+    }
+
+    #[test]
+    fn attachment_map_record_from_db_row_maps_message_and_response() {
+        let mapped = attachment_map_record_from_db_row(super::AttachmentMapDbRow {
+            message_id: Some(String::from("message-1")),
+            response: super::AttachmentResponseDbRow {
+                attachment_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+                guild_id: String::from("guild-1"),
+                channel_id: String::from("channel-1"),
+                owner_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
+                filename: String::from("report.png"),
+                mime_type: String::from("image/png"),
+                size_bytes: 2048,
+                sha256_hex: String::from("abc123"),
+            },
+        })
+        .expect("db row should map to message attachment record");
+
+        assert_eq!(mapped.0.as_deref(), Some("message-1"));
+        assert_eq!(mapped.1.attachment_id, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    }
+
+    #[test]
+    fn attachment_usage_total_from_db_rejects_negative_fail_closed() {
         assert!(matches!(
-            attachment_map_record_from_db_fields(
-                Some(String::from("message-1")),
-                String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
-                String::from("guild-1"),
-                String::from("channel-1"),
-                String::from("01ARZ3NDEKTSV4RRFFQ69G5FBB"),
-                String::from("report.png"),
-                String::from("image/png"),
-                -1,
-                String::from("abc123"),
-            ),
+            attachment_usage_total_from_db(-1),
             Err(AuthFailure::Internal)
         ));
+    }
+
+    #[test]
+    fn attachment_usage_total_from_db_accepts_non_negative_values() {
+        assert_eq!(
+            attachment_usage_total_from_db(2048).expect("non-negative total should convert"),
+            2048
+        );
     }
 
     #[test]
