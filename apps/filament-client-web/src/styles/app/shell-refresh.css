@@ -1591,11 +1591,13 @@
   display: grid;
   grid-template-rows: auto 1fr auto;
   background: #313338;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
 .chat-body {
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   display: grid;
