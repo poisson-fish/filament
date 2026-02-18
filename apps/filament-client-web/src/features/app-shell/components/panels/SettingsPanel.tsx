@@ -47,6 +47,12 @@ export function SettingsPanel(props: SettingsPanelProps) {
   const sectionLabelClassName =
     "m-0 text-[0.68rem] uppercase tracking-[0.08em] text-ink-2";
 
+  const formLabelClass = "grid gap-[0.3rem] text-ink-1 text-[0.84rem] font-medium";
+  const formInputClass =
+    "bg-bg-4 border border-line-soft rounded-[0.56rem] text-ink-0 px-[0.62rem] py-[0.55rem] focus:outline-none focus:border-brand-strong placeholder-ink-2";
+  const formButtonClass =
+    "bg-bg-3 border border-line-soft rounded-[0.56rem] text-ink-1 px-[0.68rem] py-[0.44rem] font-medium hover:bg-bg-4 active:bg-bg-2 disabled:opacity-50 disabled:pointer-events-none transition-colors";
+
   return (
     <section
       class="grid min-h-[18rem] grid-cols-[minmax(10rem,12rem)_minmax(0,1fr)] gap-[0.88rem] max-[900px]:min-h-0 max-[900px]:grid-cols-1 max-[900px]:gap-[0.72rem]"
@@ -125,10 +131,11 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 <Switch>
                   <Match when={props.activeVoiceSettingsSubmenu === "audio-devices"}>
                     <p class={sectionLabelClassName}>AUDIO DEVICES</p>
-                    <form class="inline-form" onSubmit={(event) => event.preventDefault()}>
-                      <label>
+                    <form class="grid gap-[0.5rem]" onSubmit={(event) => event.preventDefault()}>
+                      <label class={formLabelClass}>
                         Microphone
                         <select
+                          class={formInputClass}
                           aria-label="Select microphone device"
                           value={props.voiceDevicePreferences.audioInputDeviceId ?? ""}
                           onChange={(event) =>
@@ -145,9 +152,10 @@ export function SettingsPanel(props: SettingsPanelProps) {
                           </For>
                         </select>
                       </label>
-                      <label>
+                      <label class={formLabelClass}>
                         Speaker
                         <select
+                          class={formInputClass}
                           aria-label="Select speaker device"
                           value={props.voiceDevicePreferences.audioOutputDeviceId ?? ""}
                           onChange={(event) =>
@@ -166,6 +174,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       </label>
                       <button
                         type="button"
+                        class={formButtonClass}
                         onClick={() => void props.onRefreshAudioDeviceInventory()}
                         disabled={props.isRefreshingAudioDevices}
                       >
@@ -199,24 +208,26 @@ export function SettingsPanel(props: SettingsPanelProps) {
           <Match when={props.activeSettingsCategory === "profile"}>
             <p class={sectionLabelClassName}>PROFILE</p>
             <form
-              class="inline-form"
+              class="grid gap-[0.5rem]"
               onSubmit={(event) => {
                 event.preventDefault();
                 void props.onSaveProfile();
               }}
             >
-              <label>
+              <label class={formLabelClass}>
                 Username
                 <input
+                  class={formInputClass}
                   aria-label="Profile username"
                   value={props.profileDraftUsername}
                   maxlength="32"
                   onInput={(event) => props.onProfileUsernameInput(event.currentTarget.value)}
                 />
               </label>
-              <label>
+              <label class={formLabelClass}>
                 About (Markdown)
                 <textarea
+                  class={`${formInputClass} resize-y min-h-[6rem]`}
                   aria-label="Profile about markdown"
                   value={props.profileDraftAbout}
                   maxlength="2048"
@@ -225,15 +236,20 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 />
               </label>
               <div class="flex gap-2">
-                <button type="submit" disabled={props.isSavingProfile}>
+                <button
+                  type="submit"
+                  class={formButtonClass}
+                  disabled={props.isSavingProfile}
+                >
                   {props.isSavingProfile ? "Saving..." : "Save profile"}
                 </button>
               </div>
             </form>
-            <div class="inline-form">
-              <label>
+            <div class="grid gap-[0.5rem]">
+              <label class={formLabelClass}>
                 Avatar image
                 <input
+                  class={formInputClass}
                   type="file"
                   accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
                   aria-label="Profile avatar file input"
@@ -247,6 +263,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
               <div class="flex gap-2">
                 <button
                   type="button"
+                  class={formButtonClass}
                   onClick={() => void props.onUploadProfileAvatar()}
                   disabled={props.isUploadingProfileAvatar || props.selectedAvatarFilename.length === 0}
                 >

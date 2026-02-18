@@ -26,21 +26,7 @@
   background: #1d2129;
 }
 
-.inline-form input,
-.inline-form select {
-  border: 1px solid #434a57;
-  border-radius: 0.56rem;
-  background: #2d323b;
-  color: #eef1f5;
-}
 
-.inline-form button {
-  border: 1px solid #4a5261;
-  border-radius: 0.56rem;
-  background: #3a404a;
-  color: #e2e7ef;
-  padding: 0.44rem 0.68rem;
-}
 
 @media (max-width: 1200px) {
   .app-shell,

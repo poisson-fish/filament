@@ -175,46 +175,4 @@ select {
   position: relative;
 }
 
-.inline-form {
-  display: grid;
-  gap: 0.5rem;
-}
 
-.inline-form label {
-  display: grid;
-  gap: 0.3rem;
-  color: var(--ink-1);
-  font-size: 0.84rem;
-}
-
-.inline-form input {
-  border: 1px solid var(--line-soft);
-  border-radius: 0.62rem;
-  background: #0f1b33;
-  padding: 0.55rem 0.62rem;
-}
-
-.inline-form textarea {
-  border: 1px solid var(--line-soft);
-  border-radius: 0.62rem;
-  background: #0f1b33;
-  padding: 0.55rem 0.62rem;
-  color: var(--ink-1);
-  resize: vertical;
-  min-height: 6rem;
-}
-
-.inline-form select {
-  border: 1px solid var(--line-soft);
-  border-radius: 0.62rem;
-  background: #0f1b33;
-  padding: 0.55rem 0.62rem;
-}
-
-.inline-form button {
-  border: 1px solid rgba(98, 167, 255, 0.45);
-  border-radius: 0.62rem;
-  background: rgba(98, 167, 255, 0.15);
-  color: #c7e1ff;
-  padding: 0.5rem 0.72rem;
-}

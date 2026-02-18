@@ -154,7 +154,7 @@ Implementation Notes (2026-02-18):
 - Important finding:
   - `shell-refresh.css` contains multiple `.chat-panel` selector blocks for different concerns; layout contract tests must match declarations semantically rather than assuming the first block is the layout block.
 - Validation for this slice:
-  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-message-history-scroll.test.tsx` passes (`580` tests total in run), including the new load-older anchor preservation coverage.
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-message-list.test.tsx tests/app-shell-chat-layout-contract.test.ts` passes (`583` tests total in run), including the new load-older anchor preservation coverage.
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-layout-components.test.tsx tests/app-shell-chat-layout-contract.test.ts` passes (`582` tests total in run), including composer bottom pinning structure and stylesheet contract assertions.
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.

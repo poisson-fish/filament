@@ -662,4 +662,31 @@ describe("app style token manifest", () => {
       expect(componentSource).not.toMatch(rawColorLiteralPattern);
     }
   });
+
+  it("removes legacy inline-form selectors from base.css and shell-refresh.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".inline-form {",
+      ".inline-form label {",
+      ".inline-form input {",
+      ".inline-form textarea {",
+      ".inline-form select {",
+      ".inline-form button {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
+
+    const removedRefreshSelectors = [
+      ".inline-form input,",
+      ".inline-form button {",
+    ];
+
+    for (const selector of removedRefreshSelectors) {
+      expect(shellRefreshCss).not.toContain(selector);
+    }
+  });
 });
