@@ -236,4 +236,84 @@ describe("app shell profile controller", () => {
     expect(selectedProfileUserId()).toBeNull();
     expect(selectedProfileError()).toBe("");
   });
+
+  it("bumps avatar version locally after upload when server returns stale version", async () => {
+    const [session] = createSignal(SESSION);
+    const [selectedProfileUserId, setSelectedProfileUserId] = createSignal<ReturnType<
+      typeof userIdFromInput
+    > | null>(null);
+    const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<
+      Record<string, number>
+    >({
+      [USER_ID]: 5,
+    });
+    const [profileDraftUsername, setProfileDraftUsername] = createSignal("");
+    const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
+    const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(
+      null,
+    );
+    const [isSavingProfile, setSavingProfile] = createSignal(false);
+    const [isUploadingProfileAvatar, setUploadingProfileAvatar] = createSignal(false);
+    const [, setProfileSettingsStatus] = createSignal("");
+    const [, setProfileSettingsError] = createSignal("");
+    const [, setSelectedProfileError] = createSignal("");
+
+    const controller = createRoot(() =>
+      createProfileController(
+        {
+          session,
+          selectedProfileUserId,
+          avatarVersionByUserId,
+          profileDraftUsername,
+          profileDraftAbout,
+          selectedProfileAvatarFile,
+          isSavingProfile,
+          isUploadingProfileAvatar,
+          setProfileDraftUsername,
+          setProfileDraftAbout,
+          setSelectedProfileAvatarFile,
+          setProfileSettingsStatus,
+          setProfileSettingsError,
+          setSavingProfile,
+          setUploadingProfileAvatar,
+          setAvatarVersionByUserId,
+          setSelectedProfileUserId,
+          setSelectedProfileError,
+        },
+        {
+          fetchMe: async () =>
+            profileFixture({
+              userId: USER_ID,
+              username: "alice",
+              aboutMarkdown: "",
+              avatarVersion: 5,
+            }),
+          fetchUserProfile: async () =>
+            profileFixture({
+              userId: USER_ID,
+              username: "alice",
+              aboutMarkdown: "",
+              avatarVersion: 5,
+            }),
+          uploadMyProfileAvatar: async () =>
+            profileFixture({
+              userId: USER_ID,
+              username: "alice",
+              aboutMarkdown: "",
+              avatarVersion: 5,
+            }),
+        },
+      ),
+    );
+
+    await flushUntil(() => Boolean(controller.profile()));
+    setSelectedProfileAvatarFile(
+      new File(["avatar"], "avatar.png", {
+        type: "image/png",
+      }),
+    );
+
+    await controller.uploadProfileAvatar();
+    expect(avatarVersionByUserId()[USER_ID]).toBe(6);
+  });
 });

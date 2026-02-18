@@ -609,6 +609,9 @@ export function ChannelRail(props: ChannelRailProps) {
                             loading="lazy"
                             decoding="async"
                             referrerPolicy="no-referrer"
+                            onLoad={(event) => {
+                              event.currentTarget.style.display = "";
+                            }}
                             onError={(event) => {
                               event.currentTarget.style.display = "none";
                             }}

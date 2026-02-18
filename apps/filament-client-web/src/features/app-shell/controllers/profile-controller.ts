@@ -45,12 +45,14 @@ function mergeAvatarVersion(
   userId: string,
   avatarVersion: number,
 ): Record<string, number> {
-  if (existing[userId] === avatarVersion) {
+  const current = existing[userId] ?? 0;
+  const nextVersion = Math.max(current, avatarVersion);
+  if (current === nextVersion) {
     return existing;
   }
   return {
     ...existing,
-    [userId]: avatarVersion,
+    [userId]: nextVersion,
   };
 }
 
@@ -160,10 +162,22 @@ export function createProfileController(
     options.setProfileSettingsError("");
     try {
       const updated = await deps.uploadMyProfileAvatar(session, selectedFile);
+      const previousVersion = options.avatarVersionByUserId()[updated.userId] ?? 0;
       mutateProfile(updated);
-      options.setAvatarVersionByUserId((existing) =>
-        mergeAvatarVersion(existing, updated.userId, updated.avatarVersion),
-      );
+      options.setAvatarVersionByUserId((existing) => {
+        const current = existing[updated.userId] ?? 0;
+        const serverVersion = Math.max(0, updated.avatarVersion);
+        const baselineVersion = Math.max(previousVersion, serverVersion);
+        const nextVersion =
+          baselineVersion > previousVersion ? baselineVersion : previousVersion + 1;
+        if (current >= nextVersion) {
+          return existing;
+        }
+        return {
+          ...existing,
+          [updated.userId]: nextVersion,
+        };
+      });
       options.setSelectedProfileAvatarFile(null);
       options.setProfileSettingsStatus("Profile avatar updated.");
     } catch (error) {

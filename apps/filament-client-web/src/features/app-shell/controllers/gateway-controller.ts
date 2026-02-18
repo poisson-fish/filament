@@ -434,12 +434,14 @@ function mergeAvatarVersion(
   userId: string,
   avatarVersion: number,
 ): Record<string, number> {
-  if (existing[userId] === avatarVersion) {
+  const current = existing[userId] ?? 0;
+  const nextVersion = Math.max(current, avatarVersion);
+  if (current === nextVersion) {
     return existing;
   }
   return {
     ...existing,
-    [userId]: avatarVersion,
+    [userId]: nextVersion,
   };
 }
 

@@ -542,6 +542,11 @@ describe("app shell gateway controller", () => {
       avatarVersion: 8,
       updatedAtUnix: 7,
     });
+    handlers.onProfileAvatarUpdate({
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      avatarVersion: 7,
+      updatedAtUnix: 6,
+    });
     handlers.onFriendRequestCreate({
       requestId: friendRequestIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FC0"),
       senderUserId: "01ARZ3NDEKTSV4RRFFQ69G5FC1",
