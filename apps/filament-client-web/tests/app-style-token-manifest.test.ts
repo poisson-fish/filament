@@ -146,6 +146,8 @@ describe("app style token manifest", () => {
       "--danger-panel",
       "--danger-panel-strong",
       "--danger-ink",
+      "--presence-online",
+      "--presence-idle",
     ];
 
     for (const tokenName of requiredTokenNames) {
@@ -560,6 +562,16 @@ describe("app style token manifest", () => {
       ".reaction-add-trigger {",
       ".reaction-add-trigger:hover {",
     ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
+  });
+
+  it("removes dead presence selectors from base.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+
+    const removedBaseSelectors = [".presence {", ".presence.online {", ".presence.idle {"];
 
     for (const selector of removedBaseSelectors) {
       expect(baseCss).not.toContain(selector);

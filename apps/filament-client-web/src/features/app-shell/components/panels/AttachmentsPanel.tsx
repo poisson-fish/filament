@@ -19,6 +19,10 @@ export interface AttachmentsPanelProps {
 }
 
 export function AttachmentsPanel(props: AttachmentsPanelProps) {
+  const presenceDotClass = "inline-block h-[0.58rem] w-[0.58rem] rounded-full";
+  const onlinePresenceDotClass = `${presenceDotClass} bg-presence-online`;
+  const idlePresenceDotClass = `${presenceDotClass} bg-presence-idle`;
+
   return (
     <section class="member-group">
       <form class="inline-form" onSubmit={props.onSubmitUpload}>
@@ -55,7 +59,7 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
         <For each={props.activeAttachments}>
           {(record) => (
             <li>
-              <span class="presence online" />
+              <span class={onlinePresenceDotClass} />
               <div class="grid min-w-0 gap-[0.16rem]">
                 <span>{record.filename}</span>
                 <span class="muted text-[0.78rem] font-code">
@@ -81,7 +85,7 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
         </For>
         <Show when={props.activeAttachments.length === 0}>
           <li>
-            <span class="presence idle" />
+            <span class={idlePresenceDotClass} />
             no-local-attachments
           </li>
         </Show>

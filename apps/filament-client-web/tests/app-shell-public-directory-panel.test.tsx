@@ -66,8 +66,10 @@ describe("app shell public directory panel", () => {
     const [visibilityLabel] = screen.getAllByText("public");
     expect(visibilityLabel).toHaveClass("font-code");
     expect(visibilityLabel).toHaveClass("text-[0.78rem]");
+    expect(screen.getByText("Town Hall").closest("li")?.querySelector("span.bg-presence-online")).not.toBeNull();
 
     expect(document.querySelector(".inline-form")).toBeNull();
+    expect(document.querySelector(".presence")).toBeNull();
     expect(document.querySelector(".public-directory-row")).toBeNull();
     expect(document.querySelector(".public-directory-row-main")).toBeNull();
     expect(document.querySelector(".public-directory-row-actions")).toBeNull();

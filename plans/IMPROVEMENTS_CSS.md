@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `9/9 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `10/10 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -463,6 +463,19 @@ Implementation Notes (2026-02-18):
   - `empty-workspace` styling was isolated to a single fallback section in `ChatColumn.tsx`; converting that section directly to utilities made selector removal low-risk and avoided introducing another shared bridge helper.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-layout-components.test.tsx tests/app-style-token-manifest.test.ts` passes.
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (Dead legacy selector cleanup: `presence` bridge removal):
+  - Replaced remaining `presence` helper usage in `MemberRail.tsx`, `PublicDirectoryPanel.tsx`, `AttachmentsPanel.tsx`, and `SearchPanel.tsx` with equivalent Uno utility classes backed by shared tokens (`bg-presence-online`, `bg-presence-idle`).
+  - Added `--presence-online` and `--presence-idle` to `src/styles/app/tokens.css` and mapped them in `uno.config.ts` so migrated surfaces avoid raw color literals while preserving prior status-dot colors.
+  - Removed dead `.presence`, `.presence.online`, and `.presence.idle` selectors from `src/styles/app/base.css`.
+  - Extended `tests/app-style-token-manifest.test.ts` with token/selector-removal guards and added component-level regression assertions in `app-shell-member-rail.test.tsx`, `app-shell-public-directory-panel.test.tsx`, and `app-shell-attachments-panel.test.tsx`.
+  - Added `tests/app-shell-search-panel.test.tsx` to lock SearchPanel rendering/handler behavior and utility-class status-dot usage.
+- Important finding:
+  - `presence` persisted as a cross-surface bridge helper spanning both migrated and partially migrated panels; tokenizing its Uno replacement first allowed safe selector deletion without reintroducing raw color literals.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-member-rail.test.tsx tests/app-shell-public-directory-panel.test.tsx tests/app-shell-attachments-panel.test.tsx tests/app-shell-search-panel.test.tsx tests/app-style-token-manifest.test.ts` passes.
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

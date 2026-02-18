@@ -199,21 +199,6 @@ select {
   overflow-wrap: anywhere;
 }
 
-.presence {
-  width: 0.58rem;
-  height: 0.58rem;
-  border-radius: 999px;
-  display: inline-block;
-}
-
-.presence.online {
-  background: #72dfb8;
-}
-
-.presence.idle {
-  background: #f1cb68;
-}
-
 .inline-form {
   display: grid;
   gap: 0.5rem;

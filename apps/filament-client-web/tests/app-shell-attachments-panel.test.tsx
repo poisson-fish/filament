@@ -52,8 +52,10 @@ describe("app shell attachments panel", () => {
     const metadata = screen.getByText("text/plain · 128 B");
     expect(metadata).toHaveClass("font-code");
     expect(metadata).toHaveClass("text-[0.78rem]");
+    expect(screen.getByText("incident.log").closest("li")?.querySelector("span.bg-presence-online")).not.toBeNull();
     expect(document.querySelector(".stacked-meta")).toBeNull();
     expect(document.querySelector(".mono")).toBeNull();
+    expect(document.querySelector(".presence")).toBeNull();
   });
 
   it("keeps upload/download/remove handlers wired", async () => {

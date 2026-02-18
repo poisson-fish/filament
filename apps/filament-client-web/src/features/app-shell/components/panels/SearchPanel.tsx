@@ -19,6 +19,9 @@ export interface SearchPanelProps {
 }
 
 export function SearchPanel(props: SearchPanelProps) {
+  const presenceDotClass = "inline-block h-[0.58rem] w-[0.58rem] rounded-full";
+  const onlinePresenceDotClass = `${presenceDotClass} bg-presence-online`;
+
   return (
     <section class="member-group">
       <form class="inline-form" onSubmit={props.onSubmitSearch}>
@@ -65,7 +68,7 @@ export function SearchPanel(props: SearchPanelProps) {
             <For each={resultsAccessor().messages}>
               {(message) => (
                 <li>
-                  <span class="presence online" />
+                  <span class={onlinePresenceDotClass} />
                   {props.displayUserLabel(message.authorId)}:{" "}
                   {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
                 </li>

@@ -22,6 +22,8 @@ export default defineConfig({
       "danger-panel": "var(--danger-panel)",
       "danger-panel-strong": "var(--danger-panel-strong)",
       "danger-ink": "var(--danger-ink)",
+      "presence-online": "var(--presence-online)",
+      "presence-idle": "var(--presence-idle)",
       ok: "var(--ok)",
     },
     borderRadius: {

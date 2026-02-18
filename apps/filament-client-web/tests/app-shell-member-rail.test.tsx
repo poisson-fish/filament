@@ -40,9 +40,11 @@ describe("app shell member rail", () => {
     });
     expect(moderationButton).toHaveClass("rounded-[0.62rem]");
     expect(moderationButton).toHaveClass("enabled:hover:bg-bg-4");
+    expect(screen.getByText("Remote User").previousElementSibling).toHaveClass("bg-presence-online");
 
     expect(document.querySelector(".profile-card")).toBeNull();
     expect(document.querySelector(".member-group")).toBeNull();
+    expect(document.querySelector(".presence")).toBeNull();
     expect(document.querySelector(".group-label")).toBeNull();
     expect(document.querySelector(".ops-launch-grid")).toBeNull();
   });

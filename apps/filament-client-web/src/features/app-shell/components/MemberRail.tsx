@@ -26,6 +26,9 @@ export function MemberRail(props: MemberRailProps) {
   const memberListClass = "m-0 grid list-none gap-[0.42rem] p-0";
   const memberListRowClass =
     "flex items-center gap-[0.45rem] overflow-hidden rounded-[0.6rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.5rem]";
+  const presenceDotClass = "inline-block h-[0.58rem] w-[0.58rem] rounded-full";
+  const onlinePresenceDotClass = `${presenceDotClass} bg-presence-online`;
+  const idlePresenceDotClass = `${presenceDotClass} bg-presence-idle`;
   const panelButtonClass =
     "w-full rounded-[0.62rem] border border-line-soft bg-bg-3 px-[0.6rem] py-[0.48rem] text-left text-[0.82rem] text-ink-0 transition-colors duration-[120ms] ease-out enabled:hover:bg-bg-4 enabled:cursor-pointer";
 
@@ -71,14 +74,14 @@ export function MemberRail(props: MemberRailProps) {
             <For each={props.onlineMembers}>
               {(memberId) => (
                 <li class={memberListRowClass}>
-                  <span class="presence online" />
+                  <span class={onlinePresenceDotClass} />
                   <span class="min-w-0 break-words">{props.displayUserLabel(memberId)}</span>
                 </li>
               )}
             </For>
             <Show when={props.onlineMembers.length === 0}>
               <li class={memberListRowClass}>
-                <span class="presence idle" />
+                <span class={idlePresenceDotClass} />
                 <span class="min-w-0 break-words">no-presence-yet</span>
               </li>
             </Show>

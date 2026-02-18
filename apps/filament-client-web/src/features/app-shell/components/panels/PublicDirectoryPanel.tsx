@@ -20,6 +20,9 @@ const actionButtonClassName =
   "inline-flex items-center justify-center rounded-[0.62rem] border border-brand/45 bg-brand/15 px-[0.72rem] py-[0.5rem] text-ink-0 transition-colors duration-[140ms] ease-out enabled:hover:bg-brand/24 disabled:cursor-not-allowed disabled:opacity-60";
 const directoryItemClassName =
   "flex items-start gap-[0.45rem] rounded-[0.6rem] border border-line-soft bg-bg-1 px-[0.5rem] py-[0.42rem]";
+const presenceDotClassName = "inline-block h-[0.58rem] w-[0.58rem] rounded-full";
+const onlinePresenceDotClassName = `${presenceDotClassName} bg-presence-online`;
+const idlePresenceDotClassName = `${presenceDotClassName} bg-presence-idle`;
 const joinStatusBaseClassName =
   "inline-flex items-center rounded-full border px-[0.5rem] py-[0.08rem] text-[0.7rem] tracking-[0.06em] lowercase";
 
@@ -84,7 +87,7 @@ export function PublicDirectoryPanel(props: PublicDirectoryPanelProps) {
             const joinError = (): string => props.joinErrorByGuildId[guild.guildId] ?? "";
             return (
               <li class={directoryItemClassName}>
-                <span class="presence online" />
+                <span class={onlinePresenceDotClassName} />
                 <div class="grid w-full gap-[0.35rem]">
                   <div class="grid min-w-0 gap-[0.16rem]">
                     <span>{guild.name}</span>
@@ -115,7 +118,7 @@ export function PublicDirectoryPanel(props: PublicDirectoryPanelProps) {
         </For>
         <Show when={!props.isSearching && props.guilds.length === 0}>
           <li class={directoryItemClassName}>
-            <span class="presence idle" />
+            <span class={idlePresenceDotClassName} />
             no-public-workspaces
           </li>
         </Show>
