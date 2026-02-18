@@ -167,6 +167,17 @@ describe("app shell message list", () => {
 
     const messageList = document.querySelector(".message-list");
     expect(messageList).not.toBeNull();
-    expect(messageList?.firstElementChild).toHaveClass("load-older");
+    expect(messageList?.firstElementChild).toHaveTextContent("Load older messages");
+    expect(messageList?.firstElementChild).not.toHaveClass("load-older");
+  });
+
+  it("renders message list surface with Uno utility layout classes", () => {
+    renderList(Array.from({ length: 2 }, (_, index) => messageFixture(index)));
+
+    const messageList = document.querySelector(".message-list");
+    expect(messageList).not.toBeNull();
+    expect(messageList).toHaveClass("flex");
+    expect(messageList).toHaveClass("overflow-y-auto");
+    expect(messageList).toHaveClass("overscroll-contain");
   });
 });

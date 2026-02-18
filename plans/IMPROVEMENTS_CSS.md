@@ -161,7 +161,7 @@ Implementation Notes (2026-02-18):
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 3 - Chat Surface UnoCSS Migration
-Status: `NOT STARTED`
+Status: `IN PROGRESS`
 
 Scope:
 - `MessageList.tsx`
@@ -177,6 +177,21 @@ Tasks:
 Exit Criteria:
 - Chat surface fully migrated to UnoCSS.
 - Legacy CSS reduced for chat area by at least 25% from baseline.
+
+Implementation Notes (2026-02-18):
+- Applied slice (MessageList surface):
+  - Migrated `MessageList.tsx` list container spacing/scrolling styles to Uno utility classes while retaining the `.message-list` hook for scroll/controller logic and existing tests.
+  - Migrated the `Load older messages` button to Uno utility classes and removed the legacy `.load-older` selector dependency.
+  - Removed migrated `.message-list` style blocks from `shell-refresh.css`, including the mobile padding override now represented in Uno responsive utilities.
+- Important finding:
+  - `shell-refresh.css` had two separate top-level `.message-list` blocks plus a mobile override; all three had to be removed together to avoid partial cascade leftovers during incremental migration.
+- Important finding:
+  - The legacy `.load-older` selector was grouped with attachment/message action controls; migration required removing only the `.load-older` arm to avoid regressions in attachment control styling.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-message-list.test.tsx tests/app-shell-chat-layout-contract.test.ts` passes (`583` tests total in run), including updated load-older DOM-order assertions and message-list utility class checks.
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 4 - Shell, Rails, Panels Migration
 Status: `NOT STARTED`

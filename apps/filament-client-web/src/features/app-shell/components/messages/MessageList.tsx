@@ -65,18 +65,20 @@ export function MessageList(props: MessageListProps) {
   return (
     <section
       ref={handleListRef}
-      class="message-list"
+      class="message-list flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-bg-1 px-[0.85rem] pt-[0.55rem] pb-[0.72rem] max-[900px]:px-[0.52rem] max-[900px]:pt-[0.5rem] max-[900px]:pb-[0.64rem]"
       aria-live="polite"
       onScroll={handleListScroll}
     >
       <Show when={!props.isLoadingMessages && props.messages.length === 0 && !props.messageError}>
-        <p class="muted">No messages yet in this channel.</p>
+        <p class="muted m-0 px-[0.46rem] py-[0.38rem] text-[0.82rem]">
+          No messages yet in this channel.
+        </p>
       </Show>
 
       <Show when={props.nextBefore && props.showLoadOlderButton}>
         <button
           type="button"
-          class="load-older"
+          class="my-[0.15rem] inline-flex w-fit items-center rounded-control border border-line-soft bg-bg-3 px-[0.66rem] py-[0.34rem] text-[0.78rem] font-semibold leading-[1.2] text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-4 disabled:cursor-default disabled:opacity-62"
           onClick={() => void props.onLoadOlderMessages()}
           disabled={props.isLoadingOlder}
         >
