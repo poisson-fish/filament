@@ -230,7 +230,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 4 - Shell, Rails, Panels Migration
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `1/7 scoped surfaces migrated` (`ServerRail` complete)
+Completion status (2026-02-18): `2/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail` complete)
 
 Scope:
 - server rail, channel rail, member rail, header, overlays, settings panels, auth shell
@@ -259,6 +259,20 @@ Implementation Notes (2026-02-18):
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (ChannelRail surface):
+  - Migrated `ChannelRail.tsx` layout/menu/channel rows/voice dock/account controls to Uno utility classes while retaining only stable non-visual hooks required by existing contracts (`.channel-rail`, `.channel-group-header`, `.voice-tree-avatar`, `.voice-tree-avatar-speaking`).
+  - Removed migrated ChannelRail selector blocks from `src/styles/app/base.css` and `src/styles/app/shell-refresh.css` (`workspace-menu*`, `channel-nav*`, voice dock/control classes, account bar classes, legacy channel row/group selectors, and duplicated legacy voice presence selector blocks).
+  - Added `tests/app-shell-channel-rail.test.tsx` to lock Uno class rendering, tokenized disconnect-button classes, and preservation of speaking-avatar test hooks.
+  - Extended `tests/app-style-token-manifest.test.ts` with ChannelRail legacy-selector removal assertions and a utility-class token guard for the disconnect button (`bg-danger-panel`, `border-danger-panel-strong`, `text-danger-ink`) without inline style usage.
+- Important finding:
+  - `shell-refresh.css` contained two separate ChannelRail style strata (legacy carry-over and refresh block) with duplicated voice presence/layout selectors; both had to be removed together to avoid hidden cascade dependencies.
+- Important finding:
+  - Existing voice integration tests depend on `.voice-tree-avatar` / `.voice-tree-avatar-speaking` as query hooks; these classes were intentionally retained as non-visual hooks while all visual styling moved to Uno utilities.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-channel-rail.test.tsx tests/app-style-token-manifest.test.ts tests/app-shell-layout-components.test.tsx tests/app-shell-channel-kinds.test.tsx tests/app-shell-voice-controls.test.tsx` passes (`600` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `NOT STARTED`

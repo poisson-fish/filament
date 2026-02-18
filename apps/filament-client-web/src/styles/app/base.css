@@ -191,22 +191,9 @@ select {
   min-height: 0;
 }
 
-.channel-rail {
-  padding: 0.94rem;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  gap: 0.95rem;
-}
-
-.channel-rail h2,
 .chat-header h3,
 .member-rail h4 {
   margin: 0;
-}
-
-.channel-rail span {
-  color: var(--ink-2);
-  font-size: 0.84rem;
 }
 
 .group-label {
@@ -214,12 +201,6 @@ select {
   color: var(--ink-2);
   letter-spacing: 0.08em;
   font-size: 0.72rem;
-}
-
-.channel-rail nav {
-  display: grid;
-  gap: 0.35rem;
-  align-content: start;
 }
 
 .public-directory {
@@ -289,29 +270,6 @@ select {
 
 .public-directory-row-error {
   margin: 0;
-}
-
-.channel-rail nav button {
-  border: 1px solid transparent;
-  text-align: left;
-  border-radius: 0.66rem;
-  background: transparent;
-  color: var(--ink-1);
-  padding: 0.5rem 0.56rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  cursor: pointer;
-}
-
-.channel-rail nav button:hover {
-  background: var(--panel-soft);
-}
-
-.channel-rail nav button.active {
-  border-color: var(--line-soft);
-  background: rgba(29, 52, 90, 0.64);
-  color: #fff;
 }
 
 .unread-count {

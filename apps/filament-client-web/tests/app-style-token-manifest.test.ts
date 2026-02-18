@@ -192,17 +192,48 @@ describe("app style token manifest", () => {
     }
   });
 
-  it("uses shared tokens for the voice disconnect danger button style", () => {
+  it("removes legacy ChannelRail selectors from base.css and shell-refresh.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".channel-rail nav {",
+      ".channel-rail nav button {",
+      ".channel-rail nav button:hover {",
+      ".channel-rail nav button.active {",
+    ];
+
+    const removedShellRefreshSelectors = [
+      ".workspace-menu-trigger {",
+      ".workspace-menu-item {",
+      ".workspace-menu-divider {",
+      ".channel-nav {",
+      ".channel-nav .channel-row {",
+      ".voice-connected-dock {",
+      ".voice-dock-icon-button {",
+      ".channel-rail-account-bar {",
+      ".channel-rail-account-action {",
+      ".voice-channel-stream-hints {",
+      ".voice-participant-muted-badge {",
+      ".voice-participant-deafened-badge {",
+      ".voice-participant-media-badge {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
+
+    for (const selector of removedShellRefreshSelectors) {
+      expect(shellRefreshCss).not.toContain(selector);
+    }
+  });
+
+  it("uses shared tokens for the voice disconnect danger button utility classes", () => {
     const channelRail = readFileSync(channelRailPath, "utf8");
-    const match = channelRail.match(
-      /voice-dock-disconnect-button[\s\S]*?style="([^"]+)"/,
-    );
-    expect(match).not.toBeNull();
-    const styleValue = match![1];
-    expect(styleValue).toContain("background: var(--danger-panel)");
-    expect(styleValue).toContain("border-color: var(--danger-panel-strong)");
-    expect(styleValue).toContain("color: var(--danger-ink)");
-    expect(styleValue).not.toMatch(/#[0-9a-f]{3,8}/i);
+    expect(channelRail).toContain("bg-danger-panel");
+    expect(channelRail).toContain("border-danger-panel-strong");
+    expect(channelRail).toContain("text-danger-ink");
+    expect(channelRail).not.toContain("voice-dock-disconnect-button");
   });
 
   it("forbids raw color literals in migrated TSX surfaces", () => {

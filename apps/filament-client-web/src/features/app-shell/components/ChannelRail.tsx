@@ -156,12 +156,24 @@ export function ChannelRail(props: ChannelRailProps) {
     });
   });
 
+  const workspaceMenuItemClass =
+    "w-full min-h-[2rem] inline-flex items-center justify-between gap-[0.44rem] rounded-[0.5rem] border-0 bg-transparent px-[0.5rem] py-[0.4rem] text-left text-ink-1 enabled:cursor-pointer enabled:hover:bg-bg-4 enabled:hover:text-ink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand";
+  const channelGroupActionClass =
+    "inline-flex h-[1.2rem] w-[1.2rem] items-center justify-center rounded-[0.35rem] border-0 bg-transparent p-0 text-[1rem] leading-none text-ink-2 enabled:hover:bg-bg-3 enabled:hover:text-ink-0";
+  const channelRowBaseClass =
+    "w-full min-h-[2rem] inline-flex items-center justify-between gap-[0.4rem] rounded-[0.52rem] border-0 px-[0.52rem] py-[0.28rem] text-left transition-colors duration-[120ms] ease-out";
+  const voiceDockIconButtonClass =
+    "inline-flex h-[2.2rem] w-[2.45rem] items-center justify-center rounded-[0.56rem] border border-line bg-bg-3 p-0 text-ink-0 enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-58";
+  const voiceDockIconMaskClass = "icon-mask h-[1.05rem] w-[1.05rem]";
+  const accountAvatarClass =
+    "relative inline-flex h-[1.7rem] w-[1.7rem] flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-bg-3 text-[0.58rem] text-ink-0 font-[800] tracking-[0.03em] uppercase";
+
   return (
-    <aside class="channel-rail">
-      <header class="channel-rail-header">
+    <aside class="channel-rail grid min-h-0 content-stretch gap-[0.5rem] bg-bg-0 px-[0.58rem] pt-[0.72rem] pb-[0.58rem] [grid-template-rows:auto_auto_minmax(0,1fr)]">
+      <header class="relative flex items-center justify-between gap-[0.5rem]">
         <button
           type="button"
-          class="workspace-menu-trigger"
+          class="w-full inline-flex items-center justify-between gap-[0.48rem] rounded-[0.5rem] border-0 bg-transparent px-[0.12rem] py-[0.08rem] text-left text-ink-0 enabled:cursor-pointer enabled:hover:bg-bg-3 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand"
           aria-label="Open workspace menu"
           aria-haspopup="menu"
           aria-expanded={isWorkspaceMenuOpen()}
@@ -171,18 +183,21 @@ export function ChannelRail(props: ChannelRailProps) {
             workspaceMenuTriggerElement = element;
           }}
         >
-          <h2>{props.activeWorkspace?.guildName ?? "No Workspace"}</h2>
+          <h2 class="m-0 text-[1.05rem] text-ink-0 font-[780] tracking-[0.01em]">
+            {props.activeWorkspace?.guildName ?? "No Workspace"}
+          </h2>
           <span
             classList={{
-              "workspace-menu-chevron": true,
-              open: isWorkspaceMenuOpen(),
+              "h-[0.52rem] w-[0.52rem] shrink-0 border-r-2 border-b-2 border-ink-1 transition-transform duration-[140ms] ease-out": true,
+              "rotate-45": !isWorkspaceMenuOpen(),
+              "-rotate-135": isWorkspaceMenuOpen(),
             }}
             aria-hidden="true"
           />
         </button>
         <Show when={props.activeWorkspace && isWorkspaceMenuOpen()}>
           <div
-            class="workspace-menu"
+            class="absolute left-0 right-0 top-[calc(100%+0.44rem)] z-20 grid gap-[0.18rem] rounded-[0.76rem] border border-line bg-bg-1 p-[0.4rem] shadow-panel"
             role="menu"
             aria-label="Workspace menu"
             ref={(element) => {
@@ -191,7 +206,7 @@ export function ChannelRail(props: ChannelRailProps) {
           >
             <button
               type="button"
-              class="workspace-menu-item"
+              class={workspaceMenuItemClass}
               role="menuitem"
               aria-label="Invite to workspace"
               onClick={closeWorkspaceMenu}
@@ -200,38 +215,38 @@ export function ChannelRail(props: ChannelRailProps) {
             </button>
             <button
               type="button"
-              class="workspace-menu-item"
+              class={workspaceMenuItemClass}
               role="menuitem"
               aria-label="Open workspace settings panel"
               onClick={openWorkspaceSettingsPanel}
             >
               Server Settings
             </button>
-            <div class="workspace-menu-divider" role="separator" aria-hidden="true" />
+            <div class="mx-[0.06rem] my-[0.22rem] h-px bg-line" role="separator" aria-hidden="true" />
             <button
               type="button"
-              class="workspace-menu-item workspace-menu-item-placeholder"
+              class={`${workspaceMenuItemClass} text-ink-2 enabled:hover:bg-transparent enabled:hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-100`}
               role="menuitem"
               disabled
               aria-label="Notification settings coming soon"
             >
               <span>Notification Settings</span>
-              <span class="workspace-menu-item-meta">Soon</span>
+              <span class="text-[0.67rem] text-ink-2 tracking-[0.06em] uppercase">Soon</span>
             </button>
             <button
               type="button"
-              class="workspace-menu-item workspace-menu-item-placeholder"
+              class={`${workspaceMenuItemClass} text-ink-2 enabled:hover:bg-transparent enabled:hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-100`}
               role="menuitem"
               disabled
               aria-label="Privacy settings coming soon"
             >
               <span>Privacy Settings</span>
-              <span class="workspace-menu-item-meta">Soon</span>
+              <span class="text-[0.67rem] text-ink-2 tracking-[0.06em] uppercase">Soon</span>
             </button>
           </div>
         </Show>
       </header>
-      <span class="channel-rail-subtitle">
+      <span class="text-[0.74rem] text-ink-2 capitalize">
         {props.activeWorkspace ? `${props.activeWorkspace.visibility} workspace` : "Hardened workspace"}
       </span>
 
@@ -240,15 +255,20 @@ export function ChannelRail(props: ChannelRailProps) {
           <p class="muted">Create a workspace to begin.</p>
         </Match>
         <Match when={props.activeWorkspace}>
-          <div class="channel-rail-body">
-            <nav aria-label="channels" class="channel-nav">
-              <section class="channel-group">
-                <div class="channel-group-header">
-                  <p class="group-label">TEXT CHANNELS</p>
+          <div class="grid min-h-0 gap-[0.5rem] [grid-template-rows:minmax(0,1fr)_auto_auto]">
+            <nav
+              aria-label="channels"
+              class="grid min-h-0 content-start gap-[0.86rem] overflow-auto pr-0"
+            >
+              <section class="mx-[-0.58rem] grid gap-[0.16rem]">
+                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between border-y border-line bg-bg-1 px-[1.08rem] py-[0.48rem]">
+                  <p class="m-0 text-[0.73rem] text-ink-2 tracking-[0.08em] leading-none">
+                    TEXT CHANNELS
+                  </p>
                   <Show when={props.canManageWorkspaceChannels}>
                     <button
                       type="button"
-                      class="channel-group-action"
+                      class={channelGroupActionClass}
                       aria-label="Create text channel"
                       title="Create text channel"
                       onClick={props.onCreateTextChannel}
@@ -260,31 +280,38 @@ export function ChannelRail(props: ChannelRailProps) {
                 <For each={props.activeTextChannels}>
                   {(channel) => (
                     <button
+                      class={channelRowBaseClass}
                       classList={{
-                        active: props.activeChannelId === channel.channelId,
-                        "channel-row": true,
+                        "bg-transparent text-ink-1 hover:bg-bg-3 hover:text-ink-0":
+                          props.activeChannelId !== channel.channelId,
+                        "bg-bg-4 text-ink-0": props.activeChannelId === channel.channelId,
                       }}
                       aria-label={channelRailLabel({ kind: channel.kind, name: channel.name })}
                       onClick={() => props.onSelectChannel(channel.channelId)}
                     >
-                      <span class="channel-row-main">
-                        <span class="channel-row-kind" aria-hidden="true">
+                      <span class="inline-flex min-w-0 items-center gap-[0.45rem]">
+                        <span
+                          class="inline-flex w-[1.15rem] shrink-0 justify-center text-[0.84rem] text-ink-2 font-[700]"
+                          aria-hidden="true"
+                        >
                           #
                         </span>
-                        <span>{channel.name}</span>
+                        <span class="truncate">{channel.name}</span>
                       </span>
                     </button>
                   )}
                 </For>
               </section>
 
-              <section class="channel-group">
-                <div class="channel-group-header">
-                  <p class="group-label">VOICE CHANNELS</p>
+              <section class="mx-[-0.58rem] grid gap-[0.16rem]">
+                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between border-y border-line bg-bg-1 px-[1.08rem] py-[0.48rem]">
+                  <p class="m-0 text-[0.73rem] text-ink-2 tracking-[0.08em] leading-none">
+                    VOICE CHANNELS
+                  </p>
                   <Show when={props.canManageWorkspaceChannels}>
                     <button
                       type="button"
-                      class="channel-group-action"
+                      class={channelGroupActionClass}
                       aria-label="Create voice channel"
                       title="Create voice channel"
                       onClick={props.onCreateVoiceChannel}
@@ -295,165 +322,185 @@ export function ChannelRail(props: ChannelRailProps) {
                 </div>
                 <For each={props.activeVoiceChannels}>
                   {(channel) => (
-                    <div class="voice-channel-entry">
+                    <div class="mx-[0.58rem]">
                       {(() => {
                         const rosterEntries = () =>
                           props.voiceRosterEntriesForChannel(channel.channelId);
                         return (
                           <>
-                      <button
-                        classList={{
-                          active: props.activeChannelId === channel.channelId,
-                          "channel-row": true,
-                        }}
-                        aria-label={channelRailLabel({ kind: channel.kind, name: channel.name })}
-                        onClick={() => props.onSelectChannel(channel.channelId)}
-                      >
-                        <span class="channel-row-main">
-                          <span class="channel-row-kind channel-row-kind-voice" aria-hidden="true">
-                            VC
-                          </span>
-                          <span>{channel.name}</span>
-                        </span>
-                        <Show when={props.isVoiceSessionForChannel(channel.channelId)}>
-                          <span class="channel-row-status">{props.voiceSessionDurationLabel}</span>
-                        </Show>
-                      </button>
-                      <Show
-                        when={
-                          props.isVoiceSessionForChannel(channel.channelId) ||
-                          rosterEntries().length > 0
-                        }
-                      >
-                        <section class="voice-channel-presence" aria-label="In-call participants">
-                          <Show
-                            when={rosterEntries().length > 0}
-                            fallback={<p class="voice-channel-presence-empty">Waiting for participants...</p>}
-                          >
-                            <ul class="voice-channel-presence-tree">
-                              <For each={rosterEntries()}>
-                                {(entry) => (
-                                  <li
-                                    classList={{
-                                      "voice-channel-presence-participant": true,
-                                      "voice-channel-presence-participant-local": entry.isLocal,
-                                      "voice-channel-presence-participant-speaking": entry.isSpeaking,
-                                    }}
-                                  >
-                                    <Show
-                                      when={props.userIdFromVoiceIdentity(entry.identity)}
-                                      fallback={
-                                        <span
+                            <button
+                              class={channelRowBaseClass}
+                              classList={{
+                                "bg-transparent text-ink-1 hover:bg-bg-3 hover:text-ink-0":
+                                  props.activeChannelId !== channel.channelId,
+                                "bg-bg-4 text-ink-0": props.activeChannelId === channel.channelId,
+                              }}
+                              aria-label={channelRailLabel({ kind: channel.kind, name: channel.name })}
+                              onClick={() => props.onSelectChannel(channel.channelId)}
+                            >
+                              <span class="inline-flex min-w-0 items-center gap-[0.45rem]">
+                                <span
+                                  class="inline-flex w-[1.15rem] shrink-0 justify-center text-[0.62rem] text-ink-2 font-[700] tracking-[0.04em]"
+                                  aria-hidden="true"
+                                >
+                                  VC
+                                </span>
+                                <span class="truncate">{channel.name}</span>
+                              </span>
+                              <Show when={props.isVoiceSessionForChannel(channel.channelId)}>
+                                <span class="text-[0.82rem] text-ok tabular-nums">
+                                  {props.voiceSessionDurationLabel}
+                                </span>
+                              </Show>
+                            </button>
+                            <Show
+                              when={
+                                props.isVoiceSessionForChannel(channel.channelId) ||
+                                rosterEntries().length > 0
+                              }
+                            >
+                              <section
+                                class="ml-[1.62rem] mr-[0.2rem] mt-[0.08rem] border-l-2 border-line py-[0.08rem] pl-[0.54rem] pr-0"
+                                aria-label="In-call participants"
+                              >
+                                <Show
+                                  when={rosterEntries().length > 0}
+                                  fallback={
+                                    <p class="m-0 py-[0.16rem] text-[0.76rem] text-ink-2">
+                                      Waiting for participants...
+                                    </p>
+                                  }
+                                >
+                                  <ul class="m-0 grid list-none gap-[0.12rem] p-0">
+                                    <For each={rosterEntries()}>
+                                      {(entry) => (
+                                        <li
+                                          class="relative flex min-h-[1.7rem] items-center gap-[0.36rem] rounded-[0.42rem] bg-transparent py-[0.14rem] pl-0 pr-[0.08rem] before:absolute before:left-[-0.54rem] before:top-1/2 before:h-px before:w-[0.46rem] before:bg-line before:content-[''] before:-translate-y-1/2"
                                           classList={{
-                                            "voice-tree-avatar": true,
-                                            "voice-tree-avatar-speaking": entry.isSpeaking,
+                                            "bg-brand/10": entry.isLocal,
                                           }}
-                                          aria-hidden="true"
                                         >
-                                          <span class="voice-tree-avatar-fallback">
-                                            {actorAvatarGlyph(props.actorLabel(entry.identity))}
-                                          </span>
-                                        </span>
-                                      }
-                                    >
-                                      {(participantUserId) => (
-                                        <button
-                                          type="button"
-                                          class="voice-tree-avatar-button"
-                                          aria-label={`Open ${props.voiceParticipantLabel(entry.identity, entry.isLocal)} profile`}
-                                          onClick={() => props.onOpenUserProfile(participantUserId())}
-                                        >
-                                          <span
-                                            classList={{
-                                              "voice-tree-avatar": true,
-                                              "voice-tree-avatar-speaking": entry.isSpeaking,
-                                            }}
-                                          >
-                                            <span class="voice-tree-avatar-fallback" aria-hidden="true">
-                                              {actorAvatarGlyph(props.actorLabel(entry.identity))}
-                                            </span>
-                                            <Show when={props.resolveAvatarUrl(participantUserId())}>
-                                              <img
-                                                class="voice-tree-avatar-image"
-                                                src={props.resolveAvatarUrl(participantUserId())!}
-                                                alt={`${props.voiceParticipantLabel(entry.identity, entry.isLocal)} avatar`}
-                                                loading="lazy"
-                                                decoding="async"
-                                                referrerPolicy="no-referrer"
-                                                onError={(event) => {
-                                                  event.currentTarget.style.display = "none";
+                                          <Show
+                                            when={props.userIdFromVoiceIdentity(entry.identity)}
+                                            fallback={
+                                              <span
+                                                class={`${accountAvatarClass} h-[1.3rem] w-[1.3rem] text-[0.52rem] voice-tree-avatar`}
+                                                classList={{
+                                                  "voice-tree-avatar-speaking ring-2 ring-ok border-ok":
+                                                    entry.isSpeaking,
                                                 }}
-                                              />
-                                            </Show>
+                                                aria-hidden="true"
+                                              >
+                                                <span class="z-[1]">{actorAvatarGlyph(props.actorLabel(entry.identity))}</span>
+                                              </span>
+                                            }
+                                          >
+                                            {(participantUserId) => (
+                                              <button
+                                                type="button"
+                                                class="rounded-full border-0 bg-transparent p-0"
+                                                aria-label={`Open ${props.voiceParticipantLabel(entry.identity, entry.isLocal)} profile`}
+                                                onClick={() => props.onOpenUserProfile(participantUserId())}
+                                              >
+                                                <span
+                                                  class={`${accountAvatarClass} h-[1.3rem] w-[1.3rem] text-[0.52rem] voice-tree-avatar`}
+                                                  classList={{
+                                                    "voice-tree-avatar-speaking ring-2 ring-ok border-ok":
+                                                      entry.isSpeaking,
+                                                  }}
+                                                >
+                                                  <span class="z-[1]" aria-hidden="true">
+                                                    {actorAvatarGlyph(props.actorLabel(entry.identity))}
+                                                  </span>
+                                                  <Show when={props.resolveAvatarUrl(participantUserId())}>
+                                                    <img
+                                                      class="absolute inset-0 z-[2] h-full w-full rounded-[inherit] object-cover"
+                                                      src={props.resolveAvatarUrl(participantUserId())!}
+                                                      alt={`${props.voiceParticipantLabel(entry.identity, entry.isLocal)} avatar`}
+                                                      loading="lazy"
+                                                      decoding="async"
+                                                      referrerPolicy="no-referrer"
+                                                      onError={(event) => {
+                                                        event.currentTarget.style.display = "none";
+                                                      }}
+                                                    />
+                                                  </Show>
+                                                </span>
+                                              </button>
+                                            )}
+                                          </Show>
+                                          <span class="flex-1 truncate text-left text-[0.8rem] text-ink-1">
+                                            {props.voiceParticipantLabel(entry.identity, entry.isLocal)}
                                           </span>
-                                        </button>
+                                          {(() => {
+                                            const participantUserId = props.userIdFromVoiceIdentity(
+                                              entry.identity,
+                                            );
+                                            const isCurrentUserParticipant =
+                                              Boolean(props.currentUserId) &&
+                                              participantUserId === props.currentUserId;
+                                            const showLiveBadge = isCurrentUserParticipant
+                                              ? props.rtcSnapshot.isCameraEnabled ||
+                                                props.rtcSnapshot.isScreenShareEnabled
+                                              : entry.hasCamera || entry.hasScreenShare;
+                                            return (
+                                              <span class="ml-auto inline-flex shrink-0 items-center gap-[0.2rem]">
+                                                <Show when={entry.isMuted}>
+                                                  <span
+                                                    class="inline-flex h-[1.15rem] w-[1.15rem] items-center justify-center rounded-[0.34rem] text-ink-2"
+                                                    aria-label="Muted"
+                                                    title="Muted"
+                                                  >
+                                                    <span
+                                                      class="icon-mask h-[0.82rem] w-[0.82rem]"
+                                                      style={`--icon-url: url("${MUTE_MIC_ICON_URL}")`}
+                                                      aria-hidden="true"
+                                                    />
+                                                  </span>
+                                                </Show>
+                                                <Show when={entry.isDeafened}>
+                                                  <span
+                                                    class="inline-flex h-[1.15rem] w-[1.15rem] items-center justify-center rounded-[0.34rem] text-ink-1"
+                                                    aria-label="Deafened"
+                                                    title="Deafened"
+                                                  >
+                                                    <span
+                                                      class="icon-mask h-[0.82rem] w-[0.82rem]"
+                                                      style={`--icon-url: url("${HEADPHONES_ICON_URL}")`}
+                                                      aria-hidden="true"
+                                                    />
+                                                  </span>
+                                                </Show>
+                                                <Show when={showLiveBadge}>
+                                                  <span class="rounded-full border border-danger-panel-strong bg-danger-panel px-[0.34rem] py-[0.08rem] text-[0.64rem] text-danger-ink tracking-[0.03em] leading-[1.2] uppercase">
+                                                    LIVE
+                                                  </span>
+                                                </Show>
+                                              </span>
+                                            );
+                                          })()}
+                                        </li>
                                       )}
-                                    </Show>
-                                    <span class="voice-channel-presence-name">
-                                      {props.voiceParticipantLabel(entry.identity, entry.isLocal)}
-                                    </span>
-                                    {(() => {
-                                      const participantUserId = props.userIdFromVoiceIdentity(
-                                        entry.identity,
-                                      );
-                                      const isCurrentUserParticipant =
-                                        Boolean(props.currentUserId) &&
-                                        participantUserId === props.currentUserId;
-                                      const showLiveBadge = isCurrentUserParticipant
-                                        ? props.rtcSnapshot.isCameraEnabled ||
-                                          props.rtcSnapshot.isScreenShareEnabled
-                                        : entry.hasCamera || entry.hasScreenShare;
-                                      return (
-                                        <span class="voice-channel-presence-badges">
-                                          <Show when={entry.isMuted}>
-                                            <span
-                                              class="voice-participant-muted-badge"
-                                              aria-label="Muted"
-                                              title="Muted"
-                                            >
-                                              <span
-                                                class="icon-mask"
-                                                style={`--icon-url: url("${MUTE_MIC_ICON_URL}")`}
-                                                aria-hidden="true"
-                                              />
-                                            </span>
-                                          </Show>
-                                          <Show when={entry.isDeafened}>
-                                            <span
-                                              class="voice-participant-deafened-badge"
-                                              aria-label="Deafened"
-                                              title="Deafened"
-                                            >
-                                              <span
-                                                class="icon-mask"
-                                                style={`--icon-url: url("${HEADPHONES_ICON_URL}")`}
-                                                aria-hidden="true"
-                                              />
-                                            </span>
-                                          </Show>
-                                          <Show when={showLiveBadge}>
-                                            <span class="voice-participant-media-badge">LIVE</span>
-                                          </Show>
-                                        </span>
-                                      );
-                                    })()}
-                                  </li>
-                                )}
-                              </For>
-                            </ul>
-                          </Show>
-                          <Show
-                            when={
-                              props.isVoiceSessionForChannel(channel.channelId) &&
-                              props.voiceStreamPermissionHints.length > 0
-                            }
-                          >
-                            <div class="voice-channel-stream-hints" aria-label="Voice stream permission status">
-                              <For each={props.voiceStreamPermissionHints}>{(hint) => <p>{hint}</p>}</For>
-                            </div>
-                          </Show>
-                        </section>
-                      </Show>
+                                    </For>
+                                  </ul>
+                                </Show>
+                                <Show
+                                  when={
+                                    props.isVoiceSessionForChannel(channel.channelId) &&
+                                    props.voiceStreamPermissionHints.length > 0
+                                  }
+                                >
+                                  <div
+                                    class="mt-[0.3rem] grid gap-[0.18rem] rounded-[0.5rem] border border-line bg-bg-1 px-[0.4rem] py-[0.34rem]"
+                                    aria-label="Voice stream permission status"
+                                  >
+                                    <For each={props.voiceStreamPermissionHints}>
+                                      {(hint) => <p class="m-0 text-[0.68rem] text-ink-1">{hint}</p>}
+                                    </For>
+                                  </div>
+                                </Show>
+                              </section>
+                            </Show>
                           </>
                         );
                       })()}
@@ -464,33 +511,35 @@ export function ChannelRail(props: ChannelRailProps) {
             </nav>
 
             <Show when={props.canShowVoiceHeaderControls || props.isVoiceSessionActive}>
-              <section class="voice-connected-dock" aria-label="Voice connected dock">
-                <div class="voice-connected-dock-head">
-                  <p class="voice-connected-dock-title">
+              <section
+                class="grid gap-[0.48rem] rounded-[0.72rem] border border-line bg-bg-1 p-[0.62rem]"
+                aria-label="Voice connected dock"
+              >
+                <div class="flex items-center justify-between gap-[0.5rem]">
+                  <p class="m-0 text-ok font-[760] tracking-[0.01em]">
                     {props.isVoiceSessionActive ? "Voice Connected" : "Voice Channel Ready"}
                   </p>
                   <Show when={props.isVoiceSessionActive}>
-                    <span class="voice-connected-dock-duration">{props.voiceSessionDurationLabel}</span>
+                    <span class="text-[0.87rem] text-ok tabular-nums">
+                      {props.voiceSessionDurationLabel}
+                    </span>
                   </Show>
                 </div>
-                <p class="voice-connected-dock-channel">
+                <p class="m-0 text-[0.88rem] text-ink-1 [overflow-wrap:anywhere]">
                   {props.isVoiceSessionActive ? props.activeVoiceSessionLabel : activeChannelLabel()}
                 </p>
-                <div class="voice-connected-dock-controls">
+                <div class="flex flex-wrap gap-[0.36rem]">
                   <Show when={props.canShowVoiceHeaderControls && !props.isVoiceSessionActive}>
                     <button
                       type="button"
-                      classList={{
-                        "voice-dock-icon-button": true,
-                        "is-busy": props.isJoiningVoice,
-                      }}
+                      class={voiceDockIconButtonClass}
                       aria-label={props.isJoiningVoice ? "Joining..." : "Join Voice"}
                       title={props.isJoiningVoice ? "Joining..." : "Join Voice"}
                       onClick={props.onJoinVoice}
                       disabled={props.isJoiningVoice || props.isLeavingVoice}
                     >
                       <span
-                        class="icon-mask"
+                        class={`${voiceDockIconMaskClass} ${props.isJoiningVoice ? "animate-[message-action-pulse_950ms_ease-in-out_infinite]" : ""}`}
                         style={`--icon-url: url("${JOIN_VOICE_ICON_URL}")`}
                         aria-hidden="true"
                       />
@@ -499,10 +548,7 @@ export function ChannelRail(props: ChannelRailProps) {
                   <Show when={props.isVoiceSessionActive}>
                     <button
                       type="button"
-                      classList={{
-                        "voice-dock-icon-button": true,
-                        "is-busy": props.isTogglingVoiceMic,
-                      }}
+                      class={voiceDockIconButtonClass}
                       aria-label={
                         props.isTogglingVoiceMic
                           ? "Updating..."
@@ -526,17 +572,14 @@ export function ChannelRail(props: ChannelRailProps) {
                       }
                     >
                       <span
-                        class="icon-mask"
+                        class={`${voiceDockIconMaskClass} ${props.isTogglingVoiceMic ? "animate-[message-action-pulse_950ms_ease-in-out_infinite]" : ""}`}
                         style={`--icon-url: url("${props.rtcSnapshot.isMicrophoneEnabled ? UNMUTE_MIC_ICON_URL : MUTE_MIC_ICON_URL}")`}
                         aria-hidden="true"
                       />
                     </button>
                     <button
                       type="button"
-                      classList={{
-                        "voice-dock-icon-button": true,
-                        "is-busy": props.isTogglingVoiceDeaf,
-                      }}
+                      class={voiceDockIconButtonClass}
                       aria-label={
                         props.isTogglingVoiceDeaf
                           ? "Updating..."
@@ -560,17 +603,14 @@ export function ChannelRail(props: ChannelRailProps) {
                       }
                     >
                       <span
-                        class="icon-mask"
+                        class={`${voiceDockIconMaskClass} ${props.isTogglingVoiceDeaf ? "animate-[message-action-pulse_950ms_ease-in-out_infinite]" : ""}`}
                         style={`--icon-url: url("${HEADPHONES_ICON_URL}")`}
                         aria-hidden="true"
                       />
                     </button>
                     <button
                       type="button"
-                      classList={{
-                        "voice-dock-icon-button": true,
-                        "is-busy": props.isTogglingVoiceCamera,
-                      }}
+                      class={voiceDockIconButtonClass}
                       aria-label={
                         props.isTogglingVoiceCamera
                           ? "Updating..."
@@ -595,17 +635,14 @@ export function ChannelRail(props: ChannelRailProps) {
                       }
                     >
                       <span
-                        class="icon-mask"
+                        class={`${voiceDockIconMaskClass} ${props.isTogglingVoiceCamera ? "animate-[message-action-pulse_950ms_ease-in-out_infinite]" : ""}`}
                         style={`--icon-url: url("${CAMERA_ICON_URL}")`}
                         aria-hidden="true"
                       />
                     </button>
                     <button
                       type="button"
-                      classList={{
-                        "voice-dock-icon-button": true,
-                        "is-busy": props.isTogglingVoiceScreenShare,
-                      }}
+                      class={voiceDockIconButtonClass}
                       aria-label={
                         props.isTogglingVoiceScreenShare
                           ? "Updating..."
@@ -630,32 +667,25 @@ export function ChannelRail(props: ChannelRailProps) {
                       }
                     >
                       <span
-                        class="icon-mask"
+                        class={`${voiceDockIconMaskClass} ${props.isTogglingVoiceScreenShare ? "animate-[message-action-pulse_950ms_ease-in-out_infinite]" : ""}`}
                         style={`--icon-url: url("${props.rtcSnapshot.isScreenShareEnabled ? STOP_SCREEN_SHARE_ICON_URL : START_SCREEN_SHARE_ICON_URL}")`}
                         aria-hidden="true"
                       />
                     </button>
                     <button
                       type="button"
-                      classList={{
-                        "voice-dock-icon-button": true,
-                        "leave-voice-button": true,
-                        "voice-dock-disconnect-button": true,
-                        danger: true,
-                        "is-busy": props.isLeavingVoice,
-                      }}
-                      style="flex: 1 0 100%; width: 100%; min-height: 2.35rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.42rem; background: var(--danger-panel); border-color: var(--danger-panel-strong); color: var(--danger-ink);"
+                      class="inline-flex min-h-[2.35rem] w-full flex-[1_0_100%] items-center justify-center gap-[0.42rem] rounded-[0.56rem] border border-danger-panel-strong bg-danger-panel p-0 text-danger-ink enabled:hover:bg-danger disabled:cursor-default disabled:opacity-58"
                       aria-label={props.isLeavingVoice ? "Disconnecting..." : "Disconnect"}
                       title={props.isLeavingVoice ? "Disconnecting..." : "Disconnect"}
                       onClick={props.onLeaveVoice}
                       disabled={props.isLeavingVoice || props.isJoiningVoice}
                     >
                       <span
-                        class="icon-mask"
+                        class={`${voiceDockIconMaskClass} ${props.isLeavingVoice ? "animate-[message-action-pulse_950ms_ease-in-out_infinite]" : ""}`}
                         style={`--icon-url: url("${LEAVE_VOICE_ICON_URL}")`}
                         aria-hidden="true"
                       />
-                      <span class="voice-dock-button-label" aria-hidden="true">
+                      <span class="text-[0.78rem] font-[700] tracking-[0.02em]" aria-hidden="true">
                         {props.isLeavingVoice ? "Disconnecting..." : "Disconnect"}
                       </span>
                     </button>
@@ -664,32 +694,33 @@ export function ChannelRail(props: ChannelRailProps) {
               </section>
             </Show>
 
-            <footer class="channel-rail-account-bar" aria-label="Account controls">
-              <div class="channel-rail-account-identity">
+            <footer
+              class="flex items-center justify-start gap-[0.5rem] rounded-[0.72rem] border border-line bg-bg-1 px-[0.52rem] py-[0.48rem]"
+              aria-label="Account controls"
+            >
+              <div class="inline-flex min-w-0 items-center gap-[0.45rem]">
                 <Show
                   when={props.currentUserId}
                   fallback={
-                    <span class="channel-rail-account-avatar" aria-hidden="true">
-                      <span class="channel-rail-account-avatar-fallback">
-                        {actorAvatarGlyph(currentUserLabel())}
-                      </span>
+                    <span class={accountAvatarClass} aria-hidden="true">
+                      <span class="z-[1]">{actorAvatarGlyph(currentUserLabel())}</span>
                     </span>
                   }
                 >
                   {(currentUserId) => (
                     <button
                       type="button"
-                      class="channel-rail-account-avatar-button"
+                      class="rounded-full border-0 bg-transparent p-0"
                       aria-label={`Open ${currentUserLabel()} profile`}
                       onClick={() => props.onOpenUserProfile(currentUserId())}
                     >
-                      <span class="channel-rail-account-avatar">
-                        <span class="channel-rail-account-avatar-fallback" aria-hidden="true">
+                      <span class={accountAvatarClass}>
+                        <span class="z-[1]" aria-hidden="true">
                           {actorAvatarGlyph(currentUserLabel())}
                         </span>
                         <Show when={props.resolveAvatarUrl(currentUserId())}>
                           <img
-                            class="channel-rail-account-avatar-image"
+                            class="absolute inset-0 z-[2] h-full w-full rounded-[inherit] object-cover"
                             src={props.resolveAvatarUrl(currentUserId())!}
                             alt={`${currentUserLabel()} avatar`}
                             loading="lazy"
@@ -707,19 +738,25 @@ export function ChannelRail(props: ChannelRailProps) {
                     </button>
                   )}
                 </Show>
-                <div class="channel-rail-account-copy">
-                  <p class="channel-rail-account-name">{currentUserLabel()}</p>
-                  <p class="channel-rail-account-status">{currentUserStatusLabel()}</p>
+                <div class="grid min-w-0 gap-[0.02rem]">
+                  <p class="m-0 truncate text-[0.8rem] text-ink-0 font-[740]">
+                    {currentUserLabel()}
+                  </p>
+                  <p class="m-0 text-[0.72rem] text-ink-2">{currentUserStatusLabel()}</p>
                 </div>
               </div>
               <button
                 type="button"
-                class="channel-rail-account-action"
+                class="ml-auto inline-flex h-[2.1rem] w-[2.1rem] shrink-0 items-center justify-center rounded-[0.56rem] border border-line bg-bg-3 p-0 text-ink-0 enabled:hover:bg-bg-4"
                 aria-label="Open client settings panel"
                 title="Client settings"
                 onClick={props.onOpenClientSettings}
               >
-                <span class="icon-mask" style={`--icon-url: url("${SETTINGS_ICON_URL}")`} aria-hidden="true" />
+                <span
+                  class="icon-mask h-[1.02rem] w-[1.02rem]"
+                  style={`--icon-url: url("${SETTINGS_ICON_URL}")`}
+                  aria-hidden="true"
+                />
               </button>
             </footer>
           </div>
