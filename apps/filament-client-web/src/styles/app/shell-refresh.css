@@ -56,65 +56,6 @@
   padding: 0.44rem 0.68rem;
 }
 
-.panel-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  background: rgba(8, 10, 14, 0.72);
-  display: grid;
-  place-items: center;
-  padding: 1rem;
-}
-
-.panel-window {
-  width: min(52rem, 100%);
-  max-height: min(88vh, 50rem);
-  border-radius: 0.9rem;
-  border: 1px solid #3a414d;
-  background: linear-gradient(180deg, #20242b, #1a1e25);
-  box-shadow: 0 1.1rem 2.4rem rgba(0, 0, 0, 0.5);
-  display: grid;
-  grid-template-rows: auto 1fr;
-  overflow: hidden;
-}
-
-.panel-window-medium {
-  width: min(42rem, 100%);
-}
-
-.panel-window-compact {
-  width: min(30rem, 100%);
-}
-
-.panel-window-header {
-  padding: 0.78rem 0.92rem;
-  border-bottom: 1px solid #353b45;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.panel-window-header h4 {
-  margin: 0;
-}
-
-.panel-window-header button {
-  border: 1px solid #4b5260;
-  border-radius: 0.58rem;
-  background: #2c3139;
-  color: #d4d8e0;
-  padding: 0.38rem 0.62rem;
-}
-
-.panel-window-body {
-  overflow: auto;
-  padding: 0.85rem 0.92rem;
-  display: grid;
-  align-content: start;
-  gap: 0.7rem;
-}
-
 @media (max-width: 1200px) {
   .app-shell,
   .app-shell.channel-rail-collapsed,
@@ -156,17 +97,6 @@
 
   .chat-panel {
     border-right: 0;
-  }
-
-  .panel-backdrop {
-    padding: 0.55rem;
-  }
-
-  .panel-window,
-  .panel-window-medium,
-  .panel-window-compact {
-    width: 100%;
-    max-height: 94vh;
   }
 
 }

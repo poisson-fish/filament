@@ -35,6 +35,10 @@ const settingsPanelPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/SettingsPanel.tsx",
 );
+const panelHostPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/PanelHost.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -55,6 +59,7 @@ const migratedTsxPaths = [
   chatHeaderPath,
   userProfileOverlayPath,
   settingsPanelPath,
+  panelHostPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -411,6 +416,25 @@ describe("app style token manifest", () => {
 
     for (const selector of removedBaseSelectors) {
       expect(baseCss).not.toContain(selector);
+    }
+  });
+
+  it("removes legacy panel host selectors from shell-refresh.css", () => {
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+
+    const removedShellRefreshSelectors = [
+      ".panel-backdrop {",
+      ".panel-window {",
+      ".panel-window-medium {",
+      ".panel-window-compact {",
+      ".panel-window-header {",
+      ".panel-window-header h4 {",
+      ".panel-window-header button {",
+      ".panel-window-body {",
+    ];
+
+    for (const selector of removedShellRefreshSelectors) {
+      expect(shellRefreshCss).not.toContain(selector);
     }
   });
 

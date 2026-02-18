@@ -424,6 +424,44 @@ describe("app shell panel host props adapter", () => {
     expect(setAttachmentFilename).toHaveBeenNthCalledWith(2, "");
   });
 
+  it("renders panel host shell with utility layout classes and stable panel hooks", () => {
+    const propGroups = buildPanelHostPropGroups(baseOptions());
+
+    const { container } = render(() => (
+      <PanelHost
+        panel="workspace-create"
+        canCloseActivePanel={true}
+        canManageWorkspaceChannels={true}
+        canAccessActiveChannel={true}
+        hasRoleManagementAccess={true}
+        hasModerationAccess={true}
+        panelTitle={() => "Workspace"}
+        panelClassName={() => "panel-window panel-window-compact"}
+        onClose={vi.fn()}
+        {...propGroups}
+      />
+    ));
+
+    const backdrop = container.querySelector(".panel-backdrop");
+    expect(backdrop).not.toBeNull();
+    expect(backdrop?.className).toContain("fixed");
+    expect(backdrop?.className).toContain("inset-0");
+
+    const panelWindow = screen.getByRole("dialog", { name: "Workspace panel" });
+    expect(panelWindow.className).toContain("panel-window");
+    expect(panelWindow.className).toContain("panel-window-compact");
+    expect(panelWindow.className).toContain("w-full");
+    expect(panelWindow.className).toContain("md:w-[min(30rem,100%)]");
+
+    const panelHeader = container.querySelector(".panel-window-header");
+    expect(panelHeader).not.toBeNull();
+    expect(panelHeader?.className).toContain("border-b");
+
+    const panelBody = container.querySelector(".panel-window-body");
+    expect(panelBody).not.toBeNull();
+    expect(panelBody?.className).toContain("overflow-auto");
+  });
+
   it("composes panel groups from panel-scoped builders without mapping drift", () => {
     const options = baseOptions();
 

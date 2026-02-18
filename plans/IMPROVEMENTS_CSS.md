@@ -344,7 +344,8 @@ Implementation Notes (2026-02-18):
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 5 - Legacy CSS Removal and Governance
-Status: `NOT STARTED`
+Status: `IN PROGRESS`
+Completion status (2026-02-18): `1/3 task tracks started` (shared overlay panel shell migrated to Uno utilities; legacy selector cleanup underway)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -357,6 +358,21 @@ Tasks:
 Exit Criteria:
 - `shell-refresh.css` removed or reduced to minimal compatibility patch.
 - Migration complete with stable tests.
+
+Implementation Notes (2026-02-18):
+- Applied slice (PanelHost shared shell):
+  - Migrated `PanelHost.tsx` backdrop/window/header/body presentation to Uno utility classes while retaining `.panel-backdrop`, `.panel-window`, `.panel-window-medium`, `.panel-window-compact`, `.panel-window-header`, and `.panel-window-body` as stable non-visual hooks for compatibility.
+  - Added deterministic width utility mapping in `PanelHost.tsx` so overlay size variants remain tied to existing `overlayPanelClassName` outputs without relying on legacy CSS.
+  - Removed migrated shared panel selectors from `src/styles/app/shell-refresh.css` (`.panel-backdrop`, `.panel-window*`, `.panel-window-header*`, `.panel-window-body`, and their mobile width/padding override block).
+  - Extended `tests/app-shell-panel-host-props.test.tsx` with a layout contract check for PanelHost utility classes and hook preservation.
+  - Extended `tests/app-style-token-manifest.test.ts` to assert removed panel host selectors remain absent from `shell-refresh.css`, and added `PanelHost.tsx` to migrated raw-color literal guard coverage.
+- Important finding:
+  - `overlayPanelClassName` is consumed as both behavior contract and sizing signal; preserving these class hooks while moving visuals into Uno avoids runtime/controller churn and keeps panel-size routing deterministic.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-panel-host-props.test.tsx tests/app-style-token-manifest.test.ts` passes (`615` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Testing and Validation Gates
 Run on every migration phase:
