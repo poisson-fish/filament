@@ -124,12 +124,10 @@ Tasks:
   - composer: non-scrolling bottom region
 - Align render order + scroll anchoring logic to Spec A/B/C.
 - Keep existing bounded/full render-window behavior intact.
-- Add/expand tests for:
-  - pinned-to-latest behavior
-  - history scroll mode behavior
-  - load-older anchor preservation
-  - composer bottom pinning
 - [x] Normalize message list DOM flow to chronological order (oldest -> newest) and keep `Load older messages` anchored before rows.
+- [x] Add targeted incoming-message scroll tests for pinned-to-latest and history-mode behavior (Spec A).
+- [ ] Add/expand tests for load-older anchor preservation.
+- [ ] Add/expand tests for composer bottom pinning.
 
 Exit Criteria:
 - Chat behavior matches Spec A/B/C.
@@ -141,8 +139,13 @@ Implementation Notes (2026-02-18):
   - `MessageList.tsx` now renders chronological rows directly and places the `Load older messages` affordance before message rows.
   - `shell-refresh.css` uses `.message-list { flex-direction: column; }` to keep scroll math in standard top-to-bottom semantics while preserving bottom stickiness behavior via existing controller logic.
   - Added test coverage in `tests/app-shell-message-list.test.tsx` to guard that load-older controls remain anchored before message rows in the normalized DOM flow.
+- Applied slice (2026-02-18, later):
+  - Added `tests/app-shell-gateway-controller.test.ts` coverage for the history-mode branch where incoming gateway messages must merge into state without forcing a scroll-to-bottom snap.
+- Important finding:
+  - Existing gateway tests only asserted pinned-to-latest auto-scroll behavior, which left Spec A's history-mode branch unguarded; this now has explicit coverage.
 - Validation for this slice:
-  - `pnpm -C apps/filament-client-web run test` passes (`578` tests).
+  - `pnpm -C apps/filament-client-web run test` passes (`579` tests), including the new history-mode gateway coverage.
+  - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 

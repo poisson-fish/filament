@@ -587,4 +587,106 @@ describe("app shell gateway controller", () => {
     handlers.onOpenStateChange(false);
     expect(onGatewayConnectionChange).toHaveBeenCalledWith(false);
   });
+
+  it("keeps history viewport stable for incoming messages when not near bottom", () => {
+    const [session] = createSignal(SESSION);
+    const [activeGuildId] = createSignal(GUILD_ID);
+    const [activeChannelId] = createSignal(CHANNEL_ID);
+    const [canAccessActiveChannel] = createSignal(true);
+    const [, setGatewayOnline] = createSignal(false);
+    const [, setOnlineMembers] = createSignal<string[]>([]);
+    const [workspaces, setWorkspaces] = createSignal<WorkspaceRecord[]>([
+      {
+        guildId: GUILD_ID,
+        guildName: guildNameFromInput("Ops"),
+        visibility: "private",
+        channels: [
+          channelFromResponse({
+            channel_id: CHANNEL_ID,
+            name: "incident-room",
+            kind: "text",
+          }),
+        ],
+      },
+    ]);
+    const [messages, setMessages] = createSignal([
+      messageFixture({
+        guildId: GUILD_ID,
+        channelId: CHANNEL_ID,
+        messageId: "01ARZ3NDEKTSV4RRFFQ69G5FAA",
+        authorId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+        content: "existing",
+      }),
+    ]);
+    const [, setReactionState] = createSignal<Record<string, ReactionView>>({});
+    const [, setResolvedUsernames] = createSignal<Record<string, string>>({});
+    const [, setAvatarVersionByUserId] = createSignal<Record<string, number>>({});
+    const [, setProfileDraftUsername] = createSignal("");
+    const [, setProfileDraftAbout] = createSignal("");
+    const [, setFriends] = createSignal<FriendRecord[]>([]);
+    const [, setFriendRequests] = createSignal<FriendRequestList>({
+      incoming: [],
+      outgoing: [],
+    });
+    const [, setVoiceParticipantsByChannel] = createSignal<
+      Record<string, VoiceParticipantPayload[]>
+    >({});
+
+    const scrollMessageListToBottomMock = vi.fn();
+    let handlers: any = null;
+    const connectGatewayMock = vi.fn((_token, _guildId, _channelId, nextHandlers) => {
+      handlers = nextHandlers;
+      return {
+        setSubscribedChannels: vi.fn(),
+        close: vi.fn(),
+      };
+    });
+
+    createRoot(() =>
+      createGatewayController(
+        {
+          session,
+          activeGuildId,
+          activeChannelId,
+          workspaces,
+          canAccessActiveChannel,
+          setGatewayOnline,
+          setOnlineMembers,
+          setWorkspaces,
+          setMessages,
+          setReactionState,
+          setResolvedUsernames,
+          setAvatarVersionByUserId,
+          setProfileDraftUsername,
+          setProfileDraftAbout,
+          setFriends,
+          setFriendRequests,
+          setVoiceParticipantsByChannel,
+          isMessageListNearBottom: () => false,
+          scrollMessageListToBottom: scrollMessageListToBottomMock,
+        },
+        {
+          connectGateway: connectGatewayMock,
+        },
+      ),
+    );
+
+    expect(connectGatewayMock).toHaveBeenCalledTimes(1);
+    if (!handlers) {
+      throw new Error("missing handlers");
+    }
+
+    handlers.onMessageCreate(
+      messageFixture({
+        guildId: GUILD_ID,
+        channelId: CHANNEL_ID,
+        messageId: "01ARZ3NDEKTSV4RRFFQ69G5FAC",
+        authorId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+        content: "incoming",
+      }),
+    );
+
+    expect(messages().map((entry) => entry.content)).toEqual(["existing", "incoming"]);
+    expect(scrollMessageListToBottomMock).not.toHaveBeenCalled();
+  });
 });
