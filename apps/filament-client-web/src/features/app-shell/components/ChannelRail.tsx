@@ -644,6 +644,7 @@ export function ChannelRail(props: ChannelRailProps) {
                         danger: true,
                         "is-busy": props.isLeavingVoice,
                       }}
+                      style="flex: 1 0 100%; width: 100%; min-height: 2.35rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.42rem; background: #9f1f2a; border-color: #bf2a37; color: #fff4f5;"
                       aria-label={props.isLeavingVoice ? "Disconnecting..." : "Disconnect"}
                       title={props.isLeavingVoice ? "Disconnecting..." : "Disconnect"}
                       onClick={props.onLeaveVoice}
