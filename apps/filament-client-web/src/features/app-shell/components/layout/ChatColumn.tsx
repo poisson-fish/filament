@@ -30,8 +30,8 @@ export function ChatColumn(props: ChatColumnProps) {
       <Show
         when={props.workspaceBootstrapDone && props.workspaceCount === 0}
         fallback={(
-          <section class="chat-body">
-            <div class="chat-scroll-region">
+          <>
+            <section class="chat-body">
               <div class="chat-transient-notes">
                 <Show when={!props.workspaceBootstrapDone}>
                   <p class="panel-note">Validating workspace access...</p>
@@ -64,10 +64,10 @@ export function ChatColumn(props: ChatColumnProps) {
               </div>
 
               {props.messageList}
-            </div>
+            </section>
 
             {props.messageComposer}
-          </section>
+          </>
         )}
       >
         <section class="empty-workspace">

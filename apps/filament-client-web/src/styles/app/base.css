@@ -378,7 +378,7 @@ select {
 
 .chat-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   overflow: hidden;
 }
@@ -390,27 +390,18 @@ select {
   flex-direction: column;
 }
 
-.chat-scroll-region {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
 .chat-transient-notes {
   flex-shrink: 0;
   display: grid;
 }
 
-.chat-scroll-region .message-list {
+.chat-body .message-list {
   flex: 1 1 auto;
   height: 100%;
   min-height: 0;
 }
 
-.chat-body .composer {
-  margin-top: 0;
+.chat-panel > .composer {
   flex-shrink: 0;
 }
 
