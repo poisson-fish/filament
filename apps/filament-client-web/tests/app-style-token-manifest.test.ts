@@ -19,6 +19,10 @@ const serverRailPath = resolve(
   webRootDir,
   "src/features/app-shell/components/ServerRail.tsx",
 );
+const memberRailPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/MemberRail.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -34,6 +38,7 @@ const reactionPickerPortalPath = resolve(
 const migratedTsxPaths = [
   channelRailPath,
   serverRailPath,
+  memberRailPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -217,6 +222,36 @@ describe("app style token manifest", () => {
       ".voice-participant-muted-badge {",
       ".voice-participant-deafened-badge {",
       ".voice-participant-media-badge {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
+
+    for (const selector of removedShellRefreshSelectors) {
+      expect(shellRefreshCss).not.toContain(selector);
+    }
+  });
+
+  it("removes legacy MemberRail selectors from base.css and shell-refresh.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".member-rail h4",
+      ".profile-card {",
+      ".profile-card p {",
+      ".profile-card p + p {",
+      ".profile-card .label {",
+      ".ops-launch-grid {",
+      ".ops-launch-grid button {",
+    ];
+
+    const removedShellRefreshSelectors = [
+      ".member-rail h4",
+      ".profile-card {",
+      ".ops-launch-grid button {",
+      ".ops-launch-grid {",
     ];
 
     for (const selector of removedBaseSelectors) {

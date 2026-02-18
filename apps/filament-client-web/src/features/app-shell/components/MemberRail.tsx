@@ -20,10 +20,21 @@ interface MemberRailProps {
 }
 
 export function MemberRail(props: MemberRailProps) {
+  const sectionClass = "grid gap-[0.5rem]";
+  const sectionLabelClass =
+    "m-0 text-[0.68rem] text-ink-2 tracking-[0.08em] uppercase";
+  const memberListClass = "m-0 grid list-none gap-[0.42rem] p-0";
+  const memberListRowClass =
+    "flex items-center gap-[0.45rem] overflow-hidden rounded-[0.6rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.5rem]";
+  const panelButtonClass =
+    "w-full rounded-[0.62rem] border border-line-soft bg-bg-3 px-[0.6rem] py-[0.48rem] text-left text-[0.82rem] text-ink-0 transition-colors duration-[120ms] ease-out enabled:hover:bg-bg-4 enabled:cursor-pointer";
+
   return (
-    <aside class="member-rail">
+    <aside class="member-rail grid min-h-0 content-start gap-[0.66rem] overflow-auto bg-bg-0 px-[0.78rem] py-[0.78rem]">
       <header>
-        <h4>Workspace Tools</h4>
+        <h4 class="m-0 text-[0.94rem] text-ink-0 font-[700] tracking-[0.01em]">
+          Workspace Tools
+        </h4>
       </header>
 
       <Show when={props.profileLoading}>
@@ -34,11 +45,17 @@ export function MemberRail(props: MemberRailProps) {
       </Show>
       <Show when={props.profile}>
         {(value) => (
-          <div class="profile-card">
-            <p class="label">Username</p>
-            <p>{value().username}</p>
-            <p class="label">User ID</p>
-            <p class="mono">{value().userId}</p>
+          <div class="grid gap-[0.3rem] rounded-[0.64rem] border border-line-soft bg-bg-2 p-[0.72rem]">
+            <p class="m-0 text-[0.72rem] text-ink-2 tracking-[0.07em] uppercase">
+              Username
+            </p>
+            <p class="m-0 break-words text-[0.86rem] text-ink-0">{value().username}</p>
+            <p class="m-0 pt-[0.1rem] text-[0.72rem] text-ink-2 tracking-[0.07em] uppercase">
+              User ID
+            </p>
+            <p class="m-0 break-all text-[0.82rem] text-ink-1 font-code">
+              {value().userId}
+            </p>
           </div>
         )}
       </Show>
@@ -48,55 +65,83 @@ export function MemberRail(props: MemberRailProps) {
       </Show>
 
       <Show when={props.canAccessActiveChannel}>
-        <section class="member-group">
-          <p class="group-label">ONLINE ({props.onlineMembers.length})</p>
-          <ul>
+        <section class={sectionClass}>
+          <p class={sectionLabelClass}>ONLINE ({props.onlineMembers.length})</p>
+          <ul class={memberListClass}>
             <For each={props.onlineMembers}>
               {(memberId) => (
-                <li>
+                <li class={memberListRowClass}>
                   <span class="presence online" />
-                  {props.displayUserLabel(memberId)}
+                  <span class="min-w-0 break-words">{props.displayUserLabel(memberId)}</span>
                 </li>
               )}
             </For>
             <Show when={props.onlineMembers.length === 0}>
-              <li>
+              <li class={memberListRowClass}>
                 <span class="presence idle" />
-                no-presence-yet
+                <span class="min-w-0 break-words">no-presence-yet</span>
               </li>
             </Show>
           </ul>
         </section>
       </Show>
 
-      <section class="member-group">
-        <p class="group-label">PANELS</p>
-        <div class="ops-launch-grid">
-          <button type="button" onClick={() => props.onOpenPanel("public-directory")}>
+      <section class={sectionClass}>
+        <p class={sectionLabelClass}>PANELS</p>
+        <div class="grid gap-[0.44rem]">
+          <button
+            type="button"
+            class={panelButtonClass}
+            onClick={() => props.onOpenPanel("public-directory")}
+          >
             Open directory panel
           </button>
-          <button type="button" onClick={() => props.onOpenPanel("friendships")}>
+          <button
+            type="button"
+            class={panelButtonClass}
+            onClick={() => props.onOpenPanel("friendships")}
+          >
             Open friendships panel
           </button>
           <Show when={props.canAccessActiveChannel}>
-            <button type="button" onClick={() => props.onOpenPanel("search")}>
+            <button
+              type="button"
+              class={panelButtonClass}
+              onClick={() => props.onOpenPanel("search")}
+            >
               Open search panel
             </button>
-            <button type="button" onClick={() => props.onOpenPanel("attachments")}>
+            <button
+              type="button"
+              class={panelButtonClass}
+              onClick={() => props.onOpenPanel("attachments")}
+            >
               Open attachments panel
             </button>
           </Show>
           <Show when={props.hasModerationAccess}>
-            <button type="button" onClick={() => props.onOpenPanel("moderation")}>
+            <button
+              type="button"
+              class={panelButtonClass}
+              onClick={() => props.onOpenPanel("moderation")}
+            >
               Open moderation panel
             </button>
           </Show>
           <Show when={props.hasRoleManagementAccess}>
-            <button type="button" onClick={() => props.onOpenPanel("role-management")}>
+            <button
+              type="button"
+              class={panelButtonClass}
+              onClick={() => props.onOpenPanel("role-management")}
+            >
               Open role management panel
             </button>
           </Show>
-          <button type="button" onClick={() => props.onOpenPanel("utility")}>
+          <button
+            type="button"
+            class={panelButtonClass}
+            onClick={() => props.onOpenPanel("utility")}
+          >
             Open utility panel
           </button>
         </div>

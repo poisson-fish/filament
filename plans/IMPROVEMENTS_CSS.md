@@ -230,7 +230,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 4 - Shell, Rails, Panels Migration
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `2/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail` complete)
+Completion status (2026-02-18): `3/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail`, `MemberRail` complete)
 
 Scope:
 - server rail, channel rail, member rail, header, overlays, settings panels, auth shell
@@ -270,6 +270,20 @@ Implementation Notes (2026-02-18):
   - Existing voice integration tests depend on `.voice-tree-avatar` / `.voice-tree-avatar-speaking` as query hooks; these classes were intentionally retained as non-visual hooks while all visual styling moved to Uno utilities.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-channel-rail.test.tsx tests/app-style-token-manifest.test.ts tests/app-shell-layout-components.test.tsx tests/app-shell-channel-kinds.test.tsx tests/app-shell-voice-controls.test.tsx` passes (`600` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (MemberRail surface):
+  - Migrated `MemberRail.tsx` structure/profile summary/member presence rows/panel launch actions to Uno utility classes while retaining only `.member-rail` as the stable shell/layout hook.
+  - Removed migrated MemberRail-owned selectors from `src/styles/app/base.css` and `src/styles/app/shell-refresh.css` (`.profile-card*`, `.ops-launch-grid*`, and `.member-rail h4` contributions in mixed heading selectors).
+  - Added `tests/app-shell-member-rail.test.tsx` to lock utility-class rendering, callback wiring, and removal of legacy internal hooks.
+  - Extended `tests/app-style-token-manifest.test.ts` to include `MemberRail.tsx` in migrated raw-color literal guards and to assert removed MemberRail selectors remain absent from legacy stylesheets.
+- Important finding:
+  - `.member-group` and `.group-label` are still shared across multiple panel surfaces; removing those selectors during MemberRail migration would regress unmigrated panels, so this slice only removed MemberRail-specific selector families.
+- Important finding:
+  - Both `base.css` and `shell-refresh.css` declared a combined `.chat-header h3, .member-rail h4` margin rule; migration required splitting those selectors so MemberRail heading spacing is now owned by component utilities without changing ChatHeader behavior.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-member-rail.test.tsx tests/app-shell-layout-components.test.tsx tests/app-style-token-manifest.test.ts` passes (`603` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

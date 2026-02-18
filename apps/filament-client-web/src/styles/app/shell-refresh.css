@@ -17,8 +17,7 @@
   border-right: 0;
 }
 
-.chat-header h3,
-.member-rail h4 {
+.chat-header h3 {
   margin: 0;
 }
 
@@ -98,30 +97,10 @@
   background: #1d2129;
 }
 
-.profile-card {
-  border: 1px solid #3a414d;
-  border-radius: 0.64rem;
-  background: #272b34;
-}
-
 .member-group li {
   border: 1px solid #404651;
   border-radius: 0.56rem;
   background: #2b3038;
-}
-
-.ops-launch-grid button {
-  border: 1px solid #454c58;
-  border-radius: 0.58rem;
-  background: #2f343d;
-  color: #d8dce3;
-  padding: 0.46rem 0.58rem;
-  text-align: left;
-}
-
-.ops-launch-grid {
-  display: grid;
-  gap: 0.44rem;
 }
 
 .inline-form input,

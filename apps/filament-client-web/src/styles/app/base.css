@@ -191,8 +191,7 @@ select {
   min-height: 0;
 }
 
-.chat-header h3,
-.member-rail h4 {
+.chat-header h3 {
   margin: 0;
 }
 
@@ -636,29 +635,6 @@ select {
   position: relative;
 }
 
-.profile-card {
-  border: 1px solid #2b487f;
-  border-radius: 0.76rem;
-  background: #102140;
-  padding: 0.72rem;
-}
-
-.profile-card p {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.profile-card p + p {
-  margin-top: 0.3rem;
-}
-
-.profile-card .label {
-  color: var(--ink-2);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  font-size: 0.72rem;
-}
-
 .member-group ul {
   list-style: none;
   margin: 0;
@@ -681,20 +657,6 @@ select {
   align-items: center;
   gap: 0.45rem;
   overflow-wrap: anywhere;
-}
-
-.ops-launch-grid {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.ops-launch-grid button {
-  border: 1px solid rgba(98, 167, 255, 0.4);
-  border-radius: 0.62rem;
-  background: rgba(18, 38, 68, 0.8);
-  color: #d7e8ff;
-  padding: 0.48rem 0.6rem;
-  text-align: left;
 }
 
 .ops-overlay {
