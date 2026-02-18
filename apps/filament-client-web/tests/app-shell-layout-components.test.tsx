@@ -58,7 +58,7 @@ function channelRailPropsFixture(
     isVoiceSessionActive: false,
     isVoiceSessionForChannel: () => false,
     voiceSessionDurationLabel: "0:00",
-    voiceRosterEntries: [],
+    voiceRosterEntriesForChannel: () => [],
     voiceStreamPermissionHints: [],
     activeVoiceSessionLabel: "war-room / Security Ops",
     rtcSnapshot: {
@@ -166,7 +166,7 @@ describe("app shell extracted layout components", () => {
       <ChannelRail
         {...channelRailPropsFixture({
           isVoiceSessionForChannel: () => true,
-          voiceRosterEntries: [
+            voiceRosterEntriesForChannel: () => [
             {
               identity: "self.voice",
               isLocal: true,
@@ -181,12 +181,35 @@ describe("app shell extracted layout components", () => {
               hasCamera: true,
               hasScreenShare: false,
             },
-          ],
+            ],
         })}
       />
     ));
 
     expect(screen.getAllByText("LIVE")).toHaveLength(1);
+  });
+
+  it("shows voice participant list even when not connected to that voice channel", () => {
+    render(() => (
+      <ChannelRail
+        {...channelRailPropsFixture({
+          isVoiceSessionForChannel: () => false,
+          voiceRosterEntriesForChannel: () => [
+            {
+              identity: "remote.voice",
+              isLocal: false,
+              isSpeaking: false,
+              hasCamera: false,
+              hasScreenShare: false,
+            },
+          ],
+          voiceParticipantLabel: (identity) =>
+            identity === "remote.voice" ? "remote.user" : identity,
+        })}
+      />
+    ));
+
+    expect(screen.getByText("remote.user")).toBeInTheDocument();
   });
 
   it("keeps member rail panel actions and chat header toggles wired", () => {

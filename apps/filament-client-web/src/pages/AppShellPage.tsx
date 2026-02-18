@@ -43,10 +43,10 @@ export function AppShellPage() {
     voiceConnectionState,
     isVoiceSessionActive,
     isVoiceSessionForChannel,
+    voiceRosterEntriesForChannel,
     canToggleVoiceCamera,
     canToggleVoiceScreenShare,
     canShowVoiceHeaderControls,
-    voiceRosterEntries,
     voiceStreamPermissionHints,
     voiceSessionDurationLabel,
     canCloseActivePanel,
@@ -128,7 +128,7 @@ export function AppShellPage() {
           isVoiceSessionActive={isVoiceSessionActive()}
           isVoiceSessionForChannel={isVoiceSessionForChannel}
           voiceSessionDurationLabel={voiceSessionDurationLabel()}
-          voiceRosterEntries={voiceRosterEntries()}
+          voiceRosterEntriesForChannel={voiceRosterEntriesForChannel}
           voiceStreamPermissionHints={voiceStreamPermissionHints()}
           activeVoiceSessionLabel={activeVoiceSessionLabel()}
           rtcSnapshot={voiceState.rtcSnapshot()}

@@ -12,6 +12,7 @@ import {
   clearReactionRecordsForMessage,
   collectMediaPreviewTargets,
   createMessageActionsController,
+  createMessageMediaPreviewController,
   mediaPreviewRetryDelayMs,
   mergeComposerAttachmentSelection,
   nextMediaPreviewAttempt,
@@ -338,5 +339,54 @@ describe("app shell message controller", () => {
       errorMessage: "",
     });
     expect(harness.sendMessagePhaseTransitions()).toEqual([]);
+  });
+
+  it("clears loading preview state when a scheduled preview load is cancelled", async () => {
+    vi.useFakeTimers();
+    try {
+      await createRoot(async (dispose) => {
+        const [session] = createSignal(SESSION);
+        const [activeGuildId] = createSignal(guildIdFromInput(GUILD_ID));
+        const [activeChannelId] = createSignal(channelIdFromInput(CHANNEL_ID));
+        const [messages, setMessages] = createSignal([
+          messageWithAttachments([
+            {
+              attachment_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+              filename: "screen.png",
+              mime_type: "image/png",
+              size_bytes: 120,
+            },
+          ]),
+        ]);
+
+        const controller = createMessageMediaPreviewController({
+          session,
+          setAuthenticatedSession: vi.fn(),
+          activeGuildId,
+          activeChannelId,
+          messages,
+          initialDelayMs: 50,
+        });
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(controller.loadingMediaPreviewIds()).toEqual({
+          "01ARZ3NDEKTSV4RRFFQ69G5FB0": true,
+        });
+
+        setMessages((existing) => [...existing]);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        vi.advanceTimersByTime(60);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(controller.loadingMediaPreviewIds()).toEqual({});
+        dispose();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

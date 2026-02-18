@@ -35,8 +35,23 @@ export interface ProfileControllerOptions {
   setProfileSettingsError: Setter<string>;
   setSavingProfile: Setter<boolean>;
   setUploadingProfileAvatar: Setter<boolean>;
+  setAvatarVersionByUserId: Setter<Record<string, number>>;
   setSelectedProfileUserId: Setter<UserId | null>;
   setSelectedProfileError: Setter<string>;
+}
+
+function mergeAvatarVersion(
+  existing: Record<string, number>,
+  userId: string,
+  avatarVersion: number,
+): Record<string, number> {
+  if (existing[userId] === avatarVersion) {
+    return existing;
+  }
+  return {
+    ...existing,
+    [userId]: avatarVersion,
+  };
 }
 
 export interface ProfileControllerDependencies {
@@ -146,6 +161,9 @@ export function createProfileController(
     try {
       const updated = await deps.uploadMyProfileAvatar(session, selectedFile);
       mutateProfile(updated);
+      options.setAvatarVersionByUserId((existing) =>
+        mergeAvatarVersion(existing, updated.userId, updated.avatarVersion),
+      );
       options.setSelectedProfileAvatarFile(null);
       options.setProfileSettingsStatus("Profile avatar updated.");
     } catch (error) {
@@ -176,6 +194,9 @@ export function createProfileController(
     if (!session || !value) {
       return;
     }
+    options.setAvatarVersionByUserId((existing) =>
+      mergeAvatarVersion(existing, value.userId, value.avatarVersion),
+    );
     options.setProfileDraftUsername(value.username);
     options.setProfileDraftAbout(value.aboutMarkdown);
   });

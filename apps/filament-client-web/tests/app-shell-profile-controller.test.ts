@@ -48,7 +48,9 @@ describe("app shell profile controller", () => {
     const [selectedProfileUserId, setSelectedProfileUserId] = createSignal<ReturnType<
       typeof userIdFromInput
     > | null>(null);
-    const [avatarVersionByUserId] = createSignal<Record<string, number>>({});
+    const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<
+      Record<string, number>
+    >({});
     const [profileDraftUsername, setProfileDraftUsername] = createSignal("");
     const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
     const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(
@@ -111,6 +113,7 @@ describe("app shell profile controller", () => {
           setProfileSettingsError,
           setSavingProfile,
           setUploadingProfileAvatar,
+          setAvatarVersionByUserId,
           setSelectedProfileUserId,
           setSelectedProfileError,
         },
@@ -127,6 +130,7 @@ describe("app shell profile controller", () => {
     expect(controller.profile()?.username).toBe("alice");
     expect(profileDraftUsername()).toBe("alice");
     expect(profileDraftAbout()).toBe("initial");
+    expect(avatarVersionByUserId()[USER_ID]).toBe(1);
 
     setProfileDraftUsername("aliceupdated");
     setProfileDraftAbout("updated about");
@@ -144,6 +148,7 @@ describe("app shell profile controller", () => {
     expect(uploadMyProfileAvatarMock).toHaveBeenCalledTimes(1);
     expect(selectedProfileAvatarFile()).toBeNull();
     expect(profileSettingsStatus()).toBe("Profile avatar updated.");
+    expect(avatarVersionByUserId()[USER_ID]).toBe(2);
 
     controller.openUserProfile("invalid");
     expect(selectedProfileError()).toBe("User profile is unavailable.");
@@ -159,7 +164,9 @@ describe("app shell profile controller", () => {
     const [selectedProfileUserId, setSelectedProfileUserId] = createSignal<ReturnType<
       typeof userIdFromInput
     > | null>(USER_ID);
-    const [avatarVersionByUserId] = createSignal<Record<string, number>>({
+    const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<
+      Record<string, number>
+    >({
       [USER_ID]: 3,
     });
     const [profileDraftUsername, setProfileDraftUsername] = createSignal("alice");
@@ -193,6 +200,7 @@ describe("app shell profile controller", () => {
           setProfileSettingsError,
           setSavingProfile,
           setUploadingProfileAvatar,
+          setAvatarVersionByUserId,
           setSelectedProfileUserId,
           setSelectedProfileError,
         },

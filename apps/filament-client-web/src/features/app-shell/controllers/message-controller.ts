@@ -736,6 +736,14 @@ export function createMessageMediaPreviewController(
         runFetch()
           .then((payload) => {
             if (cancelled) {
+              setLoadingMediaPreviewIds((existing) => {
+                if (!existing[attachmentId]) {
+                  return existing;
+                }
+                const next = { ...existing };
+                delete next[attachmentId];
+                return next;
+              });
               return;
             }
             const { mimeType, kind } = resolveAttachmentPreviewType(
@@ -792,6 +800,14 @@ export function createMessageMediaPreviewController(
           })
           .catch(() => {
             if (cancelled) {
+              setLoadingMediaPreviewIds((existing) => {
+                if (!existing[attachmentId]) {
+                  return existing;
+                }
+                const next = { ...existing };
+                delete next[attachmentId];
+                return next;
+              });
               return;
             }
             const nextAttempt = nextMediaPreviewAttempt(
@@ -823,6 +839,14 @@ export function createMessageMediaPreviewController(
         window.setTimeout(() => {
           if (cancelled) {
             inflightMessageMediaLoads.delete(attachmentId);
+            setLoadingMediaPreviewIds((existing) => {
+              if (!existing[attachmentId]) {
+                return existing;
+              }
+              const next = { ...existing };
+              delete next[attachmentId];
+              return next;
+            });
             return;
           }
           void processFetch();

@@ -70,6 +70,7 @@ export interface CreateAppShellSelectorsResult {
   isVoiceSessionActive: Accessor<boolean>;
   isVoiceSessionForActiveChannel: Accessor<boolean>;
   isVoiceSessionForChannel: (channelId: ChannelId) => boolean;
+  voiceRosterEntriesForChannel: (channelId: ChannelId) => VoiceRosterEntry[];
   canToggleVoiceCamera: Accessor<boolean>;
   canToggleVoiceScreenShare: Accessor<boolean>;
   canShowVoiceHeaderControls: Accessor<boolean>;
@@ -348,31 +349,44 @@ export function createAppShellSelectors(
     () => isActiveVoiceChannel() && canAccessActiveChannel(),
   );
 
-  const voiceRosterEntries = createMemo<VoiceRosterEntry[]>(() =>
-    (() => {
-      const activeGuildId = options.activeGuildId();
-      const activeChannelId = options.activeChannelId();
+  const voiceRosterEntriesForChannel = (channelId: ChannelId): VoiceRosterEntry[] => {
+    const activeGuildId = options.activeGuildId();
+    if (!activeGuildId) {
+      return [];
+    }
+    const key = channelKey(activeGuildId, channelId);
+    const synced = options.voiceParticipantsByChannel()[key];
+    if (synced && synced.length > 0) {
       const snapshot = options.rtcSnapshot();
       const localIdentity = snapshot.localParticipantIdentity;
       const localMedia = localMediaState(snapshot);
-      if (activeGuildId && activeChannelId) {
-        const key = channelKey(activeGuildId, activeChannelId);
-        const synced = options.voiceParticipantsByChannel()[key];
-        if (synced && synced.length > 0) {
-          return synced.map((entry) => ({
-            identity: entry.identity,
-            isLocal: entry.identity === localIdentity,
-            isSpeaking: entry.isSpeaking,
-            hasCamera:
-              entry.identity === localIdentity ? localMedia.hasCamera : entry.isVideoEnabled,
-            hasScreenShare:
-              entry.identity === localIdentity
-                ? localMedia.hasScreenShare
-                : entry.isScreenShareEnabled,
-          }));
-        }
+      return synced.map((entry) => ({
+        identity: entry.identity,
+        isLocal: entry.identity === localIdentity,
+        isSpeaking: entry.isSpeaking,
+        hasCamera: entry.identity === localIdentity ? localMedia.hasCamera : entry.isVideoEnabled,
+        hasScreenShare:
+          entry.identity === localIdentity
+            ? localMedia.hasScreenShare
+            : entry.isScreenShareEnabled,
+      }));
+    }
+    if (
+      isVoiceSessionActive() &&
+      options.voiceSessionChannelKey() === key
+    ) {
+      return buildVoiceRosterEntries(options.rtcSnapshot());
+    }
+    return [];
+  };
+
+  const voiceRosterEntries = createMemo<VoiceRosterEntry[]>(() =>
+    (() => {
+      const activeChannelId = options.activeChannelId();
+      if (activeChannelId) {
+        return voiceRosterEntriesForChannel(activeChannelId);
       }
-      return buildVoiceRosterEntries(snapshot);
+      return [];
     })(),
   );
 
@@ -433,6 +447,7 @@ export function createAppShellSelectors(
     isVoiceSessionActive,
     isVoiceSessionForActiveChannel,
     isVoiceSessionForChannel,
+    voiceRosterEntriesForChannel,
     canToggleVoiceCamera,
     canToggleVoiceScreenShare,
     canShowVoiceHeaderControls,

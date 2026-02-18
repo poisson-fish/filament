@@ -56,7 +56,7 @@ interface ChannelRailProps {
   isVoiceSessionActive: boolean;
   isVoiceSessionForChannel: (channelId: ChannelId) => boolean;
   voiceSessionDurationLabel: string;
-  voiceRosterEntries: VoiceRosterEntry[];
+  voiceRosterEntriesForChannel: (channelId: ChannelId) => VoiceRosterEntry[];
   voiceStreamPermissionHints: string[];
   activeVoiceSessionLabel: string;
   rtcSnapshot: RtcSnapshot;
@@ -290,6 +290,11 @@ export function ChannelRail(props: ChannelRailProps) {
                 <For each={props.activeVoiceChannels}>
                   {(channel) => (
                     <div class="voice-channel-entry">
+                      {(() => {
+                        const rosterEntries = () =>
+                          props.voiceRosterEntriesForChannel(channel.channelId);
+                        return (
+                          <>
                       <button
                         classList={{
                           active: props.activeChannelId === channel.channelId,
@@ -308,14 +313,19 @@ export function ChannelRail(props: ChannelRailProps) {
                           <span class="channel-row-status">{props.voiceSessionDurationLabel}</span>
                         </Show>
                       </button>
-                      <Show when={props.isVoiceSessionForChannel(channel.channelId)}>
+                      <Show
+                        when={
+                          props.isVoiceSessionForChannel(channel.channelId) ||
+                          rosterEntries().length > 0
+                        }
+                      >
                         <section class="voice-channel-presence" aria-label="In-call participants">
                           <Show
-                            when={props.voiceRosterEntries.length > 0}
+                            when={rosterEntries().length > 0}
                             fallback={<p class="voice-channel-presence-empty">Waiting for participants...</p>}
                           >
                             <ul class="voice-channel-presence-tree">
-                              <For each={props.voiceRosterEntries}>
+                              <For each={rosterEntries()}>
                                 {(entry) => (
                                   <li
                                     classList={{
@@ -386,13 +396,21 @@ export function ChannelRail(props: ChannelRailProps) {
                               </For>
                             </ul>
                           </Show>
-                          <Show when={props.voiceStreamPermissionHints.length > 0}>
+                          <Show
+                            when={
+                              props.isVoiceSessionForChannel(channel.channelId) &&
+                              props.voiceStreamPermissionHints.length > 0
+                            }
+                          >
                             <div class="voice-channel-stream-hints" aria-label="Voice stream permission status">
                               <For each={props.voiceStreamPermissionHints}>{(hint) => <p>{hint}</p>}</For>
                             </div>
                           </Show>
                         </section>
                       </Show>
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
                 </For>

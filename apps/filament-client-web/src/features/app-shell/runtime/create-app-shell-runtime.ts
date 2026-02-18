@@ -400,6 +400,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setProfileSettingsError: profileState.setProfileSettingsError,
     setSavingProfile: profileState.setSavingProfile,
     setUploadingProfileAvatar: profileState.setUploadingProfileAvatar,
+    setAvatarVersionByUserId: profileState.setAvatarVersionByUserId,
     setSelectedProfileUserId: profileState.setSelectedProfileUserId,
     setSelectedProfileError: profileState.setSelectedProfileError,
   });
