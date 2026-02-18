@@ -961,44 +961,6 @@ select {
   padding: 0.45rem 0.6rem;
 }
 
-.composer {
-  border-top: 1px solid var(--line-soft);
-  padding: 0.85rem 1rem;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 0.6rem;
-  align-items: center;
-}
-
-.composer-file-input {
-  display: none;
-}
-
-.composer-attach-button {
-  width: 2.2rem;
-  min-height: 2.2rem;
-  font-size: 1.15rem;
-  font-weight: 700;
-  line-height: 1;
-  padding: 0;
-}
-
-.composer-attachments {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.composer-attachment-pill {
-  border: 1px solid rgba(98, 167, 255, 0.45);
-  border-radius: 999px;
-  background: rgba(20, 33, 57, 0.82);
-  color: var(--ink-1);
-  padding: 0.28rem 0.62rem;
-  font-size: 0.8rem;
-}
-
 .workspace-create-panel {
   margin: 0.85rem 1rem 0;
   border: 1px solid var(--line-soft);
@@ -1011,23 +973,6 @@ select {
 
 .workspace-create-panel h4 {
   margin: 0;
-}
-
-.composer input {
-  width: 100%;
-  border: 1px solid #315183;
-  border-radius: 0.73rem;
-  background: #101f3d;
-  padding: 0.76rem;
-}
-
-.composer button {
-  border: 1px solid rgba(98, 167, 255, 0.5);
-  border-radius: 0.73rem;
-  background: rgba(98, 167, 255, 0.14);
-  color: #c7e1ff;
-  padding: 0.75rem 0.95rem;
-  cursor: pointer;
 }
 
 .member-rail {

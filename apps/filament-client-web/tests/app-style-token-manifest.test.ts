@@ -14,8 +14,13 @@ const channelRailPath = resolve(
   webRootDir,
   "src/features/app-shell/components/ChannelRail.tsx",
 );
+const messageComposerPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/messages/MessageComposer.tsx",
+);
 const migratedTsxPaths = [
   channelRailPath,
+  messageComposerPath,
 ];
 
 const rawColorLiteralPattern = /#[0-9a-f]{3,8}\b|\b(?:rgb|rgba|hsl|hsla)\(/i;

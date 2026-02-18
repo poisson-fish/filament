@@ -62,4 +62,20 @@ describe("app shell chat layout contract", () => {
       /min-height:\s*0;/,
     ]);
   });
+
+  it("removes legacy composer internal selector dependencies", () => {
+    const shellCss = readFileSync(shellRefreshCssPath, "utf8");
+    const removedSelectors = [
+      ".composer-input-shell",
+      ".composer-attach-button",
+      ".composer-send-button",
+      ".composer-text-input",
+      ".composer-attachments",
+      ".composer-attachment-pill",
+    ];
+
+    for (const selector of removedSelectors) {
+      expect(shellCss).not.toContain(selector);
+    }
+  });
 });

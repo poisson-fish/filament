@@ -162,6 +162,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 3 - Chat Surface UnoCSS Migration
 Status: `IN PROGRESS`
+Completion status (2026-02-18): `2/4 scoped surfaces migrated` (`MessageList`, `MessageComposer` complete; `MessageRow`, `ReactionPickerPortal` pending)
 
 Scope:
 - `MessageList.tsx`
@@ -192,6 +193,14 @@ Implementation Notes (2026-02-18):
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (MessageComposer surface):
+  - Migrated `MessageComposer.tsx` internal layout/controls/attachment pills to Uno utility classes and retained only stable runtime hooks (`form.composer`, `.composer-file-input`) used by existing controllers/integration tests.
+  - Removed migrated composer-internal selectors from both `src/styles/app/shell-refresh.css` and `src/styles/app/base.css`, including the previous broad `.composer input` and `.composer button` cascade rules.
+  - Added `tests/app-shell-message-composer.test.tsx` to lock Uno class usage and composer behavior (disabled-state gating, attachment pill removal callbacks).
+  - Extended `tests/app-shell-chat-layout-contract.test.ts` with a regression guard that composer internals no longer depend on legacy `shell-refresh.css` selectors.
+  - Extended `tests/app-style-token-manifest.test.ts` migrated-surface guard to include `MessageComposer.tsx`.
+- Important finding:
+  - Keeping `.composer` for layout contracts while removing only internal selectors is the safest incremental step; previous generic `.composer input/button` legacy rules in `base.css` would otherwise override Uno utility declarations due to selector specificity.
 
 ## Phase 4 - Shell, Rails, Panels Migration
 Status: `NOT STARTED`

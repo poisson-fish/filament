@@ -357,107 +357,6 @@
   background: #1d2128;
 }
 
-.composer {
-  border-top: 1px solid #323740;
-  padding: 0.68rem 0.72rem 0.72rem;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  justify-items: stretch;
-  align-items: stretch;
-  gap: 0.52rem;
-}
-
-.composer-input-shell button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-}
-
-.composer-input-shell {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  width: 100%;
-  min-width: 0;
-  align-items: stretch;
-  border: 1px solid #484e5a;
-  border-radius: 0.74rem;
-  background: #3a3f48;
-  overflow: hidden;
-}
-
-.composer-input-shell:focus-within {
-  border-color: #61697a;
-  box-shadow: 0 0 0 1px #61697a;
-}
-
-.composer-attach-button,
-.composer-send-button {
-  min-height: 2.7rem;
-  padding: 0 0.82rem;
-  color: #e4e8ef;
-}
-
-.composer-attach-button {
-  border-right: 1px solid #4d5461;
-  font-size: 1.14rem;
-  font-weight: 700;
-}
-
-.composer-send-button {
-  border-left: 1px solid #4d5461;
-  min-width: 5rem;
-  font-size: 0.9rem;
-  font-weight: 760;
-  line-height: 1;
-  letter-spacing: 0.01em;
-}
-
-.composer .composer-text-input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: #f0f2f5;
-  padding: 0 0.78rem;
-}
-
-.composer-text-input::placeholder {
-  color: #a8aeb8;
-}
-
-.composer-attach-button:hover,
-.composer-send-button:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.composer-attach-button:disabled,
-.composer-send-button:disabled,
-.composer-text-input:disabled {
-  cursor: not-allowed;
-  opacity: 0.68;
-}
-
-.composer-attachments {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.composer .composer-attachment-pill {
-  border: 1px solid #4a505d;
-  border-radius: 999px;
-  background: #353a43;
-  color: #dce1e7;
-  padding: 0.25rem 0.62rem;
-  font-size: 0.78rem;
-}
-
 .member-rail {
   padding: 0.78rem;
   display: grid;
@@ -1853,40 +1752,6 @@
   margin-top: 0.4rem;
 }
 
-.composer {
-  border-top: 0;
-  padding: 0.68rem 0.9rem 0.86rem;
-  background: #313338;
-}
-
-.composer-input-shell {
-  border: 1px solid #4a4f5d;
-  border-radius: 0.56rem;
-  background: #383c45;
-}
-
-.composer-input-shell:focus-within {
-  border-color: #5f6778;
-  box-shadow: 0 0 0 1px #5f6778;
-}
-
-.composer-attach-button,
-.composer-send-button {
-  min-height: 2.58rem;
-}
-
-.composer-send-button {
-  min-width: 4.2rem;
-}
-
-.composer .composer-text-input {
-  color: #eef1f4;
-}
-
-.composer-text-input::placeholder {
-  color: #9fa6b3;
-}
-
 .member-rail {
   border-right: 0;
   background: #22252d;
@@ -1923,9 +1788,6 @@
     align-items: flex-start;
   }
 
-  .composer {
-    padding: 0.52rem;
-  }
 }
 
 @media (hover: none) {
