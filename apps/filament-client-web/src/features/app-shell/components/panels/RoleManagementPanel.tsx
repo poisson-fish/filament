@@ -148,6 +148,19 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const [reorderDraftRoleIds, setReorderDraftRoleIds] = createSignal<WorkspaceRoleId[]>([]);
 
   const [assignmentRoleId, setAssignmentRoleId] = createSignal<WorkspaceRoleId | null>(null);
+  const roleHierarchyClass = "grid gap-[0.5rem]";
+  const roleHierarchyItemClass =
+    "grid gap-[0.12rem] rounded-[0.62rem] border border-line-soft bg-bg-2 px-[0.58rem] py-[0.52rem] text-left text-ink-1";
+  const roleHierarchyMetaClass = "m-0 text-[0.82rem] text-ink-2";
+  const permissionGridClass = "grid gap-[0.5rem]";
+  const permissionToggleClass =
+    "grid grid-cols-[auto_1fr] items-start gap-x-[0.52rem] gap-y-[0.2rem] rounded-[0.62rem] border border-line-soft bg-bg-1 px-[0.6rem] py-[0.5rem]";
+  const checkboxRowClass =
+    "flex items-center gap-[0.5rem] [&>input]:mt-[0.14rem] [&>input]:h-[0.95rem] [&>input]:w-[0.95rem]";
+  const statusChipClass =
+    "inline-block text-[0.7rem] uppercase tracking-[0.06em] text-ink-2";
+  const rolePreviewClass = "m-0 break-words text-ink-2";
+  const statusBaseClass = "mt-[0.92rem] text-[0.91rem]";
 
   const hierarchyRoles = createMemo(() => sortRolesByHierarchy(props.roles));
   const assignableRoles = createMemo(() =>
@@ -341,7 +354,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   };
 
   return (
-    <section class="member-group role-management-panel">
+    <section class="member-group">
       <div class="button-row">
         <button
           type="button"
@@ -357,23 +370,23 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
 
       <Show when={props.hasActiveWorkspace} fallback={<p class="muted">Select a workspace first.</p>}>
         <>
-          <section class="role-hierarchy-grid" aria-label="role hierarchy">
+          <section class={roleHierarchyClass} aria-label="role hierarchy">
             <For each={hierarchyRoles()}>
               {(role) => (
                 <button
                   type="button"
                   classList={{
-                    "role-hierarchy-item": true,
-                    selected: selectedRoleId() === role.roleId,
-                    system: role.isSystem,
+                    [roleHierarchyItemClass]: true,
+                    "border-brand": selectedRoleId() === role.roleId,
+                    "opacity-90": role.isSystem,
                   }}
                   onClick={() => setSelectedRoleId(role.roleId)}
                 >
                   <span>{role.name}</span>
-                  <span class="muted">position {role.position}</span>
-                  <span class="muted">{role.permissions.length} capabilities</span>
+                  <span class={roleHierarchyMetaClass}>position {role.position}</span>
+                  <span class={roleHierarchyMetaClass}>{role.permissions.length} capabilities</span>
                   <Show when={role.isSystem}>
-                    <span class="status-chip">system</span>
+                    <span class={statusChipClass}>system</span>
                   </Show>
                 </button>
               )}
@@ -394,12 +407,13 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                   maxlength="32"
                 />
               </label>
-              <div class="permission-grid" aria-label="create role permission matrix">
+              <div class={permissionGridClass} aria-label="create role permission matrix">
                 <For each={PERMISSION_MATRIX}>
                   {(entry) => (
-                    <label class="permission-toggle">
+                    <label class={permissionToggleClass}>
                       <input
                         type="checkbox"
+                        class="mt-[0.14rem]"
                         checked={createPermissions().includes(entry.permission)}
                         onChange={(event) =>
                           setCreatePermissions((current) =>
@@ -409,13 +423,13 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                               event.currentTarget.checked,
                             ))}
                       />
-                      <span>{entry.label}</span>
-                      <small>{entry.summary}</small>
+                      <span class="text-[0.86rem] text-ink-1">{entry.label}</span>
+                      <small class="col-[2] text-[0.74rem] text-ink-2">{entry.summary}</small>
                     </label>
                   )}
                 </For>
               </div>
-              <p class="muted role-preview">
+              <p class={rolePreviewClass}>
                 Capability preview ({createPreview().length}):{" "}
                 {createPreview()
                   .map((entry) => entry.permission)
@@ -440,12 +454,13 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                         disabled={roleAccessor().isSystem}
                       />
                     </label>
-                    <div class="permission-grid" aria-label="edit role permission matrix">
+                    <div class={permissionGridClass} aria-label="edit role permission matrix">
                       <For each={PERMISSION_MATRIX}>
                         {(entry) => (
-                          <label class="permission-toggle">
+                          <label class={permissionToggleClass}>
                             <input
                               type="checkbox"
+                              class="mt-[0.14rem]"
                               checked={editPermissions().includes(entry.permission)}
                               onChange={(event) =>
                                 setEditPermissions((current) =>
@@ -456,20 +471,20 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                                   ))}
                               disabled={roleAccessor().isSystem}
                             />
-                            <span>{entry.label}</span>
-                            <small>{entry.summary}</small>
+                            <span class="text-[0.86rem] text-ink-1">{entry.label}</span>
+                            <small class="col-[2] text-[0.74rem] text-ink-2">{entry.summary}</small>
                           </label>
                         )}
                       </For>
                     </div>
-                    <p class="muted role-preview">
+                    <p class={rolePreviewClass}>
                       Capability preview ({editPreview().length}):{" "}
                       {editPreview()
                         .map((entry) => entry.permission)
                         .join(", ") || "none"}
                     </p>
                     <Show when={isRiskyPermissionDrop() && !roleAccessor().isSystem}>
-                      <label class="checkbox-row">
+                      <label class={checkboxRowClass}>
                         <input
                           type="checkbox"
                           checked={confirmRiskyRoleEdit()}
@@ -507,11 +522,11 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
               </Show>
             </form>
 
-            <section class="inline-form role-reorder-block">
+            <section class="inline-form">
               <h5>Role Hierarchy Reorder</h5>
               <For each={reorderDraftRoleIds()}>
                 {(roleId, indexAccessor) => (
-                  <div class="button-row role-reorder-row">
+                  <div class="button-row items-center [&>span]:min-w-0 [&>span]:flex-1 [&>span]:break-words">
                     <span>
                       {hierarchyRoles().find((entry) => entry.roleId === roleId)?.name ??
                         "unknown"}
@@ -595,10 +610,10 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
       </Show>
 
       <Show when={props.roleManagementStatus}>
-        <p class="status ok">{props.roleManagementStatus}</p>
+        <p class={`${statusBaseClass} text-ok`}>{props.roleManagementStatus}</p>
       </Show>
       <Show when={props.roleManagementError || clientError()}>
-        <p class="status error">{props.roleManagementError || clientError()}</p>
+        <p class={`${statusBaseClass} text-danger`}>{props.roleManagementError || clientError()}</p>
       </Show>
     </section>
   );

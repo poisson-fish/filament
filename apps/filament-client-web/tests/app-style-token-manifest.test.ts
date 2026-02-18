@@ -40,6 +40,10 @@ const workspaceSettingsPanelPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/WorkspaceSettingsPanel.tsx",
 );
+const roleManagementPanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/RoleManagementPanel.tsx",
+);
 const panelHostPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/PanelHost.tsx",
@@ -85,6 +89,7 @@ const migratedTsxPaths = [
   userProfileOverlayPath,
   settingsPanelPath,
   workspaceSettingsPanelPath,
+  roleManagementPanelPath,
   panelHostPath,
   utilityPanelPath,
   chatColumnPath,
@@ -585,6 +590,31 @@ describe("app style token manifest", () => {
     expect(baseCss).not.toContain(".group-label {");
     expect(baseCss).not.toContain(".ops-overlay-header .group-label {");
     expect(shellRefreshCss).not.toContain(".group-label {");
+  });
+
+  it("removes legacy role management selectors from base.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+    const removedBaseSelectors = [
+      ".role-hierarchy-grid {",
+      ".role-hierarchy-item {",
+      ".role-hierarchy-item.selected {",
+      ".role-hierarchy-item.system {",
+      ".permission-grid {",
+      ".permission-toggle {",
+      ".permission-toggle input {",
+      ".permission-toggle span {",
+      ".permission-toggle small {",
+      ".role-preview {",
+      ".role-reorder-row {",
+      ".role-reorder-row span {",
+      ".status-chip {",
+      ".checkbox-row {",
+      ".checkbox-row input {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
   });
 
   it("uses shared tokens for the voice disconnect danger button utility classes", () => {

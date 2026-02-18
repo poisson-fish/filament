@@ -102,6 +102,49 @@ describe("role management panel", () => {
     expect(screen.queryByRole("button", { name: "Assign role" })).not.toBeInTheDocument();
   });
 
+  it("renders hierarchy and permission matrix with utility classes and no legacy hooks", () => {
+    render(() => RoleManagementPanel(panelProps()));
+
+    const hierarchy = screen.getByLabelText("role hierarchy");
+    expect(hierarchy).toHaveClass("grid");
+
+    const selectedRoleButton = screen.getByRole("button", { name: /Responder/ });
+    expect(selectedRoleButton.className).toContain("border-brand");
+
+    const createMatrix = screen.getByLabelText("create role permission matrix");
+    expect(createMatrix).toHaveClass("grid");
+    const firstToggle = within(createMatrix).getByLabelText(/Create Messages/i).closest("label");
+    expect(firstToggle?.className).toContain("grid-cols-[auto_1fr]");
+
+    expect(document.querySelector(".role-hierarchy-grid")).toBeNull();
+    expect(document.querySelector(".role-hierarchy-item")).toBeNull();
+    expect(document.querySelector(".permission-grid")).toBeNull();
+    expect(document.querySelector(".permission-toggle")).toBeNull();
+  });
+
+  it("renders system role badge without the legacy status-chip hook", () => {
+    render(() =>
+      RoleManagementPanel(
+        panelProps({
+          roles: [
+            {
+              roleId: ROLE_ID,
+              name: workspaceRoleNameFromInput("Owner"),
+              position: 10,
+              isSystem: true,
+              permissions: [permissionFromInput("manage_workspace_roles")],
+            },
+          ],
+        }),
+      ),
+    );
+
+    const systemBadge = screen.getByText("system");
+    expect(systemBadge.className).toContain("uppercase");
+    expect(systemBadge).not.toHaveClass("status-chip");
+    expect(document.querySelector(".status-chip")).toBeNull();
+  });
+
   it("requires explicit confirmation before delete action", async () => {
     const onDeleteRole = vi.fn(async () => undefined);
     const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(false);
