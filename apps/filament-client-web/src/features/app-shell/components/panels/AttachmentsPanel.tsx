@@ -22,6 +22,12 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
   const presenceDotClass = "inline-block h-[0.58rem] w-[0.58rem] rounded-full";
   const onlinePresenceDotClass = `${presenceDotClass} bg-presence-online`;
   const idlePresenceDotClass = `${presenceDotClass} bg-presence-idle`;
+  const attachmentListClass = "m-0 grid list-none gap-[0.42rem] p-0";
+  const attachmentListItemClass =
+    "grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-[0.45rem] overflow-hidden rounded-[0.6rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.5rem]";
+  const attachmentNameClass = "min-w-0 break-words text-[0.84rem] text-ink-0";
+  const attachmentActionButtonClass =
+    "min-h-[1.75rem] rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.54rem] text-[0.78rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
 
   return (
     <section class="member-group">
@@ -55,19 +61,20 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
       <Show when={props.attachmentError}>
         <p class="status error">{props.attachmentError}</p>
       </Show>
-      <ul>
+      <ul class={attachmentListClass}>
         <For each={props.activeAttachments}>
           {(record) => (
-            <li>
+            <li class={attachmentListItemClass}>
               <span class={onlinePresenceDotClass} />
               <div class="grid min-w-0 gap-[0.16rem]">
-                <span>{record.filename}</span>
+                <span class={attachmentNameClass}>{record.filename}</span>
                 <span class="muted text-[0.78rem] font-code">
                   {record.mimeType} · {formatBytes(record.sizeBytes)}
                 </span>
               </div>
               <button
                 type="button"
+                class={attachmentActionButtonClass}
                 onClick={() => void props.onDownloadAttachment(record)}
                 disabled={props.downloadingAttachmentId === record.attachmentId}
               >
@@ -75,6 +82,7 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
               </button>
               <button
                 type="button"
+                class={attachmentActionButtonClass}
                 onClick={() => void props.onRemoveAttachment(record)}
                 disabled={props.deletingAttachmentId === record.attachmentId}
               >
@@ -84,9 +92,11 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
           )}
         </For>
         <Show when={props.activeAttachments.length === 0}>
-          <li>
+          <li class={attachmentListItemClass}>
             <span class={idlePresenceDotClass} />
-            no-local-attachments
+            <span class="col-span-3 min-w-0 break-words text-[0.84rem] text-ink-2">
+              no-local-attachments
+            </span>
           </li>
         </Show>
       </ul>

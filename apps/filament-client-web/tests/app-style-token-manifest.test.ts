@@ -68,6 +68,10 @@ const attachmentsPanelPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/AttachmentsPanel.tsx",
 );
+const searchPanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/SearchPanel.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -96,6 +100,7 @@ const migratedTsxPaths = [
   publicDirectoryPanelPath,
   friendshipsPanelPath,
   attachmentsPanelPath,
+  searchPanelPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -522,6 +527,12 @@ describe("app style token manifest", () => {
     for (const selector of removedBaseSelectors) {
       expect(baseCss).not.toContain(selector);
     }
+  });
+
+  it("removes dead member-group list selectors from base.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+    expect(baseCss).not.toContain(".member-group ul {");
+    expect(baseCss).not.toContain(".member-group li {");
   });
 
   it("removes dead ops-overlay selectors from base.css", () => {

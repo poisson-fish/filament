@@ -49,6 +49,10 @@ describe("app shell attachments panel", () => {
     render(() => <AttachmentsPanel {...attachmentsPanelPropsFixture()} />);
 
     expect(screen.getByText("incident.log")).toBeInTheDocument();
+    expect(screen.getByText("incident.log").closest("ul")).toHaveClass("list-none");
+    expect(screen.getByText("incident.log").closest("li")).toHaveClass(
+      "grid-cols-[auto_minmax(0,1fr)_auto_auto]",
+    );
     const metadata = screen.getByText("text/plain · 128 B");
     expect(metadata).toHaveClass("font-code");
     expect(metadata).toHaveClass("text-[0.78rem]");

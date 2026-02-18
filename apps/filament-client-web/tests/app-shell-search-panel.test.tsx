@@ -54,8 +54,11 @@ describe("app shell search panel", () => {
   it("renders result rows with utility presence dots and no legacy presence hook", () => {
     render(() => <SearchPanel {...searchPanelPropsFixture()} />);
 
-    expect(screen.getByText("Remote User: incident logs")).toBeInTheDocument();
-    expect(screen.getByText("Remote User: incident logs").closest("li")?.querySelector("span.bg-presence-online")).not.toBeNull();
+    const resultText = screen.getByText("Remote User: incident logs");
+    expect(resultText).toBeInTheDocument();
+    expect(resultText.closest("ul")).toHaveClass("list-none");
+    expect(resultText.closest("li")).toHaveClass("rounded-[0.6rem]");
+    expect(resultText.closest("li")?.querySelector("span.bg-presence-online")).not.toBeNull();
     expect(document.querySelector(".presence")).toBeNull();
   });
 

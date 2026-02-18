@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `11/11 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `12/12 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -488,6 +488,17 @@ Implementation Notes (2026-02-18):
   - `RoleManagementPanel` still depends on shared `.inline-form` and `.button-row` helpers that are also used by unmigrated panels; this slice intentionally removed only role-management-specific helper families to avoid cross-panel regressions.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-role-management-panel.test.tsx tests/app-style-token-manifest.test.ts` passes (`636` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (Dead legacy selector cleanup: `member-group` list bridge removal):
+  - Migrated `SearchPanel.tsx` and `AttachmentsPanel.tsx` search-result/attachment list rows to explicit Uno utility classes (`list-none`, tokenized row surfaces, utility action buttons), removing reliance on inherited `.member-group ul/li` bridge styling.
+  - Removed dead `.member-group ul` and `.member-group li` selectors from `src/styles/app/base.css` while retaining `.member-group` section layout as an interim helper for still-unmigrated panel wrappers.
+  - Extended `tests/app-shell-search-panel.test.tsx` and `tests/app-shell-attachments-panel.test.tsx` with list-row utility assertions, and extended `tests/app-style-token-manifest.test.ts` with selector-removal guards plus `SearchPanel.tsx` raw-color guard coverage.
+- Important finding:
+  - `.member-group ul/li` selectors were only still affecting `SearchPanel` and `AttachmentsPanel`; migrating those two list surfaces in the same slice enabled safe selector deletion without touching broader `.inline-form`/`.button-row` helper usage that remains shared by unmigrated panels.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-search-panel.test.tsx tests/app-shell-attachments-panel.test.tsx tests/app-style-token-manifest.test.ts` passes (`637` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

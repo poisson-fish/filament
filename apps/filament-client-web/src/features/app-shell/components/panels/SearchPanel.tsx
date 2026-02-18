@@ -21,6 +21,10 @@ export interface SearchPanelProps {
 export function SearchPanel(props: SearchPanelProps) {
   const presenceDotClass = "inline-block h-[0.58rem] w-[0.58rem] rounded-full";
   const onlinePresenceDotClass = `${presenceDotClass} bg-presence-online`;
+  const resultsListClass = "m-0 grid list-none gap-[0.42rem] p-0";
+  const resultsListItemClass =
+    "flex items-start gap-[0.45rem] overflow-hidden rounded-[0.6rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.5rem]";
+  const resultsListTextClass = "min-w-0 break-words text-[0.84rem] text-ink-0";
 
   return (
     <section class="member-group">
@@ -64,13 +68,15 @@ export function SearchPanel(props: SearchPanelProps) {
       </Show>
       <Show when={props.searchResults}>
         {(resultsAccessor) => (
-          <ul>
+          <ul class={resultsListClass}>
             <For each={resultsAccessor().messages}>
               {(message) => (
-                <li>
+                <li class={resultsListItemClass}>
                   <span class={onlinePresenceDotClass} />
-                  {props.displayUserLabel(message.authorId)}:{" "}
-                  {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
+                  <span class={resultsListTextClass}>
+                    {props.displayUserLabel(message.authorId)}:{" "}
+                    {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
+                  </span>
                 </li>
               )}
             </For>

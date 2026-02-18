@@ -175,28 +175,9 @@ select {
   position: relative;
 }
 
-.member-group ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.42rem;
-}
-
 .member-group {
   display: grid;
   gap: 0.5rem;
-}
-
-.member-group li {
-  border: 1px solid var(--line-soft);
-  border-radius: 0.6rem;
-  background: rgba(20, 33, 57, 0.85);
-  padding: 0.5rem 0.55rem;
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  overflow-wrap: anywhere;
 }
 
 .inline-form {
