@@ -497,6 +497,7 @@ function createVoiceFixtureFetch(options?: {
   const userLookupById = options?.userLookupById ?? {};
   let voiceTokenBody: unknown = null;
   let voiceTokenRequestCount = 0;
+  const voiceStateBodies: unknown[] = [];
   const userLookupBodies: unknown[] = [];
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -602,6 +603,15 @@ function createVoiceFixtureFetch(options?: {
       });
     }
 
+    if (
+      method === "POST" &&
+      channel?.kind === "voice" &&
+      url.includes(`/guilds/${GUILD_ID}/channels/${channel.channelId}/voice/state`)
+    ) {
+      voiceStateBodies.push(init?.body ? JSON.parse(init.body as string) : null);
+      return new Response(null, { status: 204 });
+    }
+
     if (method === "POST" && url.endsWith("/auth/logout")) {
       return new Response(null, { status: 204 });
     }
@@ -613,6 +623,7 @@ function createVoiceFixtureFetch(options?: {
     fetchMock,
     voiceTokenBody: () => voiceTokenBody,
     voiceTokenRequestCount: () => voiceTokenRequestCount,
+    voiceStateBodies: () => voiceStateBodies,
     userLookupBodies: () => userLookupBodies,
   };
 }
@@ -748,10 +759,16 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Mute Mic" }));
     await waitFor(() => expect(rtcMock.toggleMicrophone).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: "Unmute Mic" })).toBeInTheDocument();
+    expect(fixture.voiceStateBodies()).toContainEqual({
+      is_muted: true,
+    });
 
     fireEvent.click(await screen.findByRole("button", { name: "Deafen Audio" }));
     await waitFor(() => expect(rtcMock.toggleDeafened).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: "Undeafen Audio" })).toBeInTheDocument();
+    expect(fixture.voiceStateBodies()).toContainEqual({
+      is_deafened: true,
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));

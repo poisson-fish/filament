@@ -9,6 +9,7 @@ import type {
 import {
   issueVoiceToken,
   leaveVoiceChannel as leaveVoiceChannelApi,
+  updateVoiceParticipantState as updateVoiceParticipantStateApi,
 } from "../../../lib/api";
 import { createRtcClient, type RtcClient, type RtcSnapshot } from "../../../lib/rtc";
 import type { VoiceDevicePreferences } from "../../../lib/voice-device-settings";
@@ -74,6 +75,15 @@ export interface VoiceOperationsControllerDependencies {
     guildId: GuildId,
     channelId: ChannelRecord["channelId"],
   ) => Promise<void>;
+  updateVoiceParticipantState: (
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelRecord["channelId"],
+    input: {
+      isMuted?: boolean;
+      isDeafened?: boolean;
+    },
+  ) => Promise<void>;
   createRtcClient: () => RtcClient;
   channelKey: (guildId: GuildId, channelId: ChannelRecord["channelId"]) => string;
   mapRtcError: (error: unknown, fallback: string) => string;
@@ -96,6 +106,7 @@ export interface VoiceOperationsController {
 const DEFAULT_VOICE_OPERATIONS_CONTROLLER_DEPENDENCIES: VoiceOperationsControllerDependencies = {
   issueVoiceToken,
   leaveVoiceChannel: leaveVoiceChannelApi,
+  updateVoiceParticipantState: updateVoiceParticipantStateApi,
   createRtcClient,
   channelKey,
   mapRtcError,
@@ -307,6 +318,23 @@ export function createVoiceOperationsController(
     try {
       const enabled = await rtcClient.toggleMicrophone();
       options.setVoiceStatus(enabled ? "Microphone unmuted." : "Microphone muted.");
+      const session = options.session();
+      const connectedChannelKey = options.voiceSessionChannelKey();
+      const [guildId, channelId] = connectedChannelKey?.split("|") ?? [];
+      if (session && guildId && channelId) {
+        try {
+          await deps.updateVoiceParticipantState(
+            session,
+            guildId as GuildId,
+            channelId as ChannelRecord["channelId"],
+            { isMuted: !enabled },
+          );
+        } catch (error) {
+          options.setVoiceError(
+            deps.mapRtcError(error, "Microphone changed locally, but sync failed."),
+          );
+        }
+      }
     } catch (error) {
       options.setVoiceError(deps.mapRtcError(error, "Unable to update microphone."));
     } finally {
@@ -323,6 +351,23 @@ export function createVoiceOperationsController(
     try {
       const enabled = await rtcClient.toggleDeafened();
       options.setVoiceStatus(enabled ? "Audio output deafened." : "Audio output undeafened.");
+      const session = options.session();
+      const connectedChannelKey = options.voiceSessionChannelKey();
+      const [guildId, channelId] = connectedChannelKey?.split("|") ?? [];
+      if (session && guildId && channelId) {
+        try {
+          await deps.updateVoiceParticipantState(
+            session,
+            guildId as GuildId,
+            channelId as ChannelRecord["channelId"],
+            { isDeafened: enabled },
+          );
+        } catch (error) {
+          options.setVoiceError(
+            deps.mapRtcError(error, "Audio output changed locally, but sync failed."),
+          );
+        }
+      }
     } catch (error) {
       options.setVoiceError(deps.mapRtcError(error, "Unable to update deafen state."));
     } finally {

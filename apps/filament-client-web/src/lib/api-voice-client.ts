@@ -27,6 +27,15 @@ export interface VoiceClient {
     guildId: GuildId,
     channelId: ChannelId,
   ): Promise<void>;
+  updateVoiceParticipantState(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+    input: {
+      isMuted?: boolean;
+      isDeafened?: boolean;
+    },
+  ): Promise<void>;
 }
 
 export function createVoiceClient(input: VoiceClientDependencies): VoiceClient {
@@ -36,6 +45,9 @@ export function createVoiceClient(input: VoiceClientDependencies): VoiceClient {
     },
     leaveVoiceChannel(session, guildId, channelId) {
       return input.voiceApi.leaveVoiceChannel(session, guildId, channelId);
+    },
+    updateVoiceParticipantState(session, guildId, channelId, payload) {
+      return input.voiceApi.updateVoiceParticipantState(session, guildId, channelId, payload);
     },
   };
 }

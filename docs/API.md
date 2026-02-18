@@ -397,6 +397,15 @@ Permission enum values:
   - Request: none
   - Response `200`: `{ "accepted": true }`
 
+### Voice Participant State
+- `POST /guilds/{guild_id}/channels/{channel_id}/voice/state`
+  - Auth required
+  - Request:
+    - `{ "is_muted"?: bool, "is_deafened"?: bool }`
+  - At least one field is required.
+  - Updates the caller's voice participant mute/deafen state and broadcasts `voice_participant_update` for changed fields.
+  - Response `204 No Content`
+
 ### RTC Client UX Behavior (Web)
 - Voice controls are only shown for channels with `kind: "voice"` and effective `create_message` access.
 - Web client call states are surfaced as `connecting`, `connected`, `reconnecting`, and `error`.

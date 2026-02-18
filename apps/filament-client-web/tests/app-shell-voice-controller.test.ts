@@ -344,9 +344,12 @@ describe("app shell voice controller", () => {
 
   it("toggles local deafen state and updates status", async () => {
     const toggleDeafened = vi.fn(async () => true);
+    const updateVoiceParticipantState = vi.fn(async () => {});
     const harness = createRoot(() =>
       createVoiceOperationsHarness({
+        initialVoiceSessionChannelKey: `${GUILD_ID}|${VOICE_CHANNEL.channelId}`,
         dependencies: {
+          updateVoiceParticipantState,
           createRtcClient: () =>
             createRtcClientMock({
               toggleDeafened,
@@ -359,6 +362,12 @@ describe("app shell voice controller", () => {
     await harness.controller.toggleVoiceDeafen();
 
     expect(toggleDeafened).toHaveBeenCalledTimes(1);
+    expect(updateVoiceParticipantState).toHaveBeenCalledWith(
+      SESSION,
+      GUILD_ID,
+      VOICE_CHANNEL.channelId,
+      { isDeafened: true },
+    );
     expect(harness.voiceStatus()).toBe("Audio output deafened.");
     expect(harness.voiceError()).toBe("");
   });

@@ -95,6 +95,7 @@ pub(crate) use connection_runtime::{
     add_subscription, broadcast_channel_event, broadcast_guild_event, broadcast_user_event,
     handle_presence_subscribe, handle_voice_subscribe, register_voice_participant_from_token,
     remove_connection, remove_voice_participant_for_channel,
+    update_voice_participant_audio_state_for_channel,
 };
 use hydration_db::collect_hydrated_messages_db;
 use hydration_in_memory::collect_hydrated_messages_in_memory;

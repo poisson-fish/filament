@@ -135,3 +135,4 @@ export const unassignGuildRole = workspaceClient.unassignGuildRole;
 
 export const issueVoiceToken = voiceClient.issueVoiceToken;
 export const leaveVoiceChannel = voiceClient.leaveVoiceChannel;
+export const updateVoiceParticipantState = voiceClient.updateVoiceParticipantState;

@@ -43,7 +43,7 @@ use super::{
         },
         media::{
             delete_attachment, download_attachment, issue_voice_token, leave_voice_channel,
-            upload_attachment,
+            update_voice_participant_state, upload_attachment,
         },
         messages::{
             add_reaction, create_message, delete_message, edit_message, get_channel_permissions,
@@ -134,6 +134,10 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     (
         "POST",
         "/guilds/{guild_id}/channels/{channel_id}/voice/leave",
+    ),
+    (
+        "POST",
+        "/guilds/{guild_id}/channels/{channel_id}/voice/state",
     ),
     ("GET", "/guilds/{guild_id}/search"),
     ("POST", "/guilds/{guild_id}/search/rebuild"),
@@ -396,6 +400,10 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/voice/leave",
             post(leave_voice_channel),
+        )
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/voice/state",
+            post(update_voice_participant_state),
         )
         .route("/guilds/{guild_id}/search", get(search_messages))
         .route(

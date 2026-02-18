@@ -1159,6 +1159,51 @@ async fn websocket_voice_participant_sync_repairs_and_disconnect_cleanup() {
     let member_publish = next_event_of_type(&mut member_socket, "voice_stream_publish").await;
     assert_eq!(member_publish["d"]["identity"], joined_identity);
 
+    let voice_state_update = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/voice/state",
+            voice_channel.guild_id, voice_channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.141")
+        .body(Body::from(
+            json!({
+                "is_muted": true,
+                "is_deafened": true
+            })
+            .to_string(),
+        ))
+        .expect("voice state update request should build");
+    let voice_state_update_response = app
+        .clone()
+        .oneshot(voice_state_update)
+        .await
+        .expect("voice state update request should execute");
+    assert_eq!(voice_state_update_response.status(), StatusCode::NO_CONTENT);
+
+    let owner_update = next_event_of_type(&mut owner_socket, "voice_participant_update").await;
+    let member_update = next_event_of_type(&mut member_socket, "voice_participant_update").await;
+    assert_eq!(owner_update["d"]["identity"], joined_identity);
+    assert_eq!(member_update["d"]["identity"], joined_identity);
+    assert_eq!(
+        owner_update["d"]["updated_fields"]["is_muted"],
+        Value::Bool(true)
+    );
+    assert_eq!(
+        owner_update["d"]["updated_fields"]["is_deafened"],
+        Value::Bool(true)
+    );
+    assert_eq!(
+        member_update["d"]["updated_fields"]["is_muted"],
+        Value::Bool(true)
+    );
+    assert_eq!(
+        member_update["d"]["updated_fields"]["is_deafened"],
+        Value::Bool(true)
+    );
+
     let mut member_second_req = ws_url(&member.access_token)
         .into_client_request()
         .expect("member second ws request should build");

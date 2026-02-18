@@ -88,4 +88,27 @@ describe("api-voice", () => {
       accessToken: session.accessToken,
     });
   });
+
+  it("updateVoiceParticipantState issues scoped sync request", async () => {
+    const requestJson = vi.fn(async () => ({}));
+    const requestNoContent = vi.fn(async () => {});
+    const api = createVoiceApi({ requestJson, requestNoContent });
+
+    await expect(
+      api.updateVoiceParticipantState(session, guildId, channelId, {
+        isMuted: true,
+        isDeafened: false,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(requestNoContent).toHaveBeenCalledWith({
+      method: "POST",
+      path: `/guilds/${guildId}/channels/${channelId}/voice/state`,
+      accessToken: session.accessToken,
+      body: {
+        is_muted: true,
+        is_deafened: false,
+      },
+    });
+  });
 });

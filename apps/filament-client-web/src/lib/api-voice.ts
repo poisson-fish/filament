@@ -38,6 +38,15 @@ export interface VoiceApi {
     guildId: GuildId,
     channelId: ChannelId,
   ): Promise<void>;
+  updateVoiceParticipantState(
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelId,
+    input: {
+      isMuted?: boolean;
+      isDeafened?: boolean;
+    },
+  ): Promise<void>;
 }
 
 export function createVoiceApi(input: VoiceApiDependencies): VoiceApi {
@@ -61,6 +70,17 @@ export function createVoiceApi(input: VoiceApiDependencies): VoiceApi {
         method: "POST",
         path: `/guilds/${guildId}/channels/${channelId}/voice/leave`,
         accessToken: session.accessToken,
+      });
+    },
+    async updateVoiceParticipantState(session, guildId, channelId, payload) {
+      await input.requestNoContent({
+        method: "POST",
+        path: `/guilds/${guildId}/channels/${channelId}/voice/state`,
+        accessToken: session.accessToken,
+        body: {
+          is_muted: payload.isMuted,
+          is_deafened: payload.isDeafened,
+        },
       });
     },
   };

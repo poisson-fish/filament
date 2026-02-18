@@ -9,7 +9,7 @@ use crate::server::{
         MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
     },
     errors::AuthFailure,
-    gateway_events::GatewayEvent,
+    gateway_events::{self, GatewayEvent},
 };
 
 use super::{
@@ -34,6 +34,7 @@ use super::{
     voice_presence::{collect_voice_snapshots, voice_channel_key},
     voice_registration::apply_voice_registration_transition,
     voice_registration_events::plan_voice_registration_events,
+    voice_registry::update_channel_user_voice_participant_audio_state,
     voice_subscribe_sync::build_voice_subscribe_sync_event,
     voice_sync_dispatch::dispatch_voice_sync_event,
 };
@@ -168,6 +169,47 @@ pub(crate) async fn remove_voice_participant_for_channel(
     for (channel_subscription_key, event) in planned {
         broadcast_channel_event(state, &channel_subscription_key, &event).await;
     }
+}
+
+pub(crate) async fn update_voice_participant_audio_state_for_channel(
+    state: &AppState,
+    user_id: UserId,
+    guild_id: &str,
+    channel_id: &str,
+    is_muted: Option<bool>,
+    is_deafened: Option<bool>,
+    updated_at_unix: i64,
+) {
+    let updated = {
+        let mut voice = state.realtime_registry.voice_participants().write().await;
+        update_channel_user_voice_participant_audio_state(
+            &mut voice,
+            guild_id,
+            channel_id,
+            user_id,
+            is_muted,
+            is_deafened,
+            updated_at_unix,
+        )
+    };
+
+    let Some((channel_subscription_key, participant, changed_muted, changed_deafened)) = updated
+    else {
+        return;
+    };
+    let event = gateway_events::voice_participant_update(
+        guild_id,
+        channel_id,
+        participant.user_id,
+        &participant.identity,
+        changed_muted,
+        changed_deafened,
+        None,
+        None,
+        None,
+        participant.updated_at_unix,
+    );
+    broadcast_channel_event(state, &channel_subscription_key, &event).await;
 }
 
 pub(crate) async fn handle_voice_subscribe(

@@ -31,6 +31,7 @@ describe("api-voice-client", () => {
         }),
       ),
       leaveVoiceChannel: vi.fn(async () => {}),
+      updateVoiceParticipantState: vi.fn(async () => {}),
     };
 
     return {
@@ -119,5 +120,25 @@ describe("api-voice-client", () => {
     ).resolves.toBeUndefined();
 
     expect(leaveVoiceChannel).toHaveBeenCalledWith(session, guildId, channelId);
+  });
+
+  it("delegates updateVoiceParticipantState through voice API", async () => {
+    const updateVoiceParticipantState = vi.fn(async () => {});
+    const voiceClient = createVoiceClient({
+      voiceApi: createVoiceApiStub({ updateVoiceParticipantState }),
+    });
+    const session = createSession();
+    const guildId = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    const channelId = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB0");
+
+    await expect(
+      voiceClient.updateVoiceParticipantState(session, guildId, channelId, {
+        isMuted: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(updateVoiceParticipantState).toHaveBeenCalledWith(session, guildId, channelId, {
+      isMuted: true,
+    });
   });
 });

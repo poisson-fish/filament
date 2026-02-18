@@ -543,6 +543,13 @@ pub(crate) struct VoiceTokenResponse {
     pub(crate) expires_in_secs: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct VoiceParticipantStateUpdateRequest {
+    pub(crate) is_muted: Option<bool>,
+    pub(crate) is_deafened: Option<bool>,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MediaPublishSource {
@@ -642,9 +649,15 @@ mod tests {
         .expect("valid hcaptcha verify response");
 
         assert!(!response.success);
-        assert_eq!(response.error_codes, vec![String::from("invalid-input-response")]);
+        assert_eq!(
+            response.error_codes,
+            vec![String::from("invalid-input-response")]
+        );
         assert_eq!(response.hostname.as_deref(), Some("filamentapp.net"));
-        assert_eq!(response.challenge_ts.as_deref(), Some("2026-02-17T00:00:00.000Z"));
+        assert_eq!(
+            response.challenge_ts.as_deref(),
+            Some("2026-02-17T00:00:00.000Z")
+        );
         assert_eq!(response.score, None);
         assert!(response.score_reason.is_empty());
         assert_eq!(response.credit, None);

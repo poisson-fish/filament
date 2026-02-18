@@ -72,6 +72,52 @@ pub(crate) fn remove_channel_user_voice_participant(
     Some((channel_key, participant))
 }
 
+#[allow(clippy::type_complexity)]
+pub(crate) fn update_channel_user_voice_participant_audio_state(
+    voice: &mut VoiceParticipantsByChannel,
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+    is_muted: Option<bool>,
+    is_deafened: Option<bool>,
+    updated_at_unix: i64,
+) -> Option<(String, VoiceParticipant, Option<bool>, Option<bool>)> {
+    if is_muted.is_none() && is_deafened.is_none() {
+        return None;
+    }
+
+    let channel_key = format!("{guild_id}:{channel_id}");
+    let participants = voice.get_mut(&channel_key)?;
+    let participant = participants.get_mut(&user_id)?;
+    let mut changed_muted = None;
+    let mut changed_deafened = None;
+
+    if let Some(next_muted) = is_muted {
+        if participant.is_muted != next_muted {
+            participant.is_muted = next_muted;
+            changed_muted = Some(next_muted);
+        }
+    }
+    if let Some(next_deafened) = is_deafened {
+        if participant.is_deafened != next_deafened {
+            participant.is_deafened = next_deafened;
+            changed_deafened = Some(next_deafened);
+        }
+    }
+
+    if changed_muted.is_none() && changed_deafened.is_none() {
+        return None;
+    }
+
+    participant.updated_at_unix = updated_at_unix;
+    Some((
+        channel_key,
+        participant.clone(),
+        changed_muted,
+        changed_deafened,
+    ))
+}
+
 pub(crate) fn remove_user_voice_participant_removals(
     voice: &mut VoiceParticipantsByChannel,
     user_id: UserId,
@@ -114,6 +160,7 @@ mod tests {
         remove_channel_user_voice_participant, remove_channel_user_voice_participant_removal,
         remove_user_voice_participant_removals, remove_user_voice_participants,
         take_expired_voice_participant_removals, take_expired_voice_participants,
+        update_channel_user_voice_participant_audio_state,
     };
     use crate::server::core::{VoiceParticipant, VoiceParticipantsByChannel, VoiceStreamKind};
 
@@ -288,5 +335,89 @@ mod tests {
         assert_eq!(removed.channel_id, "c1");
         assert_eq!(removed.participant.user_id, target_user);
         assert!(voice.is_empty());
+    }
+
+    #[test]
+    fn updates_channel_user_audio_state_and_returns_changed_fields() {
+        let target_user = UserId::new();
+        let mut voice: VoiceParticipantsByChannel = HashMap::from([(
+            String::from("g7:c1"),
+            HashMap::from([(target_user, participant(target_user, "target", 120))]),
+        )]);
+
+        let updated = update_channel_user_voice_participant_audio_state(
+            &mut voice,
+            "g7",
+            "c1",
+            target_user,
+            Some(true),
+            Some(true),
+            99,
+        )
+        .expect("participant should be updated");
+
+        assert_eq!(updated.0, "g7:c1");
+        assert_eq!(updated.1.user_id, target_user);
+        assert_eq!(updated.2, Some(true));
+        assert_eq!(updated.3, Some(true));
+        assert!(
+            voice["g7:c1"]
+                .get(&target_user)
+                .expect("target participant exists")
+                .is_muted
+        );
+        assert!(
+            voice["g7:c1"]
+                .get(&target_user)
+                .expect("target participant exists")
+                .is_deafened
+        );
+        assert_eq!(
+            voice["g7:c1"]
+                .get(&target_user)
+                .expect("target participant exists")
+                .updated_at_unix,
+            99
+        );
+    }
+
+    #[test]
+    fn returns_none_when_audio_state_update_is_unchanged_or_missing() {
+        let target_user = UserId::new();
+        let mut voice: VoiceParticipantsByChannel = HashMap::from([(
+            String::from("g8:c1"),
+            HashMap::from([(target_user, participant(target_user, "target", 120))]),
+        )]);
+
+        assert!(update_channel_user_voice_participant_audio_state(
+            &mut voice,
+            "g8",
+            "c1",
+            target_user,
+            None,
+            None,
+            99,
+        )
+        .is_none());
+        assert!(update_channel_user_voice_participant_audio_state(
+            &mut voice,
+            "g8",
+            "c1",
+            target_user,
+            Some(false),
+            Some(false),
+            99,
+        )
+        .is_none());
+        assert!(update_channel_user_voice_participant_audio_state(
+            &mut voice,
+            "g8",
+            "missing",
+            target_user,
+            Some(true),
+            None,
+            99,
+        )
+        .is_none());
     }
 }
