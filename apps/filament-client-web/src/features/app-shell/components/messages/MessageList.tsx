@@ -59,8 +59,7 @@ export function MessageList(props: MessageListProps) {
 
   const visibleMessages = () => {
     const window = renderWindow();
-    // Reverse for column-reverse layout so newest is first in DOM (bottom visually)
-    return props.messages.slice(window.startIndex, window.endIndex).reverse();
+    return props.messages.slice(window.startIndex, window.endIndex);
   };
 
   return (
@@ -72,6 +71,17 @@ export function MessageList(props: MessageListProps) {
     >
       <Show when={!props.isLoadingMessages && props.messages.length === 0 && !props.messageError}>
         <p class="muted">No messages yet in this channel.</p>
+      </Show>
+
+      <Show when={props.nextBefore && props.showLoadOlderButton}>
+        <button
+          type="button"
+          class="load-older"
+          onClick={() => void props.onLoadOlderMessages()}
+          disabled={props.isLoadingOlder}
+        >
+          {props.isLoadingOlder ? "Loading older..." : "Load older messages"}
+        </button>
       </Show>
 
       <For each={visibleMessages()}>
@@ -109,17 +119,6 @@ export function MessageList(props: MessageListProps) {
           />
         )}
       </For>
-
-      <Show when={props.nextBefore && props.showLoadOlderButton}>
-        <button
-          type="button"
-          class="load-older"
-          onClick={() => void props.onLoadOlderMessages()}
-          disabled={props.isLoadingOlder}
-        >
-          {props.isLoadingOlder ? "Loading older..." : "Load older messages"}
-        </button>
-      </Show>
     </section>
   );
 }

@@ -109,7 +109,7 @@ Implementation Notes (2026-02-18):
 - `tests/app-style-token-manifest.test.ts` now includes a migrated-TSX rule that rejects raw color literals in migrated files (starting with `ChannelRail.tsx`); additional migrated components should be added to that allowlist as migration continues.
 
 ## Phase 2 - Chat Layout Behavior Fix (Before Full Rewrite)
-Status: `NOT STARTED`
+Status: `IN PROGRESS`
 
 Scope:
 - `apps/filament-client-web/src/features/app-shell/components/messages/MessageList.tsx`
@@ -129,10 +129,22 @@ Tasks:
   - history scroll mode behavior
   - load-older anchor preservation
   - composer bottom pinning
+- [x] Normalize message list DOM flow to chronological order (oldest -> newest) and keep `Load older messages` anchored before rows.
 
 Exit Criteria:
 - Chat behavior matches Spec A/B/C.
 - No regressions in existing message list/controller tests.
+
+Implementation Notes (2026-02-18):
+- Important finding: the previous list implementation combined `flex-direction: column-reverse` with an in-memory `reverse()` of the rendered message window. That made DOM order diverge from normalized chronology and caused the existing history refresh ordering test to fail.
+- Applied slice:
+  - `MessageList.tsx` now renders chronological rows directly and places the `Load older messages` affordance before message rows.
+  - `shell-refresh.css` uses `.message-list { flex-direction: column; }` to keep scroll math in standard top-to-bottom semantics while preserving bottom stickiness behavior via existing controller logic.
+  - Added test coverage in `tests/app-shell-message-list.test.tsx` to guard that load-older controls remain anchored before message rows in the normalized DOM flow.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test` passes (`578` tests).
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 3 - Chat Surface UnoCSS Migration
 Status: `NOT STARTED`

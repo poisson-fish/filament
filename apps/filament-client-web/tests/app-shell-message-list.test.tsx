@@ -5,6 +5,7 @@ import {
   channelIdFromInput,
   guildIdFromInput,
   messageFromResponse,
+  type MessageId,
   type MessageRecord,
   userIdFromInput,
 } from "../src/domain/chat";
@@ -32,14 +33,20 @@ function messageFixture(index: number): MessageRecord {
   });
 }
 
-function renderList(messages: MessageRecord[], maxRenderedMessages?: number): void {
+interface RenderListOptions {
+  maxRenderedMessages?: number;
+  nextBefore?: MessageId | null;
+  showLoadOlderButton?: boolean;
+}
+
+function renderList(messages: MessageRecord[], options: RenderListOptions = {}): void {
   render(() => (
     <MessageList
       messages={messages}
-      maxRenderedMessages={maxRenderedMessages}
+      maxRenderedMessages={options.maxRenderedMessages}
       maxHistoricalRenderedMessages={900}
-      nextBefore={null}
-      showLoadOlderButton={false}
+      nextBefore={options.nextBefore ?? null}
+      showLoadOlderButton={options.showLoadOlderButton ?? false}
       isLoadingOlder={false}
       isLoadingMessages={false}
       messageError=""
@@ -81,7 +88,7 @@ function renderList(messages: MessageRecord[], maxRenderedMessages?: number): vo
 describe("app shell message list", () => {
   it("renders all messages when history is below the window size", () => {
     const messages = Array.from({ length: 6 }, (_, index) => messageFixture(index));
-    renderList(messages, 10);
+    renderList(messages, { maxRenderedMessages: 10 });
 
     const rows = document.querySelectorAll(".message-row");
     expect(rows).toHaveLength(6);
@@ -149,5 +156,17 @@ describe("app shell message list", () => {
     expect(rows).toHaveLength(1_500);
     expect(screen.getByText("message-0")).toBeInTheDocument();
     expect(screen.getByText("message-1499")).toBeInTheDocument();
+  });
+
+  it("keeps older-message affordance before rows in chronological DOM flow", () => {
+    const messages = Array.from({ length: 3 }, (_, index) => messageFixture(index));
+    renderList(messages, {
+      nextBefore: messages[0]?.messageId ?? null,
+      showLoadOlderButton: true,
+    });
+
+    const messageList = document.querySelector(".message-list");
+    expect(messageList).not.toBeNull();
+    expect(messageList?.firstElementChild).toHaveClass("load-older");
   });
 });
