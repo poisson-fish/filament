@@ -544,11 +544,14 @@ describe("app style token manifest", () => {
     }
   });
 
-  it("removes dead member-group list selectors from base.css and shell-refresh.css", () => {
+  it("removes dead member-group and button-row selectors from base.css and shell-refresh.css", () => {
     const baseCss = readFileSync(baseCssPath, "utf8");
     const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+    expect(baseCss).not.toContain(".member-group {");
     expect(baseCss).not.toContain(".member-group ul {");
     expect(baseCss).not.toContain(".member-group li {");
+    expect(baseCss).not.toContain(".button-row {");
+    expect(baseCss).not.toContain(".button-row button {");
     expect(shellRefreshCss).not.toContain(".member-group li {");
   });
 

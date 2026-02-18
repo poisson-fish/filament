@@ -108,6 +108,9 @@ describe("role management panel", () => {
     const hierarchy = screen.getByLabelText("role hierarchy");
     expect(hierarchy).toHaveClass("grid");
 
+    const refreshButton = screen.getByRole("button", { name: "Refresh roles" });
+    expect(refreshButton.className).toContain("flex-1");
+
     const selectedRoleButton = screen.getByRole("button", { name: /Responder/ });
     expect(selectedRoleButton.className).toContain("border-brand");
 
@@ -120,6 +123,9 @@ describe("role management panel", () => {
     expect(document.querySelector(".role-hierarchy-item")).toBeNull();
     expect(document.querySelector(".permission-grid")).toBeNull();
     expect(document.querySelector(".permission-toggle")).toBeNull();
+    expect(document.querySelector(".member-group")).toBeNull();
+    expect(document.querySelector(".button-row")).toBeNull();
+    expect(document.querySelector(".inline-form")).toBeNull();
   });
 
   it("renders system role badge without the legacy status-chip hook", () => {

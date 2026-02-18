@@ -175,11 +175,6 @@ select {
   position: relative;
 }
 
-.member-group {
-  display: grid;
-  gap: 0.5rem;
-}
-
 .inline-form {
   display: grid;
   gap: 0.5rem;
@@ -222,13 +217,4 @@ select {
   background: rgba(98, 167, 255, 0.15);
   color: #c7e1ff;
   padding: 0.5rem 0.72rem;
-}
-
-.button-row {
-  display: flex;
-  gap: 0.45rem;
-}
-
-.button-row button {
-  flex: 1;
 }

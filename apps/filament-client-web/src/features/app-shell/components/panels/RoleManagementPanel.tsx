@@ -160,6 +160,16 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const statusChipClass =
     "inline-block text-[0.7rem] uppercase tracking-[0.06em] text-ink-2";
   const rolePreviewClass = "m-0 break-words text-ink-2";
+  const panelSectionClass = "grid gap-[0.5rem]";
+  const formClass = "grid gap-[0.5rem]";
+  const fieldLabelClass = "grid gap-[0.3rem] text-[0.84rem] text-ink-1";
+  const fieldControlClass =
+    "rounded-[0.56rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.62rem] text-ink-0 disabled:cursor-default disabled:opacity-62";
+  const actionButtonClass =
+    "min-h-[1.95rem] rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.44rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
+  const actionButtonRowClass = "flex gap-[0.45rem]";
+  const rowActionButtonClass = `${actionButtonClass} flex-1`;
+  const mutedTextClass = "m-0 text-[0.91rem] text-ink-2";
   const statusBaseClass = "mt-[0.92rem] text-[0.91rem]";
 
   const hierarchyRoles = createMemo(() => sortRolesByHierarchy(props.roles));
@@ -354,21 +364,22 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   };
 
   return (
-    <section class="member-group">
-      <div class="button-row">
+    <section class={panelSectionClass}>
+      <div class={actionButtonRowClass}>
         <button
+          class={rowActionButtonClass}
           type="button"
           onClick={() => void props.onRefreshRoles()}
           disabled={props.isLoadingRoles || !props.hasActiveWorkspace}
         >
           {props.isLoadingRoles ? "Refreshing..." : "Refresh roles"}
         </button>
-        <button type="button" onClick={props.onOpenModerationPanel}>
+        <button class={rowActionButtonClass} type="button" onClick={props.onOpenModerationPanel}>
           Open moderation panel
         </button>
       </div>
 
-      <Show when={props.hasActiveWorkspace} fallback={<p class="muted">Select a workspace first.</p>}>
+      <Show when={props.hasActiveWorkspace} fallback={<p class={mutedTextClass}>Select a workspace first.</p>}>
         <>
           <section class={roleHierarchyClass} aria-label="role hierarchy">
             <For each={hierarchyRoles()}>
@@ -392,16 +403,17 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
               )}
             </For>
             <Show when={hierarchyRoles().length === 0}>
-              <p class="muted">No roles available.</p>
+              <p class={mutedTextClass}>No roles available.</p>
             </Show>
           </section>
 
           <Show when={props.canManageWorkspaceRoles}>
-            <form class="inline-form" onSubmit={onCreateRole}>
+            <form class={formClass} onSubmit={onCreateRole}>
               <h5>Create Role</h5>
-              <label>
+              <label class={fieldLabelClass}>
                 Role name
                 <input
+                  class={fieldControlClass}
                   value={createName()}
                   onInput={(event) => setCreateName(event.currentTarget.value)}
                   maxlength="32"
@@ -435,19 +447,20 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                   .map((entry) => entry.permission)
                   .join(", ") || "none"}
               </p>
-              <button type="submit" disabled={props.isMutatingRoles}>
+              <button class={actionButtonClass} type="submit" disabled={props.isMutatingRoles}>
                 {props.isMutatingRoles ? "Applying..." : "Create role"}
               </button>
             </form>
 
-            <form class="inline-form" onSubmit={onSaveRole}>
+            <form class={formClass} onSubmit={onSaveRole}>
               <h5>Edit Selected Role</h5>
-              <Show when={selectedRole()} fallback={<p class="muted">Select a role to edit.</p>}>
+              <Show when={selectedRole()} fallback={<p class={mutedTextClass}>Select a role to edit.</p>}>
                 {(roleAccessor) => (
                   <>
-                    <label>
+                    <label class={fieldLabelClass}>
                       Role name
                       <input
+                        class={fieldControlClass}
                         value={editName()}
                         onInput={(event) => setEditName(event.currentTarget.value)}
                         maxlength="32"
@@ -497,14 +510,16 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                         </span>
                       </label>
                     </Show>
-                    <div class="button-row">
+                    <div class={actionButtonRowClass}>
                       <button
+                        class={rowActionButtonClass}
                         type="submit"
                         disabled={props.isMutatingRoles || roleAccessor().isSystem}
                       >
                         {props.isMutatingRoles ? "Applying..." : "Save role"}
                       </button>
                       <button
+                        class={rowActionButtonClass}
                         type="button"
                         disabled={props.isMutatingRoles || roleAccessor().isSystem}
                         onClick={() => void onDeleteRole()}
@@ -513,7 +528,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                       </button>
                     </div>
                     <Show when={roleAccessor().isSystem}>
-                      <p class="muted">
+                      <p class={mutedTextClass}>
                         System roles are locked and cannot be edited or deleted from workspace UI.
                       </p>
                     </Show>
@@ -522,16 +537,17 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
               </Show>
             </form>
 
-            <section class="inline-form">
+            <section class={formClass}>
               <h5>Role Hierarchy Reorder</h5>
               <For each={reorderDraftRoleIds()}>
                 {(roleId, indexAccessor) => (
-                  <div class="button-row items-center [&>span]:min-w-0 [&>span]:flex-1 [&>span]:break-words">
+                  <div class={`${actionButtonRowClass} items-center [&>span]:min-w-0 [&>span]:flex-1 [&>span]:break-words`}>
                     <span>
                       {hierarchyRoles().find((entry) => entry.roleId === roleId)?.name ??
                         "unknown"}
                     </span>
                     <button
+                      class={rowActionButtonClass}
                       type="button"
                       onClick={() => moveRole(roleId, "up")}
                       disabled={indexAccessor() === 0 || props.isMutatingRoles}
@@ -539,6 +555,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                       Up
                     </button>
                     <button
+                      class={rowActionButtonClass}
                       type="button"
                       onClick={() => moveRole(roleId, "down")}
                       disabled={
@@ -552,6 +569,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                 )}
               </For>
               <button
+                class={actionButtonClass}
                 type="button"
                 disabled={props.isMutatingRoles || reorderDraftRoleIds().length === 0}
                 onClick={() => void onSaveReorder()}
@@ -562,20 +580,22 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
           </Show>
 
           <Show when={props.canManageMemberRoles}>
-            <form class="inline-form" onSubmit={(event) => event.preventDefault()}>
+            <form class={formClass} onSubmit={(event) => event.preventDefault()}>
               <h5>Member Role Assignment</h5>
-              <label>
+              <label class={fieldLabelClass}>
                 Target user ULID
                 <input
+                  class={fieldControlClass}
                   value={props.targetUserIdInput}
                   onInput={(event) => props.onTargetUserIdInput(event.currentTarget.value)}
                   maxlength="26"
                   placeholder="01ARZ..."
                 />
               </label>
-              <label>
+              <label class={fieldLabelClass}>
                 Role
                 <select
+                  class={fieldControlClass}
                   value={assignmentRoleId() ?? ""}
                   onChange={(event) =>
                     setAssignmentRoleId(event.currentTarget.value as WorkspaceRoleId)}
@@ -585,8 +605,9 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                   </For>
                 </select>
               </label>
-              <div class="button-row">
+              <div class={actionButtonRowClass}>
                 <button
+                  class={rowActionButtonClass}
                   type="button"
                   disabled={props.isMutatingRoles || !assignmentRoleId()}
                   onClick={() => void onAssignRole()}
@@ -594,6 +615,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                   Assign role
                 </button>
                 <button
+                  class={rowActionButtonClass}
                   type="button"
                   disabled={props.isMutatingRoles || !assignmentRoleId()}
                   onClick={() => void onUnassignRole()}
@@ -601,7 +623,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                   Unassign role
                 </button>
               </div>
-              <p class="muted">
+              <p class={mutedTextClass}>
                 Workspace owner promotion is server-owner-only and intentionally hidden here.
               </p>
             </form>

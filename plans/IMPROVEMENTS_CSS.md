@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `16/16 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; utility/workspace-settings helper migration added; moderation panel helper migration added; search/attachments form helper migration added; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `17/17 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; utility/workspace-settings helper migration added; moderation panel helper migration added; search/attachments form helper migration added; role-management shared helper extraction with member-group/button-row selector removal added; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -544,6 +544,18 @@ Implementation Notes (2026-02-18):
   - `AttachmentsPanel` file and filename controls inherited shared `.inline-form` input styling; utility migration required applying the same border/background/disabled semantics directly to both inputs to avoid regressions when helper selectors are eventually removed.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-search-panel.test.tsx tests/app-shell-attachments-panel.test.tsx` passes.
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (RoleManagementPanel shared-helper extraction + dead selector cleanup):
+  - Migrated `RoleManagementPanel.tsx` away from shared legacy helper hooks (`member-group`, `button-row`, `inline-form`, `muted`) to explicit Uno utility classes for panel layout, form fields, and action rows while preserving role create/edit/reorder/assignment behavior.
+  - Removed dead `.member-group` and `.button-row*` selectors from `src/styles/app/base.css`; retained `.inline-form*` because `SettingsPanel.tsx` still depends on that helper family.
+  - Extended `tests/app-shell-role-management-panel.test.tsx` with regression assertions for utility action-row classes and absence of `member-group`/`button-row`/`inline-form` hooks in the RoleManagement surface.
+  - Extended `tests/app-style-token-manifest.test.ts` with selector-removal assertions for `.member-group {` and `.button-row*`.
+- Important finding:
+  - `.button-row` and `.member-group` are now unused after this slice, but `.inline-form` remains actively used by `SettingsPanel.tsx`; full removal of the inline-form helper family should be done with a SettingsPanel migration slice.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-role-management-panel.test.tsx tests/app-style-token-manifest.test.ts` passes (`646` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
