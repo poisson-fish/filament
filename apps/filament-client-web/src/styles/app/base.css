@@ -191,10 +191,6 @@ select {
   min-height: 0;
 }
 
-.chat-header h3 {
-  margin: 0;
-}
-
 .group-label {
   margin: 0;
   color: var(--ink-2);
@@ -315,78 +311,6 @@ select {
 
 .chat-panel > .chat-body {
   min-height: 0;
-}
-
-.chat-header {
-  padding: 0.95rem 1.12rem;
-  border-bottom: 1px solid var(--line-soft);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.chat-header p {
-  margin: 0.2rem 0 0;
-  color: var(--ink-2);
-  font-size: 0.84rem;
-}
-
-.header-actions {
-  display: flex;
-  gap: 0.45rem;
-}
-
-.header-actions button,
-.logout {
-  border: 1px solid var(--line-soft);
-  border-radius: 0.64rem;
-  background: #152846;
-  padding: 0.5rem 0.72rem;
-  cursor: pointer;
-}
-
-.gateway-badge {
-  border: 1px solid #5b3d3d;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  padding: 0.24rem 0.48rem;
-  color: #ffc5c5;
-  background: rgba(120, 30, 30, 0.25);
-}
-
-.gateway-badge.online {
-  border-color: #2f755b;
-  color: #b9ffd7;
-  background: rgba(25, 106, 74, 0.24);
-}
-
-.voice-badge {
-  border: 1px solid #566072;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  padding: 0.24rem 0.48rem;
-  color: #d0d7e5;
-  background: rgba(67, 76, 94, 0.32);
-}
-
-.voice-badge.connecting,
-.voice-badge.reconnecting {
-  border-color: #7c6f49;
-  color: #ffe6b0;
-  background: rgba(110, 88, 31, 0.28);
-}
-
-.voice-badge.connected {
-  border-color: #2f755b;
-  color: #b9ffd7;
-  background: rgba(25, 106, 74, 0.24);
-}
-
-.voice-badge.error {
-  border-color: #7c4343;
-  color: #ffcece;
-  background: rgba(116, 35, 35, 0.3);
 }
 
 .voice-roster {

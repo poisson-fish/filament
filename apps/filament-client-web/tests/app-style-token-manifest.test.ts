@@ -23,6 +23,10 @@ const memberRailPath = resolve(
   webRootDir,
   "src/features/app-shell/components/MemberRail.tsx",
 );
+const chatHeaderPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/ChatHeader.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -39,6 +43,7 @@ const migratedTsxPaths = [
   channelRailPath,
   serverRailPath,
   memberRailPath,
+  chatHeaderPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -252,6 +257,55 @@ describe("app style token manifest", () => {
       ".profile-card {",
       ".ops-launch-grid button {",
       ".ops-launch-grid {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
+
+    for (const selector of removedShellRefreshSelectors) {
+      expect(shellRefreshCss).not.toContain(selector);
+    }
+  });
+
+  it("removes legacy ChatHeader selectors from base.css and shell-refresh.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".chat-header h3 {",
+      ".chat-header {",
+      ".chat-header p {",
+      ".header-actions {",
+      ".header-actions button,",
+      ".logout {",
+      ".gateway-badge {",
+      ".gateway-badge.online {",
+      ".voice-badge {",
+      ".voice-badge.connecting,",
+      ".voice-badge.connected {",
+      ".voice-badge.error {",
+    ];
+
+    const removedShellRefreshSelectors = [
+      ".chat-header h3 {",
+      ".chat-header {",
+      ".chat-header p {",
+      ".header-actions {",
+      ".header-actions button,",
+      ".logout {",
+      ".gateway-badge {",
+      ".gateway-badge.online {",
+      ".voice-badge {",
+      ".voice-badge.connecting,",
+      ".voice-badge.connected {",
+      ".voice-badge.error {",
+      ".header-actions .header-icon-button {",
+      ".header-actions .header-icon-button .icon-mask {",
+      ".header-actions .header-icon-button:hover:not(:disabled) {",
+      ".header-actions .header-icon-button:disabled {",
+      ".header-actions .header-icon-button.logout {",
+      ".header-actions .header-icon-button.logout:hover:not(:disabled) {",
     ];
 
     for (const selector of removedBaseSelectors) {

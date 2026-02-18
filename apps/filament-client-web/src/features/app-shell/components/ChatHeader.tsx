@@ -50,28 +50,42 @@ interface ChatHeaderProps {
 }
 
 export function ChatHeader(props: ChatHeaderProps) {
+  const statusBadgeClass =
+    "inline-flex items-center rounded-full border px-[0.45rem] py-[0.2rem] text-[0.72rem] leading-[1.2]";
+  const headerIconButtonClass =
+    "inline-flex h-[2rem] w-[2rem] items-center justify-center rounded-[0.5rem] border border-line bg-bg-3 p-0 text-ink-1 transition-colors duration-[120ms] ease-out enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
+
   return (
-    <header class="chat-header">
-      <div>
-        <h3>
+    <header class="chat-header flex items-center justify-between gap-[0.68rem] border-b border-line px-[0.95rem] py-[0.74rem] [@media(max-width:900px)]:flex-col [@media(max-width:900px)]:items-start [@media(max-width:900px)]:gap-[0.48rem]">
+      <div class="min-w-0">
+        <h3 class="m-0 text-[1.24rem] font-[780] leading-[1.2] tracking-[0.005em] text-ink-0">
           {props.activeChannel
             ? channelHeaderLabel({ kind: props.activeChannel.kind, name: props.activeChannel.name })
             : "#no-channel"}
         </h3>
-        <p>Gateway {props.gatewayOnline ? "connected" : "disconnected"}</p>
+        <p class="mt-[0.14rem] text-[0.8rem] text-ink-2">
+          Gateway {props.gatewayOnline ? "connected" : "disconnected"}
+        </p>
       </div>
-      <div class="header-actions">
-        <span classList={{ "gateway-badge": true, online: props.gatewayOnline }}>
+      <div class="flex flex-wrap items-center justify-start gap-[0.28rem]">
+        <span
+          classList={{
+            [statusBadgeClass]: true,
+            "border-ok bg-bg-3 text-ok": props.gatewayOnline,
+            "border-danger bg-bg-3 text-danger": !props.gatewayOnline,
+          }}
+        >
           {props.gatewayOnline ? "Live" : "Offline"}
         </span>
         <Show when={props.canShowVoiceHeaderControls || props.isVoiceSessionActive}>
           <span
             classList={{
-              "voice-badge": true,
-              connected: props.voiceConnectionState === "connected",
-              connecting: props.voiceConnectionState === "connecting",
-              reconnecting: props.voiceConnectionState === "reconnecting",
-              error: props.voiceConnectionState === "error",
+              [statusBadgeClass]: true,
+              "border-line bg-bg-3 text-ink-1": props.voiceConnectionState === "disconnected",
+              "border-brand bg-bg-3 text-brand":
+                props.voiceConnectionState === "connecting" || props.voiceConnectionState === "reconnecting",
+              "border-ok bg-bg-3 text-ok": props.voiceConnectionState === "connected",
+              "border-danger bg-bg-3 text-danger": props.voiceConnectionState === "error",
             }}
           >
             Voice {props.voiceConnectionState}
@@ -79,16 +93,20 @@ export function ChatHeader(props: ChatHeaderProps) {
         </Show>
         <button
           type="button"
-          class="header-icon-button"
+          class={headerIconButtonClass}
           aria-label={props.isChannelRailCollapsed ? "Show channels" : "Hide channels"}
           title={props.isChannelRailCollapsed ? "Show channels" : "Hide channels"}
           onClick={props.onToggleChannelRail}
         >
-          <span class="icon-mask" style={`--icon-url: url("${TOGGLE_CHANNELS_ICON_URL}")`} aria-hidden="true" />
+          <span
+            class="icon-mask h-[1rem] w-[1rem]"
+            style={`--icon-url: url("${TOGGLE_CHANNELS_ICON_URL}")`}
+            aria-hidden="true"
+          />
         </button>
         <button
           type="button"
-          class="header-icon-button"
+          class={headerIconButtonClass}
           aria-label={
             props.isMemberRailCollapsed
               ? "Show workspace tools rail"
@@ -101,47 +119,65 @@ export function ChatHeader(props: ChatHeaderProps) {
           }
           onClick={props.onToggleMemberRail}
         >
-          <span class="icon-mask" style={`--icon-url: url("${WORKSPACE_TOOLS_ICON_URL}")`} aria-hidden="true" />
+          <span
+            class="icon-mask h-[1rem] w-[1rem]"
+            style={`--icon-url: url("${WORKSPACE_TOOLS_ICON_URL}")`}
+            aria-hidden="true"
+          />
         </button>
         <button
           type="button"
-          class="header-icon-button"
+          class={headerIconButtonClass}
           aria-label="Directory"
           title="Directory"
           onClick={() => props.onOpenPanel("public-directory")}
         >
-          <span class="icon-mask" style={`--icon-url: url("${DIRECTORY_ICON_URL}")`} aria-hidden="true" />
+          <span class="icon-mask h-[1rem] w-[1rem]" style={`--icon-url: url("${DIRECTORY_ICON_URL}")`} aria-hidden="true" />
         </button>
         <button
           type="button"
-          class="header-icon-button"
+          class={headerIconButtonClass}
           aria-label="Friends"
           title="Friends"
           onClick={() => props.onOpenPanel("friendships")}
         >
-          <span class="icon-mask" style={`--icon-url: url("${FRIENDS_ICON_URL}")`} aria-hidden="true" />
+          <span class="icon-mask h-[1rem] w-[1rem]" style={`--icon-url: url("${FRIENDS_ICON_URL}")`} aria-hidden="true" />
         </button>
         <button
           type="button"
-          class="header-icon-button"
+          class={headerIconButtonClass}
           aria-label="Refresh"
           title="Refresh messages"
           onClick={props.onRefreshMessages}
         >
-          <span class="icon-mask" style={`--icon-url: url("${REFRESH_MESSAGES_ICON_URL}")`} aria-hidden="true" />
+          <span
+            class="icon-mask h-[1rem] w-[1rem]"
+            style={`--icon-url: url("${REFRESH_MESSAGES_ICON_URL}")`}
+            aria-hidden="true"
+          />
         </button>
         <button
           type="button"
-          class="header-icon-button"
+          class={headerIconButtonClass}
           aria-label={props.isRefreshingSession ? "Refreshing..." : "Refresh session"}
           title={props.isRefreshingSession ? "Refreshing session..." : "Refresh session"}
           onClick={props.onRefreshSession}
           disabled={props.isRefreshingSession}
         >
-          <span class="icon-mask" style={`--icon-url: url("${REFRESH_SESSION_ICON_URL}")`} aria-hidden="true" />
+          <span
+            class="icon-mask h-[1rem] w-[1rem]"
+            style={`--icon-url: url("${REFRESH_SESSION_ICON_URL}")`}
+            aria-hidden="true"
+          />
         </button>
-        <button type="button" class="header-icon-button logout" aria-label="Logout" title="Logout" onClick={props.onLogout}>
-          <span class="icon-mask" style={`--icon-url: url("${LOGOUT_ICON_URL}")`} aria-hidden="true" />
+        <button
+          type="button"
+          class={`${headerIconButtonClass} border-danger-panel-strong bg-danger-panel text-danger-ink enabled:hover:bg-danger-panel-strong`}
+          aria-label="Logout"
+          title="Logout"
+          onClick={props.onLogout}
+        >
+          <span class="icon-mask h-[1rem] w-[1rem]" style={`--icon-url: url("${LOGOUT_ICON_URL}")`} aria-hidden="true" />
         </button>
       </div>
     </header>

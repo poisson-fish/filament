@@ -230,7 +230,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 4 - Shell, Rails, Panels Migration
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `3/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail`, `MemberRail` complete)
+Completion status (2026-02-18): `4/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail`, `MemberRail`, `ChatHeader` complete)
 
 Scope:
 - server rail, channel rail, member rail, header, overlays, settings panels, auth shell
@@ -284,6 +284,20 @@ Implementation Notes (2026-02-18):
   - Both `base.css` and `shell-refresh.css` declared a combined `.chat-header h3, .member-rail h4` margin rule; migration required splitting those selectors so MemberRail heading spacing is now owned by component utilities without changing ChatHeader behavior.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-member-rail.test.tsx tests/app-shell-layout-components.test.tsx tests/app-style-token-manifest.test.ts` passes (`603` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (ChatHeader surface):
+  - Migrated `ChatHeader.tsx` heading/status badges/action controls to Uno utility classes while retaining only `.chat-header` as the stable shell/layout hook.
+  - Removed migrated ChatHeader selectors from `src/styles/app/base.css` and `src/styles/app/shell-refresh.css` (`.chat-header*`, `.header-actions*`, `.gateway-badge*`, `.voice-badge*`, `.logout`, and `.header-icon-button*` blocks).
+  - Added `tests/app-shell-chat-header.test.tsx` to lock utility-class rendering, action callback wiring, and refresh-session disabled-state behavior.
+  - Extended `tests/app-style-token-manifest.test.ts` to include `ChatHeader.tsx` in migrated raw-color literal guards and assert removed ChatHeader selectors remain absent from legacy stylesheets.
+- Important finding:
+  - ChatHeader styles were duplicated across both the legacy carry-over region and the refresh block of `shell-refresh.css`, including separate mobile `@media (max-width: 900px)` overrides. All of those blocks had to be removed together to avoid partial cascade leftovers.
+- Important finding:
+  - Keeping `.chat-header` as a non-visual hook is still useful for shell composition tests and layout slot clarity, while all visual/responsive styling now lives in component utilities.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-chat-header.test.tsx tests/app-style-token-manifest.test.ts tests/app-shell-layout-components.test.tsx` passes (`606` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
