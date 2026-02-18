@@ -109,7 +109,7 @@ Implementation Notes (2026-02-18):
 - `tests/app-style-token-manifest.test.ts` now includes a migrated-TSX rule that rejects raw color literals in migrated files (starting with `ChannelRail.tsx`); additional migrated components should be added to that allowlist as migration continues.
 
 ## Phase 2 - Chat Layout Behavior Fix (Before Full Rewrite)
-Status: `IN PROGRESS`
+Status: `COMPLETED`
 
 Scope:
 - `apps/filament-client-web/src/features/app-shell/components/messages/MessageList.tsx`
@@ -127,7 +127,7 @@ Tasks:
 - [x] Normalize message list DOM flow to chronological order (oldest -> newest) and keep `Load older messages` anchored before rows.
 - [x] Add targeted incoming-message scroll tests for pinned-to-latest and history-mode behavior (Spec A).
 - [x] Add/expand tests for load-older anchor preservation.
-- [ ] Add/expand tests for composer bottom pinning.
+- [x] Add/expand tests for composer bottom pinning.
 
 Exit Criteria:
 - Chat behavior matches Spec A/B/C.
@@ -144,12 +144,18 @@ Implementation Notes (2026-02-18):
 - Applied slice (2026-02-18, load-older anchor):
   - Extended `tests/app-shell-message-history-scroll.test.tsx` with an integration assertion that prepending older history preserves viewport anchor by restoring `scrollTop` with the `scrollHeight` delta.
   - Extended the test scroll metric harness to allow controlled `scrollHeight` growth during pagination, so Spec C is validated against the real controller path instead of only unit-level mocks.
+- Applied slice (2026-02-18, composer bottom pinning):
+  - Expanded `tests/app-shell-layout-components.test.tsx` so `ChatColumn` coverage now asserts `.chat-panel > .chat-body` and `.chat-panel > .composer` remain sibling regions, with composer attachment rows confined to the composer subtree and excluded from the scrollable body subtree.
+  - Added `tests/app-shell-chat-layout-contract.test.ts` (node-environment stylesheet contract checks) to lock the CSS semantics that enforce Spec B: `.chat-panel` grid rows (`auto 1fr auto`), `.chat-body` containment, `.chat-body .message-list` as the sole vertical scroller, and direct-child composer constraints.
 - Important finding:
   - Existing gateway tests only asserted pinned-to-latest auto-scroll behavior, which left Spec A's history-mode branch unguarded; this now has explicit coverage.
 - Important finding:
   - `tests/app-shell-message-list-controller.test.ts` already covered delta-based scroll restoration at the unit level, but there was no integration proof that the App path preserved anchor after async history prepend. The new spec-level integration test now closes that gap.
+- Important finding:
+  - `shell-refresh.css` contains multiple `.chat-panel` selector blocks for different concerns; layout contract tests must match declarations semantically rather than assuming the first block is the layout block.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-message-history-scroll.test.tsx` passes (`580` tests total in run), including the new load-older anchor preservation coverage.
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-layout-components.test.tsx tests/app-shell-chat-layout-contract.test.ts` passes (`582` tests total in run), including composer bottom pinning structure and stylesheet contract assertions.
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

@@ -368,10 +368,10 @@ describe("app shell extracted layout components", () => {
     expect(screen.getByText("Chat column")).toBeInTheDocument();
   });
 
-  it("keeps chat body layout stable with transient notes", () => {
+  it("keeps chat body layout stable with transient notes and a bottom composer sibling", () => {
     render(() => (
       <ChatColumn
-        chatHeader={<header>Chat Header</header>}
+        chatHeader={<header class="chat-header">Chat Header</header>}
         workspaceBootstrapDone={true}
         workspaceCount={1}
         isLoadingMessages={false}
@@ -385,22 +385,30 @@ describe("app shell extracted layout components", () => {
         activeChannel={channelFixture("text")}
         canAccessActiveChannel={true}
         messageList={<section class="message-list">Message List</section>}
-        messageComposer={<form class="composer">Composer</form>}
+        messageComposer={(
+          <form class="composer">
+            Composer
+            <div class="composer-attachments">Attachment row</div>
+          </form>
+        )}
         reactionPicker={<div>Reaction Picker</div>}
         messageStatus=""
       />
     ));
 
-    const chatBody = document.querySelector(".chat-body");
+    const chatBody = document.querySelector(".chat-panel > .chat-body");
     expect(chatBody).not.toBeNull();
 
     const messageList = chatBody?.querySelector(".message-list");
     const composer = chatBody?.querySelector(".composer");
     expect(messageList).not.toBeNull();
     expect(composer).toBeNull();
+    expect(chatBody?.querySelector(".composer-attachments")).toBeNull();
 
     const panelComposer = document.querySelector(".chat-panel > .composer");
     expect(panelComposer).not.toBeNull();
+    expect(chatBody?.nextElementSibling).toBe(panelComposer);
+    expect(panelComposer?.querySelector(".composer-attachments")).not.toBeNull();
     expect(screen.getByText("Reaction Picker")).toBeInTheDocument();
     expect(screen.getByText("session-ok")).toBeInTheDocument();
   });
