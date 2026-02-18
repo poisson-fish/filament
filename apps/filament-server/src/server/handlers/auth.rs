@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::error::Error as StdError;
 use std::net::SocketAddr;
 
 use axum::{
@@ -58,6 +59,7 @@ pub(crate) async fn verify_captcha_token(
         })?;
 
     let mut form_data = vec![
+        ("sitekey", config.site_key.clone()),
         ("secret", config.secret.clone()),
         ("response", token.as_str().to_owned()),
     ];
@@ -72,10 +74,13 @@ pub(crate) async fn verify_captcha_token(
         .send()
         .await
         .map_err(|error| {
+            let error_chain = format_error_chain(&error);
             tracing::warn!(
                 event = "auth.captcha.verify",
                 outcome = "request_error",
                 error = %error,
+                error_debug = ?error,
+                error_chain = %error_chain,
                 verify_url = %config.verify_url,
                 client_ip_source = client_ip.source().as_str()
             );
@@ -133,6 +138,17 @@ pub(crate) async fn verify_captcha_token(
     );
 
     Ok(())
+}
+
+fn format_error_chain(error: &dyn StdError) -> String {
+    let mut chain = Vec::new();
+    chain.push(error.to_string());
+    let mut source = error.source();
+    while let Some(err) = source {
+        chain.push(err.to_string());
+        source = err.source();
+    }
+    chain.join(" | caused_by: ")
 }
 
 pub(crate) async fn register(

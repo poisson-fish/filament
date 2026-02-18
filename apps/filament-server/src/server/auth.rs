@@ -361,6 +361,7 @@ pub(crate) fn build_captcha_config(config: &AppConfig) -> anyhow::Result<Option<
                 ));
             }
             Ok(Some(CaptchaConfig {
+                site_key: site_key.to_owned(),
                 secret: secret.to_owned(),
                 verify_url,
                 verify_timeout: config.captcha_verify_timeout,
@@ -632,10 +633,28 @@ fn parse_forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
 
 #[cfg(test)]
 mod tests {
-    use super::{enforce_auth_route_rate_limit, resolve_client_ip, ClientIp, ClientIpSource};
+    use super::{
+        build_captcha_config, enforce_auth_route_rate_limit, resolve_client_ip, ClientIp,
+        ClientIpSource,
+    };
     use crate::server::core::{AppConfig, AppState};
     use crate::server::directory_contract::IpNetwork;
     use axum::http::HeaderMap;
+
+    #[test]
+    fn captcha_config_includes_site_key_for_siteverify_binding() {
+        let mut config = AppConfig::default();
+        config.captcha_hcaptcha_site_key = Some(String::from("10000000-ffff-ffff-ffff-000000000001"));
+        config.captcha_hcaptcha_secret = Some(String::from("0x0000000000000000000000000000000000000000"));
+
+        let captcha = build_captcha_config(&config)
+            .expect("captcha config should build")
+            .expect("captcha should be enabled");
+
+        assert_eq!(captcha.site_key, "10000000-ffff-ffff-ffff-000000000001");
+        assert_eq!(captcha.secret, "0x0000000000000000000000000000000000000000");
+        assert_eq!(captcha.verify_url, "https://api.hcaptcha.com/siteverify");
+    }
 
     #[test]
     fn client_ip_defaults_to_peer_when_proxy_is_untrusted() {

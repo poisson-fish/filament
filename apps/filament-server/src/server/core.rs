@@ -216,6 +216,7 @@ pub(crate) struct LiveKitConfig {
 
 #[derive(Clone)]
 pub(crate) struct CaptchaConfig {
+    pub(crate) site_key: String,
     pub(crate) secret: String,
     pub(crate) verify_url: String,
     pub(crate) verify_timeout: Duration,
