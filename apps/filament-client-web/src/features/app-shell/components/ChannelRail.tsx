@@ -639,6 +639,7 @@ export function ChannelRail(props: ChannelRailProps) {
                       type="button"
                       classList={{
                         "voice-dock-icon-button": true,
+                        "leave-voice-button": true,
                         danger: true,
                         "is-busy": props.isLeavingVoice,
                       }}
@@ -652,6 +653,9 @@ export function ChannelRail(props: ChannelRailProps) {
                         style={`--icon-url: url("${LEAVE_VOICE_ICON_URL}")`}
                         aria-hidden="true"
                       />
+                      <span class="voice-dock-button-label" aria-hidden="true">
+                        {props.isLeavingVoice ? "Leaving..." : "Leave Voice"}
+                      </span>
                     </button>
                   </Show>
                 </div>

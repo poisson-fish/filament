@@ -158,6 +158,7 @@ describe("app shell channel kinds", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     await screen.findByRole("heading", { name: "Workspace Tools" });
     await screen.findByText("TEXT CHANNELS");
     await screen.findByText("VOICE CHANNELS");

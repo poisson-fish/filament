@@ -233,6 +233,7 @@ describe("app shell message history scrolling", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     await screen.findByRole("heading", { name: "Workspace Tools" });
     await screen.findByText("latest message");
 
@@ -328,6 +329,7 @@ describe("app shell message history scrolling", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     await screen.findByRole("heading", { name: "Workspace Tools" });
     await screen.findByText("before refresh");
     expect(historyRequests).toBe(1);
@@ -455,6 +457,7 @@ describe("app shell message history scrolling", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     await screen.findByRole("heading", { name: "Workspace Tools" });
     await screen.findByText("latest message");
     await screen.findByText("older message");

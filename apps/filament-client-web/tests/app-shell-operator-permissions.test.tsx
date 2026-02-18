@@ -246,6 +246,7 @@ describe("operator console permission fixtures", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     expect(await screen.findByRole("heading", { name: "Workspace Tools" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Open search panel" }));
@@ -274,6 +275,7 @@ describe("operator console permission fixtures", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     expect(await screen.findByRole("heading", { name: "Workspace Tools" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Open search panel" }));

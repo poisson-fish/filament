@@ -16,7 +16,7 @@ export function createOverlayState() {
   const [activeVoiceSettingsSubmenu, setActiveVoiceSettingsSubmenu] =
     createSignal<VoiceSettingsSubmenu>(DEFAULT_VOICE_SETTINGS_SUBMENU);
   const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
-  const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(false);
+  const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(true);
 
   return {
     activeOverlayPanel,

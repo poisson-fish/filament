@@ -2799,6 +2799,26 @@ select {
   color: #f0b6bf;
 }
 
+.voice-dock-icon-button.leave-voice-button {
+  width: 100%;
+  justify-content: center;
+  gap: 0.42rem;
+  padding: 0.45rem 0.6rem;
+  background: #5b323b;
+  border-color: #72404b;
+  color: #ffd5dc;
+}
+
+.voice-dock-icon-button.leave-voice-button:hover:not(:disabled) {
+  background: #6a3a44;
+}
+
+.voice-dock-button-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .voice-dock-icon-button:disabled {
   opacity: 0.58;
   cursor: default;
@@ -2938,6 +2958,7 @@ select {
 
 .header-actions {
   gap: 0.28rem;
+  flex-wrap: wrap;
 }
 
 .header-actions button,
@@ -2949,6 +2970,39 @@ select {
   padding: 0.3rem 0.52rem;
   font-size: 0.77rem;
   line-height: 1.2;
+}
+
+.header-actions .header-icon-button {
+  width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-actions .header-icon-button .icon-mask {
+  width: 1rem;
+  height: 1rem;
+}
+
+.header-actions .header-icon-button:hover:not(:disabled) {
+  background: #454b58;
+}
+
+.header-actions .header-icon-button:disabled {
+  opacity: 0.62;
+  cursor: default;
+}
+
+.header-actions .header-icon-button.logout {
+  color: #f0b5bf;
+  background: #4a3038;
+  border-color: #5f3741;
+}
+
+.header-actions .header-icon-button.logout:hover:not(:disabled) {
+  background: #58353f;
 }
 
 .message-list {
@@ -2979,7 +3033,7 @@ select {
 }
 
 .message-row:hover {
-  background: rgba(255, 255, 255, 0.014);
+  background: rgba(255, 255, 255, 0.046);
 }
 
 .message-avatar {

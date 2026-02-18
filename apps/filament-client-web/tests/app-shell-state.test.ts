@@ -155,7 +155,7 @@ describe("app shell state factories", () => {
     expect(overlayState.activeSettingsCategory()).toBe(DEFAULT_SETTINGS_CATEGORY);
     expect(overlayState.activeVoiceSettingsSubmenu()).toBe(DEFAULT_VOICE_SETTINGS_SUBMENU);
     expect(overlayState.isChannelRailCollapsed()).toBe(false);
-    expect(overlayState.isMemberRailCollapsed()).toBe(false);
+    expect(overlayState.isMemberRailCollapsed()).toBe(true);
   });
 
   it("exposes setter-accessor pairs by slice", () => {

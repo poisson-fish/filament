@@ -177,6 +177,7 @@ describe("app shell reactions", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     await screen.findByRole("heading", { name: "Workspace Tools" });
     await screen.findByText("hello reaction");
 
@@ -211,6 +212,7 @@ describe("app shell reactions", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     await screen.findByRole("heading", { name: "Workspace Tools" });
     await screen.findByText("hello reaction");
 

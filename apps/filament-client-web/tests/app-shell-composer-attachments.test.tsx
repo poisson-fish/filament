@@ -218,6 +218,7 @@ describe("app shell composer attachments", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     await screen.findByRole("heading", { name: "Workspace Tools" });
 
     const composerInput = await screen.findByPlaceholderText("Message #incident-room");
@@ -319,6 +320,7 @@ describe("app shell composer attachments", () => {
     window.history.replaceState({}, "", "/app");
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
     await screen.findByRole("heading", { name: "Workspace Tools" });
     await screen.findByPlaceholderText("Message #incident-room");
     await screen.findByAltText("camera-roll.jpg");
