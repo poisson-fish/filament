@@ -42,11 +42,20 @@ export interface SettingsPanelProps {
 }
 
 export function SettingsPanel(props: SettingsPanelProps) {
+  const settingsNavButtonClass =
+    "w-full cursor-pointer rounded-[0.62rem] border border-line bg-bg-2 px-[0.6rem] py-[0.52rem] text-left text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60";
+
   return (
-    <section class="settings-panel-layout" aria-label="settings">
-      <aside class="settings-panel-rail" aria-label="Settings category rail">
+    <section
+      class="grid min-h-[18rem] grid-cols-[minmax(10rem,12rem)_minmax(0,1fr)] gap-[0.88rem] max-[900px]:min-h-0 max-[900px]:grid-cols-1 max-[900px]:gap-[0.72rem]"
+      aria-label="settings"
+    >
+      <aside
+        class="grid content-start gap-[0.6rem] border-r border-line pr-[0.88rem] max-[900px]:border-r-0 max-[900px]:border-b max-[900px]:pr-0 max-[900px]:pb-[0.72rem]"
+        aria-label="Settings category rail"
+      >
         <p class="group-label">CATEGORIES</p>
-        <ul class="settings-category-list">
+        <ul class="m-0 grid list-none gap-[0.45rem] p-0">
           <For each={props.settingsCategories}>
             {(category) => {
               const isActive = () => props.activeSettingsCategory === category.id;
@@ -54,14 +63,17 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 <li>
                   <button
                     type="button"
-                    class="settings-category-button"
-                    classList={{ "settings-category-button-active": isActive() }}
+                    class={settingsNavButtonClass}
+                    classList={{
+                      "border-brand/85": isActive(),
+                      "bg-brand/16": isActive(),
+                    }}
                     onClick={() => props.onOpenSettingsCategory(category.id)}
                     aria-label={`Open ${category.label} settings category`}
                     aria-current={isActive() ? "page" : undefined}
                   >
-                    <span class="settings-category-name">{category.label}</span>
-                    <span class="settings-category-summary muted">{category.summary}</span>
+                    <span class="text-[0.84rem] font-[700]">{category.label}</span>
+                    <span class="muted text-[0.74rem]">{category.summary}</span>
                   </button>
                 </li>
               );
@@ -69,13 +81,19 @@ export function SettingsPanel(props: SettingsPanelProps) {
           </For>
         </ul>
       </aside>
-      <section class="settings-panel-content" aria-label="Settings content pane">
+      <section class="grid content-start gap-[0.6rem]" aria-label="Settings content pane">
         <Switch>
           <Match when={props.activeSettingsCategory === "voice"}>
-            <section class="settings-submenu-layout" aria-label="Voice settings submenu">
-              <aside class="settings-submenu-rail" aria-label="Voice settings submenu rail">
+            <section
+              class="grid grid-cols-[minmax(10rem,12rem)_minmax(0,1fr)] gap-[0.88rem] max-[900px]:grid-cols-1 max-[900px]:gap-[0.72rem]"
+              aria-label="Voice settings submenu"
+            >
+              <aside
+                class="grid content-start gap-[0.6rem] border-r border-line pr-[0.88rem] max-[900px]:border-r-0 max-[900px]:border-b max-[900px]:pr-0 max-[900px]:pb-[0.72rem]"
+                aria-label="Voice settings submenu rail"
+              >
                 <p class="group-label">VOICE</p>
-                <ul class="settings-submenu-list">
+                <ul class="m-0 grid list-none gap-[0.45rem] p-0">
                   <For each={props.voiceSettingsSubmenu}>
                     {(submenu) => {
                       const isActive = () => props.activeVoiceSettingsSubmenu === submenu.id;
@@ -83,16 +101,17 @@ export function SettingsPanel(props: SettingsPanelProps) {
                         <li>
                           <button
                             type="button"
-                            class="settings-submenu-button"
+                            class={settingsNavButtonClass}
                             classList={{
-                              "settings-submenu-button-active": isActive(),
+                              "border-brand/85": isActive(),
+                              "bg-brand/16": isActive(),
                             }}
                             onClick={() => props.onOpenVoiceSettingsSubmenu(submenu.id)}
                             aria-label={`Open Voice ${submenu.label} submenu`}
                             aria-current={isActive() ? "page" : undefined}
                           >
-                            <span class="settings-category-name">{submenu.label}</span>
-                            <span class="settings-category-summary muted">{submenu.summary}</span>
+                            <span class="text-[0.84rem] font-[700]">{submenu.label}</span>
+                            <span class="muted text-[0.74rem]">{submenu.summary}</span>
                           </button>
                         </li>
                       );
@@ -100,10 +119,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   </For>
                 </ul>
               </aside>
-              <section
-                class="settings-submenu-content"
-                aria-label="Voice settings submenu content"
-              >
+              <section class="grid content-start gap-[0.6rem]" aria-label="Voice settings submenu content">
                 <Switch>
                   <Match when={props.activeVoiceSettingsSubmenu === "audio-devices"}>
                     <p class="group-label">AUDIO DEVICES</p>
@@ -206,7 +222,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   rows="6"
                 />
               </label>
-              <div class="settings-profile-actions">
+              <div class="flex gap-2">
                 <button type="submit" disabled={props.isSavingProfile}>
                   {props.isSavingProfile ? "Saving..." : "Save profile"}
                 </button>
@@ -226,7 +242,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
               <Show when={props.selectedAvatarFilename}>
                 <p class="muted">Selected: {props.selectedAvatarFilename}</p>
               </Show>
-              <div class="settings-profile-actions">
+              <div class="flex gap-2">
                 <button
                   type="button"
                   onClick={() => void props.onUploadProfileAvatar()}
@@ -244,14 +260,17 @@ export function SettingsPanel(props: SettingsPanelProps) {
             </Show>
             <Show when={props.profile}>
               {(profile) => (
-                <section class="settings-profile-preview">
+                <section class="grid gap-[0.55rem] rounded-[0.72rem] border border-line bg-bg-1 p-[0.7rem]">
                   <p class="group-label">PROFILE PREVIEW</p>
-                  <div class="settings-profile-preview-head">
-                    <span class="settings-avatar-shell" aria-hidden="true">
-                      <span class="settings-avatar-fallback">{profile().username.slice(0, 1).toUpperCase()}</span>
+                  <div class="flex items-center gap-[0.6rem]">
+                    <span
+                      class="relative inline-flex h-[2.4rem] w-[2.4rem] items-center justify-center overflow-hidden rounded-full border border-line-soft bg-gradient-to-br from-bg-4 to-bg-3 text-[0.78rem] font-[780] text-ink-0"
+                      aria-hidden="true"
+                    >
+                      <span class="z-[1]">{profile().username.slice(0, 1).toUpperCase()}</span>
                       <Show when={props.profileAvatarUrl}>
                         <img
-                          class="settings-avatar-image"
+                          class="absolute inset-0 z-[2] h-full w-full rounded-full object-cover"
                           src={props.profileAvatarUrl!}
                           alt={`${profile().username} avatar`}
                           loading="lazy"
@@ -264,11 +283,14 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       </Show>
                     </span>
                     <div>
-                      <p class="settings-profile-name">{profile().username}</p>
+                      <p class="m-0 font-[760] text-ink-0">{profile().username}</p>
                       <p class="mono">{profile().userId}</p>
                     </div>
                   </div>
-                  <SafeMarkdown class="settings-profile-markdown" tokens={profile().aboutMarkdownTokens} />
+                  <SafeMarkdown
+                    class="leading-[1.4] text-ink-1 [&_ol]:m-[0.4rem_0_0.4rem_1.15rem] [&_ol]:p-0 [&_p+p]:mt-[0.45rem] [&_p]:m-0 [&_ul]:m-[0.4rem_0_0.4rem_1.15rem] [&_ul]:p-0"
+                    tokens={profile().aboutMarkdownTokens}
+                  />
                 </section>
               )}
             </Show>

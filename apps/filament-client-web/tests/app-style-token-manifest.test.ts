@@ -31,6 +31,10 @@ const userProfileOverlayPath = resolve(
   webRootDir,
   "src/features/app-shell/components/overlays/UserProfileOverlay.tsx",
 );
+const settingsPanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/SettingsPanel.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -49,6 +53,7 @@ const migratedTsxPaths = [
   memberRailPath,
   chatHeaderPath,
   userProfileOverlayPath,
+  settingsPanelPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -338,6 +343,41 @@ describe("app style token manifest", () => {
       ".profile-view-markdown p + p",
       ".profile-view-markdown ul",
       ".profile-view-markdown ol",
+    ];
+
+    for (const selector of removedShellRefreshSelectors) {
+      expect(shellRefreshCss).not.toContain(selector);
+    }
+  });
+
+  it("removes legacy SettingsPanel selectors from shell-refresh.css", () => {
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+
+    const removedShellRefreshSelectors = [
+      ".settings-panel-layout {",
+      ".settings-panel-rail {",
+      ".settings-panel-content {",
+      ".settings-category-list {",
+      ".settings-category-button {",
+      ".settings-category-button-active {",
+      ".settings-category-name {",
+      ".settings-category-summary {",
+      ".settings-submenu-layout {",
+      ".settings-submenu-rail {",
+      ".settings-submenu-content {",
+      ".settings-submenu-list {",
+      ".settings-submenu-button {",
+      ".settings-submenu-button-active {",
+      ".settings-profile-actions {",
+      ".settings-profile-preview {",
+      ".settings-profile-preview-head {",
+      ".settings-avatar-shell {",
+      ".settings-avatar-fallback {",
+      ".settings-avatar-image {",
+      ".settings-profile-name {",
+      ".settings-profile-markdown {",
+      ".settings-profile-markdown p {",
+      ".settings-profile-markdown p + p {",
     ];
 
     for (const selector of removedShellRefreshSelectors) {

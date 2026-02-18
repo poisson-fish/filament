@@ -230,7 +230,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 4 - Shell, Rails, Panels Migration
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `5/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail`, `MemberRail`, `ChatHeader`, `UserProfileOverlay` complete)
+Completion status (2026-02-18): `6/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail`, `MemberRail`, `ChatHeader`, `UserProfileOverlay`, `SettingsPanel` complete)
 
 Scope:
 - server rail, channel rail, member rail, header, overlays, settings panels, auth shell
@@ -312,6 +312,20 @@ Implementation Notes (2026-02-18):
   - Avatar markup in `UserProfileOverlay` is intentionally nested inside an `aria-hidden` container, so tests should query avatar images by `alt` text rather than accessible role.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-user-profile-overlay.test.tsx tests/app-shell-layout-components.test.tsx tests/app-style-token-manifest.test.ts` passes (`609` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (SettingsPanel surface):
+  - Migrated `SettingsPanel.tsx` category rail/submenu rail/profile preview to Uno utility classes and removed legacy `settings-*` class dependencies.
+  - Removed migrated SettingsPanel selectors from `src/styles/app/shell-refresh.css`, including the `@media (max-width: 900px)` settings-layout overrides now represented in component utility classes.
+  - Added `tests/app-shell-settings-panel.test.tsx` to lock utility-class rendering, callback wiring, and profile preview behavior (including avatar image fallback hiding).
+  - Extended `tests/app-style-token-manifest.test.ts` to include `SettingsPanel.tsx` in migrated raw-color literal guards and assert removed SettingsPanel selectors remain absent from `shell-refresh.css`.
+- Important finding:
+  - Settings layout selectors existed in both the primary legacy carry-over block and the mobile media-query block; both blocks had to be removed together to avoid a hidden mobile-only cascade dependency.
+- Important finding:
+  - `SafeMarkdown` paragraph/list spacing for settings profile preview can be migrated safely via Uno descendant utility selectors (`[&_p]`, `[&_p+p]`, `[&_ul]`, `[&_ol]`) without reintroducing a dedicated legacy markdown class.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-settings-panel.test.tsx tests/app-shell-settings-entry.test.tsx tests/app-style-token-manifest.test.ts` passes (`612` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
