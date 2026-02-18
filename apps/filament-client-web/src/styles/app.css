@@ -2800,17 +2800,18 @@ select {
 }
 
 .voice-dock-icon-button.leave-voice-button {
+  flex: 1 0 100%;
   width: 100%;
   justify-content: center;
   gap: 0.42rem;
   padding: 0.45rem 0.6rem;
-  background: #5b323b;
-  border-color: #72404b;
-  color: #ffd5dc;
+  background: #8f1d26;
+  border-color: #b32936;
+  color: #fff1f3;
 }
 
 .voice-dock-icon-button.leave-voice-button:hover:not(:disabled) {
-  background: #6a3a44;
+  background: #a5222e;
 }
 
 .voice-dock-button-label {

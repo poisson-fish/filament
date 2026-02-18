@@ -371,6 +371,7 @@ export function createAppShellSelectors(
       const snapshot = options.rtcSnapshot();
       const localIdentity = snapshot.localParticipantIdentity;
       const localMedia = localMediaState(snapshot);
+      const activeSpeakers = new Set(snapshot.activeSpeakerIdentities);
       return synced.map((entry) => ({
         identity: entry.identity,
         isLocal: entry.identity === localIdentity,
@@ -382,7 +383,7 @@ export function createAppShellSelectors(
           entry.identity === localIdentity
             ? localMedia.isDeafened
             : Boolean(entry.isDeafened),
-        isSpeaking: entry.isSpeaking,
+        isSpeaking: activeSpeakers.has(entry.identity) || entry.isSpeaking,
         hasCamera: entry.identity === localIdentity ? localMedia.hasCamera : entry.isVideoEnabled,
         hasScreenShare:
           entry.identity === localIdentity

@@ -643,8 +643,8 @@ export function ChannelRail(props: ChannelRailProps) {
                         danger: true,
                         "is-busy": props.isLeavingVoice,
                       }}
-                      aria-label={props.isLeavingVoice ? "Leaving..." : "Leave"}
-                      title={props.isLeavingVoice ? "Leaving..." : "Leave"}
+                      aria-label={props.isLeavingVoice ? "Disconnecting..." : "Disconnect"}
+                      title={props.isLeavingVoice ? "Disconnecting..." : "Disconnect"}
                       onClick={props.onLeaveVoice}
                       disabled={props.isLeavingVoice || props.isJoiningVoice}
                     >
@@ -654,7 +654,7 @@ export function ChannelRail(props: ChannelRailProps) {
                         aria-hidden="true"
                       />
                       <span class="voice-dock-button-label" aria-hidden="true">
-                        {props.isLeavingVoice ? "Leaving..." : "Leave Voice"}
+                        {props.isLeavingVoice ? "Disconnecting..." : "Disconnect"}
                       </span>
                     </button>
                   </Show>

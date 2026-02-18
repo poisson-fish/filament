@@ -753,7 +753,7 @@ describe("app shell voice controls", () => {
     await waitFor(() => expect(rtcMock.toggleDeafened).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: "Undeafen Audio" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: "Join Voice" })).toBeInTheDocument();
   });
@@ -1057,10 +1057,10 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "#general" }));
     await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(0));
     expect(await screen.findByLabelText("In-call participants")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Leave" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "bridge" }));
-    expect(await screen.findByRole("button", { name: "Leave" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Disconnect" })).toBeInTheDocument();
   });
 
   it("logs out cleanly even when rtc leave/destroy teardown rejects", async () => {

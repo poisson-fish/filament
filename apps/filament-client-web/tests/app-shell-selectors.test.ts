@@ -320,6 +320,7 @@ describe("app shell selectors", () => {
           { identity: remoteIdentity, subscribedTrackCount: 0 },
         ],
         videoTracks: [],
+        activeSpeakerIdentities: [remoteIdentity],
       });
       harness.setActiveChannelId(VOICE_A);
       harness.setVoiceSessionChannelKey(channelKey(GUILD_A, VOICE_A));
@@ -359,7 +360,7 @@ describe("app shell selectors", () => {
           isLocal: false,
           isMuted: true,
           isDeafened: true,
-          isSpeaking: false,
+          isSpeaking: true,
           hasCamera: true,
           hasScreenShare: false,
         },
