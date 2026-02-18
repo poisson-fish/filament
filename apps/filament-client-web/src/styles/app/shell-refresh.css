@@ -17,44 +17,6 @@
   border-right: 0;
 }
 
-.server-list {
-  display: grid;
-  align-content: start;
-  gap: 0.38rem;
-}
-
-.server-rail button {
-  width: 3rem;
-  height: 3rem;
-  border-radius: 999px;
-  border: 1px solid #373c45;
-  background: #2a2d33;
-  color: #e6e8eb;
-  font-weight: 750;
-  cursor: pointer;
-  transition: border-radius 120ms ease, background-color 120ms ease, border-color 120ms ease;
-}
-
-.server-rail button:hover {
-  background: #353941;
-}
-
-.server-rail button.active {
-  border-color: #545c6b;
-  border-radius: 0.92rem;
-  background: #42464f;
-}
-
-.server-rail-footer {
-  margin-top: auto;
-  display: grid;
-  gap: 0.38rem;
-}
-
-.server-action {
-  font-size: 1rem;
-}
-
 .channel-rail {
   padding: 0.78rem;
   display: grid;
@@ -797,41 +759,6 @@
   box-shadow: none;
   min-width: 0;
   min-height: 0;
-}
-
-.server-rail {
-  background: #1b1d23;
-  padding: 0.7rem 0.5rem;
-  display: grid;
-  align-content: start;
-  gap: 0.52rem;
-}
-
-.server-rail .rail-label {
-  text-align: center;
-  margin: 0;
-  font-size: 0.58rem;
-  letter-spacing: 0.18em;
-  color: #707784;
-}
-
-.server-rail button {
-  width: 3.05rem;
-  height: 3.05rem;
-  border-radius: 1rem;
-  border: 0;
-  background: #2b2f39;
-  color: #f1f2f4;
-  font-weight: 800;
-}
-
-.server-rail button:hover {
-  background: #373c46;
-}
-
-.server-rail button.active {
-  border-radius: 0.9rem;
-  background: #5865f2;
 }
 
 .channel-rail {

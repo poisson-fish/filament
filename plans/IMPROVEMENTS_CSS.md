@@ -229,7 +229,8 @@ Implementation Notes (2026-02-18):
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 4 - Shell, Rails, Panels Migration
-Status: `NOT STARTED`
+Status: `IN PROGRESS`
+Completion status (2026-02-18): `1/7 scoped surfaces migrated` (`ServerRail` complete)
 
 Scope:
 - server rail, channel rail, member rail, header, overlays, settings panels, auth shell
@@ -242,6 +243,22 @@ Tasks:
 Exit Criteria:
 - Primary shell UI uses UnoCSS utilities/shortcuts.
 - Legacy global selectors mostly removed.
+
+Implementation Notes (2026-02-18):
+- Applied slice (ServerRail surface):
+  - Migrated `ServerRail.tsx` to Uno utility classes for rail container internals, workspace buttons, and footer action controls while retaining only `.server-rail` as the stable shell/layout hook.
+  - Removed migrated ServerRail selector blocks from `src/styles/app/base.css` and `src/styles/app/shell-refresh.css` (`.rail-label`, `.server-list`, `.server-rail-footer`, `.server-action`, and legacy `.server-rail button*` cascades).
+  - Added `tests/app-shell-server-rail.test.tsx` to lock utility-class rendering, callback behavior, and removal of legacy internal class hooks.
+  - Extended `tests/app-style-token-manifest.test.ts` to include `ServerRail.tsx` in migrated raw-color literal guards and to assert removed ServerRail selectors stay absent from legacy stylesheets.
+- Important finding:
+  - ServerRail styles existed in two different `shell-refresh.css` regions plus `base.css`; migration needed removing all duplicated button/label/internal blocks together to avoid leftover cascade overrides.
+- Important finding:
+  - Keeping `.server-rail` as a non-visual hook remains necessary for shared shell layout/media-query behavior (`.app-shell` grid and mobile border-right rules), even after internal visual styles moved to Uno utilities.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-server-rail.test.tsx tests/app-shell-layout-components.test.tsx tests/app-style-token-manifest.test.ts` passes (`596` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `NOT STARTED`

@@ -191,41 +191,6 @@ select {
   min-height: 0;
 }
 
-.server-rail {
-  padding: 0.64rem 0.46rem;
-  display: grid;
-  gap: 0.56rem;
-  align-content: start;
-}
-
-.server-rail .rail-label {
-  text-align: center;
-  margin: 0 0 0.2rem;
-  color: var(--ink-2);
-  font-size: 0.72rem;
-  letter-spacing: 0.12em;
-}
-
-.server-rail button {
-  height: 3.1rem;
-  border-radius: 0.95rem;
-  border: 1px solid var(--line-soft);
-  background: #13264a;
-  color: var(--ink-0);
-  font-weight: 800;
-  cursor: pointer;
-  transition: transform 140ms ease, border-color 140ms ease;
-}
-
-.server-rail button:hover {
-  transform: translateY(-1px);
-}
-
-.server-rail button.active {
-  border-color: var(--brand);
-  background: linear-gradient(180deg, #3d6fbf, #254f91);
-}
-
 .channel-rail {
   padding: 0.94rem;
   display: grid;

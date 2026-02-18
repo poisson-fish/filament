@@ -2,7 +2,7 @@ import { For } from "solid-js";
 import type { ChannelId, GuildId, WorkspaceRecord } from "../../../domain/chat";
 import type { OverlayPanel } from "../types";
 
-interface ServerRailProps {
+export interface ServerRailProps {
   workspaces: WorkspaceRecord[];
   activeGuildId: GuildId | null;
   isCreatingWorkspace: boolean;
@@ -11,15 +11,25 @@ interface ServerRailProps {
 }
 
 export function ServerRail(props: ServerRailProps) {
+  const railButtonClass =
+    "inline-flex h-[3.05rem] w-[3.05rem] items-center justify-center border-0 rounded-[1rem] text-ink-0 font-[800] leading-none transition-colors duration-[120ms] ease-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand";
+
   return (
-    <aside class="server-rail" aria-label="servers">
-      <header class="rail-label">WS</header>
-      <div class="server-list">
+    <aside
+      class="server-rail grid min-h-0 content-start gap-[0.52rem] bg-bg-0 px-[0.5rem] py-[0.7rem]"
+      aria-label="servers"
+    >
+      <header class="m-0 text-center text-[0.58rem] tracking-[0.18em] text-ink-2">WS</header>
+      <div class="grid content-start gap-[0.38rem]">
         <For each={props.workspaces}>
           {(workspace) => (
             <button
               title={`${workspace.guildName} (${workspace.visibility})`}
-              classList={{ active: props.activeGuildId === workspace.guildId }}
+              class={`${railButtonClass} ${
+                props.activeGuildId === workspace.guildId
+                  ? "rounded-[0.9rem] bg-brand"
+                  : "bg-bg-3 hover:bg-bg-4"
+              }`}
               onClick={() =>
                 props.onSelectWorkspace(workspace.guildId, workspace.channels[0]?.channelId ?? null)}
             >
@@ -28,10 +38,10 @@ export function ServerRail(props: ServerRailProps) {
           )}
         </For>
       </div>
-      <div class="server-rail-footer">
+      <div class="mt-auto grid gap-[0.38rem]">
         <button
           type="button"
-          class="server-action"
+          class={`${railButtonClass} bg-bg-3 text-[1rem] hover:bg-bg-4 disabled:cursor-default disabled:opacity-62`}
           aria-label="Open workspace create panel"
           title="Create workspace"
           onClick={() => props.onOpenPanel("workspace-create")}
@@ -41,7 +51,7 @@ export function ServerRail(props: ServerRailProps) {
         </button>
         <button
           type="button"
-          class="server-action"
+          class={`${railButtonClass} bg-bg-3 text-[1rem] hover:bg-bg-4`}
           aria-label="Open public workspace directory panel"
           title="Public workspace directory"
           onClick={() => props.onOpenPanel("public-directory")}
@@ -50,7 +60,7 @@ export function ServerRail(props: ServerRailProps) {
         </button>
         <button
           type="button"
-          class="server-action"
+          class={`${railButtonClass} bg-bg-3 text-[1rem] hover:bg-bg-4`}
           aria-label="Open friendships panel"
           title="Friendships"
           onClick={() => props.onOpenPanel("friendships")}

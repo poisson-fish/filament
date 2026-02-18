@@ -15,6 +15,10 @@ const channelRailPath = resolve(
   webRootDir,
   "src/features/app-shell/components/ChannelRail.tsx",
 );
+const serverRailPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/ServerRail.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -29,6 +33,7 @@ const reactionPickerPortalPath = resolve(
 );
 const migratedTsxPaths = [
   channelRailPath,
+  serverRailPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -146,6 +151,36 @@ describe("app style token manifest", () => {
       ".message-hover-actions .icon-button.danger {",
       ".message-row + .message-row {",
       ".reaction-row button {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
+
+    for (const selector of removedShellRefreshSelectors) {
+      expect(shellRefreshCss).not.toContain(selector);
+    }
+  });
+
+  it("removes legacy ServerRail selectors from base.css and shell-refresh.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".server-rail .rail-label {",
+      ".server-rail button {",
+      ".server-rail button:hover {",
+      ".server-rail button.active {",
+    ];
+
+    const removedShellRefreshSelectors = [
+      ".server-list {",
+      ".server-rail-footer {",
+      ".server-action {",
+      ".server-rail .rail-label {",
+      ".server-rail button {",
+      ".server-rail button:hover {",
+      ".server-rail button.active {",
     ];
 
     for (const selector of removedBaseSelectors) {
