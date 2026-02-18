@@ -516,6 +516,41 @@ describe("app style token manifest", () => {
     }
   });
 
+  it("removes dead voice roster, voice video grid, and reaction add trigger selectors from base.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".voice-roster {",
+      ".voice-roster-title {",
+      ".voice-roster-empty {",
+      ".voice-roster ul {",
+      ".voice-roster li {",
+      ".voice-roster li span:last-child {",
+      ".voice-roster-local {",
+      ".voice-roster-speaking {",
+      ".voice-roster-name {",
+      ".voice-roster-name-speaking {",
+      ".voice-stream-hints {",
+      ".voice-stream-hints p {",
+      ".voice-video-grid {",
+      ".voice-video-grid-title {",
+      ".voice-video-grid-empty {",
+      ".voice-video-grid-tiles {",
+      ".voice-video-tile {",
+      ".voice-video-tile-local {",
+      ".voice-video-tile-screen {",
+      ".voice-video-tile-identity {",
+      ".voice-video-tile-meta {",
+      ".voice-video-grid-overflow {",
+      ".reaction-add-trigger {",
+      ".reaction-add-trigger:hover {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
+  });
+
   it("removes legacy group-label selectors from base.css and shell-refresh.css", () => {
     const baseCss = readFileSync(baseCssPath, "utf8");
     const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");

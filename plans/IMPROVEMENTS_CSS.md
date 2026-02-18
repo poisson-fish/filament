@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `6/6 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `7/7 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -436,6 +436,14 @@ Implementation Notes (2026-02-18):
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (Dead legacy selector cleanup: voice roster + video-grid + reaction trigger removal):
+  - Removed dead voice roster and voice video grid selector families from `src/styles/app/base.css` (`.voice-roster*`, `.voice-stream-hints*`, `.voice-video-grid*`, `.voice-video-tile*`) along with stale `.reaction-add-trigger` styles.
+  - Extended `tests/app-style-token-manifest.test.ts` with regression assertions that these selector families remain absent from `base.css`.
+- Important finding:
+  - The removed voice roster/video-grid selectors had zero live TSX/test references and existed only in `base.css`, making them safe bridge-CSS deletions in this phase.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-style-token-manifest.test.ts` passes.
+  - `pnpm -C apps/filament-client-web run lint` passes.
 
 ## Testing and Validation Gates
 Run on every migration phase:
