@@ -377,13 +377,14 @@ select {
 }
 
 .chat-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
 
 .chat-body {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -402,6 +403,7 @@ select {
 }
 
 .chat-panel > .composer {
+  margin-top: 0;
   flex-shrink: 0;
 }
 
@@ -638,6 +640,11 @@ select {
   justify-content: flex-end;
   gap: 0.72rem;
   overflow: auto;
+}
+
+.message-list > .message-row:first-of-type,
+.message-list > .muted:first-of-type {
+  margin-top: auto;
 }
 
 .message-row {

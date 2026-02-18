@@ -60,6 +60,9 @@ export function ChatColumn(props: ChatColumnProps) {
                       Channel is not visible with your current default permissions.
                     </p>
                   </Show>
+                  <Show when={props.messageStatus}>
+                    <p class="status ok panel-note">{props.messageStatus}</p>
+                  </Show>
                 </Show>
               </div>
 
@@ -77,10 +80,6 @@ export function ChatColumn(props: ChatColumnProps) {
       </Show>
 
       {props.reactionPicker}
-
-      <Show when={props.messageStatus}>
-        <p class="status ok panel-note">{props.messageStatus}</p>
-      </Show>
     </main>
   );
 }

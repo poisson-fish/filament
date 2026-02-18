@@ -909,18 +909,19 @@
 /* Refresh block */
 /* Discord-inspired voice + text channel shell refresh */
 .app-shell-scaffold {
-  min-height: 100vh;
-  height: 100vh;
+  min-height: 100dvh;
+  height: 100dvh;
   width: 100vw;
-  position: relative;
+  position: fixed;
+  inset: 0;
   padding: 0;
   background: #111217;
   overflow: hidden;
 }
 
 .app-shell {
-  min-height: 100vh;
-  height: 100vh;
+  min-height: 0;
+  height: 100%;
   width: 100%;
   max-width: 100vw;
   display: grid;
@@ -1599,8 +1600,8 @@
 }
 
 .chat-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   background: #313338;
   height: 100%;
   min-height: 0;
@@ -1608,6 +1609,7 @@
 }
 
 .chat-body {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -1626,6 +1628,7 @@
 }
 
 .chat-panel > .composer {
+  margin-top: 0;
   flex-shrink: 0;
 }
 
@@ -1715,6 +1718,11 @@
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
+}
+
+.message-list > .message-row:first-of-type,
+.message-list > .muted:first-of-type {
+  margin-top: auto;
 }
 
 .message-row {
