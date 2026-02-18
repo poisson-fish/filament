@@ -26,12 +26,6 @@
   background: #1d2129;
 }
 
-.member-group li {
-  border: 1px solid #404651;
-  border-radius: 0.56rem;
-  background: #2b3038;
-}
-
 .inline-form input,
 .inline-form select {
   border: 1px solid #434a57;

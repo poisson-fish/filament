@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `12/12 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `13/13 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -499,6 +499,18 @@ Implementation Notes (2026-02-18):
   - `.member-group ul/li` selectors were only still affecting `SearchPanel` and `AttachmentsPanel`; migrating those two list surfaces in the same slice enabled safe selector deletion without touching broader `.inline-form`/`.button-row` helper usage that remains shared by unmigrated panels.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-search-panel.test.tsx tests/app-shell-attachments-panel.test.tsx tests/app-style-token-manifest.test.ts` passes (`637` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (WorkspaceCreatePanel + ChannelCreatePanel utility migration and lingering `member-group` shell bridge cleanup):
+  - Migrated `WorkspaceCreatePanel.tsx` and `ChannelCreatePanel.tsx` form/field/button/status presentation from shared legacy helper hooks (`member-group`, `inline-form`, `button-row`, `status`) to explicit Uno utility classes while preserving submit/cancel and input-binding behavior.
+  - Removed lingering `.member-group li` bridge styling from `src/styles/app/shell-refresh.css` and extended manifest tests to guard that this selector remains absent from both `base.css` and `shell-refresh.css`.
+  - Added `tests/app-shell-workspace-create-panel.test.tsx` and `tests/app-shell-channel-create-panel.test.tsx` to lock utility-class rendering, callback wiring, and removal of legacy helper hooks.
+  - Extended `tests/app-style-token-manifest.test.ts` migrated-surface raw-color guards to include both create-panel surfaces.
+- Important finding:
+  - Even after base-layer `member-group` list selector cleanup, `shell-refresh.css` still carried a high-specificity `.member-group li` rule that could silently override utility row styles in nested panel surfaces.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-channel-create-panel.test.tsx tests/app-shell-workspace-create-panel.test.tsx tests/app-style-token-manifest.test.ts` passes (`642` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

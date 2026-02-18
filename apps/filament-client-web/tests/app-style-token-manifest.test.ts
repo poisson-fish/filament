@@ -72,6 +72,14 @@ const searchPanelPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/SearchPanel.tsx",
 );
+const channelCreatePanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/ChannelCreatePanel.tsx",
+);
+const workspaceCreatePanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/WorkspaceCreatePanel.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -101,6 +109,8 @@ const migratedTsxPaths = [
   friendshipsPanelPath,
   attachmentsPanelPath,
   searchPanelPath,
+  channelCreatePanelPath,
+  workspaceCreatePanelPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -529,10 +539,12 @@ describe("app style token manifest", () => {
     }
   });
 
-  it("removes dead member-group list selectors from base.css", () => {
+  it("removes dead member-group list selectors from base.css and shell-refresh.css", () => {
     const baseCss = readFileSync(baseCssPath, "utf8");
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
     expect(baseCss).not.toContain(".member-group ul {");
     expect(baseCss).not.toContain(".member-group li {");
+    expect(shellRefreshCss).not.toContain(".member-group li {");
   });
 
   it("removes dead ops-overlay selectors from base.css", () => {
