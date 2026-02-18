@@ -508,7 +508,7 @@ export function ChannelRail(props: ChannelRailProps) {
                     >
                       <span
                         class="icon-mask"
-                        style={`--icon-url: url("${props.rtcSnapshot.isMicrophoneEnabled ? MUTE_MIC_ICON_URL : UNMUTE_MIC_ICON_URL}")`}
+                        style={`--icon-url: url("${props.rtcSnapshot.isMicrophoneEnabled ? UNMUTE_MIC_ICON_URL : MUTE_MIC_ICON_URL}")`}
                         aria-hidden="true"
                       />
                     </button>
