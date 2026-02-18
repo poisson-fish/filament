@@ -128,7 +128,7 @@ describe("app shell message list", () => {
     expect(screen.getByText("message-259")).toBeInTheDocument();
   });
 
-  it("keeps unpinned dense histories within capped history window", async () => {
+  it("renders full dense history when scrolled away from latest", async () => {
     const messages = Array.from({ length: 1_500 }, (_, index) => messageFixture(index));
     renderList(messages);
 
@@ -146,9 +146,8 @@ describe("app shell message list", () => {
     await fireEvent.scroll(listElement);
 
     const rows = document.querySelectorAll(".message-row");
-    expect(rows).toHaveLength(900);
-    expect(screen.queryByText("message-599")).not.toBeInTheDocument();
-    expect(screen.getByText("message-600")).toBeInTheDocument();
+    expect(rows).toHaveLength(1_500);
+    expect(screen.getByText("message-0")).toBeInTheDocument();
     expect(screen.getByText("message-1499")).toBeInTheDocument();
   });
 });

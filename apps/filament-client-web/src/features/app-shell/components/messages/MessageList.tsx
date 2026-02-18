@@ -54,7 +54,7 @@ export function MessageList(props: MessageListProps) {
       messageCount: props.messages.length,
       maxRenderedMessages: props.maxRenderedMessages,
       maxHistoricalRenderedMessages: props.maxHistoricalRenderedMessages,
-      mode: isPinnedToLatest() ? "bounded" : "history",
+      mode: isPinnedToLatest() ? "bounded" : "full",
     });
 
   const visibleMessages = () => {
