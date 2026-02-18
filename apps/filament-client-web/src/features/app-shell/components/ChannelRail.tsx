@@ -25,6 +25,10 @@ const UNMUTE_MIC_ICON_URL = new URL(
   "../../../../resource/coolicons.v4.1/cooliocns SVG/Media/Volume_Max.svg",
   import.meta.url,
 ).href;
+const HEADPHONES_ICON_URL = new URL(
+  "../../../../resource/coolicons.v4.1/cooliocns SVG/Media/Headphones.svg",
+  import.meta.url,
+).href;
 const CAMERA_ICON_URL = new URL(
   "../../../../resource/coolicons.v4.1/cooliocns SVG/System/Camera.svg",
   import.meta.url,
@@ -65,6 +69,7 @@ interface ChannelRailProps {
   isJoiningVoice: boolean;
   isLeavingVoice: boolean;
   isTogglingVoiceMic: boolean;
+  isTogglingVoiceDeaf: boolean;
   isTogglingVoiceCamera: boolean;
   isTogglingVoiceScreenShare: boolean;
   currentUserId?: string | null;
@@ -82,6 +87,7 @@ interface ChannelRailProps {
   onSelectChannel: (channelId: ChannelId) => void;
   onJoinVoice: () => void;
   onToggleVoiceMicrophone: () => void;
+  onToggleVoiceDeafen: () => void;
   onToggleVoiceCamera: () => void;
   onToggleVoiceScreenShare: () => void;
   onLeaveVoice: () => void;
@@ -412,6 +418,19 @@ export function ChannelRail(props: ChannelRailProps) {
                                               />
                                             </span>
                                           </Show>
+                                          <Show when={entry.isDeafened}>
+                                            <span
+                                              class="voice-participant-deafened-badge"
+                                              aria-label="Deafened"
+                                              title="Deafened"
+                                            >
+                                              <span
+                                                class="icon-mask"
+                                                style={`--icon-url: url("${HEADPHONES_ICON_URL}")`}
+                                                aria-hidden="true"
+                                              />
+                                            </span>
+                                          </Show>
                                           <Show when={showLiveBadge}>
                                             <span class="voice-participant-media-badge">LIVE</span>
                                           </Show>
@@ -509,6 +528,40 @@ export function ChannelRail(props: ChannelRailProps) {
                       <span
                         class="icon-mask"
                         style={`--icon-url: url("${props.rtcSnapshot.isMicrophoneEnabled ? UNMUTE_MIC_ICON_URL : MUTE_MIC_ICON_URL}")`}
+                        aria-hidden="true"
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      classList={{
+                        "voice-dock-icon-button": true,
+                        "is-busy": props.isTogglingVoiceDeaf,
+                      }}
+                      aria-label={
+                        props.isTogglingVoiceDeaf
+                          ? "Updating..."
+                          : props.rtcSnapshot.isDeafened
+                            ? "Undeafen Audio"
+                            : "Deafen Audio"
+                      }
+                      title={
+                        props.isTogglingVoiceDeaf
+                          ? "Updating..."
+                          : props.rtcSnapshot.isDeafened
+                            ? "Undeafen Audio"
+                            : "Deafen Audio"
+                      }
+                      onClick={props.onToggleVoiceDeafen}
+                      disabled={
+                        props.isTogglingVoiceDeaf ||
+                        props.rtcSnapshot.connectionStatus !== "connected" ||
+                        props.isJoiningVoice ||
+                        props.isLeavingVoice
+                      }
+                    >
+                      <span
+                        class="icon-mask"
+                        style={`--icon-url: url("${HEADPHONES_ICON_URL}")`}
                         aria-hidden="true"
                       />
                     </button>

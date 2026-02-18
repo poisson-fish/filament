@@ -38,6 +38,7 @@ export interface VoiceOperationsControllerOptions {
   isJoiningVoice: Accessor<boolean>;
   isLeavingVoice: Accessor<boolean>;
   isTogglingVoiceMic: Accessor<boolean>;
+  isTogglingVoiceDeaf: Accessor<boolean>;
   isTogglingVoiceCamera: Accessor<boolean>;
   isTogglingVoiceScreenShare: Accessor<boolean>;
   voiceDevicePreferences: Accessor<VoiceDevicePreferences>;
@@ -47,6 +48,7 @@ export interface VoiceOperationsControllerOptions {
   setVoiceJoinState: Setter<AsyncOperationState>;
   setLeavingVoice: Setter<boolean>;
   setTogglingVoiceMic: Setter<boolean>;
+  setTogglingVoiceDeaf: Setter<boolean>;
   setTogglingVoiceCamera: Setter<boolean>;
   setTogglingVoiceScreenShare: Setter<boolean>;
   setVoiceSessionChannelKey: Setter<string | null>;
@@ -86,6 +88,7 @@ export interface VoiceOperationsController {
   joinVoiceChannel: () => Promise<void>;
   leaveVoiceChannel: (statusMessage?: string) => Promise<void>;
   toggleVoiceMicrophone: () => Promise<void>;
+  toggleVoiceDeafen: () => Promise<void>;
   toggleVoiceCamera: () => Promise<void>;
   toggleVoiceScreenShare: () => Promise<void>;
 }
@@ -311,6 +314,22 @@ export function createVoiceOperationsController(
     }
   };
 
+  const toggleVoiceDeafen = async (): Promise<void> => {
+    if (!rtcClient || options.isTogglingVoiceDeaf()) {
+      return;
+    }
+    options.setTogglingVoiceDeaf(true);
+    options.setVoiceError("");
+    try {
+      const enabled = await rtcClient.toggleDeafened();
+      options.setVoiceStatus(enabled ? "Audio output deafened." : "Audio output undeafened.");
+    } catch (error) {
+      options.setVoiceError(deps.mapRtcError(error, "Unable to update deafen state."));
+    } finally {
+      options.setTogglingVoiceDeaf(false);
+    }
+  };
+
   const toggleVoiceCamera = async (): Promise<void> => {
     if (!rtcClient || options.isTogglingVoiceCamera()) {
       return;
@@ -360,6 +379,7 @@ export function createVoiceOperationsController(
     joinVoiceChannel,
     leaveVoiceChannel,
     toggleVoiceMicrophone,
+    toggleVoiceDeafen,
     toggleVoiceCamera,
     toggleVoiceScreenShare,
   };

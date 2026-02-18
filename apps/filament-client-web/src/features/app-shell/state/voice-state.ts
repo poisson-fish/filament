@@ -26,6 +26,7 @@ export function createVoiceState() {
   );
   const [isLeavingVoice, setLeavingVoice] = createSignal(false);
   const [isTogglingVoiceMic, setTogglingVoiceMic] = createSignal(false);
+  const [isTogglingVoiceDeaf, setTogglingVoiceDeaf] = createSignal(false);
   const [isTogglingVoiceCamera, setTogglingVoiceCamera] = createSignal(false);
   const [isTogglingVoiceScreenShare, setTogglingVoiceScreenShare] = createSignal(false);
   const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(null);
@@ -61,6 +62,8 @@ export function createVoiceState() {
     setLeavingVoice,
     isTogglingVoiceMic,
     setTogglingVoiceMic,
+    isTogglingVoiceDeaf,
+    setTogglingVoiceDeaf,
     isTogglingVoiceCamera,
     setTogglingVoiceCamera,
     isTogglingVoiceScreenShare,

@@ -94,6 +94,7 @@ export function AppShellPage() {
     joinVoiceChannel,
     leaveVoiceChannel,
     toggleVoiceMicrophone,
+    toggleVoiceDeafen,
     toggleVoiceCamera,
     toggleVoiceScreenShare,
     setComposerAttachmentInputRef,
@@ -137,6 +138,7 @@ export function AppShellPage() {
           isJoiningVoice={voiceState.isJoiningVoice()}
           isLeavingVoice={voiceState.isLeavingVoice()}
           isTogglingVoiceMic={voiceState.isTogglingVoiceMic()}
+          isTogglingVoiceDeaf={voiceState.isTogglingVoiceDeaf()}
           isTogglingVoiceCamera={voiceState.isTogglingVoiceCamera()}
           isTogglingVoiceScreenShare={voiceState.isTogglingVoiceScreenShare()}
           currentUserId={profile()?.userId ?? null}
@@ -154,6 +156,7 @@ export function AppShellPage() {
           onSelectChannel={(channelId) => workspaceState.workspaceChannel.setActiveChannelId(channelId)}
           onJoinVoice={() => void joinVoiceChannel()}
           onToggleVoiceMicrophone={() => void toggleVoiceMicrophone()}
+          onToggleVoiceDeafen={() => void toggleVoiceDeafen()}
           onToggleVoiceCamera={() => void toggleVoiceCamera()}
           onToggleVoiceScreenShare={() => void toggleVoiceScreenShare()}
           onLeaveVoice={() => void leaveVoiceChannel("Voice session ended.")}

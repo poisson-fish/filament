@@ -37,6 +37,7 @@ export type RtcErrorCode =
   | "join_failed"
   | "not_connected"
   | "microphone_toggle_failed"
+  | "deafen_toggle_failed"
   | "camera_toggle_failed"
   | "screen_share_toggle_failed"
   | "audio_device_switch_failed"
@@ -60,6 +61,7 @@ export interface RtcSnapshot {
   connectionStatus: RtcConnectionStatus;
   localParticipantIdentity: string | null;
   isMicrophoneEnabled: boolean;
+  isDeafened: boolean;
   isCameraEnabled: boolean;
   isScreenShareEnabled: boolean;
   participants: RtcParticipantSnapshot[];
@@ -83,6 +85,8 @@ export interface RtcClient {
   leave(): Promise<void>;
   setMicrophoneEnabled(enabled: boolean): Promise<void>;
   toggleMicrophone(): Promise<boolean>;
+  setDeafened(enabled: boolean): Promise<void>;
+  toggleDeafened(): Promise<boolean>;
   setCameraEnabled(enabled: boolean): Promise<void>;
   toggleCamera(): Promise<boolean>;
   setScreenShareEnabled(enabled: boolean): Promise<void>;
@@ -412,6 +416,7 @@ class RtcClientImpl implements RtcClient {
   private connectionStatus: RtcConnectionStatus = "disconnected";
   private localParticipantIdentity: string | null = null;
   private isMicrophoneEnabled = false;
+  private isDeafened = false;
   private isCameraEnabled = false;
   private isScreenShareEnabled = false;
   private preferredAudioInputDeviceId: string | null = null;
@@ -470,6 +475,7 @@ class RtcClientImpl implements RtcClient {
       connectionStatus: this.connectionStatus,
       localParticipantIdentity: this.localParticipantIdentity,
       isMicrophoneEnabled: this.isMicrophoneEnabled,
+      isDeafened: this.isDeafened,
       isCameraEnabled: this.isCameraEnabled,
       isScreenShareEnabled: this.isScreenShareEnabled,
       participants,
@@ -598,6 +604,20 @@ class RtcClientImpl implements RtcClient {
     });
   }
 
+  setDeafened(enabled: boolean): Promise<void> {
+    return this.runSerialized(async () => {
+      this.setDeafenedInternal(enabled);
+    });
+  }
+
+  toggleDeafened(): Promise<boolean> {
+    return this.runSerialized(async () => {
+      const next = !this.isDeafened;
+      this.setDeafenedInternal(next);
+      return next;
+    });
+  }
+
   setCameraEnabled(enabled: boolean): Promise<void> {
     return this.runSerialized(async () => {
       await this.setCameraEnabledInternal(enabled);
@@ -654,6 +674,25 @@ class RtcClientImpl implements RtcClient {
       };
       this.emitSnapshot();
       throw new RtcClientError("microphone_toggle_failed", this.lastError.message);
+    }
+  }
+
+  private setDeafenedInternal(enabled: boolean): void {
+    try {
+      for (const attachedElement of this.remoteAudioElementsByTrackSid.values()) {
+        attachedElement.muted = enabled;
+      }
+      this.isDeafened = enabled;
+      this.lastError = null;
+      this.emitSnapshot();
+    } catch (error) {
+      const message = sanitizeErrorMessage(error);
+      this.lastError = {
+        code: "deafen_toggle_failed",
+        message: `Unable to update deafen state: ${message}`,
+      };
+      this.emitSnapshot();
+      throw new RtcClientError("deafen_toggle_failed", this.lastError.message);
     }
   }
 
@@ -990,7 +1029,7 @@ class RtcClientImpl implements RtcClient {
       return;
     }
 
-    attachedElement.muted = false;
+    attachedElement.muted = this.isDeafened;
     if (!attachedElement.isConnected && document.body) {
       document.body.appendChild(attachedElement);
     }
@@ -1258,6 +1297,7 @@ class RtcClientImpl implements RtcClient {
     this.remoteAudioElementsByTrackSid.clear();
     this.localParticipantIdentity = null;
     this.isMicrophoneEnabled = false;
+    this.isDeafened = false;
     this.isCameraEnabled = false;
     this.isScreenShareEnabled = false;
   }

@@ -65,6 +65,7 @@ function channelRailPropsFixture(
       connectionStatus: "disconnected",
       localParticipantIdentity: null,
       isMicrophoneEnabled: false,
+      isDeafened: false,
       isCameraEnabled: false,
       isScreenShareEnabled: false,
       participants: [],
@@ -78,6 +79,7 @@ function channelRailPropsFixture(
     isJoiningVoice: false,
     isLeavingVoice: false,
     isTogglingVoiceMic: false,
+    isTogglingVoiceDeaf: false,
     isTogglingVoiceCamera: false,
     isTogglingVoiceScreenShare: false,
     currentUserId: "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
@@ -93,6 +95,7 @@ function channelRailPropsFixture(
     onSelectChannel: () => {},
     onJoinVoice: () => {},
     onToggleVoiceMicrophone: () => {},
+    onToggleVoiceDeafen: () => {},
     onToggleVoiceCamera: () => {},
     onToggleVoiceScreenShare: () => {},
     onLeaveVoice: () => {},
@@ -179,6 +182,7 @@ describe("app shell extracted layout components", () => {
               identity: "self.voice",
               isLocal: true,
               isMuted: false,
+              isDeafened: false,
               isSpeaking: false,
               hasCamera: true,
               hasScreenShare: true,
@@ -187,6 +191,7 @@ describe("app shell extracted layout components", () => {
               identity: "remote.voice",
               isLocal: false,
               isMuted: false,
+              isDeafened: false,
               isSpeaking: false,
               hasCamera: true,
               hasScreenShare: false,
@@ -199,6 +204,39 @@ describe("app shell extracted layout components", () => {
     expect(screen.getAllByText("LIVE")).toHaveLength(1);
   });
 
+  it("renders muted and deafened badges for participant entries", () => {
+    render(() => (
+      <ChannelRail
+        {...channelRailPropsFixture({
+          isVoiceSessionForChannel: () => true,
+          voiceRosterEntriesForChannel: () => [
+            {
+              identity: "local.voice",
+              isLocal: true,
+              isMuted: true,
+              isDeafened: true,
+              isSpeaking: false,
+              hasCamera: false,
+              hasScreenShare: false,
+            },
+            {
+              identity: "remote.voice",
+              isLocal: false,
+              isMuted: true,
+              isDeafened: true,
+              isSpeaking: false,
+              hasCamera: false,
+              hasScreenShare: false,
+            },
+          ],
+        })}
+      />
+    ));
+
+    expect(screen.getAllByLabelText("Muted")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Deafened")).toHaveLength(2);
+  });
+
   it("shows voice participant list even when not connected to that voice channel", () => {
     render(() => (
       <ChannelRail
@@ -209,6 +247,7 @@ describe("app shell extracted layout components", () => {
               identity: "remote.voice",
               isLocal: false,
               isMuted: false,
+              isDeafened: false,
               isSpeaking: false,
               hasCamera: false,
               hasScreenShare: false,
@@ -233,6 +272,7 @@ describe("app shell extracted layout components", () => {
               identity: "remote.voice",
               isLocal: false,
               isMuted: true,
+              isDeafened: false,
               isSpeaking: false,
               hasCamera: true,
               hasScreenShare: false,

@@ -1562,7 +1562,18 @@ select {
   color: #b6bdca;
 }
 
-.voice-participant-muted-badge .icon-mask {
+.voice-participant-deafened-badge {
+  width: 1.15rem;
+  min-height: 1.15rem;
+  border-radius: 0.34rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ec6ff;
+}
+
+.voice-participant-muted-badge .icon-mask,
+.voice-participant-deafened-badge .icon-mask {
   width: 0.82rem;
   height: 0.82rem;
 }

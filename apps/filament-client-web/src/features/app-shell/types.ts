@@ -4,6 +4,7 @@ export interface VoiceRosterEntry {
   identity: string;
   isLocal: boolean;
   isMuted: boolean;
+  isDeafened: boolean;
   isSpeaking: boolean;
   hasCamera: boolean;
   hasScreenShare: boolean;

@@ -26,6 +26,7 @@ export const RTC_DISCONNECTED_SNAPSHOT: RtcSnapshot = {
   connectionStatus: "disconnected",
   localParticipantIdentity: null,
   isMicrophoneEnabled: false,
+  isDeafened: false,
   isCameraEnabled: false,
   isScreenShareEnabled: false,
   participants: [],

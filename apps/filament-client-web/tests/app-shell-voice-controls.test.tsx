@@ -49,6 +49,7 @@ const rtcMock = vi.hoisted(() => {
     connectionStatus: "disconnected" | "connecting" | "connected" | "reconnecting" | "error";
     localParticipantIdentity: string | null;
     isMicrophoneEnabled: boolean;
+    isDeafened: boolean;
     isCameraEnabled: boolean;
     isScreenShareEnabled: boolean;
     participants: MockParticipant[];
@@ -62,6 +63,7 @@ const rtcMock = vi.hoisted(() => {
     connectionStatus: "disconnected",
     localParticipantIdentity: null,
     isMicrophoneEnabled: false,
+    isDeafened: false,
     isCameraEnabled: false,
     isScreenShareEnabled: false,
     participants: [],
@@ -163,6 +165,23 @@ const rtcMock = vi.hoisted(() => {
     return snapshot.isMicrophoneEnabled;
   });
 
+  const setDeafened = vi.fn(async (enabled: boolean) => {
+    snapshot = {
+      ...snapshot,
+      isDeafened: enabled,
+    };
+    emit();
+  });
+
+  const toggleDeafened = vi.fn(async () => {
+    snapshot = {
+      ...snapshot,
+      isDeafened: !snapshot.isDeafened,
+    };
+    emit();
+    return snapshot.isDeafened;
+  });
+
   const setCameraEnabled = vi.fn(async (enabled: boolean) => {
     snapshot = {
       ...snapshot,
@@ -239,6 +258,8 @@ const rtcMock = vi.hoisted(() => {
     setAudioOutputDevice,
     setMicrophoneEnabled,
     toggleMicrophone,
+    setDeafened,
+    toggleDeafened,
     setCameraEnabled,
     toggleCamera,
     setScreenShareEnabled,
@@ -324,6 +345,8 @@ const rtcMock = vi.hoisted(() => {
     setAudioOutputDevice.mockClear();
     setMicrophoneEnabled.mockClear();
     toggleMicrophone.mockClear();
+    setDeafened.mockClear();
+    toggleDeafened.mockClear();
     setCameraEnabled.mockClear();
     toggleCamera.mockClear();
     setScreenShareEnabled.mockClear();
@@ -339,6 +362,8 @@ const rtcMock = vi.hoisted(() => {
     setAudioOutputDevice,
     setMicrophoneEnabled,
     toggleMicrophone,
+    setDeafened,
+    toggleDeafened,
     setCameraEnabled,
     toggleCamera,
     setScreenShareEnabled,
@@ -723,6 +748,10 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Mute Mic" }));
     await waitFor(() => expect(rtcMock.toggleMicrophone).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: "Unmute Mic" })).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Deafen Audio" }));
+    await waitFor(() => expect(rtcMock.toggleDeafened).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Undeafen Audio" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Leave" }));
     await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));

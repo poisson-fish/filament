@@ -127,6 +127,7 @@ export function buildVoiceRosterEntries(snapshot: RtcSnapshot): VoiceRosterEntry
       identity: localIdentity,
       isLocal: true,
       isMuted: !snapshot.isMicrophoneEnabled,
+      isDeafened: snapshot.isDeafened,
       isSpeaking: activeSpeakers.has(localIdentity),
       hasCamera: identitiesWithCamera.has(localIdentity),
       hasScreenShare: identitiesWithScreenShare.has(localIdentity),
@@ -142,6 +143,7 @@ export function buildVoiceRosterEntries(snapshot: RtcSnapshot): VoiceRosterEntry
       identity: participant.identity,
       isLocal: false,
       isMuted: false,
+      isDeafened: false,
       isSpeaking: activeSpeakers.has(participant.identity),
       hasCamera: identitiesWithCamera.has(participant.identity),
       hasScreenShare: identitiesWithScreenShare.has(participant.identity),
@@ -154,11 +156,13 @@ export function buildVoiceRosterEntries(snapshot: RtcSnapshot): VoiceRosterEntry
 
 function localMediaState(snapshot: RtcSnapshot): {
   isMuted: boolean;
+  isDeafened: boolean;
   hasCamera: boolean;
   hasScreenShare: boolean;
 } {
   return {
     isMuted: !snapshot.isMicrophoneEnabled,
+    isDeafened: snapshot.isDeafened,
     hasCamera: snapshot.videoTracks.some((track) => track.isLocal && track.source === "camera"),
     hasScreenShare: snapshot.videoTracks.some(
       (track) => track.isLocal && track.source === "screen_share",
@@ -374,6 +378,10 @@ export function createAppShellSelectors(
           entry.identity === localIdentity
             ? localMedia.isMuted
             : Boolean(entry.isMuted),
+        isDeafened:
+          entry.identity === localIdentity
+            ? localMedia.isDeafened
+            : Boolean(entry.isDeafened),
         isSpeaking: entry.isSpeaking,
         hasCamera: entry.identity === localIdentity ? localMedia.hasCamera : entry.isVideoEnabled,
         hasScreenShare:

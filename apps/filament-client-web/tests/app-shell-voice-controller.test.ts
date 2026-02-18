@@ -53,6 +53,8 @@ function createRtcClientMock(overrides: Partial<RtcClient> = {}): RtcClient {
     leave: async () => {},
     setMicrophoneEnabled: async () => {},
     toggleMicrophone: async () => false,
+    setDeafened: async () => {},
+    toggleDeafened: async () => false,
     setCameraEnabled: async () => {},
     toggleCamera: async () => false,
     setScreenShareEnabled: async () => {},
@@ -105,6 +107,7 @@ function createVoiceOperationsHarness(input?: {
 
   const [isLeavingVoice, setLeavingVoice] = createSignal(false);
   const [isTogglingVoiceMic, setTogglingVoiceMic] = createSignal(false);
+  const [isTogglingVoiceDeaf, setTogglingVoiceDeaf] = createSignal(false);
   const [isTogglingVoiceCamera, setTogglingVoiceCamera] = createSignal(false);
   const [isTogglingVoiceScreenShare, setTogglingVoiceScreenShare] = createSignal(false);
 
@@ -171,6 +174,7 @@ function createVoiceOperationsHarness(input?: {
       isJoiningVoice,
       isLeavingVoice,
       isTogglingVoiceMic,
+      isTogglingVoiceDeaf,
       isTogglingVoiceCamera,
       isTogglingVoiceScreenShare,
       voiceDevicePreferences,
@@ -180,6 +184,7 @@ function createVoiceOperationsHarness(input?: {
       setVoiceJoinState: setVoiceJoinStateTracked,
       setLeavingVoice,
       setTogglingVoiceMic,
+      setTogglingVoiceDeaf,
       setTogglingVoiceCamera,
       setTogglingVoiceScreenShare,
       setVoiceSessionChannelKey,
@@ -335,6 +340,27 @@ describe("app shell voice controller", () => {
     await harness.controller.toggleVoiceScreenShare();
     expect(toggleScreenShare).not.toHaveBeenCalled();
     expect(harness.voiceError()).toBe("Screen share publish is not allowed for this call.");
+  });
+
+  it("toggles local deafen state and updates status", async () => {
+    const toggleDeafened = vi.fn(async () => true);
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        dependencies: {
+          createRtcClient: () =>
+            createRtcClientMock({
+              toggleDeafened,
+            }),
+        },
+      }),
+    );
+
+    harness.controller.ensureRtcClient();
+    await harness.controller.toggleVoiceDeafen();
+
+    expect(toggleDeafened).toHaveBeenCalledTimes(1);
+    expect(harness.voiceStatus()).toBe("Audio output deafened.");
+    expect(harness.voiceError()).toBe("");
   });
 
   it("applies device preferences before join and keeps token request least-privilege", async () => {
