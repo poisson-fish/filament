@@ -162,7 +162,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 3 - Chat Surface UnoCSS Migration
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `2/4 scoped surfaces migrated` (`MessageList`, `MessageComposer` complete; `MessageRow`, `ReactionPickerPortal` pending)
+Completion status (2026-02-18): `3/4 scoped surfaces migrated` (`MessageList`, `MessageComposer`, `ReactionPickerPortal` complete; `MessageRow` pending)
 
 Scope:
 - `MessageList.tsx`
@@ -201,6 +201,18 @@ Implementation Notes (2026-02-18):
   - Extended `tests/app-style-token-manifest.test.ts` migrated-surface guard to include `MessageComposer.tsx`.
 - Important finding:
   - Keeping `.composer` for layout contracts while removing only internal selectors is the safest incremental step; previous generic `.composer input/button` legacy rules in `base.css` would otherwise override Uno utility declarations due to selector specificity.
+- Applied slice (ReactionPickerPortal surface):
+  - Migrated `ReactionPickerPortal.tsx` panel/header/grid/option styling to Uno utility classes while retaining only the `.reaction-picker-floating` runtime hook used by the reaction picker controller’s outside-click handling.
+  - Removed migrated `reaction-picker*` selectors from `src/styles/app/base.css` so the portal no longer depends on legacy cascade styles.
+  - Added `tests/app-shell-reaction-picker-portal.test.tsx` to lock utility-class rendering and interaction behavior (add reaction + close).
+  - Extended `tests/app-style-token-manifest.test.ts` migrated-surface guard to include `ReactionPickerPortal.tsx` and to assert legacy reaction picker selectors remain removed from `base.css`.
+- Important finding:
+  - The controller contract depends on `.reaction-picker-floating` as a query selector boundary, so that class must remain as a stable non-visual hook even after utility migration.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-reaction-picker-portal.test.tsx tests/app-shell-reactions.test.tsx tests/app-shell-reaction-picker-controller.test.ts tests/app-style-token-manifest.test.ts` passes (`590` tests total in run), including the new portal utility/behavior assertions.
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 4 - Shell, Rails, Panels Migration
 Status: `NOT STARTED`

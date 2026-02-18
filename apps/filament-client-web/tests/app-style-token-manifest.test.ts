@@ -18,9 +18,14 @@ const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
 );
+const reactionPickerPortalPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/messages/ReactionPickerPortal.tsx",
+);
 const migratedTsxPaths = [
   channelRailPath,
   messageComposerPath,
+  reactionPickerPortalPath,
 ];
 
 const rawColorLiteralPattern = /#[0-9a-f]{3,8}\b|\b(?:rgb|rgba|hsl|hsla)\(/i;
@@ -76,6 +81,25 @@ describe("app style token manifest", () => {
     expect(baseCss).not.toMatch(/--bg-0\s*:/);
     expect(baseCss).not.toMatch(/--ink-0\s*:/);
     expect(baseCss).not.toMatch(/--line\s*:/);
+  });
+
+  it("removes legacy reaction picker selectors from base.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+    const removedSelectors = [
+      ".reaction-picker {",
+      ".reaction-picker-floating {",
+      ".reaction-picker-header {",
+      ".reaction-picker-title {",
+      ".reaction-picker-close {",
+      ".reaction-picker-grid {",
+      ".reaction-picker-option {",
+      ".reaction-picker-option:hover {",
+      ".reaction-picker-option img {",
+    ];
+
+    for (const selector of removedSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
   });
 
   it("uses shared tokens for the voice disconnect danger button style", () => {
