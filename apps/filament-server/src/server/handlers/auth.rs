@@ -38,8 +38,24 @@ pub(crate) async fn verify_captcha_token(
     };
 
     let token = token
-        .ok_or(AuthFailure::CaptchaFailed)
-        .and_then(|raw| CaptchaToken::try_from(raw).map_err(|()| AuthFailure::CaptchaFailed))?;
+        .ok_or_else(|| {
+            tracing::warn!(
+                event = "auth.captcha.verify",
+                outcome = "missing_token",
+                client_ip_source = client_ip.source().as_str()
+            );
+            AuthFailure::CaptchaFailed
+        })
+        .and_then(|raw| {
+            CaptchaToken::try_from(raw).map_err(|()| {
+                tracing::warn!(
+                    event = "auth.captcha.verify",
+                    outcome = "invalid_token_format",
+                    client_ip_source = client_ip.source().as_str()
+                );
+                AuthFailure::CaptchaFailed
+            })
+        })?;
 
     let mut form_data = vec![
         ("secret", config.secret.clone()),
@@ -55,14 +71,67 @@ pub(crate) async fn verify_captcha_token(
         .form(&form_data)
         .send()
         .await
-        .map_err(|_| AuthFailure::CaptchaFailed)?;
+        .map_err(|error| {
+            tracing::warn!(
+                event = "auth.captcha.verify",
+                outcome = "request_error",
+                error = %error,
+                verify_url = %config.verify_url,
+                client_ip_source = client_ip.source().as_str()
+            );
+            AuthFailure::CaptchaFailed
+        })?;
+    let status = response.status();
     let verify: HcaptchaVerifyResponse = response
         .json()
         .await
-        .map_err(|_| AuthFailure::CaptchaFailed)?;
-    if !verify.success {
+        .map_err(|error| {
+            tracing::warn!(
+                event = "auth.captcha.verify",
+                outcome = "response_parse_error",
+                status = %status,
+                error = %error,
+                verify_url = %config.verify_url,
+                client_ip_source = client_ip.source().as_str()
+            );
+            AuthFailure::CaptchaFailed
+        })?;
+    if !status.is_success() {
+        tracing::warn!(
+            event = "auth.captcha.verify",
+            outcome = "non_success_status",
+            status = %status,
+            verify_url = %config.verify_url,
+            error_codes = ?verify.error_codes,
+            hostname = ?verify.hostname,
+            challenge_ts = ?verify.challenge_ts,
+            client_ip_source = client_ip.source().as_str()
+        );
         return Err(AuthFailure::CaptchaFailed);
     }
+    if !verify.success {
+        tracing::warn!(
+            event = "auth.captcha.verify",
+            outcome = "verify_failed",
+            status = %status,
+            verify_url = %config.verify_url,
+            error_codes = ?verify.error_codes,
+            hostname = ?verify.hostname,
+            challenge_ts = ?verify.challenge_ts,
+            client_ip_source = client_ip.source().as_str()
+        );
+        return Err(AuthFailure::CaptchaFailed);
+    }
+
+    tracing::info!(
+        event = "auth.captcha.verify",
+        outcome = "success",
+        status = %status,
+        hostname = ?verify.hostname,
+        challenge_ts = ?verify.challenge_ts,
+        client_ip_source = client_ip.source().as_str()
+    );
+
     Ok(())
 }
 

@@ -612,4 +612,33 @@ impl TryFrom<String> for CaptchaToken {
 #[serde(deny_unknown_fields)]
 pub(crate) struct HcaptchaVerifyResponse {
     pub(crate) success: bool,
+    #[serde(default, rename = "error-codes")]
+    pub(crate) error_codes: Vec<String>,
+    #[serde(default)]
+    pub(crate) hostname: Option<String>,
+    #[serde(default)]
+    pub(crate) challenge_ts: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HcaptchaVerifyResponse;
+
+    #[test]
+    fn hcaptcha_verify_response_parses_error_fields() {
+        let response: HcaptchaVerifyResponse = serde_json::from_str(
+            r#"{
+                "success": false,
+                "error-codes": ["invalid-input-response"],
+                "hostname": "filamentapp.net",
+                "challenge_ts": "2026-02-17T00:00:00.000Z"
+            }"#,
+        )
+        .expect("valid hcaptcha verify response");
+
+        assert!(!response.success);
+        assert_eq!(response.error_codes, vec![String::from("invalid-input-response")]);
+        assert_eq!(response.hostname.as_deref(), Some("filamentapp.net"));
+        assert_eq!(response.challenge_ts.as_deref(), Some("2026-02-17T00:00:00.000Z"));
+    }
 }
