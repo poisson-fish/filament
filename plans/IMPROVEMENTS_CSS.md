@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `7/7 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `8/8 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -444,6 +444,16 @@ Implementation Notes (2026-02-18):
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-style-token-manifest.test.ts` passes.
   - `pnpm -C apps/filament-client-web run lint` passes.
+- Applied slice (Dead legacy selector cleanup: `ops-overlay` family removal):
+  - Removed dead `.ops-overlay`, `.ops-overlay-header`, and `.ops-overlay-header button` selectors from `src/styles/app/base.css`.
+  - Extended `tests/app-style-token-manifest.test.ts` with regression assertions that the removed `ops-overlay` selector family remains absent from `base.css`.
+- Important finding:
+  - The `ops-overlay` selector family had zero live TSX/test references and persisted only as stale bridge CSS after earlier `group-label` cleanup, so deletion is safe and reduces dead cascade surface.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-style-token-manifest.test.ts` passes (`629` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Testing and Validation Gates
 Run on every migration phase:

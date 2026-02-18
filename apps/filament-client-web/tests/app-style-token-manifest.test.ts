@@ -516,6 +516,20 @@ describe("app style token manifest", () => {
     }
   });
 
+  it("removes dead ops-overlay selectors from base.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".ops-overlay {",
+      ".ops-overlay-header {",
+      ".ops-overlay-header button {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
+  });
+
   it("removes dead voice roster, voice video grid, and reaction add trigger selectors from base.css", () => {
     const baseCss = readFileSync(baseCssPath, "utf8");
 

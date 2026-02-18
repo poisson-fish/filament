@@ -199,34 +199,6 @@ select {
   overflow-wrap: anywhere;
 }
 
-.ops-overlay {
-  position: absolute;
-  inset: 0.72rem;
-  border: 1px solid var(--line);
-  border-radius: 0.86rem;
-  background: linear-gradient(180deg, rgba(12, 23, 43, 0.97), rgba(8, 17, 33, 0.98));
-  box-shadow: 0 0.8rem 1.5rem rgba(1, 8, 21, 0.55);
-  padding: 0.76rem;
-  display: grid;
-  align-content: start;
-  gap: 0.72rem;
-  overflow: auto;
-}
-
-.ops-overlay-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.ops-overlay-header button {
-  border: 1px solid var(--line-soft);
-  border-radius: 0.56rem;
-  background: rgba(20, 33, 57, 0.82);
-  color: var(--ink-1);
-  padding: 0.35rem 0.6rem;
-}
-
 .presence {
   width: 0.58rem;
   height: 0.58rem;
