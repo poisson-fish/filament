@@ -8,6 +8,9 @@ COPY apps ./apps
 RUN cargo build --release -p filament-server
 
 FROM debian:trixie-slim
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends ca-certificates \
+	&& rm -rf /var/lib/apt/lists/*
 RUN useradd --system --home /nonexistent --shell /usr/sbin/nologin filament
 WORKDIR /app
 
