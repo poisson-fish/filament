@@ -51,14 +51,32 @@ function searchPanelPropsFixture(
 }
 
 describe("app shell search panel", () => {
-  it("renders result rows with utility presence dots and no legacy presence hook", () => {
-    render(() => <SearchPanel {...searchPanelPropsFixture()} />);
+  it("renders with utility form/status classes and no legacy helper hooks", () => {
+    render(() => (
+      <SearchPanel
+        {...searchPanelPropsFixture({
+          searchOpsStatus: "Index rebuilt.",
+          searchError: "Search temporarily unavailable.",
+        })}
+      />
+    ));
 
     const resultText = screen.getByText("Remote User: incident logs");
     expect(resultText).toBeInTheDocument();
     expect(resultText.closest("ul")).toHaveClass("list-none");
     expect(resultText.closest("li")).toHaveClass("rounded-[0.6rem]");
     expect(resultText.closest("li")?.querySelector("span.bg-presence-online")).not.toBeNull();
+    expect(screen.getByLabelText("Query")).toHaveClass("rounded-[0.56rem]");
+    expect(screen.getByRole("button", { name: "Search" })).toHaveClass("rounded-[0.56rem]");
+    expect(screen.getByRole("button", { name: "Rebuild Index" })).toHaveClass("flex-1");
+    expect(screen.getByRole("button", { name: "Reconcile Index" })).toHaveClass("flex-1");
+    expect(screen.getByText("Index rebuilt.")).toHaveClass("text-ok");
+    expect(screen.getByText("Search temporarily unavailable.")).toHaveClass("text-danger");
+    expect(document.querySelector(".member-group")).toBeNull();
+    expect(document.querySelector(".inline-form")).toBeNull();
+    expect(document.querySelector(".button-row")).toBeNull();
+    expect(document.querySelector(".status")).toBeNull();
+    expect(document.querySelector(".muted")).toBeNull();
     expect(document.querySelector(".presence")).toBeNull();
   });
 

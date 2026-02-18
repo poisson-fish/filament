@@ -19,6 +19,15 @@ export interface AttachmentsPanelProps {
 }
 
 export function AttachmentsPanel(props: AttachmentsPanelProps) {
+  const panelSectionClass = "grid gap-[0.5rem]";
+  const formClass = "grid gap-[0.5rem]";
+  const fieldLabelClass = "grid gap-[0.3rem] text-[0.84rem] text-ink-1";
+  const fieldControlClass =
+    "rounded-[0.56rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.62rem] text-ink-0 disabled:cursor-default disabled:opacity-62";
+  const submitButtonClass =
+    "min-h-[1.95rem] rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.44rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
+  const statusOkClass = "mt-[0.92rem] text-[0.91rem] text-ok";
+  const statusErrorClass = "mt-[0.92rem] text-[0.91rem] text-danger";
   const presenceDotClass = "inline-block h-[0.58rem] w-[0.58rem] rounded-full";
   const onlinePresenceDotClass = `${presenceDotClass} bg-presence-online`;
   const idlePresenceDotClass = `${presenceDotClass} bg-presence-idle`;
@@ -28,13 +37,15 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
   const attachmentNameClass = "min-w-0 break-words text-[0.84rem] text-ink-0";
   const attachmentActionButtonClass =
     "min-h-[1.75rem] rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.54rem] text-[0.78rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
+  const metadataTextClass = "text-[0.78rem] text-ink-2 font-code";
 
   return (
-    <section class="member-group">
-      <form class="inline-form" onSubmit={props.onSubmitUpload}>
-        <label>
+    <section class={panelSectionClass}>
+      <form class={formClass} onSubmit={props.onSubmitUpload}>
+        <label class={fieldLabelClass}>
           File
           <input
+            class={fieldControlClass}
             type="file"
             onInput={(event) => {
               const file = event.currentTarget.files?.[0] ?? null;
@@ -42,24 +53,29 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
             }}
           />
         </label>
-        <label>
+        <label class={fieldLabelClass}>
           Filename
           <input
+            class={fieldControlClass}
             value={props.attachmentFilename}
             onInput={(event) => props.onAttachmentFilenameInput(event.currentTarget.value)}
             maxlength="128"
             placeholder="upload.bin"
           />
         </label>
-        <button type="submit" disabled={props.isUploadingAttachment || !props.hasActiveChannel}>
+        <button
+          class={submitButtonClass}
+          type="submit"
+          disabled={props.isUploadingAttachment || !props.hasActiveChannel}
+        >
           {props.isUploadingAttachment ? "Uploading..." : "Upload"}
         </button>
       </form>
       <Show when={props.attachmentStatus}>
-        <p class="status ok">{props.attachmentStatus}</p>
+        <p class={statusOkClass}>{props.attachmentStatus}</p>
       </Show>
       <Show when={props.attachmentError}>
-        <p class="status error">{props.attachmentError}</p>
+        <p class={statusErrorClass}>{props.attachmentError}</p>
       </Show>
       <ul class={attachmentListClass}>
         <For each={props.activeAttachments}>
@@ -68,7 +84,7 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
               <span class={onlinePresenceDotClass} />
               <div class="grid min-w-0 gap-[0.16rem]">
                 <span class={attachmentNameClass}>{record.filename}</span>
-                <span class="muted text-[0.78rem] font-code">
+                <span class={metadataTextClass}>
                   {record.mimeType} · {formatBytes(record.sizeBytes)}
                 </span>
               </div>

@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `15/15 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; utility/workspace-settings helper migration added; moderation panel helper migration added; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `16/16 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; utility/workspace-settings helper migration added; moderation panel helper migration added; search/attachments form helper migration added; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -532,6 +532,18 @@ Implementation Notes (2026-02-18):
   - Moderation action rows need `flex-1` button utilities to preserve prior equal-width button behavior that legacy `.button-row button { flex: 1; }` provided.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-moderation-panel.test.tsx tests/app-shell-moderation-panel-props.test.ts tests/app-shell-moderation-controller.test.ts tests/app-style-token-manifest.test.ts` passes (`646` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (SearchPanel + AttachmentsPanel helper migration):
+  - Migrated `SearchPanel.tsx` and `AttachmentsPanel.tsx` form/field/button/status presentation from shared legacy helper hooks (`member-group`, `inline-form`, `button-row`, `status`, `muted`) to explicit Uno utility classes while preserving submit handlers, maintenance actions, and attachment operations.
+  - Extended `tests/app-shell-search-panel.test.tsx` and `tests/app-shell-attachments-panel.test.tsx` with regression assertions for utility-class rendering and absence of legacy helper hooks in both surfaces.
+- Important finding:
+  - `SearchPanel` still relied on legacy `.button-row button { flex: 1; }` for equal-width maintenance controls; utility migration needed explicit `flex-1` on maintenance action buttons to preserve layout parity.
+- Important finding:
+  - `AttachmentsPanel` file and filename controls inherited shared `.inline-form` input styling; utility migration required applying the same border/background/disabled semantics directly to both inputs to avoid regressions when helper selectors are eventually removed.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-search-panel.test.tsx tests/app-shell-attachments-panel.test.tsx` passes.
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

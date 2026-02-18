@@ -45,18 +45,35 @@ function attachmentsPanelPropsFixture(
 }
 
 describe("app shell attachments panel", () => {
-  it("renders metadata with utility classes and without legacy stacked-meta/mono hooks", () => {
-    render(() => <AttachmentsPanel {...attachmentsPanelPropsFixture()} />);
+  it("renders utility form/status metadata classes without legacy helper hooks", () => {
+    render(() => (
+      <AttachmentsPanel
+        {...attachmentsPanelPropsFixture({
+          attachmentStatus: "Upload complete.",
+          attachmentError: "Attachment warning.",
+        })}
+      />
+    ));
 
     expect(screen.getByText("incident.log")).toBeInTheDocument();
     expect(screen.getByText("incident.log").closest("ul")).toHaveClass("list-none");
     expect(screen.getByText("incident.log").closest("li")).toHaveClass(
       "grid-cols-[auto_minmax(0,1fr)_auto_auto]",
     );
+    expect(screen.getByLabelText("File")).toHaveClass("rounded-[0.56rem]");
+    expect(screen.getByLabelText("Filename")).toHaveClass("rounded-[0.56rem]");
+    expect(screen.getByRole("button", { name: "Upload" })).toHaveClass("rounded-[0.56rem]");
     const metadata = screen.getByText("text/plain · 128 B");
     expect(metadata).toHaveClass("font-code");
     expect(metadata).toHaveClass("text-[0.78rem]");
+    expect(metadata).toHaveClass("text-ink-2");
+    expect(screen.getByText("Upload complete.")).toHaveClass("text-ok");
+    expect(screen.getByText("Attachment warning.")).toHaveClass("text-danger");
     expect(screen.getByText("incident.log").closest("li")?.querySelector("span.bg-presence-online")).not.toBeNull();
+    expect(document.querySelector(".member-group")).toBeNull();
+    expect(document.querySelector(".inline-form")).toBeNull();
+    expect(document.querySelector(".status")).toBeNull();
+    expect(document.querySelector(".muted")).toBeNull();
     expect(document.querySelector(".stacked-meta")).toBeNull();
     expect(document.querySelector(".mono")).toBeNull();
     expect(document.querySelector(".presence")).toBeNull();
