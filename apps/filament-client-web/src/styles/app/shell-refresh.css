@@ -1675,7 +1675,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-  align-content: start;
+  align-content: end;
 }
 
 .message-row {

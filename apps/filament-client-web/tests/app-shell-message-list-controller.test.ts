@@ -180,4 +180,34 @@ describe("app shell message list controller", () => {
       dispose();
     });
   });
+
+  it("keeps load-older hidden when history does not overflow the list viewport", () => {
+    createRoot((dispose) => {
+      const [nextBefore] = createSignal<MessageId | null>(MESSAGE_ID);
+      const [isLoadingOlder] = createSignal(false);
+      const [openReactionPickerMessageId] = createSignal<MessageId | null>(null);
+      const [showLoadOlderButton, setShowLoadOlderButton] = createSignal(false);
+
+      const controller = createMessageListController({
+        nextBefore,
+        isLoadingOlder,
+        openReactionPickerMessageId,
+        setShowLoadOlderButton,
+        updateReactionPickerOverlayPosition: () => undefined,
+        scheduleAfterPaint: (callback) => callback(),
+      });
+
+      const metrics = createScrollElement({
+        scrollTop: 0,
+        scrollHeight: 400,
+        clientHeight: 800,
+      });
+      controller.onListRef(metrics.element);
+
+      controller.updateLoadOlderButtonVisibility();
+      expect(showLoadOlderButton()).toBe(false);
+
+      dispose();
+    });
+  });
 });

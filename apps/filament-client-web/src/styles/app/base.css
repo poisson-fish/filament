@@ -597,7 +597,7 @@ select {
   display: grid;
   gap: 0.72rem;
   overflow: auto;
-  align-content: start;
+  align-content: end;
 }
 
 .message-row {

@@ -85,9 +85,18 @@ export function createMessageListController(
       options.setShowLoadOlderButton(false);
       return;
     }
-    options.setShowLoadOlderButton(
-      element.scrollTop <= loadOlderButtonTopThresholdPx,
-    );
+
+    const maxScrollTop = Math.max(element.scrollHeight - element.clientHeight, 0);
+    if (maxScrollTop <= 0) {
+      options.setShowLoadOlderButton(false);
+      return;
+    }
+
+    const distanceFromBottom =
+      element.scrollHeight - element.clientHeight - element.scrollTop;
+    const isNearTop = element.scrollTop <= loadOlderButtonTopThresholdPx;
+    const isNearBottom = distanceFromBottom <= stickyBottomThresholdPx;
+    options.setShowLoadOlderButton(isNearTop && !isNearBottom);
   };
 
   const scrollMessageListToBottom = (): void => {
@@ -141,12 +150,16 @@ export function createMessageListController(
 
   const onListRef = (element: HTMLElement): void => {
     messageListElement = element;
-    updateLoadOlderButtonVisibility();
+    runAfterMessageListPaint(() => {
+      updateLoadOlderButtonVisibility();
+    });
   };
 
   createEffect(() => {
     void options.nextBefore();
-    updateLoadOlderButtonVisibility();
+    runAfterMessageListPaint(() => {
+      updateLoadOlderButtonVisibility();
+    });
   });
 
   return {

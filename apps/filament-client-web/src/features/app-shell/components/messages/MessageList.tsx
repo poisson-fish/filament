@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal } from "solid-js";
 import type { MessageId, MessageRecord } from "../../../../domain/chat";
 import { MessageRow, type MessageRowProps } from "./MessageRow";
 import {
@@ -23,8 +23,10 @@ export interface MessageListProps extends Omit<MessageRowProps, "message"> {
 
 export function MessageList(props: MessageListProps) {
   const [isPinnedToLatest, setIsPinnedToLatest] = createSignal(true);
+  let messageListElement: HTMLElement | undefined;
 
   const handleListRef = (element: HTMLElement) => {
+    messageListElement = element;
     props.onListRef(element);
     setIsPinnedToLatest(isMessageListPinnedToLatest(element));
   };
@@ -37,6 +39,15 @@ export function MessageList(props: MessageListProps) {
     }
     setIsPinnedToLatest(isMessageListPinnedToLatest(element));
   };
+
+  createEffect(() => {
+    void props.messages.length;
+    const element = messageListElement;
+    if (!element) {
+      return;
+    }
+    setIsPinnedToLatest(isMessageListPinnedToLatest(element));
+  });
 
   const renderWindow = () =>
     resolveMessageListRenderWindow({
