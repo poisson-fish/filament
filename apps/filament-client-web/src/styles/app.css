@@ -1673,7 +1673,7 @@ select {
 }
 
 .message-row:hover {
-  background: rgba(255, 255, 255, 0.016);
+  background: rgba(255, 255, 255, 0.018);
 }
 
 .message-row span {
