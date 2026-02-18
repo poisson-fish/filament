@@ -1552,6 +1552,21 @@ select {
   line-height: 1.2;
 }
 
+.voice-participant-muted-badge {
+  width: 1.15rem;
+  min-height: 1.15rem;
+  border-radius: 0.34rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #b6bdca;
+}
+
+.voice-participant-muted-badge .icon-mask {
+  width: 0.82rem;
+  height: 0.82rem;
+}
+
 .voice-channel-stream-hints {
   border: 1px solid #675c3f;
   border-radius: 0.5rem;

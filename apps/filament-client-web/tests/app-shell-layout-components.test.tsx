@@ -166,17 +166,27 @@ describe("app shell extracted layout components", () => {
       <ChannelRail
         {...channelRailPropsFixture({
           isVoiceSessionForChannel: () => true,
+          currentUserId: "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+          userIdFromVoiceIdentity: (identity) =>
+            identity === "self.voice" ? "01ARZ3NDEKTSV4RRFFQ69G5FAZ" : null,
+          rtcSnapshot: {
+            ...channelRailPropsFixture().rtcSnapshot,
+            isCameraEnabled: false,
+            isScreenShareEnabled: false,
+          },
             voiceRosterEntriesForChannel: () => [
             {
               identity: "self.voice",
               isLocal: true,
+              isMuted: false,
               isSpeaking: false,
-              hasCamera: false,
-              hasScreenShare: false,
+              hasCamera: true,
+              hasScreenShare: true,
             },
             {
               identity: "remote.voice",
               isLocal: false,
+              isMuted: false,
               isSpeaking: false,
               hasCamera: true,
               hasScreenShare: false,
@@ -198,6 +208,7 @@ describe("app shell extracted layout components", () => {
             {
               identity: "remote.voice",
               isLocal: false,
+              isMuted: false,
               isSpeaking: false,
               hasCamera: false,
               hasScreenShare: false,
@@ -210,6 +221,29 @@ describe("app shell extracted layout components", () => {
     ));
 
     expect(screen.getByText("remote.user")).toBeInTheDocument();
+  });
+
+  it("shows muted mic indicator before LIVE badge when participant is muted", () => {
+    render(() => (
+      <ChannelRail
+        {...channelRailPropsFixture({
+          isVoiceSessionForChannel: () => true,
+          voiceRosterEntriesForChannel: () => [
+            {
+              identity: "remote.voice",
+              isLocal: false,
+              isMuted: true,
+              isSpeaking: false,
+              hasCamera: true,
+              hasScreenShare: false,
+            },
+          ],
+        })}
+      />
+    ));
+
+    expect(screen.getByLabelText("Muted")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
   });
 
   it("keeps member rail panel actions and chat header toggles wired", () => {

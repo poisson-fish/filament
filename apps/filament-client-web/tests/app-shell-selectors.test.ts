@@ -231,6 +231,7 @@ describe("app shell selectors", () => {
         {
           identity: localIdentity,
           isLocal: true,
+          isMuted: true,
           isSpeaking: false,
           hasCamera: true,
           hasScreenShare: false,
@@ -238,6 +239,7 @@ describe("app shell selectors", () => {
         {
           identity: remoteIdentity,
           isLocal: false,
+          isMuted: false,
           isSpeaking: true,
           hasCamera: false,
           hasScreenShare: true,
@@ -265,6 +267,7 @@ describe("app shell selectors", () => {
         {
           identity: localIdentity,
           isLocal: true,
+          isMuted: true,
           isSpeaking: false,
           hasCamera: true,
           hasScreenShare: false,
@@ -272,6 +275,7 @@ describe("app shell selectors", () => {
         {
           identity: remoteIdentity,
           isLocal: false,
+          isMuted: false,
           isSpeaking: true,
           hasCamera: false,
           hasScreenShare: true,
@@ -318,12 +322,14 @@ describe("app shell selectors", () => {
         [channelKey(GUILD_A, VOICE_A)]: [
           {
             identity: localIdentity,
+            isMuted: false,
             isSpeaking: false,
             isVideoEnabled: true,
             isScreenShareEnabled: true,
           },
           {
             identity: remoteIdentity,
+            isMuted: true,
             isSpeaking: false,
             isVideoEnabled: true,
             isScreenShareEnabled: false,
@@ -335,6 +341,7 @@ describe("app shell selectors", () => {
         {
           identity: localIdentity,
           isLocal: true,
+          isMuted: true,
           isSpeaking: false,
           hasCamera: false,
           hasScreenShare: false,
@@ -342,6 +349,7 @@ describe("app shell selectors", () => {
         {
           identity: remoteIdentity,
           isLocal: false,
+          isMuted: true,
           isSpeaking: false,
           hasCamera: true,
           hasScreenShare: false,

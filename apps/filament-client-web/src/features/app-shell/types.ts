@@ -3,6 +3,7 @@ import type { MediaPublishSource, ReactionEmoji } from "../../domain/chat";
 export interface VoiceRosterEntry {
   identity: string;
   isLocal: boolean;
+  isMuted: boolean;
   isSpeaking: boolean;
   hasCamera: boolean;
   hasScreenShare: boolean;

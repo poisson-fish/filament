@@ -386,11 +386,38 @@ export function ChannelRail(props: ChannelRailProps) {
                                     <span class="voice-channel-presence-name">
                                       {props.voiceParticipantLabel(entry.identity, entry.isLocal)}
                                     </span>
-                                    <span class="voice-channel-presence-badges">
-                                      <Show when={entry.hasCamera || entry.hasScreenShare}>
-                                        <span class="voice-participant-media-badge">LIVE</span>
-                                      </Show>
-                                    </span>
+                                    {(() => {
+                                      const participantUserId = props.userIdFromVoiceIdentity(
+                                        entry.identity,
+                                      );
+                                      const isCurrentUserParticipant =
+                                        Boolean(props.currentUserId) &&
+                                        participantUserId === props.currentUserId;
+                                      const showLiveBadge = isCurrentUserParticipant
+                                        ? props.rtcSnapshot.isCameraEnabled ||
+                                          props.rtcSnapshot.isScreenShareEnabled
+                                        : entry.hasCamera || entry.hasScreenShare;
+                                      return (
+                                        <span class="voice-channel-presence-badges">
+                                          <Show when={entry.isMuted}>
+                                            <span
+                                              class="voice-participant-muted-badge"
+                                              aria-label="Muted"
+                                              title="Muted"
+                                            >
+                                              <span
+                                                class="icon-mask"
+                                                style={`--icon-url: url("${MUTE_MIC_ICON_URL}")`}
+                                                aria-hidden="true"
+                                              />
+                                            </span>
+                                          </Show>
+                                          <Show when={showLiveBadge}>
+                                            <span class="voice-participant-media-badge">LIVE</span>
+                                          </Show>
+                                        </span>
+                                      );
+                                    })()}
                                   </li>
                                 )}
                               </For>
