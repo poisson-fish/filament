@@ -109,9 +109,10 @@ function renderedMessageTexts(): string[] {
 
 function installMessageListScrollMetrics(element: HTMLElement): {
   setScrollTop: (value: number) => void;
+  setScrollHeight: (value: number) => void;
 } {
   let scrollTopValue = 900;
-  const scrollHeightValue = 1600;
+  let scrollHeightValue = 1600;
   const clientHeightValue = 560;
 
   Object.defineProperty(element, "scrollTop", {
@@ -133,6 +134,9 @@ function installMessageListScrollMetrics(element: HTMLElement): {
   return {
     setScrollTop: (value: number) => {
       scrollTopValue = value;
+    },
+    setScrollHeight: (value: number) => {
+      scrollHeightValue = value;
     },
   };
 }
@@ -470,5 +474,117 @@ describe("app shell message history scrolling", () => {
     await waitFor(() => expect(textHistoryRequests).toBe(2));
     await screen.findByText("latest message");
     expect(renderedMessageTexts()).toEqual(["older message", "latest message"]);
+  });
+
+  it("preserves the scroll anchor when older history is prepended", async () => {
+    seedAuthenticatedWorkspace();
+
+    let olderPageRequests = 0;
+    let expandScrollHeight: (() => void) | undefined;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(init);
+
+      if (method === "GET" && url.includes("/auth/me")) {
+        return jsonResponse({ user_id: USER_ID, username: "alice" });
+      }
+      if (method === "GET" && url.endsWith("/guilds")) {
+        return jsonResponse({
+          guilds: [{ guild_id: GUILD_ID, name: "Security Ops", visibility: "private" }],
+        });
+      }
+      if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
+        return jsonResponse({
+          channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
+        });
+      }
+      if (
+        method === "GET" &&
+        url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/permissions/self`)
+      ) {
+        return jsonResponse({ role: "member", permissions: ["create_message"] });
+      }
+      if (method === "GET" && url.includes(`/guilds/${GUILD_ID}/channels/${CHANNEL_ID}/messages`)) {
+        const parsed = new URL(url, "https://filament.test");
+        const before = parsed.searchParams.get("before");
+        if (!before) {
+          return jsonResponse({
+            messages: [
+              {
+                message_id: LATEST_MESSAGE_ID,
+                guild_id: GUILD_ID,
+                channel_id: CHANNEL_ID,
+                author_id: USER_ID,
+                content: "latest message",
+                markdown_tokens: [{ type: "text", text: "latest message" }],
+                attachments: [],
+                created_at_unix: 3,
+              },
+              {
+                message_id: "01ARZ3NDEKTSV4RRFFQ69G5FB3",
+                guild_id: GUILD_ID,
+                channel_id: CHANNEL_ID,
+                author_id: USER_ID,
+                content: "middle message",
+                markdown_tokens: [{ type: "text", text: "middle message" }],
+                attachments: [],
+                created_at_unix: 2,
+              },
+            ],
+            next_before: INITIAL_NEXT_BEFORE,
+          });
+        }
+
+        if (before === INITIAL_NEXT_BEFORE) {
+          olderPageRequests += 1;
+          expandScrollHeight?.();
+          return jsonResponse({
+            messages: [
+              {
+                message_id: OLDER_MESSAGE_ID,
+                guild_id: GUILD_ID,
+                channel_id: CHANNEL_ID,
+                author_id: USER_ID,
+                content: "older message",
+                markdown_tokens: [{ type: "text", text: "older message" }],
+                attachments: [],
+                created_at_unix: 1,
+              },
+            ],
+            next_before: null,
+          });
+        }
+      }
+      if (method === "GET" && url.includes("/guilds/public")) {
+        return jsonResponse({ guilds: [] });
+      }
+
+      return jsonResponse({ error: "not_found" }, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Show workspace tools rail" }));
+    await screen.findByRole("heading", { name: "Workspace Tools" });
+    await screen.findByText("latest message");
+
+    const messageList = document.querySelector(".message-list");
+    expect(messageList).not.toBeNull();
+    const metrics = installMessageListScrollMetrics(messageList as HTMLElement);
+    expandScrollHeight = () => {
+      metrics.setScrollHeight(2_080);
+    };
+
+    metrics.setScrollTop(80);
+    await fireEvent.scroll(messageList as HTMLElement);
+
+    await waitFor(() => expect(olderPageRequests).toBe(1));
+    await screen.findByText("older message");
+    await waitFor(() => expect((messageList as HTMLElement).scrollTop).toBe(560));
   });
 });

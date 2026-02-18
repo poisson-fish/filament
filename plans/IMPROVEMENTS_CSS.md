@@ -126,7 +126,7 @@ Tasks:
 - Keep existing bounded/full render-window behavior intact.
 - [x] Normalize message list DOM flow to chronological order (oldest -> newest) and keep `Load older messages` anchored before rows.
 - [x] Add targeted incoming-message scroll tests for pinned-to-latest and history-mode behavior (Spec A).
-- [ ] Add/expand tests for load-older anchor preservation.
+- [x] Add/expand tests for load-older anchor preservation.
 - [ ] Add/expand tests for composer bottom pinning.
 
 Exit Criteria:
@@ -141,10 +141,15 @@ Implementation Notes (2026-02-18):
   - Added test coverage in `tests/app-shell-message-list.test.tsx` to guard that load-older controls remain anchored before message rows in the normalized DOM flow.
 - Applied slice (2026-02-18, later):
   - Added `tests/app-shell-gateway-controller.test.ts` coverage for the history-mode branch where incoming gateway messages must merge into state without forcing a scroll-to-bottom snap.
+- Applied slice (2026-02-18, load-older anchor):
+  - Extended `tests/app-shell-message-history-scroll.test.tsx` with an integration assertion that prepending older history preserves viewport anchor by restoring `scrollTop` with the `scrollHeight` delta.
+  - Extended the test scroll metric harness to allow controlled `scrollHeight` growth during pagination, so Spec C is validated against the real controller path instead of only unit-level mocks.
 - Important finding:
   - Existing gateway tests only asserted pinned-to-latest auto-scroll behavior, which left Spec A's history-mode branch unguarded; this now has explicit coverage.
+- Important finding:
+  - `tests/app-shell-message-list-controller.test.ts` already covered delta-based scroll restoration at the unit level, but there was no integration proof that the App path preserved anchor after async history prepend. The new spec-level integration test now closes that gap.
 - Validation for this slice:
-  - `pnpm -C apps/filament-client-web run test` passes (`579` tests), including the new history-mode gateway coverage.
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-message-history-scroll.test.tsx` passes (`580` tests total in run), including the new load-older anchor preservation coverage.
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
