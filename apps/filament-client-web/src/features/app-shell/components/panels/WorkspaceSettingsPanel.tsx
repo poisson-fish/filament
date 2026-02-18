@@ -15,23 +15,37 @@ export interface WorkspaceSettingsPanelProps {
 }
 
 export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
+  const panelSectionClass = "grid gap-[0.5rem]";
   const sectionLabelClassName =
     "m-0 text-[0.68rem] uppercase tracking-[0.08em] text-ink-2";
+  const mutedTextClass = "m-0 text-[0.91rem] text-ink-2";
+  const formClass = "grid gap-[0.5rem]";
+  const fieldLabelClass = "grid gap-[0.3rem] text-[0.84rem] text-ink-1";
+  const fieldControlClass =
+    "rounded-[0.56rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.62rem] text-ink-0 disabled:cursor-default disabled:opacity-62";
+  const submitButtonClass =
+    "min-h-[1.95rem] rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.44rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
+  const statusOkClass = "mt-[0.92rem] text-[0.91rem] text-ok";
+  const statusErrorClass = "mt-[0.92rem] text-[0.91rem] text-danger";
 
   return (
-    <section aria-label="workspace settings">
+    <section class={panelSectionClass} aria-label="workspace settings">
       <p class={sectionLabelClassName}>WORKSPACE</p>
-      <Show when={props.hasActiveWorkspace} fallback={<p class="muted">No active workspace selected.</p>}>
+      <Show
+        when={props.hasActiveWorkspace}
+        fallback={<p class={mutedTextClass}>No active workspace selected.</p>}
+      >
         <form
-          class="inline-form"
+          class={formClass}
           onSubmit={(event) => {
             event.preventDefault();
             void props.onSaveWorkspaceSettings();
           }}
         >
-          <label>
+          <label class={fieldLabelClass}>
             Workspace name
             <input
+              class={fieldControlClass}
               aria-label="Workspace settings name"
               value={props.workspaceName}
               maxlength="64"
@@ -39,9 +53,10 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
               disabled={props.isSavingWorkspaceSettings || !props.canManageWorkspaceSettings}
             />
           </label>
-          <label>
+          <label class={fieldLabelClass}>
             Visibility
             <select
+              class={fieldControlClass}
               aria-label="Workspace settings visibility"
               value={props.workspaceVisibility}
               onChange={(event) =>
@@ -54,18 +69,22 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
               <option value="public">public</option>
             </select>
           </label>
-          <button type="submit" disabled={props.isSavingWorkspaceSettings || !props.canManageWorkspaceSettings}>
+          <button
+            class={submitButtonClass}
+            type="submit"
+            disabled={props.isSavingWorkspaceSettings || !props.canManageWorkspaceSettings}
+          >
             {props.isSavingWorkspaceSettings ? "Saving..." : "Save workspace"}
           </button>
         </form>
         <Show when={!props.canManageWorkspaceSettings}>
-          <p class="muted">You need workspace role-management permissions to update these settings.</p>
+          <p class={mutedTextClass}>You need workspace role-management permissions to update these settings.</p>
         </Show>
         <Show when={props.workspaceSettingsStatus}>
-          <p class="status ok">{props.workspaceSettingsStatus}</p>
+          <p class={statusOkClass}>{props.workspaceSettingsStatus}</p>
         </Show>
         <Show when={props.workspaceSettingsError}>
-          <p class="status error">{props.workspaceSettingsError}</p>
+          <p class={statusErrorClass}>{props.workspaceSettingsError}</p>
         </Show>
       </Show>
     </section>

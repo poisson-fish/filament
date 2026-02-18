@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `13/13 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `14/14 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; utility/workspace-settings helper migration added; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -511,6 +511,16 @@ Implementation Notes (2026-02-18):
   - Even after base-layer `member-group` list selector cleanup, `shell-refresh.css` still carried a high-specificity `.member-group li` rule that could silently override utility row styles in nested panel surfaces.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-channel-create-panel.test.tsx tests/app-shell-workspace-create-panel.test.tsx tests/app-style-token-manifest.test.ts` passes (`642` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (UtilityPanel + WorkspaceSettingsPanel helper migration):
+  - Migrated `UtilityPanel.tsx` and `WorkspaceSettingsPanel.tsx` form/field/button/status presentation from shared legacy helper hooks (`member-group`, `inline-form`, `button-row`, `status`) to explicit Uno utility classes while preserving existing callback and permission-gating behavior.
+  - Extended `tests/app-shell-utility-panel.test.tsx` and `tests/app-shell-workspace-settings-panel.test.tsx` with utility-class contract assertions and regression checks that legacy helper hooks are absent from these surfaces.
+- Important finding:
+  - Shared helper selectors (`.inline-form`, `.button-row`, `.status`, `.member-group`) are still used by other unmigrated panels (notably Moderation and parts of RoleManagement), so this slice intentionally avoids selector deletion and only removes those hooks from the migrated panel surfaces.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-utility-panel.test.tsx tests/app-shell-workspace-settings-panel.test.tsx` passes (`643` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

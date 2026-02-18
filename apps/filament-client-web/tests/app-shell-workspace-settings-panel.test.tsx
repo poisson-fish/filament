@@ -21,12 +21,27 @@ function workspaceSettingsPanelPropsFixture(
 }
 
 describe("app shell workspace settings panel", () => {
-  it("renders with utility section labels and without legacy group-label hooks", () => {
-    render(() => <WorkspaceSettingsPanel {...workspaceSettingsPanelPropsFixture()} />);
+  it("renders with utility classes and no legacy helper hooks", () => {
+    render(() =>
+      <WorkspaceSettingsPanel
+        {...workspaceSettingsPanelPropsFixture({
+          workspaceSettingsStatus: "saved",
+          workspaceSettingsError: "conflict",
+        })}
+      />
+    );
 
     expect(screen.getByText("WORKSPACE")).toHaveClass("m-0");
     expect(screen.getByText("WORKSPACE")).toHaveClass("uppercase");
+    expect(screen.getByLabelText("Workspace settings name")).toHaveClass("border-line-soft");
+    expect(screen.getByLabelText("Workspace settings visibility")).toHaveClass("border-line-soft");
+    expect(screen.getByRole("button", { name: "Save workspace" })).toHaveClass("border-line-soft");
+    expect(screen.getByText("saved")).toHaveClass("text-ok");
+    expect(screen.getByText("conflict")).toHaveClass("text-danger");
+
     expect(document.querySelector(".group-label")).toBeNull();
+    expect(document.querySelector(".inline-form")).toBeNull();
+    expect(document.querySelector(".status")).toBeNull();
   });
 
   it("wires input and submit callbacks", async () => {

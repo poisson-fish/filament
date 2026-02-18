@@ -29,9 +29,26 @@ function baseProps(overrides: Partial<Parameters<typeof UtilityPanel>[0]> = {}) 
 }
 
 describe("app shell utility panel", () => {
+  it("renders utility classes without legacy helper hooks", () => {
+    render(() => <UtilityPanel {...baseProps({ showDiagnosticsCounters: false, diagError: "network down" })} />);
+
+    const healthButton = screen.getByRole("button", { name: "Health" });
+    const echoInput = screen.getByLabelText("Echo");
+    expect(healthButton).toHaveClass("flex-1");
+    expect(healthButton).toHaveClass("border-line-soft");
+    expect(echoInput).toHaveClass("border-line-soft");
+    expect(echoInput).toHaveClass("bg-bg-2");
+    expect(screen.getByText("Health: ok")).toHaveClass("text-ok");
+    expect(screen.getByText("network down")).toHaveClass("text-danger");
+
+    expect(document.querySelector(".member-group")).toBeNull();
+    expect(document.querySelector(".inline-form")).toBeNull();
+    expect(document.querySelector(".button-row")).toBeNull();
+    expect(document.querySelector(".status")).toBeNull();
+  });
+
   it("hides diagnostics counters when dev mode is disabled", () => {
     render(() => <UtilityPanel {...baseProps({ showDiagnosticsCounters: false })} />);
-
     expect(screen.queryByText("Diagnostics counters (dev only)")).toBeNull();
   });
 
