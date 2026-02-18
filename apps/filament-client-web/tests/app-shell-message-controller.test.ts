@@ -19,6 +19,7 @@ import {
   retainRecordByAllowedIds,
   shouldRetryMediaPreview,
 } from "../src/features/app-shell/controllers/message-controller";
+import * as api from "../src/lib/api";
 import type { AsyncOperationState } from "../src/features/app-shell/state/async-operation-state";
 
 const GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -341,8 +342,14 @@ describe("app shell message controller", () => {
     expect(harness.sendMessagePhaseTransitions()).toEqual([]);
   });
 
-  it("clears loading preview state when a scheduled preview load is cancelled", async () => {
+  it("keeps scheduled preview fetches across message-list rerenders", async () => {
     vi.useFakeTimers();
+    const downloadPreviewSpy = vi
+      .spyOn(api, "downloadChannelAttachmentPreview")
+      .mockResolvedValue({
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        mimeType: "image/png",
+      });
     try {
       await createRoot(async (dispose) => {
         const [session] = createSignal(SESSION);
@@ -382,10 +389,15 @@ describe("app shell message controller", () => {
         await Promise.resolve();
         await Promise.resolve();
 
+        expect(downloadPreviewSpy).toHaveBeenCalledTimes(1);
         expect(controller.loadingMediaPreviewIds()).toEqual({});
+        expect(controller.failedMediaPreviewIds()).toEqual({
+          "01ARZ3NDEKTSV4RRFFQ69G5FB0": true,
+        });
         dispose();
       });
     } finally {
+      downloadPreviewSpy.mockRestore();
       vi.useRealTimers();
     }
   });

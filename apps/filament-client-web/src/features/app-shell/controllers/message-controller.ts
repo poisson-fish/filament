@@ -662,7 +662,6 @@ export function createMessageMediaPreviewController(
       retainRecordByAllowedIds(existing, targetIds),
     );
 
-    let cancelled = false;
     const refreshSessionForPreview = async (): Promise<void> => {
       if (previewSessionRefreshPromise) {
         return previewSessionRefreshPromise;
@@ -735,17 +734,6 @@ export function createMessageMediaPreviewController(
       const processFetch = () =>
         runFetch()
           .then((payload) => {
-            if (cancelled) {
-              setLoadingMediaPreviewIds((existing) => {
-                if (!existing[attachmentId]) {
-                  return existing;
-                }
-                const next = { ...existing };
-                delete next[attachmentId];
-                return next;
-              });
-              return;
-            }
             const { mimeType, kind } = resolveAttachmentPreviewType(
               payload.mimeType,
               attachment.mimeType,
@@ -799,17 +787,6 @@ export function createMessageMediaPreviewController(
             });
           })
           .catch(() => {
-            if (cancelled) {
-              setLoadingMediaPreviewIds((existing) => {
-                if (!existing[attachmentId]) {
-                  return existing;
-                }
-                const next = { ...existing };
-                delete next[attachmentId];
-                return next;
-              });
-              return;
-            }
             const nextAttempt = nextMediaPreviewAttempt(
               previewRetryAttempts,
               attachmentId,
@@ -837,28 +814,12 @@ export function createMessageMediaPreviewController(
 
       if (attempt === 0) {
         window.setTimeout(() => {
-          if (cancelled) {
-            inflightMessageMediaLoads.delete(attachmentId);
-            setLoadingMediaPreviewIds((existing) => {
-              if (!existing[attachmentId]) {
-                return existing;
-              }
-              const next = { ...existing };
-              delete next[attachmentId];
-              return next;
-            });
-            return;
-          }
           void processFetch();
         }, initialDelayMs);
       } else {
         void processFetch();
       }
     }
-
-    onCleanup(() => {
-      cancelled = true;
-    });
   });
 
   onCleanup(() => {
