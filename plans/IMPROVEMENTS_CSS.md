@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `1/3 task tracks started` (shared overlay panel shell migrated to Uno utilities; legacy selector cleanup underway)
+Completion status (2026-02-18): `2/3 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc still pending)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -370,6 +370,20 @@ Implementation Notes (2026-02-18):
   - `overlayPanelClassName` is consumed as both behavior contract and sizing signal; preserving these class hooks while moving visuals into Uno avoids runtime/controller churn and keeps panel-size routing deterministic.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-panel-host-props.test.tsx tests/app-style-token-manifest.test.ts` passes (`615` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (PublicDirectoryPanel + FriendshipsPanel surfaces):
+  - Migrated `PublicDirectoryPanel.tsx` and `FriendshipsPanel.tsx` list/form/action/status presentation to Uno utility classes while retaining `.public-directory` as a stable non-visual panel hook.
+  - Removed dead legacy public-directory selectors from `src/styles/app/base.css` (`.public-directory*`, `.public-directory-row-*`, `.directory-status-chip*`) plus the unused `.unread-count` selector.
+  - Added `tests/app-shell-public-directory-panel.test.tsx` and `tests/app-shell-friendships-panel.test.tsx` to lock utility-class rendering, callback wiring, and removal of legacy internal class hooks in both panel surfaces.
+  - Extended `tests/app-style-token-manifest.test.ts` to include both panel TSX files in migrated raw-color literal guard coverage and to assert the removed public-directory selector family stays absent from `base.css`.
+- Important finding:
+  - `.public-directory` list/container selectors were shared by both Public Directory and Friendships overlays; selector removal is only safe after migrating both surfaces in the same slice.
+- Important finding:
+  - `.unread-count` had no remaining TSX usage and was safe to delete as dead CSS.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-public-directory-panel.test.tsx tests/app-shell-friendships-panel.test.tsx tests/app-style-token-manifest.test.ts tests/app-shell-public-discovery.test.tsx tests/app-shell-friendships.test.tsx` passes (`620` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

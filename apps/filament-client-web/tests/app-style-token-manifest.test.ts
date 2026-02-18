@@ -39,6 +39,14 @@ const panelHostPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/PanelHost.tsx",
 );
+const publicDirectoryPanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/PublicDirectoryPanel.tsx",
+);
+const friendshipsPanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/FriendshipsPanel.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -60,6 +68,8 @@ const migratedTsxPaths = [
   userProfileOverlayPath,
   settingsPanelPath,
   panelHostPath,
+  publicDirectoryPanelPath,
+  friendshipsPanelPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -435,6 +445,28 @@ describe("app style token manifest", () => {
 
     for (const selector of removedShellRefreshSelectors) {
       expect(shellRefreshCss).not.toContain(selector);
+    }
+  });
+
+  it("removes legacy public directory selectors from base.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".public-directory {",
+      ".public-directory ul {",
+      ".public-directory li {",
+      ".public-directory-row-main {",
+      ".public-directory-row-actions {",
+      ".directory-status-chip {",
+      ".directory-status-chip.joined {",
+      ".directory-status-chip.banned,",
+      ".directory-status-chip.pending {",
+      ".public-directory-row-error {",
+      ".unread-count {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
     }
   });
 
