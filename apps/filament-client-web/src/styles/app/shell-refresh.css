@@ -1600,8 +1600,8 @@
 }
 
 .chat-panel {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
   background: #313338;
   height: 100%;
   min-height: 0;
@@ -1609,7 +1609,6 @@
 }
 
 .chat-body {
-  flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -1629,7 +1628,7 @@
 
 .chat-panel > .composer {
   margin-top: 0;
-  flex-shrink: 0;
+  min-height: 0;
 }
 
 .chat-panel > .chat-body {
