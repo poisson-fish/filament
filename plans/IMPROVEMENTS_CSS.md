@@ -230,7 +230,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 4 - Shell, Rails, Panels Migration
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `4/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail`, `MemberRail`, `ChatHeader` complete)
+Completion status (2026-02-18): `5/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail`, `MemberRail`, `ChatHeader`, `UserProfileOverlay` complete)
 
 Scope:
 - server rail, channel rail, member rail, header, overlays, settings panels, auth shell
@@ -298,6 +298,20 @@ Implementation Notes (2026-02-18):
   - Keeping `.chat-header` as a non-visual hook is still useful for shell composition tests and layout slot clarity, while all visual/responsive styling now lives in component utilities.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-chat-header.test.tsx tests/app-style-token-manifest.test.ts tests/app-shell-layout-components.test.tsx` passes (`606` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (UserProfileOverlay surface):
+  - Migrated `UserProfileOverlay.tsx` backdrop/dialog/header/profile details/markdown rendering to Uno utility classes and removed reliance on legacy `.panel-window*` / `.profile-view*` visual class hooks.
+  - Removed migrated UserProfileOverlay selectors from `src/styles/app/shell-refresh.css` (`.profile-view-*` blocks plus combined markdown selector arms).
+  - Added `tests/app-shell-user-profile-overlay.test.tsx` to lock utility-class rendering, close interactions, loading/error visibility, and avatar fallback behavior.
+  - Extended `tests/app-style-token-manifest.test.ts` to include `UserProfileOverlay.tsx` in migrated raw-color literal guards and assert removed UserProfileOverlay selectors remain absent from `shell-refresh.css`.
+- Important finding:
+  - `shell-refresh.css` had shared combined selectors for `.settings-profile-markdown` and `.profile-view-markdown`; migration required splitting those blocks so settings markdown styling remains intact after removing overlay-specific selectors.
+- Important finding:
+  - Avatar markup in `UserProfileOverlay` is intentionally nested inside an `aria-hidden` container, so tests should query avatar images by `alt` text rather than accessible role.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-user-profile-overlay.test.tsx tests/app-shell-layout-components.test.tsx tests/app-style-token-manifest.test.ts` passes (`609` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

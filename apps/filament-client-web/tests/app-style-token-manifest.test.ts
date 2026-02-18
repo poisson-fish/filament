@@ -27,6 +27,10 @@ const chatHeaderPath = resolve(
   webRootDir,
   "src/features/app-shell/components/ChatHeader.tsx",
 );
+const userProfileOverlayPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/overlays/UserProfileOverlay.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -44,6 +48,7 @@ const migratedTsxPaths = [
   serverRailPath,
   memberRailPath,
   chatHeaderPath,
+  userProfileOverlayPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -311,6 +316,29 @@ describe("app style token manifest", () => {
     for (const selector of removedBaseSelectors) {
       expect(baseCss).not.toContain(selector);
     }
+
+    for (const selector of removedShellRefreshSelectors) {
+      expect(shellRefreshCss).not.toContain(selector);
+    }
+  });
+
+  it("removes legacy UserProfileOverlay selectors from shell-refresh.css", () => {
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+
+    const removedShellRefreshSelectors = [
+      ".profile-view-panel {",
+      ".profile-view-body {",
+      ".profile-view-header {",
+      ".profile-view-avatar {",
+      ".profile-view-avatar-fallback {",
+      ".profile-view-avatar-image {",
+      ".profile-view-name {",
+      ".profile-view-markdown {",
+      ".profile-view-markdown p",
+      ".profile-view-markdown p + p",
+      ".profile-view-markdown ul",
+      ".profile-view-markdown ol",
+    ];
 
     for (const selector of removedShellRefreshSelectors) {
       expect(shellRefreshCss).not.toContain(selector);
