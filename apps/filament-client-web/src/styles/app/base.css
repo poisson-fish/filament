@@ -365,14 +365,14 @@ select {
 }
 
 .chat-panel {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
 
 .chat-body {
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -386,6 +386,10 @@ select {
 .chat-body .message-list {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.chat-body .composer {
+  margin-top: auto;
 }
 
 .chat-header {
