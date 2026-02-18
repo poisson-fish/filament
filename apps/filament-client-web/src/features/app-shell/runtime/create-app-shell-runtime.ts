@@ -4,6 +4,9 @@ import {
 import { useAuth } from "../../../lib/auth-context";
 import { createAttachmentController } from "../controllers/attachment-controller";
 import {
+  createComposerFocusController,
+} from "../controllers/composer-focus-controller";
+import {
   createFriendshipController,
 } from "../controllers/friendship-controller";
 import {
@@ -68,10 +71,16 @@ export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
 export function createAppShellRuntime(auth: AppShellAuthContext) {
   let composerAttachmentInputRef: HTMLInputElement | undefined;
+  let composerInputRef: HTMLInputElement | undefined;
   const setComposerAttachmentInputRef = (
     value: HTMLInputElement | undefined,
   ): void => {
     composerAttachmentInputRef = value;
+  };
+  const setComposerInputRef = (
+    value: HTMLInputElement | undefined,
+  ): void => {
+    composerInputRef = value;
   };
 
   const workspaceState = createWorkspaceState();
@@ -258,6 +267,13 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   createProfileOverlayController({
     selectedProfileUserId: profileState.selectedProfileUserId,
     setSelectedProfileUserId: profileState.setSelectedProfileUserId,
+  });
+
+  createComposerFocusController({
+    activeChannel: selectors.activeChannel,
+    canAccessActiveChannel: selectors.canAccessActiveChannel,
+    composerInputElement: () => composerInputRef,
+    composerValue: messageState.composer,
   });
 
   const messageMediaPreviewController = createMessageMediaPreviewController({
@@ -643,6 +659,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     toggleVoiceCamera,
     toggleVoiceScreenShare,
     setComposerAttachmentInputRef,
+    setComposerInputRef,
     actorLookupId: labels.actorLookupId,
     actorLabel: labels.actorLabel,
     displayUserLabel: labels.displayUserLabel,

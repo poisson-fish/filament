@@ -97,6 +97,7 @@ export function AppShellPage() {
     toggleVoiceCamera,
     toggleVoiceScreenShare,
     setComposerAttachmentInputRef,
+    setComposerInputRef,
     openTextChannelCreatePanel,
     openVoiceChannelCreatePanel,
     onSelectWorkspace,
@@ -240,6 +241,9 @@ export function AppShellPage() {
             <MessageComposer
               attachmentInputRef={(value) => {
                 setComposerAttachmentInputRef(value);
+              }}
+              composerInputRef={(value) => {
+                setComposerInputRef(value);
               }}
               activeChannel={activeChannel()}
               canAccessActiveChannel={canAccessActiveChannel()}

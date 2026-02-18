@@ -15,6 +15,7 @@ export interface MessageComposerProps {
   onAttachmentInput: JSX.EventHandler<HTMLInputElement, InputEvent>;
   onRemoveAttachment: (file: File) => void;
   attachmentInputRef: (element: HTMLInputElement) => void;
+  composerInputRef: (element: HTMLInputElement) => void;
 }
 
 export function MessageComposer(props: MessageComposerProps) {
@@ -42,6 +43,7 @@ export function MessageComposer(props: MessageComposerProps) {
           +
         </button>
         <input
+          ref={props.composerInputRef}
           class="composer-text-input"
           value={props.composerValue}
           onInput={(event) => props.onComposerInput(event.currentTarget.value)}
