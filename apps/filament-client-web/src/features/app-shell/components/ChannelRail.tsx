@@ -640,6 +640,7 @@ export function ChannelRail(props: ChannelRailProps) {
                       classList={{
                         "voice-dock-icon-button": true,
                         "leave-voice-button": true,
+                        "voice-dock-disconnect-button": true,
                         danger: true,
                         "is-busy": props.isLeavingVoice,
                       }}

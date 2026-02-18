@@ -2814,6 +2814,23 @@ select {
   background: #a5222e;
 }
 
+.voice-connected-dock-controls > .voice-dock-disconnect-button {
+  flex: 1 0 100% !important;
+  width: 100% !important;
+  min-height: 2.35rem;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 0.42rem;
+  background: #9f1f2a !important;
+  border-color: #bf2a37 !important;
+  color: #fff4f5 !important;
+}
+
+.voice-connected-dock-controls > .voice-dock-disconnect-button:hover:not(:disabled) {
+  background: #b42330 !important;
+}
+
 .voice-dock-button-label {
   font-size: 0.78rem;
   font-weight: 700;
