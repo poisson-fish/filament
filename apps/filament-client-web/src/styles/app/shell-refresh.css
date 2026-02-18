@@ -909,8 +909,8 @@
 /* Refresh block */
 /* Discord-inspired voice + text channel shell refresh */
 .app-shell-scaffold {
-  min-height: 100dvh;
-  height: 100dvh;
+  min-height: var(--app-viewport-height, 100dvh);
+  height: var(--app-viewport-height, 100dvh);
   width: 100vw;
   position: fixed;
   inset: 0;

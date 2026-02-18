@@ -1,6 +1,7 @@
 import { render } from "solid-js/web";
 import { App } from "./App";
 import { redirectLoopbackAliasInDev } from "./lib/browser-context";
+import { installViewportHeightCssVar } from "./lib/viewport-height";
 import "./styles/app.css";
 
 const root = document.getElementById("root");
@@ -13,5 +14,13 @@ const redirected = redirectLoopbackAliasInDev(
   import.meta.env.DEV,
 );
 if (!redirected) {
+  const teardownViewportHeightSync = installViewportHeightCssVar(
+    typeof window !== "undefined" ? window : null,
+  );
+  if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+      teardownViewportHeightSync();
+    });
+  }
   render(() => <App />, root);
 }
