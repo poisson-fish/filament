@@ -609,7 +609,6 @@ impl TryFrom<String> for CaptchaToken {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct HcaptchaVerifyResponse {
     pub(crate) success: bool,
     #[serde(default, rename = "error-codes")]
@@ -618,6 +617,12 @@ pub(crate) struct HcaptchaVerifyResponse {
     pub(crate) hostname: Option<String>,
     #[serde(default)]
     pub(crate) challenge_ts: Option<String>,
+    #[serde(default)]
+    pub(crate) score: Option<f64>,
+    #[serde(default, rename = "score_reason")]
+    pub(crate) score_reason: Vec<String>,
+    #[serde(default)]
+    pub(crate) credit: Option<bool>,
 }
 
 #[cfg(test)]
@@ -640,5 +645,29 @@ mod tests {
         assert_eq!(response.error_codes, vec![String::from("invalid-input-response")]);
         assert_eq!(response.hostname.as_deref(), Some("filamentapp.net"));
         assert_eq!(response.challenge_ts.as_deref(), Some("2026-02-17T00:00:00.000Z"));
+        assert_eq!(response.score, None);
+        assert!(response.score_reason.is_empty());
+        assert_eq!(response.credit, None);
+    }
+
+    #[test]
+    fn hcaptcha_verify_response_parses_enterprise_fields_and_ignores_unknown_fields() {
+        let response: HcaptchaVerifyResponse = serde_json::from_str(
+            r#"{
+                "success": true,
+                "challenge_ts": "2026-02-17T00:00:00.000Z",
+                "hostname": "filamentapp.net",
+                "score": 0.97,
+                "score_reason": ["risk_profile"],
+                "credit": false,
+                "new_field_from_api": "future-compatible"
+            }"#,
+        )
+        .expect("valid hcaptcha verify response with enterprise and future fields");
+
+        assert!(response.success);
+        assert_eq!(response.score, Some(0.97));
+        assert_eq!(response.score_reason, vec![String::from("risk_profile")]);
+        assert_eq!(response.credit, Some(false));
     }
 }

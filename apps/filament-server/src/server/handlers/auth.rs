@@ -110,6 +110,9 @@ pub(crate) async fn verify_captcha_token(
             error_codes = ?verify.error_codes,
             hostname = ?verify.hostname,
             challenge_ts = ?verify.challenge_ts,
+            score = ?verify.score,
+            score_reason = ?verify.score_reason,
+            credit = ?verify.credit,
             client_ip_source = client_ip.source().as_str()
         );
         return Err(AuthFailure::CaptchaFailed);
@@ -123,6 +126,9 @@ pub(crate) async fn verify_captcha_token(
             error_codes = ?verify.error_codes,
             hostname = ?verify.hostname,
             challenge_ts = ?verify.challenge_ts,
+            score = ?verify.score,
+            score_reason = ?verify.score_reason,
+            credit = ?verify.credit,
             client_ip_source = client_ip.source().as_str()
         );
         return Err(AuthFailure::CaptchaFailed);
@@ -134,6 +140,9 @@ pub(crate) async fn verify_captcha_token(
         status = %status,
         hostname = ?verify.hostname,
         challenge_ts = ?verify.challenge_ts,
+        score = ?verify.score,
+        score_reason = ?verify.score_reason,
+        credit = ?verify.credit,
         client_ip_source = client_ip.source().as_str()
     );
 
