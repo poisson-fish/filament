@@ -1,5 +1,6 @@
 /* Ordered stylesheet manifest.
  * Keep imports in this order to preserve cascade behavior.
  */
+@import "./app/tokens.css";
 @import "./app/base.css";
 @import "./app/shell-refresh.css";

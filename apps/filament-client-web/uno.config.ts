@@ -19,6 +19,9 @@ export default defineConfig({
       brand: "var(--brand)",
       "brand-strong": "var(--brand-strong)",
       danger: "var(--danger)",
+      "danger-panel": "var(--danger-panel)",
+      "danger-panel-strong": "var(--danger-panel-strong)",
+      "danger-ink": "var(--danger-ink)",
       ok: "var(--ok)",
     },
     borderRadius: {

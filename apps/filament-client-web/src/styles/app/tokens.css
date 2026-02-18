@@ -1,0 +1,25 @@
+:root {
+  --bg-0: #111216;
+  --bg-1: #16181d;
+  --bg-2: #1d2027;
+  --bg-3: #242832;
+  --bg-4: #2c313c;
+  --panel: rgba(25, 27, 33, 0.96);
+  --panel-soft: rgba(36, 39, 47, 0.9);
+  --ink-0: #f1f2f5;
+  --ink-1: #d3d6dd;
+  --ink-2: #a0a6b1;
+  --line: #2c3139;
+  --line-soft: #393f4a;
+  --brand: #6f7785;
+  --brand-strong: #5f6673;
+  --danger: #ff6d7f;
+  --ok: #6fdda6;
+  --shadow: rgba(2, 4, 8, 0.55);
+  --font-main: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+  --font-code: "IBM Plex Mono", "SFMono-Regular", monospace;
+
+  --danger-panel: #9f1f2a;
+  --danger-panel-strong: #bf2a37;
+  --danger-ink: #fff4f5;
+}
