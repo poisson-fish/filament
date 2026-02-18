@@ -370,6 +370,17 @@ select {
   overflow: hidden;
 }
 
+.chat-body {
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.chat-transient-notes {
+  display: grid;
+}
+
 .chat-header {
   padding: 0.95rem 1.12rem;
   border-bottom: 1px solid var(--line-soft);

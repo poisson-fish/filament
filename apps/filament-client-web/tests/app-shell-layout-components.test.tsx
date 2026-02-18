@@ -11,6 +11,7 @@ import {
   type WorkspaceRecord,
 } from "../src/domain/chat";
 import { AppShellLayout } from "../src/features/app-shell/components/layout/AppShellLayout";
+import { ChatColumn } from "../src/features/app-shell/components/layout/ChatColumn";
 import { ChannelRail } from "../src/features/app-shell/components/ChannelRail";
 import { ChatHeader } from "../src/features/app-shell/components/ChatHeader";
 import { MemberRail } from "../src/features/app-shell/components/MemberRail";
@@ -365,6 +366,37 @@ describe("app shell extracted layout components", () => {
     expect(screen.queryByText("Channel rail")).not.toBeInTheDocument();
     expect(screen.queryByText("Member rail")).not.toBeInTheDocument();
     expect(screen.getByText("Chat column")).toBeInTheDocument();
+  });
+
+  it("keeps chat body layout stable with transient notes", () => {
+    render(() => (
+      <ChatColumn
+        chatHeader={<header>Chat Header</header>}
+        workspaceBootstrapDone={true}
+        workspaceCount={1}
+        isLoadingMessages={false}
+        messageError=""
+        sessionStatus="session-ok"
+        sessionError=""
+        voiceStatus=""
+        voiceError=""
+        canShowVoiceHeaderControls={false}
+        isVoiceSessionActive={false}
+        activeChannel={channelFixture("text")}
+        canAccessActiveChannel={true}
+        messageList={<section class="message-list">Message List</section>}
+        messageComposer={<form class="composer">Composer</form>}
+        reactionPicker={<div>Reaction Picker</div>}
+        messageStatus=""
+      />
+    ));
+
+    const chatBody = document.querySelector(".chat-body");
+    expect(chatBody).not.toBeNull();
+    expect(chatBody?.querySelector(".message-list")).not.toBeNull();
+    expect(chatBody?.querySelector(".composer")).not.toBeNull();
+    expect(screen.getByText("Reaction Picker")).toBeInTheDocument();
+    expect(screen.getByText("session-ok")).toBeInTheDocument();
   });
 
   it("preserves user profile overlay loading, error, and close interactions", () => {
