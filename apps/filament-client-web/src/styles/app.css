@@ -1521,7 +1521,7 @@ select {
 }
 
 .voice-channel-presence-participant-speaking {
-  border-color: transparent;
+  border-color: inherit;
 }
 
 .voice-channel-presence-name {
@@ -1673,7 +1673,7 @@ select {
 }
 
 .message-row:hover {
-  background: rgba(255, 255, 255, 0.024);
+  background: rgba(255, 255, 255, 0.012);
 }
 
 .message-row span {
@@ -2640,6 +2640,7 @@ select {
   text-transform: uppercase;
   position: relative;
   overflow: hidden;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .voice-tree-avatar-button {
@@ -2669,12 +2670,14 @@ select {
 }
 
 .voice-channel-presence-participant-speaking {
-  background: transparent;
+  background: inherit;
 }
 
 .voice-tree-avatar-speaking {
   border-color: #5fd084;
-  box-shadow: 0 0 0 1px rgba(95, 208, 132, 0.34);
+  box-shadow:
+    0 0 0 2px rgba(95, 208, 132, 0.56),
+    0 0 8px rgba(95, 208, 132, 0.22);
 }
 
 .voice-channel-presence-name {
@@ -2950,7 +2953,7 @@ select {
 }
 
 .message-row:hover {
-  background: rgba(255, 255, 255, 0.026);
+  background: rgba(255, 255, 255, 0.014);
 }
 
 .message-avatar {

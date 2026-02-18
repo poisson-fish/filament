@@ -149,6 +149,15 @@ export function buildVoiceRosterEntries(snapshot: RtcSnapshot): VoiceRosterEntry
   return entries;
 }
 
+function localMediaState(snapshot: RtcSnapshot): { hasCamera: boolean; hasScreenShare: boolean } {
+  return {
+    hasCamera: snapshot.videoTracks.some((track) => track.isLocal && track.source === "camera"),
+    hasScreenShare: snapshot.videoTracks.some(
+      (track) => track.isLocal && track.source === "screen_share",
+    ),
+  };
+}
+
 export function buildVoiceStreamPermissionHints(input: VoiceStreamPermissionHintInput): string[] {
   if (!input.isVoiceSessionForActiveChannel) {
     return [];
@@ -343,20 +352,27 @@ export function createAppShellSelectors(
     (() => {
       const activeGuildId = options.activeGuildId();
       const activeChannelId = options.activeChannelId();
+      const snapshot = options.rtcSnapshot();
+      const localIdentity = snapshot.localParticipantIdentity;
+      const localMedia = localMediaState(snapshot);
       if (activeGuildId && activeChannelId) {
         const key = channelKey(activeGuildId, activeChannelId);
         const synced = options.voiceParticipantsByChannel()[key];
         if (synced && synced.length > 0) {
           return synced.map((entry) => ({
             identity: entry.identity,
-            isLocal: entry.identity === options.rtcSnapshot().localParticipantIdentity,
+            isLocal: entry.identity === localIdentity,
             isSpeaking: entry.isSpeaking,
-            hasCamera: entry.isVideoEnabled,
-            hasScreenShare: entry.isScreenShareEnabled,
+            hasCamera:
+              entry.identity === localIdentity ? localMedia.hasCamera : entry.isVideoEnabled,
+            hasScreenShare:
+              entry.identity === localIdentity
+                ? localMedia.hasScreenShare
+                : entry.isScreenShareEnabled,
           }));
         }
       }
-      return buildVoiceRosterEntries(options.rtcSnapshot());
+      return buildVoiceRosterEntries(snapshot);
     })(),
   );
 

@@ -295,4 +295,59 @@ describe("app shell selectors", () => {
       dispose();
     });
   });
+
+  it("uses local rtc media state for local voice roster live status when synced participants exist", () => {
+    createRoot((dispose) => {
+      const harness = createSelectorHarness();
+      const localIdentity = "u.01ARZ3NDEKTSV4RRFFQ69G5FAA.voice";
+      const remoteIdentity = "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.voice";
+
+      harness.setRtcSnapshot({
+        ...rtcSnapshotFixture(),
+        connectionStatus: "connected",
+        localParticipantIdentity: localIdentity,
+        participants: [
+          { identity: localIdentity, subscribedTrackCount: 0 },
+          { identity: remoteIdentity, subscribedTrackCount: 0 },
+        ],
+        videoTracks: [],
+      });
+      harness.setActiveChannelId(VOICE_A);
+      harness.setVoiceSessionChannelKey(channelKey(GUILD_A, VOICE_A));
+      harness.setVoiceParticipantsByChannel({
+        [channelKey(GUILD_A, VOICE_A)]: [
+          {
+            identity: localIdentity,
+            isSpeaking: false,
+            isVideoEnabled: true,
+            isScreenShareEnabled: true,
+          },
+          {
+            identity: remoteIdentity,
+            isSpeaking: false,
+            isVideoEnabled: true,
+            isScreenShareEnabled: false,
+          },
+        ],
+      });
+
+      expect(harness.selectors.voiceRosterEntries()).toEqual([
+        {
+          identity: localIdentity,
+          isLocal: true,
+          isSpeaking: false,
+          hasCamera: false,
+          hasScreenShare: false,
+        },
+        {
+          identity: remoteIdentity,
+          isLocal: false,
+          isSpeaking: false,
+          hasCamera: true,
+          hasScreenShare: false,
+        },
+      ]);
+      dispose();
+    });
+  });
 });

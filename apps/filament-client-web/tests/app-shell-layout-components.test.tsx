@@ -161,6 +161,34 @@ describe("app shell extracted layout components", () => {
     expect(screen.getByRole("menuitem", { name: "Privacy settings coming soon" })).toBeDisabled();
   });
 
+  it("renders LIVE badge only for participants with camera or screen share", () => {
+    render(() => (
+      <ChannelRail
+        {...channelRailPropsFixture({
+          isVoiceSessionForChannel: () => true,
+          voiceRosterEntries: [
+            {
+              identity: "self.voice",
+              isLocal: true,
+              isSpeaking: false,
+              hasCamera: false,
+              hasScreenShare: false,
+            },
+            {
+              identity: "remote.voice",
+              isLocal: false,
+              isSpeaking: false,
+              hasCamera: true,
+              hasScreenShare: false,
+            },
+          ],
+        })}
+      />
+    ));
+
+    expect(screen.getAllByText("LIVE")).toHaveLength(1);
+  });
+
   it("keeps member rail panel actions and chat header toggles wired", () => {
     const onOpenPanel = vi.fn();
     const onToggleChannels = vi.fn();
