@@ -80,6 +80,10 @@ const workspaceCreatePanelPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/WorkspaceCreatePanel.tsx",
 );
+const moderationPanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/ModerationPanel.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -111,6 +115,7 @@ const migratedTsxPaths = [
   searchPanelPath,
   channelCreatePanelPath,
   workspaceCreatePanelPath,
+  moderationPanelPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,

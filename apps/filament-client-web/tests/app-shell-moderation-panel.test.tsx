@@ -1,0 +1,152 @@
+import { fireEvent, render, screen } from "@solidjs/testing-library";
+import { describe, expect, it, vi } from "vitest";
+import {
+  ModerationPanel,
+  type ModerationPanelProps,
+} from "../src/features/app-shell/components/panels/ModerationPanel";
+
+function moderationPanelPropsFixture(
+  overrides: Partial<ModerationPanelProps> = {},
+): ModerationPanelProps {
+  return {
+    moderationUserIdInput: "01ARZ3NDEKTSV4RRFFQ69G5FAA",
+    moderationRoleInput: "member",
+    overrideRoleInput: "member",
+    overrideAllowCsv: "create_message",
+    overrideDenyCsv: "delete_message",
+    isModerating: false,
+    hasActiveWorkspace: true,
+    hasActiveChannel: true,
+    canManageRoles: true,
+    canBanMembers: true,
+    canManageChannelOverrides: true,
+    moderationStatus: "",
+    moderationError: "",
+    onModerationUserIdInput: () => undefined,
+    onModerationRoleChange: () => undefined,
+    onRunMemberAction: () => undefined,
+    onOverrideRoleChange: () => undefined,
+    onOverrideAllowInput: () => undefined,
+    onOverrideDenyInput: () => undefined,
+    onApplyOverride: () => undefined,
+    onOpenRoleManagementPanel: () => undefined,
+    ...overrides,
+  };
+}
+
+describe("app shell moderation panel", () => {
+  it("renders utility classes without legacy helper hooks", () => {
+    render(() =>
+      <ModerationPanel
+        {...moderationPanelPropsFixture({
+          moderationStatus: "updated",
+          moderationError: "forbidden",
+        })}
+      />,
+    );
+
+    expect(screen.getByLabelText("Target user ULID")).toHaveClass("border-line-soft");
+    expect(screen.getByLabelText("Role")).toHaveClass("border-line-soft");
+    expect(screen.getByLabelText("Allow permissions (csv)")).toHaveClass("border-line-soft");
+    expect(screen.getByRole("button", { name: "Add" })).toHaveClass("flex-1");
+    expect(screen.getByRole("button", { name: "Apply channel override" })).toHaveClass(
+      "border-line-soft",
+    );
+    expect(screen.getByText("updated")).toHaveClass("text-ok");
+    expect(screen.getByText("forbidden")).toHaveClass("text-danger");
+
+    expect(document.querySelector(".member-group")).toBeNull();
+    expect(document.querySelector(".inline-form")).toBeNull();
+    expect(document.querySelector(".button-row")).toBeNull();
+    expect(document.querySelector(".status")).toBeNull();
+  });
+
+  it("keeps moderation actions and override callbacks wired", async () => {
+    const onModerationUserIdInput = vi.fn();
+    const onModerationRoleChange = vi.fn();
+    const onRunMemberAction = vi.fn();
+    const onOverrideRoleChange = vi.fn();
+    const onOverrideAllowInput = vi.fn();
+    const onOverrideDenyInput = vi.fn();
+    const onApplyOverride = vi.fn((event: SubmitEvent) => event.preventDefault());
+    const onOpenRoleManagementPanel = vi.fn();
+
+    render(() =>
+      <ModerationPanel
+        {...moderationPanelPropsFixture({
+          onModerationUserIdInput,
+          onModerationRoleChange,
+          onRunMemberAction,
+          onOverrideRoleChange,
+          onOverrideAllowInput,
+          onOverrideDenyInput,
+          onApplyOverride,
+          onOpenRoleManagementPanel,
+        })}
+      />,
+    );
+
+    await fireEvent.input(screen.getByLabelText("Target user ULID"), {
+      target: { value: "01ARZ3NDEKTSV4RRFFQ69G5FAB" },
+    });
+    expect(onModerationUserIdInput).toHaveBeenCalledWith("01ARZ3NDEKTSV4RRFFQ69G5FAB");
+
+    await fireEvent.change(screen.getByLabelText("Role"), {
+      target: { value: "moderator" },
+    });
+    expect(onModerationRoleChange).toHaveBeenCalledWith("moderator");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Set Role" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Kick" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Ban" }));
+    expect(onRunMemberAction).toHaveBeenNthCalledWith(1, "add");
+    expect(onRunMemberAction).toHaveBeenNthCalledWith(2, "role");
+    expect(onRunMemberAction).toHaveBeenNthCalledWith(3, "kick");
+    expect(onRunMemberAction).toHaveBeenNthCalledWith(4, "ban");
+
+    await fireEvent.change(screen.getByLabelText("Override role"), {
+      target: { value: "owner" },
+    });
+    expect(onOverrideRoleChange).toHaveBeenCalledWith("owner");
+
+    await fireEvent.input(screen.getByLabelText("Allow permissions (csv)"), {
+      target: { value: "create_message,manage_roles" },
+    });
+    expect(onOverrideAllowInput).toHaveBeenCalledWith("create_message,manage_roles");
+
+    await fireEvent.input(screen.getByLabelText("Deny permissions (csv)"), {
+      target: { value: "ban_member" },
+    });
+    expect(onOverrideDenyInput).toHaveBeenCalledWith("ban_member");
+
+    const overrideForm = screen
+      .getByRole("button", { name: "Apply channel override" })
+      .closest("form");
+    expect(overrideForm).not.toBeNull();
+    await fireEvent.submit(overrideForm!);
+    expect(onApplyOverride).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open role management panel" }));
+    expect(onOpenRoleManagementPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides gated controls when moderation permissions are missing", () => {
+    render(() =>
+      <ModerationPanel
+        {...moderationPanelPropsFixture({
+          canManageRoles: false,
+          canBanMembers: false,
+          canManageChannelOverrides: false,
+        })}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Kick" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Apply channel override" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Open role management panel" }),
+    ).toBeInTheDocument();
+  });
+});

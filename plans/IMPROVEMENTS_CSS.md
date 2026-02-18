@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `14/14 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; utility/workspace-settings helper migration added; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `15/15 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; utility/workspace-settings helper migration added; moderation panel helper migration added; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -521,6 +521,17 @@ Implementation Notes (2026-02-18):
   - Shared helper selectors (`.inline-form`, `.button-row`, `.status`, `.member-group`) are still used by other unmigrated panels (notably Moderation and parts of RoleManagement), so this slice intentionally avoids selector deletion and only removes those hooks from the migrated panel surfaces.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-utility-panel.test.tsx tests/app-shell-workspace-settings-panel.test.tsx` passes (`643` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (ModerationPanel helper migration):
+  - Migrated `ModerationPanel.tsx` form/field/button/status presentation from shared legacy helper hooks (`member-group`, `inline-form`, `button-row`, `status`) to explicit Uno utility classes while preserving moderation/override action gating and callback wiring.
+  - Added `tests/app-shell-moderation-panel.test.tsx` to lock utility-class rendering, interaction behavior, and absence of legacy helper hooks.
+  - Extended `tests/app-style-token-manifest.test.ts` migrated-surface raw-color guards to include `ModerationPanel.tsx`.
+- Important finding:
+  - Moderation action rows need `flex-1` button utilities to preserve prior equal-width button behavior that legacy `.button-row button { flex: 1; }` provided.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-moderation-panel.test.tsx tests/app-shell-moderation-panel-props.test.ts tests/app-shell-moderation-controller.test.ts tests/app-style-token-manifest.test.ts` passes (`646` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

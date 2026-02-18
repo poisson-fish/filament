@@ -25,21 +25,36 @@ export interface ModerationPanelProps {
 }
 
 export function ModerationPanel(props: ModerationPanelProps) {
+  const panelSectionClass = "grid gap-[0.5rem]";
+  const formClass = "grid gap-[0.5rem]";
+  const fieldLabelClass = "grid gap-[0.3rem] text-[0.84rem] text-ink-1";
+  const fieldControlClass =
+    "rounded-[0.56rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.62rem] text-ink-0 disabled:cursor-default disabled:opacity-62";
+  const buttonRowClass = "flex gap-[0.45rem]";
+  const actionButtonClass =
+    "min-h-[1.95rem] flex-1 rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.44rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
+  const submitButtonClass =
+    "min-h-[1.95rem] rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.44rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
+  const statusOkClass = "mt-[0.92rem] text-[0.91rem] text-ok";
+  const statusErrorClass = "mt-[0.92rem] text-[0.91rem] text-danger";
+
   return (
-    <section class="member-group">
-      <form class="inline-form">
-        <label>
+    <section class={panelSectionClass}>
+      <form class={formClass}>
+        <label class={fieldLabelClass}>
           Target user ULID
           <input
+            class={fieldControlClass}
             value={props.moderationUserIdInput}
             onInput={(event) => props.onModerationUserIdInput(event.currentTarget.value)}
             maxlength="26"
             placeholder="01ARZ..."
           />
         </label>
-        <label>
+        <label class={fieldLabelClass}>
           Role
           <select
+            class={fieldControlClass}
             value={props.moderationRoleInput}
             onChange={(event) => props.onModerationRoleChange(event.currentTarget.value)}
           >
@@ -48,9 +63,10 @@ export function ModerationPanel(props: ModerationPanelProps) {
             <option value="owner">owner</option>
           </select>
         </label>
-        <div class="button-row">
+        <div class={buttonRowClass}>
           <Show when={props.canManageRoles}>
             <button
+              class={actionButtonClass}
               type="button"
               disabled={props.isModerating || !props.hasActiveWorkspace}
               onClick={() => void props.onRunMemberAction("add")}
@@ -58,6 +74,7 @@ export function ModerationPanel(props: ModerationPanelProps) {
               Add
             </button>
             <button
+              class={actionButtonClass}
               type="button"
               disabled={props.isModerating || !props.hasActiveWorkspace}
               onClick={() => void props.onRunMemberAction("role")}
@@ -67,6 +84,7 @@ export function ModerationPanel(props: ModerationPanelProps) {
           </Show>
           <Show when={props.canBanMembers}>
             <button
+              class={actionButtonClass}
               type="button"
               disabled={props.isModerating || !props.hasActiveWorkspace}
               onClick={() => void props.onRunMemberAction("kick")}
@@ -74,6 +92,7 @@ export function ModerationPanel(props: ModerationPanelProps) {
               Kick
             </button>
             <button
+              class={actionButtonClass}
               type="button"
               disabled={props.isModerating || !props.hasActiveWorkspace}
               onClick={() => void props.onRunMemberAction("ban")}
@@ -84,10 +103,11 @@ export function ModerationPanel(props: ModerationPanelProps) {
         </div>
       </form>
       <Show when={props.canManageChannelOverrides}>
-        <form class="inline-form" onSubmit={props.onApplyOverride}>
-          <label>
+        <form class={formClass} onSubmit={props.onApplyOverride}>
+          <label class={fieldLabelClass}>
             Override role
             <select
+              class={fieldControlClass}
               value={props.overrideRoleInput}
               onChange={(event) => props.onOverrideRoleChange(event.currentTarget.value)}
             >
@@ -96,37 +116,43 @@ export function ModerationPanel(props: ModerationPanelProps) {
               <option value="owner">owner</option>
             </select>
           </label>
-          <label>
+          <label class={fieldLabelClass}>
             Allow permissions (csv)
             <input
+              class={fieldControlClass}
               value={props.overrideAllowCsv}
               onInput={(event) => props.onOverrideAllowInput(event.currentTarget.value)}
               placeholder="create_message,subscribe_streams"
             />
           </label>
-          <label>
+          <label class={fieldLabelClass}>
             Deny permissions (csv)
             <input
+              class={fieldControlClass}
               value={props.overrideDenyCsv}
               onInput={(event) => props.onOverrideDenyInput(event.currentTarget.value)}
               placeholder="delete_message"
             />
           </label>
-          <button type="submit" disabled={props.isModerating || !props.hasActiveChannel}>
+          <button
+            class={submitButtonClass}
+            type="submit"
+            disabled={props.isModerating || !props.hasActiveChannel}
+          >
             Apply channel override
           </button>
         </form>
       </Show>
-      <div class="button-row">
-        <button type="button" onClick={props.onOpenRoleManagementPanel}>
+      <div class={buttonRowClass}>
+        <button class={actionButtonClass} type="button" onClick={props.onOpenRoleManagementPanel}>
           Open role management panel
         </button>
       </div>
       <Show when={props.moderationStatus}>
-        <p class="status ok">{props.moderationStatus}</p>
+        <p class={statusOkClass}>{props.moderationStatus}</p>
       </Show>
       <Show when={props.moderationError}>
-        <p class="status error">{props.moderationError}</p>
+        <p class={statusErrorClass}>{props.moderationError}</p>
       </Show>
     </section>
   );
