@@ -161,8 +161,8 @@ Implementation Notes (2026-02-18):
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 3 - Chat Surface UnoCSS Migration
-Status: `IN PROGRESS`
-Completion status (2026-02-18): `3/4 scoped surfaces migrated` (`MessageList`, `MessageComposer`, `ReactionPickerPortal` complete; `MessageRow` pending)
+Status: `COMPLETED`
+Completion status (2026-02-18): `4/4 scoped surfaces migrated` (`MessageList`, `MessageComposer`, `ReactionPickerPortal`, `MessageRow` complete)
 
 Scope:
 - `MessageList.tsx`
@@ -210,6 +210,20 @@ Implementation Notes (2026-02-18):
   - The controller contract depends on `.reaction-picker-floating` as a query selector boundary, so that class must remain as a stable non-visual hook even after utility migration.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-reaction-picker-portal.test.tsx tests/app-shell-reactions.test.tsx tests/app-shell-reaction-picker-controller.test.ts tests/app-style-token-manifest.test.ts` passes (`590` tests total in run), including the new portal utility/behavior assertions.
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (MessageRow surface):
+  - Migrated `MessageRow.tsx` avatar/meta/content/edit state/attachment cards/reaction chips/hover actions to Uno utility classes while retaining only stable runtime hooks (`.message-row`, `.message-tokenized`, `.message-hover-actions`) needed by existing controller and integration contracts.
+  - Removed migrated MessageRow selectors from `src/styles/app/base.css` and `src/styles/app/shell-refresh.css`, including duplicate legacy cascade blocks and stale MessageRow-specific overrides.
+  - Added `tests/app-shell-message-row.test.tsx` to lock utility class rendering and key interaction behavior (profile open, reaction toggles, deleting busy state).
+  - Extended `tests/app-style-token-manifest.test.ts` migrated-surface guard to include `MessageRow.tsx` and assert legacy MessageRow selectors remain removed from `base.css`/`shell-refresh.css`.
+- Important finding:
+  - `shell-refresh.css` still contained a trailing `@media (hover: none)` fallback for `.message-main`; because `MessageRow` no longer renders that class, touch-padding behavior had to move into the component via `[@media(hover:none)]:pr-[4.5rem]` on the message content container.
+- Important finding:
+  - Keeping `.message-hover-actions` as a stable non-visual hook is still useful for touch-device fallback (`@media (hover: none)` forced visibility), even after hover panel visuals moved to Uno utilities.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-message-row.test.tsx tests/app-style-token-manifest.test.ts` passes (`593` tests total in run), including the new MessageRow migration assertions.
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
