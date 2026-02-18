@@ -1710,18 +1710,12 @@
   background: #313338;
   padding: 0.55rem 0.85rem 0.72rem;
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  flex-direction: column-reverse;
   gap: 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-}
-
-.message-list > .message-row:first-of-type,
-.message-list > .muted:first-of-type {
-  margin-top: auto;
 }
 
 .message-row {

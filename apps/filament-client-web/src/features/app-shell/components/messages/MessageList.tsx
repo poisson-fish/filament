@@ -59,7 +59,8 @@ export function MessageList(props: MessageListProps) {
 
   const visibleMessages = () => {
     const window = renderWindow();
-    return props.messages.slice(window.startIndex, window.endIndex);
+    // Reverse for column-reverse layout so newest is first in DOM (bottom visually)
+    return props.messages.slice(window.startIndex, window.endIndex).reverse();
   };
 
   return (
@@ -69,15 +70,8 @@ export function MessageList(props: MessageListProps) {
       aria-live="polite"
       onScroll={handleListScroll}
     >
-      <Show when={props.nextBefore && props.showLoadOlderButton}>
-        <button
-          type="button"
-          class="load-older"
-          onClick={() => void props.onLoadOlderMessages()}
-          disabled={props.isLoadingOlder}
-        >
-          {props.isLoadingOlder ? "Loading older..." : "Load older messages"}
-        </button>
+      <Show when={!props.isLoadingMessages && props.messages.length === 0 && !props.messageError}>
+        <p class="muted">No messages yet in this channel.</p>
       </Show>
 
       <For each={visibleMessages()}>
@@ -116,8 +110,15 @@ export function MessageList(props: MessageListProps) {
         )}
       </For>
 
-      <Show when={!props.isLoadingMessages && props.messages.length === 0 && !props.messageError}>
-        <p class="muted">No messages yet in this channel.</p>
+      <Show when={props.nextBefore && props.showLoadOlderButton}>
+        <button
+          type="button"
+          class="load-older"
+          onClick={() => void props.onLoadOlderMessages()}
+          disabled={props.isLoadingOlder}
+        >
+          {props.isLoadingOlder ? "Loading older..." : "Load older messages"}
+        </button>
       </Show>
     </section>
   );
