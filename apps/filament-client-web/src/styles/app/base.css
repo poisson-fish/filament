@@ -375,21 +375,28 @@ select {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.chat-scroll-region {
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .chat-transient-notes {
   display: grid;
 }
 
-.chat-body .message-list {
-  flex: 1 1 auto;
+.chat-scroll-region .message-list {
   min-height: 0;
 }
 
 .chat-body .composer {
-  margin-top: auto;
+  margin-top: 0;
+  flex-shrink: 0;
 }
 
 .chat-panel > .chat-body {

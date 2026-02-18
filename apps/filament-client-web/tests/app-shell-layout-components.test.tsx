@@ -393,8 +393,16 @@ describe("app shell extracted layout components", () => {
 
     const chatBody = document.querySelector(".chat-body");
     expect(chatBody).not.toBeNull();
-    expect(chatBody?.querySelector(".message-list")).not.toBeNull();
-    expect(chatBody?.querySelector(".composer")).not.toBeNull();
+
+    const scrollRegion = chatBody?.querySelector(".chat-scroll-region");
+    expect(scrollRegion).not.toBeNull();
+
+    const messageList = scrollRegion?.querySelector(".message-list");
+    const composer = chatBody?.querySelector(".composer");
+    expect(messageList).not.toBeNull();
+    expect(composer).not.toBeNull();
+    expect(chatBody?.children[0]).toBe(scrollRegion ?? null);
+    expect(chatBody?.children[1]).toBe(composer ?? null);
     expect(screen.getByText("Reaction Picker")).toBeInTheDocument();
     expect(screen.getByText("session-ok")).toBeInTheDocument();
   });

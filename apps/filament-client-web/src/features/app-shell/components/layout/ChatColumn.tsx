@@ -31,38 +31,40 @@ export function ChatColumn(props: ChatColumnProps) {
         when={props.workspaceBootstrapDone && props.workspaceCount === 0}
         fallback={(
           <section class="chat-body">
-            <div class="chat-transient-notes">
-              <Show when={!props.workspaceBootstrapDone}>
-                <p class="panel-note">Validating workspace access...</p>
-              </Show>
-              <Show when={props.workspaceBootstrapDone}>
-                <Show when={props.isLoadingMessages}>
-                  <p class="panel-note">Loading messages...</p>
+            <div class="chat-scroll-region">
+              <div class="chat-transient-notes">
+                <Show when={!props.workspaceBootstrapDone}>
+                  <p class="panel-note">Validating workspace access...</p>
                 </Show>
-                <Show when={props.messageError}>
-                  <p class="status error panel-note">{props.messageError}</p>
+                <Show when={props.workspaceBootstrapDone}>
+                  <Show when={props.isLoadingMessages}>
+                    <p class="panel-note">Loading messages...</p>
+                  </Show>
+                  <Show when={props.messageError}>
+                    <p class="status error panel-note">{props.messageError}</p>
+                  </Show>
+                  <Show when={props.sessionStatus}>
+                    <p class="status ok panel-note">{props.sessionStatus}</p>
+                  </Show>
+                  <Show when={props.sessionError}>
+                    <p class="status error panel-note">{props.sessionError}</p>
+                  </Show>
+                  <Show when={props.voiceStatus && (props.canShowVoiceHeaderControls || props.isVoiceSessionActive)}>
+                    <p class="status ok panel-note">{props.voiceStatus}</p>
+                  </Show>
+                  <Show when={props.voiceError && (props.canShowVoiceHeaderControls || props.isVoiceSessionActive)}>
+                    <p class="status error panel-note">{props.voiceError}</p>
+                  </Show>
+                  <Show when={props.activeChannel && !props.canAccessActiveChannel}>
+                    <p class="status error panel-note">
+                      Channel is not visible with your current default permissions.
+                    </p>
+                  </Show>
                 </Show>
-                <Show when={props.sessionStatus}>
-                  <p class="status ok panel-note">{props.sessionStatus}</p>
-                </Show>
-                <Show when={props.sessionError}>
-                  <p class="status error panel-note">{props.sessionError}</p>
-                </Show>
-                <Show when={props.voiceStatus && (props.canShowVoiceHeaderControls || props.isVoiceSessionActive)}>
-                  <p class="status ok panel-note">{props.voiceStatus}</p>
-                </Show>
-                <Show when={props.voiceError && (props.canShowVoiceHeaderControls || props.isVoiceSessionActive)}>
-                  <p class="status error panel-note">{props.voiceError}</p>
-                </Show>
-                <Show when={props.activeChannel && !props.canAccessActiveChannel}>
-                  <p class="status error panel-note">
-                    Channel is not visible with your current default permissions.
-                  </p>
-                </Show>
-              </Show>
-            </div>
+              </div>
 
-            {props.messageList}
+              {props.messageList}
+            </div>
 
             {props.messageComposer}
           </section>
