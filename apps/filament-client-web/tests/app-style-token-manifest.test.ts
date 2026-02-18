@@ -499,7 +499,7 @@ describe("app style token manifest", () => {
     }
   });
 
-  it("removes dead load-older, workspace-create, panel-note, stacked-meta, and mono selectors from base.css", () => {
+  it("removes dead load-older, workspace-create, panel-note, stacked-meta, mono, and empty-workspace selectors from base.css", () => {
     const baseCss = readFileSync(baseCssPath, "utf8");
 
     const removedBaseSelectors = [
@@ -509,6 +509,7 @@ describe("app style token manifest", () => {
       ".panel-note {",
       ".stacked-meta {",
       ".mono {",
+      ".empty-workspace {",
     ];
 
     for (const selector of removedBaseSelectors) {

@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `8/8 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `9/9 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -451,6 +451,18 @@ Implementation Notes (2026-02-18):
   - The `ops-overlay` selector family had zero live TSX/test references and persisted only as stale bridge CSS after earlier `group-label` cleanup, so deletion is safe and reduces dead cascade surface.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-style-token-manifest.test.ts` passes (`629` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (Dead legacy selector cleanup: `empty-workspace` bridge removal):
+  - Replaced the `empty-workspace` fallback hook in `ChatColumn.tsx` with equivalent Uno utility classes (`grid gap-[0.72rem] p-[1rem]`) while preserving the same fallback copy and layout structure.
+  - Removed dead `.empty-workspace` selector from `src/styles/app/base.css`.
+  - Extended `tests/app-shell-layout-components.test.tsx` with a fallback-layout regression assertion that utility classes render and the legacy `empty-workspace` class hook stays absent.
+  - Extended `tests/app-style-token-manifest.test.ts` selector-removal assertions to lock `.empty-workspace` absence from `base.css`.
+- Important finding:
+  - `empty-workspace` styling was isolated to a single fallback section in `ChatColumn.tsx`; converting that section directly to utilities made selector removal low-risk and avoided introducing another shared bridge helper.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-layout-components.test.tsx tests/app-style-token-manifest.test.ts` passes.
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

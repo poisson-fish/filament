@@ -413,6 +413,37 @@ describe("app shell extracted layout components", () => {
     expect(screen.getByText("session-ok")).toBeInTheDocument();
   });
 
+  it("renders empty-workspace fallback with utility classes and no legacy hook", () => {
+    render(() => (
+      <ChatColumn
+        chatHeader={<header class="chat-header">Chat Header</header>}
+        workspaceBootstrapDone={true}
+        workspaceCount={0}
+        isLoadingMessages={false}
+        messageError=""
+        sessionStatus=""
+        sessionError=""
+        voiceStatus=""
+        voiceError=""
+        canShowVoiceHeaderControls={false}
+        isVoiceSessionActive={false}
+        activeChannel={null}
+        canAccessActiveChannel={false}
+        messageList={<section class="message-list">Message List</section>}
+        messageComposer={<form class="composer">Composer</form>}
+        reactionPicker={<div>Reaction Picker</div>}
+        messageStatus=""
+      />
+    ));
+
+    const fallbackSection = screen.getByText("Create your first workspace").closest("section");
+    expect(fallbackSection).not.toBeNull();
+    expect(fallbackSection).toHaveClass("grid");
+    expect(fallbackSection).toHaveClass("gap-[0.72rem]");
+    expect(fallbackSection).toHaveClass("p-[1rem]");
+    expect(fallbackSection).not.toHaveClass("empty-workspace");
+  });
+
   it("preserves user profile overlay loading, error, and close interactions", () => {
     const onClose = vi.fn();
     const selectedProfileUserId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ");

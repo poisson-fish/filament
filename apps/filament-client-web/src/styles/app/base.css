@@ -354,9 +354,3 @@ select {
 .button-row button {
   flex: 1;
 }
-
-.empty-workspace {
-  padding: 1rem;
-  display: grid;
-  gap: 0.72rem;
-}

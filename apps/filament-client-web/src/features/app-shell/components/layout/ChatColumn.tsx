@@ -73,7 +73,7 @@ export function ChatColumn(props: ChatColumnProps) {
           </>
         )}
       >
-        <section class="empty-workspace">
+        <section class="grid gap-[0.72rem] p-[1rem]">
           <h3>Create your first workspace</h3>
           <p class="muted">Use the + button in the workspace rail to create your first guild and channel.</p>
         </section>
