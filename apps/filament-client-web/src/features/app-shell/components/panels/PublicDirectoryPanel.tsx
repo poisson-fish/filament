@@ -86,9 +86,9 @@ export function PublicDirectoryPanel(props: PublicDirectoryPanelProps) {
               <li class={directoryItemClassName}>
                 <span class="presence online" />
                 <div class="grid w-full gap-[0.35rem]">
-                  <div class="stacked-meta">
+                  <div class="grid min-w-0 gap-[0.16rem]">
                     <span>{guild.name}</span>
-                    <span class="muted mono">{guild.visibility}</span>
+                    <span class="muted text-[0.78rem] font-code">{guild.visibility}</span>
                   </div>
                   <div class="flex items-center justify-between gap-[0.4rem]">
                     <Show when={status() !== "idle"}>

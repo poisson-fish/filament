@@ -154,7 +154,10 @@ describe("app shell settings panel", () => {
     await fireEvent.error(avatarImage);
     expect(avatarImage).toHaveStyle({ display: "none" });
     expect(screen.getByText("hello").parentElement).toHaveClass("text-ink-1");
+    expect(screen.getByText(PROFILE_USER_ID)).toHaveClass("font-code");
+    expect(screen.getByText(PROFILE_USER_ID)).toHaveClass("text-[0.78rem]");
     expect(document.querySelector(".settings-profile-preview")).toBeNull();
     expect(document.querySelector(".settings-profile-markdown")).toBeNull();
+    expect(document.querySelector(".mono")).toBeNull();
   });
 });

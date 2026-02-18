@@ -81,9 +81,15 @@ describe("app shell friendships panel", () => {
     const acceptButton = screen.getByRole("button", { name: "Accept" });
     expect(acceptButton).toHaveClass("flex-1");
 
+    const [incomingSenderId] = screen.getAllByText(BOB_USER_ID);
+    expect(incomingSenderId).toHaveClass("font-code");
+    expect(incomingSenderId).toHaveClass("text-[0.78rem]");
+
     expect(document.querySelector(".inline-form")).toBeNull();
     expect(document.querySelector(".button-row")).toBeNull();
     expect(document.querySelector(".group-label")).toBeNull();
+    expect(document.querySelector(".stacked-meta")).toBeNull();
+    expect(document.querySelector(".mono")).toBeNull();
   });
 
   it("keeps request and friendship actions wired", async () => {

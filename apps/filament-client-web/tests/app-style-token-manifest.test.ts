@@ -60,6 +60,10 @@ const friendshipsPanelPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/FriendshipsPanel.tsx",
 );
+const attachmentsPanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/AttachmentsPanel.tsx",
+);
 const messageComposerPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/MessageComposer.tsx",
@@ -86,6 +90,7 @@ const migratedTsxPaths = [
   chatColumnPath,
   publicDirectoryPanelPath,
   friendshipsPanelPath,
+  attachmentsPanelPath,
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
@@ -494,7 +499,7 @@ describe("app style token manifest", () => {
     }
   });
 
-  it("removes dead load-older, workspace-create, and panel-note selectors from base.css", () => {
+  it("removes dead load-older, workspace-create, panel-note, stacked-meta, and mono selectors from base.css", () => {
     const baseCss = readFileSync(baseCssPath, "utf8");
 
     const removedBaseSelectors = [
@@ -502,6 +507,8 @@ describe("app style token manifest", () => {
       ".workspace-create-panel {",
       ".workspace-create-panel h4 {",
       ".panel-note {",
+      ".stacked-meta {",
+      ".mono {",
     ];
 
     for (const selector of removedBaseSelectors) {

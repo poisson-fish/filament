@@ -56,9 +56,9 @@ export function AttachmentsPanel(props: AttachmentsPanelProps) {
           {(record) => (
             <li>
               <span class="presence online" />
-              <div class="stacked-meta">
+              <div class="grid min-w-0 gap-[0.16rem]">
                 <span>{record.filename}</span>
-                <span class="muted mono">
+                <span class="muted text-[0.78rem] font-code">
                   {record.mimeType} · {formatBytes(record.sizeBytes)}
                 </span>
               </div>

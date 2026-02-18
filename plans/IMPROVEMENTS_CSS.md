@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `5/5 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `6/6 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -421,6 +421,18 @@ Implementation Notes (2026-02-18):
   - `base.css` still contained a scoped `.ops-overlay-header .group-label` rule despite no live `ops-overlay` TSX usage; removing it with the global helper avoids a dead selector re-entry path.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-settings-panel.test.tsx tests/app-shell-friendships-panel.test.tsx tests/app-shell-workspace-settings-panel.test.tsx tests/app-style-token-manifest.test.ts` passes.
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (Dead legacy selector cleanup: `stacked-meta` + `mono` bridge removal):
+  - Replaced remaining `stacked-meta`/`mono` helper usage in `PublicDirectoryPanel.tsx`, `FriendshipsPanel.tsx`, `AttachmentsPanel.tsx`, and `SettingsPanel.tsx` with equivalent Uno utility classes (`grid min-w-0 gap-[0.16rem]`, `text-[0.78rem]`, `font-code`).
+  - Removed dead `.stacked-meta` and `.mono` selectors from `src/styles/app/base.css`.
+  - Added `tests/app-shell-attachments-panel.test.tsx` for AttachmentsPanel rendering and handler wiring, and extended panel tests (`app-shell-public-directory-panel.test.tsx`, `app-shell-friendships-panel.test.tsx`, `app-shell-settings-panel.test.tsx`) to assert utility-class usage and absence of legacy hooks.
+  - Extended `tests/app-style-token-manifest.test.ts` selector-removal assertions for `.stacked-meta`/`.mono` and added `AttachmentsPanel.tsx` to migrated raw-color guard coverage.
+- Important finding:
+  - `stacked-meta`/`mono` persisted as cross-panel bridge helpers across directory, friendships, attachments, and settings-profile preview surfaces; selector removal was only safe after migrating all remaining usages in one slice.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-shell-friendships-panel.test.tsx tests/app-shell-attachments-panel.test.tsx tests/app-shell-public-directory-panel.test.tsx tests/app-shell-settings-panel.test.tsx tests/app-style-token-manifest.test.ts` passes (`627` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

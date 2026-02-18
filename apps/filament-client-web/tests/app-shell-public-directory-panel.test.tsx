@@ -63,12 +63,18 @@ describe("app shell public directory panel", () => {
     expect(joinedChip).toHaveClass("border-ok/80");
     expect(joinedChip).toHaveClass("text-ok");
 
+    const [visibilityLabel] = screen.getAllByText("public");
+    expect(visibilityLabel).toHaveClass("font-code");
+    expect(visibilityLabel).toHaveClass("text-[0.78rem]");
+
     expect(document.querySelector(".inline-form")).toBeNull();
     expect(document.querySelector(".public-directory-row")).toBeNull();
     expect(document.querySelector(".public-directory-row-main")).toBeNull();
     expect(document.querySelector(".public-directory-row-actions")).toBeNull();
     expect(document.querySelector(".directory-status-chip")).toBeNull();
     expect(document.querySelector(".public-directory-row-error")).toBeNull();
+    expect(document.querySelector(".stacked-meta")).toBeNull();
+    expect(document.querySelector(".mono")).toBeNull();
   });
 
   it("keeps search and join actions wired", async () => {

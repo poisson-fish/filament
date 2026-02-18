@@ -55,9 +55,9 @@ export function FriendshipsPanel(props: FriendshipsPanelProps) {
         <For each={props.friendRequests.incoming}>
           {(request) => (
             <li class={listItemClassName}>
-              <div class="stacked-meta">
+              <div class="grid min-w-0 gap-[0.16rem]">
                 <span>{request.senderUsername}</span>
-                <span class="muted mono">{request.senderUserId}</span>
+                <span class="muted text-[0.78rem] font-code">{request.senderUserId}</span>
               </div>
               <div class="ml-auto flex flex-1 gap-[0.45rem]">
                 <button
@@ -90,9 +90,9 @@ export function FriendshipsPanel(props: FriendshipsPanelProps) {
         <For each={props.friendRequests.outgoing}>
           {(request) => (
             <li class={listItemClassName}>
-              <div class="stacked-meta">
+              <div class="grid min-w-0 gap-[0.16rem]">
                 <span>{request.recipientUsername}</span>
-                <span class="muted mono">{request.recipientUserId}</span>
+                <span class="muted text-[0.78rem] font-code">{request.recipientUserId}</span>
               </div>
               <button
                 class={`${actionButtonClassName} ml-auto`}
@@ -115,9 +115,9 @@ export function FriendshipsPanel(props: FriendshipsPanelProps) {
         <For each={props.friends}>
           {(friend) => (
             <li class={listItemClassName}>
-              <div class="stacked-meta">
+              <div class="grid min-w-0 gap-[0.16rem]">
                 <span>{friend.username}</span>
-                <span class="muted mono">{friend.userId}</span>
+                <span class="muted text-[0.78rem] font-code">{friend.userId}</span>
               </div>
               <button
                 class={`${actionButtonClassName} ml-auto`}

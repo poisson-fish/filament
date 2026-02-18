@@ -286,7 +286,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     </span>
                     <div>
                       <p class="m-0 font-[760] text-ink-0">{profile().username}</p>
-                      <p class="mono">{profile().userId}</p>
+                      <p class="m-0 text-[0.78rem] font-code text-ink-2">{profile().userId}</p>
                     </div>
                   </div>
                   <SafeMarkdown
