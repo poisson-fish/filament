@@ -43,23 +43,23 @@ export function UtilityPanel(props: UtilityPanelProps) {
       </Show>
       <Show when={props.showDiagnosticsCounters}>
         <div>
-          <p class="panel-note">Diagnostics counters (dev only)</p>
-          <p class="panel-note">
+          <p class="m-[0.5rem_1rem_0]">Diagnostics counters (dev only)</p>
+          <p class="m-[0.5rem_1rem_0]">
             Session refresh: {props.diagnosticsEventCounts.session_refresh_succeeded} ok /{" "}
             {props.diagnosticsEventCounts.session_refresh_failed} failed
           </p>
-          <p class="panel-note">
+          <p class="m-[0.5rem_1rem_0]">
             Health checks: {props.diagnosticsEventCounts.health_check_succeeded} ok /{" "}
             {props.diagnosticsEventCounts.health_check_failed} failed
           </p>
-          <p class="panel-note">
+          <p class="m-[0.5rem_1rem_0]">
             Echo: {props.diagnosticsEventCounts.echo_succeeded} ok /{" "}
             {props.diagnosticsEventCounts.echo_failed} failed
           </p>
-          <p class="panel-note">
+          <p class="m-[0.5rem_1rem_0]">
             Logout requests: {props.diagnosticsEventCounts.logout_requested}
           </p>
-          <p class="panel-note">
+          <p class="m-[0.5rem_1rem_0]">
             Gateway connections: {props.diagnosticsEventCounts.gateway_connected} opened /{" "}
             {props.diagnosticsEventCounts.gateway_disconnected} closed
           </p>

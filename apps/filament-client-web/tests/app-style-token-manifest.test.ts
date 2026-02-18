@@ -40,6 +40,14 @@ const panelHostPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/PanelHost.tsx",
 );
+const utilityPanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/UtilityPanel.tsx",
+);
+const chatColumnPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/layout/ChatColumn.tsx",
+);
 const publicDirectoryPanelPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/PublicDirectoryPanel.tsx",
@@ -69,6 +77,8 @@ const migratedTsxPaths = [
   userProfileOverlayPath,
   settingsPanelPath,
   panelHostPath,
+  utilityPanelPath,
+  chatColumnPath,
   publicDirectoryPanelPath,
   friendshipsPanelPath,
   messageComposerPath,
@@ -472,6 +482,21 @@ describe("app style token manifest", () => {
       ".directory-status-chip.pending {",
       ".public-directory-row-error {",
       ".unread-count {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
+    }
+  });
+
+  it("removes dead load-older, workspace-create, and panel-note selectors from base.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".load-older {",
+      ".workspace-create-panel {",
+      ".workspace-create-panel h4 {",
+      ".panel-note {",
     ];
 
     for (const selector of removedBaseSelectors) {

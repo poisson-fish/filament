@@ -127,7 +127,7 @@ export function PanelHost(props: PanelHostProps) {
                 </button>
               </header>
               <div class="panel-window-body grid content-start gap-[0.7rem] overflow-auto px-[0.92rem] py-[0.85rem]">
-                <Suspense fallback={<p class="panel-note m-0 text-ink-2">Loading panel...</p>}>
+                <Suspense fallback={<p class="m-[0.5rem_1rem_0] text-ink-2">Loading panel...</p>}>
                   <Switch>
                     <Match when={panelAccessor() === "workspace-create"}>
                       <WorkspaceCreatePanel {...props.workspaceCreatePanelProps} />

@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `3/3 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; legacy CSS reduction still in progress)
+Completion status (2026-02-18): `4/4 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup started; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -394,6 +394,19 @@ Implementation Notes (2026-02-18):
   - `.unread-count` had no remaining TSX usage and was safe to delete as dead CSS.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-public-directory-panel.test.tsx tests/app-shell-friendships-panel.test.tsx tests/app-style-token-manifest.test.ts tests/app-shell-public-discovery.test.tsx tests/app-shell-friendships.test.tsx` passes (`620` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (Dead legacy selector cleanup: panel-note + stale single-surface rules):
+  - Migrated remaining `panel-note` usage in `ChatColumn.tsx`, `PanelHost.tsx`, and `UtilityPanel.tsx` to equivalent Uno margin utilities (`m-[0.5rem_1rem_0]`), removing dependency on a global helper class for transient-note spacing.
+  - Removed dead selectors from `src/styles/app/base.css`: `.panel-note`, `.load-older`, `.workspace-create-panel`, and `.workspace-create-panel h4`.
+  - Extended `tests/app-style-token-manifest.test.ts` with a regression assertion that these removed selector blocks remain absent, and added `UtilityPanel.tsx` + `ChatColumn.tsx` to migrated raw-color guard coverage.
+- Important finding:
+  - `.load-older` and `.workspace-create-panel*` had no remaining TSX usage; they were safe deletions and represented stale bridge CSS left behind from earlier migration slices.
+- Important finding:
+  - `panel-note` acted as a cross-surface spacing helper for chat transient notices and panel diagnostics/loading fallbacks; utility migration removes this hidden cascade coupling while preserving spacing parity.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-style-token-manifest.test.ts tests/app-shell-layout-components.test.tsx tests/app-shell-utility-panel.test.tsx tests/app-shell-panel-host-props.test.tsx` passes (`622` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

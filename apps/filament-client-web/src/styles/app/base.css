@@ -339,28 +339,6 @@ select {
   }
 }
 
-.load-older {
-  border: 1px solid var(--line-soft);
-  border-radius: 0.62rem;
-  background: rgba(17, 31, 56, 0.82);
-  color: var(--ink-1);
-  padding: 0.45rem 0.6rem;
-}
-
-.workspace-create-panel {
-  margin: 0.85rem 1rem 0;
-  border: 1px solid var(--line-soft);
-  border-radius: 0.78rem;
-  background: rgba(15, 29, 58, 0.78);
-  padding: 0.8rem;
-  display: grid;
-  gap: 0.6rem;
-}
-
-.workspace-create-panel h4 {
-  margin: 0;
-}
-
 .member-rail {
   padding: 0.92rem;
   display: grid;
@@ -586,10 +564,6 @@ select {
   display: grid;
   gap: 0.16rem;
   min-width: 0;
-}
-
-.panel-note {
-  margin: 0.5rem 1rem 0;
 }
 
 .empty-workspace {
