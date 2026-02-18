@@ -2,6 +2,7 @@ import { render } from "solid-js/web";
 import { App } from "./App";
 import { redirectLoopbackAliasInDev } from "./lib/browser-context";
 import { installViewportHeightCssVar } from "./lib/viewport-height";
+import "uno.css";
 import "./styles/app.css";
 
 const root = document.getElementById("root");

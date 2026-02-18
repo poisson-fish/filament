@@ -1,0 +1,215 @@
+# IMPROVEMENTS_CSS.md
+
+## Purpose
+Define a safe, incremental plan to migrate `apps/filament-client-web` from hand-rolled global CSS to UnoCSS, while fixing chat layout behavior so:
+- message timeline visually stacks from bottom to top
+- composer/message bar remains pinned to the bottom of the chat viewport
+
+## Direction (Locked)
+- Styling engine: `UnoCSS`
+- Migration style: incremental by surface area, not big-bang rewrite
+- Keep security posture from `AGENTS.md` unchanged (no HTML rendering paths, no unsafe runtime style/script injection)
+
+## Current Baseline (2026-02-18)
+- Stylesheet manifest: `apps/filament-client-web/src/styles/app.css`
+- Main CSS files:
+  - `apps/filament-client-web/src/styles/app/base.css` (`1332` lines)
+  - `apps/filament-client-web/src/styles/app/shell-refresh.css` (`1964` lines)
+- Approx footprint:
+  - `3301` CSS lines total
+  - `476` class selectors
+  - `340` TSX class usages
+- Layout today:
+  - heavy global cascade
+  - chat behavior partly implemented via CSS + message window logic
+
+## Migration Goals
+1. Replace global cascade styling with UnoCSS utilities and reusable shortcuts/rules.
+2. Preserve visual parity first, then improve UX polish.
+3. Fix chat timeline/composer behavior with deterministic layout semantics.
+4. Remove dead legacy CSS safely with tests and staged cleanup.
+
+## Architecture Target
+- UnoCSS utilities in TSX for layout/spacing/state.
+- Central design tokens preserved as CSS variables (color, spacing, radii, elevation, motion).
+- UnoCSS config contains:
+  - `theme` token mapping
+  - `shortcuts` for repeated UI primitives (buttons, rails, panels, chips)
+  - optional `variants` for state patterns
+- Temporary `legacy.css` bridge exists only for unmigrated surfaces.
+
+## UnoCSS Class Conventions (Phase 0)
+- Utility-first in component `class` attributes for local layout/state.
+- Use `fx-*` shortcut prefix for reusable semantic primitives.
+- Keep shortcuts composable and low-level (panel/button/chip primitives), not feature-specific.
+- Prefer token aliases (`bg-bg-2`, `text-ink-1`, `border-line`) over raw color literals in TSX.
+- Keep legacy CSS loaded during migration and delete selectors only when the owning surface is fully migrated.
+
+## Chat Layout Fix Spec (Required)
+
+### Spec A: Bottom-Anchored Timeline
+- Newest message should appear nearest composer (bottom of scroll viewport).
+- When user is at latest and a new message arrives:
+  - keep viewport pinned to bottom without jump.
+- When user scrolls up (history mode):
+  - do not force snap to bottom on incoming messages.
+
+### Spec B: Composer Pinned to Bottom
+- Composer stays attached to bottom edge of chat panel/viewport area.
+- Message list scroll area occupies remaining vertical space above composer.
+- Keyboard/input growth must not push composer off-screen.
+
+### Spec C: Load Older Behavior
+- “Load older” / history pagination preserves scroll anchor.
+- No visible jump after prepending older messages.
+
+## Work Plan
+
+## Phase 0 - UnoCSS Tooling and Guardrails
+Status: `IN PROGRESS`
+
+Tasks:
+- [x] Install UnoCSS packages in `apps/filament-client-web`.
+- [x] Add `uno.config.ts` with token mappings and initial shortcuts.
+- [x] Wire UnoCSS plugin into Vite config.
+- [x] Keep existing CSS imports active for parity.
+- [x] Add migration doc section for class conventions and shortcut naming.
+
+Exit Criteria:
+- `dev`, `build`, `test`, and `typecheck` all pass unchanged.
+- No unintended visual diffs.
+
+Implementation Notes (2026-02-18):
+- UnoCSS is wired via `unocss/vite`, and generated CSS is imported in `src/main.tsx` before legacy `app.css` to avoid cascade regressions.
+- Validation status:
+  - `build` passes.
+  - `typecheck` currently fails on existing test typing issues in `tests/app-shell-identity-resolution-controller.test.ts` and `tests/app-shell-selectors.test.ts`.
+  - `test` currently has an existing failing case in `tests/app-shell-message-history-scroll.test.tsx` (chronological ordering assertion).
+- Dependency lockfiles:
+  - Repo currently tracks `apps/filament-client-web/package-lock.json`.
+  - `pnpm-lock.yaml` is intentionally not part of this migration slice to avoid mixed lockfile governance.
+
+## Phase 1 - Token Normalization
+Status: `NOT STARTED`
+
+Tasks:
+- Consolidate design tokens under one source of truth in existing CSS variables.
+- Map tokens into UnoCSS theme aliases.
+- Add rules: avoid raw hex values in migrated TSX.
+
+Exit Criteria:
+- Token map documented and consumed by UnoCSS config.
+- New migrated components use tokens/aliases only.
+
+## Phase 2 - Chat Layout Behavior Fix (Before Full Rewrite)
+Status: `NOT STARTED`
+
+Scope:
+- `apps/filament-client-web/src/features/app-shell/components/messages/MessageList.tsx`
+- `apps/filament-client-web/src/features/app-shell/components/messages/MessageComposer.tsx`
+- related shell container layout in chat panel components/styles
+- message list controller/window logic as needed
+
+Tasks:
+- Implement explicit chat panel structure:
+  - parent: fixed-height flex/grid container
+  - list region: `min-h-0` scrollable area
+  - composer: non-scrolling bottom region
+- Align render order + scroll anchoring logic to Spec A/B/C.
+- Keep existing bounded/full render-window behavior intact.
+- Add/expand tests for:
+  - pinned-to-latest behavior
+  - history scroll mode behavior
+  - load-older anchor preservation
+  - composer bottom pinning
+
+Exit Criteria:
+- Chat behavior matches Spec A/B/C.
+- No regressions in existing message list/controller tests.
+
+## Phase 3 - Chat Surface UnoCSS Migration
+Status: `NOT STARTED`
+
+Scope:
+- `MessageList.tsx`
+- `MessageRow.tsx`
+- `MessageComposer.tsx`
+- `ReactionPickerPortal.tsx`
+
+Tasks:
+- Replace message-surface legacy classes with Uno utilities/shortcuts.
+- Remove corresponding migrated selectors from `shell-refresh.css`.
+- Keep behavior and accessibility parity (focus, hover, disabled, error).
+
+Exit Criteria:
+- Chat surface fully migrated to UnoCSS.
+- Legacy CSS reduced for chat area by at least 25% from baseline.
+
+## Phase 4 - Shell, Rails, Panels Migration
+Status: `NOT STARTED`
+
+Scope:
+- server rail, channel rail, member rail, header, overlays, settings panels, auth shell
+
+Tasks:
+- Migrate each surface in small PR slices.
+- Use shortcuts for repeated panel/button/list patterns.
+- Preserve responsive behavior and collapse modes.
+
+Exit Criteria:
+- Primary shell UI uses UnoCSS utilities/shortcuts.
+- Legacy global selectors mostly removed.
+
+## Phase 5 - Legacy CSS Removal and Governance
+Status: `NOT STARTED`
+
+Tasks:
+- Remove dead selectors and bridge styles.
+- Keep only minimal reset/base/token CSS.
+- Add style governance doc:
+  - when to use inline utility classes vs shortcut
+  - variant/state conventions
+  - token-only color policy
+
+Exit Criteria:
+- `shell-refresh.css` removed or reduced to minimal compatibility patch.
+- Migration complete with stable tests.
+
+## Testing and Validation Gates
+Run on every migration phase:
+- `pnpm -C apps/filament-client-web run typecheck`
+- `pnpm -C apps/filament-client-web run test`
+- `pnpm -C apps/filament-client-web run build`
+
+Add/maintain targeted tests:
+- message list pinning + history behavior
+- composer placement and chat-panel sizing
+- reaction/editing state visuals and interaction behavior
+
+Recommended:
+- add screenshot/visual regression coverage for chat shell and rails to catch subtle layout drift.
+
+## Risks and Mitigations
+- Risk: utility sprawl and inconsistent patterns.
+  - Mitigation: enforce shortcuts + naming conventions early.
+- Risk: chat scroll regressions during layout changes.
+  - Mitigation: Phase 2 behavior fix with focused tests before broad visual rewrite.
+- Risk: partial migration leaves hard-to-reason cascade interactions.
+  - Mitigation: surface-by-surface CSS deletion immediately after each migrated slice.
+
+## Effort Estimate
+- Phase 0-1: 1-3 days
+- Phase 2 (chat behavior fix): 2-4 days
+- Phase 3 (chat Uno migration): 3-6 days
+- Phase 4-5 (full shell migration + cleanup): 2-4 weeks
+
+## Execution Order
+1. Phase 0
+2. Phase 1
+3. Phase 2 (layout behavior correctness first)
+4. Phase 3
+5. Phase 4
+6. Phase 5
+
+## Decision
+Proceed with UnoCSS migration, with chat layout behavior fixes treated as a blocking prerequisite before broader UI rewrite.
