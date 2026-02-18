@@ -15,9 +15,12 @@ export interface WorkspaceSettingsPanelProps {
 }
 
 export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
+  const sectionLabelClassName =
+    "m-0 text-[0.68rem] uppercase tracking-[0.08em] text-ink-2";
+
   return (
     <section aria-label="workspace settings">
-      <p class="group-label">WORKSPACE</p>
+      <p class={sectionLabelClassName}>WORKSPACE</p>
       <Show when={props.hasActiveWorkspace} fallback={<p class="muted">No active workspace selected.</p>}>
         <form
           class="inline-form"

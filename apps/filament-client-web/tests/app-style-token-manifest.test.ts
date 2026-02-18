@@ -36,6 +36,10 @@ const settingsPanelPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/SettingsPanel.tsx",
 );
+const workspaceSettingsPanelPath = resolve(
+  webRootDir,
+  "src/features/app-shell/components/panels/WorkspaceSettingsPanel.tsx",
+);
 const panelHostPath = resolve(
   webRootDir,
   "src/features/app-shell/components/panels/PanelHost.tsx",
@@ -76,6 +80,7 @@ const migratedTsxPaths = [
   chatHeaderPath,
   userProfileOverlayPath,
   settingsPanelPath,
+  workspaceSettingsPanelPath,
   panelHostPath,
   utilityPanelPath,
   chatColumnPath,
@@ -502,6 +507,15 @@ describe("app style token manifest", () => {
     for (const selector of removedBaseSelectors) {
       expect(baseCss).not.toContain(selector);
     }
+  });
+
+  it("removes legacy group-label selectors from base.css and shell-refresh.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+
+    expect(baseCss).not.toContain(".group-label {");
+    expect(baseCss).not.toContain(".ops-overlay-header .group-label {");
+    expect(shellRefreshCss).not.toContain(".group-label {");
   });
 
   it("uses shared tokens for the voice disconnect danger button utility classes", () => {

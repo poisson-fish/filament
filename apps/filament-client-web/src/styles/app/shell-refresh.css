@@ -17,14 +17,6 @@
   border-right: 0;
 }
 
-.group-label {
-  margin: 0;
-  color: #959ca8;
-  letter-spacing: 0.08em;
-  font-size: 0.68rem;
-  text-transform: uppercase;
-}
-
 .member-rail {
   padding: 0.78rem;
   display: grid;

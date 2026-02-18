@@ -96,6 +96,7 @@ describe("app shell settings panel", () => {
     expect(document.querySelector(".settings-panel-layout")).toBeNull();
     expect(document.querySelector(".settings-category-button")).toBeNull();
     expect(document.querySelector(".settings-submenu-button")).toBeNull();
+    expect(document.querySelector(".group-label")).toBeNull();
   });
 
   it("keeps callbacks and profile-preview behavior intact", async () => {

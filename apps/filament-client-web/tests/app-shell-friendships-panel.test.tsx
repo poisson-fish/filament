@@ -83,6 +83,7 @@ describe("app shell friendships panel", () => {
 
     expect(document.querySelector(".inline-form")).toBeNull();
     expect(document.querySelector(".button-row")).toBeNull();
+    expect(document.querySelector(".group-label")).toBeNull();
   });
 
   it("keeps request and friendship actions wired", async () => {

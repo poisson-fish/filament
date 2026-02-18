@@ -82,13 +82,6 @@ select {
   min-height: 0;
 }
 
-.group-label {
-  margin: 0;
-  color: var(--ink-2);
-  letter-spacing: 0.08em;
-  font-size: 0.72rem;
-}
-
 .chat-panel {
   display: flex;
   flex-direction: column;
@@ -398,10 +391,6 @@ select {
   background: rgba(20, 33, 57, 0.82);
   color: var(--ink-1);
   padding: 0.35rem 0.6rem;
-}
-
-.ops-overlay-header .group-label {
-  margin-left: auto;
 }
 
 .presence {

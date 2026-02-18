@@ -44,6 +44,8 @@ export interface SettingsPanelProps {
 export function SettingsPanel(props: SettingsPanelProps) {
   const settingsNavButtonClass =
     "w-full cursor-pointer rounded-[0.62rem] border border-line bg-bg-2 px-[0.6rem] py-[0.52rem] text-left text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60";
+  const sectionLabelClassName =
+    "m-0 text-[0.68rem] uppercase tracking-[0.08em] text-ink-2";
 
   return (
     <section
@@ -54,7 +56,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
         class="grid content-start gap-[0.6rem] border-r border-line pr-[0.88rem] max-[900px]:border-r-0 max-[900px]:border-b max-[900px]:pr-0 max-[900px]:pb-[0.72rem]"
         aria-label="Settings category rail"
       >
-        <p class="group-label">CATEGORIES</p>
+        <p class={sectionLabelClassName}>CATEGORIES</p>
         <ul class="m-0 grid list-none gap-[0.45rem] p-0">
           <For each={props.settingsCategories}>
             {(category) => {
@@ -92,7 +94,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 class="grid content-start gap-[0.6rem] border-r border-line pr-[0.88rem] max-[900px]:border-r-0 max-[900px]:border-b max-[900px]:pr-0 max-[900px]:pb-[0.72rem]"
                 aria-label="Voice settings submenu rail"
               >
-                <p class="group-label">VOICE</p>
+                <p class={sectionLabelClassName}>VOICE</p>
                 <ul class="m-0 grid list-none gap-[0.45rem] p-0">
                   <For each={props.voiceSettingsSubmenu}>
                     {(submenu) => {
@@ -122,7 +124,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
               <section class="grid content-start gap-[0.6rem]" aria-label="Voice settings submenu content">
                 <Switch>
                   <Match when={props.activeVoiceSettingsSubmenu === "audio-devices"}>
-                    <p class="group-label">AUDIO DEVICES</p>
+                    <p class={sectionLabelClassName}>AUDIO DEVICES</p>
                     <form class="inline-form" onSubmit={(event) => event.preventDefault()}>
                       <label>
                         Microphone
@@ -195,7 +197,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
             </section>
           </Match>
           <Match when={props.activeSettingsCategory === "profile"}>
-            <p class="group-label">PROFILE</p>
+            <p class={sectionLabelClassName}>PROFILE</p>
             <form
               class="inline-form"
               onSubmit={(event) => {
@@ -261,7 +263,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
             <Show when={props.profile}>
               {(profile) => (
                 <section class="grid gap-[0.55rem] rounded-[0.72rem] border border-line bg-bg-1 p-[0.7rem]">
-                  <p class="group-label">PROFILE PREVIEW</p>
+                  <p class={sectionLabelClassName}>PROFILE PREVIEW</p>
                   <div class="flex items-center gap-[0.6rem]">
                     <span
                       class="relative inline-flex h-[2.4rem] w-[2.4rem] items-center justify-center overflow-hidden rounded-full border border-line-soft bg-gradient-to-br from-bg-4 to-bg-3 text-[0.78rem] font-[780] text-ink-0"

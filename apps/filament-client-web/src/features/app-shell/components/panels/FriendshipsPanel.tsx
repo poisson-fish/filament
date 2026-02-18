@@ -19,6 +19,8 @@ const formControlClassName =
   "rounded-[0.62rem] border border-line-soft bg-bg-0 px-[0.62rem] py-[0.55rem] text-ink-1 placeholder:text-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60";
 const actionButtonClassName =
   "inline-flex items-center justify-center rounded-[0.62rem] border border-brand/45 bg-brand/15 px-[0.72rem] py-[0.5rem] text-ink-0 transition-colors duration-[140ms] ease-out enabled:hover:bg-brand/24 disabled:cursor-not-allowed disabled:opacity-60";
+const sectionLabelClassName =
+  "m-0 text-[0.68rem] uppercase tracking-[0.08em] text-ink-2";
 const listClassName = "m-0 grid list-none gap-[0.35rem] p-0";
 const listItemClassName =
   "flex items-start gap-[0.45rem] rounded-[0.6rem] border border-line-soft bg-bg-1 px-[0.5rem] py-[0.42rem]";
@@ -48,7 +50,7 @@ export function FriendshipsPanel(props: FriendshipsPanelProps) {
         <p class="status error">{props.friendError}</p>
       </Show>
 
-      <p class="group-label">INCOMING</p>
+      <p class={sectionLabelClassName}>INCOMING</p>
       <ul class={listClassName}>
         <For each={props.friendRequests.incoming}>
           {(request) => (
@@ -83,7 +85,7 @@ export function FriendshipsPanel(props: FriendshipsPanelProps) {
         </Show>
       </ul>
 
-      <p class="group-label">OUTGOING</p>
+      <p class={sectionLabelClassName}>OUTGOING</p>
       <ul class={listClassName}>
         <For each={props.friendRequests.outgoing}>
           {(request) => (
@@ -108,7 +110,7 @@ export function FriendshipsPanel(props: FriendshipsPanelProps) {
         </Show>
       </ul>
 
-      <p class="group-label">FRIEND LIST</p>
+      <p class={sectionLabelClassName}>FRIEND LIST</p>
       <ul class={listClassName}>
         <For each={props.friends}>
           {(friend) => (
