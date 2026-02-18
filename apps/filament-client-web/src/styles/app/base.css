@@ -392,6 +392,11 @@ select {
   margin-top: auto;
 }
 
+.chat-panel > .chat-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .chat-header {
   padding: 0.95rem 1.12rem;
   border-bottom: 1px solid var(--line-soft);
@@ -616,10 +621,11 @@ select {
 
 .message-list {
   padding: 0.88rem 1.03rem;
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
   gap: 0.72rem;
   overflow: auto;
-  align-content: end;
 }
 
 .message-row {

@@ -1617,6 +1617,11 @@
   margin-top: auto;
 }
 
+.chat-panel > .chat-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .chat-header {
   padding: 0.74rem 0.95rem;
   border-bottom: 1px solid #262931;
@@ -1691,13 +1696,14 @@
 .message-list {
   background: #313338;
   padding: 0.55rem 0.85rem 0.72rem;
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
   gap: 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-  align-content: end;
 }
 
 .message-row {
