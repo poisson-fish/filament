@@ -90,12 +90,12 @@ Implementation Notes (2026-02-18):
   - `pnpm-lock.yaml` is intentionally not part of this migration slice to avoid mixed lockfile governance.
 
 ## Phase 1 - Token Normalization
-Status: `IN PROGRESS`
+Status: `COMPLETED`
 
 Tasks:
 - [x] Consolidate design tokens under one source of truth in existing CSS variables.
 - [x] Map tokens into UnoCSS theme aliases.
-- [ ] Add rules: avoid raw hex values in migrated TSX.
+- [x] Add rules: avoid raw hex values in migrated TSX.
 
 Exit Criteria:
 - Token map documented and consumed by UnoCSS config.
@@ -105,6 +105,8 @@ Implementation Notes (2026-02-18):
 - Token declarations were moved from `src/styles/app/base.css` into a dedicated `src/styles/app/tokens.css`, and `src/styles/app.css` now imports tokens first to lock manifest order.
 - UnoCSS theme aliases now include the new danger surface tokens (`danger-panel`, `danger-panel-strong`, `danger-ink`) so migrated components can avoid raw literals.
 - Important finding: there was still a raw hex inline danger style in `ChannelRail.tsx` (voice disconnect button). It is now tokenized, and a new test (`tests/app-style-token-manifest.test.ts`) guards import order, token definitions, and this token usage path.
+- Important finding: current TS/TSX sources do not contain raw hex/rgb/hsl literals, so the new migrated-surface guard can remain strict without introducing compatibility exemptions.
+- `tests/app-style-token-manifest.test.ts` now includes a migrated-TSX rule that rejects raw color literals in migrated files (starting with `ChannelRail.tsx`); additional migrated components should be added to that allowlist as migration continues.
 
 ## Phase 2 - Chat Layout Behavior Fix (Before Full Rewrite)
 Status: `NOT STARTED`

@@ -14,6 +14,11 @@ const channelRailPath = resolve(
   webRootDir,
   "src/features/app-shell/components/ChannelRail.tsx",
 );
+const migratedTsxPaths = [
+  channelRailPath,
+];
+
+const rawColorLiteralPattern = /#[0-9a-f]{3,8}\b|\b(?:rgb|rgba|hsl|hsla)\(/i;
 
 function parseImportPaths(cssSource: string): string[] {
   return [...cssSource.matchAll(/@import\s+"([^"]+)";/g)].map((match) => match[1]);
@@ -79,5 +84,12 @@ describe("app style token manifest", () => {
     expect(styleValue).toContain("border-color: var(--danger-panel-strong)");
     expect(styleValue).toContain("color: var(--danger-ink)");
     expect(styleValue).not.toMatch(/#[0-9a-f]{3,8}/i);
+  });
+
+  it("forbids raw color literals in migrated TSX surfaces", () => {
+    for (const migratedTsxPath of migratedTsxPaths) {
+      const componentSource = readFileSync(migratedTsxPath, "utf8");
+      expect(componentSource).not.toMatch(rawColorLiteralPattern);
+    }
   });
 });
