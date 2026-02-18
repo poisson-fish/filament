@@ -11,6 +11,7 @@ const appCssPath = resolve(webRootDir, "src/styles/app.css");
 const tokensCssPath = resolve(webRootDir, "src/styles/app/tokens.css");
 const baseCssPath = resolve(webRootDir, "src/styles/app/base.css");
 const shellRefreshCssPath = resolve(webRootDir, "src/styles/app/shell-refresh.css");
+const styleGovernancePath = resolve(webRootDir, "src/styles/STYLE_GOVERNANCE.md");
 const channelRailPath = resolve(
   webRootDir,
   "src/features/app-shell/components/ChannelRail.tsx",
@@ -83,6 +84,14 @@ function parseImportPaths(cssSource: string): string[] {
 }
 
 describe("app style token manifest", () => {
+  it("documents UnoCSS style governance requirements", () => {
+    const styleGovernance = readFileSync(styleGovernancePath, "utf8");
+    expect(styleGovernance).toContain("## When To Use Inline Utilities vs Shortcuts");
+    expect(styleGovernance).toContain("## Variant And State Conventions");
+    expect(styleGovernance).toContain("## Token-Only Color Policy");
+    expect(styleGovernance).toContain("fx-*");
+  });
+
   it("keeps tokens.css first in the stylesheet manifest order", () => {
     const appCss = readFileSync(appCssPath, "utf8");
     expect(parseImportPaths(appCss)).toEqual([

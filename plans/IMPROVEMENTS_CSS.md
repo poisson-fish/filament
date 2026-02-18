@@ -345,7 +345,7 @@ Implementation Notes (2026-02-18):
 
 ## Phase 5 - Legacy CSS Removal and Governance
 Status: `IN PROGRESS`
-Completion status (2026-02-18): `2/3 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc still pending)
+Completion status (2026-02-18): `3/3 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; legacy CSS reduction still in progress)
 
 Tasks:
 - Remove dead selectors and bridge styles.
@@ -360,6 +360,16 @@ Exit Criteria:
 - Migration complete with stable tests.
 
 Implementation Notes (2026-02-18):
+- Applied slice (Style governance documentation):
+  - Added `src/styles/STYLE_GOVERNANCE.md` to codify UnoCSS governance for inline-utility vs `fx-*` shortcut usage, variant/state conventions, token-only color policy, and legacy bridge removal rules.
+  - Extended `tests/app-style-token-manifest.test.ts` with a governance-doc contract check so required policy sections remain present during future migration slices.
+- Important finding:
+  - Governance requirements were only captured in this phase plan before this slice; adding a checked-in style policy doc plus a test guard reduces drift risk as more contributors touch migrated surfaces.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/app-style-token-manifest.test.ts` passes (`621` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 - Applied slice (PanelHost shared shell):
   - Migrated `PanelHost.tsx` backdrop/window/header/body presentation to Uno utility classes while retaining `.panel-backdrop`, `.panel-window`, `.panel-window-medium`, `.panel-window-compact`, `.panel-window-header`, and `.panel-window-body` as stable non-visual hooks for compatibility.
   - Added deterministic width utility mapping in `PanelHost.tsx` so overlay size variants remain tied to existing `overlayPanelClassName` outputs without relying on legacy CSS.
