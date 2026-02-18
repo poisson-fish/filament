@@ -327,7 +327,7 @@ async fn subscribe_to_channel(
         }
     });
     socket
-        .send(Message::Text(subscribe.to_string()))
+        .send(Message::Text(subscribe.to_string().into()))
         .await
         .expect("subscribe event should send");
     let subscribed_json = next_event_of_type(socket, "subscribed").await;
@@ -387,7 +387,7 @@ async fn websocket_handshake_and_message_flow_work_over_network() {
         }
     });
     socket
-        .send(Message::Text(message_create.to_string()))
+        .send(Message::Text(message_create.to_string().into()))
         .await
         .expect("message create event should send");
 

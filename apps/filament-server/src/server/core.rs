@@ -7,12 +7,12 @@ use std::{
 };
 
 use anyhow::anyhow;
+use argon2::password_hash::rand_core::{OsRng, RngCore};
 use filament_core::{
     ChannelKind, ChannelPermissionOverwrite, MarkdownToken, PermissionSet, Role, UserId, Username,
 };
 use object_store::local::LocalFileSystem;
 use pasetors::{keys::SymmetricKey, version4::V4};
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use tantivy::schema::Field;

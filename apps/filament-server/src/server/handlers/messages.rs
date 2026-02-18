@@ -4,7 +4,7 @@ use axum::{
     Json,
 };
 use filament_core::{tokenize_markdown, Permission, UserId};
-use object_store::{path::Path as ObjectPath, ObjectStore};
+use object_store::{path::Path as ObjectPath, ObjectStoreExt};
 use sqlx::Row;
 use std::net::SocketAddr;
 

@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::anyhow;
 use argon2::{
+    password_hash::rand_core::{OsRng, RngCore},
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
@@ -20,7 +21,6 @@ use pasetors::{
     version4::V4,
     Local,
 };
-use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::Row;

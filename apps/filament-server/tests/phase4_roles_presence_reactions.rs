@@ -395,7 +395,8 @@ async fn presence_events_do_not_leak_across_guilds() {
                 "t":"subscribe",
                 "d":{"guild_id":guild_a.guild_id,"channel_id":guild_a.channel_id}
             })
-            .to_string(),
+            .to_string()
+            .into(),
         ))
         .await
         .unwrap();
@@ -417,7 +418,8 @@ async fn presence_events_do_not_leak_across_guilds() {
                 "t":"subscribe",
                 "d":{"guild_id":guild_b.guild_id,"channel_id":guild_b.channel_id}
             })
-            .to_string(),
+            .to_string()
+            .into(),
         ))
         .await
         .unwrap();
@@ -437,7 +439,8 @@ async fn presence_events_do_not_leak_across_guilds() {
                 "t":"subscribe",
                 "d":{"guild_id":guild_a.guild_id,"channel_id":guild_a.channel_id}
             })
-            .to_string(),
+            .to_string()
+            .into(),
         ))
         .await
         .unwrap();

@@ -10,7 +10,7 @@ use axum::{
 };
 use futures_util::StreamExt;
 use livekit_api::access_token::{AccessToken as LiveKitAccessToken, VideoGrants};
-use object_store::{path::Path as ObjectPath, ObjectStore};
+use object_store::{path::Path as ObjectPath, ObjectStoreExt};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 use ulid::Ulid;

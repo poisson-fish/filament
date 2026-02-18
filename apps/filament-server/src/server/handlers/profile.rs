@@ -6,7 +6,7 @@ use axum::{
     Json,
 };
 use futures_util::StreamExt;
-use object_store::{path::Path as ObjectPath, ObjectStore};
+use object_store::{path::Path as ObjectPath, ObjectStoreExt};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::{collections::HashSet, net::SocketAddr};
