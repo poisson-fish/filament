@@ -229,8 +229,8 @@ Implementation Notes (2026-02-18):
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated test typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 4 - Shell, Rails, Panels Migration
-Status: `IN PROGRESS`
-Completion status (2026-02-18): `6/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail`, `MemberRail`, `ChatHeader`, `UserProfileOverlay`, `SettingsPanel` complete)
+Status: `COMPLETED`
+Completion status (2026-02-18): `7/7 scoped surfaces migrated` (`ServerRail`, `ChannelRail`, `MemberRail`, `ChatHeader`, `UserProfileOverlay`, `SettingsPanel`, `AuthShell` complete)
 
 Scope:
 - server rail, channel rail, member rail, header, overlays, settings panels, auth shell
@@ -326,6 +326,19 @@ Implementation Notes (2026-02-18):
   - `SafeMarkdown` paragraph/list spacing for settings profile preview can be migrated safely via Uno descendant utility selectors (`[&_p]`, `[&_p+p]`, `[&_ul]`, `[&_ol]`) without reintroducing a dedicated legacy markdown class.
 - Validation for this slice:
   - `pnpm -C apps/filament-client-web run test -- tests/app-shell-settings-panel.test.tsx tests/app-shell-settings-entry.test.tsx tests/app-style-token-manifest.test.ts` passes (`612` tests total in run).
+  - `pnpm -C apps/filament-client-web run lint` passes.
+  - `pnpm -C apps/filament-client-web run build` passes.
+  - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
+- Applied slice (AuthShell surface):
+  - Migrated `LoginPage.tsx` auth shell layout/header/mode switch/form controls/captcha-state messaging to Uno utility classes while retaining `.auth-layout`, `.auth-panel`, `.auth-mode-switch`, `.auth-form`, and `.captcha-block` as stable non-visual hooks.
+  - Removed migrated auth shell selectors from `src/styles/app/base.css` (`.auth-layout`, `.auth-panel`, `.auth-header h1`, `.eyebrow`, `.auth-mode-switch*`, `.auth-form*`, `.captcha-block*`).
+  - Extended `tests/app-style-token-manifest.test.ts` to include `LoginPage.tsx` in migrated raw-color literal guards and to assert removed auth shell selectors stay absent from `base.css`.
+- Important finding:
+  - Existing route/auth integration tests rely on `.auth-form` as a stable submit-button query boundary, so those class hooks should remain available as non-visual contracts while visual styling is owned by Uno utilities.
+- Important finding:
+  - Captcha error feedback inside `.captcha-block` previously depended on legacy `.captcha-block .status` margin resets; migrating to utility-first status typography avoids margin-cascade coupling in this surface.
+- Validation for this slice:
+  - `pnpm -C apps/filament-client-web run test -- tests/routes-login.test.tsx tests/app-style-token-manifest.test.ts` passes (`613` tests total in run).
   - `pnpm -C apps/filament-client-web run lint` passes.
   - `pnpm -C apps/filament-client-web run build` passes.
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).

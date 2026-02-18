@@ -47,6 +47,7 @@ const reactionPickerPortalPath = resolve(
   webRootDir,
   "src/features/app-shell/components/messages/ReactionPickerPortal.tsx",
 );
+const loginPagePath = resolve(webRootDir, "src/pages/LoginPage.tsx");
 const migratedTsxPaths = [
   channelRailPath,
   serverRailPath,
@@ -57,6 +58,7 @@ const migratedTsxPaths = [
   messageComposerPath,
   messageRowPath,
   reactionPickerPortalPath,
+  loginPagePath,
 ];
 
 const rawColorLiteralPattern = /#[0-9a-f]{3,8}\b|\b(?:rgb|rgba|hsl|hsla)\(/i;
@@ -382,6 +384,33 @@ describe("app style token manifest", () => {
 
     for (const selector of removedShellRefreshSelectors) {
       expect(shellRefreshCss).not.toContain(selector);
+    }
+  });
+
+  it("removes legacy auth shell selectors from base.css", () => {
+    const baseCss = readFileSync(baseCssPath, "utf8");
+
+    const removedBaseSelectors = [
+      ".auth-layout {",
+      ".auth-panel {",
+      ".auth-header h1 {",
+      ".eyebrow {",
+      ".auth-mode-switch {",
+      ".auth-mode-switch button {",
+      ".auth-mode-switch button.active {",
+      ".auth-mode-switch button:hover {",
+      ".auth-form {",
+      ".auth-form label {",
+      ".auth-form input {",
+      ".auth-form input:focus-visible {",
+      ".captcha-block {",
+      ".captcha-block .status {",
+      ".auth-form button[type=\"submit\"] {",
+      ".auth-form button[type=\"submit\"]:disabled {",
+    ];
+
+    for (const selector of removedBaseSelectors) {
+      expect(baseCss).not.toContain(selector);
     }
   });
 

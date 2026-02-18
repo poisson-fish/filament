@@ -150,23 +150,37 @@ export function LoginPage() {
     }
   };
 
+  const authModeButtonClass = (active: boolean): string =>
+    [
+      "cursor-pointer rounded-[0.7rem] border px-[0.72rem] py-[0.62rem] transition-[transform,background-color] duration-[120ms] ease-out",
+      active
+        ? "border-brand bg-gradient-to-b from-brand to-brand-strong text-white"
+        : "border-line-soft bg-bg-3 text-ink-1 hover:-translate-y-px",
+    ].join(" ");
+
   return (
-    <div class="auth-layout">
-      <div class="auth-panel">
+    <div class="auth-layout grid min-h-screen place-items-center p-[1.4rem]">
+      <div class="auth-panel fx-panel w-full max-w-[29rem] rounded-[1.1rem] p-[1.5rem] shadow-[0_1.2rem_3rem_var(--shadow)]">
         <header class="auth-header">
-          <p class="eyebrow">Filament</p>
-          <h1>{isRegisterMode() ? "Create Account" : "Welcome Back"}</h1>
-          <p class="muted">
+          <p class="m-0 text-[0.76rem] tracking-[0.14em] text-ink-2 uppercase">Filament</p>
+          <h1 class="mb-0 mt-[0.25rem] tracking-[0.015em]">
+            {isRegisterMode() ? "Create Account" : "Welcome Back"}
+          </h1>
+          <p class="mb-0 mt-[0.4rem] text-ink-2">
             {isRegisterMode()
               ? "Register with a valid username and strong password."
               : "Login to enter your workspace."}
           </p>
         </header>
 
-        <div class="auth-mode-switch" role="tablist" aria-label="Authentication mode">
+        <div
+          class="auth-mode-switch mt-[1.1rem] grid grid-cols-2 gap-[0.5rem]"
+          role="tablist"
+          aria-label="Authentication mode"
+        >
           <button
             type="button"
-            classList={{ active: !isRegisterMode() }}
+            class={authModeButtonClass(!isRegisterMode())}
             onClick={() => {
               setRegisterMode(false);
               setCaptchaError("");
@@ -176,7 +190,7 @@ export function LoginPage() {
           </button>
           <button
             type="button"
-            classList={{ active: isRegisterMode() }}
+            class={authModeButtonClass(isRegisterMode())}
             onClick={() => {
               setRegisterMode(true);
               setCaptchaError("");
@@ -186,10 +200,11 @@ export function LoginPage() {
           </button>
         </div>
 
-        <form class="auth-form" onSubmit={submit}>
-          <label>
+        <form class="auth-form mt-[1rem] grid gap-[0.75rem]" onSubmit={submit}>
+          <label class="grid gap-[0.34rem] text-[0.9rem] text-ink-1">
             Username
             <input
+              class="rounded-[0.66rem] border border-line-soft bg-bg-2 px-[0.78rem] py-[0.74rem] outline-none focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-[1px]"
               autocomplete="username"
               maxlength="32"
               required
@@ -199,9 +214,10 @@ export function LoginPage() {
             />
           </label>
 
-          <label>
+          <label class="grid gap-[0.34rem] text-[0.9rem] text-ink-1">
             Password
             <input
+              class="rounded-[0.66rem] border border-line-soft bg-bg-2 px-[0.78rem] py-[0.74rem] outline-none focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-[1px]"
               type="password"
               autocomplete={isRegisterMode() ? "new-password" : "current-password"}
               minlength="12"
@@ -213,7 +229,7 @@ export function LoginPage() {
           </label>
 
           <Show when={shouldRenderCaptcha()}>
-            <div class="captcha-block">
+            <div class="captcha-block mt-[0.25rem] grid justify-items-start gap-[0.35rem]">
               <div
                 class="h-captcha"
                 ref={(element) => {
@@ -221,28 +237,32 @@ export function LoginPage() {
                 }}
               />
               <Show when={!captchaReady()}>
-                <p class="muted">Loading captcha challenge...</p>
+                <p class="m-0 text-ink-2">Loading captcha challenge...</p>
               </Show>
               <Show when={captchaError()}>
-                <p class="status error" role="alert">
+                <p class="m-0 text-[0.91rem] text-danger" role="alert">
                   {captchaError()}
                 </p>
               </Show>
             </div>
           </Show>
 
-          <button type="submit" disabled={isSubmitting()}>
+          <button
+            class="mt-[0.32rem] cursor-pointer rounded-[0.74rem] border-0 bg-gradient-to-b from-brand to-brand-strong px-[0.8rem] py-[0.8rem] font-[750] tracking-[0.015em] text-white disabled:cursor-default disabled:opacity-[0.72]"
+            type="submit"
+            disabled={isSubmitting()}
+          >
             {isSubmitting() ? "Working..." : isRegisterMode() ? "Create account" : "Login"}
           </button>
         </form>
 
         <Show when={statusMessage()}>
-          <p class="status ok" role="status">
+          <p class="mb-0 mt-[0.92rem] text-[0.91rem] text-ok" role="status">
             {statusMessage()}
           </p>
         </Show>
         <Show when={errorMessage()}>
-          <p class="status error" role="alert">
+          <p class="mb-0 mt-[0.92rem] text-[0.91rem] text-danger" role="alert">
             {errorMessage()}
           </p>
         </Show>
