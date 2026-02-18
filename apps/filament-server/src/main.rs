@@ -210,7 +210,7 @@ async fn main() -> anyhow::Result<()> {
         captcha_hcaptcha_site_key,
         captcha_hcaptcha_secret,
         captcha_verify_url: std::env::var("FILAMENT_HCAPTCHA_VERIFY_URL")
-            .unwrap_or_else(|_| String::from("https://hcaptcha.com/siteverify")),
+            .unwrap_or_else(|_| String::from("https://api.hcaptcha.com/siteverify")),
         database_url: Some(database_url),
         ..AppConfig::default()
     };

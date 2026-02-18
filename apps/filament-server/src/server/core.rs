@@ -168,7 +168,7 @@ impl Default for AppConfig {
             livekit_token_ttl: Duration::from_secs(DEFAULT_LIVEKIT_TOKEN_TTL_SECS),
             captcha_hcaptcha_site_key: None,
             captcha_hcaptcha_secret: None,
-            captcha_verify_url: String::from("https://hcaptcha.com/siteverify"),
+            captcha_verify_url: String::from("https://api.hcaptcha.com/siteverify"),
             captcha_verify_timeout: Duration::from_secs(DEFAULT_CAPTCHA_VERIFY_TIMEOUT_SECS),
             livekit_url: String::from("ws://127.0.0.1:7880"),
             livekit_api_key: None,

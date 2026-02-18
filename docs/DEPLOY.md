@@ -41,7 +41,7 @@ Set these variables for `filament-server`:
 - `FILAMENT_MAX_CREATED_GUILDS_PER_USER`: max guilds an authenticated user may create (default `5`, must be >= `1`)
 - `FILAMENT_HCAPTCHA_SITE_KEY`: optional hCaptcha site key (must be set with secret)
 - `FILAMENT_HCAPTCHA_SECRET`: optional hCaptcha server secret (must be set with site key)
-- `FILAMENT_HCAPTCHA_VERIFY_URL`: optional captcha verify endpoint (default `https://hcaptcha.com/siteverify`; localhost `http://` allowed for tests)
+- `FILAMENT_HCAPTCHA_VERIFY_URL`: optional captcha verify endpoint (default `https://api.hcaptcha.com/siteverify`; localhost `http://` allowed for tests)
 
 Default compose values:
 - `FILAMENT_ATTACHMENT_ROOT=/var/lib/filament/attachments`
