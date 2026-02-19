@@ -15,16 +15,17 @@ export interface WorkspaceSettingsPanelProps {
 }
 
 export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
-  const panelSectionClass = "grid gap-[0.5rem]";
+  const panelSectionClass =
+    "grid gap-[0.64rem] rounded-[0.78rem] border border-line bg-bg-2 p-[0.82rem]";
   const sectionLabelClassName =
     "m-0 text-[0.68rem] uppercase tracking-[0.08em] text-ink-2";
   const mutedTextClass = "m-0 text-[0.91rem] text-ink-2";
-  const formClass = "grid gap-[0.5rem]";
+  const formClass = "grid gap-[0.55rem]";
   const fieldLabelClass = "grid gap-[0.3rem] text-[0.84rem] text-ink-1";
   const fieldControlClass =
-    "rounded-[0.56rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.62rem] text-ink-0 disabled:cursor-default disabled:opacity-62";
+    "rounded-[0.62rem] border border-line-soft bg-bg-1 px-[0.6rem] py-[0.62rem] text-ink-0 disabled:cursor-default disabled:opacity-62";
   const submitButtonClass =
-    "min-h-[1.95rem] rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.44rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
+    "min-h-[2rem] rounded-[0.62rem] border border-line-soft bg-bg-3 px-[0.72rem] py-[0.46rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
   const statusOkClass = "mt-[0.92rem] text-[0.91rem] text-ok";
   const statusErrorClass = "mt-[0.92rem] text-[0.91rem] text-danger";
 

@@ -25,15 +25,15 @@ export function MemberRail(props: MemberRailProps) {
     "m-0 text-[0.68rem] text-ink-2 tracking-[0.08em] uppercase";
   const memberListClass = "m-0 grid list-none gap-[0.42rem] p-0";
   const memberListRowClass =
-    "flex items-center gap-[0.45rem] overflow-hidden rounded-[0.6rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.5rem]";
+    "flex items-center gap-[0.45rem] overflow-hidden rounded-[0.64rem] border border-line-soft bg-bg-1 px-[0.55rem] py-[0.5rem]";
   const presenceDotClass = "inline-block h-[0.58rem] w-[0.58rem] rounded-full";
   const onlinePresenceDotClass = `${presenceDotClass} bg-presence-online`;
   const idlePresenceDotClass = `${presenceDotClass} bg-presence-idle`;
   const panelButtonClass =
-    "w-full rounded-[0.62rem] border border-line-soft bg-bg-3 px-[0.6rem] py-[0.48rem] text-left text-[0.82rem] text-ink-0 transition-colors duration-[120ms] ease-out enabled:hover:bg-bg-4 enabled:cursor-pointer";
+    "w-full rounded-[0.62rem] border border-line-soft bg-bg-2 px-[0.6rem] py-[0.48rem] text-left text-[0.82rem] text-ink-0 transition-colors duration-[120ms] ease-out enabled:hover:bg-bg-3 enabled:cursor-pointer";
 
   return (
-    <aside class="member-rail grid min-h-0 content-start gap-[0.66rem] overflow-auto bg-bg-0 px-[0.78rem] py-[0.78rem]">
+    <aside class="member-rail grid min-h-0 content-start gap-[0.66rem] overflow-auto bg-bg-1 px-[0.78rem] py-[0.78rem]">
       <header>
         <h4 class="m-0 text-[0.94rem] text-ink-0 font-[700] tracking-[0.01em]">
           Workspace Tools

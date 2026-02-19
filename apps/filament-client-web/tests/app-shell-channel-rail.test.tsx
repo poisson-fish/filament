@@ -103,11 +103,13 @@ describe("app shell channel rail", () => {
     const rail = document.querySelector("aside.channel-rail");
     expect(rail).not.toBeNull();
     expect(rail).toHaveClass("grid");
-    expect(rail).toHaveClass("bg-bg-0");
+    expect(rail).toHaveClass("bg-bg-1");
 
     const menuTrigger = screen.getByRole("button", { name: "Open workspace menu" });
     expect(menuTrigger).toHaveClass("w-full");
+    expect(menuTrigger).toHaveClass("border-line-soft");
     expect(menuTrigger).toHaveClass("enabled:hover:bg-bg-3");
+    expect(screen.getByText("private workspace")).toHaveClass("px-[0.52rem]");
 
     await fireEvent.click(menuTrigger);
     expect(screen.getByRole("menuitem", { name: "Invite to workspace" })).toHaveClass(

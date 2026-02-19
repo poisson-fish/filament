@@ -51,17 +51,19 @@ describe("app shell chat header", () => {
     const title = screen.getByRole("heading", { name: "#incident-room" });
     expect(title).toHaveClass("m-0");
     expect(title).toHaveClass("text-ink-0");
+    expect(title.parentElement).toHaveClass("items-baseline");
 
     const gatewayBadge = screen.getByText("Live");
     expect(gatewayBadge).toHaveClass("rounded-full");
-    expect(gatewayBadge).toHaveClass("text-ok");
+    expect(gatewayBadge).toHaveClass("text-bg-0");
 
     const voiceBadge = screen.getByText("Voice connected");
-    expect(voiceBadge).toHaveClass("border-ok");
+    expect(voiceBadge).toHaveClass("text-ink-2");
+    expect(voiceBadge).toHaveClass("items-center");
 
     const channelsToggle = screen.getByRole("button", { name: "Hide channels" });
-    expect(channelsToggle).toHaveClass("h-[2rem]");
-    expect(channelsToggle).toHaveClass("enabled:hover:bg-bg-4");
+    expect(channelsToggle).toHaveClass("h-[2.1rem]");
+    expect(channelsToggle).toHaveClass("hover:bg-bg-4");
 
     const logoutButton = screen.getByRole("button", { name: "Logout" });
     expect(logoutButton).toHaveClass("bg-danger-panel");

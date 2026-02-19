@@ -77,21 +77,23 @@ describe("app shell settings panel", () => {
 
     const layout = screen.getByLabelText("settings");
     expect(layout).toHaveClass("grid");
-    expect(layout).toHaveClass("min-h-[18rem]");
+    expect(layout).toHaveClass("min-h-[24rem]");
 
     const categoryRail = screen.getByLabelText("Settings category rail");
-    expect(categoryRail).toHaveClass("border-r");
+    expect(categoryRail).toHaveClass("rounded-[0.78rem]");
+    expect(categoryRail).toHaveClass("bg-bg-2");
 
     const voiceCategoryButton = screen.getByRole("button", {
       name: "Open Voice settings category",
     });
-    expect(voiceCategoryButton).toHaveClass("rounded-[0.62rem]");
+    expect(voiceCategoryButton).toHaveClass("rounded-[0.68rem]");
     expect(voiceCategoryButton).toHaveClass("border-brand/85");
+    expect(voiceCategoryButton).toHaveClass("bg-brand/20");
 
     const voiceSubmenuButton = screen.getByRole("button", {
       name: "Open Voice Audio Devices submenu",
     });
-    expect(voiceSubmenuButton).toHaveClass("bg-brand/16");
+    expect(voiceSubmenuButton).toHaveClass("bg-brand/20");
 
     expect(document.querySelector(".settings-panel-layout")).toBeNull();
     expect(document.querySelector(".settings-category-button")).toBeNull();
@@ -156,7 +158,7 @@ describe("app shell settings panel", () => {
     expect(avatarImage).toHaveStyle({ display: "none" });
     expect(screen.getByText("hello").parentElement).toHaveClass("text-ink-1");
     expect(screen.getByText(PROFILE_USER_ID)).toHaveClass("font-code");
-    expect(screen.getByText(PROFILE_USER_ID)).toHaveClass("text-[0.78rem]");
+    expect(screen.getByText(PROFILE_USER_ID)).toHaveClass("text-[0.82rem]");
     expect(document.querySelector(".settings-profile-preview")).toBeNull();
     expect(document.querySelector(".settings-profile-markdown")).toBeNull();
     expect(document.querySelector(".mono")).toBeNull();

@@ -157,98 +157,102 @@ export function ChannelRail(props: ChannelRailProps) {
   });
 
   const workspaceMenuItemClass =
-    "w-full min-h-[2rem] inline-flex items-center justify-between gap-[0.44rem] rounded-[0.5rem] border-0 bg-transparent px-[0.5rem] py-[0.4rem] text-left text-ink-1 enabled:cursor-pointer enabled:hover:bg-bg-4 enabled:hover:text-ink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand";
+    "w-full min-h-[2rem] inline-flex items-center justify-between gap-[0.44rem] rounded-[0.5rem] border border-transparent bg-transparent px-[0.5rem] py-[0.4rem] text-left text-ink-1 enabled:cursor-pointer enabled:hover:border-line-soft enabled:hover:bg-bg-3 enabled:hover:text-ink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand";
   const channelGroupActionClass =
     "inline-flex h-[1.2rem] w-[1.2rem] items-center justify-center rounded-[0.35rem] border-0 bg-transparent p-0 text-[1rem] leading-none text-ink-2 enabled:hover:bg-bg-3 enabled:hover:text-ink-0";
   const channelRowBaseClass =
     "w-full min-h-[2rem] inline-flex items-center justify-between gap-[0.4rem] rounded-[0.52rem] border-0 px-[0.52rem] py-[0.28rem] text-left transition-colors duration-[120ms] ease-out";
   const voiceDockIconButtonClass =
-    "inline-flex h-[2.2rem] w-[2.45rem] items-center justify-center rounded-[0.56rem] border border-line bg-bg-3 p-0 text-ink-0 enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-58";
+    "inline-flex h-[2.2rem] w-[2.45rem] items-center justify-center rounded-[0.56rem] border border-line-soft bg-bg-2 p-0 text-ink-0 enabled:hover:bg-bg-3 disabled:cursor-default disabled:opacity-58";
   const voiceDockIconMaskClass = "icon-mask h-[1.05rem] w-[1.05rem]";
   const accountAvatarClass =
     "relative inline-flex h-[1.7rem] w-[1.7rem] flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-bg-3 text-[0.58rem] text-ink-0 font-[800] tracking-[0.03em] uppercase";
 
   return (
-    <aside class="channel-rail grid min-h-0 content-stretch gap-[0.5rem] bg-bg-0 px-[0.58rem] pt-[0.72rem] pb-[0.58rem] [grid-template-rows:auto_auto_minmax(0,1fr)]">
-      <header class="relative flex items-center justify-between gap-[0.5rem]">
-        <button
-          type="button"
-          class="w-full inline-flex items-center justify-between gap-[0.48rem] rounded-[0.5rem] border-0 bg-transparent px-[0.12rem] py-[0.08rem] text-left text-ink-0 enabled:cursor-pointer enabled:hover:bg-bg-3 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand"
-          aria-label="Open workspace menu"
-          aria-haspopup="menu"
-          aria-expanded={isWorkspaceMenuOpen()}
-          onClick={toggleWorkspaceMenu}
-          disabled={!props.activeWorkspace}
-          ref={(element) => {
-            workspaceMenuTriggerElement = element;
-          }}
-        >
-          <h2 class="m-0 text-[1.05rem] text-ink-0 font-[780] tracking-[0.01em]">
-            {props.activeWorkspace?.guildName ?? "No Workspace"}
-          </h2>
-          <span
-            classList={{
-              "h-[0.52rem] w-[0.52rem] shrink-0 border-r-2 border-b-2 border-ink-1 transition-transform duration-[140ms] ease-out": true,
-              "rotate-45": !isWorkspaceMenuOpen(),
-              "-rotate-135": isWorkspaceMenuOpen(),
-            }}
-            aria-hidden="true"
-          />
-        </button>
-        <Show when={props.activeWorkspace && isWorkspaceMenuOpen()}>
-          <div
-            class="absolute left-0 right-0 top-[calc(100%+0.44rem)] z-20 grid gap-[0.18rem] rounded-[0.76rem] border border-line bg-bg-1 p-[0.4rem] shadow-panel"
-            role="menu"
-            aria-label="Workspace menu"
+    <aside class="channel-rail grid min-h-0 content-stretch gap-[0.5rem] bg-bg-1 px-[0.58rem] pt-[0.72rem] pb-[0.58rem] [grid-template-rows:auto_minmax(0,1fr)]">
+      <div class="grid gap-[0.16rem]">
+        <header class="relative flex items-center justify-between gap-[0.5rem]">
+          <button
+            type="button"
+            class="w-full inline-flex min-h-[2.24rem] items-center justify-between gap-[0.48rem] rounded-[0.62rem] border border-line-soft bg-bg-2 px-[0.52rem] py-[0.38rem] text-left text-ink-0 enabled:cursor-pointer enabled:hover:bg-bg-3 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand"
+            aria-label="Open workspace menu"
+            aria-haspopup="menu"
+            aria-expanded={isWorkspaceMenuOpen()}
+            onClick={toggleWorkspaceMenu}
+            disabled={!props.activeWorkspace}
             ref={(element) => {
-              workspaceMenuElement = element;
+              workspaceMenuTriggerElement = element;
             }}
           >
-            <button
-              type="button"
-              class={workspaceMenuItemClass}
-              role="menuitem"
-              aria-label="Invite to workspace"
-              onClick={closeWorkspaceMenu}
+            <h2 class="m-0 truncate text-[1.03rem] text-ink-0 font-[780] tracking-[0.01em]">
+              {props.activeWorkspace?.guildName ?? "No Workspace"}
+            </h2>
+            <span
+              classList={{
+                "h-[0.52rem] w-[0.52rem] shrink-0 border-r-2 border-b-2 border-ink-1 transition-transform duration-[140ms] ease-out": true,
+                "rotate-45": !isWorkspaceMenuOpen(),
+                "-rotate-135": isWorkspaceMenuOpen(),
+              }}
+              aria-hidden="true"
+            />
+          </button>
+          <Show when={props.activeWorkspace && isWorkspaceMenuOpen()}>
+            <div
+              class="absolute left-0 right-0 top-[calc(100%+0.44rem)] z-20 grid gap-[0.18rem] rounded-[0.76rem] border border-line bg-bg-1 p-[0.4rem] shadow-panel"
+              role="menu"
+              aria-label="Workspace menu"
+              ref={(element) => {
+                workspaceMenuElement = element;
+              }}
             >
-              Invite to Workspace
-            </button>
-            <button
-              type="button"
-              class={workspaceMenuItemClass}
-              role="menuitem"
-              aria-label="Open workspace settings panel"
-              onClick={openWorkspaceSettingsPanel}
-            >
-              Server Settings
-            </button>
-            <div class="mx-[0.06rem] my-[0.22rem] h-px bg-line" role="separator" aria-hidden="true" />
-            <button
-              type="button"
-              class={`${workspaceMenuItemClass} text-ink-2 enabled:hover:bg-transparent enabled:hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-100`}
-              role="menuitem"
-              disabled
-              aria-label="Notification settings coming soon"
-            >
-              <span>Notification Settings</span>
-              <span class="text-[0.67rem] text-ink-2 tracking-[0.06em] uppercase">Soon</span>
-            </button>
-            <button
-              type="button"
-              class={`${workspaceMenuItemClass} text-ink-2 enabled:hover:bg-transparent enabled:hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-100`}
-              role="menuitem"
-              disabled
-              aria-label="Privacy settings coming soon"
-            >
-              <span>Privacy Settings</span>
-              <span class="text-[0.67rem] text-ink-2 tracking-[0.06em] uppercase">Soon</span>
-            </button>
-          </div>
-        </Show>
-      </header>
-      <span class="text-[0.74rem] text-ink-2 capitalize">
-        {props.activeWorkspace ? `${props.activeWorkspace.visibility} workspace` : "Hardened workspace"}
-      </span>
+              <button
+                type="button"
+                class={workspaceMenuItemClass}
+                role="menuitem"
+                aria-label="Invite to workspace"
+                onClick={closeWorkspaceMenu}
+              >
+                Invite to Workspace
+              </button>
+              <button
+                type="button"
+                class={workspaceMenuItemClass}
+                role="menuitem"
+                aria-label="Open workspace settings panel"
+                onClick={openWorkspaceSettingsPanel}
+              >
+                Server Settings
+              </button>
+              <div class="mx-[0.06rem] my-[0.22rem] h-px bg-line" role="separator" aria-hidden="true" />
+              <button
+                type="button"
+                class={`${workspaceMenuItemClass} text-ink-2 enabled:hover:bg-transparent enabled:hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-100`}
+                role="menuitem"
+                disabled
+                aria-label="Notification settings coming soon"
+              >
+                <span>Notification Settings</span>
+                <span class="text-[0.67rem] text-ink-2 tracking-[0.06em] uppercase">Soon</span>
+              </button>
+              <button
+                type="button"
+                class={`${workspaceMenuItemClass} text-ink-2 enabled:hover:bg-transparent enabled:hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-100`}
+                role="menuitem"
+                disabled
+                aria-label="Privacy settings coming soon"
+              >
+                <span>Privacy Settings</span>
+                <span class="text-[0.67rem] text-ink-2 tracking-[0.06em] uppercase">Soon</span>
+              </button>
+            </div>
+          </Show>
+        </header>
+        <p class="m-0 px-[0.52rem] text-[0.74rem] text-ink-2 capitalize">
+          {props.activeWorkspace
+            ? `${props.activeWorkspace.visibility} workspace`
+            : "Hardened workspace"}
+        </p>
+      </div>
 
       <Switch>
         <Match when={!props.activeWorkspace}>
@@ -261,7 +265,7 @@ export function ChannelRail(props: ChannelRailProps) {
               class="grid min-h-0 content-start gap-[0.86rem] overflow-auto pr-0"
             >
               <section class="mx-[-0.58rem] grid gap-[0.16rem]">
-                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between border-y border-line bg-bg-1 px-[1.08rem] py-[0.48rem]">
+                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between border-y border-line bg-bg-2 px-[1.08rem] py-[0.48rem]">
                   <p class="m-0 text-[0.73rem] text-ink-2 tracking-[0.08em] leading-none">
                     TEXT CHANNELS
                   </p>
@@ -304,7 +308,7 @@ export function ChannelRail(props: ChannelRailProps) {
               </section>
 
               <section class="mx-[-0.58rem] grid gap-[0.16rem]">
-                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between border-y border-line bg-bg-1 px-[1.08rem] py-[0.48rem]">
+                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between border-y border-line bg-bg-2 px-[1.08rem] py-[0.48rem]">
                   <p class="m-0 text-[0.73rem] text-ink-2 tracking-[0.08em] leading-none">
                     VOICE CHANNELS
                   </p>
@@ -512,7 +516,7 @@ export function ChannelRail(props: ChannelRailProps) {
 
             <Show when={props.canShowVoiceHeaderControls || props.isVoiceSessionActive}>
               <section
-                class="grid gap-[0.48rem] rounded-[0.72rem] border border-line bg-bg-1 p-[0.62rem]"
+                class="grid gap-[0.48rem] rounded-[0.72rem] border border-line-soft bg-bg-2 p-[0.62rem]"
                 aria-label="Voice connected dock"
               >
                 <div class="flex items-center justify-between gap-[0.5rem]">
@@ -695,7 +699,7 @@ export function ChannelRail(props: ChannelRailProps) {
             </Show>
 
             <footer
-              class="flex items-center justify-start gap-[0.5rem] rounded-[0.72rem] border border-line bg-bg-1 px-[0.52rem] py-[0.48rem]"
+              class="flex items-center justify-start gap-[0.5rem] rounded-[0.72rem] border border-line-soft bg-bg-2 px-[0.52rem] py-[0.48rem]"
               aria-label="Account controls"
             >
               <div class="inline-flex min-w-0 items-center gap-[0.45rem]">
@@ -747,7 +751,7 @@ export function ChannelRail(props: ChannelRailProps) {
               </div>
               <button
                 type="button"
-                class="ml-auto inline-flex h-[2.1rem] w-[2.1rem] shrink-0 items-center justify-center rounded-[0.56rem] border border-line bg-bg-3 p-0 text-ink-0 enabled:hover:bg-bg-4"
+                class="ml-auto inline-flex h-[2.1rem] w-[2.1rem] shrink-0 items-center justify-center rounded-[0.56rem] border border-line-soft bg-bg-3 p-0 text-ink-0 enabled:hover:bg-bg-4"
                 aria-label="Open client settings panel"
                 title="Client settings"
                 onClick={props.onOpenClientSettings}

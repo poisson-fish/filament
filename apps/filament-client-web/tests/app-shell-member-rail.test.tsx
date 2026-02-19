@@ -30,7 +30,7 @@ describe("app shell member rail", () => {
     const rail = document.querySelector("aside.member-rail");
     expect(rail).not.toBeNull();
     expect(rail).toHaveClass("grid");
-    expect(rail).toHaveClass("bg-bg-0");
+    expect(rail).toHaveClass("bg-bg-1");
 
     expect(screen.getByRole("heading", { name: "Workspace Tools" })).toHaveClass("m-0");
     expect(screen.getByText("Username")).toHaveClass("uppercase");
@@ -39,7 +39,7 @@ describe("app shell member rail", () => {
       name: "Open moderation panel",
     });
     expect(moderationButton).toHaveClass("rounded-[0.62rem]");
-    expect(moderationButton).toHaveClass("enabled:hover:bg-bg-4");
+    expect(moderationButton).toHaveClass("enabled:hover:bg-bg-3");
     expect(screen.getByText("Remote User").previousElementSibling).toHaveClass("bg-presence-online");
 
     expect(document.querySelector(".profile-card")).toBeNull();

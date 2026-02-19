@@ -53,17 +53,18 @@ describe("app shell server rail", () => {
     const rail = document.querySelector("aside.server-rail");
     expect(rail).not.toBeNull();
     expect(rail).toHaveClass("grid");
-    expect(rail).toHaveClass("bg-bg-0");
+    expect(rail).toHaveClass("bg-bg-1");
 
     const workspaceButton = screen.getByRole("button", { name: "S" });
     expect(workspaceButton).toHaveClass("bg-brand");
     expect(workspaceButton).toHaveClass("rounded-[0.9rem]");
+    expect(workspaceButton).toHaveClass("border-brand");
 
     const actionButton = screen.getByRole("button", {
       name: "Open public workspace directory panel",
     });
-    expect(actionButton).toHaveClass("bg-bg-3");
-    expect(actionButton).toHaveClass("hover:bg-bg-4");
+    expect(actionButton).toHaveClass("bg-bg-2");
+    expect(actionButton).toHaveClass("hover:bg-bg-3");
 
     expect(document.querySelector(".rail-label")).toBeNull();
     expect(document.querySelector(".server-list")).toBeNull();

@@ -65,7 +65,7 @@ export function MessageList(props: MessageListProps) {
   return (
     <section
       ref={handleListRef}
-      class="message-list flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-bg-1 px-[0.85rem] pt-[0.55rem] pb-[0.72rem] max-[900px]:px-[0.52rem] max-[900px]:pt-[0.5rem] max-[900px]:pb-[0.64rem]"
+      class="message-list flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-bg-2 px-[0.88rem] pt-[0.62rem] pb-[0.78rem] max-[900px]:px-[0.52rem] max-[900px]:pt-[0.5rem] max-[900px]:pb-[0.64rem]"
       aria-live="polite"
       onScroll={handleListScroll}
     >

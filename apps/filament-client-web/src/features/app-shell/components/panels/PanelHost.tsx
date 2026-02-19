@@ -101,7 +101,7 @@ export function PanelHost(props: PanelHostProps) {
         const panelWidthClassName = panelWindowWidthClassName(panelClassName);
         return (
           <div
-            class="panel-backdrop fixed inset-0 z-20 grid place-items-center bg-bg-0/50 backdrop-blur-sm p-[0.55rem] md:p-4"
+            class="panel-backdrop fixed inset-0 z-20 grid place-items-center bg-bg-0/74 backdrop-blur-[2px] p-[0.55rem] md:p-4"
             role="presentation"
             onClick={(event) => {
               if (event.target === event.currentTarget) {
@@ -110,12 +110,12 @@ export function PanelHost(props: PanelHostProps) {
             }}
           >
             <section
-              class={`${panelClassName} ${panelWidthClassName} max-h-[94vh] overflow-hidden rounded-[0.9rem] border border-line bg-bg-1/90 backdrop-blur-xl shadow-panel md:max-h-[min(88vh,50rem)] grid grid-rows-[auto_minmax(0,1fr)]`}
+              class={`${panelClassName} ${panelWidthClassName} max-h-[94vh] overflow-hidden rounded-[0.9rem] border border-line-soft bg-bg-1 shadow-panel md:max-h-[min(88vh,50rem)] grid grid-rows-[auto_minmax(0,1fr)]`}
               role="dialog"
               aria-modal="true"
               aria-label={`${props.panelTitle(panel)} panel`}
             >
-              <header class="panel-window-header flex items-center justify-between gap-2 border-b border-line px-[0.92rem] py-[0.78rem]">
+              <header class="panel-window-header flex items-center justify-between gap-2 border-b border-line-soft px-[0.92rem] py-[0.78rem]">
                 <h4 class="m-0">{props.panelTitle(panel)}</h4>
                 <button
                   class="inline-flex items-center justify-center rounded-[0.58rem] border border-line-soft bg-bg-3 px-[0.62rem] py-[0.38rem] text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-4 disabled:cursor-not-allowed disabled:opacity-60"

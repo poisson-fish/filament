@@ -51,16 +51,15 @@ interface ChatHeaderProps {
 
 export function ChatHeader(props: ChatHeaderProps) {
   const statusBadgeClass =
-    "inline-flex items-center rounded-full border px-[0.55rem] py-[0.15rem] text-[0.7rem] font-[600] tracking-[0.02em] leading-[1.2] shadow-sm";
-  
-  // Clean ghost-style button for the toolbar
+    "inline-flex items-center self-baseline rounded-full border px-[0.55rem] py-[0.15rem] text-[0.69rem] font-[700] tracking-[0.03em] leading-[1.1] shadow-sm";
+
   const headerIconButtonClass =
-    "inline-flex h-[2.1rem] w-[2.1rem] items-center justify-center rounded-[0.6rem] border border-transparent bg-transparent text-ink-2 transition-all duration-[140ms] ease-out hover:bg-bg-3 hover:text-ink-0 hover:border-line-soft hover:shadow-sm focus-visible:bg-bg-3 focus-visible:text-ink-0 focus-visible:border-line-soft focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40";
+    "inline-flex h-[2.1rem] w-[2.1rem] items-center justify-center rounded-[0.62rem] border border-line-soft bg-bg-3 text-ink-1 transition-all duration-[140ms] ease-out hover:bg-bg-4 hover:text-ink-0 focus-visible:bg-bg-4 focus-visible:text-ink-0 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
-    <header class="chat-header flex items-center justify-between gap-[0.8rem] border-b border-line px-[1.1rem] py-[0.8rem] bg-bg-2 [@media(max-width:900px)]:flex-col [@media(max-width:900px)]:items-start [@media(max-width:900px)]:gap-[0.6rem]">
-      <div class="min-w-0 flex flex-col gap-[0.1rem]">
-        <div class="flex items-center gap-[0.6rem]">
+    <header class="chat-header flex items-center justify-between gap-[0.8rem] border-b border-line px-[1.1rem] py-[0.8rem] bg-bg-1 [@media(max-width:900px)]:flex-col [@media(max-width:900px)]:items-start [@media(max-width:900px)]:gap-[0.6rem]">
+      <div class="min-w-0 flex flex-col gap-[0.16rem]">
+        <div class="flex items-baseline gap-[0.44rem]">
           <h3 class="m-0 text-[1.15rem] font-[700] leading-[1.2] tracking-[0.01em] text-ink-0">
             {props.activeChannel
               ? channelHeaderLabel({ kind: props.activeChannel.kind, name: props.activeChannel.name })
@@ -78,23 +77,26 @@ export function ChatHeader(props: ChatHeaderProps) {
           </span>
         </div>
         <Show when={props.canShowVoiceHeaderControls || props.isVoiceSessionActive}>
-             <p class="text-[0.75rem] text-ink-2 flex items-center gap-2">
-                <span classList={{
-                    "w-2 h-2 rounded-full": true,
-                    "bg-ink-2": props.voiceConnectionState === "disconnected",
-                    "bg-brand animate-pulse": props.voiceConnectionState === "connecting" || props.voiceConnectionState === "reconnecting",
-                    "bg-ok": props.voiceConnectionState === "connected",
-                    "bg-danger": props.voiceConnectionState === "error",
-                }}></span>
-                Voice {props.voiceConnectionState}
-             </p>
+          <p class="m-0 flex items-center gap-[0.38rem] text-[0.74rem] text-ink-2">
+            <span
+              classList={{
+                "h-[0.52rem] w-[0.52rem] rounded-full": true,
+                "bg-ink-2": props.voiceConnectionState === "disconnected",
+                "bg-brand animate-pulse":
+                  props.voiceConnectionState === "connecting" ||
+                  props.voiceConnectionState === "reconnecting",
+                "bg-ok": props.voiceConnectionState === "connected",
+                "bg-danger": props.voiceConnectionState === "error",
+              }}
+            />
+            Voice {props.voiceConnectionState}
+          </p>
         </Show>
       </div>
 
-      <div class="flex flex-wrap items-center justify-start gap-[0.4rem]">
-        
-        <div class="flex items-center gap-[0.2rem] pr-[0.4rem] border-r border-line/40 mr-[0.2rem]">
-             <button
+      <div class="flex flex-wrap items-center justify-start gap-[0.36rem]">
+        <div class="mr-[0.1rem] flex items-center gap-[0.2rem] border-r border-line/45 pr-[0.36rem]">
+          <button
               type="button"
               class={headerIconButtonClass}
               aria-label={props.isChannelRailCollapsed ? "Show channels" : "Hide channels"}
@@ -106,28 +108,28 @@ export function ChatHeader(props: ChatHeaderProps) {
                 style={`--icon-url: url("${TOGGLE_CHANNELS_ICON_URL}")`}
                 aria-hidden="true"
               />
-            </button>
-            <button
-              type="button"
-              class={headerIconButtonClass}
-              aria-label={
-                props.isMemberRailCollapsed
-                  ? "Show workspace tools rail"
-                  : "Hide workspace tools rail"
-              }
-              title={
-                props.isMemberRailCollapsed
-                  ? "Show workspace tools rail"
-                  : "Hide workspace tools rail"
-              }
-              onClick={props.onToggleMemberRail}
-            >
-              <span
-                class="icon-mask h-[1.1rem] w-[1.1rem]"
-                style={`--icon-url: url("${WORKSPACE_TOOLS_ICON_URL}")`}
-                aria-hidden="true"
-              />
-            </button>
+          </button>
+          <button
+            type="button"
+            class={headerIconButtonClass}
+            aria-label={
+              props.isMemberRailCollapsed
+                ? "Show workspace tools rail"
+                : "Hide workspace tools rail"
+            }
+            title={
+              props.isMemberRailCollapsed
+                ? "Show workspace tools rail"
+                : "Hide workspace tools rail"
+            }
+            onClick={props.onToggleMemberRail}
+          >
+            <span
+              class="icon-mask h-[1.1rem] w-[1.1rem]"
+              style={`--icon-url: url("${WORKSPACE_TOOLS_ICON_URL}")`}
+              aria-hidden="true"
+            />
+          </button>
         </div>
 
         <button
@@ -175,12 +177,11 @@ export function ChatHeader(props: ChatHeaderProps) {
             aria-hidden="true"
           />
         </button>
-        
-        <div class="w-px h-[1.4rem] bg-line/40 mx-[0.2rem]"></div>
+        <div class="mx-[0.14rem] h-[1.4rem] w-px bg-line/45" />
 
         <button
           type="button"
-          class={`${headerIconButtonClass} text-danger hover:bg-danger-panel hover:text-danger-ink hover:border-danger-panel-strong`}
+          class={`${headerIconButtonClass} border-danger-panel-strong bg-danger-panel text-danger-ink hover:bg-danger`}
           aria-label="Logout"
           title="Logout"
           onClick={props.onLogout}

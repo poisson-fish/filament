@@ -23,7 +23,7 @@
   align-content: start;
   gap: 0.66rem;
   overflow: auto;
-  background: #1d2129;
+  background: var(--bg-1);
 }
 
 
@@ -64,7 +64,7 @@
   }
 
   .server-rail {
-    border-right: 1px solid #2c3139;
+    border-right: 1px solid var(--line);
   }
 
   .chat-panel {
@@ -82,7 +82,7 @@
   position: fixed;
   inset: 0;
   padding: 0;
-  background: #111217;
+  background: var(--bg-0);
   overflow: hidden;
 }
 
@@ -98,7 +98,7 @@
   border: 0;
   border-radius: 0;
   grid-template-columns: 4.5rem 15.5rem minmax(0, 1fr) 15rem;
-  background: #1f2128;
+  background: var(--bg-1);
   overflow: hidden;
 }
 
@@ -115,9 +115,9 @@
 .chat-panel,
 .member-rail {
   border: 0;
-  border-right: 1px solid #2a2d34;
+  border-right: 1px solid var(--line);
   border-radius: 0;
-  background: #23252c;
+  background: var(--bg-1);
   backdrop-filter: none;
   box-shadow: none;
   min-width: 0;
@@ -127,7 +127,7 @@
 .chat-panel {
   display: grid;
   grid-template-rows: auto 1fr auto;
-  background: #313338;
+  background: var(--bg-1);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -162,7 +162,7 @@
 
 .member-rail {
   border-right: 0;
-  background: #22252d;
+  background: var(--bg-1);
 }
 
 @media (max-width: 1200px) {

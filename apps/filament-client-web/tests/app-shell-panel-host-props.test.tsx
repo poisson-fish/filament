@@ -446,12 +446,17 @@ describe("app shell panel host props adapter", () => {
     expect(backdrop).not.toBeNull();
     expect(backdrop?.className).toContain("fixed");
     expect(backdrop?.className).toContain("inset-0");
+    expect(backdrop?.className).toContain("bg-bg-0/74");
 
     const panelWindow = screen.getByRole("dialog", { name: "Workspace panel" });
     expect(panelWindow.className).toContain("panel-window");
     expect(panelWindow.className).toContain("panel-window-compact");
     expect(panelWindow.className).toContain("w-full");
     expect(panelWindow.className).toContain("md:w-[min(30rem,100%)]");
+    expect(panelWindow.className).toContain("bg-bg-1");
+    expect(panelWindow.className).toContain("border-line-soft");
+    expect(panelWindow.className).not.toContain("bg-bg-1/90");
+    expect(panelWindow.className).not.toContain("backdrop-blur-xl");
 
     const panelHeader = container.querySelector(".panel-window-header");
     expect(panelHeader).not.toBeNull();

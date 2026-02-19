@@ -48,7 +48,7 @@ describe("app shell message composer", () => {
     expect(composerForm).not.toBeNull();
     expect(composerForm).toHaveClass("grid");
     expect(composerForm).toHaveClass("border-t");
-    expect(composerForm).toHaveClass("bg-bg-1");
+    expect(composerForm).toHaveClass("bg-bg-2");
 
     const fileInput = document.querySelector(".composer-file-input");
     expect(fileInput).not.toBeNull();

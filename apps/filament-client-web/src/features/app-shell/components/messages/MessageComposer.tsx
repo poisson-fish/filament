@@ -22,11 +22,11 @@ export function MessageComposer(props: MessageComposerProps) {
   const isDisabled = () =>
     !props.activeChannel || props.isSendingMessage || !props.canAccessActiveChannel;
   const controlButtonClass =
-    "inline-flex min-h-[2.58rem] items-center justify-center border-0 bg-transparent px-[0.82rem] text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-4 disabled:cursor-not-allowed disabled:opacity-68";
+    "inline-flex min-h-[2.58rem] items-center justify-center border-0 bg-transparent px-[0.82rem] text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-3 disabled:cursor-not-allowed disabled:opacity-68";
 
   return (
     <form
-      class="composer grid grid-cols-[minmax(0,1fr)] items-stretch justify-items-stretch gap-[0.52rem] border-t border-line bg-bg-1 px-[0.9rem] pt-[0.68rem] pb-[0.86rem] max-[900px]:p-[0.52rem]"
+      class="composer grid grid-cols-[minmax(0,1fr)] items-stretch justify-items-stretch gap-[0.52rem] border-t border-line-soft bg-bg-2 px-[0.9rem] pt-[0.68rem] pb-[0.86rem] max-[900px]:p-[0.52rem]"
       onSubmit={props.onSubmit}
     >
       <input
@@ -36,7 +36,7 @@ export function MessageComposer(props: MessageComposerProps) {
         class="composer-file-input hidden"
         onInput={props.onAttachmentInput}
       />
-      <div class="grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-stretch overflow-hidden rounded-[0.56rem] border border-line-soft bg-bg-3 focus-within:border-line focus-within:shadow-[0_0_0_1px_var(--line)]">
+      <div class="grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-stretch overflow-hidden rounded-[0.62rem] border border-line-soft bg-bg-2 focus-within:border-line focus-within:shadow-[0_0_0_1px_var(--line)]">
         <button
           type="button"
           class={`${controlButtonClass} border-r border-line-soft text-[1.14rem] font-[700]`}
@@ -74,7 +74,7 @@ export function MessageComposer(props: MessageComposerProps) {
             {(file) => (
               <button
                 type="button"
-                class="inline-flex items-center rounded-[999px] border border-line-soft bg-bg-3 px-[0.62rem] py-[0.25rem] text-[0.78rem] text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-4"
+                class="inline-flex items-center rounded-[999px] border border-line-soft bg-bg-2 px-[0.62rem] py-[0.25rem] text-[0.78rem] text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-3"
                 onClick={() => props.onRemoveAttachment(file)}
                 title={`Remove ${file.name}`}
               >

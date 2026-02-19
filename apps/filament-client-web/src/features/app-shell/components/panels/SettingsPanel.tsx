@@ -43,23 +43,23 @@ export interface SettingsPanelProps {
 
 export function SettingsPanel(props: SettingsPanelProps) {
   const settingsNavButtonClass =
-    "w-full cursor-pointer rounded-[0.62rem] border border-line bg-bg-2 px-[0.6rem] py-[0.52rem] text-left text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60";
+    "w-full cursor-pointer rounded-[0.68rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.58rem] text-left text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60";
   const sectionLabelClassName =
     "m-0 text-[0.68rem] uppercase tracking-[0.08em] text-ink-2";
 
   const formLabelClass = "grid gap-[0.3rem] text-ink-1 text-[0.84rem] font-medium";
   const formInputClass =
-    "bg-bg-4 border border-line-soft rounded-[0.56rem] text-ink-0 px-[0.62rem] py-[0.55rem] focus:outline-none focus:border-brand-strong placeholder-ink-2";
+    "bg-bg-1 border border-line-soft rounded-[0.62rem] text-ink-0 px-[0.62rem] py-[0.55rem] focus:outline-none focus:border-brand-strong placeholder-ink-2";
   const formButtonClass =
-    "bg-bg-3 border border-line-soft rounded-[0.56rem] text-ink-1 px-[0.68rem] py-[0.44rem] font-medium hover:bg-bg-4 active:bg-bg-2 disabled:opacity-50 disabled:pointer-events-none transition-colors";
+    "bg-bg-3 border border-line-soft rounded-[0.62rem] text-ink-1 px-[0.72rem] py-[0.46rem] font-medium hover:bg-bg-4 active:bg-bg-2 disabled:opacity-50 disabled:pointer-events-none transition-colors";
 
   return (
     <section
-      class="grid min-h-[22rem] grid-cols-1 md:grid-cols-[14rem_minmax(0,1fr)] gap-[1.25rem] md:gap-[2rem]"
+      class="grid min-h-[24rem] grid-cols-1 gap-[0.95rem] md:grid-cols-[14.5rem_minmax(0,1fr)] md:gap-[1.05rem]"
       aria-label="settings"
     >
       <aside
-        class="grid content-start gap-[0.6rem] border-b border-line pb-[0.72rem] md:border-b-0 md:border-r md:pr-[1rem] md:pb-0"
+        class="grid content-start gap-[0.6rem] rounded-[0.78rem] border border-line bg-bg-2 p-[0.74rem]"
         aria-label="Settings category rail"
       >
         <p class={sectionLabelClassName}>CATEGORIES</p>
@@ -73,8 +73,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     type="button"
                     class={settingsNavButtonClass}
                     classList={{
-                      "border-brand/85": isActive(),
-                      "bg-brand/16": isActive(),
+                      "border-brand/85 bg-brand/20 text-ink-0": isActive(),
                     }}
                     onClick={() => props.onOpenSettingsCategory(category.id)}
                     aria-label={`Open ${category.label} settings category`}
@@ -89,15 +88,18 @@ export function SettingsPanel(props: SettingsPanelProps) {
           </For>
         </ul>
       </aside>
-      <section class="grid content-start gap-[0.6rem]" aria-label="Settings content pane">
+      <section
+        class="grid content-start gap-[0.7rem] rounded-[0.78rem] border border-line bg-bg-2 p-[0.8rem]"
+        aria-label="Settings content pane"
+      >
         <Switch>
           <Match when={props.activeSettingsCategory === "voice"}>
             <section
-              class="grid grid-cols-1 lg:grid-cols-[14rem_minmax(0,1fr)] gap-[1.25rem] lg:gap-[2rem]"
+              class="grid grid-cols-1 gap-[0.8rem] lg:grid-cols-[14.2rem_minmax(0,1fr)] lg:gap-[0.8rem]"
               aria-label="Voice settings submenu"
             >
               <aside
-                class="grid content-start gap-[0.6rem] border-b border-line pb-[0.72rem] lg:border-b-0 lg:border-r lg:pr-[1rem] lg:pb-0"
+                class="grid content-start gap-[0.6rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.66rem]"
                 aria-label="Voice settings submenu rail"
               >
                 <p class={sectionLabelClassName}>VOICE</p>
@@ -111,8 +113,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                             type="button"
                             class={settingsNavButtonClass}
                             classList={{
-                              "border-brand/85": isActive(),
-                              "bg-brand/16": isActive(),
+                              "border-brand/85 bg-brand/20 text-ink-0": isActive(),
                             }}
                             onClick={() => props.onOpenVoiceSettingsSubmenu(submenu.id)}
                             aria-label={`Open Voice ${submenu.label} submenu`}
@@ -127,7 +128,10 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   </For>
                 </ul>
               </aside>
-              <section class="grid content-start gap-[0.6rem]" aria-label="Voice settings submenu content">
+              <section
+                class="grid content-start gap-[0.6rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.72rem]"
+                aria-label="Voice settings submenu content"
+              >
                 <Switch>
                   <Match when={props.activeVoiceSettingsSubmenu === "audio-devices"}>
                     <p class={sectionLabelClassName}>AUDIO DEVICES</p>
@@ -305,7 +309,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     </span>
                     <div>
                       <p class="m-0 text-lg font-[760] text-ink-0 leading-tight">{profile().username}</p>
-                      <p class="m-0 mt-0.5 text-[0.8rem] font-code text-ink-2">{profile().userId}</p>
+                      <p class="m-0 mt-0.5 text-[0.82rem] font-code text-ink-2">{profile().userId}</p>
                     </div>
                   </div>
                   <SafeMarkdown
