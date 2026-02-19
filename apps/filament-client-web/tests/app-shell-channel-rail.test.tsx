@@ -107,8 +107,8 @@ describe("app shell channel rail", () => {
 
     const menuTrigger = screen.getByRole("button", { name: "Open workspace menu" });
     expect(menuTrigger).toHaveClass("w-full");
-    expect(menuTrigger).toHaveClass("border-line-soft");
-    expect(menuTrigger).toHaveClass("enabled:hover:bg-bg-3");
+    expect(menuTrigger).toHaveClass("border-transparent");
+    expect(menuTrigger).toHaveClass("enabled:hover:bg-bg-2");
     expect(screen.getByText("private workspace")).toHaveClass("px-[0.52rem]");
 
     await fireEvent.click(menuTrigger);

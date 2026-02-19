@@ -49,6 +49,18 @@ const SETTINGS_ICON_URL = new URL(
   "../../../../resource/coolicons.v4.1/cooliocns SVG/Interface/Settings.svg",
   import.meta.url,
 ).href;
+const WORKSPACE_DROPDOWN_ICON_URL = new URL(
+  "../../../../resource/coolicons.v4.1/cooliocns SVG/Arrow/Caret_Down_SM.svg",
+  import.meta.url,
+).href;
+const TEXT_CHANNEL_ICON_URL = new URL(
+  "../../../../resource/coolicons.v4.1/cooliocns SVG/Communication/Chat.svg",
+  import.meta.url,
+).href;
+const VOICE_CHANNEL_ICON_URL = new URL(
+  "../../../../resource/coolicons.v4.1/cooliocns SVG/User/User_Voice.svg",
+  import.meta.url,
+).href;
 interface ChannelRailProps {
   activeWorkspace: WorkspaceRecord | null;
   activeChannel: ChannelRecord | null;
@@ -174,7 +186,7 @@ export function ChannelRail(props: ChannelRailProps) {
         <header class="relative flex items-center justify-between gap-[0.5rem]">
           <button
             type="button"
-            class="w-full inline-flex min-h-[2.24rem] items-center justify-between gap-[0.48rem] rounded-[0.62rem] border border-line-soft bg-bg-2 px-[0.52rem] py-[0.38rem] text-left text-ink-0 enabled:cursor-pointer enabled:hover:bg-bg-3 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand"
+            class="w-full inline-flex min-h-[2.24rem] items-center justify-between gap-[0.48rem] rounded-[0.52rem] border border-transparent bg-transparent px-[0.52rem] py-[0.38rem] text-left text-ink-0 enabled:cursor-pointer enabled:hover:bg-bg-2 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand"
             aria-label="Open workspace menu"
             aria-haspopup="menu"
             aria-expanded={isWorkspaceMenuOpen()}
@@ -188,11 +200,12 @@ export function ChannelRail(props: ChannelRailProps) {
               {props.activeWorkspace?.guildName ?? "No Workspace"}
             </h2>
             <span
+              class="icon-mask h-[0.94rem] w-[0.94rem] shrink-0 text-ink-1 transition-transform duration-[140ms] ease-out"
               classList={{
-                "h-[0.52rem] w-[0.52rem] shrink-0 border-r-2 border-b-2 border-ink-1 transition-transform duration-[140ms] ease-out": true,
-                "rotate-45": !isWorkspaceMenuOpen(),
-                "-rotate-135": isWorkspaceMenuOpen(),
+                "rotate-0": !isWorkspaceMenuOpen(),
+                "rotate-180": isWorkspaceMenuOpen(),
               }}
+              style={`--icon-url: url("${WORKSPACE_DROPDOWN_ICON_URL}")`}
               aria-hidden="true"
             />
           </button>
@@ -295,11 +308,10 @@ export function ChannelRail(props: ChannelRailProps) {
                     >
                       <span class="inline-flex min-w-0 items-center gap-[0.45rem]">
                         <span
-                          class="inline-flex w-[1.15rem] shrink-0 justify-center text-[0.84rem] text-ink-2 font-[700]"
+                          class="icon-mask h-[0.94rem] w-[0.94rem] shrink-0 text-ink-2"
+                          style={`--icon-url: url("${TEXT_CHANNEL_ICON_URL}")`}
                           aria-hidden="true"
-                        >
-                          #
-                        </span>
+                        />
                         <span class="truncate">{channel.name}</span>
                       </span>
                     </button>
@@ -344,11 +356,10 @@ export function ChannelRail(props: ChannelRailProps) {
                             >
                               <span class="inline-flex min-w-0 items-center gap-[0.45rem]">
                                 <span
-                                  class="inline-flex w-[1.15rem] shrink-0 justify-center text-[0.62rem] text-ink-2 font-[700] tracking-[0.04em]"
+                                  class="icon-mask h-[0.94rem] w-[0.94rem] shrink-0 text-ink-2"
+                                  style={`--icon-url: url("${VOICE_CHANNEL_ICON_URL}")`}
                                   aria-hidden="true"
-                                >
-                                  VC
-                                </span>
+                                />
                                 <span class="truncate">{channel.name}</span>
                               </span>
                               <Show when={props.isVoiceSessionForChannel(channel.channelId)}>

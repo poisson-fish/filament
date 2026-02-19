@@ -55,9 +55,13 @@ describe("app shell message composer", () => {
     expect(fileInput).toHaveClass("hidden");
 
     const attachButton = screen.getByRole("button", { name: "Attach files" });
-    const sendButton = screen.getByRole("button", { name: "Send" });
+    const giftButton = screen.getByRole("button", { name: "Open gift picker" });
+    const gifButton = screen.getByRole("button", { name: "Open GIF picker" });
+    const emojiButton = screen.getByRole("button", { name: "Open emoji picker" });
     expect(attachButton).toHaveClass("border-r");
-    expect(sendButton).toHaveClass("border-l");
+    expect(giftButton).toHaveClass("h-[2.12rem]");
+    expect(gifButton).toHaveTextContent("GIF");
+    expect(emojiButton).toHaveClass("h-[2.12rem]");
 
     expect(document.querySelector(".composer-input-shell")).toBeNull();
     expect(document.querySelector(".composer-send-button")).toBeNull();
@@ -77,7 +81,9 @@ describe("app shell message composer", () => {
     );
 
     expect(screen.getByRole("button", { name: "Attach files" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open gift picker" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open GIF picker" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open emoji picker" })).toBeDisabled();
     expect(screen.getByPlaceholderText("Select channel")).toBeDisabled();
   });
 

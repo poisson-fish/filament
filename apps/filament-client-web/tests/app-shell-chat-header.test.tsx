@@ -48,10 +48,11 @@ describe("app shell chat header", () => {
     expect(header).toHaveClass("flex");
     expect(header).toHaveClass("border-b");
 
-    const title = screen.getByRole("heading", { name: "#incident-room" });
+    const title = screen.getByRole("heading", { name: "incident-room" });
     expect(title).toHaveClass("m-0");
     expect(title).toHaveClass("text-ink-0");
-    expect(title.parentElement).toHaveClass("items-baseline");
+    expect(title.parentElement).toHaveClass("items-center");
+    expect(title.previousElementSibling).toHaveClass("icon-mask");
 
     const gatewayBadge = screen.getByText("Live");
     expect(gatewayBadge).toHaveClass("rounded-full");

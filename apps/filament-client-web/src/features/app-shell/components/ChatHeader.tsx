@@ -1,6 +1,5 @@
 import { Show } from "solid-js";
 import type { ChannelRecord } from "../../../domain/chat";
-import { channelHeaderLabel } from "../helpers";
 import type { OverlayPanel } from "../types";
 
 const TOGGLE_CHANNELS_ICON_URL = new URL(
@@ -17,6 +16,14 @@ const DIRECTORY_ICON_URL = new URL(
 ).href;
 const FRIENDS_ICON_URL = new URL(
   "../../../../resource/coolicons.v4.1/cooliocns SVG/User/Users.svg",
+  import.meta.url,
+).href;
+const TEXT_CHANNEL_ICON_URL = new URL(
+  "../../../../resource/coolicons.v4.1/cooliocns SVG/Communication/Chat.svg",
+  import.meta.url,
+).href;
+const VOICE_CHANNEL_ICON_URL = new URL(
+  "../../../../resource/coolicons.v4.1/cooliocns SVG/User/User_Voice.svg",
   import.meta.url,
 ).href;
 const REFRESH_MESSAGES_ICON_URL = new URL(
@@ -52,6 +59,9 @@ interface ChatHeaderProps {
 export function ChatHeader(props: ChatHeaderProps) {
   const statusBadgeClass =
     "inline-flex items-center self-baseline rounded-full border px-[0.55rem] py-[0.15rem] text-[0.69rem] font-[700] tracking-[0.03em] leading-[1.1] shadow-sm";
+  const activeChannelLabel = () => props.activeChannel?.name ?? "no-channel";
+  const activeChannelIconUrl = () =>
+    props.activeChannel?.kind === "voice" ? VOICE_CHANNEL_ICON_URL : TEXT_CHANNEL_ICON_URL;
 
   const headerIconButtonClass =
     "inline-flex h-[2.1rem] w-[2.1rem] items-center justify-center rounded-[0.62rem] border border-line-soft bg-bg-3 text-ink-1 transition-all duration-[140ms] ease-out hover:bg-bg-4 hover:text-ink-0 focus-visible:bg-bg-4 focus-visible:text-ink-0 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40";
@@ -59,11 +69,14 @@ export function ChatHeader(props: ChatHeaderProps) {
   return (
     <header class="chat-header flex items-center justify-between gap-[0.8rem] border-b border-line px-[1.1rem] py-[0.8rem] bg-bg-1 [@media(max-width:900px)]:flex-col [@media(max-width:900px)]:items-start [@media(max-width:900px)]:gap-[0.6rem]">
       <div class="min-w-0 flex flex-col gap-[0.16rem]">
-        <div class="flex items-baseline gap-[0.44rem]">
-          <h3 class="m-0 text-[1.15rem] font-[700] leading-[1.2] tracking-[0.01em] text-ink-0">
-            {props.activeChannel
-              ? channelHeaderLabel({ kind: props.activeChannel.kind, name: props.activeChannel.name })
-              : "#no-channel"}
+        <div class="flex items-center gap-[0.52rem]">
+          <span
+            class="icon-mask h-[1.08rem] w-[1.08rem] shrink-0 text-ink-2"
+            style={`--icon-url: url("${activeChannelIconUrl()}")`}
+            aria-hidden="true"
+          />
+          <h3 class="m-0 text-[1.06rem] font-[760] leading-[1.2] tracking-[0.01em] text-ink-0">
+            {activeChannelLabel()}
           </h3>
           <span
             classList={{

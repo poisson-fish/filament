@@ -3,6 +3,27 @@ import type { JSX } from "solid-js";
 import type { ChannelRecord } from "../../../../domain/chat";
 import { channelRailLabel, formatBytes } from "../../helpers";
 
+const ATTACH_ICON_URL = new URL(
+  "../../../../../resource/coolicons.v4.1/cooliocns SVG/Edit/Add_Plus.svg",
+  import.meta.url,
+).href;
+const TEXT_CHANNEL_ICON_URL = new URL(
+  "../../../../../resource/coolicons.v4.1/cooliocns SVG/Communication/Chat.svg",
+  import.meta.url,
+).href;
+const VOICE_CHANNEL_ICON_URL = new URL(
+  "../../../../../resource/coolicons.v4.1/cooliocns SVG/User/User_Voice.svg",
+  import.meta.url,
+).href;
+const GIFT_ICON_URL = new URL(
+  "../../../../../resource/coolicons.v4.1/cooliocns SVG/Interface/Gift.svg",
+  import.meta.url,
+).href;
+const EMOJI_ICON_URL = new URL(
+  "../../../../../resource/coolicons.v4.1/cooliocns SVG/Interface/Star.svg",
+  import.meta.url,
+).href;
+
 export interface MessageComposerProps {
   activeChannel: ChannelRecord | null;
   canAccessActiveChannel: boolean;
@@ -21,8 +42,12 @@ export interface MessageComposerProps {
 export function MessageComposer(props: MessageComposerProps) {
   const isDisabled = () =>
     !props.activeChannel || props.isSendingMessage || !props.canAccessActiveChannel;
+  const activeChannelIconUrl = () =>
+    props.activeChannel?.kind === "voice" ? VOICE_CHANNEL_ICON_URL : TEXT_CHANNEL_ICON_URL;
   const controlButtonClass =
-    "inline-flex min-h-[2.58rem] items-center justify-center border-0 bg-transparent px-[0.82rem] text-ink-1 transition-colors duration-[140ms] ease-out hover:bg-bg-3 disabled:cursor-not-allowed disabled:opacity-68";
+    "inline-flex min-h-[2.7rem] items-center justify-center border-0 bg-transparent px-[0.78rem] text-ink-2 transition-colors duration-[140ms] ease-out enabled:hover:bg-bg-3 enabled:hover:text-ink-0 disabled:cursor-not-allowed disabled:opacity-68";
+  const utilityButtonClass =
+    "inline-flex h-[2.12rem] items-center justify-center rounded-[0.48rem] border-0 bg-transparent px-[0.5rem] text-ink-2 transition-colors duration-[140ms] ease-out enabled:hover:bg-bg-3 enabled:hover:text-ink-0 disabled:cursor-not-allowed disabled:opacity-68";
 
   return (
     <form
@@ -36,20 +61,29 @@ export function MessageComposer(props: MessageComposerProps) {
         class="composer-file-input hidden"
         onInput={props.onAttachmentInput}
       />
-      <div class="grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-stretch overflow-hidden rounded-[0.62rem] border border-line-soft bg-bg-2 focus-within:border-line focus-within:shadow-[0_0_0_1px_var(--line)]">
+      <div class="grid w-full min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center overflow-hidden rounded-[0.82rem] border border-line-soft bg-bg-1 focus-within:border-line focus-within:shadow-[0_0_0_1px_var(--line)]">
         <button
           type="button"
-          class={`${controlButtonClass} border-r border-line-soft text-[1.14rem] font-[700]`}
+          class={`${controlButtonClass} border-r border-line-soft`}
           onClick={props.onOpenAttachmentPicker}
           disabled={isDisabled()}
           aria-label="Attach files"
           title="Attach files"
         >
-          +
+          <span
+            class="icon-mask h-[1.06rem] w-[1.06rem]"
+            style={`--icon-url: url("${ATTACH_ICON_URL}")`}
+            aria-hidden="true"
+          />
         </button>
+        <span
+          class="icon-mask mx-[0.62rem] h-[0.98rem] w-[0.98rem] shrink-0 text-ink-2"
+          style={`--icon-url: url("${activeChannelIconUrl()}")`}
+          aria-hidden="true"
+        />
         <input
           ref={props.composerInputRef}
-          class="w-full min-w-0 border-0 bg-transparent px-[0.78rem] text-ink-0 outline-none placeholder:text-ink-2 disabled:cursor-not-allowed disabled:opacity-68"
+          class="w-full min-w-0 border-0 bg-transparent pl-0 pr-[0.64rem] text-ink-0 outline-none placeholder:text-ink-2 disabled:cursor-not-allowed disabled:opacity-68"
           value={props.composerValue}
           onInput={(event) => props.onComposerInput(event.currentTarget.value)}
           maxlength="2000"
@@ -60,13 +94,55 @@ export function MessageComposer(props: MessageComposerProps) {
           }
           disabled={isDisabled()}
         />
-        <button
-          type="submit"
-          class={`${controlButtonClass} min-w-[4.2rem] border-l border-line-soft text-[0.9rem] font-[760] leading-none tracking-[0.01em]`}
-          disabled={isDisabled()}
-        >
-          {props.isSendingMessage ? "Sending..." : "Send"}
-        </button>
+        <div class="inline-flex items-center gap-[0.1rem] border-l border-line-soft px-[0.34rem]">
+          <button
+            type="button"
+            class={utilityButtonClass}
+            aria-label="Open gift picker"
+            title="Gift"
+            disabled={isDisabled()}
+            onClick={(event) => event.preventDefault()}
+          >
+            <span
+              class="icon-mask h-[1rem] w-[1rem]"
+              style={`--icon-url: url("${GIFT_ICON_URL}")`}
+              aria-hidden="true"
+            />
+          </button>
+          <button
+            type="button"
+            class={`${utilityButtonClass} min-w-[2.2rem] px-[0.48rem] text-[0.66rem] font-[760] leading-none tracking-[0.04em]`}
+            aria-label="Open GIF picker"
+            title="GIF"
+            disabled={isDisabled()}
+            onClick={(event) => event.preventDefault()}
+          >
+            GIF
+          </button>
+          <button
+            type="button"
+            class={utilityButtonClass}
+            aria-label="Open emoji picker"
+            title="Emoji"
+            disabled={isDisabled()}
+            onClick={(event) => event.preventDefault()}
+          >
+            <span
+              class="icon-mask h-[0.96rem] w-[0.96rem]"
+              style={`--icon-url: url("${EMOJI_ICON_URL}")`}
+              aria-hidden="true"
+            />
+          </button>
+          <button
+            type="submit"
+            class="h-0 w-0 overflow-hidden border-0 p-0 opacity-0"
+            tabIndex={-1}
+            aria-label={props.isSendingMessage ? "Sending..." : "Send message"}
+            disabled={isDisabled()}
+          >
+            {props.isSendingMessage ? "Sending..." : "Send"}
+          </button>
+        </div>
       </div>
       <Show when={props.composerAttachments.length > 0}>
         <div class="flex flex-wrap gap-[0.4rem]">
