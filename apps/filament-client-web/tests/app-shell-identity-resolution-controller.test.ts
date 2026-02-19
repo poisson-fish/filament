@@ -63,6 +63,7 @@ describe("app shell identity resolution controller", () => {
           identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAD.remote",
           isLocal: false,
           isMuted: false,
+          isDeafened: false,
           isSpeaking: false,
           hasCamera: false,
           hasScreenShare: false,

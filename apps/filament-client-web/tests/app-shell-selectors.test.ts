@@ -327,7 +327,10 @@ describe("app shell selectors", () => {
       harness.setVoiceParticipantsByChannel({
         [channelKey(GUILD_A, VOICE_A)]: [
           {
+            userId: "user1",
             identity: localIdentity,
+            joinedAtUnix: Date.now(),
+            updatedAtUnix: Date.now(),
             isMuted: false,
             isDeafened: false,
             isSpeaking: false,
@@ -335,7 +338,10 @@ describe("app shell selectors", () => {
             isScreenShareEnabled: true,
           },
           {
+            userId: "user2",
             identity: remoteIdentity,
+            joinedAtUnix: Date.now(),
+            updatedAtUnix: Date.now(),
             isMuted: true,
             isDeafened: true,
             isSpeaking: false,
