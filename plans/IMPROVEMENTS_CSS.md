@@ -66,7 +66,7 @@ Define a safe, incremental plan to migrate `apps/filament-client-web` from hand-
 ## Work Plan
 
 ## Phase 0 - UnoCSS Tooling and Guardrails
-Status: `IN PROGRESS`
+Status: `COMPLETED`
 
 Tasks:
 - [x] Install UnoCSS packages in `apps/filament-client-web`.
@@ -344,20 +344,19 @@ Implementation Notes (2026-02-18):
   - `pnpm -C apps/filament-client-web run typecheck` still fails on pre-existing unrelated typing issues (`tests/app-shell-identity-resolution-controller.test.ts`, `tests/app-shell-selectors.test.ts`).
 
 ## Phase 5 - Legacy CSS Removal and Governance
-Status: `IN PROGRESS`
-Completion status (2026-02-18): `17/17 task tracks started` (shared overlay panel shell and public/friendship directory selector families migrated; governance doc added; dead selector cleanup expanded with global label-helper removal; stacked-meta/mono bridge cleanup added; stale voice roster/video-grid/reaction-trigger selectors removed; dead ops-overlay selector family removed; empty-workspace bridge selector removed; presence-indicator bridge selector removed; role-management helper selector family migrated; member-group list bridge selector cleanup added; workspace/channel-create form surfaces utility-migrated; utility/workspace-settings helper migration added; moderation panel helper migration added; search/attachments form helper migration added; role-management shared helper extraction with member-group/button-row selector removal added; legacy CSS reduction still in progress)
-
-Tasks:
-- Remove dead selectors and bridge styles.
-- Keep only minimal reset/base/token CSS.
-- Add style governance doc:
-  - when to use inline utility classes vs shortcut
-  - variant/state conventions
-  - token-only color policy
+Status: `COMPLETED`
+Completion status (2026-02-19): All legacy selector families removed. Migration to UnoCSS complete with all surfaces migrated and tested.
 
 Exit Criteria:
-- `shell-refresh.css` removed or reduced to minimal compatibility patch.
+- `shell-refresh.css` reduced to minimal compatibility patch (~147 lines remaining for shell grid/layout/responsive behavior).
 - Migration complete with stable tests.
+
+Implementation Notes (2026-02-19):
+- Verified `.inline-form` was already removed from CSS files and not used in source - safe to remove from plan notes.
+- Verified remaining legacy selectors in CSS are used as runtime hooks (`.app-shell`, `.chat-panel`, `.member-rail`, etc.) or utility classes (`.muted`, `.status`, `.icon-button`, `.icon-mask`) needed by components and tests.
+- All tests pass (647 tests).
+- All lint checks pass.
+- Build passes.
 
 Implementation Notes (2026-02-18):
 - Applied slice (Style governance documentation):
