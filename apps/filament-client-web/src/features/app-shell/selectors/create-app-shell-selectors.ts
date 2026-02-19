@@ -366,13 +366,15 @@ export function createAppShellSelectors(
       return [];
     }
     const key = channelKey(activeGuildId, channelId);
+    const isActiveVoiceSessionChannel =
+      isVoiceSessionActive() && options.voiceSessionChannelKey() === key;
+    const snapshot = options.rtcSnapshot();
     const synced = options.voiceParticipantsByChannel()[key];
     if (synced && synced.length > 0) {
-      const snapshot = options.rtcSnapshot();
       const localIdentity = snapshot.localParticipantIdentity;
       const localMedia = localMediaState(snapshot);
       const activeSpeakers = new Set(snapshot.activeSpeakerIdentities);
-      return synced.map((entry) => ({
+      const mapped = synced.map((entry) => ({
         identity: entry.identity,
         isLocal: entry.identity === localIdentity,
         isMuted:
@@ -390,12 +392,30 @@ export function createAppShellSelectors(
             ? localMedia.hasScreenShare
             : entry.isScreenShareEnabled,
       }));
+      if (!isActiveVoiceSessionChannel) {
+        return mapped;
+      }
+      const mergedByIdentity = new Map(mapped.map((entry) => [entry.identity, entry]));
+      for (const rtcEntry of buildVoiceRosterEntries(snapshot)) {
+        const existing = mergedByIdentity.get(rtcEntry.identity);
+        if (!existing) {
+          mergedByIdentity.set(rtcEntry.identity, rtcEntry);
+          continue;
+        }
+        mergedByIdentity.set(rtcEntry.identity, {
+          ...existing,
+          isLocal: existing.isLocal || rtcEntry.isLocal,
+          isMuted: rtcEntry.isLocal ? rtcEntry.isMuted : existing.isMuted,
+          isDeafened: rtcEntry.isLocal ? rtcEntry.isDeafened : existing.isDeafened,
+          isSpeaking: existing.isSpeaking || rtcEntry.isSpeaking,
+          hasCamera: existing.hasCamera || rtcEntry.hasCamera,
+          hasScreenShare: existing.hasScreenShare || rtcEntry.hasScreenShare,
+        });
+      }
+      return [...mergedByIdentity.values()];
     }
-    if (
-      isVoiceSessionActive() &&
-      options.voiceSessionChannelKey() === key
-    ) {
-      return buildVoiceRosterEntries(options.rtcSnapshot());
+    if (isActiveVoiceSessionChannel) {
+      return buildVoiceRosterEntries(snapshot);
     }
     return [];
   };

@@ -254,11 +254,31 @@ function voiceChannelKey(guildId: GuildId, channelId: ChannelId): string {
   return `${guildId}|${channelId}`;
 }
 
+function voiceParticipantMatches(
+  entry: VoiceParticipantPayload,
+  candidate: {
+    userId: string;
+    identity: string;
+  },
+): boolean {
+  return entry.identity === candidate.identity || entry.userId === candidate.userId;
+}
+
+function findVoiceParticipantIndex(
+  participants: VoiceParticipantPayload[],
+  candidate: {
+    userId: string;
+    identity: string;
+  },
+): number {
+  return participants.findIndex((entry) => voiceParticipantMatches(entry, candidate));
+}
+
 function mergeVoiceParticipants(
   existing: VoiceParticipantPayload[],
   nextParticipant: VoiceParticipantPayload,
 ): VoiceParticipantPayload[] {
-  const index = existing.findIndex((entry) => entry.identity === nextParticipant.identity);
+  const index = findVoiceParticipantIndex(existing, nextParticipant);
   if (index < 0) {
     return [...existing, nextParticipant];
   }
@@ -275,9 +295,26 @@ function applyVoiceParticipantSyncState(
   existing: Record<string, VoiceParticipantPayload[]>,
   payload: VoiceParticipantSyncPayload,
 ): Record<string, VoiceParticipantPayload[]> {
+  const key = voiceChannelKey(payload.guildId, payload.channelId);
+  const currentParticipants = existing[key] ?? [];
+  let syncedParticipants: VoiceParticipantPayload[] = [];
+  for (const participant of payload.participants) {
+    syncedParticipants = mergeVoiceParticipants(syncedParticipants, participant);
+  }
+  for (const participant of currentParticipants) {
+    const participantIncludedInSync = syncedParticipants.some((syncedEntry) =>
+      voiceParticipantMatches(syncedEntry, participant),
+    );
+    if (participantIncludedInSync) {
+      continue;
+    }
+    if (participant.updatedAtUnix > payload.syncedAtUnix) {
+      syncedParticipants = mergeVoiceParticipants(syncedParticipants, participant);
+    }
+  }
   return {
     ...existing,
-    [voiceChannelKey(payload.guildId, payload.channelId)]: payload.participants,
+    [key]: syncedParticipants,
   };
 }
 
@@ -302,11 +339,12 @@ function applyVoiceParticipantLeaveState(
   if (!participants) {
     return existing;
   }
-  const next = participants.filter(
-    (entry) =>
-      entry.userId !== payload.userId &&
-      entry.identity !== payload.identity,
-  );
+  const next = participants.filter((entry) => {
+    if (!voiceParticipantMatches(entry, payload)) {
+      return true;
+    }
+    return payload.leftAtUnix < entry.updatedAtUnix;
+  });
   if (next.length === participants.length) {
     return existing;
   }
@@ -325,7 +363,7 @@ function applyVoiceParticipantUpdateState(
   if (!participants) {
     return existing;
   }
-  const index = participants.findIndex((entry) => entry.identity === payload.identity);
+  const index = findVoiceParticipantIndex(participants, payload);
   if (index < 0) {
     return existing;
   }
@@ -335,6 +373,8 @@ function applyVoiceParticipantUpdateState(
   }
   const nextParticipant: VoiceParticipantPayload = {
     ...current,
+    userId: payload.userId,
+    identity: payload.identity,
     updatedAtUnix: payload.updatedAtUnix,
     isMuted: payload.updatedFields.isMuted ?? current.isMuted,
     isDeafened: payload.updatedFields.isDeafened ?? current.isDeafened,
@@ -360,13 +400,18 @@ function applyVoiceStreamPublishedState(
   if (!participants) {
     return existing;
   }
-  const index = participants.findIndex((entry) => entry.identity === payload.identity);
+  const index = findVoiceParticipantIndex(participants, payload);
   if (index < 0) {
     return existing;
   }
   const current = participants[index]!;
+  if (payload.publishedAtUnix < current.updatedAtUnix) {
+    return existing;
+  }
   const nextParticipant = {
     ...current,
+    userId: payload.userId,
+    identity: payload.identity,
     updatedAtUnix: Math.max(current.updatedAtUnix, payload.publishedAtUnix),
     isVideoEnabled:
       payload.stream === "camera" ? true : current.isVideoEnabled,
@@ -390,13 +435,18 @@ function applyVoiceStreamUnpublishedState(
   if (!participants) {
     return existing;
   }
-  const index = participants.findIndex((entry) => entry.identity === payload.identity);
+  const index = findVoiceParticipantIndex(participants, payload);
   if (index < 0) {
     return existing;
   }
   const current = participants[index]!;
+  if (payload.unpublishedAtUnix < current.updatedAtUnix) {
+    return existing;
+  }
   const nextParticipant = {
     ...current,
+    userId: payload.userId,
+    identity: payload.identity,
     updatedAtUnix: Math.max(current.updatedAtUnix, payload.unpublishedAtUnix),
     isVideoEnabled:
       payload.stream === "camera" ? false : current.isVideoEnabled,

@@ -445,12 +445,53 @@ describe("app shell gateway controller", () => {
       ],
       syncedAtUnix: 6,
     });
+    handlers.onVoiceParticipantUpdate({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session.current-2",
+      updatedFields: { isMuted: true },
+      updatedAtUnix: 7,
+    });
+    expect(voiceParticipantsByChannel()[`${GUILD_ID}|${CHANNEL_ID}`]).toEqual([
+      {
+        userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+        identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session.current-2",
+        joinedAtUnix: 6,
+        updatedAtUnix: 7,
+        isMuted: true,
+        isDeafened: false,
+        isSpeaking: false,
+        isVideoEnabled: false,
+        isScreenShareEnabled: false,
+      },
+    ]);
     handlers.onVoiceParticipantLeave({
       guildId: GUILD_ID,
       channelId: CHANNEL_ID,
       userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
       identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session.stale",
-      leftAtUnix: 7,
+      leftAtUnix: 6,
+    });
+    expect(voiceParticipantsByChannel()[`${GUILD_ID}|${CHANNEL_ID}`]).toEqual([
+      {
+        userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+        identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session.current-2",
+        joinedAtUnix: 6,
+        updatedAtUnix: 7,
+        isMuted: true,
+        isDeafened: false,
+        isSpeaking: false,
+        isVideoEnabled: false,
+        isScreenShareEnabled: false,
+      },
+    ]);
+    handlers.onVoiceParticipantLeave({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+      identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.session.stale",
+      leftAtUnix: 8,
     });
     expect(voiceParticipantsByChannel()[`${GUILD_ID}|${CHANNEL_ID}`]).toEqual([]);
 

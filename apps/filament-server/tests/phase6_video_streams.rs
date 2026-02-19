@@ -294,7 +294,7 @@ async fn media_token_filters_publish_sources_and_enforces_subscribe_permissions(
 }
 
 #[tokio::test]
-async fn media_token_enforces_subscribe_cap_and_video_publish_churn_limit() {
+async fn media_token_refreshes_subscribe_lease_and_enforces_video_publish_churn_limit() {
     let app = test_app(1, 1);
     let owner = register_and_login(&app, "phase6_owner_limits", "203.0.113.163").await;
     let channel =
@@ -330,10 +330,7 @@ async fn media_token_enforces_subscribe_cap_and_video_publish_churn_limit() {
         ))
         .expect("subscribe token request should build");
     let second_subscribe_response = app.clone().oneshot(second_subscribe_only).await.unwrap();
-    assert_eq!(
-        second_subscribe_response.status(),
-        StatusCode::TOO_MANY_REQUESTS
-    );
+    assert_eq!(second_subscribe_response.status(), StatusCode::OK);
 
     let first_video_publish = Request::builder()
         .method("POST")
@@ -369,4 +366,57 @@ async fn media_token_enforces_subscribe_cap_and_video_publish_churn_limit() {
         second_video_response.status(),
         StatusCode::TOO_MANY_REQUESTS
     );
+}
+
+#[tokio::test]
+async fn voice_leave_releases_subscribe_lease_for_fast_rejoin() {
+    let app = test_app(200, 1);
+    let owner = register_and_login(&app, "phase6_owner_leave", "203.0.113.164").await;
+    let channel =
+        create_channel_context(&app, &owner, "203.0.113.164", "Phase 6 Leave Guild").await;
+
+    let first_subscribe_only = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/voice/token",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.164")
+        .body(Body::from(
+            json!({"can_publish": false, "can_subscribe": true}).to_string(),
+        ))
+        .expect("subscribe token request should build");
+    let first_subscribe_response = app.clone().oneshot(first_subscribe_only).await.unwrap();
+    assert_eq!(first_subscribe_response.status(), StatusCode::OK);
+
+    let leave_request = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/voice/leave",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("x-forwarded-for", "203.0.113.164")
+        .body(Body::empty())
+        .expect("voice leave request should build");
+    let leave_response = app.clone().oneshot(leave_request).await.unwrap();
+    assert_eq!(leave_response.status(), StatusCode::NO_CONTENT);
+
+    let second_subscribe_only = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/voice/token",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.164")
+        .body(Body::from(
+            json!({"can_publish": false, "can_subscribe": true}).to_string(),
+        ))
+        .expect("subscribe token request should build");
+    let second_subscribe_response = app.clone().oneshot(second_subscribe_only).await.unwrap();
+    assert_eq!(second_subscribe_response.status(), StatusCode::OK);
 }

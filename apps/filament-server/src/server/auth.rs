@@ -547,6 +547,11 @@ pub(crate) async fn enforce_media_subscribe_cap(
     let mut leases = state.media_subscribe_leases.write().await;
     let channel_leases = leases.entry(key).or_default();
     channel_leases.retain(|timestamp| *timestamp > now);
+    if let Some(first_lease) = channel_leases.first_mut() {
+        *first_lease = expires_at;
+        channel_leases.truncate(1);
+        return Ok(());
+    }
     if channel_leases.len() >= state.runtime.media_subscribe_token_cap_per_channel {
         tracing::warn!(
             event = "media.subscribe.cap_reached",
@@ -558,6 +563,22 @@ pub(crate) async fn enforce_media_subscribe_cap(
     }
     channel_leases.push(expires_at);
     Ok(())
+}
+
+pub(crate) async fn release_media_subscribe_lease_for_channel(
+    state: &AppState,
+    user_id: UserId,
+    path: &ChannelPath,
+) {
+    let key = media_channel_user_key(user_id, path);
+    let mut leases = state.media_subscribe_leases.write().await;
+    leases.remove(&key);
+}
+
+pub(crate) async fn release_media_subscribe_leases_for_user(state: &AppState, user_id: UserId) {
+    let user_prefix = format!("{user_id}:");
+    let mut leases = state.media_subscribe_leases.write().await;
+    leases.retain(|key, _| !key.starts_with(&user_prefix));
 }
 
 pub(crate) fn media_channel_user_key(user_id: UserId, path: &ChannelPath) -> String {
@@ -644,8 +665,10 @@ mod tests {
     #[test]
     fn captcha_config_includes_site_key_for_siteverify_binding() {
         let mut config = AppConfig::default();
-        config.captcha_hcaptcha_site_key = Some(String::from("10000000-ffff-ffff-ffff-000000000001"));
-        config.captcha_hcaptcha_secret = Some(String::from("0x0000000000000000000000000000000000000000"));
+        config.captcha_hcaptcha_site_key =
+            Some(String::from("10000000-ffff-ffff-ffff-000000000001"));
+        config.captcha_hcaptcha_secret =
+            Some(String::from("0x0000000000000000000000000000000000000000"));
 
         let captcha = build_captcha_config(&config)
             .expect("captcha config should build")

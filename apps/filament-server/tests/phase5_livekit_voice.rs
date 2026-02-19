@@ -207,6 +207,51 @@ async fn voice_token_is_scoped_signed_and_short_lived() {
 }
 
 #[tokio::test]
+async fn voice_token_identity_is_stable_for_same_user_and_channel() {
+    let app = test_app(20);
+    let owner = register_and_login(&app, "phase5_owner_stable", "203.0.113.155").await;
+    let channel = create_channel_context(
+        &app,
+        &owner,
+        "203.0.113.155",
+        "Phase 5 Stable Identity Guild",
+    )
+    .await;
+
+    let build_request = || {
+        Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/guilds/{}/channels/{}/voice/token",
+                channel.guild_id, channel.channel_id
+            ))
+            .header("authorization", format!("Bearer {}", owner.access_token))
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", "203.0.113.155")
+            .body(Body::from(json!({}).to_string()))
+            .expect("voice token request should build")
+    };
+
+    let first_response = app
+        .clone()
+        .oneshot(build_request())
+        .await
+        .expect("first voice token request should execute");
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_body: VoiceTokenResponse = parse_json_body(first_response).await;
+
+    let second_response = app
+        .clone()
+        .oneshot(build_request())
+        .await
+        .expect("second voice token request should execute");
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second_body: VoiceTokenResponse = parse_json_body(second_response).await;
+
+    assert_eq!(first_body.identity, second_body.identity);
+}
+
+#[tokio::test]
 async fn voice_token_enforces_channel_permissions_and_rate_limits() {
     let app = test_app(1);
     let owner = register_and_login(&app, "phase5_owner2", "203.0.113.152").await;

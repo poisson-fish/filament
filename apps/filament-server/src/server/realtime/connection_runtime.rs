@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::server::{
-    auth::now_unix,
+    auth::{now_unix, release_media_subscribe_leases_for_user},
     core::{
         AppState, VoiceStreamKind, MAX_TRACKED_VOICE_CHANNELS,
         MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
@@ -293,6 +293,7 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
     let followups = plan_disconnect_followups(outcome, removed_presence.user_id);
 
     if followups.remove_voice_participants {
+        release_media_subscribe_leases_for_user(state, removed_presence.user_id).await;
         remove_disconnected_user_voice_participants(state, removed_presence.user_id, now_unix())
             .await;
     }

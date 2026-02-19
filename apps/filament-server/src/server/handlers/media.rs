@@ -22,6 +22,7 @@ use crate::server::{
         allowed_publish_sources, authenticate, dedup_publish_sources,
         enforce_media_publish_rate_limit, enforce_media_subscribe_cap,
         enforce_media_token_rate_limit, extract_client_ip, now_unix,
+        release_media_subscribe_lease_for_channel,
     },
     core::{AppState, AttachmentRecord, MAX_MIME_SNIFF_BYTES},
     domain::{
@@ -355,8 +356,11 @@ pub(crate) async fn issue_voice_token(
         path.guild_id, path.channel_id
     ))
     .map_err(|_| AuthFailure::Internal)?;
-    let identity = LiveKitIdentity::try_from(format!("u.{}.{}", auth.user_id, Ulid::new()))
-        .map_err(|_| AuthFailure::Internal)?;
+    let identity = LiveKitIdentity::try_from(format!(
+        "u.{}.{}.{}",
+        auth.user_id, path.guild_id, path.channel_id
+    ))
+    .map_err(|_| AuthFailure::Internal)?;
 
     let mut grants = VideoGrants {
         room_join: true,
@@ -501,6 +505,7 @@ pub(crate) async fn leave_voice_channel(
         "voice.leave",
     )
     .await?;
+    release_media_subscribe_lease_for_channel(&state, auth.user_id, &path).await;
 
     remove_voice_participant_for_channel(
         &state,
