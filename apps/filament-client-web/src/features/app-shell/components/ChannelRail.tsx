@@ -173,7 +173,7 @@ export function ChannelRail(props: ChannelRailProps) {
   const channelGroupActionClass =
     "inline-flex h-[1.2rem] w-[1.2rem] items-center justify-center rounded-[0.35rem] border-0 bg-transparent p-0 text-[1rem] leading-none text-ink-2 enabled:hover:bg-bg-3 enabled:hover:text-ink-0";
   const channelRowBaseClass =
-    "w-full min-h-[2rem] inline-flex items-center justify-between gap-[0.4rem] rounded-[0.52rem] border-0 px-[0.52rem] py-[0.28rem] text-left transition-colors duration-[120ms] ease-out";
+    "w-full min-h-[2rem] inline-flex items-center justify-between gap-[0.4rem] rounded-[0.52rem] border-0 pl-[0.74rem] pr-[0.52rem] py-[0.28rem] text-left transition-colors duration-[120ms] ease-out";
   const voiceDockIconButtonClass =
     "inline-flex h-[2.2rem] w-[2.45rem] items-center justify-center rounded-[0.56rem] border border-line-soft bg-bg-2 p-0 text-ink-0 enabled:hover:bg-bg-3 disabled:cursor-default disabled:opacity-58";
   const voiceDockIconMaskClass = "icon-mask h-[1.05rem] w-[1.05rem]";
