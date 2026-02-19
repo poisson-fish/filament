@@ -55,11 +55,11 @@ export function SettingsPanel(props: SettingsPanelProps) {
 
   return (
     <section
-      class="grid min-h-[18rem] grid-cols-[minmax(10rem,12rem)_minmax(0,1fr)] gap-[0.88rem] max-[900px]:min-h-0 max-[900px]:grid-cols-1 max-[900px]:gap-[0.72rem]"
+      class="grid min-h-[22rem] grid-cols-1 md:grid-cols-[14rem_minmax(0,1fr)] gap-[1.25rem] md:gap-[2rem]"
       aria-label="settings"
     >
       <aside
-        class="grid content-start gap-[0.6rem] border-r border-line pr-[0.88rem] max-[900px]:border-r-0 max-[900px]:border-b max-[900px]:pr-0 max-[900px]:pb-[0.72rem]"
+        class="grid content-start gap-[0.6rem] border-b border-line pb-[0.72rem] md:border-b-0 md:border-r md:pr-[1rem] md:pb-0"
         aria-label="Settings category rail"
       >
         <p class={sectionLabelClassName}>CATEGORIES</p>
@@ -80,8 +80,8 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     aria-label={`Open ${category.label} settings category`}
                     aria-current={isActive() ? "page" : undefined}
                   >
-                    <span class="text-[0.84rem] font-[700]">{category.label}</span>
-                    <span class="muted text-[0.74rem]">{category.summary}</span>
+                    <div class="text-[0.88rem] font-[700] text-ink-0">{category.label}</div>
+                    <div class="muted mt-[0.15rem] text-[0.76rem] font-normal leading-[1.3]">{category.summary}</div>
                   </button>
                 </li>
               );
@@ -93,11 +93,11 @@ export function SettingsPanel(props: SettingsPanelProps) {
         <Switch>
           <Match when={props.activeSettingsCategory === "voice"}>
             <section
-              class="grid grid-cols-[minmax(10rem,12rem)_minmax(0,1fr)] gap-[0.88rem] max-[900px]:grid-cols-1 max-[900px]:gap-[0.72rem]"
+              class="grid grid-cols-1 lg:grid-cols-[14rem_minmax(0,1fr)] gap-[1.25rem] lg:gap-[2rem]"
               aria-label="Voice settings submenu"
             >
               <aside
-                class="grid content-start gap-[0.6rem] border-r border-line pr-[0.88rem] max-[900px]:border-r-0 max-[900px]:border-b max-[900px]:pr-0 max-[900px]:pb-[0.72rem]"
+                class="grid content-start gap-[0.6rem] border-b border-line pb-[0.72rem] lg:border-b-0 lg:border-r lg:pr-[1rem] lg:pb-0"
                 aria-label="Voice settings submenu rail"
               >
                 <p class={sectionLabelClassName}>VOICE</p>
@@ -118,8 +118,8 @@ export function SettingsPanel(props: SettingsPanelProps) {
                             aria-label={`Open Voice ${submenu.label} submenu`}
                             aria-current={isActive() ? "page" : undefined}
                           >
-                            <span class="text-[0.84rem] font-[700]">{submenu.label}</span>
-                            <span class="muted text-[0.74rem]">{submenu.summary}</span>
+                            <div class="text-[0.88rem] font-[700] text-ink-0">{submenu.label}</div>
+                            <div class="muted mt-[0.15rem] text-[0.76rem] font-normal leading-[1.3]">{submenu.summary}</div>
                           </button>
                         </li>
                       );
@@ -172,14 +172,16 @@ export function SettingsPanel(props: SettingsPanelProps) {
                           </For>
                         </select>
                       </label>
-                      <button
-                        type="button"
-                        class={formButtonClass}
-                        onClick={() => void props.onRefreshAudioDeviceInventory()}
-                        disabled={props.isRefreshingAudioDevices}
-                      >
-                        {props.isRefreshingAudioDevices ? "Refreshing..." : "Refresh devices"}
-                      </button>
+                      <div class="flex pt-2">
+                        <button
+                          type="button"
+                          class={formButtonClass}
+                          onClick={() => void props.onRefreshAudioDeviceInventory()}
+                          disabled={props.isRefreshingAudioDevices}
+                        >
+                          {props.isRefreshingAudioDevices ? "Refreshing..." : "Refresh devices"}
+                        </button>
+                      </div>
                     </form>
                     <Show when={props.audioDevicesStatus}>
                       <p class="status ok">{props.audioDevicesStatus}</p>
@@ -279,11 +281,11 @@ export function SettingsPanel(props: SettingsPanelProps) {
             </Show>
             <Show when={props.profile}>
               {(profile) => (
-                <section class="grid gap-[0.55rem] rounded-[0.72rem] border border-line bg-bg-1 p-[0.7rem]">
+                <section class="grid gap-[0.75rem] rounded-[0.8rem] border border-line bg-bg-2 p-[1rem] shadow-sm">
                   <p class={sectionLabelClassName}>PROFILE PREVIEW</p>
-                  <div class="flex items-center gap-[0.6rem]">
+                  <div class="flex items-center gap-[0.8rem]">
                     <span
-                      class="relative inline-flex h-[2.4rem] w-[2.4rem] items-center justify-center overflow-hidden rounded-full border border-line-soft bg-gradient-to-br from-bg-4 to-bg-3 text-[0.78rem] font-[780] text-ink-0"
+                      class="relative inline-flex h-[3.2rem] w-[3.2rem] items-center justify-center overflow-hidden rounded-full border border-line-soft bg-gradient-to-br from-bg-4 to-bg-3 text-[1rem] font-[780] text-ink-0 shadow-sm"
                       aria-hidden="true"
                     >
                       <span class="z-[1]">{profile().username.slice(0, 1).toUpperCase()}</span>
@@ -302,12 +304,12 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       </Show>
                     </span>
                     <div>
-                      <p class="m-0 font-[760] text-ink-0">{profile().username}</p>
-                      <p class="m-0 text-[0.78rem] font-code text-ink-2">{profile().userId}</p>
+                      <p class="m-0 text-lg font-[760] text-ink-0 leading-tight">{profile().username}</p>
+                      <p class="m-0 mt-0.5 text-[0.8rem] font-code text-ink-2">{profile().userId}</p>
                     </div>
                   </div>
                   <SafeMarkdown
-                    class="leading-[1.4] text-ink-1 [&_ol]:m-[0.4rem_0_0.4rem_1.15rem] [&_ol]:p-0 [&_p+p]:mt-[0.45rem] [&_p]:m-0 [&_ul]:m-[0.4rem_0_0.4rem_1.15rem] [&_ul]:p-0"
+                    class="leading-[1.5] text-ink-1 [&_ol]:m-[0.5rem_0_0.5rem_1.2rem] [&_ol]:p-0 [&_p+p]:mt-[0.6rem] [&_p]:m-0 [&_ul]:m-[0.5rem_0_0.5rem_1.2rem] [&_ul]:p-0 rounded-[0.5rem] bg-bg-3 p-[0.75rem]"
                     tokens={profile().aboutMarkdownTokens}
                   />
                 </section>
