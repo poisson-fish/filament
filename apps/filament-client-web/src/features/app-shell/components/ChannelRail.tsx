@@ -306,9 +306,9 @@ export function ChannelRail(props: ChannelRailProps) {
                       aria-label={channelRailLabel({ kind: channel.kind, name: channel.name })}
                       onClick={() => props.onSelectChannel(channel.channelId)}
                     >
-                      <span class="inline-flex min-w-0 items-center gap-[0.45rem]">
+                      <span class="inline-flex min-w-0 items-center gap-[0.64rem]">
                         <span
-                          class="icon-mask h-[0.94rem] w-[0.94rem] shrink-0 pr-[0.08rem] text-ink-2"
+                          class="icon-mask h-[0.94rem] w-[0.94rem] shrink-0 text-ink-2"
                           style={`--icon-url: url("${TEXT_CHANNEL_ICON_URL}")`}
                           aria-hidden="true"
                         />
@@ -354,9 +354,9 @@ export function ChannelRail(props: ChannelRailProps) {
                               aria-label={channelRailLabel({ kind: channel.kind, name: channel.name })}
                               onClick={() => props.onSelectChannel(channel.channelId)}
                             >
-                              <span class="inline-flex min-w-0 items-center gap-[0.45rem]">
+                              <span class="inline-flex min-w-0 items-center gap-[0.64rem]">
                                 <span
-                                  class="icon-mask h-[0.94rem] w-[0.94rem] shrink-0 pr-[0.08rem] text-ink-2"
+                                  class="icon-mask h-[0.94rem] w-[0.94rem] shrink-0 text-ink-2"
                                   style={`--icon-url: url("${VOICE_CHANNEL_ICON_URL}")`}
                                   aria-hidden="true"
                                 />
