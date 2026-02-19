@@ -51,80 +51,85 @@ interface ChatHeaderProps {
 
 export function ChatHeader(props: ChatHeaderProps) {
   const statusBadgeClass =
-    "inline-flex items-center rounded-full border px-[0.45rem] py-[0.2rem] text-[0.72rem] leading-[1.2]";
+    "inline-flex items-center rounded-full border px-[0.55rem] py-[0.15rem] text-[0.7rem] font-[600] tracking-[0.02em] leading-[1.2] shadow-sm";
+  
+  // Clean ghost-style button for the toolbar
   const headerIconButtonClass =
-    "inline-flex h-[2rem] w-[2rem] items-center justify-center rounded-[0.5rem] border border-line bg-bg-3 p-0 text-ink-1 transition-colors duration-[120ms] ease-out enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
+    "inline-flex h-[2.1rem] w-[2.1rem] items-center justify-center rounded-[0.6rem] border border-transparent bg-transparent text-ink-2 transition-all duration-[140ms] ease-out hover:bg-bg-3 hover:text-ink-0 hover:border-line-soft hover:shadow-sm focus-visible:bg-bg-3 focus-visible:text-ink-0 focus-visible:border-line-soft focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
-    <header class="chat-header flex items-center justify-between gap-[0.68rem] border-b border-line px-[0.95rem] py-[0.74rem] [@media(max-width:900px)]:flex-col [@media(max-width:900px)]:items-start [@media(max-width:900px)]:gap-[0.48rem]">
-      <div class="min-w-0">
-        <h3 class="m-0 text-[1.24rem] font-[780] leading-[1.2] tracking-[0.005em] text-ink-0">
-          {props.activeChannel
-            ? channelHeaderLabel({ kind: props.activeChannel.kind, name: props.activeChannel.name })
-            : "#no-channel"}
-        </h3>
-        <p class="mt-[0.14rem] text-[0.8rem] text-ink-2">
-          Gateway {props.gatewayOnline ? "connected" : "disconnected"}
-        </p>
-      </div>
-      <div class="flex flex-wrap items-center justify-start gap-[0.28rem]">
-        <span
-          classList={{
-            [statusBadgeClass]: true,
-            "border-ok bg-bg-3 text-ok": props.gatewayOnline,
-            "border-danger bg-bg-3 text-danger": !props.gatewayOnline,
-          }}
-        >
-          {props.gatewayOnline ? "Live" : "Offline"}
-        </span>
-        <Show when={props.canShowVoiceHeaderControls || props.isVoiceSessionActive}>
+    <header class="chat-header flex items-center justify-between gap-[0.8rem] border-b border-line px-[1.1rem] py-[0.8rem] bg-bg-2 [@media(max-width:900px)]:flex-col [@media(max-width:900px)]:items-start [@media(max-width:900px)]:gap-[0.6rem]">
+      <div class="min-w-0 flex flex-col gap-[0.1rem]">
+        <div class="flex items-center gap-[0.6rem]">
+          <h3 class="m-0 text-[1.15rem] font-[700] leading-[1.2] tracking-[0.01em] text-ink-0">
+            {props.activeChannel
+              ? channelHeaderLabel({ kind: props.activeChannel.kind, name: props.activeChannel.name })
+              : "#no-channel"}
+          </h3>
           <span
             classList={{
               [statusBadgeClass]: true,
-              "border-line bg-bg-3 text-ink-1": props.voiceConnectionState === "disconnected",
-              "border-brand bg-bg-3 text-brand":
-                props.voiceConnectionState === "connecting" || props.voiceConnectionState === "reconnecting",
-              "border-ok bg-bg-3 text-ok": props.voiceConnectionState === "connected",
-              "border-danger bg-bg-3 text-danger": props.voiceConnectionState === "error",
+              "border-transparent bg-ok text-bg-0 shadow-sm": props.gatewayOnline,
+              "border-transparent bg-danger text-danger-ink shadow-sm": !props.gatewayOnline,
             }}
+            title={props.gatewayOnline ? "Gateway connected" : "Gateway disconnected"}
           >
-            Voice {props.voiceConnectionState}
+            {props.gatewayOnline ? "Live" : "Offline"}
           </span>
+        </div>
+        <Show when={props.canShowVoiceHeaderControls || props.isVoiceSessionActive}>
+             <p class="text-[0.75rem] text-ink-2 flex items-center gap-2">
+                <span classList={{
+                    "w-2 h-2 rounded-full": true,
+                    "bg-ink-2": props.voiceConnectionState === "disconnected",
+                    "bg-brand animate-pulse": props.voiceConnectionState === "connecting" || props.voiceConnectionState === "reconnecting",
+                    "bg-ok": props.voiceConnectionState === "connected",
+                    "bg-danger": props.voiceConnectionState === "error",
+                }}></span>
+                Voice {props.voiceConnectionState}
+             </p>
         </Show>
-        <button
-          type="button"
-          class={headerIconButtonClass}
-          aria-label={props.isChannelRailCollapsed ? "Show channels" : "Hide channels"}
-          title={props.isChannelRailCollapsed ? "Show channels" : "Hide channels"}
-          onClick={props.onToggleChannelRail}
-        >
-          <span
-            class="icon-mask h-[1rem] w-[1rem]"
-            style={`--icon-url: url("${TOGGLE_CHANNELS_ICON_URL}")`}
-            aria-hidden="true"
-          />
-        </button>
-        <button
-          type="button"
-          class={headerIconButtonClass}
-          aria-label={
-            props.isMemberRailCollapsed
-              ? "Show workspace tools rail"
-              : "Hide workspace tools rail"
-          }
-          title={
-            props.isMemberRailCollapsed
-              ? "Show workspace tools rail"
-              : "Hide workspace tools rail"
-          }
-          onClick={props.onToggleMemberRail}
-        >
-          <span
-            class="icon-mask h-[1rem] w-[1rem]"
-            style={`--icon-url: url("${WORKSPACE_TOOLS_ICON_URL}")`}
-            aria-hidden="true"
-          />
-        </button>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-start gap-[0.4rem]">
+        
+        <div class="flex items-center gap-[0.2rem] pr-[0.4rem] border-r border-line/40 mr-[0.2rem]">
+             <button
+              type="button"
+              class={headerIconButtonClass}
+              aria-label={props.isChannelRailCollapsed ? "Show channels" : "Hide channels"}
+              title={props.isChannelRailCollapsed ? "Show channels" : "Hide channels"}
+              onClick={props.onToggleChannelRail}
+            >
+              <span
+                class="icon-mask h-[1.1rem] w-[1.1rem]"
+                style={`--icon-url: url("${TOGGLE_CHANNELS_ICON_URL}")`}
+                aria-hidden="true"
+              />
+            </button>
+            <button
+              type="button"
+              class={headerIconButtonClass}
+              aria-label={
+                props.isMemberRailCollapsed
+                  ? "Show workspace tools rail"
+                  : "Hide workspace tools rail"
+              }
+              title={
+                props.isMemberRailCollapsed
+                  ? "Show workspace tools rail"
+                  : "Hide workspace tools rail"
+              }
+              onClick={props.onToggleMemberRail}
+            >
+              <span
+                class="icon-mask h-[1.1rem] w-[1.1rem]"
+                style={`--icon-url: url("${WORKSPACE_TOOLS_ICON_URL}")`}
+                aria-hidden="true"
+              />
+            </button>
+        </div>
+
         <button
           type="button"
           class={headerIconButtonClass}
@@ -132,7 +137,7 @@ export function ChatHeader(props: ChatHeaderProps) {
           title="Directory"
           onClick={() => props.onOpenPanel("public-directory")}
         >
-          <span class="icon-mask h-[1rem] w-[1rem]" style={`--icon-url: url("${DIRECTORY_ICON_URL}")`} aria-hidden="true" />
+          <span class="icon-mask h-[1.1rem] w-[1.1rem]" style={`--icon-url: url("${DIRECTORY_ICON_URL}")`} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -141,7 +146,7 @@ export function ChatHeader(props: ChatHeaderProps) {
           title="Friends"
           onClick={() => props.onOpenPanel("friendships")}
         >
-          <span class="icon-mask h-[1rem] w-[1rem]" style={`--icon-url: url("${FRIENDS_ICON_URL}")`} aria-hidden="true" />
+          <span class="icon-mask h-[1.1rem] w-[1.1rem]" style={`--icon-url: url("${FRIENDS_ICON_URL}")`} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -151,7 +156,7 @@ export function ChatHeader(props: ChatHeaderProps) {
           onClick={props.onRefreshMessages}
         >
           <span
-            class="icon-mask h-[1rem] w-[1rem]"
+            class="icon-mask h-[1.1rem] w-[1.1rem]"
             style={`--icon-url: url("${REFRESH_MESSAGES_ICON_URL}")`}
             aria-hidden="true"
           />
@@ -165,19 +170,22 @@ export function ChatHeader(props: ChatHeaderProps) {
           disabled={props.isRefreshingSession}
         >
           <span
-            class="icon-mask h-[1rem] w-[1rem]"
+            class={`icon-mask h-[1.1rem] w-[1.1rem] ${props.isRefreshingSession ? "animate-spin" : ""}`}
             style={`--icon-url: url("${REFRESH_SESSION_ICON_URL}")`}
             aria-hidden="true"
           />
         </button>
+        
+        <div class="w-px h-[1.4rem] bg-line/40 mx-[0.2rem]"></div>
+
         <button
           type="button"
-          class={`${headerIconButtonClass} border-danger-panel-strong bg-danger-panel text-danger-ink enabled:hover:bg-danger-panel-strong`}
+          class={`${headerIconButtonClass} text-danger hover:bg-danger-panel hover:text-danger-ink hover:border-danger-panel-strong`}
           aria-label="Logout"
           title="Logout"
           onClick={props.onLogout}
         >
-          <span class="icon-mask h-[1rem] w-[1rem]" style={`--icon-url: url("${LOGOUT_ICON_URL}")`} aria-hidden="true" />
+          <span class="icon-mask h-[1.1rem] w-[1.1rem]" style={`--icon-url: url("${LOGOUT_ICON_URL}")`} aria-hidden="true" />
         </button>
       </div>
     </header>
