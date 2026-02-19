@@ -446,7 +446,8 @@ describe("app shell panel host props adapter", () => {
     expect(backdrop).not.toBeNull();
     expect(backdrop?.className).toContain("fixed");
     expect(backdrop?.className).toContain("inset-0");
-    expect(backdrop?.className).toContain("bg-bg-0/74");
+    expect(backdrop?.className).toContain("bg-bg-0/44");
+    expect(backdrop?.className).toContain("backdrop-blur-[5px]");
 
     const panelWindow = screen.getByRole("dialog", { name: "Workspace panel" });
     expect(panelWindow.className).toContain("panel-window");
@@ -465,6 +466,29 @@ describe("app shell panel host props adapter", () => {
     const panelBody = container.querySelector(".panel-window-body");
     expect(panelBody).not.toBeNull();
     expect(panelBody?.className).toContain("overflow-auto");
+  });
+
+  it("uses wide window sizing for client settings overlays", () => {
+    const propGroups = buildPanelHostPropGroups(baseOptions());
+
+    render(() => (
+      <PanelHost
+        panel="client-settings"
+        canCloseActivePanel={true}
+        canManageWorkspaceChannels={true}
+        canAccessActiveChannel={true}
+        hasRoleManagementAccess={true}
+        hasModerationAccess={true}
+        panelTitle={() => "Client settings"}
+        panelClassName={() => "panel-window panel-window-wide"}
+        onClose={vi.fn()}
+        {...propGroups}
+      />
+    ));
+
+    const panelWindow = screen.getByRole("dialog", { name: "Client settings panel" });
+    expect(panelWindow.className).toContain("panel-window-wide");
+    expect(panelWindow.className).toContain("md:w-[min(58rem,100%)]");
   });
 
   it("composes panel groups from panel-scoped builders without mapping drift", () => {

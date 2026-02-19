@@ -55,7 +55,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
 
   return (
     <section
-      class="grid min-h-[24rem] grid-cols-1 gap-[0.95rem] md:grid-cols-[14.5rem_minmax(0,1fr)] md:gap-[1.05rem]"
+      class="grid grid-cols-1 items-start gap-[0.95rem] md:grid-cols-[14.5rem_minmax(0,1fr)] md:gap-[1.05rem]"
       aria-label="settings"
     >
       <aside
@@ -89,13 +89,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
         </ul>
       </aside>
       <section
-        class="grid content-start gap-[0.7rem] rounded-[0.78rem] border border-line bg-bg-2 p-[0.8rem]"
+        class="grid min-w-0 content-start gap-[0.7rem] rounded-[0.78rem] border border-line bg-bg-2 p-[0.8rem]"
         aria-label="Settings content pane"
       >
         <Switch>
           <Match when={props.activeSettingsCategory === "voice"}>
             <section
-              class="grid grid-cols-1 gap-[0.8rem] lg:grid-cols-[14.2rem_minmax(0,1fr)] lg:gap-[0.8rem]"
+              class="grid grid-cols-1 items-start gap-[0.8rem] xl:grid-cols-[14.2rem_minmax(0,1fr)] xl:gap-[0.8rem]"
               aria-label="Voice settings submenu"
             >
               <aside
@@ -129,7 +129,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 </ul>
               </aside>
               <section
-                class="grid content-start gap-[0.6rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.72rem]"
+                class="grid min-w-0 content-start gap-[0.6rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.72rem]"
                 aria-label="Voice settings submenu content"
               >
                 <Switch>

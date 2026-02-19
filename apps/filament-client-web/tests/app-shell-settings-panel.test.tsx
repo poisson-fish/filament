@@ -77,7 +77,7 @@ describe("app shell settings panel", () => {
 
     const layout = screen.getByLabelText("settings");
     expect(layout).toHaveClass("grid");
-    expect(layout).toHaveClass("min-h-[24rem]");
+    expect(layout).toHaveClass("items-start");
 
     const categoryRail = screen.getByLabelText("Settings category rail");
     expect(categoryRail).toHaveClass("rounded-[0.78rem]");

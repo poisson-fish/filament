@@ -89,6 +89,9 @@ function panelWindowWidthClassName(panelClassName: string): string {
   if (panelClassName.includes("panel-window-medium")) {
     return "w-full md:w-[min(42rem,100%)]";
   }
+  if (panelClassName.includes("panel-window-wide")) {
+    return "w-full md:w-[min(58rem,100%)]";
+  }
   return "w-full md:w-[min(52rem,100%)]";
 }
 
@@ -101,7 +104,7 @@ export function PanelHost(props: PanelHostProps) {
         const panelWidthClassName = panelWindowWidthClassName(panelClassName);
         return (
           <div
-            class="panel-backdrop fixed inset-0 z-20 grid place-items-center bg-bg-0/74 backdrop-blur-[2px] p-[0.55rem] md:p-4"
+            class="panel-backdrop fixed inset-0 z-20 grid place-items-center bg-bg-0/44 backdrop-blur-[5px] p-[0.55rem] md:p-4"
             role="presentation"
             onClick={(event) => {
               if (event.target === event.currentTarget) {

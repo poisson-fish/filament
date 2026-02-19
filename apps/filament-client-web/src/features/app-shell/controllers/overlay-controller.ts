@@ -66,8 +66,10 @@ export function overlayPanelClassName(panel: OverlayPanel): string {
   if (panel === "workspace-create" || panel === "channel-create") {
     return "panel-window panel-window-compact";
   }
+  if (panel === "client-settings") {
+    return "panel-window panel-window-wide";
+  }
   if (
-    panel === "client-settings" ||
     panel === "workspace-settings" ||
     panel === "public-directory" ||
     panel === "friendships"
