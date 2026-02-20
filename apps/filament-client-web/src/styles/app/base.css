@@ -57,7 +57,7 @@ select {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
-  grid-template-columns: 3.5rem 16rem 1fr 17rem;
+  grid-template-columns: 3.2rem 16rem 1fr 17rem;
   gap: 0.82rem;
   padding: 0.82rem;
 }

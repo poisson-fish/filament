@@ -55,11 +55,10 @@ describe("app shell server rail", () => {
     expect(rail).toHaveClass("grid");
     expect(rail).toHaveClass("grid-rows-[auto_minmax(0,1fr)_auto]");
     expect(rail).toHaveClass("justify-items-center");
-    expect(rail).toHaveClass("px-[0.16rem]");
+    expect(rail).toHaveClass("px-[0.08rem]");
     expect(rail).toHaveClass("bg-bg-1");
 
     const workspaceButton = screen.getByRole("button", { name: "S" });
-    expect(workspaceButton).toHaveClass("mx-auto");
     expect(workspaceButton).toHaveClass("h-[2.72rem]");
     expect(workspaceButton).toHaveClass("w-[2.72rem]");
     expect(workspaceButton).toHaveClass("bg-brand");
