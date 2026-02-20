@@ -16,11 +16,11 @@ export function ServerRail(props: ServerRailProps) {
 
   return (
     <aside
-      class="server-rail grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] justify-items-center gap-[0.38rem] bg-bg-1 px-[0.08rem] py-[0.5rem]"
+      class="server-rail grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] justify-items-start gap-[0.38rem] bg-bg-1 px-0 py-[0.5rem]"
       aria-label="servers"
     >
-      <header class="m-0 text-center text-[0.58rem] tracking-[0.18em] text-ink-2">WS</header>
-      <div class="grid min-h-0 content-start justify-items-center gap-[0.3rem] overflow-y-auto overscroll-contain">
+      <header class="m-0 justify-self-center text-center text-[0.58rem] tracking-[0.18em] text-ink-2">WS</header>
+      <div class="grid min-h-0 content-start justify-items-start gap-[0.3rem] overflow-y-auto overscroll-contain">
         <For each={props.workspaces}>
           {(workspace) => (
             <button
@@ -37,7 +37,7 @@ export function ServerRail(props: ServerRailProps) {
           )}
         </For>
       </div>
-      <div class="grid justify-items-center gap-[0.3rem] pt-[0.04rem]">
+      <div class="grid justify-items-start gap-[0.3rem] pt-[0.04rem]">
         <button
           type="button"
           class={`${railButtonClass} text-[1rem] hover:bg-bg-3 disabled:cursor-default disabled:opacity-62`}

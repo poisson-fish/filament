@@ -54,8 +54,8 @@ describe("app shell server rail", () => {
     expect(rail).not.toBeNull();
     expect(rail).toHaveClass("grid");
     expect(rail).toHaveClass("grid-rows-[auto_minmax(0,1fr)_auto]");
-    expect(rail).toHaveClass("justify-items-center");
-    expect(rail).toHaveClass("px-[0.08rem]");
+    expect(rail).toHaveClass("justify-items-start");
+    expect(rail).toHaveClass("px-0");
     expect(rail).toHaveClass("bg-bg-1");
 
     const workspaceButton = screen.getByRole("button", { name: "S" });
