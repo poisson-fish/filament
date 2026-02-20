@@ -12,15 +12,15 @@ export interface ServerRailProps {
 
 export function ServerRail(props: ServerRailProps) {
   const railButtonClass =
-    "inline-flex h-[3.05rem] w-[3.05rem] items-center justify-center rounded-[1rem] border border-line-soft bg-bg-2 text-ink-0 font-[800] leading-none transition-colors duration-[120ms] ease-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand";
+    "mx-auto inline-flex h-[2.72rem] w-[2.72rem] shrink-0 items-center justify-center rounded-[0.9rem] border border-line-soft bg-bg-2 text-ink-0 font-[800] leading-none transition-colors duration-[120ms] ease-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-brand";
 
   return (
     <aside
-      class="server-rail flex min-h-0 flex-col items-center gap-[0.52rem] bg-bg-1 py-[0.7rem]"
+      class="server-rail grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] justify-items-center gap-[0.44rem] bg-bg-1 px-[0.16rem] py-[0.56rem]"
       aria-label="servers"
     >
       <header class="m-0 text-center text-[0.58rem] tracking-[0.18em] text-ink-2">WS</header>
-      <div class="flex flex-col items-center gap-[0.38rem] w-full">
+      <div class="grid min-h-0 w-full content-start justify-items-center gap-[0.34rem] overflow-y-auto overscroll-contain">
         <For each={props.workspaces}>
           {(workspace) => (
             <button
@@ -37,7 +37,7 @@ export function ServerRail(props: ServerRailProps) {
           )}
         </For>
       </div>
-      <div class="mt-auto flex flex-col items-center gap-[0.38rem] w-full">
+      <div class="grid w-full justify-items-center gap-[0.34rem] pt-[0.08rem]">
         <button
           type="button"
           class={`${railButtonClass} text-[1rem] hover:bg-bg-3 disabled:cursor-default disabled:opacity-62`}
