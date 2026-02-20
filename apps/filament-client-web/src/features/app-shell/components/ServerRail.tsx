@@ -16,20 +16,19 @@ export function ServerRail(props: ServerRailProps) {
 
   return (
     <aside
-      class="server-rail grid min-h-0 content-start gap-[0.52rem] bg-bg-1 px-[0.5rem] py-[0.7rem]"
+      class="server-rail flex min-h-0 flex-col items-center gap-[0.52rem] bg-bg-1 py-[0.7rem]"
       aria-label="servers"
     >
       <header class="m-0 text-center text-[0.58rem] tracking-[0.18em] text-ink-2">WS</header>
-      <div class="grid content-start gap-[0.38rem]">
+      <div class="flex flex-col items-center gap-[0.38rem] w-full">
         <For each={props.workspaces}>
           {(workspace) => (
             <button
               title={`${workspace.guildName} (${workspace.visibility})`}
-              class={`${railButtonClass} ${
-                props.activeGuildId === workspace.guildId
+              class={`${railButtonClass} ${props.activeGuildId === workspace.guildId
                   ? "rounded-[0.9rem] border-brand bg-brand"
                   : "hover:bg-bg-3"
-              }`}
+                }`}
               onClick={() =>
                 props.onSelectWorkspace(workspace.guildId, workspace.channels[0]?.channelId ?? null)}
             >
@@ -38,7 +37,7 @@ export function ServerRail(props: ServerRailProps) {
           )}
         </For>
       </div>
-      <div class="mt-auto grid gap-[0.38rem]">
+      <div class="mt-auto flex flex-col items-center gap-[0.38rem] w-full">
         <button
           type="button"
           class={`${railButtonClass} text-[1rem] hover:bg-bg-3 disabled:cursor-default disabled:opacity-62`}
