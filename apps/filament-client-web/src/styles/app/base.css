@@ -57,16 +57,16 @@ select {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
-  grid-template-columns: 4.5rem 16rem 1fr 17rem;
+  grid-template-columns: 3.8rem 16rem 1fr 17rem;
   gap: 0.82rem;
   padding: 0.82rem;
 }
 
-.app-shell > * {
+.app-shell>* {
   min-height: 0;
 }
 
-.app-shell > .chat-panel {
+.app-shell>.chat-panel {
   height: 100%;
 }
 
@@ -108,12 +108,12 @@ select {
   min-height: 0;
 }
 
-.chat-panel > .composer {
+.chat-panel>.composer {
   margin-top: 0;
   flex-shrink: 0;
 }
 
-.chat-panel > .chat-body {
+.chat-panel>.chat-body {
   min-height: 0;
 }
 
@@ -126,7 +126,7 @@ select {
   overflow: auto;
 }
 
-.message-list > .muted:first-of-type {
+.message-list>.muted:first-of-type {
   margin-top: auto;
 }
 
@@ -157,10 +157,12 @@ select {
 }
 
 @keyframes message-action-pulse {
+
   0%,
   100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.5;
   }
@@ -174,5 +176,3 @@ select {
   overflow: auto;
   position: relative;
 }
-
-
