@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::error::Error as StdError;
 use std::net::SocketAddr;
 
@@ -7,7 +7,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use sqlx::Row;
 use ulid::Ulid;
 
 use filament_core::{tokenize_markdown, UserId, Username};
@@ -24,7 +23,7 @@ use crate::server::{
     errors::AuthFailure,
     types::{
         AuthResponse, CaptchaToken, HcaptchaVerifyResponse, LoginRequest, MeResponse,
-        RefreshRequest, RegisterRequest, RegisterResponse, UserLookupItem, UserLookupRequest,
+        RefreshRequest, RegisterRequest, RegisterResponse, UserLookupRequest,
         UserLookupResponse,
     },
 };
@@ -66,6 +65,7 @@ pub(crate) async fn verify_captcha_token(
     if let Some(remote_ip) = client_ip.ip() {
         form_data.push(("remoteip", remote_ip.to_string()));
     }
+    
     let response = state
         .http_client
         .post(&config.verify_url)
@@ -86,6 +86,7 @@ pub(crate) async fn verify_captcha_token(
             );
             AuthFailure::CaptchaFailed
         })?;
+    
     let status = response.status();
     let verify: HcaptchaVerifyResponse = response
         .json()
@@ -101,19 +102,29 @@ pub(crate) async fn verify_captcha_token(
             );
             AuthFailure::CaptchaFailed
         })?;
+
+    validate_captcha_response(status, &verify, &config.verify_url, client_ip.source().as_str())
+}
+
+fn validate_captcha_response(
+    status: StatusCode,
+    verify: &HcaptchaVerifyResponse,
+    verify_url: &str,
+    client_ip_source: &str,
+) -> Result<(), AuthFailure> {
     if !status.is_success() {
         tracing::warn!(
             event = "auth.captcha.verify",
             outcome = "non_success_status",
             status = %status,
-            verify_url = %config.verify_url,
+            verify_url = %verify_url,
             error_codes = ?verify.error_codes,
             hostname = ?verify.hostname,
             challenge_ts = ?verify.challenge_ts,
             score = ?verify.score,
             score_reason = ?verify.score_reason,
             credit = ?verify.credit,
-            client_ip_source = client_ip.source().as_str()
+            client_ip_source = %client_ip_source
         );
         return Err(AuthFailure::CaptchaFailed);
     }
@@ -122,14 +133,14 @@ pub(crate) async fn verify_captcha_token(
             event = "auth.captcha.verify",
             outcome = "verify_failed",
             status = %status,
-            verify_url = %config.verify_url,
+            verify_url = %verify_url,
             error_codes = ?verify.error_codes,
             hostname = ?verify.hostname,
             challenge_ts = ?verify.challenge_ts,
             score = ?verify.score,
             score_reason = ?verify.score_reason,
             credit = ?verify.credit,
-            client_ip_source = client_ip.source().as_str()
+            client_ip_source = %client_ip_source
         );
         return Err(AuthFailure::CaptchaFailed);
     }
@@ -143,7 +154,7 @@ pub(crate) async fn verify_captcha_token(
         score = ?verify.score,
         score_reason = ?verify.score_reason,
         credit = ?verify.credit,
-        client_ip_source = client_ip.source().as_str()
+        client_ip_source = %client_ip_source
     );
 
     Ok(())
@@ -344,44 +355,20 @@ pub(crate) async fn me(
     headers: HeaderMap,
 ) -> Result<Json<MeResponse>, AuthFailure> {
     let auth = authenticate(&state, &headers).await?;
+    let typed_username = Username::try_from(auth.username.clone()).map_err(|_| AuthFailure::Unauthorized)?;
 
-    if let Some(pool) = &state.db_pool {
-        let row = sqlx::query(
-            "SELECT username, about_markdown, avatar_version
-             FROM users
-             WHERE user_id = $1",
-        )
-        .bind(auth.user_id.to_string())
-        .fetch_optional(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?
+    let repository = AuthRepository::from_state(&state);
+    let profile = repository
+        .get_user_profile(auth.user_id, &typed_username)
+        .await?
         .ok_or(AuthFailure::Unauthorized)?;
-        let username: String = row.try_get("username").map_err(|_| AuthFailure::Internal)?;
-        let about_markdown: String = row
-            .try_get("about_markdown")
-            .map_err(|_| AuthFailure::Internal)?;
-        let avatar_version: i64 = row
-            .try_get("avatar_version")
-            .map_err(|_| AuthFailure::Internal)?;
-
-        return Ok(Json(MeResponse {
-            user_id: auth.user_id.to_string(),
-            username,
-            about_markdown: about_markdown.clone(),
-            about_markdown_tokens: tokenize_markdown(&about_markdown),
-            avatar_version,
-        }));
-    }
-
-    let users = state.users.read().await;
-    let user = users.get(&auth.username).ok_or(AuthFailure::Unauthorized)?;
 
     Ok(Json(MeResponse {
         user_id: auth.user_id.to_string(),
-        username: user.username.as_str().to_owned(),
-        about_markdown: user.about_markdown.clone(),
-        about_markdown_tokens: tokenize_markdown(&user.about_markdown),
-        avatar_version: user.avatar_version,
+        username: profile.0,
+        about_markdown: profile.1.clone(),
+        about_markdown_tokens: tokenize_markdown(&profile.1),
+        avatar_version: profile.2,
     }))
 }
 
@@ -407,58 +394,7 @@ pub(crate) async fn lookup_users(
         return Err(AuthFailure::InvalidRequest);
     }
 
-    if let Some(pool) = &state.db_pool {
-        let user_ids: Vec<String> = deduped.iter().map(ToString::to_string).collect();
-        let rows = sqlx::query(
-            "SELECT user_id, username, avatar_version
-             FROM users
-             WHERE user_id = ANY($1)",
-        )
-        .bind(&user_ids)
-        .fetch_all(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-
-        let mut users_by_id = HashMap::with_capacity(rows.len());
-        for row in rows {
-            let user_id: String = row.try_get("user_id").map_err(|_| AuthFailure::Internal)?;
-            let username: String = row.try_get("username").map_err(|_| AuthFailure::Internal)?;
-            let avatar_version: i64 = row
-                .try_get("avatar_version")
-                .map_err(|_| AuthFailure::Internal)?;
-            users_by_id.insert(user_id, (username, avatar_version));
-        }
-
-        let users = user_ids
-            .iter()
-            .filter_map(|user_id| {
-                users_by_id
-                    .get(user_id)
-                    .map(|(username, avatar_version)| UserLookupItem {
-                        user_id: user_id.clone(),
-                        username: username.clone(),
-                        avatar_version: *avatar_version,
-                    })
-            })
-            .collect();
-        return Ok(Json(UserLookupResponse { users }));
-    }
-
-    let user_ids_map = state.user_ids.read().await;
-    let users = deduped
-        .into_iter()
-        .filter_map(|user_id| {
-            let user_id_text = user_id.to_string();
-            user_ids_map
-                .get(&user_id_text)
-                .cloned()
-                .map(|username| UserLookupItem {
-                    user_id: user_id_text,
-                    username,
-                    avatar_version: 0,
-                })
-        })
-        .collect();
-
+    let repository = AuthRepository::from_state(&state);
+    let users = repository.lookup_users(&deduped).await?;
     Ok(Json(UserLookupResponse { users }))
 }

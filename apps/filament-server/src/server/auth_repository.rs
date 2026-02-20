@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use sqlx::{PgPool, Row};
@@ -11,6 +12,7 @@ use crate::server::{
         LOGIN_LOCK_THRESHOLD, REFRESH_REPLAY_RETENTION_SECS, REFRESH_TOKEN_TTL_SECS,
     },
     errors::AuthFailure,
+    types::UserLookupItem,
 };
 
 pub(crate) struct RefreshCheck {
@@ -68,6 +70,17 @@ pub(crate) trait AuthPersistence {
         session_id: &str,
         token_hash: [u8; 32],
     ) -> Result<UserId, AuthFailure>;
+
+    async fn get_user_profile(
+        &self,
+        user_id: UserId,
+        username: &Username,
+    ) -> Result<Option<(String, String, i64)>, AuthFailure>;
+
+    async fn lookup_users(
+        &self,
+        user_ids: &[UserId],
+    ) -> Result<Vec<UserLookupItem>, AuthFailure>;
 }
 
 pub(crate) struct PostgresAuthRepository<'a> {
@@ -375,6 +388,77 @@ impl AuthPersistence for PostgresAuthRepository<'_> {
             .map_err(|_| AuthFailure::Internal)?;
         UserId::try_from(user_id).map_err(|_| AuthFailure::Internal)
     }
+
+    async fn get_user_profile(
+        &self,
+        user_id: UserId,
+        _username: &Username,
+    ) -> Result<Option<(String, String, i64)>, AuthFailure> {
+        let row = sqlx::query(
+            "SELECT username, about_markdown, avatar_version
+             FROM users
+             WHERE user_id = $1",
+        )
+        .bind(user_id.to_string())
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        match row {
+            Some(r) => {
+                let username: String = r.try_get("username").map_err(|_| AuthFailure::Internal)?;
+                let about_markdown: String = r
+                    .try_get("about_markdown")
+                    .map_err(|_| AuthFailure::Internal)?;
+                let avatar_version: i64 = r
+                    .try_get("avatar_version")
+                    .map_err(|_| AuthFailure::Internal)?;
+                Ok(Some((username, about_markdown, avatar_version)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn lookup_users(
+        &self,
+        user_ids: &[UserId],
+    ) -> Result<Vec<UserLookupItem>, AuthFailure> {
+        let user_ids: Vec<String> = user_ids.iter().map(ToString::to_string).collect();
+        let rows = sqlx::query(
+            "SELECT user_id, username, avatar_version
+             FROM users
+             WHERE user_id = ANY($1)",
+        )
+        .bind(&user_ids)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        let mut users_by_id = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let user_id: String = row.try_get("user_id").map_err(|_| AuthFailure::Internal)?;
+            let username: String = row.try_get("username").map_err(|_| AuthFailure::Internal)?;
+            let avatar_version: i64 = row
+                .try_get("avatar_version")
+                .map_err(|_| AuthFailure::Internal)?;
+            users_by_id.insert(user_id, (username, avatar_version));
+        }
+
+        let users = user_ids
+            .into_iter()
+            .filter_map(|user_id| {
+                users_by_id
+                    .get(&user_id)
+                    .map(|(username, avatar_version)| UserLookupItem {
+                        user_id: user_id.clone(),
+                        username: username.clone(),
+                        avatar_version: *avatar_version,
+                    })
+            })
+            .collect();
+
+        Ok(users)
+    }
 }
 
 pub(crate) struct InMemoryAuthRepository<'a> {
@@ -564,6 +648,45 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
             .await
             .map_err(|()| AuthFailure::Unauthorized)
     }
+
+    async fn get_user_profile(
+        &self,
+        _user_id: UserId,
+        username: &Username,
+    ) -> Result<Option<(String, String, i64)>, AuthFailure> {
+        let users = self.state.users.read().await;
+        if let Some(user) = users.get(username.as_str()) {
+            Ok(Some((
+                user.username.as_str().to_owned(),
+                user.about_markdown.clone(),
+                user.avatar_version,
+            )))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn lookup_users(
+        &self,
+        user_ids: &[UserId],
+    ) -> Result<Vec<UserLookupItem>, AuthFailure> {
+        let user_ids_map = self.state.user_ids.read().await;
+        let users = user_ids
+            .iter()
+            .filter_map(|user_id| {
+                let user_id_text = user_id.to_string();
+                user_ids_map
+                    .get(&user_id_text)
+                    .cloned()
+                    .map(|username| UserLookupItem {
+                        user_id: user_id_text,
+                        username,
+                        avatar_version: 0,
+                    })
+            })
+            .collect();
+        Ok(users)
+    }
 }
 
 pub(crate) enum AuthRepository<'a> {
@@ -682,6 +805,27 @@ impl AuthPersistence for AuthRepository<'_> {
         match self {
             Self::Postgres(repo) => repo.revoke_session_with_token(session_id, token_hash).await,
             Self::InMemory(repo) => repo.revoke_session_with_token(session_id, token_hash).await,
+        }
+    }
+
+    async fn get_user_profile(
+        &self,
+        user_id: UserId,
+        username: &Username,
+    ) -> Result<Option<(String, String, i64)>, AuthFailure> {
+        match self {
+            Self::Postgres(repo) => repo.get_user_profile(user_id, username).await,
+            Self::InMemory(repo) => repo.get_user_profile(user_id, username).await,
+        }
+    }
+
+    async fn lookup_users(
+        &self,
+        user_ids: &[UserId],
+    ) -> Result<Vec<UserLookupItem>, AuthFailure> {
+        match self {
+            Self::Postgres(repo) => repo.lookup_users(user_ids).await,
+            Self::InMemory(repo) => repo.lookup_users(user_ids).await,
         }
     }
 }
