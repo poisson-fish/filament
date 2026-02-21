@@ -278,8 +278,8 @@ export function ChannelRail(props: ChannelRailProps) {
               aria-label="channels"
               class="grid min-h-0 content-start gap-[0.86rem] overflow-auto pr-0"
             >
-              <section class="mx-[-0.58rem] grid gap-[0.16rem]">
-                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between border-y border-line bg-bg-2 px-[1.08rem] py-[0.48rem]">
+              <section class="grid gap-[0.24rem]">
+                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between rounded-[0.5rem] border border-line bg-bg-2 px-[0.75rem] py-[0.4rem]">
                   <p class="m-0 text-[0.73rem] text-ink-2 tracking-[0.08em] leading-none">
                     TEXT CHANNELS
                   </p>
@@ -320,8 +320,8 @@ export function ChannelRail(props: ChannelRailProps) {
                 </For>
               </section>
 
-              <section class="mx-[-0.58rem] grid gap-[0.16rem]">
-                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between border-y border-line bg-bg-2 px-[1.08rem] py-[0.48rem]">
+              <section class="grid gap-[0.24rem]">
+                <div class="channel-group-header flex min-h-[2.08rem] w-full items-center justify-between rounded-[0.5rem] border border-line bg-bg-2 px-[0.75rem] py-[0.4rem]">
                   <p class="m-0 text-[0.73rem] text-ink-2 tracking-[0.08em] leading-none">
                     VOICE CHANNELS
                   </p>
@@ -339,7 +339,7 @@ export function ChannelRail(props: ChannelRailProps) {
                 </div>
                 <For each={props.activeVoiceChannels}>
                   {(channel) => (
-                    <div class="mx-[0.58rem]">
+                    <div class="grid gap-[0.05rem]">
                       {(() => {
                         const rosterEntries = () =>
                           props.voiceRosterEntriesForChannel(channel.channelId);
