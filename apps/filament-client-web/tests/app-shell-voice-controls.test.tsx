@@ -680,6 +680,25 @@ describe("app shell voice controls", () => {
     expect(await findVoiceControl("Mute Mic")).toBeInTheDocument();
   });
 
+  it("resolves stream control icons from the app resource directory", async () => {
+    seedAuthenticatedWorkspace();
+    const fixture = createVoiceFixtureFetch();
+    vi.stubGlobal("fetch", fixture.fetchMock);
+    vi.stubGlobal("WebSocket", undefined as unknown as typeof WebSocket);
+
+    window.history.replaceState({}, "", "/app");
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
+    const muteButton = await findVoiceControl("Mute Mic");
+    const muteIcon = muteButton.querySelector(".icon-mask");
+    expect(muteIcon).toBeTruthy();
+
+    const iconStyle = muteIcon?.getAttribute("style") ?? "";
+    expect(iconStyle).toContain("data:image/svg+xml");
+    expect(iconStyle).not.toContain("/src/resource/");
+  });
+
   it("requests publish sources for camera/screen when stream permissions allow them", async () => {
     seedAuthenticatedWorkspace();
     const fixture = createVoiceFixtureFetch({

@@ -1,13 +1,13 @@
 import { Show } from "solid-js";
 import type { RtcSnapshot } from "../../../../lib/rtc";
 
-const MUTE_MIC_ICON_URL = new URL("../../../../resource/coolicons.v4.1/cooliocns SVG/Media/Volume_Off.svg", import.meta.url).href;
-const UNMUTE_MIC_ICON_URL = new URL("../../../../resource/coolicons.v4.1/cooliocns SVG/Media/Volume_Max.svg", import.meta.url).href;
-const HEADPHONES_ICON_URL = new URL("../../../../resource/coolicons.v4.1/cooliocns SVG/Media/Headphones.svg", import.meta.url).href;
-const CAMERA_ICON_URL = new URL("../../../../resource/coolicons.v4.1/cooliocns SVG/System/Camera.svg", import.meta.url).href;
-const START_SCREEN_SHARE_ICON_URL = new URL("../../../../resource/coolicons.v4.1/cooliocns SVG/System/Monitor_Play.svg", import.meta.url).href;
-const STOP_SCREEN_SHARE_ICON_URL = new URL("../../../../resource/coolicons.v4.1/cooliocns SVG/System/Monitor.svg", import.meta.url).href;
-const LEAVE_VOICE_ICON_URL = new URL("../../../../resource/coolicons.v4.1/cooliocns SVG/Interface/Log_Out.svg", import.meta.url).href;
+const MUTE_MIC_ICON_URL = new URL("../../../../../resource/coolicons.v4.1/cooliocns SVG/Media/Volume_Off.svg", import.meta.url).href;
+const UNMUTE_MIC_ICON_URL = new URL("../../../../../resource/coolicons.v4.1/cooliocns SVG/Media/Volume_Max.svg", import.meta.url).href;
+const HEADPHONES_ICON_URL = new URL("../../../../../resource/coolicons.v4.1/cooliocns SVG/Media/Headphones.svg", import.meta.url).href;
+const CAMERA_ICON_URL = new URL("../../../../../resource/coolicons.v4.1/cooliocns SVG/System/Camera.svg", import.meta.url).href;
+const START_SCREEN_SHARE_ICON_URL = new URL("../../../../../resource/coolicons.v4.1/cooliocns SVG/System/Monitor_Play.svg", import.meta.url).href;
+const STOP_SCREEN_SHARE_ICON_URL = new URL("../../../../../resource/coolicons.v4.1/cooliocns SVG/System/Monitor.svg", import.meta.url).href;
+const LEAVE_VOICE_ICON_URL = new URL("../../../../../resource/coolicons.v4.1/cooliocns SVG/Interface/Log_Out.svg", import.meta.url).href;
 
 export interface StreamControlsProps {
     rtcSnapshot: RtcSnapshot;
