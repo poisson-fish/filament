@@ -111,6 +111,22 @@
   height: 100%;
 }
 
+.app-shell.with-stream {
+  grid-template-columns: 3.0rem 15.5rem minmax(0, 1fr) 22rem 15rem;
+}
+
+.app-shell.with-stream.channel-rail-collapsed {
+  grid-template-columns: 3.0rem minmax(0, 1fr) 22rem 15rem;
+}
+
+.app-shell.with-stream.member-rail-collapsed {
+  grid-template-columns: 3.0rem 15.5rem minmax(0, 1fr) 22rem;
+}
+
+.app-shell.with-stream.channel-rail-collapsed.member-rail-collapsed {
+  grid-template-columns: 3.0rem minmax(0, 1fr) 22rem;
+}
+
 .server-rail,
 .channel-rail,
 .chat-panel,
@@ -152,7 +168,7 @@
   overflow-y: auto;
 }
 
-.chat-panel>.composer {
+.chat-panel > .composer {
   margin-top: 0;
   min-height: 0;
 }
@@ -174,6 +190,12 @@
     grid-template-columns: 3.0rem 13.8rem minmax(0, 1fr);
   }
 
+  .app-shell.with-stream,
+  .app-shell.with-stream.channel-rail-collapsed,
+  .app-shell.with-stream.member-rail-collapsed {
+    grid-template-columns: 3.0rem 13.8rem minmax(0, 1fr) 22rem;
+  }
+
   .member-rail {
     display: none;
   }
@@ -184,7 +206,11 @@
   .app-shell,
   .app-shell.channel-rail-collapsed,
   .app-shell.member-rail-collapsed,
-  .app-shell.channel-rail-collapsed.member-rail-collapsed {
+  .app-shell.channel-rail-collapsed.member-rail-collapsed,
+  .app-shell.with-stream,
+  .app-shell.with-stream.channel-rail-collapsed,
+  .app-shell.with-stream.member-rail-collapsed,
+  .app-shell.with-stream.channel-rail-collapsed.member-rail-collapsed {
     grid-template-columns: 3.0rem minmax(0, 1fr);
     min-height: 100vh;
   }

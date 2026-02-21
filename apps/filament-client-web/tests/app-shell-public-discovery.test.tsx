@@ -192,6 +192,6 @@ describe("app shell public discovery", () => {
         ),
       ).toBe(true),
     );
-    expect(screen.getByText("incident-room")).toBeInTheDocument();
+    expect(screen.getAllByText("incident-room")[0]).toBeInTheDocument();
   });
 });

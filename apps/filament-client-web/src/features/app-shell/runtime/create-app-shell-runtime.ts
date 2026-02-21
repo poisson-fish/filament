@@ -187,6 +187,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     toggleVoiceDeafen,
     toggleVoiceCamera,
     toggleVoiceScreenShare,
+    attachVideoTrack,
+    detachVideoTrack,
   } = voiceOperationsController;
 
   const { refreshAudioDeviceInventory, setVoiceDevicePreference } =
@@ -663,6 +665,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     toggleVoiceDeafen,
     toggleVoiceCamera,
     toggleVoiceScreenShare,
+    attachVideoTrack,
+    detachVideoTrack,
     setComposerAttachmentInputRef,
     setComposerInputRef,
     actorLookupId: labels.actorLookupId,

@@ -11,6 +11,7 @@ import { ReactionPickerPortal } from "../features/app-shell/components/messages/
 import { ServerRail } from "../features/app-shell/components/ServerRail";
 import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
 import { UserProfileOverlay } from "../features/app-shell/components/overlays/UserProfileOverlay";
+import { StreamColumn } from "../features/app-shell/components/stream/StreamColumn";
 import { OPENMOJI_REACTION_OPTIONS } from "../features/app-shell/config/reaction-options";
 import {
   ADD_REACTION_ICON_URL,
@@ -161,6 +162,31 @@ export function AppShellPage() {
           onToggleVoiceScreenShare={() => void toggleVoiceScreenShare()}
           onLeaveVoice={() => void leaveVoiceChannel("Voice session ended.")}
         />
+      }
+      streamColumn={
+        isVoiceSessionActive() ? (
+          <StreamColumn
+            rtcSnapshot={voiceState.rtcSnapshot()}
+            userIdFromVoiceIdentity={userIdFromVoiceIdentity}
+            actorLabel={actorLabel}
+            resolveAvatarUrl={avatarUrlForUser}
+            attachVideoTrack={runtime.attachVideoTrack}
+            detachVideoTrack={runtime.detachVideoTrack}
+            canToggleVoiceCamera={canToggleVoiceCamera()}
+            canToggleVoiceScreenShare={canToggleVoiceScreenShare()}
+            isJoiningVoice={voiceState.isJoiningVoice()}
+            isLeavingVoice={voiceState.isLeavingVoice()}
+            isTogglingVoiceMic={voiceState.isTogglingVoiceMic()}
+            isTogglingVoiceDeaf={voiceState.isTogglingVoiceDeaf()}
+            isTogglingVoiceCamera={voiceState.isTogglingVoiceCamera()}
+            isTogglingVoiceScreenShare={voiceState.isTogglingVoiceScreenShare()}
+            onToggleVoiceMicrophone={() => void toggleVoiceMicrophone()}
+            onToggleVoiceDeafen={() => void toggleVoiceDeafen()}
+            onToggleVoiceCamera={() => void toggleVoiceCamera()}
+            onToggleVoiceScreenShare={() => void toggleVoiceScreenShare()}
+            onLeaveVoice={() => void leaveVoiceChannel("Voice session ended.")}
+          />
+        ) : undefined
       }
       chatColumn={
         <ChatColumn

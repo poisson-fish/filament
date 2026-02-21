@@ -188,11 +188,11 @@ const rtcMock = vi.hoisted(() => {
       isCameraEnabled: enabled,
       videoTracks: enabled
         ? upsertLocalVideoTrack(snapshot.videoTracks, {
-            trackSid: "L-CAMERA",
-            participantIdentity: "u.local",
-            source: "camera",
-            isLocal: true,
-          })
+          trackSid: "L-CAMERA",
+          participantIdentity: "u.local",
+          source: "camera",
+          isLocal: true,
+        })
         : snapshot.videoTracks.filter((track) => !(track.isLocal && track.source === "camera")),
     };
     emit();
@@ -210,14 +210,14 @@ const rtcMock = vi.hoisted(() => {
       isScreenShareEnabled: enabled,
       videoTracks: enabled
         ? upsertLocalVideoTrack(snapshot.videoTracks, {
-            trackSid: "L-SCREEN",
-            participantIdentity: "u.local",
-            source: "screen_share",
-            isLocal: true,
-          })
+          trackSid: "L-SCREEN",
+          participantIdentity: "u.local",
+          source: "screen_share",
+          isLocal: true,
+        })
         : snapshot.videoTracks.filter(
-            (track) => !(track.isLocal && track.source === "screen_share"),
-          ),
+          (track) => !(track.isLocal && track.source === "screen_share"),
+        ),
     };
     emit();
   });
@@ -236,8 +236,10 @@ const rtcMock = vi.hoisted(() => {
     listeners.clear();
   });
 
-  const setAudioInputDevice = vi.fn(async (_deviceId: string | null) => {});
-  const setAudioOutputDevice = vi.fn(async (_deviceId: string | null) => {});
+  const setAudioInputDevice = vi.fn(async (_deviceId: string | null) => { });
+  const setAudioOutputDevice = vi.fn(async (_deviceId: string | null) => { });
+  const attachVideoTrack = vi.fn((_trackSid: string, _element: HTMLVideoElement) => { });
+  const detachVideoTrack = vi.fn((_trackSid: string, _element: HTMLVideoElement) => { });
 
   const client = {
     snapshot: () => snapshot,
@@ -264,6 +266,8 @@ const rtcMock = vi.hoisted(() => {
     toggleCamera,
     setScreenShareEnabled,
     toggleScreenShare,
+    attachVideoTrack,
+    detachVideoTrack,
     destroy,
   };
 
@@ -628,6 +632,16 @@ function createVoiceFixtureFetch(options?: {
   };
 }
 
+const findVoiceControl = async (name: string | RegExp) => {
+  const controls = await screen.findAllByRole("button", { name });
+  return controls[0];
+};
+
+const getVoiceControl = (name: string | RegExp) => {
+  const controls = screen.getAllByRole("button", { name });
+  return controls[0];
+};
+
 describe("app shell voice controls", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
@@ -663,7 +677,7 @@ describe("app shell voice controls", () => {
       publish_sources: ["microphone"],
     });
 
-    expect(await screen.findByRole("button", { name: "Mute Mic" })).toBeInTheDocument();
+    expect(await findVoiceControl("Mute Mic")).toBeInTheDocument();
   });
 
   it("requests publish sources for camera/screen when stream permissions allow them", async () => {
@@ -741,7 +755,7 @@ describe("app shell voice controls", () => {
 
     voiceTokenGate.resolve(undefined);
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("button", { name: "Mute Mic" })).toBeInTheDocument();
+    expect(await findVoiceControl("Mute Mic")).toBeInTheDocument();
   });
 
   it("supports mute/unmute and leave after joining", async () => {
@@ -756,21 +770,21 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Mute Mic" }));
+    fireEvent.click(await findVoiceControl("Mute Mic"));
     await waitFor(() => expect(rtcMock.toggleMicrophone).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("button", { name: "Unmute Mic" })).toBeInTheDocument();
+    expect(await findVoiceControl("Unmute Mic")).toBeInTheDocument();
     expect(fixture.voiceStateBodies()).toContainEqual({
       is_muted: true,
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Deafen Audio" }));
+    fireEvent.click(await findVoiceControl("Deafen Audio"));
     await waitFor(() => expect(rtcMock.toggleDeafened).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("button", { name: "Undeafen Audio" })).toBeInTheDocument();
+    expect(await findVoiceControl("Undeafen Audio")).toBeInTheDocument();
     expect(fixture.voiceStateBodies()).toContainEqual({
       is_deafened: true,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    fireEvent.click(getVoiceControl("Disconnect"));
     await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: "Join Voice" })).toBeInTheDocument();
   });
@@ -799,13 +813,13 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Camera On" }));
+    fireEvent.click(await findVoiceControl("Camera On"));
     await waitFor(() => expect(rtcMock.toggleCamera).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("button", { name: "Camera Off" })).toBeInTheDocument();
+    expect(await findVoiceControl("Camera Off")).toBeInTheDocument();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Share Screen" }));
+    fireEvent.click(await findVoiceControl("Share Screen"));
     await waitFor(() => expect(rtcMock.toggleScreenShare).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("button", { name: "Stop Share" })).toBeInTheDocument();
+    expect(await findVoiceControl("Stop Share")).toBeInTheDocument();
   });
 
   it("clamps camera/screen controls when token grants do not include those sources", async () => {
@@ -832,8 +846,8 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
 
-    expect(await screen.findByRole("button", { name: "Camera On" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Share Screen" })).toBeDisabled();
+    expect(await findVoiceControl("Camera On")).toBeDisabled();
+    expect(getVoiceControl("Share Screen")).toBeDisabled();
     expect(
       screen.getByText("Camera disabled: this voice token did not grant camera publish."),
     ).toBeInTheDocument();
@@ -947,9 +961,9 @@ describe("app shell voice controls", () => {
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
 
     expect(await screen.findByLabelText("In-call participants")).toBeInTheDocument();
-    expect(screen.getByText("u.local (you)")).toBeInTheDocument();
-    expect(screen.getByText("u.remote.1")).toBeInTheDocument();
-    expect(screen.getByText("u.remote.2")).toBeInTheDocument();
+    expect(screen.getAllByText("u.local (you)")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("u.remote.1")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("u.remote.2")[0]).toBeInTheDocument();
     expect(screen.queryByLabelText("Voice stream tiles")).not.toBeInTheDocument();
   });
 
@@ -976,8 +990,8 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
 
-    expect(await screen.findByText("alice (you)")).toBeInTheDocument();
-    expect(await screen.findByText("bob")).toBeInTheDocument();
+    expect((await screen.findAllByText("alice (you)"))[0]).toBeInTheDocument();
+    expect((await screen.findAllByText("bob"))[0]).toBeInTheDocument();
     await waitFor(() => {
       const lookupBodies = fixture.userLookupBodies();
       expect(lookupBodies.length).toBeGreaterThan(0);
@@ -999,7 +1013,7 @@ describe("app shell voice controls", () => {
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
 
     const remoteAvatar = () =>
-      screen.getByText("u.remote.1").closest("li")?.querySelector(".voice-tree-avatar") ?? null;
+      screen.getAllByText("u.remote.1")[0].closest("li")?.querySelector(".voice-tree-avatar") ?? null;
 
     await waitFor(() => expect(remoteAvatar()).not.toBeNull());
     expect(remoteAvatar()).not.toHaveClass("voice-tree-avatar-speaking");
@@ -1047,7 +1061,7 @@ describe("app shell voice controls", () => {
       ],
     );
 
-    await waitFor(() => expect(screen.getByText("u.remote.1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText("u.remote.1")[0]).toBeInTheDocument());
     expect(screen.getAllByText("LIVE").length).toBeGreaterThan(0);
     expect(screen.queryByText("Video")).not.toBeInTheDocument();
     expect(screen.queryByText("Share")).not.toBeInTheDocument();
@@ -1074,10 +1088,10 @@ describe("app shell voice controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "#general" }));
     await waitFor(() => expect(rtcMock.leave).toHaveBeenCalledTimes(0));
     expect(await screen.findByLabelText("In-call participants")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+    expect(getVoiceControl("Disconnect")).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "bridge" }));
-    expect(await screen.findByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+    expect(await findVoiceControl("Disconnect")).toBeInTheDocument();
   });
 
   it("logs out cleanly even when rtc leave/destroy teardown rejects", async () => {

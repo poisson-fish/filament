@@ -91,6 +91,8 @@ export interface RtcClient {
   toggleCamera(): Promise<boolean>;
   setScreenShareEnabled(enabled: boolean): Promise<void>;
   toggleScreenShare(): Promise<boolean>;
+  attachVideoTrack(trackSid: string, element: HTMLVideoElement): void;
+  detachVideoTrack(trackSid: string, element: HTMLVideoElement): void;
   destroy(): Promise<void>;
 }
 
@@ -112,10 +114,17 @@ interface TrackedParticipant {
 interface TrackPublicationLike {
   trackSid?: unknown;
   source?: unknown;
+  track?: unknown;
+  videoTrack?: unknown;
 }
 
 interface AudioTrackLike {
   kind?: unknown;
+  attach?(element?: HTMLMediaElement): unknown;
+  detach?(element?: HTMLMediaElement): unknown;
+}
+
+interface VideoTrackLike {
   attach?(element?: HTMLMediaElement): unknown;
   detach?(element?: HTMLMediaElement): unknown;
 }
@@ -654,6 +663,55 @@ class RtcClientImpl implements RtcClient {
       this.connectionStatus = "disconnected";
       this.subscribers.clear();
     });
+  }
+
+  attachVideoTrack(trackSid: string, element: HTMLVideoElement): void {
+    const track = this.getVideoTrackBySid(trackSid);
+    if (!track || typeof track.attach !== "function") return;
+    try {
+      track.attach(element);
+    } catch {
+      // Assume already attached or playback issue
+    }
+  }
+
+  detachVideoTrack(trackSid: string, element: HTMLVideoElement): void {
+    const track = this.getVideoTrackBySid(trackSid);
+    if (!track || typeof track.detach !== "function") return;
+    try {
+      track.detach(element);
+    } catch {
+      // Ignore
+    }
+  }
+
+  private getVideoTrackBySid(trackSid: string): VideoTrackLike | null {
+    const room = this.activeRoom;
+    if (!room) return null;
+
+    if (room.localParticipant.videoTrackPublications instanceof Map) {
+      for (const pub of room.localParticipant.videoTrackPublications.values()) {
+        if (readTrackSid(pub) === trackSid) {
+          const p = pub as { track?: unknown; videoTrack?: unknown };
+          return (p.track ?? p.videoTrack) as VideoTrackLike | null;
+        }
+      }
+    }
+
+    if (room.remoteParticipants instanceof Map) {
+      for (const p of room.remoteParticipants.values()) {
+        if (p.trackPublications instanceof Map) {
+          for (const pub of p.trackPublications.values()) {
+            if (readTrackSid(pub) === trackSid) {
+              const pubLike = pub as { track?: unknown; videoTrack?: unknown };
+              return (pubLike.track ?? pubLike.videoTrack) as VideoTrackLike | null;
+            }
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   private async setMicrophoneEnabledInternal(enabled: boolean): Promise<void> {

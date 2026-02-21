@@ -101,6 +101,8 @@ export interface VoiceOperationsController {
   toggleVoiceDeafen: () => Promise<void>;
   toggleVoiceCamera: () => Promise<void>;
   toggleVoiceScreenShare: () => Promise<void>;
+  attachVideoTrack: (trackSid: string, element: HTMLVideoElement) => void;
+  detachVideoTrack: (trackSid: string, element: HTMLVideoElement) => void;
 }
 
 const DEFAULT_VOICE_OPERATIONS_CONTROLLER_DEPENDENCIES: VoiceOperationsControllerDependencies = {
@@ -417,6 +419,14 @@ export function createVoiceOperationsController(
     }
   };
 
+  const attachVideoTrack = (trackSid: string, element: HTMLVideoElement): void => {
+    rtcClient?.attachVideoTrack(trackSid, element);
+  };
+
+  const detachVideoTrack = (trackSid: string, element: HTMLVideoElement): void => {
+    rtcClient?.detachVideoTrack(trackSid, element);
+  };
+
   return {
     ensureRtcClient,
     releaseRtcClient,
@@ -427,5 +437,7 @@ export function createVoiceOperationsController(
     toggleVoiceDeafen,
     toggleVoiceCamera,
     toggleVoiceScreenShare,
+    attachVideoTrack,
+    detachVideoTrack,
   };
 }
