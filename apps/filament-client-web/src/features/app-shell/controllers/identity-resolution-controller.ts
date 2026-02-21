@@ -38,11 +38,11 @@ export interface IdentityResolutionControllerDependencies {
 }
 
 const DEFAULT_IDENTITY_RESOLUTION_CONTROLLER_DEPENDENCIES: IdentityResolutionControllerDependencies =
-  {
-    clearUsernameLookupCache,
-    primeUsernameCache,
-    resolveUsernames,
-  };
+{
+  clearUsernameLookupCache,
+  primeUsernameCache,
+  resolveUsernames,
+};
 
 export function collectVisibleUserIds(input: {
   messages: MessageRecord[];
@@ -100,7 +100,7 @@ export function createIdentityResolutionController(
     if (!session || !value) {
       return;
     }
-    deps.primeUsernameCache([{ userId: value.userId, username: value.username }]);
+    deps.primeUsernameCache([{ userId: value.userId, username: value.username, avatarVersion: value.avatarVersion }]);
     options.setResolvedUsernames((existing) => ({
       ...existing,
       [value.userId]: value.username,
@@ -172,10 +172,20 @@ export function createIdentityResolutionController(
         if (cancelled || Object.keys(resolved).length === 0) {
           return;
         }
-        options.setResolvedUsernames((existing) => ({
-          ...existing,
-          ...resolved,
-        }));
+        options.setResolvedUsernames((existing) => {
+          const next = { ...existing };
+          for (const [userId, lookup] of Object.entries(resolved)) {
+            next[userId] = lookup.username;
+          }
+          return next;
+        });
+        options.setAvatarVersionByUserId((existing) => {
+          const next = { ...existing };
+          for (const [userId, lookup] of Object.entries(resolved)) {
+            next[userId] = lookup.avatarVersion;
+          }
+          return next;
+        });
       } catch {
         // Keep user-id fallback rendering if lookup fails.
       }

@@ -49,6 +49,7 @@ import {
   upsertReactionEntry,
   type ReactionView,
 } from "../helpers";
+import { primeUsernameCache } from "../../../lib/username-cache";
 
 export interface GatewayControllerOptions {
   session: Accessor<AuthSession | null>;
@@ -636,8 +637,8 @@ export function createGatewayController(
       onWorkspaceUpdate: (payload) => {
         options.setWorkspaces((existing) => applyWorkspaceUpdate(existing, payload));
       },
-      onWorkspaceMemberAdd: () => {},
-      onWorkspaceMemberUpdate: () => {},
+      onWorkspaceMemberAdd: () => { },
+      onWorkspaceMemberUpdate: () => { },
       onWorkspaceMemberRemove: (payload) => {
         if (payload.userId !== connectedUserId) {
           return;
@@ -675,6 +676,12 @@ export function createGatewayController(
         options.onWorkspaceModerationChanged?.(payload);
       },
       onProfileUpdate: (payload) => {
+        if (payload.updatedFields.username) {
+          primeUsernameCache([{
+            userId: payload.userId as import("../../../domain/chat").UserId,
+            username: payload.updatedFields.username
+          }]);
+        }
         options.setResolvedUsernames((existing) => {
           if (!payload.updatedFields.username) {
             return existing;
@@ -692,6 +699,10 @@ export function createGatewayController(
         }
       },
       onProfileAvatarUpdate: (payload) => {
+        primeUsernameCache([{
+          userId: payload.userId as import("../../../domain/chat").UserId,
+          avatarVersion: payload.avatarVersion
+        }]);
         options.setAvatarVersionByUserId((existing) =>
           mergeAvatarVersion(existing, payload.userId, payload.avatarVersion),
         );

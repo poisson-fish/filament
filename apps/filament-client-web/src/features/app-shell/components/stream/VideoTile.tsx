@@ -42,9 +42,14 @@ export function VideoTile(props: VideoTileProps) {
             />
 
             <div class="absolute bottom-[0.8rem] left-[0.8rem] bg-black/60 backdrop-blur-[4px] px-[0.6rem] py-[0.4rem] rounded-[0.4rem] text-white flex items-center gap-2 text-[0.85rem] font-medium">
-                <Show when={avatarUrl()}>
-                    {(url) => <img src={url()} class="w-[1.2rem] h-[1.2rem] rounded-full object-cover" />}
-                </Show>
+                <span class="relative inline-flex h-[1.2rem] w-[1.2rem] flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--line)] bg-[var(--bg-3)] text-[0.45rem] font-[800] tracking-[0.03em] uppercase">
+                    <span class="z-[1]" aria-hidden="true">
+                        {props.actorLabel(labelId())[0]}
+                    </span>
+                    <Show when={avatarUrl()}>
+                        {(url) => <img src={url()} alt={`${label()} avatar`} class="absolute inset-0 z-[2] h-full w-full rounded-[inherit] object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />}
+                    </Show>
+                </span>
                 <span>{label()}</span>
                 <Show when={props.trackSnapshot.source === "screen_share"}>
                     <span class="bg-white/20 px-[0.35rem] py-[0.1rem] rounded-[0.2rem] text-[0.70rem] uppercase tracking-[0.05em] opacity-90">Screen</span>

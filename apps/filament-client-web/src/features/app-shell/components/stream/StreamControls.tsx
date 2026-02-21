@@ -32,9 +32,7 @@ export function StreamControls(props: StreamControlsProps) {
 
     const baseBtn = "inline-flex items-center justify-center w-[3.2rem] h-[3.2rem] rounded-full border-none transition-all duration-200 ease text-[var(--ink-0)] disabled:opacity-50 disabled:cursor-not-allowed enabled:hover:bg-[var(--bg-4)] enabled:hover:-translate-y-[2px]";
     const dangerBtn = "inline-flex items-center justify-center w-[3.2rem] h-[3.2rem] rounded-full border-none transition-all duration-200 ease disabled:opacity-50 disabled:cursor-not-allowed bg-[var(--danger-panel)] text-[var(--danger-ink)] enabled:hover:bg-[var(--danger)] enabled:hover:text-white enabled:hover:-translate-y-[2px]";
-
-    const iconClass = "w-[1.4rem] h-[1.4rem] bg-current [mask-image:var(--icon-url)] [mask-size:contain] [mask-repeat:no-repeat] [mask-position:center] [-webkit-mask-image:var(--icon-url)] [-webkit-mask-size:contain] [-webkit-mask-repeat:no-repeat] [-webkit-mask-position:center]";
-
+    const iconClass = "icon-mask w-[1.4rem] h-[1.4rem]";
     const btnClasses = (isActive: boolean, isPulsing: boolean) => ({
         "bg-[var(--bg-0)]": isActive,
         "bg-[var(--bg-3)]": !isActive,
