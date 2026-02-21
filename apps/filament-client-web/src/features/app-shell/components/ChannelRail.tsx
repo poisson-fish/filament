@@ -1,5 +1,6 @@
 import {
   For,
+  Index,
   Match,
   Show,
   Switch,
@@ -387,26 +388,26 @@ export function ChannelRail(props: ChannelRailProps) {
                                   }
                                 >
                                   <ul class="m-0 grid list-none gap-[0.12rem] p-0">
-                                    <For each={rosterEntries()}>
+                                    <Index each={rosterEntries()}>
                                       {(entry) => (
                                         <li
                                           class="relative flex min-h-[1.7rem] items-center gap-[0.36rem] rounded-[0.42rem] bg-transparent py-[0.14rem] pl-0 pr-[0.08rem] before:absolute before:left-[-0.54rem] before:top-1/2 before:h-px before:w-[0.46rem] before:bg-line before:content-[''] before:-translate-y-1/2"
                                           classList={{
-                                            "bg-brand/10": entry.isLocal,
+                                            "bg-brand/10": entry().isLocal,
                                           }}
                                         >
                                           <Show
-                                            when={props.userIdFromVoiceIdentity(entry.identity)}
+                                            when={props.userIdFromVoiceIdentity(entry().identity)}
                                             fallback={
                                               <span
                                                 class={`${accountAvatarClass} h-[1.3rem] w-[1.3rem] text-[0.52rem] voice-tree-avatar`}
                                                 classList={{
                                                   "voice-tree-avatar-speaking ring-2 ring-ok border-ok":
-                                                    entry.isSpeaking,
+                                                    entry().isSpeaking,
                                                 }}
                                                 aria-hidden="true"
                                               >
-                                                <span class="z-[1]">{actorAvatarGlyph(props.actorLabel(entry.identity))}</span>
+                                                <span class="z-[1]">{actorAvatarGlyph(props.actorLabel(entry().identity))}</span>
                                               </span>
                                             }
                                           >
@@ -414,24 +415,24 @@ export function ChannelRail(props: ChannelRailProps) {
                                               <button
                                                 type="button"
                                                 class="rounded-full border-0 bg-transparent p-0"
-                                                aria-label={`Open ${props.voiceParticipantLabel(entry.identity, entry.isLocal)} profile`}
+                                                aria-label={`Open ${props.voiceParticipantLabel(entry().identity, entry().isLocal)} profile`}
                                                 onClick={() => props.onOpenUserProfile(participantUserId())}
                                               >
                                                 <span
                                                   class={`${accountAvatarClass} h-[1.3rem] w-[1.3rem] text-[0.52rem] voice-tree-avatar`}
                                                   classList={{
                                                     "voice-tree-avatar-speaking ring-2 ring-ok border-ok":
-                                                      entry.isSpeaking,
+                                                      entry().isSpeaking,
                                                   }}
                                                 >
                                                   <span class="z-[1]" aria-hidden="true">
-                                                    {actorAvatarGlyph(props.actorLabel(entry.identity))}
+                                                    {actorAvatarGlyph(props.actorLabel(entry().identity))}
                                                   </span>
                                                   <Show when={props.resolveAvatarUrl(participantUserId())}>
                                                     <img
                                                       class="absolute inset-0 z-[2] h-full w-full rounded-[inherit] object-cover"
                                                       src={props.resolveAvatarUrl(participantUserId())!}
-                                                      alt={`${props.voiceParticipantLabel(entry.identity, entry.isLocal)} avatar`}
+                                                      alt={`${props.voiceParticipantLabel(entry().identity, entry().isLocal)} avatar`}
                                                       loading="lazy"
                                                       decoding="async"
                                                       referrerPolicy="no-referrer"
@@ -445,22 +446,22 @@ export function ChannelRail(props: ChannelRailProps) {
                                             )}
                                           </Show>
                                           <span class="flex-1 truncate text-left text-[0.8rem] text-ink-1">
-                                            {props.voiceParticipantLabel(entry.identity, entry.isLocal)}
+                                            {props.voiceParticipantLabel(entry().identity, entry().isLocal)}
                                           </span>
                                           {(() => {
                                             const participantUserId = props.userIdFromVoiceIdentity(
-                                              entry.identity,
+                                              entry().identity,
                                             );
                                             const isCurrentUserParticipant =
                                               Boolean(props.currentUserId) &&
                                               participantUserId === props.currentUserId;
                                             const showLiveBadge = isCurrentUserParticipant
                                               ? props.rtcSnapshot.isCameraEnabled ||
-                                                props.rtcSnapshot.isScreenShareEnabled
-                                              : entry.hasCamera || entry.hasScreenShare;
+                                              props.rtcSnapshot.isScreenShareEnabled
+                                              : entry().hasCamera || entry().hasScreenShare;
                                             return (
                                               <span class="ml-auto inline-flex shrink-0 items-center gap-[0.2rem]">
-                                                <Show when={entry.isMuted}>
+                                                <Show when={entry().isMuted}>
                                                   <span
                                                     class="inline-flex h-[1.15rem] w-[1.15rem] items-center justify-center rounded-[0.34rem] text-ink-2"
                                                     aria-label="Muted"
@@ -473,7 +474,7 @@ export function ChannelRail(props: ChannelRailProps) {
                                                     />
                                                   </span>
                                                 </Show>
-                                                <Show when={entry.isDeafened}>
+                                                <Show when={entry().isDeafened}>
                                                   <span
                                                     class="inline-flex h-[1.15rem] w-[1.15rem] items-center justify-center rounded-[0.34rem] text-ink-1"
                                                     aria-label="Deafened"
@@ -496,7 +497,7 @@ export function ChannelRail(props: ChannelRailProps) {
                                           })()}
                                         </li>
                                       )}
-                                    </For>
+                                    </Index>
                                   </ul>
                                 </Show>
                                 <Show
