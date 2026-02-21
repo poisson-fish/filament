@@ -18,7 +18,7 @@ filament-protocol = { path = "../../crates/filament-protocol", version = "0.1.0"
 futures-util = "0.3"
 http = "1"
 infer = "0.19"
-livekit-api = { version = "0.4.13", default-features = false, features = ["access-token"] }
+livekit-api = { version = "0.4.13", default-features = false, features = ["access-token", "services-tokio", "rustls-tls-webpki-roots"] }
 mime = "0.3"
 object_store = { version = "0.13.1", default-features = false, features = ["fs"] }
 pasetors = "0.7"

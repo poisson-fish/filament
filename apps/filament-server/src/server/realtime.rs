@@ -11,6 +11,7 @@ mod hydration_runtime;
 mod ingress_message_create;
 mod ingress_parse;
 mod ingress_subscribe;
+pub mod livekit_sync;
 mod message_create_response;
 mod message_emit;
 mod message_record;

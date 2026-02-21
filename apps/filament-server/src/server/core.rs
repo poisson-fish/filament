@@ -305,6 +305,7 @@ pub struct AppState {
     pub(crate) search_bootstrapped: Arc<OnceCell<()>>,
     pub(crate) runtime: Arc<RuntimeSecurityConfig>,
     pub(crate) livekit: Option<Arc<LiveKitConfig>>,
+    pub(crate) livekit_room: Option<Arc<livekit_api::services::room::RoomClient>>,
     pub(crate) http_client: Arc<reqwest::Client>,
 }
 
@@ -415,7 +416,12 @@ impl AppState {
                 livekit_token_ttl: config.livekit_token_ttl,
                 captcha: captcha.map(Arc::new),
             }),
-            livekit: livekit.map(Arc::new),
+            livekit: livekit.clone().map(Arc::new),
+            livekit_room: livekit.map(|lk| {
+                Arc::new(livekit_api::services::room::RoomClient::with_api_key(
+                    &lk.url, &lk.api_key, &lk.api_secret,
+                ))
+            }),
             http_client: Arc::new(http_client),
         })
     }

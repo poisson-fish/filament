@@ -3201,6 +3201,23 @@ pub(crate) async fn kick_member(
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
+    let active_voice = state.realtime_registry.voice_participants().read().await;
+    let mut to_remove_voice = Vec::new();
+    for (key, users) in active_voice.iter() {
+        if key.starts_with(&format!("{}:", path.guild_id)) && users.contains_key(&target_user_id) {
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() == 2 {
+                to_remove_voice.push((parts[0].to_string(), parts[1].to_string()));
+            }
+        }
+    }
+    drop(active_voice);
+    for (guild_id, channel_id) in to_remove_voice {
+        crate::server::realtime::remove_voice_participant_for_channel(
+            &state, target_user_id, &guild_id, &channel_id, removed_at_unix,
+        ).await;
+    }
+
     write_audit_log(
         &state,
         Some(path.guild_id),
@@ -3294,6 +3311,23 @@ pub(crate) async fn ban_member(
         Some(auth.user_id),
     );
     broadcast_guild_event(&state, &path.guild_id, &remove_event).await;
+
+    let active_voice = state.realtime_registry.voice_participants().read().await;
+    let mut to_remove_voice = Vec::new();
+    for (key, users) in active_voice.iter() {
+        if key.starts_with(&format!("{}:", path.guild_id)) && users.contains_key(&target_user_id) {
+            let parts: Vec<&str> = key.split(':').collect();
+            if parts.len() == 2 {
+                to_remove_voice.push((parts[0].to_string(), parts[1].to_string()));
+            }
+        }
+    }
+    drop(active_voice);
+    for (guild_id, channel_id) in to_remove_voice {
+        crate::server::realtime::remove_voice_participant_for_channel(
+            &state, target_user_id, &guild_id, &channel_id, banned_at_unix,
+        ).await;
+    }
 
     write_audit_log(
         &state,
