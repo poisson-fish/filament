@@ -222,6 +222,13 @@ function readTrackSid(publication: unknown): string | null {
   return sid;
 }
 
+function isTrackMuted(input: unknown): boolean {
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+  return (input as { isMuted?: unknown }).isMuted === true;
+}
+
 function collectTrackSids(
   trackPublications: Map<string, TrackPublicationLike>,
   maxTracks: number,
@@ -916,6 +923,45 @@ class RtcClientImpl implements RtcClient {
       this.emitSnapshot();
     });
 
+    register(RoomEvent.TrackMuted, (publication, participant) => {
+      if (room !== this.activeRoom || !participant) {
+        return;
+      }
+      if (readTrackKind(publication) !== "video" && readTrackKind(publication) != null) {
+        return;
+      }
+      this.removeVideoTrackByPublication(publication);
+
+      const identity = readIdentity(participant);
+      if (identity === this.localParticipantIdentity) {
+        this.refreshLocalMediaState(room);
+      }
+      this.emitSnapshot();
+    });
+
+    register(RoomEvent.TrackUnmuted, (publication, participant) => {
+      if (room !== this.activeRoom || !participant) {
+        return;
+      }
+      if (readTrackKind(publication) !== "video" && readTrackKind(publication) != null) {
+        return;
+      }
+
+      const identity = readIdentity(participant);
+      if (identity) {
+        const isLocal = identity === this.localParticipantIdentity;
+        const source = readTrackSource(publication);
+        const trackSid = readTrackSid(publication);
+        if (source && trackSid) {
+          this.upsertVideoTrack(identity, isLocal, source, trackSid);
+        }
+        if (isLocal) {
+          this.refreshLocalMediaState(room);
+        }
+      }
+      this.emitSnapshot();
+    });
+
     register(RoomEvent.LocalTrackPublished, () => {
       if (room !== this.activeRoom) {
         return;
@@ -1018,6 +1064,9 @@ class RtcClientImpl implements RtcClient {
     publication: unknown,
     track?: unknown,
   ): void {
+    if (isTrackMuted(publication) || isTrackMuted(track)) {
+      return;
+    }
     const identity = readIdentity(participant);
     const trackSid = readTrackSid(publication) ?? readTrackSid(track);
     const source = readTrackSource(publication) ?? readTrackSource(track);
@@ -1183,6 +1232,9 @@ class RtcClientImpl implements RtcClient {
     this.removeVideoTracksForIdentity(localIdentity, true);
     if (localParticipant.videoTrackPublications instanceof Map) {
       for (const publication of localParticipant.videoTrackPublications.values()) {
+        if (isTrackMuted(publication)) {
+          continue;
+        }
         const trackSid = readTrackSid(publication);
         const source = readTrackSource(publication);
         if (!trackSid || !source) {
@@ -1207,6 +1259,9 @@ class RtcClientImpl implements RtcClient {
       return;
     }
     for (const publication of participant.trackPublications.values()) {
+      if (isTrackMuted(publication)) {
+        continue;
+      }
       const trackSid = readTrackSid(publication);
       const source = readTrackSource(publication);
       if (!trackSid || !source) {
