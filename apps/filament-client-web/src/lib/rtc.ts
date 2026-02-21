@@ -868,6 +868,7 @@ class RtcClientImpl implements RtcClient {
         return;
       }
       this.upsertParticipant(participant);
+      this.reconcileActiveSpeakerState(this.latestRawActiveSpeakers);
       this.emitSnapshot();
     });
 
@@ -1230,7 +1231,7 @@ class RtcClientImpl implements RtcClient {
         break;
       }
       const identity = readIdentity(participant);
-      if (!identity || !this.isKnownIdentity(identity)) {
+      if (!identity) {
         continue;
       }
       identities.add(identity);
@@ -1239,10 +1240,11 @@ class RtcClientImpl implements RtcClient {
   }
 
   private reconcileActiveSpeakerState(rawSpeakers: Set<string>): void {
-    this.latestRawActiveSpeakers = rawSpeakers;
+    const nextRawSpeakers = new Set(rawSpeakers);
+    this.latestRawActiveSpeakers = nextRawSpeakers;
 
     for (const [identity, timer] of this.pendingSpeakerOnTimers.entries()) {
-      if (rawSpeakers.has(identity)) {
+      if (nextRawSpeakers.has(identity)) {
         continue;
       }
       clearTimeout(timer);
@@ -1250,7 +1252,7 @@ class RtcClientImpl implements RtcClient {
     }
 
     for (const [identity, timer] of this.pendingSpeakerOffTimers.entries()) {
-      if (!rawSpeakers.has(identity)) {
+      if (!nextRawSpeakers.has(identity)) {
         continue;
       }
       clearTimeout(timer);
@@ -1258,7 +1260,10 @@ class RtcClientImpl implements RtcClient {
     }
 
     let changed = false;
-    for (const identity of rawSpeakers) {
+    for (const identity of nextRawSpeakers) {
+      if (!this.isKnownIdentity(identity)) {
+        continue;
+      }
       if (this.activeSpeakerIdentities.has(identity)) {
         continue;
       }
@@ -1284,7 +1289,7 @@ class RtcClientImpl implements RtcClient {
     }
 
     for (const identity of [...this.activeSpeakerIdentities]) {
-      if (rawSpeakers.has(identity)) {
+      if (nextRawSpeakers.has(identity)) {
         continue;
       }
       if (this.pendingSpeakerOffTimers.has(identity)) {

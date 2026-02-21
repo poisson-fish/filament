@@ -385,7 +385,9 @@ export function createAppShellSelectors(
           entry.identity === localIdentity
             ? localMedia.isDeafened
             : Boolean(entry.isDeafened),
-        isSpeaking: activeSpeakers.has(entry.identity) || entry.isSpeaking,
+        isSpeaking:
+          (isActiveVoiceSessionChannel && activeSpeakers.has(entry.identity)) ||
+          (!isActiveVoiceSessionChannel && entry.isSpeaking),
         hasCamera: entry.identity === localIdentity ? localMedia.hasCamera : entry.isVideoEnabled,
         hasScreenShare:
           entry.identity === localIdentity
@@ -407,7 +409,7 @@ export function createAppShellSelectors(
           isLocal: existing.isLocal || rtcEntry.isLocal,
           isMuted: rtcEntry.isLocal ? rtcEntry.isMuted : existing.isMuted,
           isDeafened: rtcEntry.isLocal ? rtcEntry.isDeafened : existing.isDeafened,
-          isSpeaking: existing.isSpeaking || rtcEntry.isSpeaking,
+          isSpeaking: rtcEntry.isSpeaking,
           hasCamera: existing.hasCamera || rtcEntry.hasCamera,
           hasScreenShare: existing.hasScreenShare || rtcEntry.hasScreenShare,
         });

@@ -375,6 +375,74 @@ describe("app shell selectors", () => {
     });
   });
 
+  it("prefers rtc speaking state for active voice sessions and keeps synced speaking for passive channels", () => {
+    createRoot((dispose) => {
+      const harness = createSelectorHarness();
+      const localIdentity = "u.01ARZ3NDEKTSV4RRFFQ69G5FAA.voice";
+      const remoteIdentity = "u.01ARZ3NDEKTSV4RRFFQ69G5FAB.voice";
+
+      harness.setRtcSnapshot({
+        ...rtcSnapshotFixture(),
+        connectionStatus: "connected",
+        localParticipantIdentity: localIdentity,
+        participants: [{ identity: remoteIdentity, subscribedTrackCount: 0 }],
+        activeSpeakerIdentities: [],
+      });
+      harness.setActiveChannelId(VOICE_A);
+      harness.setVoiceSessionChannelKey(channelKey(GUILD_A, VOICE_A));
+      harness.setVoiceParticipantsByChannel({
+        [channelKey(GUILD_A, VOICE_A)]: [
+          {
+            userId: "user2",
+            identity: remoteIdentity,
+            joinedAtUnix: Date.now(),
+            updatedAtUnix: Date.now(),
+            isMuted: false,
+            isDeafened: false,
+            isSpeaking: true,
+            isVideoEnabled: false,
+            isScreenShareEnabled: false,
+          },
+        ],
+      });
+
+      expect(harness.selectors.voiceRosterEntriesForChannel(VOICE_A)).toEqual([
+        {
+          identity: remoteIdentity,
+          isLocal: false,
+          isMuted: false,
+          isDeafened: false,
+          isSpeaking: false,
+          hasCamera: false,
+          hasScreenShare: false,
+        },
+        {
+          identity: localIdentity,
+          isLocal: true,
+          isMuted: true,
+          isDeafened: false,
+          isSpeaking: false,
+          hasCamera: false,
+          hasScreenShare: false,
+        },
+      ]);
+
+      harness.setVoiceSessionChannelKey(null);
+      expect(harness.selectors.voiceRosterEntriesForChannel(VOICE_A)).toEqual([
+        {
+          identity: remoteIdentity,
+          isLocal: false,
+          isMuted: false,
+          isDeafened: false,
+          isSpeaking: true,
+          hasCamera: false,
+          hasScreenShare: false,
+        },
+      ]);
+      dispose();
+    });
+  });
+
   it("merges active rtc participants into synced roster when sync is stale", () => {
     createRoot((dispose) => {
       const harness = createSelectorHarness();

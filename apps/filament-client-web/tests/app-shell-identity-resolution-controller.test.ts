@@ -180,4 +180,73 @@ describe("app shell identity resolution controller", () => {
 
     dispose();
   });
+
+  it("does not re-resolve when only voice speaking flags change", async () => {
+    const [session] = createSignal<typeof SESSION | null>(SESSION);
+    const [messages] = createSignal([]);
+    const [onlineMembers] = createSignal<string[]>([]);
+    const [voiceRosterEntries, setVoiceRosterEntries] = createSignal([
+      {
+        identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAD.remote",
+        isLocal: false,
+        isMuted: false,
+        isDeafened: false,
+        isSpeaking: false,
+        hasCamera: false,
+        hasScreenShare: false,
+      },
+    ]);
+    const [searchResults] = createSignal(null);
+    const [profile] = createSignal(undefined);
+    const [selectedProfile] = createSignal(null);
+    const [friends] = createSignal(friendListFromResponse({ friends: [] }));
+    const [friendRequests] = createSignal(
+      friendRequestListFromResponse({ incoming: [], outgoing: [] }),
+    );
+    const [, setResolvedUsernames] = createSignal<Record<string, string>>({});
+    const [, setAvatarVersionByUserId] = createSignal<Record<string, number>>({});
+
+    const resolveUsernamesMock = vi.fn(async () => ({}));
+
+    const dispose = createRoot((rootDispose) => {
+      createIdentityResolutionController(
+        {
+          session,
+          messages,
+          onlineMembers,
+          voiceRosterEntries,
+          searchResults,
+          profile,
+          selectedProfile,
+          friends,
+          friendRequests,
+          setResolvedUsernames,
+          setAvatarVersionByUserId,
+        },
+        {
+          resolveUsernames: resolveUsernamesMock,
+        },
+      );
+      return rootDispose;
+    });
+
+    await flush();
+    expect(resolveUsernamesMock).toHaveBeenCalledTimes(1);
+
+    setVoiceRosterEntries([
+      {
+        identity: "u.01ARZ3NDEKTSV4RRFFQ69G5FAD.remote",
+        isLocal: false,
+        isMuted: false,
+        isDeafened: false,
+        isSpeaking: true,
+        hasCamera: false,
+        hasScreenShare: false,
+      },
+    ]);
+    await flush();
+    expect(resolveUsernamesMock).toHaveBeenCalledTimes(1);
+
+    dispose();
+  });
 });

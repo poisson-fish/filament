@@ -593,6 +593,34 @@ describe("rtc client lifecycle", () => {
       vi.useRealTimers();
     }
   });
+
+  it("reconciles active speaker state when speaker arrives before participant registration", async () => {
+    vi.useFakeTimers();
+    try {
+      const room = new MockRoom();
+      const alpha = buildRemoteParticipant("alpha");
+      const client = createRtcClient({
+        roomFactory: () => room,
+        activeSpeakerDebounceMs: 100,
+        activeSpeakerHysteresisMs: 300,
+      });
+
+      await client.join({ livekitUrl: validUrl, token: validToken });
+
+      room.emit(RoomEvent.ActiveSpeakersChanged, [alpha]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(client.snapshot().activeSpeakerIdentities).toEqual([]);
+
+      room.emit(RoomEvent.ParticipantConnected, alpha);
+      await vi.advanceTimersByTimeAsync(99);
+      expect(client.snapshot().activeSpeakerIdentities).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(client.snapshot().activeSpeakerIdentities).toEqual(["alpha"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("rtc defaults", () => {

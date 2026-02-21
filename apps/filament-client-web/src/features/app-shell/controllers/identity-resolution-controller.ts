@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, type Accessor, type Setter } from "solid-js";
+import { createEffect, createMemo, onCleanup, type Accessor, type Setter } from "solid-js";
 import type { AuthSession } from "../../../domain/auth";
 import {
   userIdFromInput,
@@ -149,12 +149,7 @@ export function createIdentityResolutionController(
     }));
   });
 
-  createEffect(() => {
-    const session = options.session();
-    if (!session) {
-      return;
-    }
-
+  const visibleLookupKey = createMemo(() => {
     const lookupIds = collectVisibleUserIds({
       messages: options.messages(),
       onlineMembers: options.onlineMembers(),
@@ -162,8 +157,18 @@ export function createIdentityResolutionController(
       searchResults: options.searchResults(),
     });
     if (lookupIds.length === 0) {
+      return "";
+    }
+    return [...lookupIds].sort((left, right) => left.localeCompare(right)).join("|");
+  });
+
+  createEffect(() => {
+    const session = options.session();
+    const lookupKey = visibleLookupKey();
+    if (!session || lookupKey.length === 0) {
       return;
     }
+    const lookupIds = lookupKey.split("|") as UserId[];
 
     let cancelled = false;
     const resolveVisibleUsernames = async () => {
