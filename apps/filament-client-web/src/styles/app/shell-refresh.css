@@ -79,7 +79,7 @@
 .app-shell-scaffold {
   min-height: var(--app-viewport-height, 100dvh);
   height: var(--app-viewport-height, 100dvh);
-  width: 100vw;
+  width: 100%;
   position: fixed;
   inset: 0;
   padding: 0;
@@ -91,7 +91,7 @@
   min-height: 0;
   height: 100%;
   width: 100%;
-  max-width: 100vw;
+  max-width: 100%;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
@@ -168,7 +168,7 @@
   overflow-y: auto;
 }
 
-.chat-panel > .composer {
+.chat-panel>.composer {
   margin-top: 0;
   min-height: 0;
 }
@@ -206,13 +206,22 @@
   .app-shell,
   .app-shell.channel-rail-collapsed,
   .app-shell.member-rail-collapsed,
-  .app-shell.channel-rail-collapsed.member-rail-collapsed,
+  .app-shell.channel-rail-collapsed.member-rail-collapsed {
+    grid-template-columns: 3.0rem minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
   .app-shell.with-stream,
   .app-shell.with-stream.channel-rail-collapsed,
   .app-shell.with-stream.member-rail-collapsed,
   .app-shell.with-stream.channel-rail-collapsed.member-rail-collapsed {
     grid-template-columns: 3.0rem minmax(0, 1fr);
+    grid-template-rows: minmax(0, 60%) minmax(0, 1fr);
     min-height: 100vh;
+  }
+
+  .app-shell.with-stream .server-rail {
+    grid-row: 1 / span 2;
   }
 
   .channel-rail,
