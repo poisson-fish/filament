@@ -9,6 +9,7 @@ import {
 import { ApiError, loginWithPassword, registerWithPassword } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { ensureHcaptchaScript, hcaptchaSiteKey } from "../lib/hcaptcha";
+import { isSessionExpired } from "../lib/session";
 
 function mapApiError(error: unknown): string {
   if (error instanceof DomainValidationError) {
@@ -35,9 +36,12 @@ function mapApiError(error: unknown): string {
 export function LoginPage() {
   const auth = useAuth();
   const navigate = useNavigate();
-  if (auth.session()) {
+
+  const currentSession = auth.session();
+  if (currentSession && !isSessionExpired(currentSession)) {
     return <Navigate href="/app" />;
   }
+
   const [isRegisterMode, setRegisterMode] = createSignal(false);
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
