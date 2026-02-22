@@ -146,6 +146,8 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const [confirmRiskyRoleEdit, setConfirmRiskyRoleEdit] = createSignal(false);
 
   const [reorderDraftRoleIds, setReorderDraftRoleIds] = createSignal<WorkspaceRoleId[]>([]);
+  const [draggingRoleId, setDraggingRoleId] = createSignal<WorkspaceRoleId | null>(null);
+  const [dragOverRoleId, setDragOverRoleId] = createSignal<WorkspaceRoleId | null>(null);
 
   const [assignmentRoleId, setAssignmentRoleId] = createSignal<WorkspaceRoleId | null>(null);
   const roleHierarchyClass = "grid gap-[0.5rem]";
@@ -241,6 +243,8 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
       .filter((role) => !role.isSystem)
       .map((role) => role.roleId);
     setReorderDraftRoleIds(reorderable);
+    setDraggingRoleId(null);
+    setDragOverRoleId(null);
   });
 
   createEffect(() => {
@@ -314,21 +318,43 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     });
   };
 
-  const moveRole = (roleId: WorkspaceRoleId, direction: "up" | "down"): void => {
+  const moveRoleToTarget = (roleId: WorkspaceRoleId, targetRoleId: WorkspaceRoleId): void => {
     setReorderDraftRoleIds((current) => {
-      const index = current.findIndex((value) => value === roleId);
-      if (index < 0) {
+      const sourceIndex = current.findIndex((value) => value === roleId);
+      const targetIndex = current.findIndex((value) => value === targetRoleId);
+      if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
         return current;
       }
-      const target = direction === "up" ? index - 1 : index + 1;
-      if (target < 0 || target >= current.length) {
-        return current;
-      }
+
       const next = [...current];
-      const [moved] = next.splice(index, 1);
-      next.splice(target, 0, moved!);
+      const [moved] = next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, moved!);
       return next;
     });
+  };
+
+  const onReorderDragStart = (roleId: WorkspaceRoleId): void => {
+    if (!props.canManageWorkspaceRoles || props.isMutatingRoles) {
+      return;
+    }
+    setDraggingRoleId(roleId);
+    setDragOverRoleId(roleId);
+  };
+
+  const onReorderDrop = (targetRoleId: WorkspaceRoleId): void => {
+    const sourceRoleId = draggingRoleId();
+    if (!sourceRoleId || !props.canManageWorkspaceRoles || props.isMutatingRoles) {
+      setDragOverRoleId(null);
+      return;
+    }
+    moveRoleToTarget(sourceRoleId, targetRoleId);
+    setDragOverRoleId(null);
+    setDraggingRoleId(null);
+  };
+
+  const onReorderDragEnd = (): void => {
+    setDraggingRoleId(null);
+    setDragOverRoleId(null);
   };
 
   const onSaveReorder = async (): Promise<void> => {
@@ -539,32 +565,40 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
 
             <section class={formClass}>
               <h5>Role Hierarchy Reorder</h5>
+              <p class={mutedTextClass}>
+                Drag custom roles to reorder hierarchy. System roles stay pinned.
+              </p>
               <For each={reorderDraftRoleIds()}>
-                {(roleId, indexAccessor) => (
-                  <div class={`${actionButtonRowClass} items-center [&>span]:min-w-0 [&>span]:flex-1 [&>span]:break-words`}>
+                {(roleId) => (
+                  <div
+                    classList={{
+                      [`${actionButtonRowClass} items-center [&>span]:min-w-0 [&>span]:flex-1 [&>span]:break-words rounded-[0.56rem] border border-line-soft bg-bg-2 px-[0.48rem] py-[0.36rem]`]:
+                        true,
+                      "border-brand": dragOverRoleId() === roleId,
+                    }}
+                    aria-label={`Reorder role ${hierarchyRoles().find((entry) => entry.roleId === roleId)?.name ?? "unknown"}`}
+                    draggable={props.canManageWorkspaceRoles && !props.isMutatingRoles}
+                    onDragStart={() => onReorderDragStart(roleId)}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      if (!props.canManageWorkspaceRoles || props.isMutatingRoles) {
+                        return;
+                      }
+                      if (dragOverRoleId() !== roleId) {
+                        setDragOverRoleId(roleId);
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      onReorderDrop(roleId);
+                    }}
+                    onDragEnd={onReorderDragEnd}
+                  >
                     <span>
                       {hierarchyRoles().find((entry) => entry.roleId === roleId)?.name ??
                         "unknown"}
                     </span>
-                    <button
-                      class={rowActionButtonClass}
-                      type="button"
-                      onClick={() => moveRole(roleId, "up")}
-                      disabled={indexAccessor() === 0 || props.isMutatingRoles}
-                    >
-                      Up
-                    </button>
-                    <button
-                      class={rowActionButtonClass}
-                      type="button"
-                      onClick={() => moveRole(roleId, "down")}
-                      disabled={
-                        indexAccessor() === reorderDraftRoleIds().length - 1 ||
-                        props.isMutatingRoles
-                      }
-                    >
-                      Down
-                    </button>
+                    <span class={statusChipClass}>drag</span>
                   </div>
                 )}
               </For>

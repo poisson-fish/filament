@@ -184,13 +184,13 @@ This section is used to track the progress of the implementation across multiple
   - *Added frontend parity helpers for `compute_base_permissions` and layered `apply_channel_overrides` in `effective-permissions.ts`, then switched app-shell selectors to derive UI-gating permissions from local role assignments + overrides with secure snapshot fallback. Added targeted tests for bitset evaluation, precedence, owner short-circuit behavior, and selector integration with legacy role overrides.*
 
 ### Phase 4: Frontend UI - Role & Member Management
-- [ ] Build the **Workspace Settings: Roles Panel** (Sidebar list, drag-and-drop hierarchy).
+- [x] Build the **Workspace Settings: Roles Panel** (Sidebar list, drag-and-drop hierarchy).
 - [ ] Build the **Role Editor Panel** (Name editing, permission toggles list, save system).
 - [ ] Integrate **Role Templates** (Cosmetic, Moderator, Read-Only) into creation flow.
 - [ ] Build the **Workspace Settings: Members Panel** (Inline role assignment via dropdown badge UI).
 - [ ] Add explicit warnings/confirmation modals for dangerous operations.
 - **Notes**: 
-  - *(Add implementation notes here)*
+  - *Implemented drag-and-drop hierarchy reordering in the role-management panel using bounded client-side role-id state (`reorderDraftRoleIds`) and fail-closed drop handling that only reorders known, non-system role IDs. Added visual drag affordances and preserved explicit confirmation before persisting `onReorderRoles` to reduce accidental hierarchy changes. System roles remain pinned/non-reorderable.*
 
 ### Phase 5: Frontend UI - Channel Overrides
 - [ ] Build the **Channel Settings: Permissions Tab** (Entity Selector Sidebar prioritizing `@everyone` + active overrides).

@@ -163,4 +163,56 @@ describe("role management panel", () => {
     expect(onDeleteRole).not.toHaveBeenCalled();
     confirmMock.mockRestore();
   });
+
+  it("reorders custom roles via drag-and-drop and submits the updated hierarchy", async () => {
+    const onReorderRoles = vi.fn(async () => undefined);
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const incidentRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW");
+    const observerRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX");
+
+    render(() =>
+      RoleManagementPanel(
+        panelProps({
+          onReorderRoles,
+          roles: [
+            {
+              roleId: ROLE_ID,
+              name: workspaceRoleNameFromInput("Responder"),
+              position: 8,
+              isSystem: false,
+              permissions: [permissionFromInput("create_message")],
+            },
+            {
+              roleId: incidentRoleId,
+              name: workspaceRoleNameFromInput("Incident Lead"),
+              position: 6,
+              isSystem: false,
+              permissions: [permissionFromInput("manage_member_roles")],
+            },
+            {
+              roleId: observerRoleId,
+              name: workspaceRoleNameFromInput("Observer"),
+              position: 4,
+              isSystem: false,
+              permissions: [permissionFromInput("subscribe_streams")],
+            },
+          ],
+        }),
+      ),
+    );
+
+    const incidentReorderRow = screen.getByLabelText("Reorder role Incident Lead");
+    const responderReorderRow = screen.getByLabelText("Reorder role Responder");
+
+    fireEvent.dragStart(incidentReorderRow);
+    fireEvent.dragOver(responderReorderRow);
+    fireEvent.drop(responderReorderRow);
+    fireEvent.dragEnd(incidentReorderRow);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save hierarchy order" }));
+
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(onReorderRoles).toHaveBeenCalledWith([incidentRoleId, ROLE_ID, observerRoleId]);
+    confirmMock.mockRestore();
+  });
 });
