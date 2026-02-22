@@ -131,6 +131,8 @@ export interface WorkspaceSettingsPanelBuilderOptions {
   memberRoleStatus: string;
   memberRoleError: string;
   isMutatingMemberRoles: boolean;
+  viewAsRoleSimulatorEnabled: boolean;
+  viewAsRoleSimulatorRole: RoleName;
   members: Array<{
     userId: string;
     label: string;
@@ -140,6 +142,8 @@ export interface WorkspaceSettingsPanelBuilderOptions {
   assignableRoleIds: WorkspaceRoleId[];
   setWorkspaceSettingsName: (value: string) => void;
   setWorkspaceSettingsVisibility: (value: GuildVisibility) => void;
+  setViewAsRoleSimulatorEnabled: (value: boolean) => void;
+  setViewAsRoleSimulatorRole: (value: RoleName) => void;
   onSaveWorkspaceSettings: () => Promise<void> | void;
   onAssignMemberRole: (userId: string, roleId: WorkspaceRoleId) => Promise<void> | void;
   onUnassignMemberRole: (userId: string, roleId: WorkspaceRoleId) => Promise<void> | void;
@@ -386,11 +390,16 @@ export function buildWorkspaceSettingsPanelProps(
     memberRoleStatus: options.memberRoleStatus,
     memberRoleError: options.memberRoleError,
     isMutatingMemberRoles: options.isMutatingMemberRoles,
+    viewAsRoleSimulatorEnabled: options.viewAsRoleSimulatorEnabled,
+    viewAsRoleSimulatorRole: options.viewAsRoleSimulatorRole,
     members: options.members,
     roles: options.roles,
     assignableRoleIds: options.assignableRoleIds,
     onWorkspaceNameInput: options.setWorkspaceSettingsName,
     onWorkspaceVisibilityChange: options.setWorkspaceSettingsVisibility,
+    onViewAsRoleSimulatorToggle: options.setViewAsRoleSimulatorEnabled,
+    onViewAsRoleSimulatorRoleChange: (value) =>
+      options.setViewAsRoleSimulatorRole(roleFromInput(value)),
     onSaveWorkspaceSettings: options.onSaveWorkspaceSettings,
     onAssignMemberRole: options.onAssignMemberRole,
     onUnassignMemberRole: options.onUnassignMemberRole,

@@ -68,6 +68,9 @@ export interface SupportPanelPropGroupsStateOptions {
   memberRoleStatus: () => string;
   memberRoleError: () => string;
   isMutatingMemberRoles: () => boolean;
+  viewAsRoleSimulatorEnabled: () => boolean;
+  viewAsRoleSimulatorRole:
+    () => SupportPanelPropGroupsOptions["workspaceSettings"]["viewAsRoleSimulatorRole"];
   members: () => Array<{
     userId: string;
     label: string;
@@ -78,6 +81,10 @@ export interface SupportPanelPropGroupsStateOptions {
     SupportPanelPropGroupsOptions["workspaceSettings"]["setWorkspaceSettingsName"];
   setWorkspaceSettingsVisibility:
     SupportPanelPropGroupsOptions["workspaceSettings"]["setWorkspaceSettingsVisibility"];
+  setViewAsRoleSimulatorEnabled:
+    SupportPanelPropGroupsOptions["workspaceSettings"]["setViewAsRoleSimulatorEnabled"];
+  setViewAsRoleSimulatorRole:
+    SupportPanelPropGroupsOptions["workspaceSettings"]["setViewAsRoleSimulatorRole"];
   setWorkspaceSettingsStatus:
     SupportPanelPropGroupsOptions["workspaceSettings"]["setWorkspaceSettingsStatus"];
   setWorkspaceSettingsError:
@@ -181,11 +188,15 @@ export function createSupportPanelPropGroupsOptions(
       memberRoleStatus: options.memberRoleStatus(),
       memberRoleError: options.memberRoleError(),
       isMutatingMemberRoles: options.isMutatingMemberRoles(),
+      viewAsRoleSimulatorEnabled: options.viewAsRoleSimulatorEnabled(),
+      viewAsRoleSimulatorRole: options.viewAsRoleSimulatorRole(),
       members: options.members(),
       roles: options.roles(),
       assignableRoleIds: options.assignableRoleIds(),
       setWorkspaceSettingsName: options.setWorkspaceSettingsName,
       setWorkspaceSettingsVisibility: options.setWorkspaceSettingsVisibility,
+      setViewAsRoleSimulatorEnabled: options.setViewAsRoleSimulatorEnabled,
+      setViewAsRoleSimulatorRole: options.setViewAsRoleSimulatorRole,
       setWorkspaceSettingsStatus: options.setWorkspaceSettingsStatus,
       setWorkspaceSettingsError: options.setWorkspaceSettingsError,
       onSaveWorkspaceSettings: options.onSaveWorkspaceSettings,

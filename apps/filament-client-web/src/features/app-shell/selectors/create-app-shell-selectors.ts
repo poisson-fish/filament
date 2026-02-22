@@ -6,6 +6,7 @@ import type {
   GuildId,
   MediaPublishSource,
   PermissionName,
+  RoleName,
   UserId,
   WorkspaceRecord,
 } from "../../../domain/chat";
@@ -19,6 +20,7 @@ import {
 } from "../helpers";
 import {
   permissionListFromBits,
+  resolveEffectiveLegacyRolePermissions,
   resolveAssignedRoleIdsForUser,
   resolveEffectiveChannelPermissions,
 } from "../permissions/effective-permissions";
@@ -48,6 +50,8 @@ export interface CreateAppShellSelectorsOptions {
   workspaceRolesByGuildId: Accessor<WorkspaceRolesByGuildId>;
   workspaceUserRolesByGuildId: Accessor<WorkspaceUserRolesByGuildId>;
   workspaceChannelOverridesByGuildId: Accessor<WorkspaceChannelOverridesByGuildId>;
+  viewAsRoleSimulatorEnabled: Accessor<boolean>;
+  viewAsRoleSimulatorRole: Accessor<RoleName>;
   voiceSessionChannelKey: Accessor<string | null>;
   attachmentByChannel: Accessor<Record<string, AttachmentRecord[]>>;
   rtcSnapshot: Accessor<RtcSnapshot>;
@@ -247,6 +251,15 @@ export function createAppShellSelectors(
     );
     const channelOverrides =
       options.workspaceChannelOverridesByGuildId()[guildId]?.[channelId] ?? [];
+    if (options.viewAsRoleSimulatorEnabled()) {
+      return permissionListFromBits(
+        resolveEffectiveLegacyRolePermissions({
+          role: options.viewAsRoleSimulatorRole(),
+          guildRoles: roles,
+          channelOverrides,
+        }),
+      );
+    }
     const bits = resolveEffectiveChannelPermissions({
       channelPermissionsSnapshot: options.channelPermissions(),
       guildRoles: roles,

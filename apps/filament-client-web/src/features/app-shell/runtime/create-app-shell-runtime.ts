@@ -124,6 +124,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     workspaceUserRolesByGuildId: workspaceChannelState.workspaceUserRolesByGuildId,
     workspaceChannelOverridesByGuildId:
       workspaceChannelState.workspaceChannelOverridesByGuildId,
+    viewAsRoleSimulatorEnabled: workspaceChannelState.viewAsRoleSimulatorEnabled,
+    viewAsRoleSimulatorRole: workspaceChannelState.viewAsRoleSimulatorRole,
     voiceSessionChannelKey: voiceState.voiceSessionChannelKey,
     attachmentByChannel: messageState.attachmentByChannel,
     rtcSnapshot: voiceState.rtcSnapshot,

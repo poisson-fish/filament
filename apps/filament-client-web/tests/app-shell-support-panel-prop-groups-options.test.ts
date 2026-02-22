@@ -83,10 +83,14 @@ describe("app shell support panel prop group state options", () => {
       memberRoleStatus: () => "member-ready",
       memberRoleError: () => "",
       isMutatingMemberRoles: () => false,
+      viewAsRoleSimulatorEnabled: () => true,
+      viewAsRoleSimulatorRole: () => "moderator",
       members: () => [],
       assignableRoleIds: () => [roleId],
       setWorkspaceSettingsName: () => undefined,
       setWorkspaceSettingsVisibility: () => undefined,
+      setViewAsRoleSimulatorEnabled: () => undefined,
+      setViewAsRoleSimulatorRole: () => undefined,
       setWorkspaceSettingsStatus: () => undefined,
       setWorkspaceSettingsError: () => undefined,
       onSaveWorkspaceSettings: () => undefined,
@@ -142,6 +146,8 @@ describe("app shell support panel prop group state options", () => {
     expect(options.publicDirectory.publicGuildSearchQuery).toBe("ops");
     expect(options.settings.activeSettingsCategory).toBe("profile");
     expect(options.workspaceSettings.workspaceName).toBe("Ops");
+    expect(options.workspaceSettings.viewAsRoleSimulatorEnabled).toBe(true);
+    expect(options.workspaceSettings.viewAsRoleSimulatorRole).toBe("moderator");
     expect(options.roleManagement.roles).toHaveLength(1);
     expect(options.utility.echoInput).toBe("ping");
 

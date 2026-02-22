@@ -165,11 +165,17 @@ export function createSupportPanelHostStateOptions(
     memberRoleStatus: options.roleManagementActions.roleManagementStatus,
     memberRoleError: options.roleManagementActions.roleManagementError,
     isMutatingMemberRoles: options.roleManagementActions.isMutatingRoles,
+    viewAsRoleSimulatorEnabled:
+      options.workspaceChannelState.viewAsRoleSimulatorEnabled,
+    viewAsRoleSimulatorRole: options.workspaceChannelState.viewAsRoleSimulatorRole,
     members: resolveWorkspaceSettingsMemberRows,
     assignableRoleIds: resolveAssignableRoleIds,
     setWorkspaceSettingsName: options.workspaceChannelState.setWorkspaceSettingsName,
     setWorkspaceSettingsVisibility:
       options.workspaceChannelState.setWorkspaceSettingsVisibility,
+    setViewAsRoleSimulatorEnabled:
+      options.workspaceChannelState.setViewAsRoleSimulatorEnabled,
+    setViewAsRoleSimulatorRole: options.workspaceChannelState.setViewAsRoleSimulatorRole,
     setWorkspaceSettingsStatus:
       options.workspaceChannelState.setWorkspaceSettingsStatus,
     setWorkspaceSettingsError: options.workspaceChannelState.setWorkspaceSettingsError,

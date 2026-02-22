@@ -80,6 +80,10 @@ function createWorkspaceChannelState() {
   const [isSavingWorkspaceSettings, setSavingWorkspaceSettings] = createSignal(false);
   const [workspaceSettingsStatus, setWorkspaceSettingsStatus] = createSignal("");
   const [workspaceSettingsError, setWorkspaceSettingsError] = createSignal("");
+  const [viewAsRoleSimulatorEnabled, setViewAsRoleSimulatorEnabled] =
+    createSignal(false);
+  const [viewAsRoleSimulatorRole, setViewAsRoleSimulatorRole] =
+    createSignal<RoleName>("member");
 
   const [newChannelName, setNewChannelName] = createSignal("backend");
   const [newChannelKind, setNewChannelKind] = createSignal<ChannelKindName>("text");
@@ -410,6 +414,10 @@ function createWorkspaceChannelState() {
     setWorkspaceSettingsStatus,
     workspaceSettingsError,
     setWorkspaceSettingsError,
+    viewAsRoleSimulatorEnabled,
+    setViewAsRoleSimulatorEnabled,
+    viewAsRoleSimulatorRole,
+    setViewAsRoleSimulatorRole,
     newChannelName,
     setNewChannelName,
     newChannelKind,

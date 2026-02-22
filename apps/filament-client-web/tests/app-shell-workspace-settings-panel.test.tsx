@@ -25,6 +25,8 @@ function workspaceSettingsPanelPropsFixture(
     memberRoleStatus: "",
     memberRoleError: "",
     isMutatingMemberRoles: false,
+    viewAsRoleSimulatorEnabled: false,
+    viewAsRoleSimulatorRole: "member",
     members: [
       {
         userId: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
@@ -44,6 +46,8 @@ function workspaceSettingsPanelPropsFixture(
     assignableRoleIds: [workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX")],
     onWorkspaceNameInput: () => undefined,
     onWorkspaceVisibilityChange: () => undefined,
+    onViewAsRoleSimulatorToggle: () => undefined,
+    onViewAsRoleSimulatorRoleChange: () => undefined,
     onSaveWorkspaceSettings: () => undefined,
     onAssignMemberRole: () => undefined,
     onUnassignMemberRole: () => undefined,
@@ -79,6 +83,8 @@ describe("app shell workspace settings panel", () => {
   it("wires input and submit callbacks", async () => {
     const onWorkspaceNameInput = vi.fn();
     const onWorkspaceVisibilityChange = vi.fn();
+    const onViewAsRoleSimulatorToggle = vi.fn();
+    const onViewAsRoleSimulatorRoleChange = vi.fn();
     const onSaveWorkspaceSettings = vi.fn();
 
     render(() => (
@@ -86,6 +92,8 @@ describe("app shell workspace settings panel", () => {
         {...workspaceSettingsPanelPropsFixture({
           onWorkspaceNameInput,
           onWorkspaceVisibilityChange,
+          onViewAsRoleSimulatorToggle,
+          onViewAsRoleSimulatorRoleChange,
           onSaveWorkspaceSettings,
         })}
       />
@@ -100,6 +108,14 @@ describe("app shell workspace settings panel", () => {
       target: { value: "public" },
     });
     expect(onWorkspaceVisibilityChange).toHaveBeenCalledWith("public");
+
+    await fireEvent.click(screen.getByLabelText("Enable view server as role simulator"));
+    expect(onViewAsRoleSimulatorToggle).toHaveBeenCalledWith(true);
+
+    await fireEvent.change(screen.getByLabelText("Workspace role simulator selection"), {
+      target: { value: "moderator" },
+    });
+    expect(onViewAsRoleSimulatorRoleChange).toHaveBeenCalledWith("moderator");
 
     const form = screen.getByRole("button", { name: "Save workspace" }).closest("form");
     expect(form).not.toBeNull();

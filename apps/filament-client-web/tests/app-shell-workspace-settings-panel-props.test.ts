@@ -27,6 +27,8 @@ describe("app shell workspace settings panel props", () => {
       memberRoleStatus: "",
       memberRoleError: "",
       isMutatingMemberRoles: false,
+      viewAsRoleSimulatorEnabled: false,
+      viewAsRoleSimulatorRole: "member",
       members: [{ userId: "01ARZ3NDEKTSV4RRFFQ69G5FAX", label: "owner", roleIds: [] }],
       roles: [{
         roleId,
@@ -40,6 +42,8 @@ describe("app shell workspace settings panel props", () => {
       setWorkspaceSettingsVisibility: () => guildVisibilityFromInput("private"),
       setWorkspaceSettingsStatus: () => "",
       setWorkspaceSettingsError: () => "",
+      setViewAsRoleSimulatorEnabled: () => undefined,
+      setViewAsRoleSimulatorRole: () => undefined,
       onSaveWorkspaceSettings,
       onAssignMemberRole,
       onUnassignMemberRole,
@@ -48,6 +52,8 @@ describe("app shell workspace settings panel props", () => {
     expect(panelProps.hasActiveWorkspace).toBe(true);
     expect(panelProps.canManageWorkspaceSettings).toBe(true);
     expect(panelProps.canManageMemberRoles).toBe(true);
+    expect(panelProps.viewAsRoleSimulatorEnabled).toBe(false);
+    expect(panelProps.viewAsRoleSimulatorRole).toBe("member");
     expect(panelProps.workspaceName).toBe("Filament");
     expect(panelProps.workspaceVisibility).toBe("private");
     expect(panelProps.members).toHaveLength(1);
@@ -77,6 +83,8 @@ describe("app shell workspace settings panel props", () => {
       memberRoleStatus: "",
       memberRoleError: "",
       isMutatingMemberRoles: false,
+      viewAsRoleSimulatorEnabled: false,
+      viewAsRoleSimulatorRole: "member",
       members: [],
       roles: [],
       assignableRoleIds: [],
@@ -84,6 +92,8 @@ describe("app shell workspace settings panel props", () => {
       setWorkspaceSettingsVisibility: () => guildVisibilityFromInput("private"),
       setWorkspaceSettingsStatus,
       setWorkspaceSettingsError,
+      setViewAsRoleSimulatorEnabled: () => undefined,
+      setViewAsRoleSimulatorRole: () => undefined,
       onSaveWorkspaceSettings: () => undefined,
       onAssignMemberRole: () => undefined,
       onUnassignMemberRole: () => undefined,
@@ -115,6 +125,8 @@ describe("app shell workspace settings panel props", () => {
       memberRoleStatus: "",
       memberRoleError: "",
       isMutatingMemberRoles: false,
+      viewAsRoleSimulatorEnabled: false,
+      viewAsRoleSimulatorRole: "member",
       members: [],
       roles: [],
       assignableRoleIds: [],
@@ -122,6 +134,8 @@ describe("app shell workspace settings panel props", () => {
       setWorkspaceSettingsVisibility: setWorkspaceVisibility,
       setWorkspaceSettingsStatus,
       setWorkspaceSettingsError,
+      setViewAsRoleSimulatorEnabled: () => undefined,
+      setViewAsRoleSimulatorRole: () => undefined,
       onSaveWorkspaceSettings: () => undefined,
       onAssignMemberRole: () => undefined,
       onUnassignMemberRole: () => undefined,
@@ -132,5 +146,43 @@ describe("app shell workspace settings panel props", () => {
     expect(workspaceVisibility()).toBe("public");
     expect(workspaceSettingsStatus()).toBe("");
     expect(workspaceSettingsError()).toBe("");
+  });
+
+  it("maps role simulator controls through workspace settings props", () => {
+    const setViewAsRoleSimulatorEnabled = vi.fn();
+    const setViewAsRoleSimulatorRole = vi.fn();
+
+    const panelProps = createWorkspaceSettingsPanelProps({
+      hasActiveWorkspace: true,
+      canManageWorkspaceSettings: true,
+      canManageMemberRoles: true,
+      workspaceName: "Filament",
+      workspaceVisibility: guildVisibilityFromInput("private"),
+      isSavingWorkspaceSettings: false,
+      workspaceSettingsStatus: "",
+      workspaceSettingsError: "",
+      memberRoleStatus: "",
+      memberRoleError: "",
+      isMutatingMemberRoles: false,
+      viewAsRoleSimulatorEnabled: true,
+      viewAsRoleSimulatorRole: "moderator",
+      members: [],
+      roles: [],
+      assignableRoleIds: [],
+      setWorkspaceSettingsName: () => undefined,
+      setWorkspaceSettingsVisibility: () => undefined,
+      setWorkspaceSettingsStatus: () => undefined,
+      setWorkspaceSettingsError: () => undefined,
+      setViewAsRoleSimulatorEnabled,
+      setViewAsRoleSimulatorRole,
+      onSaveWorkspaceSettings: () => undefined,
+      onAssignMemberRole: () => undefined,
+      onUnassignMemberRole: () => undefined,
+    });
+
+    panelProps.onViewAsRoleSimulatorToggle(false);
+    panelProps.onViewAsRoleSimulatorRoleChange("owner");
+    expect(setViewAsRoleSimulatorEnabled).toHaveBeenCalledWith(false);
+    expect(setViewAsRoleSimulatorRole).toHaveBeenCalledWith("owner");
   });
 });

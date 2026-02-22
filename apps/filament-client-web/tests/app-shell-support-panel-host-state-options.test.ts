@@ -52,6 +52,10 @@ describe("app shell support panel-host state options", () => {
     const setWorkspaceSettingsVisibility = vi.fn();
     const setWorkspaceSettingsStatus = vi.fn();
     const setWorkspaceSettingsError = vi.fn();
+    const viewAsRoleSimulatorEnabled = () => true;
+    const viewAsRoleSimulatorRole = () => "moderator";
+    const setViewAsRoleSimulatorEnabled = vi.fn();
+    const setViewAsRoleSimulatorRole = vi.fn();
 
     const canManageWorkspaceRoles = () => true;
     const canManageMemberRoles = () => true;
@@ -143,8 +147,12 @@ describe("app shell support panel-host state options", () => {
         isSavingWorkspaceSettings,
         workspaceSettingsStatus,
         workspaceSettingsError,
+        viewAsRoleSimulatorEnabled,
+        viewAsRoleSimulatorRole,
         setWorkspaceSettingsName,
         setWorkspaceSettingsVisibility,
+        setViewAsRoleSimulatorEnabled,
+        setViewAsRoleSimulatorRole,
         setWorkspaceSettingsStatus,
         setWorkspaceSettingsError,
       } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["workspaceChannelState"],
@@ -208,6 +216,8 @@ describe("app shell support panel-host state options", () => {
     expect(stateOptions.profile()).toEqual(profile());
     expect(stateOptions.selectedAvatarFilename()).toBe("avatar.png");
     expect(stateOptions.workspaceName).toBe(workspaceSettingsName);
+    expect(stateOptions.viewAsRoleSimulatorEnabled()).toBe(true);
+    expect(stateOptions.viewAsRoleSimulatorRole()).toBe("moderator");
     expect(stateOptions.members()).toEqual([
       { userId: "user-1", label: "@user-1", roleIds: ["role-1"] },
       { userId: "user-2", label: "@user-2", roleIds: [] },

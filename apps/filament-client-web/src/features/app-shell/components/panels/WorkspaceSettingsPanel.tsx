@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import type {
   GuildRoleRecord,
   GuildVisibility,
+  RoleName,
   WorkspaceRoleId,
 } from "../../../../domain/chat";
 
@@ -23,11 +24,15 @@ export interface WorkspaceSettingsPanelProps {
   memberRoleStatus: string;
   memberRoleError: string;
   isMutatingMemberRoles: boolean;
+  viewAsRoleSimulatorEnabled: boolean;
+  viewAsRoleSimulatorRole: RoleName;
   members: WorkspaceSettingsMemberRecord[];
   roles: GuildRoleRecord[];
   assignableRoleIds: WorkspaceRoleId[];
   onWorkspaceNameInput: (value: string) => void;
   onWorkspaceVisibilityChange: (value: GuildVisibility) => void;
+  onViewAsRoleSimulatorToggle: (value: boolean) => void;
+  onViewAsRoleSimulatorRoleChange: (value: RoleName) => void;
   onSaveWorkspaceSettings: () => Promise<void> | void;
   onAssignMemberRole: (userId: string, roleId: WorkspaceRoleId) => Promise<void> | void;
   onUnassignMemberRole: (userId: string, roleId: WorkspaceRoleId) => Promise<void> | void;
@@ -197,6 +202,46 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
         <Show when={props.workspaceSettingsError}>
           <p class={statusErrorClass}>{props.workspaceSettingsError}</p>
         </Show>
+        <section class={panelSectionClass} aria-label="workspace permission simulator">
+          <p class={sectionLabelClassName}>PERMISSION SIMULATOR</p>
+          <label class={fieldLabelClass}>
+            View server as role
+            <span class="flex items-center gap-[0.44rem] text-[0.84rem] text-ink-1">
+              <input
+                aria-label="Enable view server as role simulator"
+                type="checkbox"
+                checked={props.viewAsRoleSimulatorEnabled}
+                onChange={(event) =>
+                  props.onViewAsRoleSimulatorToggle(event.currentTarget.checked)}
+              />
+              Clamp local UI permissions using a simulated role.
+            </span>
+          </label>
+          <label class={fieldLabelClass}>
+            Simulated role
+            <select
+              class={fieldControlClass}
+              aria-label="Workspace role simulator selection"
+              value={props.viewAsRoleSimulatorRole}
+              onChange={(event) =>
+                props.onViewAsRoleSimulatorRoleChange(
+                  event.currentTarget.value === "owner"
+                    ? "owner"
+                    : event.currentTarget.value === "moderator"
+                      ? "moderator"
+                      : "member",
+                )}
+              disabled={!props.viewAsRoleSimulatorEnabled}
+            >
+              <option value="owner">owner</option>
+              <option value="moderator">moderator</option>
+              <option value="member">member</option>
+            </select>
+          </label>
+          <p class={mutedTextClass}>
+            Simulation is local-only and does not change server authorization.
+          </p>
+        </section>
       </Show>
       <Show when={props.hasActiveWorkspace}>
         <section class={panelSectionClass} aria-label="workspace members settings">

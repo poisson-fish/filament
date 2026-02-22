@@ -1,4 +1,4 @@
-import type { GuildVisibility, WorkspaceRoleId } from "../../../domain/chat";
+import type { GuildVisibility, RoleName, WorkspaceRoleId } from "../../../domain/chat";
 import type { WorkspaceSettingsPanelBuilderOptions } from "../adapters/panel-host-props";
 
 export interface WorkspaceSettingsPanelPropsOptions {
@@ -13,6 +13,8 @@ export interface WorkspaceSettingsPanelPropsOptions {
   memberRoleStatus: string;
   memberRoleError: string;
   isMutatingMemberRoles: boolean;
+  viewAsRoleSimulatorEnabled: boolean;
+  viewAsRoleSimulatorRole: RoleName;
   members: WorkspaceSettingsPanelBuilderOptions["members"];
   roles: WorkspaceSettingsPanelBuilderOptions["roles"];
   assignableRoleIds: WorkspaceSettingsPanelBuilderOptions["assignableRoleIds"];
@@ -20,6 +22,8 @@ export interface WorkspaceSettingsPanelPropsOptions {
   setWorkspaceSettingsVisibility: (value: GuildVisibility) => void;
   setWorkspaceSettingsStatus: (value: string) => void;
   setWorkspaceSettingsError: (value: string) => void;
+  setViewAsRoleSimulatorEnabled: (value: boolean) => void;
+  setViewAsRoleSimulatorRole: (value: RoleName) => void;
   onSaveWorkspaceSettings: () => Promise<void> | void;
   onAssignMemberRole: (userId: string, roleId: WorkspaceRoleId) => Promise<void> | void;
   onUnassignMemberRole: (userId: string, roleId: WorkspaceRoleId) => Promise<void> | void;
@@ -40,6 +44,8 @@ export function createWorkspaceSettingsPanelProps(
     memberRoleStatus: options.memberRoleStatus,
     memberRoleError: options.memberRoleError,
     isMutatingMemberRoles: options.isMutatingMemberRoles,
+    viewAsRoleSimulatorEnabled: options.viewAsRoleSimulatorEnabled,
+    viewAsRoleSimulatorRole: options.viewAsRoleSimulatorRole,
     members: options.members,
     roles: options.roles,
     assignableRoleIds: options.assignableRoleIds,
@@ -53,6 +59,8 @@ export function createWorkspaceSettingsPanelProps(
       options.setWorkspaceSettingsStatus("");
       options.setWorkspaceSettingsError("");
     },
+    onViewAsRoleSimulatorToggle: options.setViewAsRoleSimulatorEnabled,
+    onViewAsRoleSimulatorRoleChange: options.setViewAsRoleSimulatorRole,
     onSaveWorkspaceSettings: options.onSaveWorkspaceSettings,
     onAssignMemberRole: options.onAssignMemberRole,
     onUnassignMemberRole: options.onUnassignMemberRole,

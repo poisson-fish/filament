@@ -142,6 +142,10 @@ function createSelectorHarness() {
   const [workspaceChannelOverridesByGuildId, setWorkspaceChannelOverridesByGuildId] = createSignal<
     Record<string, Record<string, WorkspaceChannelOverrideRecord[]>>
   >({});
+  const [viewAsRoleSimulatorEnabled, setViewAsRoleSimulatorEnabled] = createSignal(false);
+  const [viewAsRoleSimulatorRole, setViewAsRoleSimulatorRole] = createSignal<
+    "owner" | "moderator" | "member"
+  >("member");
   const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(null);
   const [attachmentByChannel] = createSignal<Record<string, AttachmentRecord[]>>({});
   const [rtcSnapshot, setRtcSnapshot] = createSignal<RtcSnapshot>(rtcSnapshotFixture());
@@ -163,6 +167,8 @@ function createSelectorHarness() {
     workspaceRolesByGuildId,
     workspaceUserRolesByGuildId,
     workspaceChannelOverridesByGuildId,
+    viewAsRoleSimulatorEnabled,
+    viewAsRoleSimulatorRole,
     voiceSessionChannelKey,
     attachmentByChannel,
     rtcSnapshot,
@@ -182,6 +188,8 @@ function createSelectorHarness() {
     setWorkspaceRolesByGuildId,
     setWorkspaceUserRolesByGuildId,
     setWorkspaceChannelOverridesByGuildId,
+    setViewAsRoleSimulatorEnabled,
+    setViewAsRoleSimulatorRole,
     setVoiceSessionChannelKey,
     setRtcSnapshot,
     setVoiceParticipantsByChannel,
@@ -276,6 +284,31 @@ describe("app shell selectors", () => {
       });
 
       expect(harness.selectors.canAccessActiveChannel()).toBe(false);
+      dispose();
+    });
+  });
+
+  it("supports local view-as-role permission simulation", () => {
+    createRoot((dispose) => {
+      const harness = createSelectorHarness();
+
+      harness.setWorkspaceUserRolesByGuildId({
+        [GUILD_A]: {
+          [USER_A]: [ROLE_MODERATOR],
+        },
+      });
+      expect(harness.selectors.canManageMemberRoles()).toBe(true);
+      expect(harness.selectors.canDeleteMessages()).toBe(true);
+
+      harness.setViewAsRoleSimulatorEnabled(true);
+      harness.setViewAsRoleSimulatorRole("member");
+      expect(harness.selectors.canManageMemberRoles()).toBe(false);
+      expect(harness.selectors.canDeleteMessages()).toBe(false);
+      expect(harness.selectors.canAccessActiveChannel()).toBe(true);
+
+      harness.setViewAsRoleSimulatorRole("moderator");
+      expect(harness.selectors.canManageMemberRoles()).toBe(true);
+      expect(harness.selectors.canDeleteMessages()).toBe(true);
       dispose();
     });
   });

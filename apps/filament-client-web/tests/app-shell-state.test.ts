@@ -52,6 +52,8 @@ describe("app shell state factories", () => {
     expect(workspaceState.workspaceChannel.isSavingWorkspaceSettings()).toBe(false);
     expect(workspaceState.workspaceChannel.workspaceSettingsStatus()).toBe("");
     expect(workspaceState.workspaceChannel.workspaceSettingsError()).toBe("");
+    expect(workspaceState.workspaceChannel.viewAsRoleSimulatorEnabled()).toBe(false);
+    expect(workspaceState.workspaceChannel.viewAsRoleSimulatorRole()).toBe("member");
     expect(workspaceState.friendships.friendRecipientUserIdInput()).toBe("");
     expect(workspaceState.discovery.publicGuildDirectory()).toEqual([]);
     expect(workspaceState.discovery.publicGuildJoinStatusByGuildId()).toEqual({});
