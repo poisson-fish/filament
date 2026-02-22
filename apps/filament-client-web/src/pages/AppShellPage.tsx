@@ -12,7 +12,6 @@ import { ServerRail } from "../features/app-shell/components/ServerRail";
 import { PanelHost } from "../features/app-shell/components/panels/PanelHost";
 import { UserProfileOverlay } from "../features/app-shell/components/overlays/UserProfileOverlay";
 import { StreamColumn } from "../features/app-shell/components/stream/StreamColumn";
-import { OPENMOJI_REACTION_OPTIONS } from "../features/app-shell/config/reaction-options";
 import {
   ADD_REACTION_ICON_URL,
   DELETE_MESSAGE_ICON_URL,
@@ -293,8 +292,6 @@ export function AppShellPage() {
           reactionPicker={
             <ReactionPickerPortal
               openMessageId={messageState.openReactionPickerMessageId()}
-              position={messageState.reactionPickerOverlayPosition()}
-              options={OPENMOJI_REACTION_OPTIONS}
               onClose={() => messageState.setOpenReactionPickerMessageId(null)}
               onAddReaction={(messageId, emoji) =>
                 addReactionFromPicker(messageId, emoji)}

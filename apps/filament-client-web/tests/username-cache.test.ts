@@ -47,14 +47,14 @@ describe("username cache", () => {
     ]);
 
     const first = await resolveUsernames(SESSION, [USER_A, USER_A, USER_B]);
-    expect(first[USER_A]).toBe("alice");
-    expect(first[USER_B]).toBe("bob");
+    expect(first[USER_A]).toEqual({ username: "alice", avatarVersion: 0 });
+    expect(first[USER_B]).toEqual({ username: "bob", avatarVersion: 0 });
     expect(lookupSpy).toHaveBeenCalledTimes(1);
     expect(lookupSpy).toHaveBeenCalledWith(SESSION, [USER_A, USER_B]);
 
     const second = await resolveUsernames(SESSION, [USER_A, USER_B]);
-    expect(second[USER_A]).toBe("alice");
-    expect(second[USER_B]).toBe("bob");
+    expect(second[USER_A]).toEqual({ username: "alice", avatarVersion: 0 });
+    expect(second[USER_B]).toEqual({ username: "bob", avatarVersion: 0 });
     expect(lookupSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -64,7 +64,7 @@ describe("username cache", () => {
       .mockResolvedValue([asLookupRecord(USER_A, "alice")]);
 
     const first = await resolveUsernames(SESSION, [USER_A, USER_C]);
-    expect(first[USER_A]).toBe("alice");
+    expect(first[USER_A]).toEqual({ username: "alice", avatarVersion: 0 });
     expect(first[USER_C]).toBeUndefined();
     expect(lookupSpy).toHaveBeenCalledTimes(1);
     expect(lookupSpy).toHaveBeenCalledWith(SESSION, [USER_A, USER_C]);

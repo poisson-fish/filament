@@ -57,7 +57,7 @@ describe("app shell chat layout contract", () => {
       /overflow-y:\s*auto;/,
     ]);
 
-    expectRuleWithDeclarations(shellCss, ".chat-panel > .composer", [
+    expectRuleWithDeclarations(shellCss, ".chat-panel>.composer", [
       /margin-top:\s*0;/,
       /min-height:\s*0;/,
     ]);

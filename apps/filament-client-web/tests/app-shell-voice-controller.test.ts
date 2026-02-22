@@ -46,20 +46,22 @@ const TEXT_CHANNEL = channelFromResponse({
 function createRtcClientMock(overrides: Partial<RtcClient> = {}): RtcClient {
   return {
     snapshot: () => RTC_DISCONNECTED_SNAPSHOT,
-    subscribe: () => () => {},
-    setAudioInputDevice: async () => {},
-    setAudioOutputDevice: async () => {},
-    join: async () => {},
-    leave: async () => {},
-    setMicrophoneEnabled: async () => {},
+    subscribe: () => () => { },
+    setAudioInputDevice: async () => { },
+    setAudioOutputDevice: async () => { },
+    join: async () => { },
+    leave: async () => { },
+    setMicrophoneEnabled: async () => { },
     toggleMicrophone: async () => false,
-    setDeafened: async () => {},
+    setDeafened: async () => { },
     toggleDeafened: async () => false,
-    setCameraEnabled: async () => {},
+    setCameraEnabled: async () => { },
     toggleCamera: async () => false,
-    setScreenShareEnabled: async () => {},
+    setScreenShareEnabled: async () => { },
     toggleScreenShare: async () => false,
-    destroy: async () => {},
+    destroy: async () => { },
+    attachVideoTrack: () => { },
+    detachVideoTrack: () => { },
     ...overrides,
   };
 }
@@ -344,7 +346,7 @@ describe("app shell voice controller", () => {
 
   it("toggles local deafen state and updates status", async () => {
     const toggleDeafened = vi.fn(async () => true);
-    const updateVoiceParticipantState = vi.fn(async () => {});
+    const updateVoiceParticipantState = vi.fn(async () => { });
     const harness = createRoot(() =>
       createVoiceOperationsHarness({
         initialVoiceSessionChannelKey: `${GUILD_ID}|${VOICE_CHANNEL.channelId}`,
@@ -385,10 +387,10 @@ describe("app shell voice controller", () => {
         expires_in_secs: 300,
       }),
     );
-    const setAudioInputDevice = vi.fn(async (_deviceId: string | null) => {});
-    const setAudioOutputDevice = vi.fn(async (_deviceId: string | null) => {});
-    const join = vi.fn(async () => {});
-    const setMicrophoneEnabled = vi.fn(async (_enabled: boolean) => {});
+    const setAudioInputDevice = vi.fn(async (_deviceId: string | null) => { });
+    const setAudioOutputDevice = vi.fn(async (_deviceId: string | null) => { });
+    const join = vi.fn(async () => { });
+    const setMicrophoneEnabled = vi.fn(async (_enabled: boolean) => { });
 
     const harness = createRoot(() =>
       createVoiceOperationsHarness({
@@ -566,8 +568,8 @@ describe("app shell voice controller", () => {
   });
 
   it("resets voice join state when leaving voice session", async () => {
-    const leave = vi.fn(async () => {});
-    const leaveVoiceChannelApi = vi.fn(async () => {});
+    const leave = vi.fn(async () => { });
+    const leaveVoiceChannelApi = vi.fn(async () => { });
     const harness = createRoot(() =>
       createVoiceOperationsHarness({
         initialVoiceSessionChannelKey: `${GUILD_ID}|${VOICE_CHANNEL.channelId}`,

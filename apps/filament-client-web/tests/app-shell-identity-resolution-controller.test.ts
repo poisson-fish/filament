@@ -129,7 +129,7 @@ describe("app shell identity resolution controller", () => {
     const [resolvedUsernames, setResolvedUsernames] = createSignal<Record<string, string>>({});
     const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<Record<string, number>>({});
 
-    const pendingResolution = deferred<Record<string, string>>();
+    const pendingResolution = deferred<Record<string, { username: string; avatarVersion: number; }>>();
     const clearUsernameLookupCacheMock = vi.fn();
     const primeUsernameCacheMock = vi.fn();
     const resolveUsernamesMock = vi.fn(() => pendingResolution.promise);
@@ -170,7 +170,7 @@ describe("app shell identity resolution controller", () => {
 
     setSession(null);
     pendingResolution.resolve({
-      "01ARZ3NDEKTSV4RRFFQ69G5FAA": "late-value",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAA": { username: "late-value", avatarVersion: 1 },
     });
     await flush();
 
