@@ -74,8 +74,8 @@ describe("role management panel", () => {
       name: "Incident Lead",
       permissions: [
         "create_message",
-        "subscribe_streams",
         "manage_workspace_roles",
+        "subscribe_streams",
       ],
     });
 
@@ -86,6 +86,44 @@ describe("role management panel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Assign role" }));
     expect(onAssignRole).toHaveBeenCalledWith("01ARZ3NDEKTSV4RRFFQ69G5FAW", ROLE_ID);
+  });
+
+  it("applies role templates to the create draft and submits template permissions", async () => {
+    const onCreateRole = vi.fn(async () => undefined);
+
+    render(() =>
+      RoleManagementPanel(
+        panelProps({
+          onCreateRole,
+        }),
+      ),
+    );
+
+    const createMatrix = screen.getByLabelText("create role permission matrix");
+    const roleTemplateSelect = screen.getByLabelText("Role template");
+
+    fireEvent.change(roleTemplateSelect, {
+      target: { value: "moderator" },
+    });
+
+    expect(screen.getAllByLabelText("Role name")[0]).toHaveValue("Moderator");
+    expect(within(createMatrix).getByLabelText(/Delete Messages/i)).toBeChecked();
+    expect(within(createMatrix).getByLabelText(/Ban Members/i)).toBeChecked();
+    expect(within(createMatrix).getByLabelText(/Publish Camera/i)).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create role" }));
+
+    expect(onCreateRole).toHaveBeenCalledWith({
+      name: "Moderator",
+      permissions: [
+        "create_message",
+        "delete_message",
+        "ban_member",
+        "view_audit_log",
+        "manage_ip_bans",
+        "subscribe_streams",
+      ],
+    });
   });
 
   it("hides management controls when role permissions are missing", () => {

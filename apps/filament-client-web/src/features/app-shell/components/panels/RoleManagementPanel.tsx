@@ -99,6 +99,61 @@ const PERMISSION_CATEGORIES: PermissionCategory[] = [
   { key: "compatibility", title: "Compatibility" },
 ];
 
+type RoleTemplateKey = "custom" | "cosmetic" | "moderator" | "read_only";
+
+interface RoleTemplate {
+  key: RoleTemplateKey;
+  label: string;
+  summary: string;
+  defaultName: string;
+  defaultPermissions: PermissionName[];
+}
+
+const ROLE_TEMPLATES: RoleTemplate[] = [
+  {
+    key: "custom",
+    label: "Custom Role",
+    summary: "Start from the baseline responder permissions.",
+    defaultName: "Responder",
+    defaultPermissions: ["create_message", "subscribe_streams"],
+  },
+  {
+    key: "cosmetic",
+    label: "Cosmetic Role",
+    summary: "No extra capabilities; use for labels and presentation only.",
+    defaultName: "Cosmetic",
+    defaultPermissions: [],
+  },
+  {
+    key: "moderator",
+    label: "Moderator",
+    summary: "Preloads common moderation capabilities for trusted operators.",
+    defaultName: "Moderator",
+    defaultPermissions: [
+      "create_message",
+      "subscribe_streams",
+      "delete_message",
+      "ban_member",
+      "view_audit_log",
+      "manage_ip_bans",
+    ],
+  },
+  {
+    key: "read_only",
+    label: "Read-Only",
+    summary: "Stream receive only; excludes message creation and media publishing.",
+    defaultName: "Read-Only",
+    defaultPermissions: ["subscribe_streams"],
+  },
+];
+
+const ROLE_TEMPLATE_BY_KEY: Record<RoleTemplateKey, RoleTemplate> = {
+  custom: ROLE_TEMPLATES[0]!,
+  cosmetic: ROLE_TEMPLATES[1]!,
+  moderator: ROLE_TEMPLATES[2]!,
+  read_only: ROLE_TEMPLATES[3]!,
+};
+
 export interface RoleManagementPanelProps {
   hasActiveWorkspace: boolean;
   canManageWorkspaceRoles: boolean;
@@ -164,6 +219,20 @@ function normalizePermissions(permissions: ReadonlyArray<PermissionName>): Permi
   return [...set].sort((left, right) => left.localeCompare(right));
 }
 
+function normalizePermissionsByMatrix(
+  permissions: ReadonlyArray<PermissionName>,
+): PermissionName[] {
+  const allowed = new Set(PERMISSION_MATRIX.map((entry) => entry.permission));
+  const selected = new Set(permissions.filter((permission) => allowed.has(permission)));
+  const normalized: PermissionName[] = [];
+  for (const entry of PERMISSION_MATRIX) {
+    if (selected.has(entry.permission)) {
+      normalized.push(entry.permission);
+    }
+  }
+  return normalized;
+}
+
 function areSamePermissions(
   left: ReadonlyArray<PermissionName>,
   right: ReadonlyArray<PermissionName>,
@@ -185,11 +254,11 @@ function permissionsByCategory(
 export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const [clientError, setClientError] = createSignal("");
 
-  const [createName, setCreateName] = createSignal("Responder");
-  const [createPermissions, setCreatePermissions] = createSignal<PermissionName[]>([
-    "create_message",
-    "subscribe_streams",
-  ]);
+  const [createTemplateKey, setCreateTemplateKey] = createSignal<RoleTemplateKey>("custom");
+  const [createName, setCreateName] = createSignal(ROLE_TEMPLATE_BY_KEY.custom.defaultName);
+  const [createPermissions, setCreatePermissions] = createSignal<PermissionName[]>(
+    ROLE_TEMPLATE_BY_KEY.custom.defaultPermissions,
+  );
 
   const [selectedRoleId, setSelectedRoleId] = createSignal<WorkspaceRoleId | null>(null);
   const [editName, setEditName] = createSignal("");
@@ -249,9 +318,11 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const createPreview = createMemo(() =>
     PERMISSION_MATRIX.filter((entry) => createPermissions().includes(entry.permission)),
   );
+  const createRoleTemplate = createMemo(() => ROLE_TEMPLATE_BY_KEY[createTemplateKey()]);
   const editPreview = createMemo(() =>
     PERMISSION_MATRIX.filter((entry) => editPermissions().includes(entry.permission)),
   );
+  const isCreateRoleNameValid = createMemo(() => createName().trim().length > 0);
   const hasRoleDraftChanges = createMemo(() => {
     const role = editableRole();
     if (!role) {
@@ -335,15 +406,28 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     if (!props.canManageWorkspaceRoles || !props.hasActiveWorkspace) {
       return;
     }
+    if (!isCreateRoleNameValid()) {
+      setClientError("Role name must include visible characters.");
+      return;
+    }
 
     await invoke(async () => {
       await props.onCreateRole({
-        name: createName(),
-        permissions: createPermissions(),
+        name: createName().trim(),
+        permissions: normalizePermissionsByMatrix(createPermissions()),
       });
-      setCreateName("Responder");
-      setCreatePermissions(["create_message", "subscribe_streams"]);
+      setCreateTemplateKey("custom");
+      setCreateName(ROLE_TEMPLATE_BY_KEY.custom.defaultName);
+      setCreatePermissions(ROLE_TEMPLATE_BY_KEY.custom.defaultPermissions);
     });
+  };
+
+  const onCreateRoleTemplateChange = (templateKey: RoleTemplateKey): void => {
+    const template = ROLE_TEMPLATE_BY_KEY[templateKey];
+    setCreateTemplateKey(templateKey);
+    setCreateName(template.defaultName);
+    setCreatePermissions(normalizePermissionsByMatrix(template.defaultPermissions));
+    setClientError("");
   };
 
   const onSaveRole = async (event: SubmitEvent): Promise<void> => {
@@ -529,6 +613,25 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
             <form class={formClass} onSubmit={onCreateRole}>
               <h5>Create Role</h5>
               <label class={fieldLabelClass}>
+                Template
+                <select
+                  class={fieldControlClass}
+                  value={createTemplateKey()}
+                  onChange={(event) =>
+                    onCreateRoleTemplateChange(
+                      event.currentTarget.value as RoleTemplateKey,
+                    )}
+                  aria-label="Role template"
+                >
+                  <For each={ROLE_TEMPLATES}>
+                    {(template) => (
+                      <option value={template.key}>{template.label}</option>
+                    )}
+                  </For>
+                </select>
+              </label>
+              <p class={mutedTextClass}>{createRoleTemplate().summary}</p>
+              <label class={fieldLabelClass}>
                 Role name
                 <input
                   class={fieldControlClass}
@@ -565,7 +668,14 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                   .map((entry) => entry.permission)
                   .join(", ") || "none"}
               </p>
-              <button class={actionButtonClass} type="submit" disabled={props.isMutatingRoles}>
+              <Show when={!isCreateRoleNameValid()}>
+                <p class={mutedTextClass}>Role name must include visible characters.</p>
+              </Show>
+              <button
+                class={actionButtonClass}
+                type="submit"
+                disabled={props.isMutatingRoles || !isCreateRoleNameValid()}
+              >
                 {props.isMutatingRoles ? "Applying..." : "Create role"}
               </button>
             </form>
