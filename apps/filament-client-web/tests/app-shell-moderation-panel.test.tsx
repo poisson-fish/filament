@@ -73,7 +73,9 @@ describe("app shell moderation panel", () => {
 
     expect(screen.getByLabelText("Target user ULID")).toHaveClass("border-line-soft");
     expect(screen.getByLabelText("Role")).toHaveClass("border-line-soft");
-    expect(screen.getByLabelText("Allow permissions (csv)")).toHaveClass("border-line-soft");
+    expect(screen.getByRole("radio", { name: "Create Messages: Inherit" })).toHaveClass(
+      "border-line-soft",
+    );
     expect(screen.getByRole("button", { name: "Add" })).toHaveClass("flex-1");
     expect(screen.getByRole("button", { name: "Apply channel override" })).toHaveClass(
       "border-line-soft",
@@ -134,15 +136,19 @@ describe("app shell moderation panel", () => {
     await fireEvent.click(screen.getByRole("button", { name: /owner/i }));
     expect(onOverrideRoleChange).toHaveBeenCalledWith("owner");
 
-    await fireEvent.input(screen.getByLabelText("Allow permissions (csv)"), {
-      target: { value: "create_message,manage_roles" },
-    });
-    expect(onOverrideAllowInput).toHaveBeenCalledWith("create_message,manage_roles");
+    await fireEvent.click(screen.getByRole("radio", { name: "Create Messages: Deny" }));
+    expect(onOverrideAllowInput).toHaveBeenLastCalledWith("");
+    expect(onOverrideDenyInput).toHaveBeenLastCalledWith("delete_message,create_message");
 
-    await fireEvent.input(screen.getByLabelText("Deny permissions (csv)"), {
-      target: { value: "ban_member" },
-    });
-    expect(onOverrideDenyInput).toHaveBeenCalledWith("ban_member");
+    await fireEvent.click(screen.getByRole("radio", { name: "Delete Messages: Inherit" }));
+    expect(onOverrideAllowInput).toHaveBeenLastCalledWith("create_message");
+    expect(onOverrideDenyInput).toHaveBeenLastCalledWith("");
+
+    await fireEvent.click(screen.getByRole("radio", { name: "Manage Overrides: Allow" }));
+    expect(onOverrideAllowInput).toHaveBeenLastCalledWith(
+      "manage_channel_overrides,create_message",
+    );
+    expect(onOverrideDenyInput).toHaveBeenLastCalledWith("delete_message");
 
     const overrideForm = screen
       .getByRole("button", { name: "Apply channel override" })
@@ -197,6 +203,10 @@ describe("app shell moderation panel", () => {
     expect(screen.getAllByText("active override")).toHaveLength(2);
     expect(screen.getByRole("button", { name: /moderator/i })).toHaveAttribute(
       "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("radio", { name: "Create Messages: Allow" })).toHaveAttribute(
+      "aria-checked",
       "true",
     );
   });

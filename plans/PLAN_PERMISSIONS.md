@@ -200,12 +200,14 @@ This section is used to track the progress of the implementation across multiple
 
 ### Phase 5: Frontend UI - Channel Overrides
 - [x] Build the **Channel Settings: Permissions Tab** (Entity Selector Sidebar prioritizing `@everyone` + active overrides).
-- [ ] Build the **Tri-State Permission Matrix** (`/`, `✓`, `X`) for the selected Role/Member.
+- [x] Build the **Tri-State Permission Matrix** (`/`, `✓`, `X`) for the selected Role/Member.
 - [ ] Implement visual indicators showing the calculated effective permission.
 - **Notes**: 
   - *Reworked `ModerationPanel` override management into a channel-permissions tab structure with a dedicated entity sidebar (`Channel override entities`). Sidebar ordering is deterministic and security-oriented: `@everyone` (`member`) is always pinned first, followed by roles with explicit overrides sorted by recency, then remaining roles.*
   - *Wired normalized override entities through runtime/adapters (`collaboration-panel-host-state-options` → `collaboration-panel-prop-groups-options` → `moderation-panel-props` → `panel-host-props`) so the UI consumes bounded, typed data from workspace state rather than ad-hoc strings. Legacy allow/deny overlaps are normalized fail-closed.*
   - *Selecting an entity now atomically updates override role + allow/deny drafts from persisted override state, preventing stale cross-role CSV edits. Added focused tests for ordering, selected-state rendering, and prop plumbing (`app-shell-moderation-panel`, collaboration panel host/options groups, moderation panel props, panel-host props).*
+  - *Implemented a secure tri-state permission matrix in `ModerationPanel` replacing manual CSV editing: each `PermissionName` now exposes explicit `Inherit (/)`, `Allow (✓)`, and `Deny (X)` controls with deterministic ordering. Matrix updates normalize drafts fail-closed (invalid tokens dropped, allow/deny overlap removed) and serialize through the known permission catalog only, preventing arbitrary string injection into override payloads.*
+  - *Expanded moderation panel tests to assert matrix rendering, tri-state callback wiring, and overlap-safe transitions (`allow -> deny`, `deny -> inherit`) while keeping existing submit and entity-selection flows intact.*
 
 ### Phase 6: Polish Phase
 - [ ] Add in-app explanations (subtitle definitions) adjacent to all permission toggles.
