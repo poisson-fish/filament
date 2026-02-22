@@ -188,7 +188,7 @@ This section is used to track the progress of the implementation across multiple
 - [x] Build the **Role Editor Panel** (Name editing, permission toggles list, save system).
 - [x] Integrate **Role Templates** (Cosmetic, Moderator, Read-Only) into creation flow.
 - [x] Build the **Workspace Settings: Members Panel** (Inline role assignment via dropdown badge UI).
-- [ ] Add explicit warnings/confirmation modals for dangerous operations.
+- [x] Add explicit warnings/confirmation modals for dangerous operations.
 - **Notes**: 
   - *Implemented drag-and-drop hierarchy reordering in the role-management panel using bounded client-side role-id state (`reorderDraftRoleIds`) and fail-closed drop handling that only reorders known, non-system role IDs. Added visual drag affordances and preserved explicit confirmation before persisting `onReorderRoles` to reduce accidental hierarchy changes. System roles remain pinned/non-reorderable.*
   - *Completed role editor panel hardening in `RoleManagementPanel`: grouped permission toggles by category, added explicit draft/dirty tracking and reset flow, and tightened save behavior to submit only changed fields after local normalization (trimmed name + deduplicated/sorted permission masks). Added tests covering draft reset, save gating, and changed-field payload composition.*
@@ -196,6 +196,7 @@ This section is used to track the progress of the implementation across multiple
   - *Implemented the Workspace Settings Members panel with inline member rows, per-member role badges, dropdown-driven role assignment, and in-row role removal actions. Wired this through panel-host/runtime builders so assignment actions call the existing role-management controller APIs without introducing new trust boundaries.*
   - *Added bounded member roster derivation (`MAX_WORKSPACE_SETTINGS_MEMBERS=200`) from current user + online presence + known assignment map, and added client-side hierarchy filtering for assignable roles using actor highest-role position where available. Non-assignable role removals are blocked in the UI and still enforced server-side.*
   - *Expanded frontend tests for workspace settings panel behavior and prop plumbing (`workspace-settings-panel`, panel-host props/groups, support panel options/host-state) to validate assignment/unassignment callbacks, new prop mapping, and hierarchy-aware member option generation.*
+  - *Replaced browser-level confirms with explicit in-app danger confirmation modals in `RoleManagementPanel` for role deletion, hierarchy reorders, and privileged permission edits. Dangerous permission transitions now fail closed until operators explicitly confirm within the modal. Added targeted tests covering cancel/confirm flows and risky permission escalation confirmation to prevent silent privilege changes.*
 
 ### Phase 5: Frontend UI - Channel Overrides
 - [ ] Build the **Channel Settings: Permissions Tab** (Entity Selector Sidebar prioritizing `@everyone` + active overrides).

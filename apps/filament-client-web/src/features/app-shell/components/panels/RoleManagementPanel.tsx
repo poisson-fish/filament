@@ -154,6 +154,15 @@ const ROLE_TEMPLATE_BY_KEY: Record<RoleTemplateKey, RoleTemplate> = {
   read_only: ROLE_TEMPLATES[3]!,
 };
 
+type DangerOperation = "save_role" | "delete_role" | "reorder_roles";
+
+interface DangerModalState {
+  operation: DangerOperation;
+  title: string;
+  message: string;
+  confirmLabel: string;
+}
+
 export interface RoleManagementPanelProps {
   hasActiveWorkspace: boolean;
   canManageWorkspaceRoles: boolean;
@@ -211,6 +220,18 @@ function hasManagementPermission(permissions: PermissionName[]): boolean {
   );
 }
 
+function hasPrivilegedPermission(permissions: ReadonlyArray<PermissionName>): boolean {
+  return permissions.some(
+    (permission) =>
+      permission === "manage_workspace_roles" ||
+      permission === "manage_member_roles" ||
+      permission === "manage_roles" ||
+      permission === "ban_member" ||
+      permission === "manage_ip_bans" ||
+      permission === "manage_channel_overrides",
+  );
+}
+
 function normalizePermissions(permissions: ReadonlyArray<PermissionName>): PermissionName[] {
   const set = new Set<PermissionName>();
   for (const permission of permissions) {
@@ -263,7 +284,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const [selectedRoleId, setSelectedRoleId] = createSignal<WorkspaceRoleId | null>(null);
   const [editName, setEditName] = createSignal("");
   const [editPermissions, setEditPermissions] = createSignal<PermissionName[]>([]);
-  const [confirmRiskyRoleEdit, setConfirmRiskyRoleEdit] = createSignal(false);
+  const [dangerModal, setDangerModal] = createSignal<DangerModalState | null>(null);
 
   const [reorderDraftRoleIds, setReorderDraftRoleIds] = createSignal<WorkspaceRoleId[]>([]);
   const [draggingRoleId, setDraggingRoleId] = createSignal<WorkspaceRoleId | null>(null);
@@ -277,8 +298,6 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const permissionGridClass = "grid gap-[0.5rem]";
   const permissionToggleClass =
     "grid grid-cols-[auto_1fr] items-start gap-x-[0.52rem] gap-y-[0.2rem] rounded-[0.62rem] border border-line-soft bg-bg-1 px-[0.6rem] py-[0.5rem]";
-  const checkboxRowClass =
-    "flex items-center gap-[0.5rem] [&>input]:mt-[0.14rem] [&>input]:h-[0.95rem] [&>input]:w-[0.95rem]";
   const statusChipClass =
     "inline-block text-[0.7rem] uppercase tracking-[0.06em] text-ink-2";
   const rolePreviewClass = "m-0 break-words text-ink-2";
@@ -345,6 +364,16 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
       !hasManagementPermission(editPermissions())
     );
   });
+  const isRiskyPermissionEscalation = createMemo(() => {
+    const role = editableRole();
+    if (!role) {
+      return false;
+    }
+    return (
+      !hasPrivilegedPermission(role.permissions) &&
+      hasPrivilegedPermission(editPermissions())
+    );
+  });
 
   createEffect(() => {
     const roles = hierarchyRoles();
@@ -363,12 +392,10 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     if (!role) {
       setEditName("");
       setEditPermissions([]);
-      setConfirmRiskyRoleEdit(false);
       return;
     }
     setEditName(role.name);
     setEditPermissions(role.permissions);
-    setConfirmRiskyRoleEdit(false);
   });
 
   createEffect(() => {
@@ -436,10 +463,17 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     if (!role || !props.canManageWorkspaceRoles || !props.hasActiveWorkspace) {
       return;
     }
-    if (isRiskyPermissionDrop() && !confirmRiskyRoleEdit()) {
-      setClientError(
-        "Confirm risky permission reduction before applying this role change.",
-      );
+    const needsDangerConfirmation =
+      isRiskyPermissionDrop() || isRiskyPermissionEscalation();
+    if (needsDangerConfirmation) {
+      setDangerModal({
+        operation: "save_role",
+        title: "Confirm dangerous permission change",
+        message: isRiskyPermissionDrop()
+          ? "This update removes role-management capabilities and can lock operators out of moderation workflows."
+          : "This update grants privileged permissions that can escalate workspace control if assigned broadly.",
+        confirmLabel: "Apply dangerous change",
+      });
       return;
     }
     if (!hasRoleDraftChanges()) {
@@ -475,11 +509,11 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     if (!role || !props.canManageWorkspaceRoles || !props.hasActiveWorkspace) {
       return;
     }
-    if (!window.confirm(`Delete role ${role.name}? This cannot be undone.`)) {
-      return;
-    }
-    await invoke(async () => {
-      await props.onDeleteRole(role.roleId);
+    setDangerModal({
+      operation: "delete_role",
+      title: "Delete role?",
+      message: `Role "${role.name}" will be permanently removed from this workspace. This cannot be undone.`,
+      confirmLabel: "Delete role",
     });
   };
 
@@ -526,11 +560,12 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     if (!props.canManageWorkspaceRoles || !props.hasActiveWorkspace) {
       return;
     }
-    if (!window.confirm("Apply this role hierarchy reorder?")) {
-      return;
-    }
-    await invoke(async () => {
-      await props.onReorderRoles(reorderDraftRoleIds());
+    setDangerModal({
+      operation: "reorder_roles",
+      title: "Apply hierarchy reorder?",
+      message:
+        "This updates role precedence across moderation and assignment checks. Review ordering before saving.",
+      confirmLabel: "Save hierarchy order",
     });
   };
 
@@ -561,8 +596,54 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     }
     setEditName(role.name);
     setEditPermissions(role.permissions);
-    setConfirmRiskyRoleEdit(false);
     setClientError("");
+  };
+
+  const onConfirmDangerModal = async (): Promise<void> => {
+    const pending = dangerModal();
+    if (!pending) {
+      return;
+    }
+    setDangerModal(null);
+    if (pending.operation === "save_role") {
+      await invoke(async () => {
+        const role = editableRole();
+        if (!role) {
+          return;
+        }
+        const nextName = editName().trim();
+        const normalizedPermissions = normalizePermissions(editPermissions());
+        const roleNameChanged = nextName !== role.name;
+        const permissionsChanged = !areSamePermissions(normalizedPermissions, role.permissions);
+        const updateInput: {
+          name?: string;
+          permissions?: PermissionName[];
+        } = {};
+        if (roleNameChanged) {
+          updateInput.name = nextName;
+        }
+        if (permissionsChanged) {
+          updateInput.permissions = normalizedPermissions;
+        }
+        await props.onUpdateRole(role.roleId, updateInput);
+      });
+      return;
+    }
+    if (pending.operation === "delete_role") {
+      await invoke(async () => {
+        const role = editableRole();
+        if (!role) {
+          return;
+        }
+        await props.onDeleteRole(role.roleId);
+      });
+      return;
+    }
+    if (pending.operation === "reorder_roles") {
+      await invoke(async () => {
+        await props.onReorderRoles(reorderDraftRoleIds());
+      });
+    }
   };
 
   return (
@@ -737,18 +818,10 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                         .join(", ") || "none"}
                     </p>
                     <Show when={isRiskyPermissionDrop() && !roleAccessor().isSystem}>
-                      <label class={checkboxRowClass}>
-                        <input
-                          type="checkbox"
-                          checked={confirmRiskyRoleEdit()}
-                          onChange={(event) =>
-                            setConfirmRiskyRoleEdit(event.currentTarget.checked)}
-                        />
-                        <span>
-                          I understand this may remove role-management capability from my operator
-                          path.
-                        </span>
-                      </label>
+                      <p class={mutedTextClass}>
+                        Removing role-management permissions can lock operators out of moderation
+                        controls.
+                      </p>
                     </Show>
                     <div class={actionButtonRowClass}>
                       <button
@@ -897,6 +970,38 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
       </Show>
       <Show when={props.roleManagementError || clientError()}>
         <p class={`${statusBaseClass} text-danger`}>{props.roleManagementError || clientError()}</p>
+      </Show>
+
+      <Show when={dangerModal()}>
+        {(dangerModalAccessor) => (
+          <div
+            class="fixed inset-0 z-[80] grid place-items-center bg-bg-0/72 p-[1rem]"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Dangerous operation confirmation"
+          >
+            <section class="grid w-full max-w-[32rem] gap-[0.85rem] rounded-[0.82rem] border border-danger-panel-strong bg-bg-1 p-[1rem] text-ink-0">
+              <h5 class="m-0">{dangerModalAccessor().title}</h5>
+              <p class="m-0 text-[0.92rem] text-ink-2">{dangerModalAccessor().message}</p>
+              <div class={actionButtonRowClass}>
+                <button
+                  class={rowActionButtonClass}
+                  type="button"
+                  onClick={() => setDangerModal(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  class={`${rowActionButtonClass} border-danger-panel-strong bg-danger-panel text-danger-ink enabled:hover:bg-danger`}
+                  type="button"
+                  onClick={() => void onConfirmDangerModal()}
+                >
+                  {dangerModalAccessor().confirmLabel}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </Show>
     </section>
   );

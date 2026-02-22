@@ -191,15 +191,55 @@ describe("role management panel", () => {
 
   it("requires explicit confirmation before delete action", async () => {
     const onDeleteRole = vi.fn(async () => undefined);
-    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(false);
 
     render(() => RoleManagementPanel(panelProps({ onDeleteRole })));
 
     fireEvent.click(screen.getByRole("button", { name: "Delete role" }));
 
-    expect(confirmMock).toHaveBeenCalledTimes(1);
+    const deleteDialog = screen.getByRole("dialog", {
+      name: "Dangerous operation confirmation",
+    });
+    expect(within(deleteDialog).getByRole("heading", { name: "Delete role?" })).toBeInTheDocument();
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Cancel" }));
     expect(onDeleteRole).not.toHaveBeenCalled();
-    confirmMock.mockRestore();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete role" }));
+    const confirmedDeleteDialog = screen.getByRole("dialog", {
+      name: "Dangerous operation confirmation",
+    });
+    fireEvent.click(within(confirmedDeleteDialog).getByRole("button", { name: /^Delete role$/ }));
+
+    expect(onDeleteRole).toHaveBeenCalledWith(ROLE_ID);
+  });
+
+  it("warns and requires modal confirmation for dangerous permission changes", async () => {
+    const onUpdateRole = vi.fn(async () => undefined);
+
+    render(() =>
+      RoleManagementPanel(
+        panelProps({
+          onUpdateRole,
+        }),
+      ),
+    );
+
+    const editMatrix = screen.getByLabelText("edit role permission matrix");
+    fireEvent.click(within(editMatrix).getByLabelText(/Manage Workspace Roles/i));
+
+    fireEvent.click(screen.getByRole("button", { name: "Save role" }));
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Confirm dangerous permission change",
+      }),
+    ).toBeInTheDocument();
+    expect(onUpdateRole).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply dangerous change" }));
+
+    expect(onUpdateRole).toHaveBeenCalledWith(ROLE_ID, {
+      permissions: ["create_message", "manage_workspace_roles"],
+    });
   });
 
   it("saves only changed role fields and trims role names", async () => {
@@ -269,7 +309,6 @@ describe("role management panel", () => {
 
   it("reorders custom roles via drag-and-drop and submits the updated hierarchy", async () => {
     const onReorderRoles = vi.fn(async () => undefined);
-    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
     const incidentRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW");
     const observerRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX");
 
@@ -314,8 +353,14 @@ describe("role management panel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save hierarchy order" }));
 
-    expect(confirmMock).toHaveBeenCalledTimes(1);
+    const reorderDialog = screen.getByRole("dialog", {
+      name: "Dangerous operation confirmation",
+    });
+    expect(
+      within(reorderDialog).getByRole("heading", { name: "Apply hierarchy reorder?" }),
+    ).toBeInTheDocument();
+    fireEvent.click(within(reorderDialog).getByRole("button", { name: /^Save hierarchy order$/ }));
+
     expect(onReorderRoles).toHaveBeenCalledWith([incidentRoleId, ROLE_ID, observerRoleId]);
-    confirmMock.mockRestore();
   });
 });
