@@ -50,7 +50,7 @@ use crate::server::{
         GuildRolePath, GuildRoleResponse, MemberPath, ModerationResponse, PublicGuildListItem,
         PublicGuildListQuery, PublicGuildListResponse, ReorderGuildRolesRequest,
         UpdateChannelRoleOverrideRequest, UpdateGuildRequest, UpdateGuildRoleRequest,
-        UpdateMemberRoleRequest,
+        UpdateMemberRoleRequest, UpdateChannelPermissionOverrideRequest, ChannelPermissionOverridePath,
     },
 };
 
@@ -3127,6 +3127,124 @@ pub(crate) async fn set_channel_role_override(
         &path.guild_id,
         &path.channel_id,
         path.role,
+        payload.allow.clone(),
+        payload.deny.clone(),
+        now_unix(),
+        Some(auth.user_id),
+    );
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
+
+    Ok(Json(ModerationResponse { accepted: true }))
+}
+
+pub(crate) async fn set_channel_permission_override(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(path): Path<ChannelPermissionOverridePath>,
+    Json(payload): Json<UpdateChannelPermissionOverrideRequest>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "guild.channel_permission_overrides.update",
+    )
+    .await?;
+
+    crate::server::domain::check_channel_permission(
+        &state,
+        auth.user_id,
+        &path.guild_id,
+        &path.channel_id,
+        Permission::ManageChannelOverrides,
+    )
+    .await?;
+
+    let allow = crate::server::db::permission_set_from_list(&payload.allow);
+    let deny = crate::server::db::permission_set_from_list(&payload.deny);
+    if allow.bits() & deny.bits() != 0 {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    let target_kind_i16 = path.target_kind.to_i16();
+
+    if let Some(pool) = &state.db_pool {
+        let result = sqlx::query(
+            "INSERT INTO channel_permission_overrides (guild_id, channel_id, target_kind, target_id, allow_mask, deny_mask)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (guild_id, channel_id, target_kind, target_id)
+             DO UPDATE SET allow_mask = EXCLUDED.allow_mask, deny_mask = EXCLUDED.deny_mask",
+        )
+        .bind(&path.guild_id)
+        .bind(&path.channel_id)
+        .bind(target_kind_i16)
+        .bind(&path.target_id)
+        .bind(crate::server::db::permission_set_to_i64(allow)?)
+        .bind(crate::server::db::permission_set_to_i64(deny)?)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            if matches!(e, sqlx::Error::Database(_)) {
+                AuthFailure::NotFound
+            } else {
+                AuthFailure::Internal
+            }
+        })?;
+        if result.rows_affected() == 0 {
+            return Err(AuthFailure::NotFound);
+        }
+    } else {
+        let mut overrides_map = state.membership_store.guild_channel_permission_overrides().write().await;
+        let guild_overrides = overrides_map
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        let channel_override = guild_overrides
+            .entry(path.channel_id.clone())
+            .or_default();
+        
+        let permissions = filament_core::ChannelPermissionOverwrite {
+            allow,
+            deny,
+        };
+        
+        if path.target_kind == crate::server::types::PermissionOverrideTargetKind::Role {
+            channel_override.role_overrides.insert(path.target_id.clone(), permissions);
+        } else {
+            let parsed_user_id = filament_core::UserId::try_from(path.target_id.clone())
+                .map_err(|_| AuthFailure::InvalidRequest)?;
+            channel_override.member_overrides.insert(parsed_user_id, permissions);
+        }
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id.clone()),
+        auth.user_id,
+        None,
+        "channel.permission_override.update",
+        serde_json::json!({
+            "channel_id": path.channel_id,
+            "target_kind": path.target_kind,
+            "target_id": path.target_id,
+            "allow": payload.allow,
+            "deny": payload.deny,
+        }),
+    )
+    .await?;
+
+    let event = gateway_events::workspace_channel_permission_override_update(
+        &path.guild_id,
+        &path.channel_id,
+        path.target_kind,
+        &path.target_id,
         payload.allow.clone(),
         payload.deny.clone(),
         now_unix(),

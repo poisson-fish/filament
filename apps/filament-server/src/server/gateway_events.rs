@@ -64,7 +64,7 @@ pub(crate) use presence_voice::{
 };
 pub(crate) use profile::{profile_avatar_update, profile_update};
 pub(crate) use workspace::{
-    workspace_channel_override_update, workspace_ip_ban_sync, workspace_member_add,
+    workspace_channel_override_update, workspace_channel_permission_override_update, workspace_ip_ban_sync, workspace_member_add,
     workspace_member_ban, workspace_member_remove, workspace_member_update,
     workspace_role_assignment_add, workspace_role_assignment_remove, workspace_role_create,
     workspace_role_delete, workspace_role_reorder, workspace_role_update, workspace_update,

@@ -47,7 +47,7 @@ use super::{
             create_guild_role, delete_guild_role, join_public_guild, kick_member, list_guild_audit,
             list_guild_channels, list_guild_ip_bans, list_guild_roles, list_guilds,
             list_public_guilds, remove_guild_ip_ban, reorder_guild_roles,
-            set_channel_role_override, unassign_guild_role, update_guild, update_guild_role,
+            set_channel_role_override, set_channel_permission_override, unassign_guild_role, update_guild, update_guild_role,
             update_member_role, upsert_guild_ip_bans_by_user,
         },
         media::{
@@ -117,6 +117,10 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     (
         "POST",
         "/guilds/{guild_id}/channels/{channel_id}/overrides/{role}",
+    ),
+    (
+        "POST",
+        "/guilds/{guild_id}/channels/{channel_id}/permission-overrides/{target_kind}/{target_id}",
     ),
     ("POST", "/guilds/{guild_id}/channels/{channel_id}/messages"),
     ("GET", "/guilds/{guild_id}/channels/{channel_id}/messages"),
@@ -421,6 +425,10 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/overrides/{role}",
             post(set_channel_role_override),
+        )
+        .route(
+            "/guilds/{guild_id}/channels/{channel_id}/permission-overrides/{target_kind}/{target_id}",
+            post(set_channel_permission_override),
         )
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/messages",

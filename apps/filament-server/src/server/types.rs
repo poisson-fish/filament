@@ -282,6 +282,29 @@ pub(crate) struct UpdateChannelRoleOverrideRequest {
     pub(crate) deny: Vec<Permission>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PermissionOverrideTargetKind {
+    Role,
+    Member,
+}
+
+impl PermissionOverrideTargetKind {
+    pub(crate) fn to_i16(self) -> i16 {
+        match self {
+            Self::Role => 0,
+            Self::Member => 1,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateChannelPermissionOverrideRequest {
+    pub(crate) allow: Vec<Permission>,
+    pub(crate) deny: Vec<Permission>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub(crate) struct MessageResponse {
     pub(crate) message_id: String,
@@ -403,6 +426,14 @@ pub(crate) struct ChannelRolePath {
     pub(crate) guild_id: String,
     pub(crate) channel_id: String,
     pub(crate) role: Role,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ChannelPermissionOverridePath {
+    pub(crate) guild_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) target_kind: PermissionOverrideTargetKind,
+    pub(crate) target_id: String,
 }
 
 #[derive(Debug, Deserialize)]

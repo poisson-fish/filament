@@ -166,6 +166,18 @@ struct WorkspaceChannelOverrideUpdatePayload {
 }
 
 #[derive(Serialize)]
+struct WorkspaceChannelPermissionOverrideUpdatePayload {
+    guild_id: String,
+    channel_id: String,
+    target_kind: crate::server::types::PermissionOverrideTargetKind,
+    target_id: String,
+    updated_fields: WorkspaceChannelOverrideFieldsPayload,
+    updated_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_user_id: Option<String>,
+}
+
+#[derive(Serialize)]
 struct WorkspaceChannelOverrideFieldsPayload {
     allow: Vec<filament_core::Permission>,
     deny: Vec<filament_core::Permission>,
@@ -414,6 +426,30 @@ pub(crate) fn workspace_channel_override_update(
             guild_id: guild_id.to_owned(),
             channel_id: channel_id.to_owned(),
             role,
+            updated_fields: WorkspaceChannelOverrideFieldsPayload { allow, deny },
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn workspace_channel_permission_override_update(
+    guild_id: &str,
+    channel_id: &str,
+    target_kind: crate::server::types::PermissionOverrideTargetKind,
+    target_id: &str,
+    allow: Vec<filament_core::Permission>,
+    deny: Vec<filament_core::Permission>,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT,
+        WorkspaceChannelPermissionOverrideUpdatePayload {
+            guild_id: guild_id.to_owned(),
+            channel_id: channel_id.to_owned(),
+            target_kind,
+            target_id: target_id.to_owned(),
             updated_fields: WorkspaceChannelOverrideFieldsPayload { allow, deny },
             updated_at_unix,
             actor_user_id: actor_user_id.map(|id| id.to_string()),
