@@ -24,6 +24,9 @@ describe("emoji utils", () => {
     const view = render(() => <p>{renderEmojiMixedText("ok 😂")}</p>);
     expect(view.container.textContent).toContain("ok ");
     const emojiSprite = view.getByRole("img", { name: "😂" });
-    expect(emojiSprite.getAttribute("style")).toContain("background-image");
+    const style = emojiSprite.getAttribute("style") ?? "";
+    expect(style).toContain("background-image");
+    expect(style).toMatch(/background-size:\s*6000%\s+6100%/);
+    expect(style).toContain("background-position:");
   });
 });

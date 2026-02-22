@@ -133,15 +133,15 @@ function ensureTwemojiMap(): Record<string, TwemojiSpriteCell> {
 function twemojiStyle(cell: TwemojiSpriteCell, sizePx: number): string {
   const columns = twemojiSheetColumns ?? 1;
   const rows = twemojiSheetRows ?? 1;
-  const spriteWidthPx = columns * sizePx;
-  const spriteHeightPx = rows * sizePx;
+  const backgroundPosXPercent = columns > 1 ? (100 / (columns - 1)) * cell.x : 0;
+  const backgroundPosYPercent = rows > 1 ? (100 / (rows - 1)) * cell.y : 0;
   return [
     `width:${sizePx}px`,
     `height:${sizePx}px`,
     `background-image:url("${TWEMOJI_SPRITESHEET_URL}")`,
     "background-repeat:no-repeat",
-    `background-size:${spriteWidthPx}px ${spriteHeightPx}px`,
-    `background-position:-${cell.x * sizePx}px -${cell.y * sizePx}px`,
+    `background-size:${100 * columns}% ${100 * rows}%`,
+    `background-position:${backgroundPosXPercent}% ${backgroundPosYPercent}%`,
     "display:inline-block",
     "vertical-align:text-bottom",
   ].join(";");
