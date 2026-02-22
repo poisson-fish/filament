@@ -8,10 +8,11 @@ use anyhow::anyhow;
 use axum::{
     extract::ConnectInfo,
     extract::DefaultBodyLimit,
-    http::{request::Request, HeaderName, StatusCode},
+    http::{header::AUTHORIZATION, request::Request, HeaderName, StatusCode},
     routing::{delete, get, patch, post},
     Router,
 };
+use sha2::{Digest, Sha256};
 use tower::ServiceBuilder;
 use tower_governor::{
     errors::GovernorError, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
@@ -176,9 +177,18 @@ impl TrustedClientIpKeyExtractor {
 }
 
 impl KeyExtractor for TrustedClientIpKeyExtractor {
-    type Key = IpAddr;
+    type Key = String;
 
     fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
+        if let Some(auth_header) = req.headers().get(AUTHORIZATION) {
+            if let Ok(auth_str) = auth_header.to_str() {
+                if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                    let hash = Sha256::digest(token.as_bytes());
+                    return Ok(format!("token:{:x}", hash));
+                }
+            }
+        }
+
         let peer_ip = req
             .extensions()
             .get::<ConnectInfo<SocketAddr>>()
@@ -186,7 +196,8 @@ impl KeyExtractor for TrustedClientIpKeyExtractor {
             .or_else(|| req.extensions().get::<SocketAddr>().map(SocketAddr::ip));
         let resolved =
             resolve_client_ip(req.headers(), peer_ip, self.trusted_proxy_cidrs.as_slice());
-        Ok(resolved.ip().unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))
+        let ip = resolved.ip().unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        Ok(format!("ip:{ip}"))
     }
 }
 
