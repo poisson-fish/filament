@@ -3,6 +3,7 @@ import { init } from "emoji-mart";
 import type { JSX } from "solid-js";
 
 const TWEMOJI_SPRITESHEET_URL = new URL(
+  // Keep this file aligned with Emoji Mart's expected twemoji sheet version; integrity is tested.
   "../../../../../resource/emoji/twitter-sheets-256-64.png",
   import.meta.url,
 ).href;
