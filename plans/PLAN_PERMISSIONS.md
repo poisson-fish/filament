@@ -213,10 +213,11 @@ This section is used to track the progress of the implementation across multiple
 ### Phase 6: Polish Phase
 - [x] Add in-app explanations (subtitle definitions) adjacent to all permission toggles.
 - [x] Implement the "View Server As Role" simulator debug switch.
-- [ ] Thorough end-to-end testing of the priority model matrix to confirm edge-cases match expected access.
+- [x] Thorough end-to-end testing of the priority model matrix to confirm edge-cases match expected access.
 - **Notes**: 
   - *Centralized permission toggle metadata into `permission-metadata.ts` and reused it across `RoleManagementPanel` and `ModerationPanel` to keep permission labels/summaries consistent and avoid drift across role editing vs channel overrides.*
   - *Added explicit tri-state subtitle definitions directly beneath each override control group (`/ Inherit`, `✓ Allow`, `X Deny`) so operators can understand the override semantics inline without relying on external docs.*
   - *Expanded panel tests to verify explanatory copy renders in both role-management and moderation permission matrices.*
   - *Implemented a local-only "View server as role" simulator in `WorkspaceSettingsPanel` (toggle + bounded `owner|moderator|member` selector) and plumbed it through runtime/adapters/state so it clamps UI permission gating without mutating server-side authorization state.*
   - *Updated `create-app-shell-selectors` to apply legacy-role effective permission evaluation when simulation is enabled, reusing shared override logic and remaining fail-closed (unknown/empty role mappings result in reduced access, never escalation). Added targeted selector and panel/prop plumbing tests to verify simulation behavior and wiring.*
+  - *Added end-to-end server permission matrix coverage through `channel_permission_snapshot` in `domain.rs` using in-memory guild state, role assignments, and per-channel overrides. New tests verify full layered precedence (`@everyone` -> aggregated role overrides -> member override), same-layer deny dominance, and workspace-owner full-access short-circuit under hostile deny-all overrides.*

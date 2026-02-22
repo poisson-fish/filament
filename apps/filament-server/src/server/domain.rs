@@ -733,13 +733,108 @@ pub(crate) async fn write_audit_log(
 
 #[cfg(test)]
 mod tests {
-    use super::guild_permission_snapshot;
+    use super::{channel_permission_snapshot, guild_permission_snapshot};
     use crate::server::{
-        core::{AppConfig, AppState, GuildRecord, GuildVisibility},
-        permissions::all_permissions,
+        auth::now_unix,
+        core::{
+            AppConfig, AppState, ChannelPermissionOverrideRecord, ChannelRecord, GuildRecord,
+            GuildVisibility, WorkspaceRoleRecord,
+        },
+        permissions::{
+            all_permissions, DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
+            SYSTEM_ROLE_WORKSPACE_OWNER,
+        },
     };
-    use filament_core::{Role, UserId};
+    use filament_core::{
+        ChannelKind, ChannelPermissionOverwrite, Permission, PermissionSet, Role, UserId,
+    };
     use std::collections::{HashMap, HashSet};
+
+    fn permission_set(values: &[Permission]) -> PermissionSet {
+        let mut set = PermissionSet::empty();
+        for value in values {
+            set.insert(*value);
+        }
+        set
+    }
+
+    fn workspace_roles_fixture() -> HashMap<String, WorkspaceRoleRecord> {
+        let created_at_unix = now_unix();
+        HashMap::from([
+            (
+                String::from("role-everyone"),
+                WorkspaceRoleRecord {
+                    role_id: String::from("role-everyone"),
+                    name: String::from("@everyone"),
+                    position: 0,
+                    is_system: true,
+                    system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
+                    permissions_allow: permission_set(&[Permission::CreateMessage]),
+                    created_at_unix,
+                },
+            ),
+            (
+                String::from("role-member"),
+                WorkspaceRoleRecord {
+                    role_id: String::from("role-member"),
+                    name: String::from(DEFAULT_ROLE_MEMBER),
+                    position: 10,
+                    is_system: false,
+                    system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
+                    permissions_allow: permission_set(&[Permission::DeleteMessage]),
+                    created_at_unix,
+                },
+            ),
+            (
+                String::from("role-moderator"),
+                WorkspaceRoleRecord {
+                    role_id: String::from("role-moderator"),
+                    name: String::from(DEFAULT_ROLE_MODERATOR),
+                    position: 100,
+                    is_system: false,
+                    system_key: Some(String::from(DEFAULT_ROLE_MODERATOR)),
+                    permissions_allow: permission_set(&[Permission::ManageChannelOverrides]),
+                    created_at_unix,
+                },
+            ),
+            (
+                String::from("role-owner"),
+                WorkspaceRoleRecord {
+                    role_id: String::from("role-owner"),
+                    name: String::from("workspace_owner"),
+                    position: 10_000,
+                    is_system: true,
+                    system_key: Some(String::from(SYSTEM_ROLE_WORKSPACE_OWNER)),
+                    permissions_allow: all_permissions(),
+                    created_at_unix,
+                },
+            ),
+            (
+                String::from("role-video-publisher"),
+                WorkspaceRoleRecord {
+                    role_id: String::from("role-video-publisher"),
+                    name: String::from("video_publisher"),
+                    position: 50,
+                    is_system: false,
+                    system_key: None,
+                    permissions_allow: permission_set(&[
+                        Permission::PublishVideo,
+                        Permission::BanMember,
+                    ]),
+                    created_at_unix,
+                },
+            ),
+        ])
+    }
+
+    fn empty_channel_record() -> ChannelRecord {
+        ChannelRecord {
+            name: String::from("general"),
+            kind: ChannelKind::try_from(String::from("text")).expect("text kind should be valid"),
+            messages: Vec::new(),
+            role_overrides: HashMap::new(),
+        }
+    }
 
     #[tokio::test]
     async fn server_owner_bypass_grants_all_permissions_without_membership() {
@@ -770,5 +865,159 @@ mod tests {
                 .expect("server owner permission resolution should succeed");
         assert_eq!(resolved_role, Role::Owner);
         assert_eq!(permissions.bits(), all_permissions().bits());
+    }
+
+    #[tokio::test]
+    async fn channel_permission_snapshot_applies_full_override_priority_matrix() {
+        let actor_user_id = UserId::new();
+        let guild_creator = UserId::new();
+        let guild_id = String::from("01ARZ3NDEKTSV4RRFFQ69G6AAA");
+        let channel_id = String::from("01ARZ3NDEKTSV4RRFFQ69G6BBB");
+        let state = AppState::new(&AppConfig::default()).expect("state initializes");
+
+        state.membership_store.guilds().write().await.insert(
+            guild_id.clone(),
+            GuildRecord {
+                name: String::from("matrix"),
+                visibility: GuildVisibility::Private,
+                created_by_user_id: guild_creator,
+                members: HashMap::from([(actor_user_id, Role::Member)]),
+                banned_members: HashSet::new(),
+                channels: HashMap::from([(channel_id.clone(), empty_channel_record())]),
+            },
+        );
+
+        state
+            .membership_store
+            .guild_roles()
+            .write()
+            .await
+            .insert(guild_id.clone(), workspace_roles_fixture());
+
+        state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await
+            .insert(
+                guild_id.clone(),
+                HashMap::from([(
+                    actor_user_id,
+                    HashSet::from([
+                        String::from("role-member"),
+                        String::from("role-video-publisher"),
+                    ]),
+                )]),
+            );
+
+        let mut channel_override = ChannelPermissionOverrideRecord::default();
+        channel_override.role_overrides.insert(
+            String::from("role-everyone"),
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::PublishVideo]),
+                deny: permission_set(&[Permission::CreateMessage]),
+            },
+        );
+        channel_override.role_overrides.insert(
+            String::from("role-member"),
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::CreateMessage]),
+                deny: permission_set(&[Permission::DeleteMessage]),
+            },
+        );
+        channel_override.role_overrides.insert(
+            String::from("role-video-publisher"),
+            ChannelPermissionOverwrite {
+                allow: PermissionSet::empty(),
+                deny: permission_set(&[Permission::CreateMessage]),
+            },
+        );
+        channel_override.member_overrides.insert(
+            actor_user_id,
+            ChannelPermissionOverwrite {
+                allow: permission_set(&[Permission::CreateMessage]),
+                deny: permission_set(&[Permission::BanMember]),
+            },
+        );
+        state
+            .membership_store
+            .guild_channel_permission_overrides()
+            .write()
+            .await
+            .insert(
+                guild_id.clone(),
+                HashMap::from([(channel_id.clone(), channel_override)]),
+            );
+
+        let (resolved_role, resolved_permissions) =
+            channel_permission_snapshot(&state, actor_user_id, &guild_id, &channel_id)
+                .await
+                .expect("channel permissions should resolve");
+
+        assert_eq!(resolved_role, Role::Member);
+        assert!(resolved_permissions.contains(Permission::CreateMessage));
+        assert!(resolved_permissions.contains(Permission::PublishVideo));
+        assert!(!resolved_permissions.contains(Permission::DeleteMessage));
+        assert!(!resolved_permissions.contains(Permission::BanMember));
+    }
+
+    #[tokio::test]
+    async fn channel_permission_snapshot_preserves_owner_full_access_despite_overrides() {
+        let owner_user_id = UserId::new();
+        let guild_creator = UserId::new();
+        let guild_id = String::from("01ARZ3NDEKTSV4RRFFQ69G6AAC");
+        let channel_id = String::from("01ARZ3NDEKTSV4RRFFQ69G6BBC");
+        let state = AppState::new(&AppConfig::default()).expect("state initializes");
+
+        state.membership_store.guilds().write().await.insert(
+            guild_id.clone(),
+            GuildRecord {
+                name: String::from("owner-bypass"),
+                visibility: GuildVisibility::Private,
+                created_by_user_id: guild_creator,
+                members: HashMap::from([(owner_user_id, Role::Owner)]),
+                banned_members: HashSet::new(),
+                channels: HashMap::from([(channel_id.clone(), empty_channel_record())]),
+            },
+        );
+
+        state
+            .membership_store
+            .guild_roles()
+            .write()
+            .await
+            .insert(guild_id.clone(), workspace_roles_fixture());
+
+        let mut channel_override = ChannelPermissionOverrideRecord::default();
+        channel_override.role_overrides.insert(
+            String::from("role-everyone"),
+            ChannelPermissionOverwrite {
+                allow: PermissionSet::empty(),
+                deny: all_permissions(),
+            },
+        );
+        channel_override.member_overrides.insert(
+            owner_user_id,
+            ChannelPermissionOverwrite {
+                allow: PermissionSet::empty(),
+                deny: all_permissions(),
+            },
+        );
+        state
+            .membership_store
+            .guild_channel_permission_overrides()
+            .write()
+            .await
+            .insert(
+                guild_id.clone(),
+                HashMap::from([(channel_id.clone(), channel_override)]),
+            );
+
+        let (_, resolved_permissions) =
+            channel_permission_snapshot(&state, owner_user_id, &guild_id, &channel_id)
+                .await
+                .expect("channel permissions should resolve");
+
+        assert_eq!(resolved_permissions.bits(), all_permissions().bits());
     }
 }
