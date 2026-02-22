@@ -24,7 +24,7 @@ export function ComposerEmojiPickerPortal(props: ComposerEmojiPickerPortalProps)
 
     const picker = new Picker({
       data,
-      set: "twitter",
+      set: "native",
       theme: "auto",
       onEmojiSelect: (selection: unknown) => {
         const native = emojiNativeFromSelection(selection);

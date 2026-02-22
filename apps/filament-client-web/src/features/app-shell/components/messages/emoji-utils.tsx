@@ -16,7 +16,7 @@ let shortcodeMap: Record<string, string> | null = null;
 
 export function initEmojiMart() {
   if (!initialized) {
-    init({ data: twitterData, set: "twitter", theme: "auto" });
+    init({ data: twitterData, set: "native", theme: "auto" });
     initialized = true;
   }
 }
@@ -181,29 +181,11 @@ export function emojiNativeFromSelection(selection: unknown): string | null {
   return native;
 }
 
-const EMOJI_PATTERN =
-  "(?:\\p{Regional_Indicator}{2}|[0-9#*]\\uFE0F?\\u20E3|\\p{Extended_Pictographic}(?:\\uFE0F|\\uFE0E)?(?:\\u200D\\p{Extended_Pictographic}(?:\\uFE0F|\\uFE0E)?)*)";
-const EMOJI_SPLIT_REGEX = new RegExp(`(${EMOJI_PATTERN})`, "gu");
-const EMOJI_TOKEN_REGEX = new RegExp(`^${EMOJI_PATTERN}$`, "u");
-
 export function renderEmojiMixedText(text: string): (string | JSX.Element)[] {
   if (!text) {
     return [];
   }
-
-  const parts = text.split(EMOJI_SPLIT_REGEX);
-  return parts.map((part) => {
-    if (!part) {
-      return part;
-    }
-    if (EMOJI_TOKEN_REGEX.test(part)) {
-      return (
-        <span class="inline-flex h-[1.2em] w-[1.2em] items-center justify-center align-bottom leading-none mb-[-0.2em]">
-          <em-emoji native={part} set="twitter" size="1.2em" />
-        </span>
-      );
-    }
-
-    return part;
-  });
+  // Render inline as plain text to avoid runtime failures for unsupported emoji
+  // sequences in emoji-mart's web component dataset.
+  return [text];
 }

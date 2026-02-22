@@ -20,10 +20,8 @@ describe("emoji utils", () => {
     expect(replacement.selectionEnd).toBe(1);
   });
 
-  it("renders emoji graphemes with twemoji-backed em-emoji elements", () => {
+  it("renders mixed text without dropping emoji graphemes", () => {
     const view = render(() => <p>{renderEmojiMixedText("ok 😂")}</p>);
-    const emojiNode = view.container.querySelector("em-emoji");
-    expect(emojiNode).not.toBeNull();
-    expect(emojiNode).toHaveAttribute("set", "twitter");
+    expect(view.getByText("ok 😂")).toBeInTheDocument();
   });
 });

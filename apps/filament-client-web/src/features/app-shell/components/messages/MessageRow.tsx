@@ -237,7 +237,7 @@ export function MessageRow(props: MessageRowProps) {
                       aria-label={`${reaction.emoji} reaction (${reaction.count})`}
                     >
                       <span class="inline-flex items-center justify-center text-[1.05rem] text-inherit leading-none">
-                        <em-emoji native={reaction.emoji} set="twitter" size="1em"></em-emoji>
+                        {reaction.emoji}
                       </span>
                       <span class="text-[0.78rem] font-[700] text-inherit">{reaction.count}</span>
                     </button>

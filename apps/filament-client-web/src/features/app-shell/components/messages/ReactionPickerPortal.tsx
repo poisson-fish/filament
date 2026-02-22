@@ -27,7 +27,7 @@ export function ReactionPickerPortal(props: ReactionPickerPortalProps) {
 
     const picker = new Picker({
       data,
-      set: "twitter",
+      set: "native",
       theme: "auto",
       onEmojiSelect: (selection: unknown) => {
         const native = emojiNativeFromSelection(selection);
