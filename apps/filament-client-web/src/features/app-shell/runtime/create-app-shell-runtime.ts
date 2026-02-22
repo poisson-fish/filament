@@ -93,11 +93,37 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const diagnosticsState = createDiagnosticsState();
   const overlayState = createOverlayState();
 
+  const profileController = createProfileController({
+    session: auth.session,
+    selectedProfileUserId: profileState.selectedProfileUserId,
+    avatarVersionByUserId: profileState.avatarVersionByUserId,
+    profileDraftUsername: profileState.profileDraftUsername,
+    profileDraftAbout: profileState.profileDraftAbout,
+    selectedProfileAvatarFile: profileState.selectedProfileAvatarFile,
+    isSavingProfile: profileState.isSavingProfile,
+    isUploadingProfileAvatar: profileState.isUploadingProfileAvatar,
+    setProfileDraftUsername: profileState.setProfileDraftUsername,
+    setProfileDraftAbout: profileState.setProfileDraftAbout,
+    setSelectedProfileAvatarFile: profileState.setSelectedProfileAvatarFile,
+    setProfileSettingsStatus: profileState.setProfileSettingsStatus,
+    setProfileSettingsError: profileState.setProfileSettingsError,
+    setSavingProfile: profileState.setSavingProfile,
+    setUploadingProfileAvatar: profileState.setUploadingProfileAvatar,
+    setAvatarVersionByUserId: profileState.setAvatarVersionByUserId,
+    setSelectedProfileUserId: profileState.setSelectedProfileUserId,
+    setSelectedProfileError: profileState.setSelectedProfileError,
+  });
+
   const selectors = createAppShellSelectors({
     workspaces: workspaceChannelState.workspaces,
     activeGuildId: workspaceChannelState.activeGuildId,
     activeChannelId: workspaceChannelState.activeChannelId,
+    currentUserId: () => profileController.profile()?.userId ?? null,
     channelPermissions: workspaceChannelState.channelPermissions,
+    workspaceRolesByGuildId: workspaceChannelState.workspaceRolesByGuildId,
+    workspaceUserRolesByGuildId: workspaceChannelState.workspaceUserRolesByGuildId,
+    workspaceChannelOverridesByGuildId:
+      workspaceChannelState.workspaceChannelOverridesByGuildId,
     voiceSessionChannelKey: voiceState.voiceSessionChannelKey,
     attachmentByChannel: messageState.attachmentByChannel,
     rtcSnapshot: voiceState.rtcSnapshot,
@@ -400,27 +426,6 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
       setWorkspaces: workspaceChannelState.setWorkspaces,
       refreshRoles: roleManagementActions.refreshRoles,
     });
-
-  const profileController = createProfileController({
-    session: auth.session,
-    selectedProfileUserId: profileState.selectedProfileUserId,
-    avatarVersionByUserId: profileState.avatarVersionByUserId,
-    profileDraftUsername: profileState.profileDraftUsername,
-    profileDraftAbout: profileState.profileDraftAbout,
-    selectedProfileAvatarFile: profileState.selectedProfileAvatarFile,
-    isSavingProfile: profileState.isSavingProfile,
-    isUploadingProfileAvatar: profileState.isUploadingProfileAvatar,
-    setProfileDraftUsername: profileState.setProfileDraftUsername,
-    setProfileDraftAbout: profileState.setProfileDraftAbout,
-    setSelectedProfileAvatarFile: profileState.setSelectedProfileAvatarFile,
-    setProfileSettingsStatus: profileState.setProfileSettingsStatus,
-    setProfileSettingsError: profileState.setProfileSettingsError,
-    setSavingProfile: profileState.setSavingProfile,
-    setUploadingProfileAvatar: profileState.setUploadingProfileAvatar,
-    setAvatarVersionByUserId: profileState.setAvatarVersionByUserId,
-    setSelectedProfileUserId: profileState.setSelectedProfileUserId,
-    setSelectedProfileError: profileState.setSelectedProfileError,
-  });
 
   const publicDirectoryActions = createPublicDirectoryController({
     session: auth.session,

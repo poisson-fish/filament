@@ -5,8 +5,11 @@ import {
   channelNameFromInput,
   guildIdFromInput,
   guildNameFromInput,
+  userIdFromInput,
   type AttachmentRecord,
   type ChannelPermissionSnapshot,
+  type GuildRoleRecord,
+  type WorkspaceRoleId,
   type WorkspaceRecord,
 } from "../src/domain/chat";
 import type { RtcSnapshot } from "../src/lib/rtc";
@@ -16,6 +19,9 @@ import {
   buildVoiceRosterEntries,
   createAppShellSelectors,
 } from "../src/features/app-shell/selectors/create-app-shell-selectors";
+import type {
+  WorkspaceChannelOverrideRecord,
+} from "../src/features/app-shell/state/workspace-state";
 import type { OverlayPanel, VoiceSessionCapabilities } from "../src/features/app-shell/types";
 
 const GUILD_A = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAA");
@@ -23,6 +29,44 @@ const GUILD_B = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAB");
 const TEXT_A = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAC");
 const VOICE_A = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAD");
 const TEXT_B = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAE");
+const USER_A = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FA1");
+const ROLE_EVERYONE = "01ARZ3NDEKTSV4RRFFQ69G5RA1" as WorkspaceRoleId;
+const ROLE_MEMBER = "01ARZ3NDEKTSV4RRFFQ69G5RA2" as WorkspaceRoleId;
+const ROLE_MODERATOR = "01ARZ3NDEKTSV4RRFFQ69G5RA3" as WorkspaceRoleId;
+
+function roleFixture(): GuildRoleRecord[] {
+  return [
+    {
+      roleId: ROLE_EVERYONE,
+      name: "@everyone" as GuildRoleRecord["name"],
+      position: 0,
+      isSystem: true,
+      permissions: ["create_message", "subscribe_streams"],
+    },
+    {
+      roleId: ROLE_MEMBER,
+      name: "member" as GuildRoleRecord["name"],
+      position: 1,
+      isSystem: false,
+      permissions: ["create_message", "publish_video", "publish_screen_share", "subscribe_streams"],
+    },
+    {
+      roleId: ROLE_MODERATOR,
+      name: "moderator" as GuildRoleRecord["name"],
+      position: 100,
+      isSystem: false,
+      permissions: [
+        "create_message",
+        "publish_video",
+        "publish_screen_share",
+        "subscribe_streams",
+        "delete_message",
+        "manage_channel_overrides",
+        "manage_member_roles",
+      ],
+    },
+  ];
+}
 
 function workspaceFixture(): WorkspaceRecord[] {
   return [
@@ -82,8 +126,22 @@ function createSelectorHarness() {
   const [activeChannelId, setActiveChannelId] = createSignal<
     typeof TEXT_A | typeof VOICE_A | typeof TEXT_B | null
   >(TEXT_A);
+  const [currentUserId] = createSignal(USER_A);
   const [channelPermissions, setChannelPermissions] =
     createSignal<ChannelPermissionSnapshot | null>(permissionsFixture());
+  const [workspaceRolesByGuildId, setWorkspaceRolesByGuildId] = createSignal<
+    Record<string, GuildRoleRecord[]>
+  >({ [GUILD_A]: roleFixture() });
+  const [workspaceUserRolesByGuildId, setWorkspaceUserRolesByGuildId] = createSignal<
+    Record<string, Record<string, WorkspaceRoleId[]>>
+  >({
+    [GUILD_A]: {
+      [USER_A]: [ROLE_MEMBER],
+    },
+  });
+  const [workspaceChannelOverridesByGuildId, setWorkspaceChannelOverridesByGuildId] = createSignal<
+    Record<string, Record<string, WorkspaceChannelOverrideRecord[]>>
+  >({});
   const [voiceSessionChannelKey, setVoiceSessionChannelKey] = createSignal<string | null>(null);
   const [attachmentByChannel] = createSignal<Record<string, AttachmentRecord[]>>({});
   const [rtcSnapshot, setRtcSnapshot] = createSignal<RtcSnapshot>(rtcSnapshotFixture());
@@ -100,7 +158,11 @@ function createSelectorHarness() {
     workspaces,
     activeGuildId,
     activeChannelId,
+    currentUserId,
     channelPermissions,
+    workspaceRolesByGuildId,
+    workspaceUserRolesByGuildId,
+    workspaceChannelOverridesByGuildId,
     voiceSessionChannelKey,
     attachmentByChannel,
     rtcSnapshot,
@@ -117,6 +179,9 @@ function createSelectorHarness() {
     setActiveGuildId,
     setActiveChannelId,
     setChannelPermissions,
+    setWorkspaceRolesByGuildId,
+    setWorkspaceUserRolesByGuildId,
+    setWorkspaceChannelOverridesByGuildId,
     setVoiceSessionChannelKey,
     setRtcSnapshot,
     setVoiceParticipantsByChannel,
@@ -162,24 +227,14 @@ describe("app shell selectors", () => {
       expect(harness.selectors.hasModerationAccess()).toBe(false);
       expect(harness.selectors.canDeleteMessages()).toBe(false);
 
-      harness.setChannelPermissions({
-        role: "moderator",
-        permissions: [
-          "create_message",
-          "publish_video",
-          "publish_screen_share",
-          "subscribe_streams",
-          "manage_roles",
-          "manage_member_roles",
-          "manage_workspace_roles",
-          "manage_channel_overrides",
-          "ban_member",
-          "delete_message",
-        ],
+      harness.setWorkspaceUserRolesByGuildId({
+        [GUILD_A]: {
+          [USER_A]: [ROLE_MODERATOR],
+        },
       });
       expect(harness.selectors.canManageWorkspaceChannels()).toBe(true);
       expect(harness.selectors.canManageSearchMaintenance()).toBe(true);
-      expect(harness.selectors.canManageWorkspaceRoles()).toBe(true);
+      expect(harness.selectors.canManageWorkspaceRoles()).toBe(false);
       expect(harness.selectors.canManageMemberRoles()).toBe(true);
       expect(harness.selectors.hasRoleManagementAccess()).toBe(true);
       expect(harness.selectors.hasModerationAccess()).toBe(true);
@@ -193,6 +248,34 @@ describe("app shell selectors", () => {
       harness.setWorkspaces(workspaceFixture());
       expect(harness.selectors.canDismissWorkspaceCreateForm()).toBe(true);
       expect(harness.selectors.canCloseActivePanel()).toBe(true);
+      dispose();
+    });
+  });
+
+  it("applies legacy channel role overrides from local workspace state", () => {
+    createRoot((dispose) => {
+      const harness = createSelectorHarness();
+
+      harness.setWorkspaceUserRolesByGuildId({
+        [GUILD_A]: {
+          [USER_A]: [ROLE_MODERATOR],
+        },
+      });
+      harness.setWorkspaceChannelOverridesByGuildId({
+        [GUILD_A]: {
+          [TEXT_A]: [
+            {
+              targetKind: "legacy_role",
+              role: "moderator",
+              allow: [],
+              deny: ["create_message"],
+              updatedAtUnix: 1,
+            },
+          ],
+        },
+      });
+
+      expect(harness.selectors.canAccessActiveChannel()).toBe(false);
       dispose();
     });
   });
