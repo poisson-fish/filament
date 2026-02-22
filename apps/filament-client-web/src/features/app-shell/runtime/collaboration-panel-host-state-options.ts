@@ -6,6 +6,10 @@ import type { createAttachmentController } from "../controllers/attachment-contr
 import type { createFriendshipController } from "../controllers/friendship-controller";
 import type { createModerationController } from "../controllers/moderation-controller";
 import type { createSearchController } from "../controllers/search-controller";
+import {
+  permissionListFromBits,
+  resolveEffectiveLegacyRolePermissions,
+} from "../permissions/effective-permissions";
 import type { CreateAppShellSelectorsResult } from "../selectors/create-app-shell-selectors";
 import type { createDiagnosticsState } from "../state/diagnostics-state";
 import type { createMessageState } from "../state/message-state";
@@ -132,6 +136,41 @@ function buildChannelOverrideEntities(options: {
   return member ? [member, ...others] : others;
 }
 
+function buildChannelOverrideEffectivePermissions(options: {
+  roles: ReturnType<
+    ReturnType<typeof createWorkspaceState>["workspaceChannel"]["workspaceRolesByGuildId"]
+  >[string] | undefined;
+  overrides: ReturnType<
+    ReturnType<typeof createWorkspaceState>["workspaceChannel"]["workspaceChannelOverridesByGuildId"]
+  >[string][string] | undefined;
+}): Record<RoleName, PermissionName[]> {
+  const roles = options.roles ?? [];
+  const overrides = options.overrides ?? [];
+  return {
+    member: permissionListFromBits(
+      resolveEffectiveLegacyRolePermissions({
+        role: "member",
+        guildRoles: roles,
+        channelOverrides: overrides,
+      }),
+    ),
+    moderator: permissionListFromBits(
+      resolveEffectiveLegacyRolePermissions({
+        role: "moderator",
+        guildRoles: roles,
+        channelOverrides: overrides,
+      }),
+    ),
+    owner: permissionListFromBits(
+      resolveEffectiveLegacyRolePermissions({
+        role: "owner",
+        guildRoles: roles,
+        channelOverrides: overrides,
+      }),
+    ),
+  };
+}
+
 export function createCollaborationPanelHostStateOptions(
   options: CollaborationPanelHostStateOptions,
 ): CollaborationPanelPropGroupsStateOptions {
@@ -143,6 +182,9 @@ export function createCollaborationPanelHostStateOptions(
         activeChannelId
       ]
       : undefined;
+  const workspaceRoles = activeGuildId
+    ? options.workspaceChannelState.workspaceRolesByGuildId()[activeGuildId]
+    : undefined;
 
   return {
     friendRecipientUserIdInput: options.friendshipsState.friendRecipientUserIdInput,
@@ -192,6 +234,10 @@ export function createCollaborationPanelHostStateOptions(
     channelOverrideEntities: buildChannelOverrideEntities({
       overrides: channelOverrides,
       selectedRole: options.diagnosticsState.overrideRoleInput(),
+    }),
+    channelOverrideEffectivePermissions: buildChannelOverrideEffectivePermissions({
+      roles: workspaceRoles,
+      overrides: channelOverrides,
     }),
     isModerating: options.diagnosticsState.isModerating,
     hasActiveModerationWorkspace: () =>

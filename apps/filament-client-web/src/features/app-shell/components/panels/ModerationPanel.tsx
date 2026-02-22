@@ -19,6 +19,7 @@ export interface ModerationPanelProps {
   overrideAllowCsv: string;
   overrideDenyCsv: string;
   channelOverrideEntities: ChannelOverrideEntity[];
+  channelOverrideEffectivePermissions: Record<RoleName, PermissionName[]>;
   isModerating: boolean;
   hasActiveWorkspace: boolean;
   hasActiveChannel: boolean;
@@ -148,6 +149,10 @@ export function ModerationPanel(props: ModerationPanelProps) {
       parseOverrideDraft(props.overrideDenyCsv).filter((permission) => !allow.has(permission)),
     );
     return { allow, deny };
+  });
+  const selectedOverrideRoleEffectivePermissions = createMemo(() => {
+    const role = props.overrideRoleInput as RoleName;
+    return new Set(props.channelOverrideEffectivePermissions[role] ?? []);
   });
 
   const applyOverrideEntitySelection = (entity: ChannelOverrideEntity): void => {
@@ -299,6 +304,8 @@ export function ModerationPanel(props: ModerationPanelProps) {
                   {(entry) => {
                     const isActive = (state: TriStateOverride) =>
                       overrideStateForPermission(entry.permission) === state;
+                    const isEffectivelyAllowed = () =>
+                      selectedOverrideRoleEffectivePermissions().has(entry.permission);
                     return (
                       <article class="grid gap-[0.3rem] rounded-[0.56rem] border border-line-soft bg-bg-2 p-[0.44rem]">
                         <div class="grid gap-[0.14rem]">
@@ -306,6 +313,16 @@ export function ModerationPanel(props: ModerationPanelProps) {
                             {entry.label}
                           </h4>
                           <p class="m-0 text-[0.73rem] text-ink-2">{entry.summary}</p>
+                          <p
+                            class={`m-0 text-[0.72rem] ${
+                              isEffectivelyAllowed() ? "text-ok" : "text-danger"
+                            }`}
+                            aria-label={`${entry.label} effective ${
+                              isEffectivelyAllowed() ? "allowed" : "denied"
+                            }`}
+                          >
+                            Effective: {isEffectivelyAllowed() ? "Allowed" : "Denied"}
+                          </p>
                         </div>
                         <div class={triStateGroupClass} role="radiogroup" aria-label={entry.label}>
                           <div class="grid grid-cols-3 gap-[0.3rem]">

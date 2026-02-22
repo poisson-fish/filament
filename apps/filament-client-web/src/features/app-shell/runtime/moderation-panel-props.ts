@@ -9,6 +9,7 @@ export interface ModerationPanelPropsOptions {
   overrideAllowCsv: string;
   overrideDenyCsv: string;
   channelOverrideEntities?: ModerationPanelBuilderOptions["channelOverrideEntities"];
+  channelOverrideEffectivePermissions: ModerationPanelBuilderOptions["channelOverrideEffectivePermissions"];
   isModerating: boolean;
   hasActiveWorkspace: boolean;
   hasActiveChannel: boolean;
@@ -41,6 +42,7 @@ export function createModerationPanelProps(
     overrideAllowCsv: options.overrideAllowCsv,
     overrideDenyCsv: options.overrideDenyCsv,
     channelOverrideEntities: options.channelOverrideEntities ?? [],
+    channelOverrideEffectivePermissions: options.channelOverrideEffectivePermissions,
     isModerating: options.isModerating,
     hasActiveWorkspace: options.hasActiveWorkspace,
     hasActiveChannel: options.hasActiveChannel,

@@ -247,6 +247,11 @@ describe("app shell panel host prop groups", () => {
           overrideRoleInput: "moderator",
           overrideAllowCsv: "create_message",
           overrideDenyCsv: "delete_message",
+          channelOverrideEffectivePermissions: {
+            member: ["create_message"],
+            moderator: ["create_message", "delete_message"],
+            owner: ["manage_roles"],
+          },
           isModerating: false,
           hasActiveWorkspace: true,
           hasActiveChannel: true,

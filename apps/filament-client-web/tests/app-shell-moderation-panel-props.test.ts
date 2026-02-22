@@ -28,6 +28,11 @@ describe("app shell moderation panel props", () => {
           updatedAtUnix: 123,
         },
       ],
+      channelOverrideEffectivePermissions: {
+        member: ["create_message"],
+        moderator: ["delete_message"],
+        owner: ["manage_roles"],
+      },
       isModerating: false,
       hasActiveWorkspace: true,
       hasActiveChannel: true,
@@ -51,6 +56,7 @@ describe("app shell moderation panel props", () => {
     expect(panelProps.canManageRoles).toBe(true);
     expect(panelProps.overrideAllowCsv).toBe("create_message");
     expect(panelProps.channelOverrideEntities).toHaveLength(1);
+    expect(panelProps.channelOverrideEffectivePermissions.member).toEqual(["create_message"]);
 
     panelProps.setModerationUserIdInput("01ARZ3NDEKTSV4RRFFQ69G5FAB");
     expect(setModerationUserIdInput).toHaveBeenCalledWith(

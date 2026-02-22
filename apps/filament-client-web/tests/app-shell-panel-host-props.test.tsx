@@ -206,6 +206,11 @@ function baseOptions(
       overrideAllowCsv: "",
       overrideDenyCsv: "",
       channelOverrideEntities: [],
+      channelOverrideEffectivePermissions: {
+        member: [],
+        moderator: [],
+        owner: [],
+      },
       isModerating: false,
       hasActiveWorkspace: true,
       hasActiveChannel: true,
@@ -426,6 +431,11 @@ describe("app shell panel host props adapter", () => {
 
     expect(setModerationRoleInput).toHaveBeenCalledWith("moderator");
     expect(setOverrideRoleInput).toHaveBeenCalledWith("owner");
+    expect(moderationPanelProps.channelOverrideEffectivePermissions).toEqual({
+      member: [],
+      moderator: [],
+      owner: [],
+    });
     expect(onOpenRoleManagementPanel).toHaveBeenCalledTimes(1);
     expect(setTargetUserIdInput).toHaveBeenCalledWith("01ARZ3NDEKTSV4RRFFQ69G5FAA");
     expect(setSelectedAttachment).toHaveBeenNthCalledWith(1, proofFile);

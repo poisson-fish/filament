@@ -35,6 +35,12 @@ export interface ResolveEffectiveChannelPermissionsInput {
   channelOverrides: ReadonlyArray<WorkspaceChannelOverrideRecord>;
 }
 
+export interface ResolveEffectiveLegacyRolePermissionsInput {
+  role: RoleName;
+  guildRoles: ReadonlyArray<GuildRoleRecord>;
+  channelOverrides: ReadonlyArray<WorkspaceChannelOverrideRecord>;
+}
+
 export const KNOWN_PERMISSIONS: readonly PermissionName[] = [
   "manage_roles",
   "manage_member_roles",
@@ -211,6 +217,72 @@ export function resolveEffectiveChannelPermissions(
   }
 
   return localBits;
+}
+
+export function resolveEffectiveLegacyRolePermissions(
+  input: ResolveEffectiveLegacyRolePermissionsInput,
+): PermissionBits {
+  const roleById = new Map<WorkspaceRoleId, GuildRoleRecord>();
+  for (const role of input.guildRoles) {
+    roleById.set(role.roleId, role);
+    if (roleById.size >= 64) {
+      break;
+    }
+  }
+
+  if (roleById.size === 0) {
+    return 0;
+  }
+
+  const legacyRoleBuckets = buildLegacyRoleBuckets(input.guildRoles);
+  const effectiveRoleIds = new Set<WorkspaceRoleId>();
+  for (const roleId of legacyRoleBuckets.everyoneRoleIds) {
+    effectiveRoleIds.add(roleId);
+  }
+  for (const roleId of roleIdsForLegacyRole(input.role, legacyRoleBuckets)) {
+    effectiveRoleIds.add(roleId);
+  }
+
+  const rolePermissionSets: PermissionBits[] = [];
+  for (const roleId of effectiveRoleIds) {
+    const role = roleById.get(roleId);
+    if (!role) {
+      continue;
+    }
+    rolePermissionSets.push(permissionBitsFromList(role.permissions));
+  }
+
+  let guildPermissionBits = computeBasePermissions(rolePermissionSets);
+  const isWorkspaceOwner = intersects(effectiveRoleIds, legacyRoleBuckets.ownerRoleIds);
+  if (isWorkspaceOwner) {
+    guildPermissionBits = KNOWN_PERMISSION_MASK;
+  }
+
+  const roleOverrides: ChannelPermissionOverwrite[] = [];
+  const scopedChannelOverrides = input.channelOverrides.slice(
+    0,
+    MAX_TRACKED_LEGACY_CHANNEL_OVERRIDES,
+  );
+  for (const override of scopedChannelOverrides) {
+    if (override.targetKind !== "legacy_role") {
+      continue;
+    }
+    if (!legacyRoleAppliesToUser(override.role, legacyRoleBuckets, effectiveRoleIds)) {
+      continue;
+    }
+    roleOverrides.push({
+      allow: permissionBitsFromList(override.allow),
+      deny: permissionBitsFromList(override.deny),
+    });
+  }
+
+  return applyChannelOverrides(
+    isWorkspaceOwner,
+    guildPermissionBits,
+    null,
+    roleOverrides,
+    null,
+  );
 }
 
 export function resolveAssignedRoleIdsForUser(

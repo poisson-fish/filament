@@ -1,5 +1,5 @@
 import type { CollaborationPanelPropGroupsOptions } from "./collaboration-panel-prop-groups";
-import type { PermissionName } from "../../../domain/chat";
+import type { PermissionName, RoleName } from "../../../domain/chat";
 
 interface ModerationChannelOverrideEntityOption {
   role: CollaborationPanelPropGroupsOptions["moderation"]["overrideRoleInput"];
@@ -9,6 +9,8 @@ interface ModerationChannelOverrideEntityOption {
   deny: PermissionName[];
   updatedAtUnix: number | null;
 }
+
+type ModerationChannelOverrideEffectivePermissions = Record<RoleName, PermissionName[]>;
 
 export interface CollaborationPanelPropGroupsStateOptions {
   friendRecipientUserIdInput: () => string;
@@ -71,6 +73,7 @@ export interface CollaborationPanelPropGroupsStateOptions {
   overrideAllowCsv: () => string;
   overrideDenyCsv: () => string;
   channelOverrideEntities: ModerationChannelOverrideEntityOption[];
+  channelOverrideEffectivePermissions: ModerationChannelOverrideEffectivePermissions;
   isModerating: () => boolean;
   hasActiveModerationWorkspace: () => boolean;
   hasActiveModerationChannel: () => boolean;
@@ -151,6 +154,7 @@ export function createCollaborationPanelPropGroupsOptions(
       overrideAllowCsv: options.overrideAllowCsv(),
       overrideDenyCsv: options.overrideDenyCsv(),
       channelOverrideEntities: options.channelOverrideEntities,
+      channelOverrideEffectivePermissions: options.channelOverrideEffectivePermissions,
       isModerating: options.isModerating(),
       hasActiveWorkspace: options.hasActiveModerationWorkspace(),
       hasActiveChannel: options.hasActiveModerationChannel(),

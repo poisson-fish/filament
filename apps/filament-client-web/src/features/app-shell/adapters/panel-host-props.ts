@@ -205,6 +205,7 @@ export interface ModerationPanelBuilderOptions {
     deny: PermissionName[];
     updatedAtUnix: number | null;
   }>;
+  channelOverrideEffectivePermissions: Record<RoleName, PermissionName[]>;
   isModerating: boolean;
   hasActiveWorkspace: boolean;
   hasActiveChannel: boolean;
@@ -467,6 +468,7 @@ export function buildModerationPanelProps(
     overrideAllowCsv: options.overrideAllowCsv,
     overrideDenyCsv: options.overrideDenyCsv,
     channelOverrideEntities: options.channelOverrideEntities ?? [],
+    channelOverrideEffectivePermissions: options.channelOverrideEffectivePermissions,
     isModerating: options.isModerating,
     hasActiveWorkspace: options.hasActiveWorkspace,
     hasActiveChannel: options.hasActiveChannel,

@@ -76,6 +76,31 @@ describe("app shell collaboration panel-host state options", () => {
       workspaceChannelState: {
         activeGuildId: () => activeGuildId,
         activeChannelId: () => activeChannelId,
+        workspaceRolesByGuildId: () => ({
+          [activeGuildId]: [
+            {
+              roleId: "01ARZ3NDEKTSV4RRFFQ69G5RB1",
+              name: "@everyone",
+              position: 0,
+              isSystem: true,
+              permissions: ["create_message"],
+            },
+            {
+              roleId: "01ARZ3NDEKTSV4RRFFQ69G5RB2",
+              name: "moderator",
+              position: 100,
+              isSystem: false,
+              permissions: ["delete_message", "ban_member"],
+            },
+            {
+              roleId: "01ARZ3NDEKTSV4RRFFQ69G5RB3",
+              name: "owner",
+              position: 999,
+              isSystem: true,
+              permissions: ["manage_roles"],
+            },
+          ],
+        }),
         workspaceChannelOverridesByGuildId: () => ({
           [activeGuildId]: {
             [activeChannelId]: [
@@ -201,6 +226,8 @@ describe("app shell collaboration panel-host state options", () => {
     expect(stateOptions.moderationRoleInput).toBe(moderationRoleInput);
     expect(stateOptions.channelOverrideEntities[0]?.role).toBe("member");
     expect(stateOptions.channelOverrideEntities[1]?.role).toBe("moderator");
+    expect(stateOptions.channelOverrideEffectivePermissions.member).toContain("create_message");
+    expect(stateOptions.channelOverrideEffectivePermissions.owner).toContain("manage_roles");
     expect(stateOptions.onApplyOverride).toBe(applyOverride);
 
     stateOptions.onOpenRoleManagementPanel();

@@ -40,6 +40,11 @@ function moderationPanelPropsFixture(
         updatedAtUnix: null,
       },
     ],
+    channelOverrideEffectivePermissions: {
+      member: ["create_message"],
+      moderator: ["create_message", "delete_message"],
+      owner: ["manage_roles"],
+    },
     isModerating: false,
     hasActiveWorkspace: true,
     hasActiveChannel: true,
@@ -209,6 +214,25 @@ describe("app shell moderation panel", () => {
       "aria-checked",
       "true",
     );
+    expect(screen.getByLabelText("Create Messages effective allowed")).toBeInTheDocument();
+  });
+
+  it("shows denied effective indicator when selected role lacks permission", () => {
+    render(() =>
+      <ModerationPanel
+        {...moderationPanelPropsFixture({
+          overrideRoleInput: "member",
+          channelOverrideEffectivePermissions: {
+            member: [],
+            moderator: ["create_message"],
+            owner: ["manage_roles"],
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByLabelText("Create Messages effective denied")).toBeInTheDocument();
+    expect(screen.getByLabelText("Delete Messages effective denied")).toBeInTheDocument();
   });
 
   it("hides gated controls when moderation permissions are missing", () => {

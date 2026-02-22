@@ -111,6 +111,11 @@ describe("app shell collaboration panel prop group state options", () => {
           updatedAtUnix: 9,
         },
       ],
+      channelOverrideEffectivePermissions: {
+        member: ["create_message"],
+        moderator: ["delete_message"],
+        owner: ["manage_roles"],
+      },
       isModerating: () => false,
       hasActiveModerationWorkspace: () => true,
       hasActiveModerationChannel: () => true,
@@ -134,6 +139,9 @@ describe("app shell collaboration panel prop group state options", () => {
     expect(options.attachments.activeAttachments).toHaveLength(1);
     expect(options.moderation.canManageRoles).toBe(true);
     expect(options.moderation.channelOverrideEntities).toHaveLength(1);
+    expect(options.moderation.channelOverrideEffectivePermissions.member).toEqual([
+      "create_message",
+    ]);
 
     const submitEvent = { preventDefault: vi.fn() } as unknown as SubmitEvent;
 

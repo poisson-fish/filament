@@ -5,6 +5,7 @@ import {
   computeBasePermissions,
   permissionBitsFromList,
   resolveEffectiveChannelPermissions,
+  resolveEffectiveLegacyRolePermissions,
 } from "../src/features/app-shell/permissions/effective-permissions";
 
 const ROLE_EVERYONE = "01ARZ3NDEKTSV4RRFFQ69G5RA1" as WorkspaceRoleId;
@@ -107,6 +108,24 @@ describe("app shell effective permissions", () => {
         },
       ],
     });
+    expect((bits & permissionBitsFromList(["delete_message"])) !== 0).toBe(false);
+  });
+
+  it("resolves effective permissions for a legacy role target using role hierarchy", () => {
+    const bits = resolveEffectiveLegacyRolePermissions({
+      role: "moderator",
+      guildRoles: roleFixtures(),
+      channelOverrides: [
+        {
+          targetKind: "legacy_role",
+          role: "moderator",
+          allow: ["create_message"],
+          deny: ["delete_message"],
+          updatedAtUnix: 1,
+        },
+      ],
+    });
+    expect((bits & permissionBitsFromList(["create_message"])) !== 0).toBe(true);
     expect((bits & permissionBitsFromList(["delete_message"])) !== 0).toBe(false);
   });
 });
