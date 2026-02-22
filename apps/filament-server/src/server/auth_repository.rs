@@ -77,10 +77,7 @@ pub(crate) trait AuthPersistence {
         username: &Username,
     ) -> Result<Option<(String, String, i64)>, AuthFailure>;
 
-    async fn lookup_users(
-        &self,
-        user_ids: &[UserId],
-    ) -> Result<Vec<UserLookupItem>, AuthFailure>;
+    async fn lookup_users(&self, user_ids: &[UserId]) -> Result<Vec<UserLookupItem>, AuthFailure>;
 }
 
 pub(crate) struct PostgresAuthRepository<'a> {
@@ -419,10 +416,7 @@ impl AuthPersistence for PostgresAuthRepository<'_> {
         }
     }
 
-    async fn lookup_users(
-        &self,
-        user_ids: &[UserId],
-    ) -> Result<Vec<UserLookupItem>, AuthFailure> {
+    async fn lookup_users(&self, user_ids: &[UserId]) -> Result<Vec<UserLookupItem>, AuthFailure> {
         let user_ids: Vec<String> = user_ids.iter().map(ToString::to_string).collect();
         let rows = sqlx::query(
             "SELECT user_id, username, avatar_version
@@ -666,10 +660,7 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
         }
     }
 
-    async fn lookup_users(
-        &self,
-        user_ids: &[UserId],
-    ) -> Result<Vec<UserLookupItem>, AuthFailure> {
+    async fn lookup_users(&self, user_ids: &[UserId]) -> Result<Vec<UserLookupItem>, AuthFailure> {
         let user_ids_map = self.state.user_ids.read().await;
         let users = user_ids
             .iter()
@@ -819,10 +810,7 @@ impl AuthPersistence for AuthRepository<'_> {
         }
     }
 
-    async fn lookup_users(
-        &self,
-        user_ids: &[UserId],
-    ) -> Result<Vec<UserLookupItem>, AuthFailure> {
+    async fn lookup_users(&self, user_ids: &[UserId]) -> Result<Vec<UserLookupItem>, AuthFailure> {
         match self {
             Self::Postgres(repo) => repo.lookup_users(user_ids).await,
             Self::InMemory(repo) => repo.lookup_users(user_ids).await,

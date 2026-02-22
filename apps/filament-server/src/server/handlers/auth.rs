@@ -23,8 +23,7 @@ use crate::server::{
     errors::AuthFailure,
     types::{
         AuthResponse, CaptchaToken, HcaptchaVerifyResponse, LoginRequest, MeResponse,
-        RefreshRequest, RegisterRequest, RegisterResponse, UserLookupRequest,
-        UserLookupResponse,
+        RefreshRequest, RegisterRequest, RegisterResponse, UserLookupRequest, UserLookupResponse,
     },
 };
 
@@ -65,7 +64,7 @@ pub(crate) async fn verify_captcha_token(
     if let Some(remote_ip) = client_ip.ip() {
         form_data.push(("remoteip", remote_ip.to_string()));
     }
-    
+
     let response = state
         .http_client
         .post(&config.verify_url)
@@ -86,24 +85,26 @@ pub(crate) async fn verify_captcha_token(
             );
             AuthFailure::CaptchaFailed
         })?;
-    
-    let status = response.status();
-    let verify: HcaptchaVerifyResponse = response
-        .json()
-        .await
-        .map_err(|error| {
-            tracing::warn!(
-                event = "auth.captcha.verify",
-                outcome = "response_parse_error",
-                status = %status,
-                error = %error,
-                verify_url = %config.verify_url,
-                client_ip_source = client_ip.source().as_str()
-            );
-            AuthFailure::CaptchaFailed
-        })?;
 
-    validate_captcha_response(status, &verify, &config.verify_url, client_ip.source().as_str())
+    let status = response.status();
+    let verify: HcaptchaVerifyResponse = response.json().await.map_err(|error| {
+        tracing::warn!(
+            event = "auth.captcha.verify",
+            outcome = "response_parse_error",
+            status = %status,
+            error = %error,
+            verify_url = %config.verify_url,
+            client_ip_source = client_ip.source().as_str()
+        );
+        AuthFailure::CaptchaFailed
+    })?;
+
+    validate_captcha_response(
+        status,
+        &verify,
+        &config.verify_url,
+        client_ip.source().as_str(),
+    )
 }
 
 fn validate_captcha_response(
@@ -355,7 +356,8 @@ pub(crate) async fn me(
     headers: HeaderMap,
 ) -> Result<Json<MeResponse>, AuthFailure> {
     let auth = authenticate(&state, &headers).await?;
-    let typed_username = Username::try_from(auth.username.clone()).map_err(|_| AuthFailure::Unauthorized)?;
+    let typed_username =
+        Username::try_from(auth.username.clone()).map_err(|_| AuthFailure::Unauthorized)?;
 
     let repository = AuthRepository::from_state(&state);
     let profile = repository

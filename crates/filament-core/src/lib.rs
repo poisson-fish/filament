@@ -593,10 +593,11 @@ fn validate_profile_about(value: &str) -> Result<(), DomainError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_channel_overwrite_legacy, base_permissions_legacy, can_assign_role_legacy, can_moderate_member_legacy,
-        has_permission_legacy, project_name, role_rank, tokenize_markdown, ChannelKind, ChannelName,
-        ChannelPermissionOverwrite, DomainError, GuildName, LiveKitIdentity, LiveKitRoomName,
-        MarkdownToken, Permission, PermissionSet, ProfileAbout, Role, UserId, Username,
+        apply_channel_overwrite_legacy, base_permissions_legacy, can_assign_role_legacy,
+        can_moderate_member_legacy, has_permission_legacy, project_name, role_rank,
+        tokenize_markdown, ChannelKind, ChannelName, ChannelPermissionOverwrite, DomainError,
+        GuildName, LiveKitIdentity, LiveKitRoomName, MarkdownToken, Permission, PermissionSet,
+        ProfileAbout, Role, UserId, Username,
     };
 
     #[test]
@@ -668,7 +669,10 @@ mod tests {
     fn permission_checks_match_role_expectations() {
         assert!(has_permission_legacy(Role::Owner, Permission::BanMember));
         assert!(has_permission_legacy(Role::Owner, Permission::ManageRoles));
-        assert!(has_permission_legacy(Role::Owner, Permission::ManageMemberRoles));
+        assert!(has_permission_legacy(
+            Role::Owner,
+            Permission::ManageMemberRoles
+        ));
         assert!(has_permission_legacy(
             Role::Owner,
             Permission::ManageWorkspaceRoles
@@ -676,16 +680,34 @@ mod tests {
         assert!(has_permission_legacy(Role::Owner, Permission::ViewAuditLog));
         assert!(has_permission_legacy(Role::Owner, Permission::ManageIpBans));
         assert!(has_permission_legacy(Role::Owner, Permission::PublishVideo));
-        assert!(has_permission_legacy(Role::Owner, Permission::PublishScreenShare));
-        assert!(has_permission_legacy(Role::Owner, Permission::SubscribeStreams));
+        assert!(has_permission_legacy(
+            Role::Owner,
+            Permission::PublishScreenShare
+        ));
+        assert!(has_permission_legacy(
+            Role::Owner,
+            Permission::SubscribeStreams
+        ));
         assert!(has_permission_legacy(
             Role::Moderator,
             Permission::ManageMemberRoles
         ));
-        assert!(has_permission_legacy(Role::Moderator, Permission::DeleteMessage));
-        assert!(has_permission_legacy(Role::Moderator, Permission::ViewAuditLog));
-        assert!(has_permission_legacy(Role::Moderator, Permission::ManageIpBans));
-        assert!(has_permission_legacy(Role::Moderator, Permission::PublishVideo));
+        assert!(has_permission_legacy(
+            Role::Moderator,
+            Permission::DeleteMessage
+        ));
+        assert!(has_permission_legacy(
+            Role::Moderator,
+            Permission::ViewAuditLog
+        ));
+        assert!(has_permission_legacy(
+            Role::Moderator,
+            Permission::ManageIpBans
+        ));
+        assert!(has_permission_legacy(
+            Role::Moderator,
+            Permission::PublishVideo
+        ));
         assert!(has_permission_legacy(
             Role::Moderator,
             Permission::PublishScreenShare
@@ -694,33 +716,67 @@ mod tests {
             Role::Moderator,
             Permission::SubscribeStreams
         ));
-        assert!(!has_permission_legacy(Role::Moderator, Permission::ManageRoles));
-        assert!(!has_permission_legacy(Role::Member, Permission::DeleteMessage));
-        assert!(!has_permission_legacy(Role::Member, Permission::PublishVideo));
+        assert!(!has_permission_legacy(
+            Role::Moderator,
+            Permission::ManageRoles
+        ));
+        assert!(!has_permission_legacy(
+            Role::Member,
+            Permission::DeleteMessage
+        ));
+        assert!(!has_permission_legacy(
+            Role::Member,
+            Permission::PublishVideo
+        ));
         assert!(!has_permission_legacy(
             Role::Member,
             Permission::PublishScreenShare
         ));
-        assert!(has_permission_legacy(Role::Member, Permission::CreateMessage));
-        assert!(has_permission_legacy(Role::Member, Permission::SubscribeStreams));
+        assert!(has_permission_legacy(
+            Role::Member,
+            Permission::CreateMessage
+        ));
+        assert!(has_permission_legacy(
+            Role::Member,
+            Permission::SubscribeStreams
+        ));
     }
 
     #[test]
     fn role_hierarchy_and_assignment_rules_are_enforced() {
         assert!(role_rank(Role::Owner) > role_rank(Role::Moderator));
         assert!(role_rank(Role::Moderator) > role_rank(Role::Member));
-        assert!(can_assign_role_legacy(Role::Owner, Role::Member, Role::Moderator));
-        assert!(can_assign_role_legacy(Role::Owner, Role::Moderator, Role::Member));
+        assert!(can_assign_role_legacy(
+            Role::Owner,
+            Role::Member,
+            Role::Moderator
+        ));
+        assert!(can_assign_role_legacy(
+            Role::Owner,
+            Role::Moderator,
+            Role::Member
+        ));
         assert!(!can_assign_role_legacy(
             Role::Moderator,
             Role::Member,
             Role::Moderator
         ));
-        assert!(!can_assign_role_legacy(Role::Owner, Role::Owner, Role::Member));
-        assert!(!can_assign_role_legacy(Role::Owner, Role::Member, Role::Owner));
+        assert!(!can_assign_role_legacy(
+            Role::Owner,
+            Role::Owner,
+            Role::Member
+        ));
+        assert!(!can_assign_role_legacy(
+            Role::Owner,
+            Role::Member,
+            Role::Owner
+        ));
         assert!(can_moderate_member_legacy(Role::Owner, Role::Moderator));
         assert!(can_moderate_member_legacy(Role::Moderator, Role::Member));
-        assert!(!can_moderate_member_legacy(Role::Moderator, Role::Moderator));
+        assert!(!can_moderate_member_legacy(
+            Role::Moderator,
+            Role::Moderator
+        ));
         assert!(!can_moderate_member_legacy(Role::Moderator, Role::Owner));
     }
 

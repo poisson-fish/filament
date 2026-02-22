@@ -9,8 +9,8 @@ use axum::{
     Json,
 };
 use filament_core::{
-    can_assign_role_legacy, can_moderate_member_legacy, has_permission_legacy, ChannelKind, ChannelName,
-    ChannelPermissionOverwrite, GuildName, Permission, Role, UserId,
+    can_assign_role_legacy, can_moderate_member_legacy, has_permission_legacy, ChannelKind,
+    ChannelName, ChannelPermissionOverwrite, GuildName, Permission, Role, UserId,
 };
 use sqlx::Row;
 use ulid::Ulid;
@@ -42,15 +42,16 @@ use crate::server::{
     },
     realtime::broadcast_guild_event,
     types::{
-        ChannelListResponse, ChannelResponse, ChannelRolePath, CreateChannelRequest,
-        CreateGuildRequest, CreateGuildRoleRequest, DirectoryJoinOutcomeResponse,
-        DirectoryJoinResponse, GuildAuditEventResponse, GuildAuditListResponse,
-        GuildIpBanApplyResponse, GuildIpBanListResponse, GuildIpBanPath, GuildIpBanRecordResponse,
-        GuildListResponse, GuildPath, GuildResponse, GuildRoleListResponse, GuildRoleMemberPath,
-        GuildRolePath, GuildRoleResponse, MemberPath, ModerationResponse, PublicGuildListItem,
-        PublicGuildListQuery, PublicGuildListResponse, ReorderGuildRolesRequest,
+        ChannelListResponse, ChannelPermissionOverridePath, ChannelResponse, ChannelRolePath,
+        CreateChannelRequest, CreateGuildRequest, CreateGuildRoleRequest,
+        DirectoryJoinOutcomeResponse, DirectoryJoinResponse, GuildAuditEventResponse,
+        GuildAuditListResponse, GuildIpBanApplyResponse, GuildIpBanListResponse, GuildIpBanPath,
+        GuildIpBanRecordResponse, GuildListResponse, GuildPath, GuildResponse,
+        GuildRoleListResponse, GuildRoleMemberPath, GuildRolePath, GuildRoleResponse, MemberPath,
+        ModerationResponse, PublicGuildListItem, PublicGuildListQuery, PublicGuildListResponse,
+        ReorderGuildRolesRequest, UpdateChannelPermissionOverrideRequest,
         UpdateChannelRoleOverrideRequest, UpdateGuildRequest, UpdateGuildRoleRequest,
-        UpdateMemberRoleRequest, UpdateChannelPermissionOverrideRequest, ChannelPermissionOverridePath,
+        UpdateMemberRoleRequest,
     },
 };
 
@@ -1467,11 +1468,10 @@ pub(crate) async fn delete_guild_role(
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
-    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+    crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(
         &state,
         &path.guild_id,
-    )
-    .await;
+    );
 
     Ok(Json(ModerationResponse { accepted: true }))
 }
@@ -1733,11 +1733,10 @@ pub(crate) async fn assign_guild_role(
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
-    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+    crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(
         &state,
         &path.guild_id,
-    )
-    .await;
+    );
 
     Ok(Json(ModerationResponse { accepted: true }))
 }
@@ -1841,6 +1840,10 @@ pub(crate) async fn unassign_guild_role(
         Some(auth.user_id),
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
+    crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(
+        &state,
+        &path.guild_id,
+    );
 
     Ok(Json(ModerationResponse { accepted: true }))
 }
@@ -3038,11 +3041,10 @@ pub(crate) async fn update_member_role(
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
-    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+    crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(
         &state,
         &path.guild_id,
-    )
-    .await;
+    );
 
     write_audit_log(
         &state,
@@ -3152,11 +3154,10 @@ pub(crate) async fn set_channel_role_override(
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
-    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+    crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(
         &state,
         &path.guild_id,
-    )
-    .await;
+    );
 
     Ok(Json(ModerationResponse { accepted: true }))
 }
@@ -3226,25 +3227,28 @@ pub(crate) async fn set_channel_permission_override(
             return Err(AuthFailure::NotFound);
         }
     } else {
-        let mut overrides_map = state.membership_store.guild_channel_permission_overrides().write().await;
+        let mut overrides_map = state
+            .membership_store
+            .guild_channel_permission_overrides()
+            .write()
+            .await;
         let guild_overrides = overrides_map
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
-        let channel_override = guild_overrides
-            .entry(path.channel_id.clone())
-            .or_default();
-        
-        let permissions = filament_core::ChannelPermissionOverwrite {
-            allow,
-            deny,
-        };
-        
+        let channel_override = guild_overrides.entry(path.channel_id.clone()).or_default();
+
+        let permissions = filament_core::ChannelPermissionOverwrite { allow, deny };
+
         if path.target_kind == crate::server::types::PermissionOverrideTargetKind::Role {
-            channel_override.role_overrides.insert(path.target_id.clone(), permissions);
+            channel_override
+                .role_overrides
+                .insert(path.target_id.clone(), permissions);
         } else {
             let parsed_user_id = filament_core::UserId::try_from(path.target_id.clone())
                 .map_err(|_| AuthFailure::InvalidRequest)?;
-            channel_override.member_overrides.insert(parsed_user_id, permissions);
+            channel_override
+                .member_overrides
+                .insert(parsed_user_id, permissions);
         }
     }
 
@@ -3276,11 +3280,10 @@ pub(crate) async fn set_channel_permission_override(
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
-    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+    crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(
         &state,
         &path.guild_id,
-    )
-    .await;
+    );
 
     Ok(Json(ModerationResponse { accepted: true }))
 }
@@ -3362,8 +3365,13 @@ pub(crate) async fn kick_member(
     drop(active_voice);
     for (guild_id, channel_id) in to_remove_voice {
         crate::server::realtime::remove_voice_participant_for_channel(
-            &state, target_user_id, &guild_id, &channel_id, removed_at_unix,
-        ).await;
+            &state,
+            target_user_id,
+            &guild_id,
+            &channel_id,
+            removed_at_unix,
+        )
+        .await;
     }
 
     write_audit_log(
@@ -3473,8 +3481,13 @@ pub(crate) async fn ban_member(
     drop(active_voice);
     for (guild_id, channel_id) in to_remove_voice {
         crate::server::realtime::remove_voice_participant_for_channel(
-            &state, target_user_id, &guild_id, &channel_id, banned_at_unix,
-        ).await;
+            &state,
+            target_user_id,
+            &guild_id,
+            &channel_id,
+            banned_at_unix,
+        )
+        .await;
     }
 
     write_audit_log(

@@ -13,6 +13,10 @@ use axum::{
     Router,
 };
 
+use pasetors::{
+    claims::ClaimsValidationRules, keys::SymmetricKey, local, token::UntrustedToken, version4::V4,
+    Local,
+};
 use tower::ServiceBuilder;
 use tower_governor::{
     errors::GovernorError, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
@@ -22,14 +26,6 @@ use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     timeout::TimeoutLayer,
     trace::TraceLayer,
-};
-use pasetors::{
-    claims::ClaimsValidationRules,
-    keys::SymmetricKey,
-    local,
-    token::UntrustedToken,
-    version4::V4,
-    Local,
 };
 
 use super::{
@@ -47,8 +43,8 @@ use super::{
             create_guild_role, delete_guild_role, join_public_guild, kick_member, list_guild_audit,
             list_guild_channels, list_guild_ip_bans, list_guild_roles, list_guilds,
             list_public_guilds, remove_guild_ip_ban, reorder_guild_roles,
-            set_channel_role_override, set_channel_permission_override, unassign_guild_role, update_guild, update_guild_role,
-            update_member_role, upsert_guild_ip_bans_by_user,
+            set_channel_permission_override, set_channel_role_override, unassign_guild_role,
+            update_guild, update_guild_role, update_member_role, upsert_guild_ip_bans_by_user,
         },
         media::{
             delete_attachment, download_attachment, issue_voice_token, leave_voice_channel,
@@ -210,7 +206,8 @@ impl KeyExtractor for TrustedClientIpKeyExtractor {
                             None,
                         ) {
                             if let Some(claims) = trusted.payload_claims() {
-                                if let Some(sub) = claims.get_claim("sub").and_then(|v| v.as_str()) {
+                                if let Some(sub) = claims.get_claim("sub").and_then(|v| v.as_str())
+                                {
                                     return Ok(format!("user:{sub}"));
                                 }
                             }
@@ -340,8 +337,10 @@ fn validate_router_config(config: &AppConfig) -> anyhow::Result<()> {
 
 #[allow(clippy::too_many_lines)]
 fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::Result<Router> {
-    tokio::spawn(crate::server::realtime::livekit_sync::start_livekit_sync(app_state.clone()));
-    
+    tokio::spawn(crate::server::realtime::livekit_sync::start_livekit_sync(
+        app_state.clone(),
+    ));
+
     let governor_config = Arc::new(
         GovernorConfigBuilder::default()
             .period(Duration::from_secs(60))

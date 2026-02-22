@@ -368,6 +368,13 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - `allow` and `deny` cannot overlap
   - Requires `manage_channel_overrides`
   - Response `200`: `{ "accepted": true }`
+- `POST /guilds/{guild_id}/channels/{channel_id}/permission-overrides/{target_kind}/{target_id}`
+  - `target_kind` path: `0` (role), `1` (member)
+  - Request:
+    - `{ "allow": [Permission...], "deny": [Permission...] }`
+  - `allow` and `deny` cannot overlap
+  - Requires `manage_channel_overrides`
+  - Response `200`: `{ "accepted": true }`
 
 Permission enum values:
 - `manage_roles`

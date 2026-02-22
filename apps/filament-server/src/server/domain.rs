@@ -65,7 +65,8 @@ pub(crate) async fn check_channel_permission(
     channel_id: &str,
     permission: Permission,
 ) -> Result<(), AuthFailure> {
-    let (_, permissions) = channel_permission_snapshot(state, user_id, guild_id, channel_id).await?;
+    let (_, permissions) =
+        channel_permission_snapshot(state, user_id, guild_id, channel_id).await?;
     if !permissions.contains(permission) {
         return Err(AuthFailure::Forbidden);
     }

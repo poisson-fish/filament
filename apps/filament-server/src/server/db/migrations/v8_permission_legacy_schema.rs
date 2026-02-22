@@ -112,20 +112,26 @@ pub(crate) async fn apply_permission_legacy_schema(
             "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
              SELECT gm.guild_id, $1, gm.user_id, $2
              FROM guild_members gm
-             WHERE gm.guild_id = $3 AND gm.role = 2"
+             WHERE gm.guild_id = $3 AND gm.role = 2",
         )
-        .bind(&owner_role_id).bind(now).bind(&guild_id)
-        .execute(&mut **tx).await?;
+        .bind(&owner_role_id)
+        .bind(now)
+        .bind(&guild_id)
+        .execute(&mut **tx)
+        .await?;
 
         // role=1 translates to Moderator
         sqlx::query(
             "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
              SELECT gm.guild_id, $1, gm.user_id, $2
              FROM guild_members gm
-             WHERE gm.guild_id = $3 AND gm.role = 1"
+             WHERE gm.guild_id = $3 AND gm.role = 1",
         )
-        .bind(&mod_role_id).bind(now).bind(&guild_id)
-        .execute(&mut **tx).await?;
+        .bind(&mod_role_id)
+        .bind(now)
+        .bind(&guild_id)
+        .execute(&mut **tx)
+        .await?;
     }
 
     Ok(())

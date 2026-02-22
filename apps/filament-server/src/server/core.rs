@@ -419,7 +419,9 @@ impl AppState {
             livekit: livekit.clone().map(Arc::new),
             livekit_room: livekit.map(|lk| {
                 Arc::new(livekit_api::services::room::RoomClient::with_api_key(
-                    &lk.url, &lk.api_key, &lk.api_secret,
+                    &lk.url,
+                    &lk.api_key,
+                    &lk.api_secret,
                 ))
             }),
             http_client: Arc::new(http_client),
