@@ -1,6 +1,6 @@
 import { Show, createEffect, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
-import data from "@emoji-mart/data";
+import data from "@emoji-mart/data/sets/14/twitter.json";
 import { Picker } from "emoji-mart";
 import { computePosition, offset, shift, flip, autoUpdate } from "@floating-ui/dom";
 import type { MessageId, ReactionEmoji } from "../../../../domain/chat";
