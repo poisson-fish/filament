@@ -14,6 +14,7 @@ import type {
   SearchResults,
   UserId,
   WorkspaceRoleId,
+  WorkspaceRoleName,
   WorkspaceRecord,
 } from "../../../domain/chat";
 import type { PublicDirectoryJoinStatus } from "../types";
@@ -102,6 +103,171 @@ function createWorkspaceChannelState() {
       ...existing,
       [guildId]: sortWorkspaceRolesByPosition(roles),
     }));
+  };
+
+  const upsertWorkspaceRoleForGuild = (
+    guildId: GuildId,
+    role: GuildRoleRecord,
+  ): void => {
+    setWorkspaceRolesByGuildId((existing) => {
+      const guildRoles = existing[guildId] ?? [];
+      const nextRoles = [...guildRoles.filter((entry) => entry.roleId !== role.roleId), role];
+      return {
+        ...existing,
+        [guildId]: sortWorkspaceRolesByPosition(nextRoles),
+      };
+    });
+  };
+
+  const updateWorkspaceRoleForGuild = (
+    guildId: GuildId,
+    roleId: WorkspaceRoleId,
+    updatedFields: {
+      name?: WorkspaceRoleName;
+      permissions?: ReadonlyArray<PermissionName>;
+    },
+  ): void => {
+    if (
+      typeof updatedFields.name === "undefined" &&
+      typeof updatedFields.permissions === "undefined"
+    ) {
+      return;
+    }
+    setWorkspaceRolesByGuildId((existing) => {
+      const guildRoles = existing[guildId];
+      if (!guildRoles || guildRoles.length === 0) {
+        return existing;
+      }
+      let changed = false;
+      const normalizedPermissions =
+        typeof updatedFields.permissions === "undefined"
+          ? undefined
+          : [...new Set(updatedFields.permissions)];
+      const nextRoles = guildRoles.map((entry) => {
+        if (entry.roleId !== roleId) {
+          return entry;
+        }
+        changed = true;
+        return {
+          ...entry,
+          name: updatedFields.name ?? entry.name,
+          permissions: normalizedPermissions ?? entry.permissions,
+        };
+      });
+      if (!changed) {
+        return existing;
+      }
+      return {
+        ...existing,
+        [guildId]: sortWorkspaceRolesByPosition(nextRoles),
+      };
+    });
+  };
+
+  const removeWorkspaceRoleFromGuild = (
+    guildId: GuildId,
+    roleId: WorkspaceRoleId,
+  ): void => {
+    setWorkspaceRolesByGuildId((existing) => {
+      const guildRoles = existing[guildId];
+      if (!guildRoles || guildRoles.length === 0) {
+        return existing;
+      }
+      const nextRoles = guildRoles.filter((entry) => entry.roleId !== roleId);
+      if (nextRoles.length === guildRoles.length) {
+        return existing;
+      }
+      return {
+        ...existing,
+        [guildId]: sortWorkspaceRolesByPosition(nextRoles),
+      };
+    });
+    setWorkspaceUserRolesByGuildId((existing) => {
+      const guildEntries = existing[guildId];
+      if (!guildEntries) {
+        return existing;
+      }
+      let changed = false;
+      const nextGuildEntries: Record<string, WorkspaceRoleId[]> = {};
+      for (const [userId, roleIds] of Object.entries(guildEntries)) {
+        const nextRoleIds = roleIds.filter((entry) => entry !== roleId);
+        if (nextRoleIds.length !== roleIds.length) {
+          changed = true;
+        }
+        if (nextRoleIds.length > 0) {
+          nextGuildEntries[userId] = nextRoleIds;
+        } else if (roleIds.length > 0) {
+          changed = true;
+        }
+      }
+      if (!changed) {
+        return existing;
+      }
+      return {
+        ...existing,
+        [guildId]: nextGuildEntries,
+      };
+    });
+  };
+
+  const reorderWorkspaceRolesForGuild = (
+    guildId: GuildId,
+    orderedRoleIds: ReadonlyArray<WorkspaceRoleId>,
+  ): void => {
+    setWorkspaceRolesByGuildId((existing) => {
+      const guildRoles = existing[guildId];
+      if (!guildRoles || guildRoles.length === 0 || orderedRoleIds.length === 0) {
+        return existing;
+      }
+
+      const seen = new Set<WorkspaceRoleId>();
+      const indexByRoleId = new Map<WorkspaceRoleId, number>();
+      for (const roleId of orderedRoleIds) {
+        if (seen.has(roleId)) {
+          continue;
+        }
+        seen.add(roleId);
+        indexByRoleId.set(roleId, indexByRoleId.size);
+      }
+      if (indexByRoleId.size === 0) {
+        return existing;
+      }
+
+      const nextOrdered = guildRoles.slice().sort((left, right) => {
+        const leftIndex = indexByRoleId.get(left.roleId);
+        const rightIndex = indexByRoleId.get(right.roleId);
+        if (typeof leftIndex === "number" && typeof rightIndex === "number") {
+          return leftIndex - rightIndex;
+        }
+        if (typeof leftIndex === "number") {
+          return -1;
+        }
+        if (typeof rightIndex === "number") {
+          return 1;
+        }
+        return 0;
+      });
+
+      const unchanged = nextOrdered.every(
+        (entry, index) => entry.roleId === guildRoles[index]?.roleId,
+      );
+      if (unchanged) {
+        return existing;
+      }
+
+      const topPosition = Math.max(
+        guildRoles.length,
+        ...guildRoles.map((entry) => entry.position),
+      );
+      const nextRoles = nextOrdered.map((entry, index) => ({
+        ...entry,
+        position: topPosition - index,
+      }));
+      return {
+        ...existing,
+        [guildId]: sortWorkspaceRolesByPosition(nextRoles),
+      };
+    });
   };
 
   const assignWorkspaceRoleToUser = (
@@ -257,6 +423,10 @@ function createWorkspaceChannelState() {
     workspaceRolesByGuildId,
     setWorkspaceRolesByGuildId,
     setWorkspaceRolesForGuild,
+    upsertWorkspaceRoleForGuild,
+    updateWorkspaceRoleForGuild,
+    removeWorkspaceRoleFromGuild,
+    reorderWorkspaceRolesForGuild,
     workspaceUserRolesByGuildId,
     setWorkspaceUserRolesByGuildId,
     assignWorkspaceRoleToUser,

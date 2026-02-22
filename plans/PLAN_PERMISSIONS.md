@@ -175,11 +175,12 @@ This section is used to track the progress of the implementation across multiple
 
 ### Phase 3: Frontend Data & State Handling
 - [x] Update Pinia/Solid state models to track `roles` (ordered array), `userRoles`, and `channelOverrides`.
-- [ ] Implement Gateway Event listeners to seamlessly patch the local state.
+- [x] Implement Gateway Event listeners to seamlessly patch the local state.
 - [ ] Port the exact `apply_channel_overwrite` and `compute_base_permissions` logic to `filament-client-web` to selectively hide/show UI elements (buttons, inputs) based on effective permissions.
 - **Notes**: 
   - *Added a dedicated permissions slice to `workspace-state` (`workspaceRolesByGuildId`, `workspaceUserRolesByGuildId`, `workspaceChannelOverridesByGuildId`) with bounded update helpers for role ordering, role assignment deduplication, and legacy channel override normalization (allow/deny overlap removal).*
   - *Wired role management and moderation controllers into the shared permissions state so REST-driven role fetches and role/override mutations update centralized app state without relying on stringly typed ad-hoc state updates.*
+  - *Implemented gateway-driven permission-state patching in `gateway-controller` with validated, bounded mutations for role create/update/delete/reorder events, role assignment add/remove events, and channel override updates. Added new `workspace-state` helpers (`upsertWorkspaceRoleForGuild`, `updateWorkspaceRoleForGuild`, `removeWorkspaceRoleFromGuild`, `reorderWorkspaceRolesForGuild`) and wired runtime registration to apply these local updates immediately while retaining refresh fallback for channel permission snapshots.*
 
 ### Phase 4: Frontend UI - Role & Member Management
 - [ ] Build the **Workspace Settings: Roles Panel** (Sidebar list, drag-and-drop hierarchy).

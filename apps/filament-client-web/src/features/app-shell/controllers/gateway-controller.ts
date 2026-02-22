@@ -6,10 +6,19 @@ import type {
   FriendRecord,
   FriendRequestList,
   GuildId,
+  GuildRoleRecord,
   MessageId,
   MessageRecord,
+  PermissionName,
   ReactionEmoji,
+  UserId,
+  WorkspaceRoleId,
+  WorkspaceRoleName,
   WorkspaceRecord,
+} from "../../../domain/chat";
+import {
+  userIdFromInput,
+  workspaceRoleNameFromInput,
 } from "../../../domain/chat";
 import {
   connectGateway,
@@ -51,6 +60,8 @@ import {
 } from "../helpers";
 import { primeUsernameCache } from "../../../lib/username-cache";
 
+const MAX_WORKSPACE_ROLE_PERMISSIONS = 64;
+
 export interface GatewayControllerOptions {
   session: Accessor<AuthSession | null>;
   activeGuildId: Accessor<GuildId | null>;
@@ -72,6 +83,44 @@ export interface GatewayControllerOptions {
   isMessageListNearBottom: () => boolean;
   scrollMessageListToBottom: () => void;
   onGatewayConnectionChange?: (isOpen: boolean) => void;
+  upsertWorkspaceRoleForGuild?: (
+    guildId: GuildId,
+    role: GuildRoleRecord,
+  ) => void;
+  updateWorkspaceRoleForGuild?: (
+    guildId: GuildId,
+    roleId: WorkspaceRoleId,
+    updatedFields: {
+      name?: WorkspaceRoleName;
+      permissions?: ReadonlyArray<PermissionName>;
+    },
+  ) => void;
+  removeWorkspaceRoleFromGuild?: (
+    guildId: GuildId,
+    roleId: WorkspaceRoleId,
+  ) => void;
+  reorderWorkspaceRolesForGuild?: (
+    guildId: GuildId,
+    orderedRoleIds: ReadonlyArray<WorkspaceRoleId>,
+  ) => void;
+  assignWorkspaceRoleToUser?: (
+    guildId: GuildId,
+    userId: UserId,
+    roleId: WorkspaceRoleId,
+  ) => void;
+  unassignWorkspaceRoleFromUser?: (
+    guildId: GuildId,
+    userId: UserId,
+    roleId: WorkspaceRoleId,
+  ) => void;
+  setLegacyChannelOverride?: (
+    guildId: GuildId,
+    channelId: ChannelId,
+    role: WorkspaceChannelOverrideUpdatePayload["role"],
+    allow: ReadonlyArray<PermissionName>,
+    deny: ReadonlyArray<PermissionName>,
+    updatedAtUnix: number | null,
+  ) => void;
   onWorkspacePermissionsChanged?: (guildId: GuildId) => void;
   onWorkspaceModerationChanged?: (payload: WorkspaceIpBanSyncPayload) => void;
 }
@@ -225,6 +274,78 @@ export function applyWorkspaceUpdate(
     guildName: payload.updatedFields.name ?? workspace.guildName,
     visibility: payload.updatedFields.visibility ?? workspace.visibility,
   }));
+}
+
+function normalizePermissions(
+  permissions: ReadonlyArray<PermissionName>,
+): PermissionName[] | null {
+  if (permissions.length > MAX_WORKSPACE_ROLE_PERMISSIONS) {
+    return null;
+  }
+  return [...new Set(permissions)];
+}
+
+function toWorkspaceRoleRecord(
+  payload: WorkspaceRoleCreatePayload["role"],
+): GuildRoleRecord | null {
+  let name: WorkspaceRoleName;
+  try {
+    name = workspaceRoleNameFromInput(payload.name);
+  } catch {
+    return null;
+  }
+  const permissions = normalizePermissions(payload.permissions);
+  if (!permissions) {
+    return null;
+  }
+  return {
+    roleId: payload.roleId,
+    name,
+    position: payload.position,
+    isSystem: payload.isSystem,
+    permissions,
+  };
+}
+
+function toWorkspaceRoleUpdatedFields(
+  payload: WorkspaceRoleUpdatePayload,
+): {
+  name?: WorkspaceRoleName;
+  permissions?: PermissionName[];
+} | null {
+  const updatedFields: {
+    name?: WorkspaceRoleName;
+    permissions?: PermissionName[];
+  } = {};
+  if (typeof payload.updatedFields.name !== "undefined") {
+    try {
+      updatedFields.name = workspaceRoleNameFromInput(payload.updatedFields.name);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof payload.updatedFields.permissions !== "undefined") {
+    const permissions = normalizePermissions(payload.updatedFields.permissions);
+    if (!permissions) {
+      return null;
+    }
+    updatedFields.permissions = permissions;
+  }
+  if (
+    typeof updatedFields.name === "undefined" &&
+    typeof updatedFields.permissions === "undefined"
+  ) {
+    return null;
+  }
+  return updatedFields;
+}
+
+function parseGatewayUserId(userId: string): UserId | null {
+  try {
+    return userIdFromInput(userId);
+  } catch {
+    return null;
+  }
 }
 
 function gatewaySubscriptionChannelIds(
@@ -652,24 +773,62 @@ export function createGatewayController(
         options.setWorkspaces((existing) => removeWorkspace(existing, payload.guildId));
       },
       onWorkspaceRoleCreate: (payload) => {
+        const role = toWorkspaceRoleRecord(payload.role);
+        if (role) {
+          options.upsertWorkspaceRoleForGuild?.(payload.guildId, role);
+        }
         options.onWorkspacePermissionsChanged?.(payload.guildId);
       },
       onWorkspaceRoleUpdate: (payload) => {
+        const updatedFields = toWorkspaceRoleUpdatedFields(payload);
+        if (updatedFields) {
+          options.updateWorkspaceRoleForGuild?.(
+            payload.guildId,
+            payload.roleId,
+            updatedFields,
+          );
+        }
         options.onWorkspacePermissionsChanged?.(payload.guildId);
       },
       onWorkspaceRoleDelete: (payload) => {
+        options.removeWorkspaceRoleFromGuild?.(payload.guildId, payload.roleId);
         options.onWorkspacePermissionsChanged?.(payload.guildId);
       },
       onWorkspaceRoleReorder: (payload) => {
+        options.reorderWorkspaceRolesForGuild?.(payload.guildId, payload.roleIds);
         options.onWorkspacePermissionsChanged?.(payload.guildId);
       },
       onWorkspaceRoleAssignmentAdd: (payload) => {
+        const userId = parseGatewayUserId(payload.userId);
+        if (userId) {
+          options.assignWorkspaceRoleToUser?.(
+            payload.guildId,
+            userId,
+            payload.roleId,
+          );
+        }
         options.onWorkspacePermissionsChanged?.(payload.guildId);
       },
       onWorkspaceRoleAssignmentRemove: (payload) => {
+        const userId = parseGatewayUserId(payload.userId);
+        if (userId) {
+          options.unassignWorkspaceRoleFromUser?.(
+            payload.guildId,
+            userId,
+            payload.roleId,
+          );
+        }
         options.onWorkspacePermissionsChanged?.(payload.guildId);
       },
       onWorkspaceChannelOverrideUpdate: (payload) => {
+        options.setLegacyChannelOverride?.(
+          payload.guildId,
+          payload.channelId,
+          payload.role,
+          payload.updatedFields.allow,
+          payload.updatedFields.deny,
+          payload.updatedAtUnix,
+        );
         options.onWorkspacePermissionsChanged?.(payload.guildId);
       },
       onWorkspaceIpBanSync: (payload) => {

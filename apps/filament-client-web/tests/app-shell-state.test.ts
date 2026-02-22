@@ -187,6 +187,7 @@ describe("app shell state factories", () => {
     const workspaceState = createWorkspaceState();
     const guildId = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
     const userId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAY");
+    const incidentRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB0");
     const responderRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX");
     const everyoneRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
     const channelId = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW");
@@ -207,6 +208,26 @@ describe("app shell state factories", () => {
         permissions: ["create_message", "delete_message"],
       },
     ]);
+    workspaceState.workspaceChannel.upsertWorkspaceRoleForGuild(guildId, {
+      roleId: incidentRoleId,
+      name: workspaceRoleNameFromInput("Incident Commander"),
+      position: 75,
+      isSystem: false,
+      permissions: ["manage_member_roles"],
+    });
+    workspaceState.workspaceChannel.updateWorkspaceRoleForGuild(
+      guildId,
+      responderRoleId,
+      {
+        name: workspaceRoleNameFromInput("Responder Prime"),
+        permissions: ["delete_message", "create_message", "delete_message"],
+      },
+    );
+    workspaceState.workspaceChannel.reorderWorkspaceRolesForGuild(guildId, [
+      everyoneRoleId,
+      responderRoleId,
+      incidentRoleId,
+    ]);
 
     workspaceState.workspaceChannel.assignWorkspaceRoleToUser(
       guildId,
@@ -223,6 +244,15 @@ describe("app shell state factories", () => {
       userId,
       responderRoleId,
     );
+    workspaceState.workspaceChannel.assignWorkspaceRoleToUser(
+      guildId,
+      userId,
+      responderRoleId,
+    );
+    workspaceState.workspaceChannel.removeWorkspaceRoleFromGuild(
+      guildId,
+      responderRoleId,
+    );
     workspaceState.workspaceChannel.setLegacyChannelOverride(
       guildId,
       channelId,
@@ -234,18 +264,18 @@ describe("app shell state factories", () => {
 
     expect(workspaceState.workspaceChannel.workspaceRolesByGuildId()[guildId]).toEqual([
       {
-        roleId: responderRoleId,
-        name: workspaceRoleNameFromInput("Responder"),
-        position: 50,
-        isSystem: false,
-        permissions: ["create_message", "delete_message"],
-      },
-      {
         roleId: everyoneRoleId,
         name: workspaceRoleNameFromInput("Everyone"),
-        position: 1,
+        position: 75,
         isSystem: true,
         permissions: ["create_message"],
+      },
+      {
+        roleId: incidentRoleId,
+        name: workspaceRoleNameFromInput("Incident Commander"),
+        position: 73,
+        isSystem: false,
+        permissions: ["manage_member_roles"],
       },
     ]);
     expect(

@@ -528,6 +528,14 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setFriends: friendshipsState.setFriends,
     setFriendRequests: friendshipsState.setFriendRequests,
     setVoiceParticipantsByChannel: voiceState.setVoiceParticipantsByChannel,
+    upsertWorkspaceRoleForGuild: workspaceChannelState.upsertWorkspaceRoleForGuild,
+    updateWorkspaceRoleForGuild: workspaceChannelState.updateWorkspaceRoleForGuild,
+    removeWorkspaceRoleFromGuild: workspaceChannelState.removeWorkspaceRoleFromGuild,
+    reorderWorkspaceRolesForGuild: workspaceChannelState.reorderWorkspaceRolesForGuild,
+    assignWorkspaceRoleToUser: workspaceChannelState.assignWorkspaceRoleToUser,
+    unassignWorkspaceRoleFromUser:
+      workspaceChannelState.unassignWorkspaceRoleFromUser,
+    setLegacyChannelOverride: workspaceChannelState.setLegacyChannelOverride,
     isMessageListNearBottom: messageListController.isMessageListNearBottom,
     scrollMessageListToBottom: messageListController.scrollMessageListToBottom,
     onGatewayConnectionChange: (isOpen) => {

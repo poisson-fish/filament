@@ -11,6 +11,9 @@ import {
   messageContentFromInput,
   messageFromResponse,
   reactionEmojiFromInput,
+  userIdFromInput,
+  workspaceRoleIdFromInput,
+  workspaceRoleNameFromInput,
   type WorkspaceRecord,
   type FriendRecord,
   type FriendRequestList,
@@ -283,6 +286,13 @@ describe("app shell gateway controller", () => {
     const setSubscribedChannelsMock = vi.fn();
     const onWorkspacePermissionsChanged = vi.fn();
     const onGatewayConnectionChange = vi.fn();
+    const upsertWorkspaceRoleForGuild = vi.fn();
+    const updateWorkspaceRoleForGuild = vi.fn();
+    const removeWorkspaceRoleFromGuild = vi.fn();
+    const reorderWorkspaceRolesForGuild = vi.fn();
+    const assignWorkspaceRoleToUser = vi.fn();
+    const unassignWorkspaceRoleFromUser = vi.fn();
+    const setLegacyChannelOverride = vi.fn();
     let handlers: any = null;
     const connectGatewayMock = vi.fn((_token, _guildId, _channelId, nextHandlers) => {
       handlers = nextHandlers;
@@ -315,6 +325,13 @@ describe("app shell gateway controller", () => {
           isMessageListNearBottom: () => true,
           scrollMessageListToBottom: scrollMessageListToBottomMock,
           onGatewayConnectionChange,
+          upsertWorkspaceRoleForGuild,
+          updateWorkspaceRoleForGuild,
+          removeWorkspaceRoleFromGuild,
+          reorderWorkspaceRolesForGuild,
+          assignWorkspaceRoleToUser,
+          unassignWorkspaceRoleFromUser,
+          setLegacyChannelOverride,
           onWorkspacePermissionsChanged,
         },
         {
@@ -547,11 +564,56 @@ describe("app shell gateway controller", () => {
     });
     handlers.onWorkspaceRoleUpdate({
       guildId: GUILD_ID,
-      roleId: "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      roleId: workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
       updatedFields: {
         name: "ops_admin",
       },
       updatedAtUnix: 5,
+    });
+    handlers.onWorkspaceRoleCreate({
+      guildId: GUILD_ID,
+      role: {
+        roleId: workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
+        name: "Incident Commander",
+        position: 25,
+        isSystem: false,
+        permissions: ["manage_member_roles", "delete_message"],
+      },
+    });
+    handlers.onWorkspaceRoleDelete({
+      guildId: GUILD_ID,
+      roleId: workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
+      deletedAtUnix: 6,
+    });
+    handlers.onWorkspaceRoleReorder({
+      guildId: GUILD_ID,
+      roleIds: [
+        workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+        workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
+      ],
+      updatedAtUnix: 7,
+    });
+    handlers.onWorkspaceRoleAssignmentAdd({
+      guildId: GUILD_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+      roleId: workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+      assignedAtUnix: 8,
+    });
+    handlers.onWorkspaceRoleAssignmentRemove({
+      guildId: GUILD_ID,
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+      roleId: workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+      removedAtUnix: 9,
+    });
+    handlers.onWorkspaceChannelOverrideUpdate({
+      guildId: GUILD_ID,
+      channelId: CHANNEL_ID,
+      role: "moderator",
+      updatedFields: {
+        allow: ["delete_message"],
+        deny: ["create_message"],
+      },
+      updatedAtUnix: 10,
     });
     expect(workspaces()[0]?.channels.map((entry) => entry.name)).toEqual([
       "incident-room",
@@ -559,6 +621,52 @@ describe("app shell gateway controller", () => {
       "voice-bridge",
     ]);
     expect(workspaces()[0]?.guildName).toBe("Ops Oncall");
+    expect(updateWorkspaceRoleForGuild).toHaveBeenCalledWith(
+      GUILD_ID,
+      workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+      {
+        name: workspaceRoleNameFromInput("ops_admin"),
+      },
+    );
+    expect(upsertWorkspaceRoleForGuild).toHaveBeenCalledWith(
+      GUILD_ID,
+      {
+        roleId: workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
+        name: workspaceRoleNameFromInput("Incident Commander"),
+        position: 25,
+        isSystem: false,
+        permissions: ["manage_member_roles", "delete_message"],
+      },
+    );
+    expect(removeWorkspaceRoleFromGuild).toHaveBeenCalledWith(
+      GUILD_ID,
+      workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
+    );
+    expect(reorderWorkspaceRolesForGuild).toHaveBeenCalledWith(
+      GUILD_ID,
+      [
+        workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+        workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
+      ],
+    );
+    expect(assignWorkspaceRoleToUser).toHaveBeenCalledWith(
+      GUILD_ID,
+      userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB1"),
+      workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+    );
+    expect(unassignWorkspaceRoleFromUser).toHaveBeenCalledWith(
+      GUILD_ID,
+      userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB1"),
+      workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+    );
+    expect(setLegacyChannelOverride).toHaveBeenCalledWith(
+      GUILD_ID,
+      CHANNEL_ID,
+      "moderator",
+      ["delete_message"],
+      ["create_message"],
+      10,
+    );
     expect(onWorkspacePermissionsChanged).toHaveBeenCalledWith(GUILD_ID);
 
     handlers.onWorkspaceMemberRemove({
