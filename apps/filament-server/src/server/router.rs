@@ -12,7 +12,7 @@ use axum::{
     routing::{delete, get, patch, post},
     Router,
 };
-use sha2::{Digest, Sha256};
+
 use tower::ServiceBuilder;
 use tower_governor::{
     errors::GovernorError, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
@@ -22,6 +22,14 @@ use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     timeout::TimeoutLayer,
     trace::TraceLayer,
+};
+use pasetors::{
+    claims::ClaimsValidationRules,
+    keys::SymmetricKey,
+    local,
+    token::UntrustedToken,
+    version4::V4,
+    Local,
 };
 
 use super::{
@@ -166,12 +174,17 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
 #[derive(Clone)]
 struct TrustedClientIpKeyExtractor {
     trusted_proxy_cidrs: Arc<Vec<super::directory_contract::IpNetwork>>,
+    token_key: Arc<SymmetricKey<V4>>,
 }
 
 impl TrustedClientIpKeyExtractor {
-    fn new(trusted_proxy_cidrs: Arc<Vec<super::directory_contract::IpNetwork>>) -> Self {
+    fn new(
+        trusted_proxy_cidrs: Arc<Vec<super::directory_contract::IpNetwork>>,
+        token_key: Arc<SymmetricKey<V4>>,
+    ) -> Self {
         Self {
             trusted_proxy_cidrs,
+            token_key,
         }
     }
 }
@@ -183,8 +196,22 @@ impl KeyExtractor for TrustedClientIpKeyExtractor {
         if let Some(auth_header) = req.headers().get(AUTHORIZATION) {
             if let Ok(auth_str) = auth_header.to_str() {
                 if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                    let hash = Sha256::digest(token.as_bytes());
-                    return Ok(format!("token:{:x}", hash));
+                    if let Ok(untrusted) = UntrustedToken::<Local, V4>::try_from(token) {
+                        let validation_rules = ClaimsValidationRules::new();
+                        if let Ok(trusted) = local::decrypt(
+                            &self.token_key,
+                            &untrusted,
+                            &validation_rules,
+                            None,
+                            None,
+                        ) {
+                            if let Some(claims) = trusted.payload_claims() {
+                                if let Some(sub) = claims.get_claim("sub").and_then(|v| v.as_str()) {
+                                    return Ok(format!("user:{sub}"));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -315,9 +342,10 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         GovernorConfigBuilder::default()
             .period(Duration::from_secs(60))
             .burst_size(config.rate_limit_requests_per_minute)
-            .key_extractor(TrustedClientIpKeyExtractor::new(Arc::new(
-                config.trusted_proxy_cidrs.clone(),
-            )))
+            .key_extractor(TrustedClientIpKeyExtractor::new(
+                Arc::new(config.trusted_proxy_cidrs.clone()),
+                app_state.token_key.clone(),
+            ))
             .finish()
             .ok_or_else(|| anyhow!("invalid governor configuration"))?,
     );
