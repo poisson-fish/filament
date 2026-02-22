@@ -16,6 +16,9 @@ import {
   type MessageMediaPreview,
   type ReactionView,
 } from "../../helpers";
+import { initEmojiMart } from "./emoji-utils";
+
+initEmojiMart();
 
 export interface MessageRowProps {
   message: MessageRecord;
@@ -231,7 +234,9 @@ export function MessageRow(props: MessageRowProps) {
                       disabled={reaction.pending}
                       aria-label={`${reaction.emoji} reaction (${reaction.count})`}
                     >
-                      <span class="text-[0.92rem] text-inherit">{reaction.emoji}</span>
+                      <span class="inline-flex items-center justify-center text-[1.05rem] text-inherit leading-none">
+                        <em-emoji native={reaction.emoji} set="twitter" size="1em"></em-emoji>
+                      </span>
                       <span class="text-[0.78rem] font-[700] text-inherit">{reaction.count}</span>
                     </button>
                   )}

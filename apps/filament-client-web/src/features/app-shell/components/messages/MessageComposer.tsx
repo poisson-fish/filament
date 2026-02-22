@@ -1,7 +1,9 @@
-import { For, Show } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ChannelRecord } from "../../../../domain/chat";
 import { channelRailLabel, formatBytes } from "../../helpers";
+import { replaceEmojiShortcodes } from "./emoji-utils";
+import { ComposerEmojiPickerPortal } from "./ComposerEmojiPickerPortal";
 
 const ATTACH_ICON_URL = new URL(
   "../../../../../resource/coolicons.v4.1/cooliocns SVG/Edit/Add_Plus.svg",
@@ -49,6 +51,28 @@ export function MessageComposer(props: MessageComposerProps) {
   const utilityButtonClass =
     "inline-flex h-[2.12rem] items-center justify-center rounded-[0.48rem] border-0 bg-transparent px-[0.5rem] text-ink-2 transition-colors duration-[140ms] ease-out enabled:hover:bg-bg-3 enabled:hover:text-ink-0 disabled:cursor-not-allowed disabled:opacity-68";
 
+  const [isEmojiPickerOpen, setEmojiPickerOpen] = createSignal(false);
+  let inputEl: HTMLInputElement | undefined;
+
+  const handleEmojiAdd = (emojiNative: string) => {
+    if (!inputEl) {
+      props.onComposerInput(props.composerValue + emojiNative);
+      return;
+    }
+    const start = inputEl.selectionStart ?? props.composerValue.length;
+    const end = inputEl.selectionEnd ?? props.composerValue.length;
+    const val = props.composerValue;
+    props.onComposerInput(val.slice(0, start) + emojiNative + val.slice(end));
+
+    // Attempt cursor restore
+    inputEl.focus();
+    setTimeout(() => {
+      if (inputEl) {
+        inputEl.selectionStart = inputEl.selectionEnd = start + emojiNative.length;
+      }
+    }, 0);
+  };
+
   return (
     <form
       class="composer grid grid-cols-[minmax(0,1fr)] items-stretch justify-items-stretch gap-[0.52rem] border-t border-line-soft bg-bg-2 px-[0.9rem] pt-[0.68rem] pb-[0.86rem] max-[900px]:p-[0.52rem]"
@@ -82,10 +106,25 @@ export function MessageComposer(props: MessageComposerProps) {
           aria-hidden="true"
         />
         <input
-          ref={props.composerInputRef}
+          ref={(el) => {
+            inputEl = el;
+            props.composerInputRef(el);
+          }}
           class="w-full min-w-0 border-0 bg-transparent pl-0 pr-[0.64rem] text-ink-0 outline-none placeholder:text-ink-2 disabled:cursor-not-allowed disabled:opacity-68"
           value={props.composerValue}
-          onInput={(event) => props.onComposerInput(event.currentTarget.value)}
+          onInput={(event) => {
+            const rawValue = event.currentTarget.value;
+            const replaced = replaceEmojiShortcodes(rawValue);
+            if (replaced !== rawValue) {
+              const diff = replaced.length - rawValue.length;
+              const start = event.currentTarget.selectionStart;
+              event.currentTarget.value = replaced;
+              if (start !== null) {
+                event.currentTarget.selectionStart = event.currentTarget.selectionEnd = start + diff;
+              }
+            }
+            props.onComposerInput(replaced);
+          }}
           maxlength="2000"
           placeholder={
             props.activeChannel
@@ -120,12 +159,16 @@ export function MessageComposer(props: MessageComposerProps) {
             GIF
           </button>
           <button
+            id="composer-emoji-button"
             type="button"
             class={utilityButtonClass}
             aria-label="Open emoji picker"
             title="Emoji"
             disabled={isDisabled()}
-            onClick={(event) => event.preventDefault()}
+            onClick={(event) => {
+              event.preventDefault();
+              setEmojiPickerOpen((prev) => !prev);
+            }}
           >
             <span
               class="icon-mask h-[0.96rem] w-[0.96rem]"
@@ -160,6 +203,12 @@ export function MessageComposer(props: MessageComposerProps) {
           </For>
         </div>
       </Show>
+      <ComposerEmojiPickerPortal
+        isOpen={isEmojiPickerOpen()}
+        onClose={() => setEmojiPickerOpen(false)}
+        onAddEmoji={handleEmojiAdd}
+        anchorSelector="#composer-emoji-button"
+      />
     </form>
   );
 }
