@@ -16,7 +16,7 @@ import {
   type MessageMediaPreview,
   type ReactionView,
 } from "../../helpers";
-import { initEmojiMart, renderEmojiMixedText } from "./emoji-utils";
+import { initEmojiMart, renderEmojiMixedText, renderTwemojiNative } from "./emoji-utils";
 
 initEmojiMart();
 
@@ -237,7 +237,7 @@ export function MessageRow(props: MessageRowProps) {
                       aria-label={`${reaction.emoji} reaction (${reaction.count})`}
                     >
                       <span class="inline-flex items-center justify-center text-[1.05rem] text-inherit leading-none">
-                        {reaction.emoji}
+                        {renderTwemojiNative(reaction.emoji, { sizePx: 18 })}
                       </span>
                       <span class="text-[0.78rem] font-[700] text-inherit">{reaction.count}</span>
                     </button>

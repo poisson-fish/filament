@@ -3,7 +3,7 @@ import { Portal } from "solid-js/web";
 import data from "@emoji-mart/data/sets/14/twitter.json";
 import { Picker } from "emoji-mart";
 import { computePosition, offset, shift, flip, autoUpdate } from "@floating-ui/dom";
-import { emojiNativeFromSelection } from "./emoji-utils";
+import { emojiNativeFromSelection, twemojiSpritesheetUrl } from "./emoji-utils";
 
 export interface ComposerEmojiPickerPortalProps {
   isOpen: boolean;
@@ -24,8 +24,9 @@ export function ComposerEmojiPickerPortal(props: ComposerEmojiPickerPortalProps)
 
     const picker = new Picker({
       data,
-      set: "native",
+      set: "twitter",
       theme: "auto",
+      getSpritesheetURL: () => twemojiSpritesheetUrl(),
       onEmojiSelect: (selection: unknown) => {
         const native = emojiNativeFromSelection(selection);
         if (!native) {

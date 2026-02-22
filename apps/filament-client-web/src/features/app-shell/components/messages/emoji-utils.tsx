@@ -1,28 +1,36 @@
 import twitterData from "@emoji-mart/data/sets/14/twitter.json";
-import "emoji-mart";
 import { init } from "emoji-mart";
 import type { JSX } from "solid-js";
 
-declare module "solid-js" {
-    namespace JSX {
-        interface IntrinsicElements {
-            "em-emoji": any;
-        }
-    }
-}
+const TWEMOJI_SPRITESHEET_URL = new URL(
+  "../../../../../resource/emoji/twitter-sheets-256-64.png",
+  import.meta.url,
+).href;
 
 let initialized = false;
 let shortcodeMap: Record<string, string> | null = null;
+let twemojiByNative: Record<string, TwemojiSpriteCell> | null = null;
+let twemojiSheetColumns: number | null = null;
+let twemojiSheetRows: number | null = null;
+
+const DEFAULT_INLINE_TWEMOJI_PX = 18;
 
 export function initEmojiMart() {
   if (!initialized) {
-    init({ data: twitterData, set: "native", theme: "auto" });
+    init({
+      data: twitterData,
+      set: "twitter",
+      theme: "auto",
+      getSpritesheetURL: () => TWEMOJI_SPRITESHEET_URL,
+    });
     initialized = true;
   }
 }
 
 interface EmojiSkinRecord {
   native?: string;
+  x?: number;
+  y?: number;
 }
 
 interface EmojiRecord {
@@ -35,6 +43,11 @@ interface EmojiRecord {
 
 interface EmojiDataRecord {
   emojis?: Record<string, EmojiRecord>;
+}
+
+interface TwemojiSpriteCell {
+  x: number;
+  y: number;
 }
 
 function normalizeShortcodeToken(token: string): string {
@@ -77,6 +90,89 @@ export function buildShortcodeMap() {
   }
 
   return shortcodeMap;
+}
+
+function ensureTwemojiMap(): Record<string, TwemojiSpriteCell> {
+  if (twemojiByNative) {
+    return twemojiByNative;
+  }
+
+  const map: Record<string, TwemojiSpriteCell> = {};
+  const data = twitterData as EmojiDataRecord;
+  const emojis = data.emojis ?? {};
+  let maxX = 0;
+  let maxY = 0;
+
+  for (const emoji of Object.values(emojis)) {
+    for (const skin of emoji.skins ?? []) {
+      if (
+        typeof skin.native !== "string" ||
+        skin.native.length === 0 ||
+        typeof skin.x !== "number" ||
+        typeof skin.y !== "number"
+      ) {
+        continue;
+      }
+      map[skin.native] = { x: skin.x, y: skin.y };
+      if (skin.x > maxX) {
+        maxX = skin.x;
+      }
+      if (skin.y > maxY) {
+        maxY = skin.y;
+      }
+    }
+  }
+
+  twemojiByNative = map;
+  twemojiSheetColumns = maxX + 1;
+  twemojiSheetRows = maxY + 1;
+  return twemojiByNative;
+}
+
+function twemojiStyle(cell: TwemojiSpriteCell, sizePx: number): string {
+  const columns = twemojiSheetColumns ?? 1;
+  const rows = twemojiSheetRows ?? 1;
+  const spriteWidthPx = columns * sizePx;
+  const spriteHeightPx = rows * sizePx;
+  return [
+    `width:${sizePx}px`,
+    `height:${sizePx}px`,
+    `background-image:url("${TWEMOJI_SPRITESHEET_URL}")`,
+    "background-repeat:no-repeat",
+    `background-size:${spriteWidthPx}px ${spriteHeightPx}px`,
+    `background-position:-${cell.x * sizePx}px -${cell.y * sizePx}px`,
+    "display:inline-block",
+    "vertical-align:text-bottom",
+  ].join(";");
+}
+
+export interface TwemojiRenderOptions {
+  className?: string;
+  sizePx?: number;
+}
+
+export function renderTwemojiNative(
+  native: string,
+  options: TwemojiRenderOptions = {},
+): JSX.Element | string {
+  const cell = ensureTwemojiMap()[native];
+  if (!cell) {
+    return native;
+  }
+  const sizePx = options.sizePx ?? DEFAULT_INLINE_TWEMOJI_PX;
+  return (
+    <span
+      class={options.className ?? ""}
+      role="img"
+      aria-label={native}
+      title={native}
+      style={twemojiStyle(cell, sizePx)}
+    />
+  );
+}
+
+export function twemojiSpritesheetUrl(): string {
+  return TWEMOJI_SPRITESHEET_URL;
 }
 
 const SHORTCODE_PATTERN = /:([a-zA-Z0-9_+\-]+):/g;
@@ -181,11 +277,24 @@ export function emojiNativeFromSelection(selection: unknown): string | null {
   return native;
 }
 
+const EMOJI_PATTERN =
+  "(?:\\p{Regional_Indicator}{2}|[0-9#*]\\uFE0F?\\u20E3|\\p{Extended_Pictographic}(?:\\uFE0F|\\uFE0E)?(?:\\u200D\\p{Extended_Pictographic}(?:\\uFE0F|\\uFE0E)?)*)";
+const EMOJI_SPLIT_REGEX = new RegExp(`(${EMOJI_PATTERN})`, "gu");
+const EMOJI_TOKEN_REGEX = new RegExp(`^${EMOJI_PATTERN}$`, "u");
+
 export function renderEmojiMixedText(text: string): (string | JSX.Element)[] {
   if (!text) {
     return [];
   }
-  // Render inline as plain text to avoid runtime failures for unsupported emoji
-  // sequences in emoji-mart's web component dataset.
-  return [text];
+
+  const parts = text.split(EMOJI_SPLIT_REGEX);
+  return parts.map((part) => {
+    if (!part) {
+      return part;
+    }
+    if (!EMOJI_TOKEN_REGEX.test(part)) {
+      return part;
+    }
+    return renderTwemojiNative(part, { className: "mb-[-0.2em]", sizePx: DEFAULT_INLINE_TWEMOJI_PX });
+  });
 }

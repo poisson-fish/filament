@@ -106,7 +106,7 @@ describe("app shell message row", () => {
     });
     expect(reactionChip).toHaveClass("reaction-chip");
     expect(reactionChip).toHaveClass("border-line-soft");
-    expect(reactionChip).toHaveTextContent("👍");
+    expect(screen.getByRole("img", { name: "👍" })).toBeInTheDocument();
 
     const hoverActions = document.querySelector(".message-hover-actions");
     expect(hoverActions).not.toBeNull();

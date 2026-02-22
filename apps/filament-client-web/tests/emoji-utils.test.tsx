@@ -20,8 +20,10 @@ describe("emoji utils", () => {
     expect(replacement.selectionEnd).toBe(1);
   });
 
-  it("renders mixed text without dropping emoji graphemes", () => {
+  it("renders mixed text with twemoji sprite spans", () => {
     const view = render(() => <p>{renderEmojiMixedText("ok 😂")}</p>);
-    expect(view.getByText("ok 😂")).toBeInTheDocument();
+    expect(view.container.textContent).toContain("ok ");
+    const emojiSprite = view.getByRole("img", { name: "😂" });
+    expect(emojiSprite.getAttribute("style")).toContain("background-image");
   });
 });

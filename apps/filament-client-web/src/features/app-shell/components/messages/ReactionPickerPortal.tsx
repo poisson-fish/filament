@@ -5,7 +5,7 @@ import { Picker } from "emoji-mart";
 import { computePosition, offset, shift, flip, autoUpdate } from "@floating-ui/dom";
 import type { MessageId, ReactionEmoji } from "../../../../domain/chat";
 import { reactionEmojiFromInput } from "../../../../domain/chat";
-import { emojiNativeFromSelection } from "./emoji-utils";
+import { emojiNativeFromSelection, twemojiSpritesheetUrl } from "./emoji-utils";
 
 export interface ReactionPickerPortalProps {
   openMessageId: MessageId | null;
@@ -27,8 +27,9 @@ export function ReactionPickerPortal(props: ReactionPickerPortalProps) {
 
     const picker = new Picker({
       data,
-      set: "native",
+      set: "twitter",
       theme: "auto",
+      getSpritesheetURL: () => twemojiSpritesheetUrl(),
       onEmojiSelect: (selection: unknown) => {
         const native = emojiNativeFromSelection(selection);
         if (!native) {
