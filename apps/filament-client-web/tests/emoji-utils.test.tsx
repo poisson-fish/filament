@@ -26,7 +26,7 @@ describe("emoji utils", () => {
     const emojiSprite = view.getByRole("img", { name: "😂" });
     const style = emojiSprite.getAttribute("style") ?? "";
     expect(style).toContain("background-image");
-    expect(style).toMatch(/background-size:\s*6000%\s+6100%/);
+    expect(style).toMatch(/background-size:\s*6100%\s+6100%/);
     expect(style).toContain("background-position:");
   });
 });

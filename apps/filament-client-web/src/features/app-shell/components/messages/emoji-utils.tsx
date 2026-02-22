@@ -44,6 +44,10 @@ interface EmojiRecord {
 
 interface EmojiDataRecord {
   emojis?: Record<string, EmojiRecord>;
+  sheet?: {
+    cols?: number;
+    rows?: number;
+  };
 }
 
 interface TwemojiSpriteCell {
@@ -125,8 +129,10 @@ function ensureTwemojiMap(): Record<string, TwemojiSpriteCell> {
   }
 
   twemojiByNative = map;
-  twemojiSheetColumns = maxX + 1;
-  twemojiSheetRows = maxY + 1;
+  twemojiSheetColumns =
+    typeof data.sheet?.cols === "number" && data.sheet.cols > 0 ? data.sheet.cols : maxX + 1;
+  twemojiSheetRows =
+    typeof data.sheet?.rows === "number" && data.sheet.rows > 0 ? data.sheet.rows : maxY + 1;
   return twemojiByNative;
 }
 
