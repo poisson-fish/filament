@@ -163,13 +163,13 @@ This section is used to track the progress of the implementation across multiple
   - *Completed Phase 1. Added `compute_base_permissions` and `apply_channel_overrides` implementing the 5-step Discord priority logic. Updated `can_assign_role` and `can_moderate_member` to evaluate position rankings dynamically. Set up legacy schema data backfill loop to automatically populate standard `Owner`, `Moderator`, and `@everyone` roles as well as mapping current `guild_members.role` mapping in `guild_role_members`.*
 
 ### Phase 2: Backend Integration & API
-- [ ] Create central context/service utilities (`check_workspace_permission`, `check_channel_permission`).
+- [x] Create central context/service utilities (`check_workspace_permission`, `check_channel_permission`).
 - [ ] Update API routes handling creation, modification, and deletion of roles (`guild_roles`).
 - [ ] Update API routes for channel permission overrides (`channel_permission_overrides`).
 - [ ] Wire up LiveKit token updates when a user's permissions change.
 - [ ] Wire Gateway Events (`WorkspaceRoleCreate`, `WorkspaceChannelOverrideUpdate`, etc.) to broadcast on changes.
 - **Notes**: 
-  - *(Add implementation notes here)*
+  - *Implemented `check_workspace_permission` and `check_channel_permission` in `domain.rs` to validate if a user has a specific permission via `guild_permission_snapshot` and `channel_permission_snapshot`. Ready to be used for replacing legacy `has_permission` checks.*
 
 ### Phase 3: Frontend Data & State Handling
 - [ ] Update Pinia/Solid state models to track `roles` (ordered array), `userRoles`, and `channelOverrides`.
