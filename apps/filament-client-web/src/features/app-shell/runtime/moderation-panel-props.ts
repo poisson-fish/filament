@@ -8,6 +8,7 @@ export interface ModerationPanelPropsOptions {
   overrideRoleInput: ModerationPanelBuilderOptions["overrideRoleInput"];
   overrideAllowCsv: string;
   overrideDenyCsv: string;
+  channelOverrideEntities?: ModerationPanelBuilderOptions["channelOverrideEntities"];
   isModerating: boolean;
   hasActiveWorkspace: boolean;
   hasActiveChannel: boolean;
@@ -39,6 +40,7 @@ export function createModerationPanelProps(
     overrideRoleInput: options.overrideRoleInput,
     overrideAllowCsv: options.overrideAllowCsv,
     overrideDenyCsv: options.overrideDenyCsv,
+    channelOverrideEntities: options.channelOverrideEntities ?? [],
     isModerating: options.isModerating,
     hasActiveWorkspace: options.hasActiveWorkspace,
     hasActiveChannel: options.hasActiveChannel,

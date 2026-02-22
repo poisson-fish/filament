@@ -640,6 +640,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
       isDevelopmentMode: import.meta.env.DEV,
     },
     collaboration: {
+      workspaceChannelState,
       friendshipsState,
       discoveryState,
       messageState,

@@ -1,3 +1,7 @@
+import type {
+  PermissionName,
+  RoleName,
+} from "../../../domain/chat";
 import type { createAttachmentController } from "../controllers/attachment-controller";
 import type { createFriendshipController } from "../controllers/friendship-controller";
 import type { createModerationController } from "../controllers/moderation-controller";
@@ -10,6 +14,7 @@ import type { createAppShellRuntimeLabels } from "./runtime-labels";
 import type { CollaborationPanelPropGroupsStateOptions } from "./collaboration-panel-prop-groups-options";
 
 export interface CollaborationPanelHostStateOptions {
+  workspaceChannelState: ReturnType<typeof createWorkspaceState>["workspaceChannel"];
   friendshipsState: ReturnType<typeof createWorkspaceState>["friendships"];
   discoveryState: ReturnType<typeof createWorkspaceState>["discovery"];
   messageState: ReturnType<typeof createMessageState>;
@@ -23,9 +28,122 @@ export interface CollaborationPanelHostStateOptions {
   openOverlayPanel: (panel: "role-management") => void;
 }
 
+const LEGACY_OVERRIDE_ROLE_ORDER: readonly RoleName[] = ["member", "moderator", "owner"];
+
+const LEGACY_OVERRIDE_ROLE_LABEL: Record<RoleName, string> = {
+  member: "@everyone",
+  moderator: "moderator",
+  owner: "owner",
+};
+
+function normalizePermissionList(
+  permissions: ReadonlyArray<PermissionName>,
+): PermissionName[] {
+  return [...new Set(permissions)];
+}
+
+function normalizeOverridePermissions(input: {
+  allow: ReadonlyArray<PermissionName>;
+  deny: ReadonlyArray<PermissionName>;
+}): { allow: PermissionName[]; deny: PermissionName[] } {
+  const allow = normalizePermissionList(input.allow);
+  const deny = normalizePermissionList(input.deny).filter(
+    (permission) => !allow.includes(permission),
+  );
+  return { allow, deny };
+}
+
+function buildChannelOverrideEntities(options: {
+  overrides: ReturnType<
+    ReturnType<typeof createWorkspaceState>["workspaceChannel"]["workspaceChannelOverridesByGuildId"]
+  >[string][string] | undefined;
+  selectedRole: RoleName;
+}): CollaborationPanelPropGroupsStateOptions["channelOverrideEntities"] {
+  const byRole = new Map<RoleName, {
+    allow: PermissionName[];
+    deny: PermissionName[];
+    updatedAtUnix: number | null;
+  }>();
+
+  for (const entry of options.overrides ?? []) {
+    if (entry.targetKind !== "legacy_role") {
+      continue;
+    }
+    const normalized = normalizeOverridePermissions({
+      allow: entry.allow,
+      deny: entry.deny,
+    });
+    byRole.set(entry.role, {
+      allow: normalized.allow,
+      deny: normalized.deny,
+      updatedAtUnix: entry.updatedAtUnix,
+    });
+  }
+
+  const entities = LEGACY_OVERRIDE_ROLE_ORDER.map((role) => {
+    const existing = byRole.get(role);
+    const isSelectedWithoutOverride = role === options.selectedRole && !existing;
+    if (existing) {
+      return {
+        role,
+        label: LEGACY_OVERRIDE_ROLE_LABEL[role],
+        hasExplicitOverride: true,
+        allow: existing.allow,
+        deny: existing.deny,
+        updatedAtUnix: existing.updatedAtUnix,
+      };
+    }
+    if (isSelectedWithoutOverride) {
+      return {
+        role,
+        label: LEGACY_OVERRIDE_ROLE_LABEL[role],
+        hasExplicitOverride: false,
+        allow: [],
+        deny: [],
+        updatedAtUnix: null,
+      };
+    }
+    return {
+      role,
+      label: LEGACY_OVERRIDE_ROLE_LABEL[role],
+      hasExplicitOverride: false,
+      allow: [],
+      deny: [],
+      updatedAtUnix: null,
+    };
+  });
+
+  const member = entities.find((entry) => entry.role === "member");
+  const others = entities
+    .filter((entry) => entry.role !== "member")
+    .sort((left, right) => {
+      if (left.hasExplicitOverride !== right.hasExplicitOverride) {
+        return left.hasExplicitOverride ? -1 : 1;
+      }
+      const leftUpdatedAt = left.updatedAtUnix ?? -1;
+      const rightUpdatedAt = right.updatedAtUnix ?? -1;
+      if (leftUpdatedAt !== rightUpdatedAt) {
+        return rightUpdatedAt - leftUpdatedAt;
+      }
+      return LEGACY_OVERRIDE_ROLE_ORDER.indexOf(left.role)
+        - LEGACY_OVERRIDE_ROLE_ORDER.indexOf(right.role);
+    });
+
+  return member ? [member, ...others] : others;
+}
+
 export function createCollaborationPanelHostStateOptions(
   options: CollaborationPanelHostStateOptions,
 ): CollaborationPanelPropGroupsStateOptions {
+  const activeGuildId = options.workspaceChannelState.activeGuildId();
+  const activeChannelId = options.workspaceChannelState.activeChannelId();
+  const channelOverrides =
+    activeGuildId && activeChannelId
+      ? options.workspaceChannelState.workspaceChannelOverridesByGuildId()[activeGuildId]?.[
+        activeChannelId
+      ]
+      : undefined;
+
   return {
     friendRecipientUserIdInput: options.friendshipsState.friendRecipientUserIdInput,
     friendRequests: options.friendshipsState.friendRequests(),
@@ -71,6 +189,10 @@ export function createCollaborationPanelHostStateOptions(
     overrideRoleInput: options.diagnosticsState.overrideRoleInput,
     overrideAllowCsv: options.diagnosticsState.overrideAllowCsv,
     overrideDenyCsv: options.diagnosticsState.overrideDenyCsv,
+    channelOverrideEntities: buildChannelOverrideEntities({
+      overrides: channelOverrides,
+      selectedRole: options.diagnosticsState.overrideRoleInput(),
+    }),
     isModerating: options.diagnosticsState.isModerating,
     hasActiveModerationWorkspace: () =>
       Boolean(options.selectors.activeWorkspace()),

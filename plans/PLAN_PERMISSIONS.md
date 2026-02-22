@@ -199,11 +199,13 @@ This section is used to track the progress of the implementation across multiple
   - *Replaced browser-level confirms with explicit in-app danger confirmation modals in `RoleManagementPanel` for role deletion, hierarchy reorders, and privileged permission edits. Dangerous permission transitions now fail closed until operators explicitly confirm within the modal. Added targeted tests covering cancel/confirm flows and risky permission escalation confirmation to prevent silent privilege changes.*
 
 ### Phase 5: Frontend UI - Channel Overrides
-- [ ] Build the **Channel Settings: Permissions Tab** (Entity Selector Sidebar prioritizing `@everyone` + active overrides).
+- [x] Build the **Channel Settings: Permissions Tab** (Entity Selector Sidebar prioritizing `@everyone` + active overrides).
 - [ ] Build the **Tri-State Permission Matrix** (`/`, `✓`, `X`) for the selected Role/Member.
 - [ ] Implement visual indicators showing the calculated effective permission.
 - **Notes**: 
-  - *(Add implementation notes here)*
+  - *Reworked `ModerationPanel` override management into a channel-permissions tab structure with a dedicated entity sidebar (`Channel override entities`). Sidebar ordering is deterministic and security-oriented: `@everyone` (`member`) is always pinned first, followed by roles with explicit overrides sorted by recency, then remaining roles.*
+  - *Wired normalized override entities through runtime/adapters (`collaboration-panel-host-state-options` → `collaboration-panel-prop-groups-options` → `moderation-panel-props` → `panel-host-props`) so the UI consumes bounded, typed data from workspace state rather than ad-hoc strings. Legacy allow/deny overlaps are normalized fail-closed.*
+  - *Selecting an entity now atomically updates override role + allow/deny drafts from persisted override state, preventing stale cross-role CSV edits. Added focused tests for ordering, selected-state rendering, and prop plumbing (`app-shell-moderation-panel`, collaboration panel host/options groups, moderation panel props, panel-host props).*
 
 ### Phase 6: Polish Phase
 - [ ] Add in-app explanations (subtitle definitions) adjacent to all permission toggles.

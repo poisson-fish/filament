@@ -101,6 +101,16 @@ describe("app shell collaboration panel prop group state options", () => {
       overrideRoleInput: () => roleFromInput("moderator"),
       overrideAllowCsv: () => "create_message",
       overrideDenyCsv: () => "delete_message",
+      channelOverrideEntities: [
+        {
+          role: roleFromInput("member"),
+          label: "@everyone",
+          hasExplicitOverride: true,
+          allow: ["create_message"],
+          deny: [],
+          updatedAtUnix: 9,
+        },
+      ],
       isModerating: () => false,
       hasActiveModerationWorkspace: () => true,
       hasActiveModerationChannel: () => true,
@@ -123,6 +133,7 @@ describe("app shell collaboration panel prop group state options", () => {
     expect(options.search.searchQuery).toBe("incident");
     expect(options.attachments.activeAttachments).toHaveLength(1);
     expect(options.moderation.canManageRoles).toBe(true);
+    expect(options.moderation.channelOverrideEntities).toHaveLength(1);
 
     const submitEvent = { preventDefault: vi.fn() } as unknown as SubmitEvent;
 

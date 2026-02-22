@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { channelIdFromInput, guildIdFromInput } from "../src/domain/chat";
 import { createCollaborationPanelHostStateOptions } from "../src/features/app-shell/runtime/collaboration-panel-host-state-options";
 
 describe("app shell collaboration panel-host state options", () => {
@@ -68,8 +69,29 @@ describe("app shell collaboration panel-host state options", () => {
     const applyOverride = vi.fn();
 
     const openOverlayPanel = vi.fn();
+    const activeGuildId = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAA");
+    const activeChannelId = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAB");
 
     const stateOptions = createCollaborationPanelHostStateOptions({
+      workspaceChannelState: {
+        activeGuildId: () => activeGuildId,
+        activeChannelId: () => activeChannelId,
+        workspaceChannelOverridesByGuildId: () => ({
+          [activeGuildId]: {
+            [activeChannelId]: [
+              {
+                targetKind: "legacy_role",
+                role: "moderator",
+                allow: ["create_message"],
+                deny: [],
+                updatedAtUnix: 40,
+              },
+            ],
+          },
+        }),
+      } as unknown as Parameters<
+        typeof createCollaborationPanelHostStateOptions
+      >[0]["workspaceChannelState"],
       friendshipsState: {
         friendRecipientUserIdInput,
         friendRequests,
@@ -177,6 +199,8 @@ describe("app shell collaboration panel-host state options", () => {
     expect(stateOptions.activeAttachments).toEqual(activeAttachments());
     expect(stateOptions.onSubmitUploadAttachment).toBe(uploadAttachment);
     expect(stateOptions.moderationRoleInput).toBe(moderationRoleInput);
+    expect(stateOptions.channelOverrideEntities[0]?.role).toBe("member");
+    expect(stateOptions.channelOverrideEntities[1]?.role).toBe("moderator");
     expect(stateOptions.onApplyOverride).toBe(applyOverride);
 
     stateOptions.onOpenRoleManagementPanel();

@@ -205,6 +205,7 @@ function baseOptions(
       overrideRoleInput: roleFromInput("member"),
       overrideAllowCsv: "",
       overrideDenyCsv: "",
+      channelOverrideEntities: [],
       isModerating: false,
       hasActiveWorkspace: true,
       hasActiveChannel: true,

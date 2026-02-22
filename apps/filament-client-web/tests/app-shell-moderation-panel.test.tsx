@@ -14,6 +14,32 @@ function moderationPanelPropsFixture(
     overrideRoleInput: "member",
     overrideAllowCsv: "create_message",
     overrideDenyCsv: "delete_message",
+    channelOverrideEntities: [
+      {
+        role: "member",
+        label: "@everyone",
+        hasExplicitOverride: true,
+        allow: ["create_message"],
+        deny: [],
+        updatedAtUnix: 100,
+      },
+      {
+        role: "moderator",
+        label: "moderator",
+        hasExplicitOverride: false,
+        allow: [],
+        deny: [],
+        updatedAtUnix: null,
+      },
+      {
+        role: "owner",
+        label: "owner",
+        hasExplicitOverride: false,
+        allow: [],
+        deny: [],
+        updatedAtUnix: null,
+      },
+    ],
     isModerating: false,
     hasActiveWorkspace: true,
     hasActiveChannel: true,
@@ -105,9 +131,7 @@ describe("app shell moderation panel", () => {
     expect(onRunMemberAction).toHaveBeenNthCalledWith(3, "kick");
     expect(onRunMemberAction).toHaveBeenNthCalledWith(4, "ban");
 
-    await fireEvent.change(screen.getByLabelText("Override role"), {
-      target: { value: "owner" },
-    });
+    await fireEvent.click(screen.getByRole("button", { name: /owner/i }));
     expect(onOverrideRoleChange).toHaveBeenCalledWith("owner");
 
     await fireEvent.input(screen.getByLabelText("Allow permissions (csv)"), {
@@ -129,6 +153,52 @@ describe("app shell moderation panel", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Open role management panel" }));
     expect(onOpenRoleManagementPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders entity selector with @everyone first and marks active overrides", () => {
+    render(() =>
+      <ModerationPanel
+        {...moderationPanelPropsFixture({
+          overrideRoleInput: "moderator",
+          channelOverrideEntities: [
+            {
+              role: "member",
+              label: "@everyone",
+              hasExplicitOverride: false,
+              allow: [],
+              deny: [],
+              updatedAtUnix: null,
+            },
+            {
+              role: "owner",
+              label: "owner",
+              hasExplicitOverride: true,
+              allow: ["manage_channel_overrides"],
+              deny: [],
+              updatedAtUnix: 300,
+            },
+            {
+              role: "moderator",
+              label: "moderator",
+              hasExplicitOverride: true,
+              allow: ["create_message"],
+              deny: [],
+              updatedAtUnix: 200,
+            },
+          ],
+        })}
+      />,
+    );
+
+    const entities = screen
+      .getByLabelText("Channel override entities")
+      .querySelectorAll("button");
+    expect(entities[0]).toHaveTextContent("@everyone");
+    expect(screen.getAllByText("active override")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /moderator/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("hides gated controls when moderation permissions are missing", () => {

@@ -18,6 +18,16 @@ describe("app shell moderation panel props", () => {
       overrideRoleInput: "member",
       overrideAllowCsv: "create_message",
       overrideDenyCsv: "delete_message",
+      channelOverrideEntities: [
+        {
+          role: "member",
+          label: "@everyone",
+          hasExplicitOverride: true,
+          allow: ["create_message"],
+          deny: [],
+          updatedAtUnix: 123,
+        },
+      ],
       isModerating: false,
       hasActiveWorkspace: true,
       hasActiveChannel: true,
@@ -40,6 +50,7 @@ describe("app shell moderation panel props", () => {
     expect(panelProps.hasActiveChannel).toBe(true);
     expect(panelProps.canManageRoles).toBe(true);
     expect(panelProps.overrideAllowCsv).toBe("create_message");
+    expect(panelProps.channelOverrideEntities).toHaveLength(1);
 
     panelProps.setModerationUserIdInput("01ARZ3NDEKTSV4RRFFQ69G5FAB");
     expect(setModerationUserIdInput).toHaveBeenCalledWith(
