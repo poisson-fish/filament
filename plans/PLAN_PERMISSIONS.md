@@ -185,12 +185,13 @@ This section is used to track the progress of the implementation across multiple
 
 ### Phase 4: Frontend UI - Role & Member Management
 - [x] Build the **Workspace Settings: Roles Panel** (Sidebar list, drag-and-drop hierarchy).
-- [ ] Build the **Role Editor Panel** (Name editing, permission toggles list, save system).
+- [x] Build the **Role Editor Panel** (Name editing, permission toggles list, save system).
 - [ ] Integrate **Role Templates** (Cosmetic, Moderator, Read-Only) into creation flow.
 - [ ] Build the **Workspace Settings: Members Panel** (Inline role assignment via dropdown badge UI).
 - [ ] Add explicit warnings/confirmation modals for dangerous operations.
 - **Notes**: 
   - *Implemented drag-and-drop hierarchy reordering in the role-management panel using bounded client-side role-id state (`reorderDraftRoleIds`) and fail-closed drop handling that only reorders known, non-system role IDs. Added visual drag affordances and preserved explicit confirmation before persisting `onReorderRoles` to reduce accidental hierarchy changes. System roles remain pinned/non-reorderable.*
+  - *Completed role editor panel hardening in `RoleManagementPanel`: grouped permission toggles by category, added explicit draft/dirty tracking and reset flow, and tightened save behavior to submit only changed fields after local normalization (trimmed name + deduplicated/sorted permission masks). Added tests covering draft reset, save gating, and changed-field payload composition.*
 
 ### Phase 5: Frontend UI - Channel Overrides
 - [ ] Build the **Channel Settings: Permissions Tab** (Entity Selector Sidebar prioritizing `@everyone` + active overrides).

@@ -164,6 +164,71 @@ describe("role management panel", () => {
     confirmMock.mockRestore();
   });
 
+  it("saves only changed role fields and trims role names", async () => {
+    const onUpdateRole = vi.fn(async () => undefined);
+
+    render(() =>
+      RoleManagementPanel(
+        panelProps({
+          onUpdateRole,
+          roles: [
+            {
+              roleId: ROLE_ID,
+              name: workspaceRoleNameFromInput("Responder"),
+              position: 3,
+              isSystem: false,
+              permissions: [
+                permissionFromInput("create_message"),
+                permissionFromInput("subscribe_streams"),
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+
+    fireEvent.input(screen.getAllByLabelText("Role name")[1]!, {
+      target: { value: " Incident Lead " },
+    });
+    const editMatrix = screen.getByLabelText("edit role permission matrix");
+    fireEvent.click(within(editMatrix).getByLabelText(/Delete Messages/i));
+
+    fireEvent.click(screen.getByRole("button", { name: "Save role" }));
+
+    expect(onUpdateRole).toHaveBeenCalledWith(ROLE_ID, {
+      name: "Incident Lead",
+      permissions: ["create_message", "delete_message", "subscribe_streams"],
+    });
+  });
+
+  it("disables saving when no edits exist and supports draft reset", async () => {
+    const onUpdateRole = vi.fn(async () => undefined);
+
+    render(() =>
+      RoleManagementPanel(
+        panelProps({
+          onUpdateRole,
+        }),
+      ),
+    );
+
+    const saveButton = screen.getByRole("button", { name: "Save role" });
+    expect(saveButton).toBeDisabled();
+
+    fireEvent.input(screen.getAllByLabelText("Role name")[1]!, {
+      target: { value: "Responder Prime" },
+    });
+
+    expect(screen.getByText("unsaved changes")).toBeInTheDocument();
+    expect(saveButton).not.toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset draft" }));
+
+    expect(screen.getAllByLabelText("Role name")[1]).toHaveValue("Responder");
+    expect(saveButton).toBeDisabled();
+    expect(onUpdateRole).not.toHaveBeenCalled();
+  });
+
   it("reorders custom roles via drag-and-drop and submits the updated hierarchy", async () => {
     const onReorderRoles = vi.fn(async () => undefined);
     const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);

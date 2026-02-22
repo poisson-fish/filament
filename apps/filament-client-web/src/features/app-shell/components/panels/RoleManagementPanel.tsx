@@ -9,6 +9,7 @@ interface PermissionMatrixEntry {
   permission: PermissionName;
   label: string;
   summary: string;
+  category: "workspace" | "moderation" | "voice" | "compatibility";
 }
 
 const PERMISSION_MATRIX: PermissionMatrixEntry[] = [
@@ -16,62 +17,86 @@ const PERMISSION_MATRIX: PermissionMatrixEntry[] = [
     permission: "create_message",
     label: "Create Messages",
     summary: "Send messages and participate in channels.",
+    category: "workspace",
   },
   {
     permission: "delete_message",
     label: "Delete Messages",
     summary: "Delete or edit messages authored by other members.",
+    category: "moderation",
   },
   {
     permission: "manage_channel_overrides",
     label: "Manage Overrides",
     summary: "Edit channel role override rules.",
+    category: "workspace",
   },
   {
     permission: "ban_member",
     label: "Ban Members",
     summary: "Kick and ban users at workspace scope.",
+    category: "moderation",
   },
   {
     permission: "manage_member_roles",
     label: "Manage Member Roles",
     summary: "Assign and unassign workspace roles on members.",
+    category: "workspace",
   },
   {
     permission: "manage_workspace_roles",
     label: "Manage Workspace Roles",
     summary: "Create, update, delete, and reorder workspace roles.",
+    category: "workspace",
   },
   {
     permission: "view_audit_log",
     label: "View Audit Log",
     summary: "Read redacted workspace audit history.",
+    category: "moderation",
   },
   {
     permission: "manage_ip_bans",
     label: "Manage IP Bans",
     summary: "Apply and remove user-derived guild IP bans.",
+    category: "moderation",
   },
   {
     permission: "publish_video",
     label: "Publish Camera",
     summary: "Publish camera tracks in voice channels.",
+    category: "voice",
   },
   {
     permission: "publish_screen_share",
     label: "Publish Screen",
     summary: "Publish screen-share tracks in voice channels.",
+    category: "voice",
   },
   {
     permission: "subscribe_streams",
     label: "Subscribe Streams",
     summary: "Receive remote media streams in voice channels.",
+    category: "voice",
   },
   {
     permission: "manage_roles",
     label: "Legacy Manage Roles",
     summary: "Compatibility grant for pre-phase-7 moderation paths.",
+    category: "compatibility",
   },
+];
+
+interface PermissionCategory {
+  key: PermissionMatrixEntry["category"];
+  title: string;
+}
+
+const PERMISSION_CATEGORIES: PermissionCategory[] = [
+  { key: "workspace", title: "Workspace Access" },
+  { key: "moderation", title: "Moderation" },
+  { key: "voice", title: "Voice & Media" },
+  { key: "compatibility", title: "Compatibility" },
 ];
 
 export interface RoleManagementPanelProps {
@@ -129,6 +154,32 @@ function hasManagementPermission(permissions: PermissionName[]): boolean {
     permissions.includes("manage_member_roles") ||
     permissions.includes("manage_roles")
   );
+}
+
+function normalizePermissions(permissions: ReadonlyArray<PermissionName>): PermissionName[] {
+  const set = new Set<PermissionName>();
+  for (const permission of permissions) {
+    set.add(permission);
+  }
+  return [...set].sort((left, right) => left.localeCompare(right));
+}
+
+function areSamePermissions(
+  left: ReadonlyArray<PermissionName>,
+  right: ReadonlyArray<PermissionName>,
+): boolean {
+  const normalizedLeft = normalizePermissions(left);
+  const normalizedRight = normalizePermissions(right);
+  if (normalizedLeft.length !== normalizedRight.length) {
+    return false;
+  }
+  return normalizedLeft.every((permission, index) => permission === normalizedRight[index]);
+}
+
+function permissionsByCategory(
+  category: PermissionMatrixEntry["category"],
+): PermissionMatrixEntry[] {
+  return PERMISSION_MATRIX.filter((entry) => entry.category === category);
 }
 
 export function RoleManagementPanel(props: RoleManagementPanelProps) {
@@ -201,6 +252,17 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const editPreview = createMemo(() =>
     PERMISSION_MATRIX.filter((entry) => editPermissions().includes(entry.permission)),
   );
+  const hasRoleDraftChanges = createMemo(() => {
+    const role = editableRole();
+    if (!role) {
+      return false;
+    }
+    if (editName().trim() !== role.name) {
+      return true;
+    }
+    return !areSamePermissions(editPermissions(), role.permissions);
+  });
+  const isRoleNameValid = createMemo(() => editName().trim().length > 0);
 
   const isRiskyPermissionDrop = createMemo(() => {
     const role = editableRole();
@@ -296,12 +358,31 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
       );
       return;
     }
+    if (!hasRoleDraftChanges()) {
+      setClientError("No role changes to save.");
+      return;
+    }
+    if (!isRoleNameValid()) {
+      setClientError("Role name must include visible characters.");
+      return;
+    }
 
     await invoke(async () => {
-      await props.onUpdateRole(role.roleId, {
-        name: editName(),
-        permissions: editPermissions(),
-      });
+      const nextName = editName().trim();
+      const normalizedPermissions = normalizePermissions(editPermissions());
+      const roleNameChanged = nextName !== role.name;
+      const permissionsChanged = !areSamePermissions(normalizedPermissions, role.permissions);
+      const updateInput: {
+        name?: string;
+        permissions?: PermissionName[];
+      } = {};
+      if (roleNameChanged) {
+        updateInput.name = nextName;
+      }
+      if (permissionsChanged) {
+        updateInput.permissions = normalizedPermissions;
+      }
+      await props.onUpdateRole(role.roleId, updateInput);
     });
   };
 
@@ -387,6 +468,17 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     await invoke(async () => {
       await props.onUnassignRole(props.targetUserIdInput, roleId);
     });
+  };
+
+  const onResetRoleDraft = (): void => {
+    const role = selectedRole();
+    if (!role) {
+      return;
+    }
+    setEditName(role.name);
+    setEditPermissions(role.permissions);
+    setConfirmRiskyRoleEdit(false);
+    setClientError("");
   };
 
   return (
@@ -483,6 +575,9 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
               <Show when={selectedRole()} fallback={<p class={mutedTextClass}>Select a role to edit.</p>}>
                 {(roleAccessor) => (
                   <>
+                    <Show when={hasRoleDraftChanges() && !roleAccessor().isSystem}>
+                      <p class={statusChipClass}>unsaved changes</p>
+                    </Show>
                     <label class={fieldLabelClass}>
                       Role name
                       <input
@@ -494,25 +589,34 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                       />
                     </label>
                     <div class={permissionGridClass} aria-label="edit role permission matrix">
-                      <For each={PERMISSION_MATRIX}>
-                        {(entry) => (
-                          <label class={permissionToggleClass}>
-                            <input
-                              type="checkbox"
-                              class="mt-[0.14rem]"
-                              checked={editPermissions().includes(entry.permission)}
-                              onChange={(event) =>
-                                setEditPermissions((current) =>
-                                  togglePermission(
-                                    current,
-                                    entry.permission,
-                                    event.currentTarget.checked,
-                                  ))}
-                              disabled={roleAccessor().isSystem}
-                            />
-                            <span class="text-[0.86rem] text-ink-1">{entry.label}</span>
-                            <small class="col-[2] text-[0.74rem] text-ink-2">{entry.summary}</small>
-                          </label>
+                      <For each={PERMISSION_CATEGORIES}>
+                        {(category) => (
+                          <section class={panelSectionClass}>
+                            <h6 class="m-0 text-[0.82rem] uppercase tracking-[0.06em] text-ink-2">
+                              {category.title}
+                            </h6>
+                            <For each={permissionsByCategory(category.key)}>
+                              {(entry) => (
+                                <label class={permissionToggleClass}>
+                                  <input
+                                    type="checkbox"
+                                    class="mt-[0.14rem]"
+                                    checked={editPermissions().includes(entry.permission)}
+                                    onChange={(event) =>
+                                      setEditPermissions((current) =>
+                                        togglePermission(
+                                          current,
+                                          entry.permission,
+                                          event.currentTarget.checked,
+                                        ))}
+                                    disabled={roleAccessor().isSystem}
+                                  />
+                                  <span class="text-[0.86rem] text-ink-1">{entry.label}</span>
+                                  <small class="col-[2] text-[0.74rem] text-ink-2">{entry.summary}</small>
+                                </label>
+                              )}
+                            </For>
+                          </section>
                         )}
                       </For>
                     </div>
@@ -540,9 +644,22 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                       <button
                         class={rowActionButtonClass}
                         type="submit"
-                        disabled={props.isMutatingRoles || roleAccessor().isSystem}
+                        disabled={
+                          props.isMutatingRoles ||
+                          roleAccessor().isSystem ||
+                          !hasRoleDraftChanges() ||
+                          !isRoleNameValid()
+                        }
                       >
                         {props.isMutatingRoles ? "Applying..." : "Save role"}
+                      </button>
+                      <button
+                        class={rowActionButtonClass}
+                        type="button"
+                        disabled={props.isMutatingRoles || roleAccessor().isSystem || !hasRoleDraftChanges()}
+                        onClick={onResetRoleDraft}
+                      >
+                        Reset draft
                       </button>
                       <button
                         class={rowActionButtonClass}
