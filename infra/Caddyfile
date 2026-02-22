@@ -7,7 +7,7 @@
 
 
 (tls_origin_cert) {
-  tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+  tls {$CADDY_TLS_CERT_PATH} {$CADDY_TLS_KEY_PATH}
 }
 
 (security_headers) {
@@ -32,13 +32,13 @@
   }
 }
 
-# Redirect HTTP to HTTPS for active web/app hosts
-http://filamentapp.net, http://app.filament.local, http://api.filament.local {
+# Redirect HTTP to HTTPS for configured hosts
+http://{$CADDY_HTTP_REDIRECT_HOSTS} {
   redir https://{host}{uri}
 }
 
 # App host: SPA + same-origin API/gateway paths
-https://filamentapp.net, https://app.filament.local {
+https://{$CADDY_APP_HTTPS_HOSTS} {
   import tls_origin_cert
   encode zstd gzip
   import security_headers
@@ -47,12 +47,12 @@ https://filamentapp.net, https://app.filament.local {
   # Frontend (Vite Dev Server running on Host)
   # Requires "host.docker.internal" to be mapped in docker-compose.yml
   handle {
-    reverse_proxy host.docker.internal:4173
+    reverse_proxy {$CADDY_WEB_UPSTREAM}
   }
 }
 
 # API host: API + gateway only
-https://api.filament.local {
+https://{$CADDY_API_HTTPS_HOSTS} {
   import tls_origin_cert
   encode zstd gzip
   import security_headers
@@ -64,13 +64,13 @@ https://api.filament.local {
 }
 
 # LiveKit Signaling Proxy
-# Allows clients to connect via wss://filamentapp.net:8443
-:8443 {
+# Allows clients to connect via wss://<host>:<port>
+:{$CADDY_LIVEKIT_PROXY_PORT} {
   import tls_origin_cert
-  reverse_proxy livekit:7880
+  reverse_proxy livekit:{$LIVEKIT_PORT}
 }
 
 # Keep the old port for direct access if needed (optional, can be removed)
-:8080 {
+:{$CADDY_LEGACY_SERVER_PORT} {
   reverse_proxy filament-server:3000
 }

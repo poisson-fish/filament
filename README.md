@@ -117,7 +117,9 @@ Prerequisites:
 From the repository root:
 
 ```bash
-docker compose -f infra/docker-compose.yml up -d --build
+cp infra/.env.example infra/.env
+# edit infra/.env for LAN IP or domain settings
+docker compose --env-file infra/.env -f infra/docker-compose.yml up -d --build
 ```
 
 This starts:
@@ -127,7 +129,7 @@ This starts:
 - `filament-server`
 - `reverse-proxy` (Caddy)
 
-Default local endpoints:
+Default local endpoints (from `infra/.env.example`):
 
 - Filament API/Gateway (via proxy): `http://localhost:8080`
 - Health check: `http://localhost:8080/health`
@@ -138,20 +140,29 @@ Useful commands:
 
 ```bash
 # View service status
-docker compose -f infra/docker-compose.yml ps
+docker compose --env-file infra/.env -f infra/docker-compose.yml ps
 
 # View logs
-docker compose -f infra/docker-compose.yml logs -f filament-server
+docker compose --env-file infra/.env -f infra/docker-compose.yml logs -f filament-server
 
 # Check health quickly
 curl -fsS http://localhost:8080/health
 
 # Stop services
-docker compose -f infra/docker-compose.yml down
+docker compose --env-file infra/.env -f infra/docker-compose.yml down
 
 # Stop and remove volumes (destructive: deletes local data)
-docker compose -f infra/docker-compose.yml down -v
+docker compose --env-file infra/.env -f infra/docker-compose.yml down -v
 ```
+
+Vite dev server knobs (`apps/filament-client-web`):
+
+- `VITE_DEV_ALLOWED_HOSTS` (comma-separated)
+- `VITE_DEV_API_PROXY_TARGET`
+- `VITE_DEV_GATEWAY_PROXY_TARGET`
+- `VITE_DEV_HMR_CLIENT_PORT`
+
+These can be set in `apps/filament-client-web/.env.local` for local development.
 
 ## Local Quality Checks
 

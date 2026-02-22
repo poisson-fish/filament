@@ -2,6 +2,14 @@
 
 This document covers deployment, backup/restore, and observability for Filament.
 
+Start from:
+
+```bash
+cp infra/.env.example infra/.env
+# edit infra/.env for your host/domain/IP values
+docker compose --env-file infra/.env -f infra/docker-compose.yml up -d --build
+```
+
 ## Compose Topology
 
 `infra/docker-compose.yml` includes:
@@ -14,7 +22,9 @@ Network model:
 - `filament-internal`: internal-only network for service-to-service traffic
 - `filament-edge`: edge network for externally exposed ports
 
-Port map (default compose):
+Note: LiveKit runtime config is generated from env vars by `infra/docker-compose.yml`.
+
+Port map (default compose, configurable via `infra/.env`):
 - `reverse-proxy`: `8080/tcp` (HTTP ingress to Filament API/gateway)
 - `livekit`: `7880/tcp` (signaling), `7881/tcp` (RTC over TCP), `7882/udp` (RTC over UDP)
 
@@ -31,7 +41,7 @@ Do not remove these defaults without documenting threat impact.
 
 ## Required Runtime Environment
 
-Set these variables for `filament-server`:
+Set these variables for `filament-server` (via `infra/.env`):
 - `FILAMENT_DATABASE_URL`: required in runtime; points to Postgres
 - `FILAMENT_ATTACHMENT_ROOT`: required attachment object storage root
 - `FILAMENT_LIVEKIT_API_KEY`: required LiveKit API key for token minting
@@ -60,6 +70,20 @@ Recommended patterns:
 
 Misconfiguration symptom: voice join fails with signaling connection errors even though token issuance succeeds.
 
+### LAN vs Domain profiles
+
+LAN/IP baseline:
+- `FILAMENT_LIVEKIT_URL=ws://192.168.1.50:7880`
+- `LIVEKIT_USE_EXTERNAL_IP=false`
+- `CADDY_WEB_UPSTREAM=host.docker.internal:4173` (when using Vite dev server on host)
+
+Domain baseline:
+- `FILAMENT_LIVEKIT_URL=wss://chat.example.com:8443`
+- `LIVEKIT_USE_EXTERNAL_IP=true`
+- `CADDY_APP_HTTPS_HOSTS=chat.example.com`
+- `CADDY_HTTP_REDIRECT_HOSTS=chat.example.com`
+- `CADDY_WEB_UPSTREAM=host.docker.internal:4173` (or your static web container/service)
+
 ## Attachment Storage Persistence
 
 Attachment binaries are stored under `FILAMENT_ATTACHMENT_ROOT` via `object_store` local backend.
@@ -83,7 +107,23 @@ Baseline requirements:
 - pass websocket upgrades for `/gateway/ws`
 - restrict direct public exposure of `filament-server`
 
-`infra/Caddyfile` is a baseline ingress config. For production, replace `auto_https off` with certificate-backed HTTPS settings.
+`infra/Caddyfile` now consumes env vars from compose (`CADDY_*` and `LIVEKIT_PORT`) so host/domain changes are centralized in `infra/.env`.
+
+If you use certificate files, ensure:
+- `CADDY_TLS_CERT_PATH` and `CADDY_TLS_KEY_PATH` point to mounted files in the Caddy container
+- `infra/certs` contains the certificate and key files
+
+### Web (Vite) env controls
+
+For `apps/filament-client-web`, these dev-time vars control proxy and host behavior:
+- `VITE_DEV_SERVER_HOST`
+- `VITE_DEV_SERVER_PORT`
+- `VITE_DEV_ALLOWED_HOSTS` (comma-separated)
+- `VITE_DEV_HMR_CLIENT_PORT`
+- `VITE_DEV_API_PROXY_TARGET`
+- `VITE_DEV_GATEWAY_PROXY_TARGET`
+
+Runtime API defaults now use same-origin `/api` unless `VITE_FILAMENT_API_BASE_URL` is explicitly set.
 
 ## LiveKit and TURN Guidance
 

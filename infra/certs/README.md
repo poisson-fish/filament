@@ -7,4 +7,4 @@ To enable SSL with Cloudflare Full (Strict) mode:
 5. Copy the "Private Key" content into a file named `key.pem` in this directory.
 
 After adding these files, restart the Caddy container:
-docker compose -f ../infra/docker-compose.yml restart reverse-proxy
+docker compose --env-file ../infra/.env -f ../infra/docker-compose.yml restart reverse-proxy

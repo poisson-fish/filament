@@ -154,6 +154,17 @@ fn parse_server_owner_user_id_from_env(defaults: &AppConfig) -> anyhow::Result<O
     )
 }
 
+fn parse_optional_nonempty_env(var_name: &str) -> Option<String> {
+    std::env::var(var_name).ok().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -185,8 +196,8 @@ async fn main() -> anyhow::Result<()> {
     ) = parse_directory_runtime_limits_from_env(&defaults)?;
     let trusted_proxy_cidrs = parse_trusted_proxy_cidrs_from_env(&defaults)?;
     let server_owner_user_id = parse_server_owner_user_id_from_env(&defaults)?;
-    let captcha_hcaptcha_site_key = std::env::var("FILAMENT_HCAPTCHA_SITE_KEY").ok();
-    let captcha_hcaptcha_secret = std::env::var("FILAMENT_HCAPTCHA_SECRET").ok();
+    let captcha_hcaptcha_site_key = parse_optional_nonempty_env("FILAMENT_HCAPTCHA_SITE_KEY");
+    let captcha_hcaptcha_secret = parse_optional_nonempty_env("FILAMENT_HCAPTCHA_SECRET");
     let app_config = AppConfig {
         attachment_root: std::env::var("FILAMENT_ATTACHMENT_ROOT")
             .map_or_else(|_| PathBuf::from("./data/attachments"), PathBuf::from),
@@ -234,7 +245,8 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::{
         parse_directory_runtime_limits_from_env, parse_rate_limit_requests_per_minute_from_env,
-        parse_rate_runtime_limits_from_env, parse_server_owner_user_id_from_env,
+        parse_optional_nonempty_env, parse_rate_runtime_limits_from_env,
+        parse_server_owner_user_id_from_env,
         parse_trusted_proxy_cidrs_from_env, parse_u32_env_or_default, parse_u64_env_or_default,
         parse_usize_env_or_default,
     };
@@ -436,5 +448,22 @@ mod tests {
         let result = parse_server_owner_user_id_from_env(&AppConfig::default());
         std::env::remove_var("FILAMENT_SERVER_OWNER_USER_ID");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn optional_nonempty_env_treats_blank_as_unset() {
+        let _guard = lock_env();
+        std::env::remove_var("FILAMENT_TEST_OPTIONAL_NONEMPTY");
+        std::env::set_var("FILAMENT_TEST_OPTIONAL_NONEMPTY", "   ");
+        assert_eq!(
+            parse_optional_nonempty_env("FILAMENT_TEST_OPTIONAL_NONEMPTY"),
+            None
+        );
+        std::env::set_var("FILAMENT_TEST_OPTIONAL_NONEMPTY", "present");
+        assert_eq!(
+            parse_optional_nonempty_env("FILAMENT_TEST_OPTIONAL_NONEMPTY"),
+            Some(String::from("present"))
+        );
+        std::env::remove_var("FILAMENT_TEST_OPTIONAL_NONEMPTY");
     }
 }

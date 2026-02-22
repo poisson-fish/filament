@@ -1,11 +1,13 @@
-port: 7880
+# Reference template for the runtime-generated LiveKit config in docker-compose.yml.
+# Compose now renders the active config from env vars at container startup.
+port: ${LIVEKIT_PORT}
 rtc:
-  tcp_port: 7881
-  udp_port: 7882
-  use_external_ip: true
-  # node_ip: 192.168.1.103
+  tcp_port: ${LIVEKIT_TCP_PORT}
+  udp_port: ${LIVEKIT_UDP_PORT}
+  use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP}
+  # node_ip: ${LIVEKIT_NODE_IP}
 keys:
-  devkey: devsecret
+  ${FILAMENT_LIVEKIT_API_KEY}: ${FILAMENT_LIVEKIT_API_SECRET}
 
 logging:
   level: info

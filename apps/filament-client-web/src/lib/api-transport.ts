@@ -1,7 +1,6 @@
 import { type AccessToken } from "../domain/auth";
 import { bearerHeader } from "./session";
 
-const DEFAULT_API_ORIGIN = "https://api.filament.local";
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_ATTACHMENT_DOWNLOAD_BYTES = 26 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 7_000;
@@ -43,10 +42,7 @@ function resolvedBaseUrl(): string {
   if (typeof envValue === "string" && envValue.length > 0) {
     return envValue;
   }
-  if (import.meta.env.DEV) {
-    return "/api";
-  }
-  return DEFAULT_API_ORIGIN;
+  return "/api";
 }
 
 function apiConfig(): ApiConfig {
