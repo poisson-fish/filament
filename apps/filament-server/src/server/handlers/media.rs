@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 use ulid::Ulid;
 
-use filament_core::{has_permission, LiveKitIdentity, LiveKitRoomName, Permission};
+use filament_core::{has_permission_legacy, LiveKitIdentity, LiveKitRoomName, Permission};
 
 use crate::server::{
     auth::{
@@ -297,7 +297,7 @@ pub(crate) async fn delete_attachment(
     .await?;
     let role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
     let record = find_attachment(&state, &path).await?;
-    if record.owner_id != auth.user_id && !has_permission(role, Permission::DeleteMessage) {
+    if record.owner_id != auth.user_id && !has_permission_legacy(role, Permission::DeleteMessage) {
         return Err(AuthFailure::Forbidden);
     }
 

@@ -155,12 +155,12 @@ If workspaces exist using the legacy `guild_members.role SMALLINT` column:
 This section is used to track the progress of the implementation across multiple sessions. When a phase is completed, mark the checkbox `[x]` and add any relevant notes.
 
 ### Phase 1: Domain & Database Foundation
-- [ ] Migrate ` filament_core` static `Role` logic to dynamic `PermissionSet` evaluation via `compute_base_permissions`.
-- [ ] Implement the Discord-like 5-step Channel Overrides Priority Model in `apply_channel_overwrite`.
-- [ ] Finalize role hierarchy rules (`position` comparisons for assigning/moderating).
-- [ ] Write the database migration script for existing workspaces (legacy role column to `guild_roles` tables).
+- [x] Migrate ` filament_core` static `Role` logic to dynamic `PermissionSet` evaluation via `compute_base_permissions`.
+- [x] Implement the Discord-like 5-step Channel Overrides Priority Model in `apply_channel_overwrite`.
+- [x] Finalize role hierarchy rules (`position` comparisons for assigning/moderating).
+- [x] Write the database migration script for existing workspaces (legacy role column to `guild_roles` tables).
 - **Notes**: 
-  - *(Add implementation notes here)*
+  - *Completed Phase 1. Added `compute_base_permissions` and `apply_channel_overrides` implementing the 5-step Discord priority logic. Updated `can_assign_role` and `can_moderate_member` to evaluate position rankings dynamically. Set up legacy schema data backfill loop to automatically populate standard `Owner`, `Moderator`, and `@everyone` roles as well as mapping current `guild_members.role` mapping in `guild_role_members`.*
 
 ### Phase 2: Backend Integration & API
 - [ ] Create central context/service utilities (`check_workspace_permission`, `check_channel_permission`).

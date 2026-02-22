@@ -9,7 +9,7 @@ use axum::{
     Json,
 };
 use filament_core::{
-    can_assign_role, can_moderate_member, has_permission, ChannelKind, ChannelName,
+    can_assign_role_legacy, can_moderate_member_legacy, has_permission_legacy, ChannelKind, ChannelName,
     ChannelPermissionOverwrite, GuildName, Permission, Role, UserId,
 };
 use sqlx::Row;
@@ -2844,7 +2844,7 @@ pub(crate) async fn update_member_role(
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
     let target_role = member_role_in_guild(&state, target_user_id, &path.guild_id).await?;
 
-    if !can_assign_role(actor_role, target_role, payload.role) {
+    if !can_assign_role_legacy(actor_role, target_role, payload.role) {
         return Err(AuthFailure::Forbidden);
     }
 
@@ -3060,7 +3060,7 @@ pub(crate) async fn set_channel_role_override(
     )
     .await?;
     let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
-    if !has_permission(actor_role, Permission::ManageChannelOverrides) {
+    if !has_permission_legacy(actor_role, Permission::ManageChannelOverrides) {
         return Err(AuthFailure::Forbidden);
     }
 
@@ -3144,12 +3144,12 @@ pub(crate) async fn kick_member(
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
     let auth = authenticate(&state, &headers).await?;
     let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
-    if !has_permission(actor_role, Permission::BanMember) {
+    if !has_permission_legacy(actor_role, Permission::BanMember) {
         return Err(AuthFailure::Forbidden);
     }
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
     let target_role = member_role_in_guild(&state, target_user_id, &path.guild_id).await?;
-    if !can_moderate_member(actor_role, target_role) {
+    if !can_moderate_member_legacy(actor_role, target_role) {
         return Err(AuthFailure::Forbidden);
     }
 
@@ -3237,12 +3237,12 @@ pub(crate) async fn ban_member(
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
     let auth = authenticate(&state, &headers).await?;
     let actor_role = user_role_in_guild(&state, auth.user_id, &path.guild_id).await?;
-    if !has_permission(actor_role, Permission::BanMember) {
+    if !has_permission_legacy(actor_role, Permission::BanMember) {
         return Err(AuthFailure::Forbidden);
     }
     let target_user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
     if let Ok(target_role) = member_role_in_guild(&state, target_user_id, &path.guild_id).await {
-        if !can_moderate_member(actor_role, target_role) {
+        if !can_moderate_member_legacy(actor_role, target_role) {
             return Err(AuthFailure::Forbidden);
         }
     }

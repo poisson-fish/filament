@@ -293,12 +293,12 @@ pub fn role_rank(role: Role) -> u8 {
 }
 
 #[must_use]
-pub fn can_assign_role(actor: Role, current_target: Role, new_target: Role) -> bool {
+pub fn can_assign_role_legacy(actor: Role, current_target: Role, new_target: Role) -> bool {
     if matches!(current_target, Role::Owner) || matches!(new_target, Role::Owner) {
         return false;
     }
-    if !has_permission(actor, Permission::ManageRoles)
-        && !has_permission(actor, Permission::ManageMemberRoles)
+    if !has_permission_legacy(actor, Permission::ManageRoles)
+        && !has_permission_legacy(actor, Permission::ManageMemberRoles)
     {
         return false;
     }
@@ -306,15 +306,15 @@ pub fn can_assign_role(actor: Role, current_target: Role, new_target: Role) -> b
 }
 
 #[must_use]
-pub fn can_moderate_member(actor: Role, target: Role) -> bool {
-    if !has_permission(actor, Permission::BanMember) {
+pub fn can_moderate_member_legacy(actor: Role, target: Role) -> bool {
+    if !has_permission_legacy(actor, Permission::BanMember) {
         return false;
     }
     !matches!(target, Role::Owner) && role_rank(actor) > role_rank(target)
 }
 
 #[must_use]
-pub fn base_permissions(role: Role) -> PermissionSet {
+pub fn base_permissions_legacy(role: Role) -> PermissionSet {
     let mut set = PermissionSet::empty();
     match role {
         Role::Owner => {
@@ -351,7 +351,7 @@ pub fn base_permissions(role: Role) -> PermissionSet {
 }
 
 #[must_use]
-pub fn apply_channel_overwrite(
+pub fn apply_channel_overwrite_legacy(
     base: PermissionSet,
     overwrite: Option<ChannelPermissionOverwrite>,
 ) -> PermissionSet {
@@ -362,6 +362,87 @@ pub fn apply_channel_overwrite(
     bits |= overwrite.allow.bits();
     bits &= !overwrite.deny.bits();
     PermissionSet::from_bits(bits)
+}
+
+#[must_use]
+pub fn compute_base_permissions(role_permissions: &[PermissionSet]) -> PermissionSet {
+    let mut bits = 0;
+    for p in role_permissions {
+        bits |= p.bits();
+    }
+    PermissionSet::from_bits(bits)
+}
+
+#[must_use]
+pub fn apply_channel_overrides(
+    is_owner: bool,
+    base_permissions: PermissionSet,
+    everyone_override: Option<&ChannelPermissionOverwrite>,
+    role_overrides: &[ChannelPermissionOverwrite],
+    member_override: Option<&ChannelPermissionOverwrite>,
+) -> PermissionSet {
+    if is_owner {
+        return PermissionSet::from_bits(u64::MAX);
+    }
+
+    let mut current = base_permissions.bits();
+
+    if let Some(over) = everyone_override {
+        current &= !over.deny.bits();
+        current |= over.allow.bits();
+    }
+
+    let mut role_deny = 0;
+    let mut role_allow = 0;
+    for r_over in role_overrides {
+        role_deny |= r_over.deny.bits();
+        role_allow |= r_over.allow.bits();
+    }
+    current &= !role_deny;
+    current |= role_allow;
+
+    if let Some(over) = member_override {
+        current &= !over.deny.bits();
+        current |= over.allow.bits();
+    }
+
+    PermissionSet::from_bits(current)
+}
+
+#[must_use]
+pub fn can_assign_role(
+    actor_has_manage_roles_permission: bool,
+    actor_highest_position: i32,
+    actor_is_owner: bool,
+    target_role_position: i32,
+) -> bool {
+    if actor_is_owner {
+        return true;
+    }
+    if !actor_has_manage_roles_permission {
+        return false;
+    }
+    actor_highest_position > target_role_position
+}
+
+#[must_use]
+pub fn can_moderate_member(
+    actor_has_ban_permission: bool,
+    actor_highest_position: i32,
+    actor_is_owner: bool,
+    target_highest_position: i32,
+    target_is_owner: bool,
+) -> bool {
+    if target_is_owner {
+        return false;
+    }
+    if actor_is_owner {
+        return true;
+    }
+    if !actor_has_ban_permission {
+        return false;
+    }
+    actor_highest_position > target_highest_position
 }
 
 fn permission_mask(permission: Permission) -> u64 {
@@ -382,8 +463,8 @@ fn permission_mask(permission: Permission) -> u64 {
 }
 
 #[must_use]
-pub fn has_permission(role: Role, permission: Permission) -> bool {
-    base_permissions(role).contains(permission)
+pub fn has_permission_legacy(role: Role, permission: Permission) -> bool {
+    base_permissions_legacy(role).contains(permission)
 }
 
 #[must_use]
@@ -512,8 +593,8 @@ fn validate_profile_about(value: &str) -> Result<(), DomainError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_channel_overwrite, base_permissions, can_assign_role, can_moderate_member,
-        has_permission, project_name, role_rank, tokenize_markdown, ChannelKind, ChannelName,
+        apply_channel_overwrite_legacy, base_permissions_legacy, can_assign_role_legacy, can_moderate_member_legacy,
+        has_permission_legacy, project_name, role_rank, tokenize_markdown, ChannelKind, ChannelName,
         ChannelPermissionOverwrite, DomainError, GuildName, LiveKitIdentity, LiveKitRoomName,
         MarkdownToken, Permission, PermissionSet, ProfileAbout, Role, UserId, Username,
     };
@@ -585,67 +666,67 @@ mod tests {
 
     #[test]
     fn permission_checks_match_role_expectations() {
-        assert!(has_permission(Role::Owner, Permission::BanMember));
-        assert!(has_permission(Role::Owner, Permission::ManageRoles));
-        assert!(has_permission(Role::Owner, Permission::ManageMemberRoles));
-        assert!(has_permission(
+        assert!(has_permission_legacy(Role::Owner, Permission::BanMember));
+        assert!(has_permission_legacy(Role::Owner, Permission::ManageRoles));
+        assert!(has_permission_legacy(Role::Owner, Permission::ManageMemberRoles));
+        assert!(has_permission_legacy(
             Role::Owner,
             Permission::ManageWorkspaceRoles
         ));
-        assert!(has_permission(Role::Owner, Permission::ViewAuditLog));
-        assert!(has_permission(Role::Owner, Permission::ManageIpBans));
-        assert!(has_permission(Role::Owner, Permission::PublishVideo));
-        assert!(has_permission(Role::Owner, Permission::PublishScreenShare));
-        assert!(has_permission(Role::Owner, Permission::SubscribeStreams));
-        assert!(has_permission(
+        assert!(has_permission_legacy(Role::Owner, Permission::ViewAuditLog));
+        assert!(has_permission_legacy(Role::Owner, Permission::ManageIpBans));
+        assert!(has_permission_legacy(Role::Owner, Permission::PublishVideo));
+        assert!(has_permission_legacy(Role::Owner, Permission::PublishScreenShare));
+        assert!(has_permission_legacy(Role::Owner, Permission::SubscribeStreams));
+        assert!(has_permission_legacy(
             Role::Moderator,
             Permission::ManageMemberRoles
         ));
-        assert!(has_permission(Role::Moderator, Permission::DeleteMessage));
-        assert!(has_permission(Role::Moderator, Permission::ViewAuditLog));
-        assert!(has_permission(Role::Moderator, Permission::ManageIpBans));
-        assert!(has_permission(Role::Moderator, Permission::PublishVideo));
-        assert!(has_permission(
+        assert!(has_permission_legacy(Role::Moderator, Permission::DeleteMessage));
+        assert!(has_permission_legacy(Role::Moderator, Permission::ViewAuditLog));
+        assert!(has_permission_legacy(Role::Moderator, Permission::ManageIpBans));
+        assert!(has_permission_legacy(Role::Moderator, Permission::PublishVideo));
+        assert!(has_permission_legacy(
             Role::Moderator,
             Permission::PublishScreenShare
         ));
-        assert!(has_permission(
+        assert!(has_permission_legacy(
             Role::Moderator,
             Permission::SubscribeStreams
         ));
-        assert!(!has_permission(Role::Moderator, Permission::ManageRoles));
-        assert!(!has_permission(Role::Member, Permission::DeleteMessage));
-        assert!(!has_permission(Role::Member, Permission::PublishVideo));
-        assert!(!has_permission(
+        assert!(!has_permission_legacy(Role::Moderator, Permission::ManageRoles));
+        assert!(!has_permission_legacy(Role::Member, Permission::DeleteMessage));
+        assert!(!has_permission_legacy(Role::Member, Permission::PublishVideo));
+        assert!(!has_permission_legacy(
             Role::Member,
             Permission::PublishScreenShare
         ));
-        assert!(has_permission(Role::Member, Permission::CreateMessage));
-        assert!(has_permission(Role::Member, Permission::SubscribeStreams));
+        assert!(has_permission_legacy(Role::Member, Permission::CreateMessage));
+        assert!(has_permission_legacy(Role::Member, Permission::SubscribeStreams));
     }
 
     #[test]
     fn role_hierarchy_and_assignment_rules_are_enforced() {
         assert!(role_rank(Role::Owner) > role_rank(Role::Moderator));
         assert!(role_rank(Role::Moderator) > role_rank(Role::Member));
-        assert!(can_assign_role(Role::Owner, Role::Member, Role::Moderator));
-        assert!(can_assign_role(Role::Owner, Role::Moderator, Role::Member));
-        assert!(!can_assign_role(
+        assert!(can_assign_role_legacy(Role::Owner, Role::Member, Role::Moderator));
+        assert!(can_assign_role_legacy(Role::Owner, Role::Moderator, Role::Member));
+        assert!(!can_assign_role_legacy(
             Role::Moderator,
             Role::Member,
             Role::Moderator
         ));
-        assert!(!can_assign_role(Role::Owner, Role::Owner, Role::Member));
-        assert!(!can_assign_role(Role::Owner, Role::Member, Role::Owner));
-        assert!(can_moderate_member(Role::Owner, Role::Moderator));
-        assert!(can_moderate_member(Role::Moderator, Role::Member));
-        assert!(!can_moderate_member(Role::Moderator, Role::Moderator));
-        assert!(!can_moderate_member(Role::Moderator, Role::Owner));
+        assert!(!can_assign_role_legacy(Role::Owner, Role::Owner, Role::Member));
+        assert!(!can_assign_role_legacy(Role::Owner, Role::Member, Role::Owner));
+        assert!(can_moderate_member_legacy(Role::Owner, Role::Moderator));
+        assert!(can_moderate_member_legacy(Role::Moderator, Role::Member));
+        assert!(!can_moderate_member_legacy(Role::Moderator, Role::Moderator));
+        assert!(!can_moderate_member_legacy(Role::Moderator, Role::Owner));
     }
 
     #[test]
     fn channel_overrides_apply_allow_and_deny_masks() {
-        let base = base_permissions(Role::Member);
+        let base = base_permissions_legacy(Role::Member);
         assert!(base.contains(Permission::CreateMessage));
         assert!(!base.contains(Permission::DeleteMessage));
 
@@ -653,7 +734,7 @@ mod tests {
             allow: PermissionSet::from_bits(1 << 4),
             deny: PermissionSet::from_bits(1 << 8),
         };
-        let effective = apply_channel_overwrite(base, Some(overwrite));
+        let effective = apply_channel_overwrite_legacy(base, Some(overwrite));
         assert!(effective.contains(Permission::DeleteMessage));
         assert!(!effective.contains(Permission::CreateMessage));
 
@@ -661,7 +742,7 @@ mod tests {
             allow: PermissionSet::from_bits(1 << 9),
             deny: PermissionSet::from_bits(1 << 11),
         };
-        let effective = apply_channel_overwrite(base, Some(overwrite));
+        let effective = apply_channel_overwrite_legacy(base, Some(overwrite));
         assert!(effective.contains(Permission::PublishVideo));
         assert!(!effective.contains(Permission::SubscribeStreams));
     }

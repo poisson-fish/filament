@@ -73,6 +73,61 @@ pub(crate) async fn apply_permission_legacy_schema(
         .execute(&mut **tx)
         .await?;
 
+    let guilds: Vec<(String,)> = sqlx::query_as("SELECT guild_id FROM guilds")
+        .fetch_all(&mut **tx)
+        .await?;
+
+    for (guild_id,) in guilds {
+        let owner_role_id = ulid::Ulid::new().to_string();
+        let mod_role_id = ulid::Ulid::new().to_string();
+        let everyone_role_id = ulid::Ulid::new().to_string();
+        let now = 0_i64;
+
+        // Owner mask: 4095
+        sqlx::query(
+            "INSERT INTO guild_roles (role_id, guild_id, name, position, permissions_allow_mask, is_system, system_key, created_at_unix)
+             VALUES ($1, $2, 'Owner', 999, 4095, true, 'owner', $3)"
+        )
+        .bind(&owner_role_id).bind(&guild_id).bind(now)
+        .execute(&mut **tx).await?;
+
+        // Moderator mask: 4082
+        sqlx::query(
+            "INSERT INTO guild_roles (role_id, guild_id, name, position, permissions_allow_mask, is_system, system_key, created_at_unix)
+             VALUES ($1, $2, 'Moderator', 100, 4082, true, 'moderator', $3)"
+        )
+        .bind(&mod_role_id).bind(&guild_id).bind(now)
+        .execute(&mut **tx).await?;
+
+        // Everyone mask: 2304
+        sqlx::query(
+            "INSERT INTO guild_roles (role_id, guild_id, name, position, permissions_allow_mask, is_system, system_key, created_at_unix)
+             VALUES ($1, $2, '@everyone', 0, 2304, true, 'everyone', $3)"
+        )
+        .bind(&everyone_role_id).bind(&guild_id).bind(now)
+        .execute(&mut **tx).await?;
+
+        // role=2 translates to Owner
+        sqlx::query(
+            "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
+             SELECT gm.guild_id, $1, gm.user_id, $2
+             FROM guild_members gm
+             WHERE gm.guild_id = $3 AND gm.role = 2"
+        )
+        .bind(&owner_role_id).bind(now).bind(&guild_id)
+        .execute(&mut **tx).await?;
+
+        // role=1 translates to Moderator
+        sqlx::query(
+            "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
+             SELECT gm.guild_id, $1, gm.user_id, $2
+             FROM guild_members gm
+             WHERE gm.guild_id = $3 AND gm.role = 1"
+        )
+        .bind(&mod_role_id).bind(now).bind(&guild_id)
+        .execute(&mut **tx).await?;
+    }
+
     Ok(())
 }
 
