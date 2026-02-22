@@ -6,6 +6,7 @@ import {
   userIdFromInput,
   type ChannelId,
   type GuildId,
+  type PermissionName,
   type RoleName,
   type UserId,
 } from "../../../domain/chat";
@@ -34,6 +35,14 @@ export interface ModerationControllerOptions {
   setModerating: Setter<boolean>;
   setModerationError: Setter<string>;
   setModerationStatus: Setter<string>;
+  setLegacyChannelOverride?: (
+    guildId: GuildId,
+    channelId: ChannelId,
+    role: RoleName,
+    allow: ReadonlyArray<PermissionName>,
+    deny: ReadonlyArray<PermissionName>,
+    updatedAtUnix: number | null,
+  ) => void;
 }
 
 export interface ModerationControllerDependencies {
@@ -161,6 +170,14 @@ export function createModerationController(
           allow,
           deny,
         },
+      );
+      options.setLegacyChannelOverride?.(
+        guildId,
+        channelId,
+        roleFromInput(options.overrideRoleInput()),
+        allow,
+        deny,
+        null,
       );
       options.setModerationStatus("Channel role override updated.");
     } catch (error) {

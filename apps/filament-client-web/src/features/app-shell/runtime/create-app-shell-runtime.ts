@@ -370,6 +370,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setModerating: diagnosticsState.setModerating,
     setModerationError: diagnosticsState.setModerationError,
     setModerationStatus: diagnosticsState.setModerationStatus,
+    setLegacyChannelOverride: workspaceChannelState.setLegacyChannelOverride,
   });
 
   const roleManagementActions = createRoleManagementController({
@@ -377,6 +378,17 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     activeGuildId: workspaceChannelState.activeGuildId,
     activeChannelId: workspaceChannelState.activeChannelId,
     setChannelPermissions: workspaceChannelState.setChannelPermissions,
+    roles: () => {
+      const guildId = workspaceChannelState.activeGuildId();
+      if (!guildId) {
+        return [];
+      }
+      return workspaceChannelState.workspaceRolesByGuildId()[guildId] ?? [];
+    },
+    setWorkspaceRolesForGuild: workspaceChannelState.setWorkspaceRolesForGuild,
+    assignWorkspaceRoleToUser: workspaceChannelState.assignWorkspaceRoleToUser,
+    unassignWorkspaceRoleFromUser:
+      workspaceChannelState.unassignWorkspaceRoleFromUser,
   });
 
   const { refreshWorkspacePermissionStateFromGateway } =

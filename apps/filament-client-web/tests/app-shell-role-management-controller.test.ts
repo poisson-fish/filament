@@ -76,6 +76,9 @@ describe("app shell role management controller", () => {
           permissionFromInput("manage_workspace_roles"),
         ],
       }));
+      const setWorkspaceRolesForGuildMock = vi.fn();
+      const assignWorkspaceRoleToUserMock = vi.fn();
+      const unassignWorkspaceRoleFromUserMock = vi.fn();
 
       const controller = createRoleManagementController(
         {
@@ -83,6 +86,9 @@ describe("app shell role management controller", () => {
           activeGuildId,
           activeChannelId,
           setChannelPermissions,
+          setWorkspaceRolesForGuild: setWorkspaceRolesForGuildMock,
+          assignWorkspaceRoleToUser: assignWorkspaceRoleToUserMock,
+          unassignWorkspaceRoleFromUser: unassignWorkspaceRoleFromUserMock,
         },
         {
           fetchGuildRoles: fetchGuildRolesMock,
@@ -138,6 +144,11 @@ describe("app shell role management controller", () => {
         ROLE_ID,
         "01ARZ3NDEKTSV4RRFFQ69G5FAY",
       );
+      expect(assignWorkspaceRoleToUserMock).toHaveBeenCalledWith(
+        GUILD_ID,
+        "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+        ROLE_ID,
+      );
 
       await controller.unassignRoleFromMember("01ARZ3NDEKTSV4RRFFQ69G5FAY", ROLE_ID);
       expect(unassignGuildRoleMock).toHaveBeenCalledWith(
@@ -146,9 +157,18 @@ describe("app shell role management controller", () => {
         ROLE_ID,
         "01ARZ3NDEKTSV4RRFFQ69G5FAY",
       );
+      expect(unassignWorkspaceRoleFromUserMock).toHaveBeenCalledWith(
+        GUILD_ID,
+        "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+        ROLE_ID,
+      );
 
       await controller.deleteRole(ROLE_ID);
       expect(deleteGuildRoleMock).toHaveBeenCalledWith(SESSION, GUILD_ID, ROLE_ID);
+      expect(setWorkspaceRolesForGuildMock).toHaveBeenCalledWith(
+        GUILD_ID,
+        controller.roles(),
+      );
 
       expect(fetchGuildRolesMock).toHaveBeenCalledTimes(7);
       expect(controller.roleManagementStatus()).toBe("Role deleted.");

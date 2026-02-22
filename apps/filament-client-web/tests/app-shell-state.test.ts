@@ -14,6 +14,13 @@ import {
 } from "../src/features/app-shell/state/voice-state";
 import { isMessageHistoryLoading } from "../src/features/app-shell/state/message-state";
 import { createWorkspaceState } from "../src/features/app-shell/state/workspace-state";
+import {
+  channelIdFromInput,
+  guildIdFromInput,
+  userIdFromInput,
+  workspaceRoleIdFromInput,
+  workspaceRoleNameFromInput,
+} from "../src/domain/chat";
 import { VOICE_DEVICE_SETTINGS_STORAGE_KEY } from "../src/lib/voice-device-settings";
 
 beforeEach(() => {
@@ -36,6 +43,9 @@ describe("app shell state factories", () => {
     expect(workspaceState.workspaceChannel.createGuildVisibility()).toBe("private");
     expect(workspaceState.friendships.friendRequests()).toEqual({ incoming: [], outgoing: [] });
     expect(workspaceState.workspaceChannel.channelPermissions()).toBeNull();
+    expect(workspaceState.workspaceChannel.workspaceRolesByGuildId()).toEqual({});
+    expect(workspaceState.workspaceChannel.workspaceUserRolesByGuildId()).toEqual({});
+    expect(workspaceState.workspaceChannel.workspaceChannelOverridesByGuildId()).toEqual({});
     expect(workspaceState.workspaceChannel.createChannelName()).toBe("incident-room");
     expect(workspaceState.workspaceChannel.workspaceSettingsName()).toBe("");
     expect(workspaceState.workspaceChannel.workspaceSettingsVisibility()).toBe("private");
@@ -171,6 +181,89 @@ describe("app shell state factories", () => {
     expect(workspaceState.friendships.friendStatus()).toBe("updated");
     expect(workspaceState.discovery.searchQuery()).toBe("incident");
     expect(overlayState.isChannelRailCollapsed()).toBe(true);
+  });
+
+  it("tracks ordered roles, role assignments, and channel overrides per workspace", () => {
+    const workspaceState = createWorkspaceState();
+    const guildId = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    const userId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAY");
+    const responderRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX");
+    const everyoneRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
+    const channelId = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAW");
+
+    workspaceState.workspaceChannel.setWorkspaceRolesForGuild(guildId, [
+      {
+        roleId: everyoneRoleId,
+        name: workspaceRoleNameFromInput("Everyone"),
+        position: 1,
+        isSystem: true,
+        permissions: ["create_message"],
+      },
+      {
+        roleId: responderRoleId,
+        name: workspaceRoleNameFromInput("Responder"),
+        position: 50,
+        isSystem: false,
+        permissions: ["create_message", "delete_message"],
+      },
+    ]);
+
+    workspaceState.workspaceChannel.assignWorkspaceRoleToUser(
+      guildId,
+      userId,
+      responderRoleId,
+    );
+    workspaceState.workspaceChannel.assignWorkspaceRoleToUser(
+      guildId,
+      userId,
+      responderRoleId,
+    );
+    workspaceState.workspaceChannel.unassignWorkspaceRoleFromUser(
+      guildId,
+      userId,
+      responderRoleId,
+    );
+    workspaceState.workspaceChannel.setLegacyChannelOverride(
+      guildId,
+      channelId,
+      "moderator",
+      ["delete_message", "delete_message"],
+      ["delete_message", "create_message"],
+      null,
+    );
+
+    expect(workspaceState.workspaceChannel.workspaceRolesByGuildId()[guildId]).toEqual([
+      {
+        roleId: responderRoleId,
+        name: workspaceRoleNameFromInput("Responder"),
+        position: 50,
+        isSystem: false,
+        permissions: ["create_message", "delete_message"],
+      },
+      {
+        roleId: everyoneRoleId,
+        name: workspaceRoleNameFromInput("Everyone"),
+        position: 1,
+        isSystem: true,
+        permissions: ["create_message"],
+      },
+    ]);
+    expect(
+      workspaceState.workspaceChannel.workspaceUserRolesByGuildId()[guildId]?.[userId],
+    ).toBeUndefined();
+    expect(
+      workspaceState.workspaceChannel.workspaceChannelOverridesByGuildId()[guildId]?.[
+        channelId
+      ],
+    ).toEqual([
+      {
+        targetKind: "legacy_role",
+        role: "moderator",
+        allow: ["delete_message"],
+        deny: ["create_message"],
+        updatedAtUnix: null,
+      },
+    ]);
   });
 
   it("treats any running history operation as loading", () => {

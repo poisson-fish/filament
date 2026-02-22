@@ -174,11 +174,12 @@ This section is used to track the progress of the implementation across multiple
   - *Added `reevaluate_livekit_permissions_for_guild` to `livekit_sync.rs` which is now called dynamically upon role updates, role deletions, channel permission overrides, and role assignment modifications to actively evaluate user access and kick them from LiveKit voice channels if they lose `SubscribeStreams`.*
 
 ### Phase 3: Frontend Data & State Handling
-- [ ] Update Pinia/Solid state models to track `roles` (ordered array), `userRoles`, and `channelOverrides`.
+- [x] Update Pinia/Solid state models to track `roles` (ordered array), `userRoles`, and `channelOverrides`.
 - [ ] Implement Gateway Event listeners to seamlessly patch the local state.
 - [ ] Port the exact `apply_channel_overwrite` and `compute_base_permissions` logic to `filament-client-web` to selectively hide/show UI elements (buttons, inputs) based on effective permissions.
 - **Notes**: 
-  - *(Add implementation notes here)*
+  - *Added a dedicated permissions slice to `workspace-state` (`workspaceRolesByGuildId`, `workspaceUserRolesByGuildId`, `workspaceChannelOverridesByGuildId`) with bounded update helpers for role ordering, role assignment deduplication, and legacy channel override normalization (allow/deny overlap removal).*
+  - *Wired role management and moderation controllers into the shared permissions state so REST-driven role fetches and role/override mutations update centralized app state without relying on stringly typed ad-hoc state updates.*
 
 ### Phase 4: Frontend UI - Role & Member Management
 - [ ] Build the **Workspace Settings: Roles Panel** (Sidebar list, drag-and-drop hierarchy).

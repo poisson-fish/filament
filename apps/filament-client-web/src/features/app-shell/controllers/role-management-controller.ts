@@ -29,12 +29,29 @@ import {
   updateGuildRole,
 } from "../../../lib/api";
 import { mapError } from "../helpers";
+import { sortWorkspaceRolesByPosition } from "../state/workspace-state";
 
 export interface RoleManagementControllerOptions {
   session: Accessor<AuthSession | null>;
   activeGuildId: Accessor<GuildId | null>;
   activeChannelId: Accessor<ChannelId | null>;
   setChannelPermissions: Setter<ChannelPermissionSnapshot | null>;
+  roles?: Accessor<GuildRoleRecord[]>;
+  setRoles?: Setter<GuildRoleRecord[]>;
+  setWorkspaceRolesForGuild?: (
+    guildId: GuildId,
+    roles: ReadonlyArray<GuildRoleRecord>,
+  ) => void;
+  assignWorkspaceRoleToUser?: (
+    guildId: GuildId,
+    userId: UserId,
+    roleId: WorkspaceRoleId,
+  ) => void;
+  unassignWorkspaceRoleFromUser?: (
+    guildId: GuildId,
+    userId: UserId,
+    roleId: WorkspaceRoleId,
+  ) => void;
 }
 
 export interface RoleManagementControllerDependencies {
@@ -111,7 +128,9 @@ export function createRoleManagementController(
     ...dependencies,
   };
 
-  const [roles, setRoles] = createSignal<GuildRoleRecord[]>([]);
+  const [localRoles, setLocalRoles] = createSignal<GuildRoleRecord[]>([]);
+  const roles = options.roles ?? localRoles;
+  const setRoles = options.setRoles ?? setLocalRoles;
   const [isLoadingRoles, setLoadingRoles] = createSignal(false);
   const [isMutatingRoles, setMutatingRoles] = createSignal(false);
   const [roleManagementStatus, setRoleManagementStatus] = createSignal("");
@@ -158,12 +177,15 @@ export function createRoleManagementController(
       if (requestVersion !== loadVersion) {
         return;
       }
-      setRoles(response.roles);
+      const orderedRoles = sortWorkspaceRolesByPosition(response.roles);
+      setRoles(orderedRoles);
+      options.setWorkspaceRolesForGuild?.(guildId, orderedRoles);
     } catch (error) {
       if (requestVersion !== loadVersion) {
         return;
       }
       setRoles([]);
+      options.setWorkspaceRolesForGuild?.(guildId, []);
       setRoleManagementError(
         deps.mapError(error, "Unable to load workspace roles."),
       );
@@ -302,6 +324,7 @@ export function createRoleManagementController(
 
     await runMutation(async () => {
       await deps.assignGuildRole(session, guildId, roleId, targetUserId);
+      options.assignWorkspaceRoleToUser?.(guildId, targetUserId, roleId);
     }, "Role assigned to member.");
   };
 
@@ -324,6 +347,7 @@ export function createRoleManagementController(
 
     await runMutation(async () => {
       await deps.unassignGuildRole(session, guildId, roleId, targetUserId);
+      options.unassignWorkspaceRoleFromUser?.(guildId, targetUserId, roleId);
     }, "Role removed from member.");
   };
 

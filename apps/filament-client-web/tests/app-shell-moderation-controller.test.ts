@@ -45,6 +45,7 @@ describe("app shell moderation controller", () => {
     const kickGuildMemberMock = vi.fn(async () => ({ accepted: true as const }));
     const banGuildMemberMock = vi.fn(async () => ({ accepted: true as const }));
     const setChannelRoleOverrideMock = vi.fn(async () => ({ accepted: true as const }));
+    const setLegacyChannelOverrideMock = vi.fn();
 
     const controller = createModerationController(
       {
@@ -60,6 +61,7 @@ describe("app shell moderation controller", () => {
         setModerating,
         setModerationError,
         setModerationStatus,
+        setLegacyChannelOverride: setLegacyChannelOverrideMock,
       },
       {
         fetchMe: fetchMeMock,
@@ -105,6 +107,14 @@ describe("app shell moderation controller", () => {
     expect(moderationStatus()).toBe("Channel role override updated.");
     expect(moderationError()).toBe("");
     expect(isModerating()).toBe(false);
+    expect(setLegacyChannelOverrideMock).toHaveBeenCalledWith(
+      GUILD_ID,
+      CHANNEL_ID,
+      "member",
+      ["create_message", "manage_roles"],
+      ["ban_member"],
+      null,
+    );
 
     const actorAction = vi.fn(async () => undefined);
     await controller.runModerationAction(actorAction);
