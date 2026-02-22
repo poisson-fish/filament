@@ -156,6 +156,11 @@ describe("role management panel", () => {
     expect(createMatrix).toHaveClass("grid");
     const firstToggle = within(createMatrix).getByLabelText(/Create Messages/i).closest("label");
     expect(firstToggle?.className).toContain("grid-cols-[auto_1fr]");
+    expect(
+      within(createMatrix).getByText(
+        "Create, update, delete, and reorder workspace roles.",
+      ),
+    ).toBeInTheDocument();
 
     expect(document.querySelector(".role-hierarchy-grid")).toBeNull();
     expect(document.querySelector(".role-hierarchy-item")).toBeNull();

@@ -2,6 +2,7 @@ import { For, Show, createMemo } from "solid-js";
 import type { PermissionName, RoleName } from "../../../../domain/chat";
 import { KNOWN_PERMISSIONS } from "../../permissions/effective-permissions";
 import { parsePermissionCsv } from "../../helpers";
+import { PERMISSION_MATRIX } from "../../permissions/permission-metadata";
 
 interface ChannelOverrideEntity {
   role: RoleName;
@@ -38,76 +39,7 @@ export interface ModerationPanelProps {
   onOpenRoleManagementPanel: () => void;
 }
 
-interface PermissionOverrideEntry {
-  permission: PermissionName;
-  label: string;
-  summary: string;
-}
-
 type TriStateOverride = "inherit" | "allow" | "deny";
-
-const CHANNEL_OVERRIDE_PERMISSION_MATRIX: readonly PermissionOverrideEntry[] = [
-  {
-    permission: "create_message",
-    label: "Create Messages",
-    summary: "Send messages in the selected channel.",
-  },
-  {
-    permission: "delete_message",
-    label: "Delete Messages",
-    summary: "Delete messages authored by other members.",
-  },
-  {
-    permission: "manage_channel_overrides",
-    label: "Manage Overrides",
-    summary: "Edit channel override rules for roles and members.",
-  },
-  {
-    permission: "ban_member",
-    label: "Ban Members",
-    summary: "Kick or ban members from the workspace.",
-  },
-  {
-    permission: "manage_member_roles",
-    label: "Manage Member Roles",
-    summary: "Assign and remove workspace roles for members.",
-  },
-  {
-    permission: "manage_workspace_roles",
-    label: "Manage Workspace Roles",
-    summary: "Create, update, delete, and reorder workspace roles.",
-  },
-  {
-    permission: "view_audit_log",
-    label: "View Audit Log",
-    summary: "View workspace moderation audit history.",
-  },
-  {
-    permission: "manage_ip_bans",
-    label: "Manage IP Bans",
-    summary: "Apply and remove guild IP ban entries.",
-  },
-  {
-    permission: "publish_video",
-    label: "Publish Camera",
-    summary: "Publish camera tracks in voice channels.",
-  },
-  {
-    permission: "publish_screen_share",
-    label: "Publish Screen",
-    summary: "Publish screen-share tracks in voice channels.",
-  },
-  {
-    permission: "subscribe_streams",
-    label: "Subscribe Streams",
-    summary: "Receive remote media streams in voice channels.",
-  },
-  {
-    permission: "manage_roles",
-    label: "Legacy Manage Roles",
-    summary: "Compatibility permission for pre-role-system flows.",
-  },
-];
 
 function parseOverrideDraft(csv: string): PermissionName[] {
   try {
@@ -300,7 +232,7 @@ export function ModerationPanel(props: ModerationPanelProps) {
                 <strong class="text-[0.82rem] uppercase tracking-[0.06em] text-ink-2">
                   Permission overrides
                 </strong>
-                <For each={CHANNEL_OVERRIDE_PERMISSION_MATRIX}>
+                <For each={PERMISSION_MATRIX}>
                   {(entry) => {
                     const isActive = (state: TriStateOverride) =>
                       overrideStateForPermission(entry.permission) === state;
@@ -363,6 +295,10 @@ export function ModerationPanel(props: ModerationPanelProps) {
                               X
                             </button>
                           </div>
+                          <p class="m-0 text-[0.7rem] text-ink-2">
+                            / Inherit keeps workspace defaults. ✓ Allow grants this permission in
+                            this channel. X Deny blocks this permission in this channel.
+                          </p>
                         </div>
                       </article>
                     );

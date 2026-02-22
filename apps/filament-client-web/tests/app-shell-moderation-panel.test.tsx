@@ -85,6 +85,11 @@ describe("app shell moderation panel", () => {
     expect(screen.getByRole("button", { name: "Apply channel override" })).toHaveClass(
       "border-line-soft",
     );
+    expect(
+      screen.getAllByText(
+        "/ Inherit keeps workspace defaults. ✓ Allow grants this permission in this channel. X Deny blocks this permission in this channel.",
+      ).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText("updated")).toHaveClass("text-ok");
     expect(screen.getByText("forbidden")).toHaveClass("text-danger");
 

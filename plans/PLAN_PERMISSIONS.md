@@ -211,8 +211,10 @@ This section is used to track the progress of the implementation across multiple
   - *Implemented channel override effective-permission indicators in the moderation matrix. Runtime now computes effective permissions per legacy override target (`member`/`moderator`/`owner`) via shared `effective-permissions` logic and passes a typed map through panel host/runtime prop builders to `ModerationPanel`. Each permission row displays a deterministic `Effective: Allowed|Denied` status with accessible labels; indicators are derived from the evaluated permission set rather than raw override CSV drafts. Added test coverage for helper evaluation, runtime wiring, prop propagation, and moderation panel rendering.*
 
 ### Phase 6: Polish Phase
-- [ ] Add in-app explanations (subtitle definitions) adjacent to all permission toggles.
+- [x] Add in-app explanations (subtitle definitions) adjacent to all permission toggles.
 - [ ] Implement the "View Server As Role" simulator debug switch.
 - [ ] Thorough end-to-end testing of the priority model matrix to confirm edge-cases match expected access.
 - **Notes**: 
-  - *(Add implementation notes here)*
+  - *Centralized permission toggle metadata into `permission-metadata.ts` and reused it across `RoleManagementPanel` and `ModerationPanel` to keep permission labels/summaries consistent and avoid drift across role editing vs channel overrides.*
+  - *Added explicit tri-state subtitle definitions directly beneath each override control group (`/ Inherit`, `✓ Allow`, `X Deny`) so operators can understand the override semantics inline without relying on external docs.*
+  - *Expanded panel tests to verify explanatory copy renders in both role-management and moderation permission matrices.*
