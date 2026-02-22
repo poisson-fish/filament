@@ -30,6 +30,7 @@ describe("decodeMessageGatewayEvent", () => {
         content: "hello",
         markdownTokens: [{ type: "text", text: "hello" }],
         attachments: [],
+        reactions: [],
         createdAtUnix: 1710000001,
       },
     });

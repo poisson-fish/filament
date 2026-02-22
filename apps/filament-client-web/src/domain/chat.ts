@@ -76,14 +76,14 @@ const IPV6_MAX_VALUE = (1n << 128n) - 1n;
 
 function idFromInput<
   T extends
-    | GuildId
-    | ChannelId
-    | MessageId
-    | UserId
-    | AttachmentId
-    | FriendRequestId
-    | GuildIpBanId
-    | WorkspaceRoleId,
+  | GuildId
+  | ChannelId
+  | MessageId
+  | UserId
+  | AttachmentId
+  | FriendRequestId
+  | GuildIpBanId
+  | WorkspaceRoleId,
 >(
   input: string,
   label: string,
@@ -572,6 +572,7 @@ export interface MessageRecord {
   content: MessageContent;
   markdownTokens: MarkdownToken[];
   attachments: AttachmentRecord[];
+  reactions: ReactionRecord[];
   createdAtUnix: number;
 }
 
@@ -920,11 +921,20 @@ export function messageFromResponse(dto: unknown): MessageRecord {
       : Array.isArray(attachmentsDto)
         ? attachmentsDto.map((entry) => attachmentFromResponse(entry))
         : (() => {
-            throw new DomainValidationError("attachments must be an array.");
-          })();
+          throw new DomainValidationError("attachments must be an array.");
+        })();
   if (attachments.length > 5) {
     throw new DomainValidationError("attachments exceeds per-message cap.");
   }
+  const reactionsDto = data.reactions;
+  const reactions =
+    typeof reactionsDto === "undefined"
+      ? []
+      : Array.isArray(reactionsDto)
+        ? reactionsDto.map((entry) => reactionFromResponse(entry))
+        : (() => {
+          throw new DomainValidationError("reactions must be an array.");
+        })();
   return {
     messageId: messageIdFromInput(requireString(data.message_id, "message_id")),
     guildId: guildIdFromInput(requireString(data.guild_id, "guild_id")),
@@ -933,6 +943,7 @@ export function messageFromResponse(dto: unknown): MessageRecord {
     content: messageContentFromInput(requireString(data.content, "content")),
     markdownTokens: markdownTokensFromResponse(data.markdown_tokens),
     attachments,
+    reactions,
     createdAtUnix: requirePositiveInteger(data.created_at_unix, "created_at_unix"),
   };
 }

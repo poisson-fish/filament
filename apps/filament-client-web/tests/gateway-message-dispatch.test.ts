@@ -46,6 +46,7 @@ describe("dispatchMessageGatewayEvent", () => {
         },
       ],
       attachments: [],
+      reactions: [],
       createdAtUnix: 1710000001,
     });
   });
