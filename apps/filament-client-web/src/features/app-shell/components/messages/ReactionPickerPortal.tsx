@@ -5,6 +5,7 @@ import { Picker } from "emoji-mart";
 import { computePosition, offset, shift, flip, autoUpdate } from "@floating-ui/dom";
 import type { MessageId, ReactionEmoji } from "../../../../domain/chat";
 import { reactionEmojiFromInput } from "../../../../domain/chat";
+import { emojiNativeFromSelection } from "./emoji-utils";
 
 export interface ReactionPickerPortalProps {
   openMessageId: MessageId | null;
@@ -28,12 +29,16 @@ export function ReactionPickerPortal(props: ReactionPickerPortalProps) {
       data,
       set: "twitter",
       theme: "auto",
-      onEmojiSelect: (emoji: any) => {
-        void props.onAddReaction(messageId, reactionEmojiFromInput(emoji.native));
+      onEmojiSelect: (selection: unknown) => {
+        const native = emojiNativeFromSelection(selection);
+        if (!native) {
+          return;
+        }
+        void props.onAddReaction(messageId, reactionEmojiFromInput(native));
       },
-      onClickOutside: (e: any) => {
+      onClickOutside: () => {
         // handle click outside if we want, but controller already does it
-      }
+      },
     });
     floatingRef.appendChild(picker as unknown as HTMLElement);
 

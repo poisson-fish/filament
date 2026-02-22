@@ -2,7 +2,11 @@ import { For, Show, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ChannelRecord } from "../../../../domain/chat";
 import { channelRailLabel, formatBytes } from "../../helpers";
-import { replaceEmojiShortcodes } from "./emoji-utils";
+import {
+  initEmojiMart,
+  replaceEmojiShortcodesWithSelection,
+  renderEmojiMixedText,
+} from "./emoji-utils";
 import { ComposerEmojiPickerPortal } from "./ComposerEmojiPickerPortal";
 
 const ATTACH_ICON_URL = new URL(
@@ -42,6 +46,8 @@ export interface MessageComposerProps {
 }
 
 export function MessageComposer(props: MessageComposerProps) {
+  initEmojiMart();
+
   const isDisabled = () =>
     !props.activeChannel || props.isSendingMessage || !props.canAccessActiveChannel;
   const activeChannelIconUrl = () =>
@@ -53,8 +59,11 @@ export function MessageComposer(props: MessageComposerProps) {
 
   const [isEmojiPickerOpen, setEmojiPickerOpen] = createSignal(false);
   let inputEl: HTMLInputElement | undefined;
+  let ghostEl: HTMLDivElement | undefined;
 
   const handleEmojiAdd = (emojiNative: string) => {
+    setEmojiPickerOpen(false);
+
     if (!inputEl) {
       props.onComposerInput(props.composerValue + emojiNative);
       return;
@@ -105,34 +114,65 @@ export function MessageComposer(props: MessageComposerProps) {
           style={`--icon-url: url("${activeChannelIconUrl()}")`}
           aria-hidden="true"
         />
-        <input
-          ref={(el) => {
-            inputEl = el;
-            props.composerInputRef(el);
-          }}
-          class="w-full min-w-0 border-0 bg-transparent pl-0 pr-[0.64rem] text-ink-0 outline-none placeholder:text-ink-2 disabled:cursor-not-allowed disabled:opacity-68"
-          value={props.composerValue}
-          onInput={(event) => {
-            const rawValue = event.currentTarget.value;
-            const replaced = replaceEmojiShortcodes(rawValue);
-            if (replaced !== rawValue) {
-              const diff = replaced.length - rawValue.length;
-              const start = event.currentTarget.selectionStart;
-              event.currentTarget.value = replaced;
-              if (start !== null) {
-                event.currentTarget.selectionStart = event.currentTarget.selectionEnd = start + diff;
+        <div
+          class="relative grid w-full min-w-0 items-center"
+          style="grid-template-columns: minmax(0,1fr);"
+        >
+          <div
+            ref={ghostEl}
+            class="pointer-events-none col-start-1 row-start-1 flex h-full w-full min-w-0 items-center overflow-hidden whitespace-pre border-0 bg-transparent pl-0 pr-[0.64rem] text-[0.94rem] text-ink-0 disabled:opacity-68"
+            aria-hidden="true"
+          >
+            {props.composerValue ? (
+              renderEmojiMixedText(props.composerValue)
+            ) : (
+              <span class="text-ink-2">
+                {props.activeChannel
+                  ? `Message ${channelRailLabel({ kind: props.activeChannel.kind, name: props.activeChannel.name })}`
+                  : "Select channel"}
+              </span>
+            )}
+          </div>
+          <input
+            ref={(el) => {
+              inputEl = el;
+              props.composerInputRef(el);
+            }}
+            class="col-start-1 row-start-1 w-full min-w-0 border-0 bg-transparent pl-0 pr-[0.64rem] text-[0.94rem] text-transparent caret-ink-0 outline-none placeholder:text-transparent disabled:cursor-not-allowed disabled:opacity-68"
+            value={props.composerValue}
+            onInput={(event) => {
+              const rawValue = event.currentTarget.value;
+              const replacement = replaceEmojiShortcodesWithSelection(
+                rawValue,
+                event.currentTarget.selectionStart,
+                event.currentTarget.selectionEnd,
+              );
+              if (replacement.text !== rawValue) {
+                event.currentTarget.value = replacement.text;
+                if (
+                  replacement.selectionStart !== null &&
+                  replacement.selectionEnd !== null
+                ) {
+                  event.currentTarget.selectionStart = replacement.selectionStart;
+                  event.currentTarget.selectionEnd = replacement.selectionEnd;
+                }
               }
+              props.onComposerInput(replacement.text);
+            }}
+            onScroll={(event) => {
+              if (ghostEl) {
+                ghostEl.scrollLeft = event.currentTarget.scrollLeft;
+              }
+            }}
+            maxlength="2000"
+            placeholder={
+              props.activeChannel
+                ? `Message ${channelRailLabel({ kind: props.activeChannel.kind, name: props.activeChannel.name })}`
+                : "Select channel"
             }
-            props.onComposerInput(replaced);
-          }}
-          maxlength="2000"
-          placeholder={
-            props.activeChannel
-              ? `Message ${channelRailLabel({ kind: props.activeChannel.kind, name: props.activeChannel.name })}`
-              : "Select channel"
-          }
-          disabled={isDisabled()}
-        />
+            disabled={isDisabled()}
+          />
+        </div>
         <div class="inline-flex items-center gap-[0.1rem] border-l border-line-soft px-[0.34rem]">
           <button
             type="button"

@@ -106,6 +106,9 @@ describe("app shell message row", () => {
     });
     expect(reactionChip).toHaveClass("reaction-chip");
     expect(reactionChip).toHaveClass("border-line-soft");
+    const reactionEmoji = reactionChip.querySelector("em-emoji");
+    expect(reactionEmoji).not.toBeNull();
+    expect(reactionEmoji).toHaveAttribute("set", "twitter");
 
     const hoverActions = document.querySelector(".message-hover-actions");
     expect(hoverActions).not.toBeNull();

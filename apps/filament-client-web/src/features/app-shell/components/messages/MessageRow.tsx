@@ -16,7 +16,7 @@ import {
   type MessageMediaPreview,
   type ReactionView,
 } from "../../helpers";
-import { initEmojiMart } from "./emoji-utils";
+import { initEmojiMart, renderEmojiMixedText } from "./emoji-utils";
 
 initEmojiMart();
 
@@ -116,7 +116,9 @@ export function MessageRow(props: MessageRowProps) {
           fallback={
             <Show when={tokenizeToDisplayText(props.message.markdownTokens) || props.message.content}>
               <p class="message-tokenized mt-[0.08rem] whitespace-pre-wrap break-words leading-[1.38] text-ink-1">
-                {tokenizeToDisplayText(props.message.markdownTokens) || props.message.content}
+                {renderEmojiMixedText(
+                  tokenizeToDisplayText(props.message.markdownTokens) || props.message.content
+                )}
               </p>
             </Show>
           }

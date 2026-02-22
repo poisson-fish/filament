@@ -2,16 +2,6 @@ import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { vi } from "vitest";
 import { App } from "../src/App";
 
-vi.mock("emoji-mart", () => ({
-  Picker: class MockPicker {
-    constructor() {
-      const div = document.createElement("div");
-      div.setAttribute("data-testid", "mock-emoji-picker");
-      return div;
-    }
-  },
-}));
-
 const SESSION_STORAGE_KEY = "filament.auth.session.v1";
 const WORKSPACE_CACHE_KEY = "filament.workspace.cache.v1";
 

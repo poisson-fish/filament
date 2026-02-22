@@ -87,6 +87,30 @@ describe("app shell message composer", () => {
     expect(screen.getByPlaceholderText("Select channel")).toBeDisabled();
   });
 
+  it("opens and closes the emoji picker from the composer emoji button", async () => {
+    render(() => <MessageComposer {...composerPropsFixture()} />);
+
+    const emojiButton = screen.getByRole("button", { name: "Open emoji picker" });
+    expect(screen.queryByRole("dialog", { name: "Choose emoji" })).toBeNull();
+
+    await fireEvent.click(emojiButton);
+    expect(screen.getByRole("dialog", { name: "Choose emoji" })).toBeInTheDocument();
+
+    await fireEvent.click(emojiButton);
+    expect(screen.queryByRole("dialog", { name: "Choose emoji" })).toBeNull();
+  });
+
+  it("converts :shortcode: input into native emoji before forwarding composer input", async () => {
+    const onComposerInput = vi.fn();
+
+    render(() => <MessageComposer {...composerPropsFixture({ onComposerInput })} />);
+
+    const input = screen.getByPlaceholderText("Message #incident-room") as HTMLInputElement;
+    await fireEvent.input(input, { target: { value: ":joy:" } });
+
+    expect(onComposerInput).toHaveBeenCalledWith("😂");
+  });
+
   it("renders attachment pills and routes remove actions", async () => {
     const onRemoveAttachment = vi.fn();
     const attachment = new File(["x"], "sample.txt", { type: "text/plain" });
