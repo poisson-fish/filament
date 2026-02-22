@@ -166,11 +166,12 @@ This section is used to track the progress of the implementation across multiple
 - [x] Create central context/service utilities (`check_workspace_permission`, `check_channel_permission`).
 - [x] Update API routes handling creation, modification, and deletion of roles (`guild_roles`).
 - [x] Update API routes for channel permission overrides (`channel_permission_overrides`).
-- [ ] Wire up LiveKit token updates when a user's permissions change.
-- [ ] Wire Gateway Events (`WorkspaceRoleCreate`, `WorkspaceChannelOverrideUpdate`, etc.) to broadcast on changes.
+- [x] Wire up LiveKit token updates when a user's permissions change.
+- [x] Wire Gateway Events (`WorkspaceRoleCreate`, `WorkspaceChannelOverrideUpdate`, etc.) to broadcast on changes.
 - **Notes**: 
   - *Implemented `check_workspace_permission` and `check_channel_permission` in `domain.rs` to validate if a user has a specific permission via `guild_permission_snapshot` and `channel_permission_snapshot`. Ready to be used for replacing legacy `has_permission` checks.*
   - *Verified `guild_roles` endpoints were fully implemented and wired into axum router. Developed `set_channel_permission_override` which targets either Roles or Members to configure hierarchical permissions for modern override model, integrating audit logs and proper payload dispatching to existing Gateway events (`workspace_channel_permission_override_update`).*
+  - *Added `reevaluate_livekit_permissions_for_guild` to `livekit_sync.rs` which is now called dynamically upon role updates, role deletions, channel permission overrides, and role assignment modifications to actively evaluate user access and kick them from LiveKit voice channels if they lose `SubscribeStreams`.*
 
 ### Phase 3: Frontend Data & State Handling
 - [ ] Update Pinia/Solid state models to track `roles` (ordered array), `userRoles`, and `channelOverrides`.

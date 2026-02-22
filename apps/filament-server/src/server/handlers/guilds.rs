@@ -1467,6 +1467,12 @@ pub(crate) async fn delete_guild_role(
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
+    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+        &state,
+        &path.guild_id,
+    )
+    .await;
+
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
@@ -1726,6 +1732,12 @@ pub(crate) async fn assign_guild_role(
         Some(auth.user_id),
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
+
+    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+        &state,
+        &path.guild_id,
+    )
+    .await;
 
     Ok(Json(ModerationResponse { accepted: true }))
 }
@@ -3026,6 +3038,12 @@ pub(crate) async fn update_member_role(
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
+    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+        &state,
+        &path.guild_id,
+    )
+    .await;
+
     write_audit_log(
         &state,
         Some(path.guild_id),
@@ -3133,6 +3151,12 @@ pub(crate) async fn set_channel_role_override(
         Some(auth.user_id),
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
+
+    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+        &state,
+        &path.guild_id,
+    )
+    .await;
 
     Ok(Json(ModerationResponse { accepted: true }))
 }
@@ -3251,6 +3275,12 @@ pub(crate) async fn set_channel_permission_override(
         Some(auth.user_id),
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
+
+    crate::server::realtime::livekit_sync::reevaluate_livekit_permissions_for_guild(
+        &state,
+        &path.guild_id,
+    )
+    .await;
 
     Ok(Json(ModerationResponse { accepted: true }))
 }

@@ -94,3 +94,34 @@ pub(crate) async fn start_livekit_sync(state: AppState) {
         }
     }
 }
+
+pub(crate) async fn reevaluate_livekit_permissions_for_guild(
+    state: &AppState,
+    guild_id: &str,
+) {
+    let mut users_to_check = Vec::new();
+    {
+        let vp = state.realtime_registry.voice_participants().read().await;
+        for (key, channel_participants) in vp.iter() {
+            if key.starts_with(&format!("{guild_id}:")) {
+                let channel_id = key.split(':').nth(1).unwrap_or("");
+                for user_id in channel_participants.keys() {
+                    users_to_check.push((*user_id, channel_id.to_string()));
+                }
+            }
+        }
+    }
+
+    let now = now_unix();
+    for (user_id, channel_id) in users_to_check {
+        let snapshot = match crate::server::domain::channel_permission_snapshot(state, user_id, guild_id, &channel_id).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        
+        let can_subscribe = snapshot.1.contains(filament_core::Permission::SubscribeStreams);
+        if !can_subscribe {
+            remove_voice_participant_for_channel(state, user_id, guild_id, &channel_id, now).await;
+        }
+    }
+}
