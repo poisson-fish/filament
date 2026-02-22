@@ -1,4 +1,4 @@
-import type { GuildVisibility } from "../../../domain/chat";
+import type { GuildVisibility, WorkspaceRoleId } from "../../../domain/chat";
 import type { SupportPanelPropGroupsOptions } from "./support-panel-prop-groups";
 
 export interface SupportPanelPropGroupsStateOptions {
@@ -65,6 +65,15 @@ export interface SupportPanelPropGroupsStateOptions {
   isSavingWorkspaceSettings: () => boolean;
   workspaceSettingsStatus: () => string;
   workspaceSettingsError: () => string;
+  memberRoleStatus: () => string;
+  memberRoleError: () => string;
+  isMutatingMemberRoles: () => boolean;
+  members: () => Array<{
+    userId: string;
+    label: string;
+    roleIds: WorkspaceRoleId[];
+  }>;
+  assignableRoleIds: () => SupportPanelPropGroupsOptions["workspaceSettings"]["assignableRoleIds"];
   setWorkspaceSettingsName:
     SupportPanelPropGroupsOptions["workspaceSettings"]["setWorkspaceSettingsName"];
   setWorkspaceSettingsVisibility:
@@ -101,6 +110,10 @@ export interface SupportPanelPropGroupsStateOptions {
     SupportPanelPropGroupsOptions["roleManagement"]["onUnassignRole"];
   onOpenModerationPanel:
     SupportPanelPropGroupsOptions["roleManagement"]["onOpenModerationPanel"];
+  onAssignMemberRole:
+    SupportPanelPropGroupsOptions["workspaceSettings"]["onAssignMemberRole"];
+  onUnassignMemberRole:
+    SupportPanelPropGroupsOptions["workspaceSettings"]["onUnassignMemberRole"];
   echoInput: () => string;
   healthStatus: () => string;
   diagError: () => string;
@@ -159,16 +172,25 @@ export function createSupportPanelPropGroupsOptions(
     workspaceSettings: {
       hasActiveWorkspace: options.hasActiveWorkspace(),
       canManageWorkspaceSettings: options.canManageWorkspaceSettings(),
+      canManageMemberRoles: options.canManageMemberRoles(),
       workspaceName: options.workspaceName(),
       workspaceVisibility: options.workspaceVisibility(),
       isSavingWorkspaceSettings: options.isSavingWorkspaceSettings(),
       workspaceSettingsStatus: options.workspaceSettingsStatus(),
       workspaceSettingsError: options.workspaceSettingsError(),
+      memberRoleStatus: options.memberRoleStatus(),
+      memberRoleError: options.memberRoleError(),
+      isMutatingMemberRoles: options.isMutatingMemberRoles(),
+      members: options.members(),
+      roles: options.roles(),
+      assignableRoleIds: options.assignableRoleIds(),
       setWorkspaceSettingsName: options.setWorkspaceSettingsName,
       setWorkspaceSettingsVisibility: options.setWorkspaceSettingsVisibility,
       setWorkspaceSettingsStatus: options.setWorkspaceSettingsStatus,
       setWorkspaceSettingsError: options.setWorkspaceSettingsError,
       onSaveWorkspaceSettings: options.onSaveWorkspaceSettings,
+      onAssignMemberRole: options.onAssignMemberRole,
+      onUnassignMemberRole: options.onUnassignMemberRole,
     },
     roleManagement: {
       hasActiveWorkspace: options.hasActiveWorkspace(),

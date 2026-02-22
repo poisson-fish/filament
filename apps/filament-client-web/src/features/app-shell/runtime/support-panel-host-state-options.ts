@@ -9,6 +9,9 @@ import type { createVoiceState } from "../state/voice-state";
 import type { createWorkspaceState } from "../state/workspace-state";
 import type { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 import type { SupportPanelPropGroupsStateOptions } from "./support-panel-prop-groups-options";
+import type { WorkspaceRoleId } from "../../../domain/chat";
+
+const MAX_WORKSPACE_SETTINGS_MEMBERS = 200;
 
 export interface SupportPanelHostStateOptions {
   discoveryState: ReturnType<typeof createWorkspaceState>["discovery"];
@@ -30,12 +33,88 @@ export interface SupportPanelHostStateOptions {
   refreshAudioDeviceInventory: (force: boolean) => Promise<void>;
   saveWorkspaceSettings: () => Promise<void>;
   openOverlayPanel: (panel: "moderation") => void;
+  displayUserLabel: (userId: string) => string;
   isDevelopmentMode: boolean;
 }
 
 export function createSupportPanelHostStateOptions(
   options: SupportPanelHostStateOptions,
 ): SupportPanelPropGroupsStateOptions {
+  const resolveWorkspaceSettingsMemberRows = (): Array<{
+    userId: string;
+    label: string;
+    roleIds: WorkspaceRoleId[];
+  }> => {
+    const guildId = options.workspaceChannelState.activeGuildId();
+    if (!guildId) {
+      return [];
+    }
+    const assignmentsByUser =
+      options.workspaceChannelState.workspaceUserRolesByGuildId()[guildId] ?? {};
+    const knownMemberIds = new Set<string>();
+    const actorId = options.profileController.profile()?.userId;
+    if (actorId) {
+      knownMemberIds.add(actorId);
+    }
+    for (const userId of options.profileState.onlineMembers()) {
+      knownMemberIds.add(userId);
+      if (knownMemberIds.size >= MAX_WORKSPACE_SETTINGS_MEMBERS) {
+        break;
+      }
+    }
+    if (knownMemberIds.size < MAX_WORKSPACE_SETTINGS_MEMBERS) {
+      for (const userId of Object.keys(assignmentsByUser)) {
+        knownMemberIds.add(userId);
+        if (knownMemberIds.size >= MAX_WORKSPACE_SETTINGS_MEMBERS) {
+          break;
+        }
+      }
+    }
+
+    const rows: Array<{
+      userId: string;
+      label: string;
+      roleIds: WorkspaceRoleId[];
+    }> = [];
+    for (const userId of knownMemberIds) {
+      rows.push({
+        userId,
+        label: options.displayUserLabel(userId),
+        roleIds: assignmentsByUser[userId] ?? [],
+      });
+    }
+    rows.sort((left, right) => left.userId.localeCompare(right.userId));
+    return rows;
+  };
+
+  const resolveAssignableRoleIds = (): WorkspaceRoleId[] => {
+    const guildId = options.workspaceChannelState.activeGuildId();
+    if (!guildId) {
+      return [];
+    }
+    const allRoles = options.roleManagementActions.roles();
+    const actorId = options.profileController.profile()?.userId;
+    if (!actorId) {
+      return [];
+    }
+    const actorRoleIds =
+      options.workspaceChannelState.workspaceUserRolesByGuildId()[guildId]?.[actorId] ?? [];
+    if (actorRoleIds.length === 0) {
+      return [];
+    }
+    const roleById = new Map(allRoles.map((role) => [role.roleId, role]));
+    const actorHighestPosition = actorRoleIds.reduce((highest, roleId) => {
+      const role = roleById.get(roleId);
+      if (!role) {
+        return highest;
+      }
+      return Math.max(highest, role.position);
+    }, Number.NEGATIVE_INFINITY);
+    return allRoles
+      .filter((role) => !role.isSystem && role.position < actorHighestPosition)
+      .map((role) => role.roleId);
+  };
+
   return {
     publicGuildSearchQuery: options.discoveryState.publicGuildSearchQuery,
     isSearchingPublicGuilds: options.discoveryState.isSearchingPublicGuilds,
@@ -83,6 +162,11 @@ export function createSupportPanelHostStateOptions(
     isSavingWorkspaceSettings: options.workspaceChannelState.isSavingWorkspaceSettings,
     workspaceSettingsStatus: options.workspaceChannelState.workspaceSettingsStatus,
     workspaceSettingsError: options.workspaceChannelState.workspaceSettingsError,
+    memberRoleStatus: options.roleManagementActions.roleManagementStatus,
+    memberRoleError: options.roleManagementActions.roleManagementError,
+    isMutatingMemberRoles: options.roleManagementActions.isMutatingRoles,
+    members: resolveWorkspaceSettingsMemberRows,
+    assignableRoleIds: resolveAssignableRoleIds,
     setWorkspaceSettingsName: options.workspaceChannelState.setWorkspaceSettingsName,
     setWorkspaceSettingsVisibility:
       options.workspaceChannelState.setWorkspaceSettingsVisibility,
@@ -107,6 +191,10 @@ export function createSupportPanelHostStateOptions(
     onAssignRole: options.roleManagementActions.assignRoleToMember,
     onUnassignRole: options.roleManagementActions.unassignRoleFromMember,
     onOpenModerationPanel: () => options.openOverlayPanel("moderation"),
+    onAssignMemberRole: (userId, roleId) =>
+      options.roleManagementActions.assignRoleToMember(userId, roleId),
+    onUnassignMemberRole: (userId, roleId) =>
+      options.roleManagementActions.unassignRoleFromMember(userId, roleId),
     echoInput: options.diagnosticsState.echoInput,
     healthStatus: options.diagnosticsState.healthStatus,
     diagError: options.diagnosticsState.diagError,

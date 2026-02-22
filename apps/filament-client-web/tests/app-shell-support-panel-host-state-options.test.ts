@@ -25,7 +25,7 @@ describe("app shell support panel-host state options", () => {
     const audioDevicesStatus = () => "ready";
     const audioDevicesError = () => "";
 
-    const profile = vi.fn(() => ({ id: "user-1" }));
+    const profile = vi.fn(() => ({ userId: "user-1" }));
     const profileDraftUsername = () => "filament";
     const profileDraftAbout = () => "ops";
     const selectedProfileAvatarFile = () => ({ name: "avatar.png" } as File);
@@ -41,6 +41,7 @@ describe("app shell support panel-host state options", () => {
     const avatarUrlForUser = vi.fn(() => "/avatar/user-1");
 
     const activeWorkspace = vi.fn(() => ({ id: "guild-1" }));
+    const activeGuildId = () => "guild-1";
     const canManageRoles = () => true;
     const workspaceSettingsName = () => "Ops";
     const workspaceSettingsVisibility = () => "private";
@@ -54,7 +55,7 @@ describe("app shell support panel-host state options", () => {
 
     const canManageWorkspaceRoles = () => true;
     const canManageMemberRoles = () => true;
-    const roles = () => [{ roleId: "role-1" }];
+    const roles = () => [{ roleId: "role-1", position: 10, isSystem: false }];
     const isLoadingRoles = () => false;
     const isMutatingRoles = () => false;
     const roleManagementStatus = () => "ready";
@@ -94,6 +95,7 @@ describe("app shell support panel-host state options", () => {
     const refreshAudioDeviceInventory = vi.fn(async () => undefined);
     const saveWorkspaceSettings = vi.fn(async () => undefined);
     const openOverlayPanel = vi.fn();
+    const displayUserLabel = (userId: string) => `@${userId}`;
     const runHealthCheck = vi.fn();
     const runEcho = vi.fn();
 
@@ -121,6 +123,7 @@ describe("app shell support panel-host state options", () => {
         audioDevicesError,
       } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["voiceState"],
       profileState: {
+        onlineMembers,
         profileDraftUsername,
         profileDraftAbout,
         selectedProfileAvatarFile,
@@ -133,6 +136,8 @@ describe("app shell support panel-host state options", () => {
         setSelectedProfileAvatarFile,
       } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["profileState"],
       workspaceChannelState: {
+        activeGuildId,
+        workspaceUserRolesByGuildId,
         workspaceSettingsName,
         workspaceSettingsVisibility,
         isSavingWorkspaceSettings,
@@ -193,6 +198,7 @@ describe("app shell support panel-host state options", () => {
       refreshAudioDeviceInventory,
       saveWorkspaceSettings,
       openOverlayPanel,
+      displayUserLabel,
       isDevelopmentMode: true,
     });
 
@@ -202,6 +208,11 @@ describe("app shell support panel-host state options", () => {
     expect(stateOptions.profile()).toEqual(profile());
     expect(stateOptions.selectedAvatarFilename()).toBe("avatar.png");
     expect(stateOptions.workspaceName).toBe(workspaceSettingsName);
+    expect(stateOptions.members()).toEqual([
+      { userId: "user-1", label: "@user-1", roleIds: ["role-1"] },
+      { userId: "user-2", label: "@user-2", roleIds: [] },
+    ]);
+    expect(stateOptions.assignableRoleIds()).toEqual([]);
     expect(stateOptions.roles).toBe(roles);
     expect(stateOptions.echoInput).toBe(echoInput);
     expect(stateOptions.diagnosticsEventCounts).toBe(diagnosticsEventCounts);
@@ -211,3 +222,10 @@ describe("app shell support panel-host state options", () => {
     expect(openOverlayPanel).toHaveBeenCalledWith("moderation");
   });
 });
+    const onlineMembers = () => ["user-2"];
+    const workspaceUserRolesByGuildId = () => ({
+      "guild-1": {
+        "user-1": ["role-1"],
+        "user-2": [],
+      },
+    });

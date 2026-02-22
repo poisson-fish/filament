@@ -636,6 +636,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
       refreshAudioDeviceInventory,
       saveWorkspaceSettings,
       openOverlayPanel,
+      displayUserLabel: labels.displayUserLabel,
       isDevelopmentMode: import.meta.env.DEV,
     },
     collaboration: {

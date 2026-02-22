@@ -1,6 +1,14 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
-import { WorkspaceSettingsPanel, type WorkspaceSettingsPanelProps } from "../src/features/app-shell/components/panels/WorkspaceSettingsPanel";
+import {
+  WorkspaceSettingsPanel,
+  type WorkspaceSettingsPanelProps,
+} from "../src/features/app-shell/components/panels/WorkspaceSettingsPanel";
+import {
+  permissionFromInput,
+  workspaceRoleIdFromInput,
+  workspaceRoleNameFromInput,
+} from "../src/domain/chat";
 
 function workspaceSettingsPanelPropsFixture(
   overrides: Partial<WorkspaceSettingsPanelProps> = {},
@@ -8,14 +16,37 @@ function workspaceSettingsPanelPropsFixture(
   return {
     hasActiveWorkspace: true,
     canManageWorkspaceSettings: true,
+    canManageMemberRoles: true,
     workspaceName: "Filament",
     workspaceVisibility: "private",
     isSavingWorkspaceSettings: false,
     workspaceSettingsStatus: "",
     workspaceSettingsError: "",
+    memberRoleStatus: "",
+    memberRoleError: "",
+    isMutatingMemberRoles: false,
+    members: [
+      {
+        userId: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        label: "owner",
+        roleIds: [workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX")],
+      },
+    ],
+    roles: [
+      {
+        roleId: workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+        name: workspaceRoleNameFromInput("Moderator"),
+        position: 40,
+        isSystem: false,
+        permissions: [permissionFromInput("manage_member_roles")],
+      },
+    ],
+    assignableRoleIds: [workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX")],
     onWorkspaceNameInput: () => undefined,
     onWorkspaceVisibilityChange: () => undefined,
     onSaveWorkspaceSettings: () => undefined,
+    onAssignMemberRole: () => undefined,
+    onUnassignMemberRole: () => undefined,
     ...overrides,
   };
 }
@@ -36,6 +67,7 @@ describe("app shell workspace settings panel", () => {
     expect(screen.getByLabelText("Workspace settings name")).toHaveClass("border-line-soft");
     expect(screen.getByLabelText("Workspace settings visibility")).toHaveClass("border-line-soft");
     expect(screen.getByRole("button", { name: "Save workspace" })).toHaveClass("border-line-soft");
+    expect(screen.getByLabelText("Workspace members search")).toHaveClass("border-line-soft");
     expect(screen.getByText("saved")).toHaveClass("text-ok");
     expect(screen.getByText("conflict")).toHaveClass("text-danger");
 
@@ -73,5 +105,35 @@ describe("app shell workspace settings panel", () => {
     expect(form).not.toBeNull();
     await fireEvent.submit(form!);
     expect(onSaveWorkspaceSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports inline member role assignment and unassignment actions", async () => {
+    const onAssignMemberRole = vi.fn();
+    const onUnassignMemberRole = vi.fn();
+
+    render(() => (
+      <WorkspaceSettingsPanel
+        {...workspaceSettingsPanelPropsFixture({
+          onAssignMemberRole,
+          onUnassignMemberRole,
+        })}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Assign role" }));
+    expect(onAssignMemberRole).toHaveBeenCalledWith(
+      "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+    );
+
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Unassign Moderator from owner",
+      }),
+    );
+    expect(onUnassignMemberRole).toHaveBeenCalledWith(
+      "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+    );
   });
 });
