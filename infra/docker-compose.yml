@@ -25,7 +25,9 @@ services:
   livekit:
     image: livekit/livekit-server:v1.8.3
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-ec"]
+    entrypoint:
+      - /bin/sh
+      - -ec
     environment:
       LIVEKIT_PORT: ${LIVEKIT_PORT:-7880}
       LIVEKIT_TCP_PORT: ${LIVEKIT_TCP_PORT:-7881}
@@ -34,24 +36,25 @@ services:
       LIVEKIT_NODE_IP: ${LIVEKIT_NODE_IP:-}
       FILAMENT_LIVEKIT_API_KEY: ${FILAMENT_LIVEKIT_API_KEY:-devkey}
       FILAMENT_LIVEKIT_API_SECRET: ${FILAMENT_LIVEKIT_API_SECRET:-devsecret}
-    command: |
-      cat > /tmp/livekit.yaml <<EOF
-      port: ${LIVEKIT_PORT}
-      rtc:
-        tcp_port: ${LIVEKIT_TCP_PORT}
-        udp_port: ${LIVEKIT_UDP_PORT}
-        use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP}
-      EOF
-      if [ -n "${LIVEKIT_NODE_IP}" ]; then
-        printf "  node_ip: %s\n" "${LIVEKIT_NODE_IP}" >> /tmp/livekit.yaml
-      fi
-      cat >> /tmp/livekit.yaml <<EOF
-      keys:
-        ${FILAMENT_LIVEKIT_API_KEY}: ${FILAMENT_LIVEKIT_API_SECRET}
-      logging:
-        level: info
-      EOF
-      exec livekit-server --config /tmp/livekit.yaml
+    command:
+      - |
+        cat > /tmp/livekit.yaml <<EOF
+        port: ${LIVEKIT_PORT}
+        rtc:
+          tcp_port: ${LIVEKIT_TCP_PORT}
+          udp_port: ${LIVEKIT_UDP_PORT}
+          use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP}
+        EOF
+        if [ -n "${LIVEKIT_NODE_IP}" ]; then
+          printf "  node_ip: %s\n" "${LIVEKIT_NODE_IP}" >> /tmp/livekit.yaml
+        fi
+        cat >> /tmp/livekit.yaml <<EOF
+        keys:
+          ${FILAMENT_LIVEKIT_API_KEY}: ${FILAMENT_LIVEKIT_API_SECRET}
+        logging:
+          level: info
+        EOF
+        exec /livekit-server --config /tmp/livekit.yaml
     ports:
       - "${LIVEKIT_PORT:-7880}:${LIVEKIT_PORT:-7880}"
       - "${LIVEKIT_TCP_PORT:-7881}:${LIVEKIT_TCP_PORT:-7881}"
@@ -129,8 +132,8 @@ services:
     environment:
       CADDY_TLS_CERT_PATH: ${CADDY_TLS_CERT_PATH:-/etc/caddy/certs/cert.pem}
       CADDY_TLS_KEY_PATH: ${CADDY_TLS_KEY_PATH:-/etc/caddy/certs/key.pem}
-      CADDY_HTTP_REDIRECT_HOSTS: ${CADDY_HTTP_REDIRECT_HOSTS:-filamentapp.net,app.filament.local,api.filament.local}
-      CADDY_APP_HTTPS_HOSTS: ${CADDY_APP_HTTPS_HOSTS:-filamentapp.net,app.filament.local}
+      CADDY_HTTP_REDIRECT_HOSTS: ${CADDY_HTTP_REDIRECT_HOSTS:-filamentapp.net app.filament.local api.filament.local}
+      CADDY_APP_HTTPS_HOSTS: ${CADDY_APP_HTTPS_HOSTS:-filamentapp.net app.filament.local}
       CADDY_API_HTTPS_HOSTS: ${CADDY_API_HTTPS_HOSTS:-api.filament.local}
       CADDY_WEB_UPSTREAM: ${CADDY_WEB_UPSTREAM:-host.docker.internal:4173}
       CADDY_LIVEKIT_PROXY_PORT: ${CADDY_LIVEKIT_PROXY_PORT:-8443}

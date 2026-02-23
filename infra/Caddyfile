@@ -32,8 +32,8 @@
   }
 }
 
-# Redirect HTTP to HTTPS for configured hosts
-http://{$CADDY_HTTP_REDIRECT_HOSTS} {
+# Redirect all HTTP to HTTPS
+:80 {
   redir https://{host}{uri}
 }
 
