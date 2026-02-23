@@ -71,9 +71,10 @@ describe("app shell workspace settings panel", () => {
     expect(screen.getByLabelText("Workspace settings name")).toHaveClass("border-line-soft");
     expect(screen.getByLabelText("Workspace settings visibility")).toHaveClass("border-line-soft");
     expect(screen.getByRole("button", { name: "Save workspace" })).toHaveClass("border-line-soft");
-    expect(screen.getByLabelText("Workspace members search")).toHaveClass("border-line-soft");
     expect(screen.getByText("saved")).toHaveClass("text-ok");
     expect(screen.getByText("conflict")).toHaveClass("text-danger");
+    fireEvent.click(screen.getByRole("button", { name: "Open Members workspace section" }));
+    expect(screen.getByLabelText("Workspace members search")).toHaveClass("border-line-soft");
 
     expect(document.querySelector(".group-label")).toBeNull();
     expect(document.querySelector(".inline-form")).toBeNull();
@@ -109,6 +110,9 @@ describe("app shell workspace settings panel", () => {
     });
     expect(onWorkspaceVisibilityChange).toHaveBeenCalledWith("public");
 
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Open Permission Simulator workspace section" }),
+    );
     await fireEvent.click(screen.getByLabelText("Enable view server as role simulator"));
     expect(onViewAsRoleSimulatorToggle).toHaveBeenCalledWith(true);
 
@@ -117,6 +121,7 @@ describe("app shell workspace settings panel", () => {
     });
     expect(onViewAsRoleSimulatorRoleChange).toHaveBeenCalledWith("moderator");
 
+    await fireEvent.click(screen.getByRole("button", { name: "Open Server Profile workspace section" }));
     const form = screen.getByRole("button", { name: "Save workspace" }).closest("form");
     expect(form).not.toBeNull();
     await fireEvent.submit(form!);
@@ -136,6 +141,7 @@ describe("app shell workspace settings panel", () => {
       />
     ));
 
+    await fireEvent.click(screen.getByRole("button", { name: "Open Members workspace section" }));
     await fireEvent.click(screen.getByRole("button", { name: "Assign role" }));
     expect(onAssignMemberRole).toHaveBeenCalledWith(
       "01ARZ3NDEKTSV4RRFFQ69G5FAW",
