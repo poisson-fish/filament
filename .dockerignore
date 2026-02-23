@@ -1,0 +1,9 @@
+.git
+.github
+target
+
+apps/filament-client-web/node_modules
+apps/filament-client-web/dist
+apps/filament-client-web/.vite
+
+**/.DS_Store
