@@ -155,14 +155,13 @@ docker compose --env-file infra/.env -f infra/docker-compose.yml down
 docker compose --env-file infra/.env -f infra/docker-compose.yml down -v
 ```
 
-Vite dev server knobs (`apps/filament-client-web`):
+Vite dev server knobs (`apps/filament-client-web`, loaded from `infra/.env`):
 
 - `VITE_DEV_ALLOWED_HOSTS` (comma-separated)
 - `VITE_DEV_API_PROXY_TARGET`
 - `VITE_DEV_GATEWAY_PROXY_TARGET`
 - `VITE_DEV_HMR_CLIENT_PORT`
-
-These can be set in `apps/filament-client-web/.env.local` for local development.
+- `VITE_FILAMENT_HCAPTCHA_SITE_KEY`
 
 ## Local Quality Checks
 

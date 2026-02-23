@@ -42,6 +42,7 @@ const DEV_GATEWAY_PROXY_TARGET =
   process.env.VITE_DEV_GATEWAY_PROXY_TARGET ?? "ws://localhost:8080";
 
 export default defineConfig({
+  envDir: "../../infra",
   plugins: [UnoCSS(), solid()],
   build: {
     rollupOptions: {

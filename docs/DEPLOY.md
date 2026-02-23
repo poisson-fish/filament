@@ -115,13 +115,14 @@ If you use certificate files, ensure:
 
 ### Web (Vite) env controls
 
-For `apps/filament-client-web`, these dev-time vars control proxy and host behavior:
+For `apps/filament-client-web`, these dev-time vars are loaded from `infra/.env`:
 - `VITE_DEV_SERVER_HOST`
 - `VITE_DEV_SERVER_PORT`
 - `VITE_DEV_ALLOWED_HOSTS` (comma-separated)
 - `VITE_DEV_HMR_CLIENT_PORT`
 - `VITE_DEV_API_PROXY_TARGET`
 - `VITE_DEV_GATEWAY_PROXY_TARGET`
+- `VITE_FILAMENT_HCAPTCHA_SITE_KEY`
 
 Runtime API defaults now use same-origin `/api` unless `VITE_FILAMENT_API_BASE_URL` is explicitly set.
 
