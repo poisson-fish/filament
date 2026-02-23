@@ -103,6 +103,25 @@ services:
     tmpfs:
       - /tmp
 
+  # Optional bundled web client container.
+  # Disabled by default; enable with: docker compose --profile web ...
+  # When enabled, set CADDY_WEB_UPSTREAM=filament-web:4173 in infra/.env.
+  filament-web:
+    profiles: ["web"]
+    build:
+      context: ..
+      dockerfile: apps/filament-client-web/Dockerfile
+    restart: unless-stopped
+    networks:
+      - filament-internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
   reverse-proxy:
     image: caddy:2.8.4-alpine
     restart: unless-stopped

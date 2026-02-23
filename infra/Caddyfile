@@ -44,8 +44,7 @@ https://{$CADDY_APP_HTTPS_HOSTS} {
   import security_headers
   import api_gateway_routes
 
-  # Frontend (Vite Dev Server running on Host)
-  # Requires "host.docker.internal" to be mapped in docker-compose.yml
+  # Frontend upstream (for example host Vite dev server or filament-web:4173)
   handle {
     reverse_proxy {$CADDY_WEB_UPSTREAM}
   }

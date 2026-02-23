@@ -17,12 +17,14 @@ docker compose --env-file infra/.env -f infra/docker-compose.yml up -d --build
 - `livekit`: SFU for voice/video/screen share
 - `filament-server`: API + gateway + search + attachment metadata
 - `reverse-proxy`: edge ingress (Caddy) forwarding to `filament-server`
+- `filament-web` (optional profile): static web client container on `filament-web:4173`
 
 Network model:
 - `filament-internal`: internal-only network for service-to-service traffic
 - `filament-edge`: edge network for externally exposed ports
 
 Note: LiveKit runtime config is generated from env vars by `infra/docker-compose.yml`.
+Note: `filament-web` is disabled by default and only runs when compose profile `web` is enabled.
 
 Port map (default compose, configurable via `infra/.env`):
 - `reverse-proxy`: `8080/tcp` (HTTP ingress to Filament API/gateway)
@@ -83,6 +85,10 @@ Domain baseline:
 - `CADDY_APP_HTTPS_HOSTS=chat.example.com`
 - `CADDY_HTTP_REDIRECT_HOSTS=chat.example.com`
 - `CADDY_WEB_UPSTREAM=host.docker.internal:4173` (or your static web container/service)
+
+If using the bundled web container:
+- set `CADDY_WEB_UPSTREAM=filament-web:4173`
+- start with `docker compose --profile web --env-file infra/.env -f infra/docker-compose.yml up -d --build`
 
 ## Attachment Storage Persistence
 

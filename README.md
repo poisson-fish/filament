@@ -128,6 +128,7 @@ This starts:
 - `livekit`
 - `filament-server`
 - `reverse-proxy` (Caddy)
+- Optional: `filament-web` (disabled by default; enable with `--profile web`)
 
 Default local endpoints (from `infra/.env.example`):
 
@@ -153,6 +154,14 @@ docker compose --env-file infra/.env -f infra/docker-compose.yml down
 
 # Stop and remove volumes (destructive: deletes local data)
 docker compose --env-file infra/.env -f infra/docker-compose.yml down -v
+```
+
+Optional bundled web container:
+
+```bash
+# in infra/.env
+# CADDY_WEB_UPSTREAM=filament-web:4173
+docker compose --profile web --env-file infra/.env -f infra/docker-compose.yml up -d --build
 ```
 
 Vite dev server knobs (`apps/filament-client-web`, loaded from `infra/.env`):
