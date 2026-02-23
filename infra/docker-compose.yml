@@ -112,6 +112,8 @@ services:
     build:
       context: ..
       dockerfile: apps/filament-client-web/Dockerfile
+      args:
+        VITE_FILAMENT_HCAPTCHA_SITE_KEY: ${VITE_FILAMENT_HCAPTCHA_SITE_KEY:-}
     restart: unless-stopped
     networks:
       - filament-internal

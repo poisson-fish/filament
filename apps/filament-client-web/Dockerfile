@@ -1,6 +1,9 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
+ARG VITE_FILAMENT_HCAPTCHA_SITE_KEY
+ENV VITE_FILAMENT_HCAPTCHA_SITE_KEY=${VITE_FILAMENT_HCAPTCHA_SITE_KEY}
+
 COPY apps/filament-client-web/package.json /app/package.json
 COPY apps/filament-client-web/package-lock.json /app/package-lock.json
 RUN npm ci
