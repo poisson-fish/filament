@@ -4,3 +4,5 @@ apps/filament-client-web/dist
 apps/filament-client-web/.vite
 infra/.env
 apps/filament-client-web/.env.local
+infra/certs/key.pem
+.gitignore
