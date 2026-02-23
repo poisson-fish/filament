@@ -330,9 +330,9 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
           <Switch>
             <Match when={activeSectionId() === "profile"}>
               <section class={panelSectionClass} aria-label="workspace profile settings">
-                <div class="grid gap-[0.78rem] xl:grid-cols-[minmax(0,1fr)_18rem]">
+                <div class="flex flex-wrap items-start gap-[0.78rem]">
                   <form
-                    class="grid gap-[0.75rem]"
+                    class="grid min-w-[17.5rem] flex-[1_1_22rem] gap-[0.75rem]"
                     onSubmit={(event) => {
                       event.preventDefault();
                       void props.onSaveWorkspaceSettings();
@@ -379,16 +379,12 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                         <button
                           class={tertiaryButtonClass}
                           type="button"
-                          disabled
-                          title="Icon upload is not wired yet."
                         >
                           Change server icon
                         </button>
                         <button
                           class={destructiveButtonClass}
                           type="button"
-                          disabled
-                          title="Icon removal is not wired yet."
                         >
                           Remove icon
                         </button>
@@ -396,7 +392,7 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                     </section>
                     <section class="grid gap-[0.55rem] rounded-[0.75rem] border border-line-soft bg-bg-1 p-[0.62rem]">
                       <p class={sectionLabelClassName}>BANNER</p>
-                      <ul class="m-0 grid list-none grid-cols-2 gap-[0.46rem] p-0 sm:grid-cols-4" aria-label="Workspace banner presets">
+                      <ul class="m-0 grid list-none grid-cols-[repeat(auto-fit,minmax(5.4rem,1fr))] gap-[0.46rem] p-0" aria-label="Workspace banner presets">
                         <For each={BANNER_PRESETS}>
                           {(preset) => (
                             <li>
@@ -421,9 +417,9 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                     <section class="grid gap-[0.55rem] rounded-[0.75rem] border border-line-soft bg-bg-1 p-[0.62rem]">
                       <p class={sectionLabelClassName}>TRAITS</p>
                       <p class={mutedTextClass}>Add up to 5 local preview traits for your server card.</p>
-                      <div class="grid gap-[0.45rem] sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <div class="flex flex-wrap gap-[0.45rem]">
                         <input
-                          class={fieldControlClass}
+                          class={`${fieldControlClass} min-w-[10rem] flex-[1_1_10rem]`}
                           aria-label="Workspace trait input"
                           value={traitDraft()}
                           maxlength="24"
@@ -432,7 +428,7 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                           placeholder="e.g. security, infra"
                         />
                         <button
-                          class={neutralButtonClass}
+                          class={`${neutralButtonClass} flex-none`}
                           type="button"
                           onClick={addTrait}
                           disabled={!canAddTrait()}
@@ -482,7 +478,7 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                       <p class={statusErrorClass}>{props.workspaceSettingsError}</p>
                     </Show>
                   </form>
-                  <section class="grid content-start gap-[0.52rem] rounded-[0.78rem] border border-line-soft bg-bg-1 p-[0.64rem]">
+                  <section class="grid w-[18.5rem] max-w-full flex-[0_0_18.5rem] content-start gap-[0.52rem] rounded-[0.78rem] border border-line-soft bg-bg-1 p-[0.64rem]">
                     <p class={sectionLabelClassName}>PREVIEW</p>
                     <article class="overflow-hidden rounded-[0.72rem] border border-line-soft bg-bg-2">
                       <div
