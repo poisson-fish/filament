@@ -253,6 +253,8 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setChannelCreateError: workspaceChannelState.setChannelCreateError,
     setActiveSettingsCategory: overlayState.setActiveSettingsCategory,
     setActiveVoiceSettingsSubmenu: overlayState.setActiveVoiceSettingsSubmenu,
+    setActiveWorkspaceSettingsSection:
+      overlayState.setActiveWorkspaceSettingsSection,
   });
 
   createWorkspaceBootstrapController({
@@ -653,7 +655,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
       attachmentActions,
       moderationActions,
       labels,
-      openOverlayPanel,
+      openWorkspaceSettingsPanel,
     },
   });
 

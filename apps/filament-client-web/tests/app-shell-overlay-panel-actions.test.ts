@@ -24,6 +24,8 @@ describe("app shell overlay panel actions", () => {
     const [workspaceSettingsError, setWorkspaceSettingsError] = createSignal("stale");
     const [activeOverlayPanel, setActiveOverlayPanel] =
       createSignal<OverlayPanel | null>(null);
+    const [activeWorkspaceSettingsSection, setActiveWorkspaceSettingsSection] =
+      createSignal<"profile" | "simulator" | "members" | "roles">("profile");
 
     const actions = createOverlayPanelActions({
       activeWorkspace: () => activeWorkspace,
@@ -37,15 +39,17 @@ describe("app shell overlay panel actions", () => {
       setChannelCreateError: () => "",
       setActiveSettingsCategory: () => "profile",
       setActiveVoiceSettingsSubmenu: () => "audio-devices",
+      setActiveWorkspaceSettingsSection,
     });
 
-    actions.openWorkspaceSettingsPanel();
+    actions.openWorkspaceSettingsPanel("roles");
 
     expect(workspaceSettingsName()).toBe("Security Ops");
     expect(workspaceSettingsVisibility()).toBe("public");
     expect(workspaceSettingsStatus()).toBe("");
     expect(workspaceSettingsError()).toBe("");
     expect(activeOverlayPanel()).toBe("workspace-settings");
+    expect(activeWorkspaceSettingsSection()).toBe("roles");
   });
 
   it("resets voice submenu when opening voice settings category", () => {
@@ -55,6 +59,8 @@ describe("app shell overlay panel actions", () => {
     const [activeVoiceSettingsSubmenu, setActiveVoiceSettingsSubmenu] = createSignal<
       "audio-devices"
     >("audio-devices");
+    const [activeWorkspaceSettingsSection, setActiveWorkspaceSettingsSection] =
+      createSignal<"profile" | "simulator" | "members" | "roles">("profile");
 
     const actions = createOverlayPanelActions({
       activeWorkspace: () => undefined,
@@ -68,18 +74,22 @@ describe("app shell overlay panel actions", () => {
       setChannelCreateError: () => "",
       setActiveSettingsCategory,
       setActiveVoiceSettingsSubmenu,
+      setActiveWorkspaceSettingsSection,
     });
 
     actions.openSettingsCategory("voice");
 
     expect(activeSettingsCategory()).toBe("voice");
     expect(activeVoiceSettingsSubmenu()).toBe("audio-devices");
+    expect(activeWorkspaceSettingsSection()).toBe("profile");
   });
 
   it("does not close panel when close is not allowed", () => {
     const [activeOverlayPanel, setActiveOverlayPanel] = createSignal<OverlayPanel | null>(
       "workspace-create",
     );
+    const [activeWorkspaceSettingsSection, setActiveWorkspaceSettingsSection] =
+      createSignal<"profile" | "simulator" | "members" | "roles">("profile");
 
     const actions = createOverlayPanelActions({
       activeWorkspace: () => undefined,
@@ -93,10 +103,12 @@ describe("app shell overlay panel actions", () => {
       setChannelCreateError: () => "",
       setActiveSettingsCategory: () => "profile",
       setActiveVoiceSettingsSubmenu: () => "audio-devices",
+      setActiveWorkspaceSettingsSection,
     });
 
     actions.closeOverlayPanel();
 
     expect(activeOverlayPanel()).toBe("workspace-create");
+    expect(activeWorkspaceSettingsSection()).toBe("profile");
   });
 });

@@ -119,6 +119,7 @@ describe("app shell panel host prop groups", () => {
           hasActiveWorkspace: true,
           canManageWorkspaceSettings: true,
           canManageMemberRoles: true,
+          workspaceSettingsSection: "profile",
           workspaceName: "Ops",
           workspaceVisibility: guildVisibilityFromInput("private"),
           isSavingWorkspaceSettings: false,

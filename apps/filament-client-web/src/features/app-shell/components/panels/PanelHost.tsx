@@ -59,6 +59,11 @@ const UtilityPanelLazy = lazy(() =>
   })),
 );
 
+type WorkspaceSettingsPanelHostProps = Omit<
+  WorkspaceSettingsPanelProps,
+  "roleManagementPanelProps"
+>;
+
 export interface PanelHostProps {
   panel: OverlayPanel | null;
   canCloseActivePanel: boolean;
@@ -73,7 +78,7 @@ export interface PanelHostProps {
   channelCreatePanelProps: ChannelCreatePanelProps;
   publicDirectoryPanelProps: PublicDirectoryPanelProps;
   settingsPanelProps: SettingsPanelProps;
-  workspaceSettingsPanelProps: WorkspaceSettingsPanelProps;
+  workspaceSettingsPanelProps: WorkspaceSettingsPanelHostProps;
   friendshipsPanelProps: FriendshipsPanelProps;
   searchPanelProps: SearchPanelProps;
   attachmentsPanelProps: AttachmentsPanelProps;
@@ -149,7 +154,10 @@ export function PanelHost(props: PanelHostProps) {
                     </Match>
 
                     <Match when={panelAccessor() === "workspace-settings"}>
-                      <WorkspaceSettingsPanelLazy {...props.workspaceSettingsPanelProps} />
+                      <WorkspaceSettingsPanelLazy
+                        {...props.workspaceSettingsPanelProps}
+                        roleManagementPanelProps={props.roleManagementPanelProps}
+                      />
                     </Match>
 
                     <Match when={panelAccessor() === "friendships"}>

@@ -7,6 +7,7 @@ import type {
   OverlayPanel,
   SettingsCategory,
   VoiceSettingsSubmenu,
+  WorkspaceSettingsSection,
 } from "../types";
 
 export function createOverlayState() {
@@ -15,6 +16,8 @@ export function createOverlayState() {
     createSignal<SettingsCategory>(DEFAULT_SETTINGS_CATEGORY);
   const [activeVoiceSettingsSubmenu, setActiveVoiceSettingsSubmenu] =
     createSignal<VoiceSettingsSubmenu>(DEFAULT_VOICE_SETTINGS_SUBMENU);
+  const [activeWorkspaceSettingsSection, setActiveWorkspaceSettingsSection] =
+    createSignal<WorkspaceSettingsSection>("profile");
   const [isChannelRailCollapsed, setChannelRailCollapsed] = createSignal(false);
   const [isMemberRailCollapsed, setMemberRailCollapsed] = createSignal(true);
 
@@ -25,6 +28,8 @@ export function createOverlayState() {
     setActiveSettingsCategory,
     activeVoiceSettingsSubmenu,
     setActiveVoiceSettingsSubmenu,
+    activeWorkspaceSettingsSection,
+    setActiveWorkspaceSettingsSection,
     isChannelRailCollapsed,
     setChannelRailCollapsed,
     isMemberRailCollapsed,

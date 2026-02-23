@@ -75,6 +75,7 @@ describe("app shell support panel prop group state options", () => {
       avatarUrlForUser: (userId) => `/avatar/${userId}`,
       hasActiveWorkspace: () => true,
       canManageWorkspaceSettings: () => true,
+      workspaceSettingsSection: () => "profile",
       workspaceName: () => "Ops",
       workspaceVisibility: () => guildVisibilityFromInput("private"),
       isSavingWorkspaceSettings: () => false,
@@ -146,6 +147,7 @@ describe("app shell support panel prop group state options", () => {
     expect(options.publicDirectory.publicGuildSearchQuery).toBe("ops");
     expect(options.settings.activeSettingsCategory).toBe("profile");
     expect(options.workspaceSettings.workspaceName).toBe("Ops");
+    expect(options.workspaceSettings.workspaceSettingsSection).toBe("profile");
     expect(options.workspaceSettings.viewAsRoleSimulatorEnabled).toBe(true);
     expect(options.workspaceSettings.viewAsRoleSimulatorRole).toBe("moderator");
     expect(options.roleManagement.roles).toHaveLength(1);

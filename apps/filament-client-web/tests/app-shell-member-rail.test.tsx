@@ -19,6 +19,7 @@ function memberRailPropsFixture(
     hasModerationAccess: true,
     displayUserLabel: (userId) => (userId === "remote.user" ? "Remote User" : userId),
     onOpenPanel: () => undefined,
+    onOpenWorkspaceRoleSettings: () => undefined,
     ...overrides,
   };
 }
@@ -74,7 +75,9 @@ describe("app shell member rail", () => {
     expect(screen.queryByRole("button", { name: "Open search panel" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open attachments panel" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open moderation panel" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open role management panel" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open server settings roles" }),
+    ).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "Open directory panel" }));
     await fireEvent.click(screen.getByRole("button", { name: "Open friendships panel" }));

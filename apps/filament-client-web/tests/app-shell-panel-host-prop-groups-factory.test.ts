@@ -79,7 +79,7 @@ describe("app shell panel-host prop groups factory", () => {
       attachmentActions: {},
       moderationActions: {},
       labels: {},
-      openOverlayPanel: vi.fn(),
+      openWorkspaceSettingsPanel: vi.fn(),
     };
 
     const workspaceChannelCreate = { workspaceCreate: {}, channelCreate: {} };

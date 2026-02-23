@@ -5,6 +5,11 @@ import type {
   RoleName,
   WorkspaceRoleId,
 } from "../../../../domain/chat";
+import type { WorkspaceSettingsSection } from "../../types";
+import {
+  RoleManagementPanel,
+  type RoleManagementPanelProps,
+} from "./RoleManagementPanel";
 
 export interface WorkspaceSettingsMemberRecord {
   userId: string;
@@ -16,6 +21,7 @@ export interface WorkspaceSettingsPanelProps {
   hasActiveWorkspace: boolean;
   canManageWorkspaceSettings: boolean;
   canManageMemberRoles: boolean;
+  activeSectionId: WorkspaceSettingsSection;
   workspaceName: string;
   workspaceVisibility: GuildVisibility;
   isSavingWorkspaceSettings: boolean;
@@ -29,6 +35,7 @@ export interface WorkspaceSettingsPanelProps {
   members: WorkspaceSettingsMemberRecord[];
   roles: GuildRoleRecord[];
   assignableRoleIds: WorkspaceRoleId[];
+  roleManagementPanelProps: RoleManagementPanelProps;
   onWorkspaceNameInput: (value: string) => void;
   onWorkspaceVisibilityChange: (value: GuildVisibility) => void;
   onViewAsRoleSimulatorToggle: (value: boolean) => void;
@@ -38,10 +45,8 @@ export interface WorkspaceSettingsPanelProps {
   onUnassignMemberRole: (userId: string, roleId: WorkspaceRoleId) => Promise<void> | void;
 }
 
-type WorkspaceSettingsSectionId = "profile" | "simulator" | "members";
-
 interface WorkspaceSettingsSectionRecord {
-  id: WorkspaceSettingsSectionId;
+  id: WorkspaceSettingsSection;
   label: string;
   summary: string;
 }
@@ -67,6 +72,11 @@ const WORKSPACE_SETTINGS_SECTIONS: WorkspaceSettingsSectionRecord[] = [
     id: "members",
     label: "Members",
     summary: "Assign and remove workspace role mappings.",
+  },
+  {
+    id: "roles",
+    label: "Roles & Hierarchy",
+    summary: "Create roles, tune capabilities, and reorder precedence.",
   },
 ];
 
@@ -133,7 +143,9 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
   >({});
   const [memberSearchQuery, setMemberSearchQuery] = createSignal("");
   const [memberRoleClientError, setMemberRoleClientError] = createSignal("");
-  const [activeSectionId, setActiveSectionId] = createSignal<WorkspaceSettingsSectionId>("profile");
+  const [activeSectionId, setActiveSectionId] = createSignal<WorkspaceSettingsSection>(
+    props.activeSectionId,
+  );
   const [selectedBannerPresetId, setSelectedBannerPresetId] = createSignal(BANNER_PRESETS[0]?.id ?? "");
   const [traitDraft, setTraitDraft] = createSignal("");
   const [traits, setTraits] = createSignal<string[]>([]);
@@ -222,6 +234,10 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
     }
     const lowered = candidate.toLowerCase();
     return !traits().some((existing) => existing.toLowerCase() === lowered);
+  });
+
+  createEffect(() => {
+    setActiveSectionId(props.activeSectionId);
   });
 
   createEffect(() => {
@@ -661,6 +677,24 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                 <Show when={props.memberRoleError || memberRoleClientError()}>
                   <p class={statusErrorClass}>{props.memberRoleError || memberRoleClientError()}</p>
                 </Show>
+              </section>
+            </Match>
+            <Match when={activeSectionId() === "roles"}>
+              <section class={panelSectionClass} aria-label="workspace roles settings">
+                <header class="grid gap-[0.34rem]">
+                  <p class={sectionLabelClassName}>ROLES</p>
+                  <h4 class="m-0 text-[1.34rem] leading-tight text-ink-0">
+                    Roles and Hierarchy
+                  </h4>
+                  <p class={mutedTextClass}>
+                    Manage role capabilities, hierarchy order, and targeted role
+                    assignments from server settings.
+                  </p>
+                </header>
+                <RoleManagementPanel
+                  {...props.roleManagementPanelProps}
+                  embedded={true}
+                />
               </section>
             </Match>
           </Switch>

@@ -30,6 +30,7 @@ import type {
   PublicDirectoryJoinStatus,
   SettingsCategory,
   VoiceSettingsSubmenu,
+  WorkspaceSettingsSection,
 } from "../types";
 import type { DiagnosticsEventCounts } from "../state/diagnostics-event-counters";
 
@@ -123,6 +124,7 @@ export interface WorkspaceSettingsPanelBuilderOptions {
   hasActiveWorkspace: boolean;
   canManageWorkspaceSettings: boolean;
   canManageMemberRoles: boolean;
+  workspaceSettingsSection: WorkspaceSettingsSection;
   workspaceName: string;
   workspaceVisibility: GuildVisibility;
   isSavingWorkspaceSettings: boolean;
@@ -382,6 +384,7 @@ export function buildWorkspaceSettingsPanelProps(
     hasActiveWorkspace: options.hasActiveWorkspace,
     canManageWorkspaceSettings: options.canManageWorkspaceSettings,
     canManageMemberRoles: options.canManageMemberRoles,
+    activeSectionId: options.workspaceSettingsSection,
     workspaceName: options.workspaceName,
     workspaceVisibility: options.workspaceVisibility,
     isSavingWorkspaceSettings: options.isSavingWorkspaceSettings,

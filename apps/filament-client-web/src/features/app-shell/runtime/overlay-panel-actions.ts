@@ -8,6 +8,7 @@ import type {
   OverlayPanel,
   SettingsCategory,
   VoiceSettingsSubmenu,
+  WorkspaceSettingsSection,
 } from "../types";
 
 export interface OverlayPanelActionsOptions {
@@ -22,10 +23,14 @@ export interface OverlayPanelActionsOptions {
   setChannelCreateError: Setter<string>;
   setActiveSettingsCategory: Setter<SettingsCategory>;
   setActiveVoiceSettingsSubmenu: Setter<VoiceSettingsSubmenu>;
+  setActiveWorkspaceSettingsSection: Setter<WorkspaceSettingsSection>;
 }
 
 export function createOverlayPanelActions(options: OverlayPanelActionsOptions) {
   const openOverlayPanel = (panel: OverlayPanel): void => {
+    if (panel === "workspace-settings") {
+      options.setActiveWorkspaceSettingsSection("profile");
+    }
     openOverlayPanelWithDefaults(panel, {
       setPanel: options.setActiveOverlayPanel,
       setWorkspaceError: options.setWorkspaceError,
@@ -53,15 +58,24 @@ export function createOverlayPanelActions(options: OverlayPanelActionsOptions) {
     openOverlayPanel("client-settings");
   };
 
-  const openWorkspaceSettingsPanel = (): void => {
+  const openWorkspaceSettingsPanel = (
+    section: WorkspaceSettingsSection = "profile",
+  ): void => {
     const activeWorkspace = options.activeWorkspace();
     if (activeWorkspace) {
       options.setWorkspaceSettingsName(activeWorkspace.guildName);
       options.setWorkspaceSettingsVisibility(activeWorkspace.visibility);
     }
+    options.setActiveWorkspaceSettingsSection(section);
     options.setWorkspaceSettingsStatus("");
     options.setWorkspaceSettingsError("");
-    openOverlayPanel("workspace-settings");
+    openOverlayPanelWithDefaults("workspace-settings", {
+      setPanel: options.setActiveOverlayPanel,
+      setWorkspaceError: options.setWorkspaceError,
+      setChannelCreateError: options.setChannelCreateError,
+      setActiveSettingsCategory: options.setActiveSettingsCategory,
+      setActiveVoiceSettingsSubmenu: options.setActiveVoiceSettingsSubmenu,
+    });
   };
 
   return {

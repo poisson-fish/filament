@@ -13,6 +13,7 @@ describe("app shell support panel-host state options", () => {
 
     const activeSettingsCategory = () => "profile";
     const activeVoiceSettingsSubmenu = () => "audio-devices";
+    const activeWorkspaceSettingsSection = () => "profile" as const;
     const setActiveVoiceSettingsSubmenu = vi.fn();
 
     const voiceDevicePreferences = () => ({
@@ -42,6 +43,13 @@ describe("app shell support panel-host state options", () => {
 
     const activeWorkspace = vi.fn(() => ({ id: "guild-1" }));
     const activeGuildId = () => "guild-1";
+    const onlineMembers = () => ["user-2"];
+    const workspaceUserRolesByGuildId = () => ({
+      "guild-1": {
+        "user-1": ["role-1"],
+        "user-2": [],
+      },
+    });
     const canManageRoles = () => true;
     const workspaceSettingsName = () => "Ops";
     const workspaceSettingsVisibility = () => "private";
@@ -116,6 +124,7 @@ describe("app shell support panel-host state options", () => {
       overlayState: {
         activeSettingsCategory,
         activeVoiceSettingsSubmenu,
+        activeWorkspaceSettingsSection,
         setActiveVoiceSettingsSubmenu,
       } as unknown as Parameters<typeof createSupportPanelHostStateOptions>[0]["overlayState"],
       voiceState: {
@@ -216,6 +225,7 @@ describe("app shell support panel-host state options", () => {
     expect(stateOptions.profile()).toEqual(profile());
     expect(stateOptions.selectedAvatarFilename()).toBe("avatar.png");
     expect(stateOptions.workspaceName).toBe(workspaceSettingsName);
+    expect(stateOptions.workspaceSettingsSection()).toBe("profile");
     expect(stateOptions.viewAsRoleSimulatorEnabled()).toBe(true);
     expect(stateOptions.viewAsRoleSimulatorRole()).toBe("moderator");
     expect(stateOptions.members()).toEqual([
@@ -232,10 +242,3 @@ describe("app shell support panel-host state options", () => {
     expect(openOverlayPanel).toHaveBeenCalledWith("moderation");
   });
 });
-    const onlineMembers = () => ["user-2"];
-    const workspaceUserRolesByGuildId = () => ({
-      "guild-1": {
-        "user-1": ["role-1"],
-        "user-2": [],
-      },
-    });

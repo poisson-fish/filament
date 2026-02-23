@@ -318,7 +318,7 @@ export function ModerationPanel(props: ModerationPanelProps) {
       </Show>
       <div class={buttonRowClass}>
         <button class={actionButtonClass} type="button" onClick={props.onOpenRoleManagementPanel}>
-          Open role management panel
+          Open server settings roles
         </button>
       </div>
       <Show when={props.moderationStatus}>

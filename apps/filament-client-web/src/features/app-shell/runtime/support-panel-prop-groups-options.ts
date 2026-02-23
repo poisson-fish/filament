@@ -60,6 +60,8 @@ export interface SupportPanelPropGroupsStateOptions {
     SupportPanelPropGroupsOptions["settings"]["avatarUrlForUser"];
   hasActiveWorkspace: () => boolean;
   canManageWorkspaceSettings: () => boolean;
+  workspaceSettingsSection:
+    () => SupportPanelPropGroupsOptions["workspaceSettings"]["workspaceSettingsSection"];
   workspaceName: () => string;
   workspaceVisibility: () => GuildVisibility;
   isSavingWorkspaceSettings: () => boolean;
@@ -179,6 +181,7 @@ export function createSupportPanelPropGroupsOptions(
     workspaceSettings: {
       hasActiveWorkspace: options.hasActiveWorkspace(),
       canManageWorkspaceSettings: options.canManageWorkspaceSettings(),
+      workspaceSettingsSection: options.workspaceSettingsSection(),
       canManageMemberRoles: options.canManageMemberRoles(),
       workspaceName: options.workspaceName(),
       workspaceVisibility: options.workspaceVisibility(),

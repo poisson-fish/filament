@@ -82,6 +82,7 @@ describe("app shell support panel prop groups", () => {
         hasActiveWorkspace: true,
         canManageWorkspaceSettings: true,
         canManageMemberRoles: true,
+        workspaceSettingsSection: "profile",
         workspaceName: "Ops",
         workspaceVisibility: guildVisibilityFromInput("private"),
         isSavingWorkspaceSettings: false,
@@ -160,6 +161,7 @@ describe("app shell support panel prop groups", () => {
     expect(panelGroups.publicDirectory.publicGuildSearchQuery).toBe("ops");
     expect(panelGroups.settings.activeSettingsCategory).toBe("profile");
     expect(panelGroups.workspaceSettings.workspaceName).toBe("Ops");
+    expect(panelGroups.workspaceSettings.workspaceSettingsSection).toBe("profile");
     expect(panelGroups.roleManagement.roles).toHaveLength(1);
     expect(panelGroups.utility.echoInput).toBe("ping");
 

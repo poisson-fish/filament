@@ -314,6 +314,7 @@ export function AppShellPage() {
           hasModerationAccess={hasModerationAccess()}
           displayUserLabel={displayUserLabel}
           onOpenPanel={openOverlayPanel}
+          onOpenWorkspaceRoleSettings={() => openWorkspaceSettingsPanel("roles")}
         />
       }
     >

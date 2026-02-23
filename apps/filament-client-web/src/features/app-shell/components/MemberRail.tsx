@@ -17,6 +17,7 @@ interface MemberRailProps {
   hasModerationAccess: boolean;
   displayUserLabel: (userId: string) => string;
   onOpenPanel: (panel: OverlayPanel) => void;
+  onOpenWorkspaceRoleSettings: () => void;
 }
 
 export function MemberRail(props: MemberRailProps) {
@@ -135,9 +136,9 @@ export function MemberRail(props: MemberRailProps) {
             <button
               type="button"
               class={panelButtonClass}
-              onClick={() => props.onOpenPanel("role-management")}
+              onClick={props.onOpenWorkspaceRoleSettings}
             >
-              Open role management panel
+              Open server settings roles
             </button>
           </Show>
           <button

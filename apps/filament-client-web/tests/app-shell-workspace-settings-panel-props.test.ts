@@ -19,6 +19,7 @@ describe("app shell workspace settings panel props", () => {
       hasActiveWorkspace: true,
       canManageWorkspaceSettings: true,
       canManageMemberRoles: true,
+      workspaceSettingsSection: "profile",
       workspaceName: "Filament",
       workspaceVisibility: guildVisibilityFromInput("private"),
       isSavingWorkspaceSettings: false,
@@ -52,6 +53,7 @@ describe("app shell workspace settings panel props", () => {
     expect(panelProps.hasActiveWorkspace).toBe(true);
     expect(panelProps.canManageWorkspaceSettings).toBe(true);
     expect(panelProps.canManageMemberRoles).toBe(true);
+    expect(panelProps.workspaceSettingsSection).toBe("profile");
     expect(panelProps.viewAsRoleSimulatorEnabled).toBe(false);
     expect(panelProps.viewAsRoleSimulatorRole).toBe("member");
     expect(panelProps.workspaceName).toBe("Filament");
@@ -75,6 +77,7 @@ describe("app shell workspace settings panel props", () => {
       hasActiveWorkspace: true,
       canManageWorkspaceSettings: true,
       canManageMemberRoles: true,
+      workspaceSettingsSection: "profile",
       workspaceName: workspaceName(),
       workspaceVisibility: guildVisibilityFromInput("private"),
       isSavingWorkspaceSettings: false,
@@ -117,6 +120,7 @@ describe("app shell workspace settings panel props", () => {
       hasActiveWorkspace: true,
       canManageWorkspaceSettings: true,
       canManageMemberRoles: true,
+      workspaceSettingsSection: "profile",
       workspaceName: "Filament",
       workspaceVisibility: workspaceVisibility(),
       isSavingWorkspaceSettings: false,
@@ -156,6 +160,7 @@ describe("app shell workspace settings panel props", () => {
       hasActiveWorkspace: true,
       canManageWorkspaceSettings: true,
       canManageMemberRoles: true,
+      workspaceSettingsSection: "simulator",
       workspaceName: "Filament",
       workspaceVisibility: guildVisibilityFromInput("private"),
       isSavingWorkspaceSettings: false,

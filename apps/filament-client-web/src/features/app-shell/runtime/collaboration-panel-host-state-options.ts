@@ -14,6 +14,7 @@ import type { CreateAppShellSelectorsResult } from "../selectors/create-app-shel
 import type { createDiagnosticsState } from "../state/diagnostics-state";
 import type { createMessageState } from "../state/message-state";
 import type { createWorkspaceState } from "../state/workspace-state";
+import type { WorkspaceSettingsSection } from "../types";
 import type { createAppShellRuntimeLabels } from "./runtime-labels";
 import type { CollaborationPanelPropGroupsStateOptions } from "./collaboration-panel-prop-groups-options";
 
@@ -29,7 +30,9 @@ export interface CollaborationPanelHostStateOptions {
   attachmentActions: ReturnType<typeof createAttachmentController>;
   moderationActions: ReturnType<typeof createModerationController>;
   labels: ReturnType<typeof createAppShellRuntimeLabels>;
-  openOverlayPanel: (panel: "role-management") => void;
+  openWorkspaceSettingsPanel: (
+    section?: WorkspaceSettingsSection,
+  ) => void;
 }
 
 const LEGACY_OVERRIDE_ROLE_ORDER: readonly RoleName[] = ["member", "moderator", "owner"];
@@ -255,6 +258,7 @@ export function createCollaborationPanelHostStateOptions(
     setOverrideAllowCsv: options.diagnosticsState.setOverrideAllowCsv,
     setOverrideDenyCsv: options.diagnosticsState.setOverrideDenyCsv,
     onApplyOverride: options.moderationActions.applyOverride,
-    onOpenRoleManagementPanel: () => options.openOverlayPanel("role-management"),
+    onOpenRoleManagementPanel: () =>
+      options.openWorkspaceSettingsPanel("roles"),
   };
 }

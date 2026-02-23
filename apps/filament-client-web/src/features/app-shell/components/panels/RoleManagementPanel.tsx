@@ -102,7 +102,8 @@ export interface RoleManagementPanelProps {
   onReorderRoles: (roleIds: WorkspaceRoleId[]) => Promise<void> | void;
   onAssignRole: (targetUserIdInput: string, roleId: WorkspaceRoleId) => Promise<void> | void;
   onUnassignRole: (targetUserIdInput: string, roleId: WorkspaceRoleId) => Promise<void> | void;
-  onOpenModerationPanel: () => void;
+  onOpenModerationPanel?: () => void;
+  embedded?: boolean;
 }
 
 function togglePermission(
@@ -212,7 +213,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const statusChipClass =
     "inline-block text-[0.7rem] uppercase tracking-[0.06em] text-ink-2";
   const rolePreviewClass = "m-0 break-words text-ink-2";
-  const panelSectionClass = "grid gap-[0.5rem]";
+  const panelSectionClass = props.embedded ? "grid gap-[0.66rem]" : "grid gap-[0.5rem]";
   const formClass = "grid gap-[0.5rem]";
   const fieldLabelClass = "grid gap-[0.3rem] text-[0.84rem] text-ink-1";
   const fieldControlClass =
@@ -568,9 +569,17 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
         >
           {props.isLoadingRoles ? "Refreshing..." : "Refresh roles"}
         </button>
-        <button class={rowActionButtonClass} type="button" onClick={props.onOpenModerationPanel}>
-          Open moderation panel
-        </button>
+        <Show when={props.onOpenModerationPanel}>
+          {(onOpenModerationPanel) => (
+            <button
+              class={rowActionButtonClass}
+              type="button"
+              onClick={onOpenModerationPanel()}
+            >
+              Open moderation tools
+            </button>
+          )}
+        </Show>
       </div>
 
       <Show when={props.hasActiveWorkspace} fallback={<p class={mutedTextClass}>Select a workspace first.</p>}>

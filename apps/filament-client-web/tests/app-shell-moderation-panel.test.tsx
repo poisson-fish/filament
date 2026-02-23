@@ -167,7 +167,7 @@ describe("app shell moderation panel", () => {
     await fireEvent.submit(overrideForm!);
     expect(onApplyOverride).toHaveBeenCalledTimes(1);
 
-    await fireEvent.click(screen.getByRole("button", { name: "Open role management panel" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open server settings roles" }));
     expect(onOpenRoleManagementPanel).toHaveBeenCalledTimes(1);
   });
 
@@ -255,7 +255,7 @@ describe("app shell moderation panel", () => {
     expect(screen.queryByRole("button", { name: "Kick" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Apply channel override" })).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Open role management panel" }),
+      screen.getByRole("button", { name: "Open server settings roles" }),
     ).toBeInTheDocument();
   });
 });

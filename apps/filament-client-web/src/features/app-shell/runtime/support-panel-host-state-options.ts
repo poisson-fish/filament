@@ -157,6 +157,7 @@ export function createSupportPanelHostStateOptions(
     avatarUrlForUser: options.profileController.avatarUrlForUser,
     hasActiveWorkspace: () => Boolean(options.selectors.activeWorkspace()),
     canManageWorkspaceSettings: options.selectors.canManageRoles,
+    workspaceSettingsSection: options.overlayState.activeWorkspaceSettingsSection,
     workspaceName: options.workspaceChannelState.workspaceSettingsName,
     workspaceVisibility: options.workspaceChannelState.workspaceSettingsVisibility,
     isSavingWorkspaceSettings: options.workspaceChannelState.isSavingWorkspaceSettings,

@@ -68,7 +68,7 @@ describe("app shell collaboration panel-host state options", () => {
     const runMemberAction = vi.fn();
     const applyOverride = vi.fn();
 
-    const openOverlayPanel = vi.fn();
+    const openWorkspaceSettingsPanel = vi.fn();
     const activeGuildId = guildIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAA");
     const activeChannelId = channelIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAB");
 
@@ -212,7 +212,7 @@ describe("app shell collaboration panel-host state options", () => {
       } as unknown as Parameters<
         typeof createCollaborationPanelHostStateOptions
       >[0]["labels"],
-      openOverlayPanel,
+      openWorkspaceSettingsPanel,
     });
 
     expect(stateOptions.friendRecipientUserIdInput).toBe(friendRecipientUserIdInput);
@@ -231,6 +231,6 @@ describe("app shell collaboration panel-host state options", () => {
     expect(stateOptions.onApplyOverride).toBe(applyOverride);
 
     stateOptions.onOpenRoleManagementPanel();
-    expect(openOverlayPanel).toHaveBeenCalledWith("role-management");
+    expect(openWorkspaceSettingsPanel).toHaveBeenCalledWith("roles");
   });
 });

@@ -17,6 +17,7 @@ function workspaceSettingsPanelPropsFixture(
     hasActiveWorkspace: true,
     canManageWorkspaceSettings: true,
     canManageMemberRoles: true,
+    activeSectionId: "profile",
     workspaceName: "Filament",
     workspaceVisibility: "private",
     isSavingWorkspaceSettings: false,
@@ -44,6 +45,34 @@ function workspaceSettingsPanelPropsFixture(
       },
     ],
     assignableRoleIds: [workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX")],
+    roleManagementPanelProps: {
+      hasActiveWorkspace: true,
+      canManageWorkspaceRoles: true,
+      canManageMemberRoles: true,
+      roles: [
+        {
+          roleId: workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+          name: workspaceRoleNameFromInput("Moderator"),
+          position: 40,
+          isSystem: false,
+          permissions: [permissionFromInput("manage_member_roles")],
+        },
+      ],
+      isLoadingRoles: false,
+      isMutatingRoles: false,
+      roleManagementStatus: "",
+      roleManagementError: "",
+      targetUserIdInput: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      onTargetUserIdInput: () => undefined,
+      onRefreshRoles: () => undefined,
+      onCreateRole: () => undefined,
+      onUpdateRole: () => undefined,
+      onDeleteRole: () => undefined,
+      onReorderRoles: () => undefined,
+      onAssignRole: () => undefined,
+      onUnassignRole: () => undefined,
+      onOpenModerationPanel: () => undefined,
+    },
     onWorkspaceNameInput: () => undefined,
     onWorkspaceVisibilityChange: () => undefined,
     onViewAsRoleSimulatorToggle: () => undefined,
@@ -157,5 +186,16 @@ describe("app shell workspace settings panel", () => {
       "01ARZ3NDEKTSV4RRFFQ69G5FAW",
       "01ARZ3NDEKTSV4RRFFQ69G5FAX",
     );
+  });
+
+  it("renders embedded role management controls under the roles section", async () => {
+    render(() => <WorkspaceSettingsPanel {...workspaceSettingsPanelPropsFixture()} />);
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Open Roles & Hierarchy workspace section" }),
+    );
+
+    expect(screen.getByRole("button", { name: "Create role" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh roles" })).toBeInTheDocument();
   });
 });

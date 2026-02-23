@@ -1,10 +1,12 @@
 import type { GuildVisibility, RoleName, WorkspaceRoleId } from "../../../domain/chat";
+import type { WorkspaceSettingsSection } from "../types";
 import type { WorkspaceSettingsPanelBuilderOptions } from "../adapters/panel-host-props";
 
 export interface WorkspaceSettingsPanelPropsOptions {
   hasActiveWorkspace: boolean;
   canManageWorkspaceSettings: boolean;
   canManageMemberRoles: boolean;
+  workspaceSettingsSection: WorkspaceSettingsSection;
   workspaceName: string;
   workspaceVisibility: GuildVisibility;
   isSavingWorkspaceSettings: boolean;
@@ -36,6 +38,7 @@ export function createWorkspaceSettingsPanelProps(
     hasActiveWorkspace: options.hasActiveWorkspace,
     canManageWorkspaceSettings: options.canManageWorkspaceSettings,
     canManageMemberRoles: options.canManageMemberRoles,
+    workspaceSettingsSection: options.workspaceSettingsSection,
     workspaceName: options.workspaceName,
     workspaceVisibility: options.workspaceVisibility,
     isSavingWorkspaceSettings: options.isSavingWorkspaceSettings,

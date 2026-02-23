@@ -128,6 +128,7 @@ function baseOptions(
       hasActiveWorkspace: true,
       canManageWorkspaceSettings: true,
       canManageMemberRoles: true,
+      workspaceSettingsSection: "profile",
       workspaceName: "Security Ops",
       workspaceVisibility: "private",
       isSavingWorkspaceSettings: false,
@@ -540,6 +541,9 @@ describe("app shell panel host props adapter", () => {
     );
     expect(propGroups.workspaceSettingsPanelProps.workspaceName).toBe(
       options.workspaceSettings.workspaceName,
+    );
+    expect(propGroups.workspaceSettingsPanelProps.activeSectionId).toBe(
+      options.workspaceSettings.workspaceSettingsSection,
     );
     expect(propGroups.searchPanelProps.searchResults).toBe(options.search.searchResults);
     expect(propGroups.attachmentsPanelProps.activeAttachments).toBe(

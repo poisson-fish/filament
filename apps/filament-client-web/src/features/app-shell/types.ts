@@ -39,6 +39,12 @@ export type OverlayPanel =
   | "moderation"
   | "utility";
 
+export type WorkspaceSettingsSection =
+  | "profile"
+  | "simulator"
+  | "members"
+  | "roles";
+
 export type SettingsCategory = "voice" | "profile";
 
 export type VoiceSettingsSubmenu = "audio-devices";

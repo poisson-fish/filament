@@ -289,6 +289,7 @@ describe("app shell extracted layout components", () => {
 
   it("keeps member rail panel actions and chat header toggles wired", () => {
     const onOpenPanel = vi.fn();
+    const onOpenWorkspaceRoleSettings = vi.fn();
     const onToggleChannels = vi.fn();
 
     render(() => (
@@ -304,6 +305,7 @@ describe("app shell extracted layout components", () => {
           hasModerationAccess={true}
           displayUserLabel={(value) => value}
           onOpenPanel={onOpenPanel}
+          onOpenWorkspaceRoleSettings={onOpenWorkspaceRoleSettings}
         />
         <ChatHeader
           activeChannel={channelFixture("text")}
@@ -326,8 +328,8 @@ describe("app shell extracted layout components", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open moderation panel" }));
     expect(onOpenPanel).toHaveBeenCalledWith("moderation");
-    fireEvent.click(screen.getByRole("button", { name: "Open role management panel" }));
-    expect(onOpenPanel).toHaveBeenCalledWith("role-management");
+    fireEvent.click(screen.getByRole("button", { name: "Open server settings roles" }));
+    expect(onOpenWorkspaceRoleSettings).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Hide channels" }));
     expect(onToggleChannels).toHaveBeenCalledTimes(1);

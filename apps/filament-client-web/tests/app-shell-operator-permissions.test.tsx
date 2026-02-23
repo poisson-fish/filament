@@ -256,7 +256,7 @@ describe("operator console permission fixtures", () => {
     expect(screen.getByRole("button", { name: "Reconcile Index" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open role management panel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open server settings roles" }));
     expect(await screen.findByRole("button", { name: "Create role" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -287,7 +287,7 @@ describe("operator console permission fixtures", () => {
     expect(screen.queryByRole("button", { name: "Ban" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open moderation panel" })).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Open role management panel" }),
+      screen.queryByRole("button", { name: "Open server settings roles" }),
     ).not.toBeInTheDocument();
   });
 });
