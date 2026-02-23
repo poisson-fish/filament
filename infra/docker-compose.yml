@@ -25,6 +25,7 @@ services:
   livekit:
     image: livekit/livekit-server:v1.8.3
     restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
     environment:
       LIVEKIT_PORT: ${LIVEKIT_PORT:-7880}
       LIVEKIT_TCP_PORT: ${LIVEKIT_TCP_PORT:-7881}
@@ -33,27 +34,24 @@ services:
       LIVEKIT_NODE_IP: ${LIVEKIT_NODE_IP:-}
       FILAMENT_LIVEKIT_API_KEY: ${FILAMENT_LIVEKIT_API_KEY:-devkey}
       FILAMENT_LIVEKIT_API_SECRET: ${FILAMENT_LIVEKIT_API_SECRET:-devsecret}
-    command:
-      - /bin/sh
-      - -ec
-      - |
-        cat > /tmp/livekit.yaml <<EOF
-        port: ${LIVEKIT_PORT}
-        rtc:
-          tcp_port: ${LIVEKIT_TCP_PORT}
-          udp_port: ${LIVEKIT_UDP_PORT}
-          use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP}
-        EOF
-        if [ -n "${LIVEKIT_NODE_IP}" ]; then
-          printf "  node_ip: %s\n" "${LIVEKIT_NODE_IP}" >> /tmp/livekit.yaml
-        fi
-        cat >> /tmp/livekit.yaml <<EOF
-        keys:
-          ${FILAMENT_LIVEKIT_API_KEY}: ${FILAMENT_LIVEKIT_API_SECRET}
-        logging:
-          level: info
-        EOF
-        exec livekit-server --config /tmp/livekit.yaml
+    command: |
+      cat > /tmp/livekit.yaml <<EOF
+      port: ${LIVEKIT_PORT}
+      rtc:
+        tcp_port: ${LIVEKIT_TCP_PORT}
+        udp_port: ${LIVEKIT_UDP_PORT}
+        use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP}
+      EOF
+      if [ -n "${LIVEKIT_NODE_IP}" ]; then
+        printf "  node_ip: %s\n" "${LIVEKIT_NODE_IP}" >> /tmp/livekit.yaml
+      fi
+      cat >> /tmp/livekit.yaml <<EOF
+      keys:
+        ${FILAMENT_LIVEKIT_API_KEY}: ${FILAMENT_LIVEKIT_API_SECRET}
+      logging:
+        level: info
+      EOF
+      exec livekit-server --config /tmp/livekit.yaml
     ports:
       - "${LIVEKIT_PORT:-7880}:${LIVEKIT_PORT:-7880}"
       - "${LIVEKIT_TCP_PORT:-7881}:${LIVEKIT_TCP_PORT:-7881}"
