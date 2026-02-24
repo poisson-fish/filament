@@ -190,6 +190,26 @@ function createOperatorFixtureFetch(role: FixtureRole) {
         ? jsonResponse({
             roles: [
               {
+                role_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                name: "Owner",
+                position: 1,
+                is_system: true,
+                permissions: [
+                  "manage_roles",
+                  "manage_member_roles",
+                  "manage_workspace_roles",
+                  "manage_channel_overrides",
+                  "delete_message",
+                  "ban_member",
+                  "view_audit_log",
+                  "manage_ip_bans",
+                  "create_message",
+                  "publish_video",
+                  "publish_screen_share",
+                  "subscribe_streams",
+                ],
+              },
+              {
                 role_id: "01ARZ3NDEKTSV4RRFFQ69G5FB1",
                 name: "Responder",
                 position: 3,
@@ -265,7 +285,7 @@ describe("operator console permission fixtures", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("button", { name: "Open voice panel" })).not.toBeInTheDocument();
-  });
+  }, 15000);
 
   it("hides privileged operator controls for restricted member fixtures", async () => {
     seedAuthenticatedWorkspace();

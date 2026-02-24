@@ -76,6 +76,7 @@ describe("api-workspace-client", () => {
         role: roleFromInput("member"),
         permissions: ["create_message" as const],
       })),
+      fetchGuildMembers: vi.fn(),
       addGuildMember: vi.fn(async () =>
         moderationResultFromResponse({
           accepted: true,

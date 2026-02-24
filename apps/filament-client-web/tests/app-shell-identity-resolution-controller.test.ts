@@ -84,6 +84,7 @@ describe("app shell identity resolution controller", () => {
           },
         ],
       }),
+      workspaceMembers: [],
     });
 
     expect(ids).toEqual([
@@ -102,6 +103,7 @@ describe("app shell identity resolution controller", () => {
     const [onlineMembers] = createSignal<string[]>([]);
     const [voiceRosterEntries] = createSignal([]);
     const [searchResults] = createSignal(null);
+    const [workspaceMembers] = createSignal<string[]>([]);
     const [profile] = createSignal(
       profileFromResponse({
         user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAA",
@@ -142,6 +144,7 @@ describe("app shell identity resolution controller", () => {
           onlineMembers,
           voiceRosterEntries,
           searchResults,
+          workspaceMembers,
           profile,
           selectedProfile,
           friends,
@@ -197,6 +200,7 @@ describe("app shell identity resolution controller", () => {
       },
     ]);
     const [searchResults] = createSignal(null);
+    const [workspaceMembers] = createSignal<string[]>([]);
     const [profile] = createSignal(undefined);
     const [selectedProfile] = createSignal(null);
     const [friends] = createSignal(friendListFromResponse({ friends: [] }));
@@ -216,6 +220,7 @@ describe("app shell identity resolution controller", () => {
           onlineMembers,
           voiceRosterEntries,
           searchResults,
+          workspaceMembers,
           profile,
           selectedProfile,
           friends,

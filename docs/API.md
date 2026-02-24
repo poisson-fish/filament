@@ -345,6 +345,11 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Response `200`: `{ "upserted": <number>, "deleted": <number> }`
 
 ### Membership and Moderation
+- `GET /guilds/{guild_id}/members?cursor=<user_id>&limit=<n>`
+  - Auth required
+  - Requires `manage_roles` or `manage_member_roles` or `manage_workspace_roles`
+  - Response `200`:
+    - `{ "members": [{ "user_id", "role_ids" }], "next_cursor": "..." | null }`
 - `POST /guilds/{guild_id}/members/{user_id}`
   - Add member as `member`
   - Requires `manage_roles`

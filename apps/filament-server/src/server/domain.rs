@@ -45,19 +45,6 @@ pub(crate) async fn user_can_write_channel(
         .is_some_and(|(_, permissions)| permissions.contains(Permission::CreateMessage))
 }
 
-pub(crate) async fn check_workspace_permission(
-    state: &AppState,
-    user_id: UserId,
-    guild_id: &str,
-    permission: Permission,
-) -> Result<(), AuthFailure> {
-    let (_, permissions) = guild_permission_snapshot(state, user_id, guild_id).await?;
-    if !permissions.contains(permission) {
-        return Err(AuthFailure::Forbidden);
-    }
-    Ok(())
-}
-
 pub(crate) async fn check_channel_permission(
     state: &AppState,
     user_id: UserId,

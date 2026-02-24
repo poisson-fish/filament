@@ -58,7 +58,9 @@ describe("role management panel", () => {
       ),
     );
 
-    fireEvent.input(screen.getAllByLabelText("Role name")[0]!, {
+    fireEvent.click(screen.getByRole("button", { name: "Create role" }));
+
+    fireEvent.input(screen.getByLabelText("Role name"), {
       target: { value: "Incident Lead" },
     });
 
@@ -68,7 +70,7 @@ describe("role management panel", () => {
     );
     fireEvent.click(manageWorkspaceRolesToggle);
 
-    fireEvent.click(screen.getByRole("button", { name: "Create role" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create Role" }));
 
     expect(onCreateRole).toHaveBeenCalledWith({
       name: "Incident Lead",
@@ -79,12 +81,14 @@ describe("role management panel", () => {
       ],
     });
 
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Members" }));
+
     fireEvent.input(screen.getByLabelText("Target user ULID"), {
       target: { value: "01ARZ3NDEKTSV4RRFFQ69G5FAW" },
     });
     expect(onTargetUserIdInput).toHaveBeenCalledWith("01ARZ3NDEKTSV4RRFFQ69G5FAW");
 
-    fireEvent.click(screen.getByRole("button", { name: "Assign role" }));
+    fireEvent.click(screen.getByRole("button", { name: "Assign Role" }));
     expect(onAssignRole).toHaveBeenCalledWith("01ARZ3NDEKTSV4RRFFQ69G5FAW", ROLE_ID);
   });
 
@@ -99,6 +103,8 @@ describe("role management panel", () => {
       ),
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Create role" }));
+
     const createMatrix = screen.getByLabelText("create role permission matrix");
     const roleTemplateSelect = screen.getByLabelText("Role template");
 
@@ -106,12 +112,12 @@ describe("role management panel", () => {
       target: { value: "moderator" },
     });
 
-    expect(screen.getAllByLabelText("Role name")[0]).toHaveValue("Moderator");
+    expect(screen.getByLabelText("Role name")).toHaveValue("Moderator");
     expect(within(createMatrix).getByLabelText(/Delete Messages/i)).toBeChecked();
     expect(within(createMatrix).getByLabelText(/Ban Members/i)).toBeChecked();
     expect(within(createMatrix).getByLabelText(/Publish Camera/i)).not.toBeChecked();
 
-    fireEvent.click(screen.getByRole("button", { name: "Create role" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create Role" }));
 
     expect(onCreateRole).toHaveBeenCalledWith({
       name: "Moderator",
@@ -137,25 +143,22 @@ describe("role management panel", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Create role" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Assign role" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage Members" }));
+    expect(screen.getByRole("button", { name: "Assign Role" })).toBeDisabled();
   });
 
   it("renders hierarchy and permission matrix with utility classes and no legacy hooks", () => {
     render(() => RoleManagementPanel(panelProps()));
 
-    const hierarchy = screen.getByLabelText("role hierarchy");
-    expect(hierarchy).toHaveClass("grid");
+    fireEvent.click(screen.getByRole("button", { name: "Create role" }));
 
     const refreshButton = screen.getByRole("button", { name: "Refresh roles" });
-    expect(refreshButton.className).toContain("flex-1");
-
-    const selectedRoleButton = screen.getByRole("button", { name: /Responder/ });
-    expect(selectedRoleButton.className).toContain("border-brand");
+    expect(refreshButton).toHaveClass("border-line-soft");
 
     const createMatrix = screen.getByLabelText("create role permission matrix");
     expect(createMatrix).toHaveClass("grid");
     const firstToggle = within(createMatrix).getByLabelText(/Create Messages/i).closest("label");
-    expect(firstToggle?.className).toContain("grid-cols-[auto_1fr]");
+    expect(firstToggle?.className).toContain("flex");
     expect(
       within(createMatrix).getByText(
         "Create, update, delete, and reorder workspace roles.",
@@ -188,9 +191,12 @@ describe("role management panel", () => {
       ),
     );
 
-    const systemBadge = screen.getByText("system");
-    expect(systemBadge.className).toContain("uppercase");
-    expect(systemBadge).not.toHaveClass("status-chip");
+    const systemBadges = screen.getAllByText("System");
+    const systemBadge = systemBadges.find((node) =>
+      node.className.includes("rounded-full"),
+    ) as HTMLElement | undefined;
+    expect(systemBadge).toBeTruthy();
+    expect(systemBadge!).not.toHaveClass("status-chip");
     expect(document.querySelector(".status-chip")).toBeNull();
   });
 
@@ -199,7 +205,7 @@ describe("role management panel", () => {
 
     render(() => RoleManagementPanel(panelProps({ onDeleteRole })));
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete role" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Role" }));
 
     const deleteDialog = screen.getByRole("dialog", {
       name: "Dangerous operation confirmation",
@@ -208,7 +214,7 @@ describe("role management panel", () => {
     fireEvent.click(within(deleteDialog).getByRole("button", { name: "Cancel" }));
     expect(onDeleteRole).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete role" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Role" }));
     const confirmedDeleteDialog = screen.getByRole("dialog", {
       name: "Dangerous operation confirmation",
     });
@@ -228,10 +234,11 @@ describe("role management panel", () => {
       ),
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Permissions" }));
     const editMatrix = screen.getByLabelText("edit role permission matrix");
     fireEvent.click(within(editMatrix).getByLabelText(/Manage Workspace Roles/i));
 
-    fireEvent.click(screen.getByRole("button", { name: "Save role" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
 
     expect(
       screen.getByRole("heading", {
@@ -270,13 +277,14 @@ describe("role management panel", () => {
       ),
     );
 
-    fireEvent.input(screen.getAllByLabelText("Role name")[1]!, {
+    fireEvent.input(screen.getByLabelText("Role name"), {
       target: { value: " Incident Lead " },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Permissions" }));
     const editMatrix = screen.getByLabelText("edit role permission matrix");
     fireEvent.click(within(editMatrix).getByLabelText(/Delete Messages/i));
 
-    fireEvent.click(screen.getByRole("button", { name: "Save role" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
 
     expect(onUpdateRole).toHaveBeenCalledWith(ROLE_ID, {
       name: "Incident Lead",
@@ -295,20 +303,22 @@ describe("role management panel", () => {
       ),
     );
 
-    const saveButton = screen.getByRole("button", { name: "Save role" });
-    expect(saveButton).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save Changes" })).not.toBeInTheDocument();
 
-    fireEvent.input(screen.getAllByLabelText("Role name")[1]!, {
+    fireEvent.input(screen.getByLabelText("Role name"), {
       target: { value: "Responder Prime" },
     });
 
-    expect(screen.getByText("unsaved changes")).toBeInTheDocument();
-    expect(saveButton).not.toBeDisabled();
+    expect(screen.getByText(/^unsaved changes$/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Reset draft" }));
+    const unsavedBanner = screen
+      .getByText(/you have unsaved changes to this role/i)
+      .closest("div");
+    fireEvent.click(within(unsavedBanner!).getByRole("button", { name: "Reset" }));
 
-    expect(screen.getAllByLabelText("Role name")[1]).toHaveValue("Responder");
-    expect(saveButton).toBeDisabled();
+    expect(screen.getByLabelText("Role name")).toHaveValue("Responder");
+    expect(screen.queryByRole("button", { name: "Save Changes" })).not.toBeInTheDocument();
     expect(onUpdateRole).not.toHaveBeenCalled();
   });
 
@@ -348,15 +358,16 @@ describe("role management panel", () => {
       ),
     );
 
-    const incidentReorderRow = screen.getByLabelText("Reorder role Incident Lead");
-    const responderReorderRow = screen.getByLabelText("Reorder role Responder");
+    const incidentReorderRow = screen.getByRole("button", { name: /incident lead/i });
+    const responderReorderRow = screen.getByRole("button", { name: /responder/i });
 
     fireEvent.dragStart(incidentReorderRow);
     fireEvent.dragOver(responderReorderRow);
     fireEvent.drop(responderReorderRow);
     fireEvent.dragEnd(incidentReorderRow);
 
-    fireEvent.click(screen.getByRole("button", { name: "Save hierarchy order" }));
+    const reorderNotice = screen.getByText(/Careful - you have unsaved changes!/i).closest("div");
+    fireEvent.click(within(reorderNotice!).getByRole("button", { name: "Save" }));
 
     const reorderDialog = screen.getByRole("dialog", {
       name: "Dangerous operation confirmation",

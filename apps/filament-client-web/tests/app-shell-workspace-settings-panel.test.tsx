@@ -25,7 +25,7 @@ function workspaceSettingsPanelPropsFixture(
     workspaceSettingsError: "",
     memberRoleStatus: "",
     memberRoleError: "",
-    isMutatingMemberRoles: false,
+    isMutatingMemberRoles: false, isLoadingMembers: false, memberListError: "",
     viewAsRoleSimulatorEnabled: false,
     viewAsRoleSimulatorRole: "member",
     members: [

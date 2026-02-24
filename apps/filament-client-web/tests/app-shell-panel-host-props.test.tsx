@@ -136,7 +136,7 @@ function baseOptions(
       workspaceSettingsError: "",
       memberRoleStatus: "",
       memberRoleError: "",
-      isMutatingMemberRoles: false,
+      isMutatingMemberRoles: false, isLoadingMembers: false, memberListError: "",
       viewAsRoleSimulatorEnabled: false,
       viewAsRoleSimulatorRole: roleFromInput("member"),
       members: [],

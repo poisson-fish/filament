@@ -33,7 +33,7 @@ describe("viewport height css var sync", () => {
   it("syncs css var immediately and on resize/orientation events", () => {
     const browserWindow = createWindowFixture(801.4);
 
-    const dispose = installViewportHeightCssVar(browserWindow);
+    const dispose = installViewportHeightCssVar(browserWindow as any);
 
     expect(browserWindow.document.documentElement.style.setProperty).toHaveBeenCalledWith(
       "--app-viewport-height",
@@ -77,7 +77,7 @@ describe("viewport height css var sync", () => {
   it("ignores invalid viewport heights", () => {
     const browserWindow = createWindowFixture(0);
 
-    installViewportHeightCssVar(browserWindow);
+    installViewportHeightCssVar(browserWindow as any);
 
     expect(browserWindow.document.documentElement.style.setProperty).not.toHaveBeenCalled();
   });

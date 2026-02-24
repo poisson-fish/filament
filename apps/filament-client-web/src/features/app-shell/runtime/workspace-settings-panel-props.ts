@@ -66,8 +66,8 @@ export function createWorkspaceSettingsPanelProps(
       options.setWorkspaceSettingsStatus("");
       options.setWorkspaceSettingsError("");
     },
-    onViewAsRoleSimulatorToggle: options.setViewAsRoleSimulatorEnabled,
-    onViewAsRoleSimulatorRoleChange: options.setViewAsRoleSimulatorRole,
+    setViewAsRoleSimulatorEnabled: options.setViewAsRoleSimulatorEnabled,
+    setViewAsRoleSimulatorRole: options.setViewAsRoleSimulatorRole,
     onSaveWorkspaceSettings: options.onSaveWorkspaceSettings,
     onAssignMemberRole: options.onAssignMemberRole,
     onUnassignMemberRole: options.onUnassignMemberRole,

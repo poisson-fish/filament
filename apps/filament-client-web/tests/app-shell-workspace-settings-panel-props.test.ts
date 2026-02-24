@@ -27,7 +27,7 @@ describe("app shell workspace settings panel props", () => {
       workspaceSettingsError: "",
       memberRoleStatus: "",
       memberRoleError: "",
-      isMutatingMemberRoles: false,
+      isMutatingMemberRoles: false, isLoadingMembers: false, memberListError: "",
       viewAsRoleSimulatorEnabled: false,
       viewAsRoleSimulatorRole: "member",
       members: [{ userId: "01ARZ3NDEKTSV4RRFFQ69G5FAX", label: "owner", roleIds: [] }],
@@ -85,7 +85,7 @@ describe("app shell workspace settings panel props", () => {
       workspaceSettingsError: workspaceSettingsError(),
       memberRoleStatus: "",
       memberRoleError: "",
-      isMutatingMemberRoles: false,
+      isMutatingMemberRoles: false, isLoadingMembers: false, memberListError: "",
       viewAsRoleSimulatorEnabled: false,
       viewAsRoleSimulatorRole: "member",
       members: [],
@@ -128,7 +128,7 @@ describe("app shell workspace settings panel props", () => {
       workspaceSettingsError: workspaceSettingsError(),
       memberRoleStatus: "",
       memberRoleError: "",
-      isMutatingMemberRoles: false,
+      isMutatingMemberRoles: false, isLoadingMembers: false, memberListError: "",
       viewAsRoleSimulatorEnabled: false,
       viewAsRoleSimulatorRole: "member",
       members: [],
@@ -168,7 +168,7 @@ describe("app shell workspace settings panel props", () => {
       workspaceSettingsError: "",
       memberRoleStatus: "",
       memberRoleError: "",
-      isMutatingMemberRoles: false,
+      isMutatingMemberRoles: false, isLoadingMembers: false, memberListError: "",
       viewAsRoleSimulatorEnabled: true,
       viewAsRoleSimulatorRole: "moderator",
       members: [],
@@ -185,8 +185,8 @@ describe("app shell workspace settings panel props", () => {
       onUnassignMemberRole: () => undefined,
     });
 
-    panelProps.onViewAsRoleSimulatorToggle(false);
-    panelProps.onViewAsRoleSimulatorRoleChange("owner");
+    panelProps.setViewAsRoleSimulatorEnabled(false);
+    panelProps.setViewAsRoleSimulatorRole("owner");
     expect(setViewAsRoleSimulatorEnabled).toHaveBeenCalledWith(false);
     expect(setViewAsRoleSimulatorRole).toHaveBeenCalledWith("owner");
   });

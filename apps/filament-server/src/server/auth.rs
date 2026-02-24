@@ -664,11 +664,13 @@ mod tests {
 
     #[test]
     fn captcha_config_includes_site_key_for_siteverify_binding() {
-        let mut config = AppConfig::default();
-        config.captcha_hcaptcha_site_key =
-            Some(String::from("10000000-ffff-ffff-ffff-000000000001"));
-        config.captcha_hcaptcha_secret =
-            Some(String::from("0x0000000000000000000000000000000000000000"));
+        let config = AppConfig {
+            captcha_hcaptcha_site_key: Some(String::from("10000000-ffff-ffff-ffff-000000000001")),
+            captcha_hcaptcha_secret: Some(String::from(
+                "0x0000000000000000000000000000000000000000",
+            )),
+            ..AppConfig::default()
+        };
 
         let captcha = build_captcha_config(&config)
             .expect("captcha config should build")

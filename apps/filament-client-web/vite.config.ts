@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import solid from "vite-plugin-solid";
 import UnoCSS from "unocss/vite";
 
@@ -79,10 +79,18 @@ export default defineConfig({
     port: DEV_SERVER_PORT,
     strictPort: true,
   },
+  ssr: {
+    noExternal: ["@solidjs/router"],
+  },
   test: {
     globals: true,
     environment: "jsdom",
     setupFiles: "./tests/setup.ts",
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+    server: {
+      deps: {
+        inline: ["@solidjs/router"],
+      },
+    },
   },
 });

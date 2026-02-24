@@ -269,17 +269,19 @@ async fn guild_member_list_includes_offline_members() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    let payload = payload.expect("member list payload");
     let members = payload
-        .expect("member list payload")
         .get("members")
         .and_then(|value| value.as_array())
         .expect("member list members array");
+    let owner_user_id_value = Value::from(owner_user_id.clone());
+    let member_user_id_value = Value::from(member_user_id.clone());
     assert!(members
         .iter()
-        .any(|entry| entry.get("user_id") == Some(&Value::from(owner_user_id.clone()))));
+        .any(|entry| entry.get("user_id") == Some(&owner_user_id_value)));
     assert!(members
         .iter()
-        .any(|entry| entry.get("user_id") == Some(&Value::from(member_user_id))));
+        .any(|entry| entry.get("user_id") == Some(&member_user_id_value)));
 
     let (member_status, _) = authed_json_request(
         &app,

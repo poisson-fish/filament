@@ -476,8 +476,8 @@ mod tests {
         DirectoryContractError, DirectoryJoinOutcome, GuildIpBanByUserRequest,
         GuildIpBanByUserRequestDto, GuildIpBanId, GuildIpBanListQuery, GuildIpBanListQueryDto,
         GuildMemberListQuery, GuildMemberListQueryDto, IpNetwork, WorkspaceRoleId,
-        AUDIT_ACCESS_DENIED_ERROR, DIRECTORY_JOIN_IP_BANNED_ERROR, DIRECTORY_JOIN_NOT_ALLOWED_ERROR,
-        DIRECTORY_JOIN_USER_BANNED_ERROR, MAX_AUDIT_CURSOR_CHARS,
+        AUDIT_ACCESS_DENIED_ERROR, DIRECTORY_JOIN_IP_BANNED_ERROR,
+        DIRECTORY_JOIN_NOT_ALLOWED_ERROR, DIRECTORY_JOIN_USER_BANNED_ERROR, MAX_AUDIT_CURSOR_CHARS,
     };
 
     #[test]

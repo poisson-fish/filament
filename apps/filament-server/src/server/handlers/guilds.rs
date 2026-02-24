@@ -1135,7 +1135,7 @@ async fn list_guild_members_db(
     guild_id: &str,
     query: &GuildMemberListQuery,
 ) -> Result<GuildMemberListResponse, AuthFailure> {
-    let cursor = query.cursor.as_ref().map(|value| value.to_string());
+    let cursor = query.cursor.as_ref().map(ToString::to_string);
     let limit_plus_one = query
         .limit
         .checked_add(1)
@@ -1218,13 +1218,13 @@ async fn list_guild_members_in_memory(
     guild_id: &str,
     query: &GuildMemberListQuery,
 ) -> Result<GuildMemberListResponse, AuthFailure> {
-    let cursor = query.cursor.as_ref().map(|value| value.to_string());
+    let cursor = query.cursor.as_ref().map(ToString::to_string);
     let guilds = state.membership_store.guilds().read().await;
     let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
     let mut user_ids = guild
         .members
         .keys()
-        .map(|user_id| user_id.to_string())
+        .map(ToString::to_string)
         .collect::<Vec<_>>();
     drop(guilds);
 
@@ -3345,43 +3345,23 @@ pub(crate) async fn set_channel_role_override(
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
-pub(crate) async fn set_channel_permission_override(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
-    Path(path): Path<ChannelPermissionOverridePath>,
-    Json(payload): Json<UpdateChannelPermissionOverrideRequest>,
-) -> Result<Json<ModerationResponse>, AuthFailure> {
-    let client_ip = extract_client_ip(
-        &state,
-        &headers,
-        connect_info.as_ref().map(|value| value.0 .0.ip()),
-    );
-    let auth = authenticate(&state, &headers).await?;
-    enforce_guild_ip_ban_for_request(
-        &state,
-        &path.guild_id,
-        auth.user_id,
-        client_ip,
-        "guild.channel_permission_overrides.update",
-    )
-    .await?;
-
-    crate::server::domain::check_channel_permission(
-        &state,
-        auth.user_id,
-        &path.guild_id,
-        &path.channel_id,
-        Permission::ManageChannelOverrides,
-    )
-    .await?;
-
-    let allow = crate::server::db::permission_set_from_list(&payload.allow);
-    let deny = crate::server::db::permission_set_from_list(&payload.deny);
+fn parse_channel_permission_override_masks(
+    payload: &UpdateChannelPermissionOverrideRequest,
+) -> Result<(filament_core::PermissionSet, filament_core::PermissionSet), AuthFailure> {
+    let allow = permission_set_from_list(&payload.allow);
+    let deny = permission_set_from_list(&payload.deny);
     if allow.bits() & deny.bits() != 0 {
         return Err(AuthFailure::InvalidRequest);
     }
+    Ok((allow, deny))
+}
 
+async fn apply_channel_permission_override(
+    state: &AppState,
+    path: &ChannelPermissionOverridePath,
+    allow: filament_core::PermissionSet,
+    deny: filament_core::PermissionSet,
+) -> Result<(), AuthFailure> {
     let target_kind_i16 = path.target_kind.to_i16();
 
     if let Some(pool) = &state.db_pool {
@@ -3395,8 +3375,8 @@ pub(crate) async fn set_channel_permission_override(
         .bind(&path.channel_id)
         .bind(target_kind_i16)
         .bind(&path.target_id)
-        .bind(crate::server::db::permission_set_to_i64(allow)?)
-        .bind(crate::server::db::permission_set_to_i64(deny)?)
+        .bind(permission_set_to_i64(allow)?)
+        .bind(permission_set_to_i64(deny)?)
         .execute(pool)
         .await
         .map_err(|e| {
@@ -3435,6 +3415,43 @@ pub(crate) async fn set_channel_permission_override(
         }
     }
 
+    Ok(())
+}
+
+pub(crate) async fn set_channel_permission_override(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(path): Path<ChannelPermissionOverridePath>,
+    Json(payload): Json<UpdateChannelPermissionOverrideRequest>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    enforce_guild_ip_ban_for_request(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        client_ip,
+        "guild.channel_permission_overrides.update",
+    )
+    .await?;
+
+    crate::server::domain::check_channel_permission(
+        &state,
+        auth.user_id,
+        &path.guild_id,
+        &path.channel_id,
+        Permission::ManageChannelOverrides,
+    )
+    .await?;
+
+    let (allow, deny) = parse_channel_permission_override_masks(&payload)?;
+    apply_channel_permission_override(&state, &path, allow, deny).await?;
+
     write_audit_log(
         &state,
         Some(path.guild_id.clone()),
@@ -3456,8 +3473,10 @@ pub(crate) async fn set_channel_permission_override(
         &path.channel_id,
         path.target_kind,
         &path.target_id,
-        payload.allow.clone(),
-        payload.deny.clone(),
+        gateway_events::WorkspaceChannelOverrideFieldsPayload::new(
+            payload.allow.clone(),
+            payload.deny.clone(),
+        ),
         now_unix(),
         Some(auth.user_id),
     );
@@ -3469,6 +3488,35 @@ pub(crate) async fn set_channel_permission_override(
     );
 
     Ok(Json(ModerationResponse { accepted: true }))
+}
+
+async fn remove_member_from_voice_channels(
+    state: &AppState,
+    guild_id: &str,
+    user_id: UserId,
+    removed_at_unix: i64,
+) {
+    let prefix = format!("{guild_id}:");
+    let active_voice = state.realtime_registry.voice_participants().read().await;
+    let mut to_remove_voice = Vec::new();
+    for (key, users) in active_voice.iter() {
+        if key.starts_with(&prefix) && users.contains_key(&user_id) {
+            if let Some((entry_guild_id, channel_id)) = key.split_once(':') {
+                to_remove_voice.push((entry_guild_id.to_owned(), channel_id.to_owned()));
+            }
+        }
+    }
+    drop(active_voice);
+    for (entry_guild_id, channel_id) in to_remove_voice {
+        crate::server::realtime::remove_voice_participant_for_channel(
+            state,
+            user_id,
+            &entry_guild_id,
+            &channel_id,
+            removed_at_unix,
+        )
+        .await;
+    }
 }
 
 pub(crate) async fn kick_member(
@@ -3535,27 +3583,8 @@ pub(crate) async fn kick_member(
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
-    let active_voice = state.realtime_registry.voice_participants().read().await;
-    let mut to_remove_voice = Vec::new();
-    for (key, users) in active_voice.iter() {
-        if key.starts_with(&format!("{}:", path.guild_id)) && users.contains_key(&target_user_id) {
-            let parts: Vec<&str> = key.split(':').collect();
-            if parts.len() == 2 {
-                to_remove_voice.push((parts[0].to_string(), parts[1].to_string()));
-            }
-        }
-    }
-    drop(active_voice);
-    for (guild_id, channel_id) in to_remove_voice {
-        crate::server::realtime::remove_voice_participant_for_channel(
-            &state,
-            target_user_id,
-            &guild_id,
-            &channel_id,
-            removed_at_unix,
-        )
+    remove_member_from_voice_channels(&state, &path.guild_id, target_user_id, removed_at_unix)
         .await;
-    }
 
     write_audit_log(
         &state,
@@ -3567,6 +3596,62 @@ pub(crate) async fn kick_member(
     )
     .await?;
     Ok(Json(ModerationResponse { accepted: true }))
+}
+
+async fn persist_member_ban(
+    state: &AppState,
+    guild_id: &str,
+    target_user_id: UserId,
+    banned_by_user_id: UserId,
+    banned_at_unix: i64,
+) -> Result<(), AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+        sqlx::query(
+            "INSERT INTO guild_bans (guild_id, user_id, banned_by_user_id, created_at_unix)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (guild_id, user_id) DO UPDATE SET banned_by_user_id = EXCLUDED.banned_by_user_id, created_at_unix = EXCLUDED.created_at_unix",
+        )
+        .bind(guild_id)
+        .bind(target_user_id.to_string())
+        .bind(banned_by_user_id.to_string())
+        .bind(banned_at_unix)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+            .bind(guild_id)
+            .bind(target_user_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        sqlx::query(
+            "DELETE FROM guild_role_members
+             WHERE guild_id = $1 AND user_id = $2",
+        )
+        .bind(guild_id)
+        .bind(target_user_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+    } else {
+        let mut guilds = state.membership_store.guilds().write().await;
+        let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
+        guild.members.remove(&target_user_id);
+        guild.banned_members.insert(target_user_id);
+        drop(guilds);
+        let mut assignments = state
+            .membership_store
+            .guild_role_assignments()
+            .write()
+            .await;
+        if let Some(guild_assignments) = assignments.get_mut(guild_id) {
+            guild_assignments.remove(&target_user_id);
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) async fn ban_member(
@@ -3586,55 +3671,15 @@ pub(crate) async fn ban_member(
         }
     }
 
-    if let Some(pool) = &state.db_pool {
-        let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
-        sqlx::query(
-            "INSERT INTO guild_bans (guild_id, user_id, banned_by_user_id, created_at_unix)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (guild_id, user_id) DO UPDATE SET banned_by_user_id = EXCLUDED.banned_by_user_id, created_at_unix = EXCLUDED.created_at_unix",
-        )
-        .bind(&path.guild_id)
-        .bind(target_user_id.to_string())
-        .bind(auth.user_id.to_string())
-        .bind(now_unix())
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-        sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
-            .bind(&path.guild_id)
-            .bind(target_user_id.to_string())
-            .execute(&mut *tx)
-            .await
-            .map_err(|_| AuthFailure::Internal)?;
-        sqlx::query(
-            "DELETE FROM guild_role_members
-             WHERE guild_id = $1 AND user_id = $2",
-        )
-        .bind(&path.guild_id)
-        .bind(target_user_id.to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
-        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
-    } else {
-        let mut guilds = state.membership_store.guilds().write().await;
-        let guild = guilds
-            .get_mut(&path.guild_id)
-            .ok_or(AuthFailure::NotFound)?;
-        guild.members.remove(&target_user_id);
-        guild.banned_members.insert(target_user_id);
-        drop(guilds);
-        let mut assignments = state
-            .membership_store
-            .guild_role_assignments()
-            .write()
-            .await;
-        if let Some(guild_assignments) = assignments.get_mut(&path.guild_id) {
-            guild_assignments.remove(&target_user_id);
-        }
-    }
-
     let banned_at_unix = now_unix();
+    persist_member_ban(
+        &state,
+        &path.guild_id,
+        target_user_id,
+        auth.user_id,
+        banned_at_unix,
+    )
+    .await?;
     let ban_event = gateway_events::workspace_member_ban(
         &path.guild_id,
         target_user_id,
@@ -3651,27 +3696,7 @@ pub(crate) async fn ban_member(
     );
     broadcast_guild_event(&state, &path.guild_id, &remove_event).await;
 
-    let active_voice = state.realtime_registry.voice_participants().read().await;
-    let mut to_remove_voice = Vec::new();
-    for (key, users) in active_voice.iter() {
-        if key.starts_with(&format!("{}:", path.guild_id)) && users.contains_key(&target_user_id) {
-            let parts: Vec<&str> = key.split(':').collect();
-            if parts.len() == 2 {
-                to_remove_voice.push((parts[0].to_string(), parts[1].to_string()));
-            }
-        }
-    }
-    drop(active_voice);
-    for (guild_id, channel_id) in to_remove_voice {
-        crate::server::realtime::remove_voice_participant_for_channel(
-            &state,
-            target_user_id,
-            &guild_id,
-            &channel_id,
-            banned_at_unix,
-        )
-        .await;
-    }
+    remove_member_from_voice_channels(&state, &path.guild_id, target_user_id, banned_at_unix).await;
 
     write_audit_log(
         &state,

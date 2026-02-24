@@ -128,6 +128,8 @@ describe("app shell panel host prop groups", () => {
           memberRoleStatus: "ready",
           memberRoleError: "",
           isMutatingMemberRoles: false,
+          isLoadingMembers: false,
+          memberListError: "",
           viewAsRoleSimulatorEnabled: false,
           viewAsRoleSimulatorRole: "member",
           members: [],

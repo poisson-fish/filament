@@ -344,6 +344,11 @@ describe("app shell message controller", () => {
 
   it("keeps scheduled preview fetches across message-list rerenders", async () => {
     vi.useFakeTimers();
+    const originalCreateObjectUrl = URL.createObjectURL;
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: undefined,
+    });
     const downloadPreviewSpy = vi
       .spyOn(api, "downloadChannelAttachmentPreview")
       .mockResolvedValue({
@@ -397,6 +402,10 @@ describe("app shell message controller", () => {
         dispose();
       });
     } finally {
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: originalCreateObjectUrl,
+      });
       downloadPreviewSpy.mockRestore();
       vi.useRealTimers();
     }

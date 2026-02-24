@@ -90,7 +90,7 @@ describe("app shell support panel prop groups", () => {
         workspaceSettingsError: "",
         memberRoleStatus: "ready",
         memberRoleError: "",
-        isMutatingMemberRoles: false,
+        isMutatingMemberRoles: false, isLoadingMembers: false, memberListError: "",
         viewAsRoleSimulatorEnabled: false,
         viewAsRoleSimulatorRole: "member",
         members: [],

@@ -24,4 +24,15 @@
   --danger-ink: #fff4f5;
   --presence-online: #72dfb8;
   --presence-idle: #f1cb68;
+
+  --workspace-banner-sun: linear-gradient(135deg, #f4e4a2 0%, #d7bf63 100%);
+  --workspace-banner-rose: linear-gradient(135deg, #c74989 0%, #7d2f6a 100%);
+  --workspace-banner-ember: linear-gradient(135deg, #b34d30 0%, #782530 100%);
+  --workspace-banner-amber: linear-gradient(135deg, #c67a32 0%, #7d5231 100%);
+  --workspace-banner-citrus: linear-gradient(135deg, #9e933f 0%, #5f7043 100%);
+  --workspace-banner-violet: linear-gradient(135deg, #5f4b82 0%, #7a5b91 100%);
+  --workspace-banner-aqua: linear-gradient(135deg, #2f5d9f 0%, #3d8aa2 100%);
+  --workspace-banner-teal: linear-gradient(135deg, #3f8b84 0%, #5ba8a2 100%);
+  --workspace-banner-forest: linear-gradient(135deg, #355b2a 0%, #1f2f2e 100%);
+  --workspace-banner-slate: linear-gradient(135deg, #414651 0%, #252833 100%);
 }

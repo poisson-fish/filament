@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js";
 import {
   type PermissionName,
   type GuildRoleRecord,
@@ -203,27 +203,33 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const [dragOverRoleId, setDragOverRoleId] = createSignal<WorkspaceRoleId | null>(null);
 
   const [assignmentRoleId, setAssignmentRoleId] = createSignal<WorkspaceRoleId | null>(null);
-  const roleHierarchyClass = "grid gap-[0.5rem]";
-  const roleHierarchyItemClass =
-    "grid gap-[0.12rem] rounded-[0.62rem] border border-line-soft bg-bg-2 px-[0.58rem] py-[0.52rem] text-left text-ink-1";
-  const roleHierarchyMetaClass = "m-0 text-[0.82rem] text-ink-2";
-  const permissionGridClass = "grid gap-[0.5rem]";
-  const permissionToggleClass =
-    "grid grid-cols-[auto_1fr] items-start gap-x-[0.52rem] gap-y-[0.2rem] rounded-[0.62rem] border border-line-soft bg-bg-1 px-[0.6rem] py-[0.5rem]";
-  const statusChipClass =
-    "inline-block text-[0.7rem] uppercase tracking-[0.06em] text-ink-2";
-  const rolePreviewClass = "m-0 break-words text-ink-2";
-  const panelSectionClass = props.embedded ? "grid gap-[0.66rem]" : "grid gap-[0.5rem]";
-  const formClass = "grid gap-[0.5rem]";
-  const fieldLabelClass = "grid gap-[0.3rem] text-[0.84rem] text-ink-1";
+
+  // Layout states
+  const [isCreatingRole, setIsCreatingRole] = createSignal(false);
+  const [activeTab, setActiveTab] = createSignal<"display" | "permissions" | "members">("display");
+
+  // CSS classes
+  const panelSectionClass = props.embedded ? "flex flex-col gap-[0.66rem] h-full" : "flex flex-col gap-[0.5rem] h-full";
+  const formClass = "grid gap-[1rem]";
+  const fieldLabelClass = "grid gap-[0.4rem] text-[0.84rem] text-ink-1 uppercase tracking-wide font-semibold";
   const fieldControlClass =
-    "rounded-[0.56rem] border border-line-soft bg-bg-2 px-[0.55rem] py-[0.62rem] text-ink-0 disabled:cursor-default disabled:opacity-62";
+    "rounded-[0.4rem] border border-line-soft bg-bg-0 px-[0.7rem] py-[0.62rem] text-[0.92rem] text-ink-0 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-default disabled:opacity-62 transition-shadow";
   const actionButtonClass =
-    "min-h-[1.95rem] rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.44rem] text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-4 disabled:cursor-default disabled:opacity-62";
-  const actionButtonRowClass = "flex gap-[0.45rem]";
-  const rowActionButtonClass = `${actionButtonClass} flex-1`;
-  const mutedTextClass = "m-0 text-[0.91rem] text-ink-2";
-  const statusBaseClass = "mt-[0.92rem] text-[0.91rem]";
+    "min-h-[2.2rem] rounded-[0.4rem] border border-line-soft bg-bg-2 px-[1rem] py-[0.5rem] text-[0.92rem] font-medium text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-3 enabled:hover:text-ink-0 disabled:cursor-default disabled:opacity-50";
+  const primaryButtonClass = "min-h-[2.2rem] rounded-[0.4rem] border border-brand bg-brand px-[1rem] py-[0.5rem] text-[0.92rem] font-medium text-brand-ink transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:brightness-110 disabled:cursor-default disabled:opacity-50";
+  const toolbarButtonClass =
+    "min-h-[1.8rem] rounded-[0.4rem] border border-line-soft bg-bg-2 px-[0.6rem] py-[0.3rem] text-[0.75rem] font-medium text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-3 enabled:hover:text-ink-0 disabled:cursor-default disabled:opacity-60";
+  const statusChipClass =
+    "inline-block rounded-full bg-bg-2 px-[0.4rem] py-[0.1rem] text-[0.65rem] uppercase tracking-[0.06em] text-ink-2";
+  const mutedTextClass = "m-0 text-[0.88rem] text-ink-2 leading-relaxed";
+  
+  // Right pane tab styles
+  const tabButtonClass = "px-[0.5rem] pb-[0.6rem] text-[0.96rem] font-medium transition-colors border-b-[2px] -mb-[1px]";
+  const tabButtonActive = "border-brand text-ink-0";
+  const tabButtonInactive = "border-transparent text-ink-2 hover:text-ink-1 hover:border-line-soft";
+
+  // Permission switch
+  const permissionToggleClass = "flex items-center justify-between rounded-[0.5rem] border border-line-soft bg-bg-0 px-[1rem] py-[0.8rem] transition-colors hover:border-line";
 
   const hierarchyRoles = createMemo(() => sortRolesByHierarchy(props.roles));
   const assignableRoles = createMemo(() =>
@@ -246,13 +252,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     return role;
   });
 
-  const createPreview = createMemo(() =>
-    PERMISSION_MATRIX.filter((entry) => createPermissions().includes(entry.permission)),
-  );
   const createRoleTemplate = createMemo(() => ROLE_TEMPLATE_BY_KEY[createTemplateKey()]);
-  const editPreview = createMemo(() =>
-    PERMISSION_MATRIX.filter((entry) => editPermissions().includes(entry.permission)),
-  );
   const isCreateRoleNameValid = createMemo(() => createName().trim().length > 0);
   const hasRoleDraftChanges = createMemo(() => {
     const role = editableRole();
@@ -287,6 +287,16 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     );
   });
 
+  const hasReorderChanges = createMemo(() => {
+    const original = assignableRoles().map((r) => r.roleId);
+    const draft = reorderDraftRoleIds();
+    if (original.length !== draft.length) return false;
+    for (let i = 0; i < original.length; i++) {
+      if (original[i] !== draft[i]) return true;
+    }
+    return false;
+  });
+
   createEffect(() => {
     const roles = hierarchyRoles();
     if (roles.length === 0) {
@@ -311,9 +321,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   });
 
   createEffect(() => {
-    const reorderable = hierarchyRoles()
-      .filter((role) => !role.isSystem)
-      .map((role) => role.roleId);
+    const reorderable = assignableRoles().map((role) => role.roleId);
     setReorderDraftRoleIds(reorderable);
     setDraggingRoleId(null);
     setDragOverRoleId(null);
@@ -358,6 +366,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
       setCreateTemplateKey("custom");
       setCreateName(ROLE_TEMPLATE_BY_KEY.custom.defaultName);
       setCreatePermissions(ROLE_TEMPLATE_BY_KEY.custom.defaultPermissions);
+      setIsCreatingRole(false);
     });
   };
 
@@ -481,6 +490,11 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     });
   };
 
+  const onCancelReorder = (): void => {
+    const reorderable = assignableRoles().map((role) => role.roleId);
+    setReorderDraftRoleIds(reorderable);
+  };
+
   const onAssignRole = async (): Promise<void> => {
     const roleId = assignmentRoleId();
     if (!roleId || !props.canManageMemberRoles || !props.hasActiveWorkspace) {
@@ -558,361 +572,526 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     }
   };
 
+  const getSystemRoles = createMemo(() => hierarchyRoles().filter(r => r.isSystem));
+
   return (
     <section class={panelSectionClass}>
-      <div class={actionButtonRowClass}>
-        <button
-          class={rowActionButtonClass}
-          type="button"
-          onClick={() => void props.onRefreshRoles()}
-          disabled={props.isLoadingRoles || !props.hasActiveWorkspace}
-        >
-          {props.isLoadingRoles ? "Refreshing..." : "Refresh roles"}
-        </button>
-        <Show when={props.onOpenModerationPanel}>
-          {(onOpenModerationPanel) => (
-            <button
-              class={rowActionButtonClass}
-              type="button"
-              onClick={onOpenModerationPanel()}
-            >
-              Open moderation tools
-            </button>
-          )}
-        </Show>
-      </div>
-
       <Show when={props.hasActiveWorkspace} fallback={<p class={mutedTextClass}>Select a workspace first.</p>}>
-        <>
-          <section class={roleHierarchyClass} aria-label="role hierarchy">
-            <For each={hierarchyRoles()}>
-              {(role) => (
+        <div class="flex h-[80vh] min-h-[500px] w-full flex-col md:flex-row bg-bg-1 rounded-[0.5rem] overflow-hidden border border-line-soft">
+          {/* Left Sidebar: Roles List */}
+          <div class="flex flex-col w-full md:w-[280px] flex-shrink-0 bg-bg-1 border-r border-line-soft">
+            <div class="flex items-center justify-between p-[1rem] border-b border-line-soft">
+              <h3 class="m-0 text-[0.8rem] uppercase tracking-[0.05em] font-semibold text-ink-2">Roles</h3>
+              <Show when={props.canManageWorkspaceRoles}>
                 <button
                   type="button"
-                  classList={{
-                    [roleHierarchyItemClass]: true,
-                    "border-brand": selectedRoleId() === role.roleId,
-                    "opacity-90": role.isSystem,
-                  }}
-                  onClick={() => setSelectedRoleId(role.roleId)}
+                  class="text-[0.8rem] text-brand hover:underline font-medium flex items-center gap-[0.2rem]"
+                  onClick={() => setIsCreatingRole(true)}
+                  disabled={props.isMutatingRoles}
                 >
-                  <span>{role.name}</span>
-                  <span class={roleHierarchyMetaClass}>position {role.position}</span>
-                  <span class={roleHierarchyMetaClass}>{role.permissions.length} capabilities</span>
-                  <Show when={role.isSystem}>
-                    <span class={statusChipClass}>system</span>
-                  </Show>
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                  Create role
                 </button>
-              )}
-            </For>
-            <Show when={hierarchyRoles().length === 0}>
-              <p class={mutedTextClass}>No roles available.</p>
-            </Show>
-          </section>
+              </Show>
+            </div>
 
-          <Show when={props.canManageWorkspaceRoles}>
-            <form class={formClass} onSubmit={onCreateRole}>
-              <h5>Create Role</h5>
-              <label class={fieldLabelClass}>
-                Template
-                <select
-                  class={fieldControlClass}
-                  value={createTemplateKey()}
-                  onChange={(event) =>
-                    onCreateRoleTemplateChange(
-                      event.currentTarget.value as RoleTemplateKey,
-                    )}
-                  aria-label="Role template"
-                >
-                  <For each={ROLE_TEMPLATES}>
-                    {(template) => (
-                      <option value={template.key}>{template.label}</option>
-                    )}
-                  </For>
-                </select>
-              </label>
-              <p class={mutedTextClass}>{createRoleTemplate().summary}</p>
-              <label class={fieldLabelClass}>
-                Role name
-                <input
-                  class={fieldControlClass}
-                  value={createName()}
-                  onInput={(event) => setCreateName(event.currentTarget.value)}
-                  maxlength="32"
-                />
-              </label>
-              <div class={permissionGridClass} aria-label="create role permission matrix">
-                <For each={PERMISSION_MATRIX}>
-                  {(entry) => (
-                    <label class={permissionToggleClass}>
-                      <input
-                        type="checkbox"
-                        class="mt-[0.14rem]"
-                        checked={createPermissions().includes(entry.permission)}
-                        onChange={(event) =>
-                          setCreatePermissions((current) =>
-                            togglePermission(
-                              current,
-                              entry.permission,
-                              event.currentTarget.checked,
-                            ))}
-                      />
-                      <span class="text-[0.86rem] text-ink-1">{entry.label}</span>
-                      <small class="col-[2] text-[0.74rem] text-ink-2">{entry.summary}</small>
-                    </label>
+            <div class="px-[1rem] pb-[0.8rem] pt-[0.6rem] border-b border-line-soft flex flex-wrap gap-[0.5rem]">
+              <button
+                class={toolbarButtonClass}
+                type="button"
+                onClick={() => void props.onRefreshRoles()}
+                disabled={props.isLoadingRoles || !props.hasActiveWorkspace}
+              >
+                {props.isLoadingRoles ? "Refreshing..." : "Refresh roles"}
+              </button>
+              <Show when={props.onOpenModerationPanel}>
+                {(onOpenModerationPanel) => (
+                  <button
+                    class={toolbarButtonClass}
+                    type="button"
+                    onClick={onOpenModerationPanel()}
+                  >
+                    Moderation tools
+                  </button>
+                )}
+              </Show>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-[0.5rem] flex flex-col gap-[0.2rem]">
+              <Show when={getSystemRoles().length > 0}>
+                <div class="px-[0.5rem] py-[0.4rem] mt-[0.4rem]">
+                  <span class="text-[0.7rem] uppercase tracking-wider text-ink-3 font-semibold">System</span>
+                </div>
+                <For each={getSystemRoles()}>
+                  {(role) => (
+                    <button
+                      type="button"
+                      classList={{
+                        "flex items-center justify-between gap-[0.5rem] px-[0.6rem] py-[0.5rem] rounded-[0.4rem] text-left transition-colors": true,
+                        "bg-bg-3 text-ink-0": !isCreatingRole() && selectedRoleId() === role.roleId,
+                        "hover:bg-bg-2 text-ink-1 opacity-80": isCreatingRole() || selectedRoleId() !== role.roleId,
+                      }}
+                      onClick={() => { setIsCreatingRole(false); setSelectedRoleId(role.roleId); }}
+                    >
+                      <span class="truncate font-medium flex-1">{role.name}</span>
+                      <svg class="w-3.5 h-3.5 text-ink-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                    </button>
                   )}
                 </For>
-              </div>
-              <p class={rolePreviewClass}>
-                Capability preview ({createPreview().length}):{" "}
-                {createPreview()
-                  .map((entry) => entry.permission)
-                  .join(", ") || "none"}
-              </p>
-              <Show when={!isCreateRoleNameValid()}>
-                <p class={mutedTextClass}>Role name must include visible characters.</p>
               </Show>
-              <button
-                class={actionButtonClass}
-                type="submit"
-                disabled={props.isMutatingRoles || !isCreateRoleNameValid()}
-              >
-                {props.isMutatingRoles ? "Applying..." : "Create role"}
-              </button>
-            </form>
 
-            <form class={formClass} onSubmit={onSaveRole}>
-              <h5>Edit Selected Role</h5>
-              <Show when={selectedRole()} fallback={<p class={mutedTextClass}>Select a role to edit.</p>}>
-                {(roleAccessor) => (
-                  <>
-                    <Show when={hasRoleDraftChanges() && !roleAccessor().isSystem}>
-                      <p class={statusChipClass}>unsaved changes</p>
-                    </Show>
+              <div class="px-[0.5rem] py-[0.4rem] mt-[0.8rem]">
+                <span class="text-[0.7rem] uppercase tracking-wider text-ink-3 font-semibold">Custom Roles</span>
+              </div>
+              
+              <div class="flex flex-col gap-[0.2rem]">
+                <For each={reorderDraftRoleIds()}>
+                  {(roleId) => {
+                    const role = hierarchyRoles().find(r => r.roleId === roleId);
+                    if (!role) return null;
+                    return (
+                      <button
+                        type="button"
+                        classList={{
+                          "flex items-center justify-between gap-[0.5rem] px-[0.6rem] py-[0.5rem] rounded-[0.4rem] text-left transition-colors cursor-pointer select-none border-t-[2px]": true,
+                          "bg-bg-3 text-ink-0 border-transparent": !isCreatingRole() && selectedRoleId() === role.roleId && dragOverRoleId() !== roleId,
+                          "hover:bg-bg-2 text-ink-1 border-transparent": (isCreatingRole() || selectedRoleId() !== role.roleId) && dragOverRoleId() !== roleId,
+                          "border-brand bg-bg-2": dragOverRoleId() === roleId,
+                        }}
+                        draggable={props.canManageWorkspaceRoles && !props.isMutatingRoles}
+                        onDragStart={() => onReorderDragStart(roleId)}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          if (!props.canManageWorkspaceRoles || props.isMutatingRoles) return;
+                          if (dragOverRoleId() !== roleId) setDragOverRoleId(roleId);
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          onReorderDrop(roleId);
+                        }}
+                        onDragEnd={onReorderDragEnd}
+                        onClick={() => { setIsCreatingRole(false); setSelectedRoleId(role.roleId); }}
+                      >
+                        <span class="truncate font-medium flex-1">{role.name}</span>
+                        <Show when={props.canManageWorkspaceRoles}>
+                          <div class="cursor-grab active:cursor-grabbing p-[0.2rem] text-ink-3 hover:text-ink-1" aria-label="Drag to reorder">
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <line x1="8" y1="6" x2="21" y2="6" />
+                              <line x1="8" y1="12" x2="21" y2="12" />
+                              <line x1="8" y1="18" x2="21" y2="18" />
+                              <line x1="3" y1="6" x2="3.01" y2="6" />
+                              <line x1="3" y1="12" x2="3.01" y2="12" />
+                              <line x1="3" y1="18" x2="3.01" y2="18" />
+                            </svg>
+                          </div>
+                        </Show>
+                      </button>
+                    );
+                  }}
+                </For>
+                <Show when={reorderDraftRoleIds().length === 0}>
+                   <p class="px-[0.6rem] py-[0.5rem] text-[0.85rem] text-ink-3 italic">No custom roles yet.</p>
+                </Show>
+              </div>
+
+              <Show when={hasReorderChanges()}>
+                <div class="mt-[1rem] p-[0.8rem] bg-bg-2 rounded-[0.4rem] border border-line-soft flex flex-col gap-[0.5rem]">
+                  <p class="m-0 text-[0.8rem] text-ink-1 text-center font-medium">Careful - you have unsaved changes!</p>
+                  <div class="flex gap-[0.4rem]">
+                    <button class="flex-1 text-[0.8rem] py-[0.3rem] rounded bg-ink-2 text-bg-0 font-medium hover:bg-ink-1" onClick={onCancelReorder}>Reset</button>
+                    <button class="flex-1 text-[0.8rem] py-[0.3rem] rounded bg-ok text-ok-ink font-medium hover:brightness-110" onClick={() => void onSaveReorder()} disabled={props.isMutatingRoles}>Save</button>
+                  </div>
+                </div>
+              </Show>
+            </div>
+          </div>
+
+          {/* Right Pane: Main Content Area */}
+          <div class="flex-1 bg-bg-1 overflow-y-auto relative">
+            <Show when={isCreatingRole()}>
+              {/* Create Role View */}
+              <div class="p-[2rem] max-w-[800px] mx-auto pb-[6rem]">
+                <header class="mb-[2rem]">
+                  <h2 class="m-0 text-[1.4rem] font-semibold text-ink-0">Create Role</h2>
+                  <p class={mutedTextClass}>Create a new custom role to assign to members.</p>
+                </header>
+
+                <form class={formClass} onSubmit={onCreateRole}>
+                  <section class="grid gap-[1rem] p-[1.5rem] bg-bg-2 border border-line-soft rounded-[0.6rem]">
                     <label class={fieldLabelClass}>
                       Role name
                       <input
                         class={fieldControlClass}
-                        value={editName()}
-                        onInput={(event) => setEditName(event.currentTarget.value)}
+                        value={createName()}
+                        onInput={(event) => setCreateName(event.currentTarget.value)}
                         maxlength="32"
-                        disabled={roleAccessor().isSystem}
+                        placeholder="e.g. VIP, Moderator, Member"
+                        autofocus
                       />
                     </label>
-                    <div class={permissionGridClass} aria-label="edit role permission matrix">
+
+                    <label class={fieldLabelClass}>
+                      Start from Template
+                      <select
+                        class={fieldControlClass}
+                        value={createTemplateKey()}
+                        onChange={(event) =>
+                          onCreateRoleTemplateChange(
+                            event.currentTarget.value as RoleTemplateKey,
+                          )}
+                        aria-label="Role template"
+                      >
+                        <For each={ROLE_TEMPLATES}>
+                          {(template) => (
+                            <option value={template.key}>{template.label}</option>
+                          )}
+                        </For>
+                      </select>
+                      <span class="text-[0.8rem] text-ink-2 normal-case font-normal mt-[0.2rem]">{createRoleTemplate().summary}</span>
+                    </label>
+                  </section>
+
+                  <section class="mt-[1rem]">
+                    <div class="flex items-center justify-between mb-[1rem]">
+                      <h4 class="m-0 text-[1rem] font-medium text-ink-0">Permissions</h4>
+                      <span class="text-[0.8rem] text-ink-2">{createPermissions().length} enabled</span>
+                    </div>
+                    
+                    <div class="grid gap-[1rem]" aria-label="create role permission matrix">
                       <For each={PERMISSION_CATEGORIES}>
                         {(category) => (
-                          <section class={panelSectionClass}>
-                            <h6 class="m-0 text-[0.82rem] uppercase tracking-[0.06em] text-ink-2">
-                              {category.title}
-                            </h6>
-                            <For each={permissionsByCategory(category.key)}>
-                              {(entry) => (
-                                <label class={permissionToggleClass}>
-                                  <input
-                                    type="checkbox"
-                                    class="mt-[0.14rem]"
-                                    checked={editPermissions().includes(entry.permission)}
-                                    onChange={(event) =>
-                                      setEditPermissions((current) =>
-                                        togglePermission(
-                                          current,
-                                          entry.permission,
-                                          event.currentTarget.checked,
-                                        ))}
-                                    disabled={roleAccessor().isSystem}
-                                  />
-                                  <span class="text-[0.86rem] text-ink-1">{entry.label}</span>
-                                  <small class="col-[2] text-[0.74rem] text-ink-2">{entry.summary}</small>
-                                </label>
-                              )}
-                            </For>
-                          </section>
+                           <div class="grid gap-[0.5rem]">
+                              <h5 class="m-0 text-[0.8rem] uppercase tracking-widest text-ink-2 font-semibold mb-[0.2rem]">{category.title}</h5>
+                              <div class="grid gap-[0.5rem]">
+                                <For each={permissionsByCategory(category.key)}>
+                                  {(entry) => (
+                                    <label class={`${permissionToggleClass} cursor-pointer`}>
+                                      <div class="flex flex-col gap-[0.1rem] pr-[1rem]">
+                                        <span class="text-[0.92rem] font-medium text-ink-0">{entry.label}</span>
+                                        <span class="text-[0.8rem] text-ink-2 leading-tight">{entry.summary}</span>
+                                      </div>
+                                      <div class="relative inline-flex items-center cursor-pointer flex-shrink-0">
+                                        <input
+                                          type="checkbox"
+                                          class="sr-only peer"
+                                          checked={createPermissions().includes(entry.permission)}
+                                          onChange={(event) =>
+                                            setCreatePermissions((current) =>
+                                              togglePermission(
+                                                current,
+                                                entry.permission,
+                                                event.currentTarget.checked,
+                                              ))}
+                                        />
+                                        <div class="w-10 h-6 bg-line-soft peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-brand rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand"></div>
+                                      </div>
+                                    </label>
+                                  )}
+                                </For>
+                              </div>
+                           </div>
                         )}
                       </For>
                     </div>
-                    <p class={rolePreviewClass}>
-                      Capability preview ({editPreview().length}):{" "}
-                      {editPreview()
-                        .map((entry) => entry.permission)
-                        .join(", ") || "none"}
-                    </p>
-                    <Show when={isRiskyPermissionDrop() && !roleAccessor().isSystem}>
-                      <p class={mutedTextClass}>
-                        Removing role-management permissions can lock operators out of moderation
-                        controls.
-                      </p>
-                    </Show>
-                    <div class={actionButtonRowClass}>
-                      <button
-                        class={rowActionButtonClass}
-                        type="submit"
-                        disabled={
-                          props.isMutatingRoles ||
-                          roleAccessor().isSystem ||
-                          !hasRoleDraftChanges() ||
-                          !isRoleNameValid()
-                        }
-                      >
-                        {props.isMutatingRoles ? "Applying..." : "Save role"}
-                      </button>
-                      <button
-                        class={rowActionButtonClass}
-                        type="button"
-                        disabled={props.isMutatingRoles || roleAccessor().isSystem || !hasRoleDraftChanges()}
-                        onClick={onResetRoleDraft}
-                      >
-                        Reset draft
-                      </button>
-                      <button
-                        class={rowActionButtonClass}
-                        type="button"
-                        disabled={props.isMutatingRoles || roleAccessor().isSystem}
-                        onClick={() => void onDeleteRole()}
-                      >
-                        Delete role
-                      </button>
-                    </div>
-                    <Show when={roleAccessor().isSystem}>
-                      <p class={mutedTextClass}>
-                        System roles are locked and cannot be edited or deleted from workspace UI.
-                      </p>
-                    </Show>
-                  </>
-                )}
-              </Show>
-            </form>
+                  </section>
 
-            <section class={formClass}>
-              <h5>Role Hierarchy Reorder</h5>
-              <p class={mutedTextClass}>
-                Drag custom roles to reorder hierarchy. System roles stay pinned.
-              </p>
-              <For each={reorderDraftRoleIds()}>
-                {(roleId) => (
-                  <div
-                    classList={{
-                      [`${actionButtonRowClass} items-center [&>span]:min-w-0 [&>span]:flex-1 [&>span]:break-words rounded-[0.56rem] border border-line-soft bg-bg-2 px-[0.48rem] py-[0.36rem]`]:
-                        true,
-                      "border-brand": dragOverRoleId() === roleId,
-                    }}
-                    aria-label={`Reorder role ${hierarchyRoles().find((entry) => entry.roleId === roleId)?.name ?? "unknown"}`}
-                    draggable={props.canManageWorkspaceRoles && !props.isMutatingRoles}
-                    onDragStart={() => onReorderDragStart(roleId)}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      if (!props.canManageWorkspaceRoles || props.isMutatingRoles) {
-                        return;
-                      }
-                      if (dragOverRoleId() !== roleId) {
-                        setDragOverRoleId(roleId);
-                      }
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      onReorderDrop(roleId);
-                    }}
-                    onDragEnd={onReorderDragEnd}
-                  >
-                    <span>
-                      {hierarchyRoles().find((entry) => entry.roleId === roleId)?.name ??
-                        "unknown"}
-                    </span>
-                    <span class={statusChipClass}>drag</span>
+                  <div class="absolute bottom-0 left-0 right-0 bg-bg-1 p-[1.5rem] border-t border-line-soft flex justify-end gap-[1rem]">
+                    <button
+                      class={actionButtonClass}
+                      type="button"
+                      onClick={() => setIsCreatingRole(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      class={primaryButtonClass}
+                      type="submit"
+                      disabled={props.isMutatingRoles || !isCreateRoleNameValid()}
+                    >
+                      {props.isMutatingRoles ? "Creating..." : "Create Role"}
+                    </button>
                   </div>
-                )}
-              </For>
-              <button
-                class={actionButtonClass}
-                type="button"
-                disabled={props.isMutatingRoles || reorderDraftRoleIds().length === 0}
-                onClick={() => void onSaveReorder()}
-              >
-                Save hierarchy order
-              </button>
-            </section>
-          </Show>
-
-          <Show when={props.canManageMemberRoles}>
-            <form class={formClass} onSubmit={(event) => event.preventDefault()}>
-              <h5>Member Role Assignment</h5>
-              <label class={fieldLabelClass}>
-                Target user ULID
-                <input
-                  class={fieldControlClass}
-                  value={props.targetUserIdInput}
-                  onInput={(event) => props.onTargetUserIdInput(event.currentTarget.value)}
-                  maxlength="26"
-                  placeholder="01ARZ..."
-                />
-              </label>
-              <label class={fieldLabelClass}>
-                Role
-                <select
-                  class={fieldControlClass}
-                  value={assignmentRoleId() ?? ""}
-                  onChange={(event) =>
-                    setAssignmentRoleId(event.currentTarget.value as WorkspaceRoleId)}
-                >
-                  <For each={assignableRoles()}>
-                    {(role) => <option value={role.roleId}>{role.name}</option>}
-                  </For>
-                </select>
-              </label>
-              <div class={actionButtonRowClass}>
-                <button
-                  class={rowActionButtonClass}
-                  type="button"
-                  disabled={props.isMutatingRoles || !assignmentRoleId()}
-                  onClick={() => void onAssignRole()}
-                >
-                  Assign role
-                </button>
-                <button
-                  class={rowActionButtonClass}
-                  type="button"
-                  disabled={props.isMutatingRoles || !assignmentRoleId()}
-                  onClick={() => void onUnassignRole()}
-                >
-                  Unassign role
-                </button>
+                </form>
               </div>
-              <p class={mutedTextClass}>
-                Workspace owner promotion is server-owner-only and intentionally hidden here.
-              </p>
-            </form>
-          </Show>
-        </>
+            </Show>
+
+            <Show when={!isCreatingRole() && selectedRole()}>
+              {(roleAccessor) => (
+                <div class="h-full flex flex-col relative pb-[6rem]">
+                  {/* Sticky Header with Tabs */}
+                  <header class="sticky top-0 z-10 bg-bg-1 px-[2rem] pt-[2rem] border-b border-line-soft">
+                    <div class="flex items-center justify-between mb-[1.5rem]">
+                      <div>
+                        <h2 class="m-0 text-[1.4rem] font-semibold text-ink-0 flex items-center gap-[0.5rem]">
+                          {roleAccessor().name}
+                          <Show when={roleAccessor().isSystem}>
+                             <span class={statusChipClass}>System</span>
+                          </Show>
+                        </h2>
+                      </div>
+                      <Show when={hasRoleDraftChanges() && !roleAccessor().isSystem}>
+                        <div class="flex items-center gap-[0.5rem] bg-bg-2 px-[0.8rem] py-[0.4rem] rounded-[0.4rem] border border-line-soft">
+                           <span class="text-[0.8rem] text-ink-1 font-medium mr-[0.5rem]">Unsaved changes</span>
+                           <button class="text-[0.8rem] hover:underline text-ink-2" onClick={onResetRoleDraft}>Reset</button>
+                           <button class="text-[0.8rem] bg-brand text-brand-ink px-[0.6rem] py-[0.2rem] rounded hover:brightness-110 font-medium" onClick={(e) => void onSaveRole(e as any)}>Save</button>
+                        </div>
+                      </Show>
+                    </div>
+
+                    <nav class="flex gap-[1.5rem]" aria-label="Role settings tabs">
+                      <button
+                        class={`${tabButtonClass} ${activeTab() === "display" ? tabButtonActive : tabButtonInactive}`}
+                        onClick={() => setActiveTab("display")}
+                      >
+                        Display
+                      </button>
+                      <button
+                        class={`${tabButtonClass} ${activeTab() === "permissions" ? tabButtonActive : tabButtonInactive}`}
+                        onClick={() => setActiveTab("permissions")}
+                      >
+                        Permissions
+                      </button>
+                      <button
+                        class={`${tabButtonClass} ${activeTab() === "members" ? tabButtonActive : tabButtonInactive}`}
+                        onClick={() => setActiveTab("members")}
+                      >
+                        Manage Members
+                      </button>
+                    </nav>
+                  </header>
+
+                  {/* Tab Content */}
+                  <div class="flex-1 overflow-y-auto p-[2rem] max-w-[800px] w-full mx-auto">
+                    <Switch>
+                      <Match when={activeTab() === "display"}>
+                        <form class={formClass} onSubmit={onSaveRole}>
+                          <section class="grid gap-[1.5rem]">
+                            <label class={fieldLabelClass}>
+                              Role name
+                              <input
+                                class={fieldControlClass}
+                                value={editName()}
+                                onInput={(event) => setEditName(event.currentTarget.value)}
+                                maxlength="32"
+                                disabled={roleAccessor().isSystem || !props.canManageWorkspaceRoles}
+                              />
+                            </label>
+
+                            <Show when={roleAccessor().isSystem}>
+                              <div class="bg-bg-2 p-[1rem] rounded-[0.4rem] border border-line-soft">
+                                <p class={mutedTextClass}>
+                                  This is a system role. Its name and core permissions cannot be modified.
+                                </p>
+                              </div>
+                            </Show>
+                          </section>
+
+                          <Show when={props.canManageWorkspaceRoles && !roleAccessor().isSystem}>
+                            <div class="mt-[4rem] border-t border-line-soft pt-[2rem]">
+                              <h4 class="m-0 text-[1rem] font-medium text-danger mb-[0.5rem]">Danger Zone</h4>
+                              <div class="flex items-center justify-between p-[1rem] bg-bg-2 border border-danger-panel-strong rounded-[0.4rem]">
+                                <div>
+                                  <h5 class="m-0 text-[0.92rem] text-ink-0 font-medium mb-[0.2rem]">Delete Role</h5>
+                                  <p class="m-0 text-[0.8rem] text-ink-2">Once you delete a role, there is no going back.</p>
+                                </div>
+                                <button
+                                  class="px-[1rem] py-[0.5rem] bg-danger text-danger-ink rounded-[0.4rem] font-medium text-[0.88rem] hover:brightness-110 transition-all"
+                                  type="button"
+                                  disabled={props.isMutatingRoles}
+                                  onClick={() => void onDeleteRole()}
+                                >
+                                  Delete Role
+                                </button>
+                              </div>
+                            </div>
+                          </Show>
+                        </form>
+                      </Match>
+
+                      <Match when={activeTab() === "permissions"}>
+                        <form onSubmit={onSaveRole}>
+                          <div class="mb-[1.5rem] flex items-center justify-between">
+                            <p class={mutedTextClass}>
+                              Control what members with this role can do in the workspace.
+                            </p>
+                            <span class="text-[0.8rem] bg-bg-2 px-[0.6rem] py-[0.2rem] rounded-[0.4rem] text-ink-2 font-medium">
+                              {editPermissions().length} allowed
+                            </span>
+                          </div>
+
+                          <div class="grid gap-[2rem]" aria-label="edit role permission matrix">
+                            <For each={PERMISSION_CATEGORIES}>
+                              {(category) => (
+                                <section class="grid gap-[0.5rem]">
+                                  <h6 class="m-0 text-[0.8rem] uppercase tracking-widest text-ink-2 font-semibold border-b border-line-soft pb-[0.4rem] mb-[0.4rem]">
+                                    {category.title}
+                                  </h6>
+                                  <div class="grid gap-[0.5rem]">
+                                    <For each={permissionsByCategory(category.key)}>
+                                      {(entry) => (
+                                        <label class={`${permissionToggleClass} ${roleAccessor().isSystem || !props.canManageWorkspaceRoles ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                          <div class="flex flex-col gap-[0.1rem] pr-[1rem]">
+                                            <span class="text-[0.92rem] font-medium text-ink-0">{entry.label}</span>
+                                            <span class="text-[0.8rem] text-ink-2 leading-tight">{entry.summary}</span>
+                                          </div>
+                                          <div class="relative inline-flex items-center flex-shrink-0">
+                                            <input
+                                              type="checkbox"
+                                              class="sr-only peer"
+                                              checked={editPermissions().includes(entry.permission)}
+                                              disabled={roleAccessor().isSystem || !props.canManageWorkspaceRoles}
+                                              onChange={(event) =>
+                                                setEditPermissions((current) =>
+                                                  togglePermission(
+                                                    current,
+                                                    entry.permission,
+                                                    event.currentTarget.checked,
+                                                  ))}
+                                            />
+                                            <div class="w-10 h-6 bg-line-soft peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-brand rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand peer-disabled:opacity-50"></div>
+                                          </div>
+                                        </label>
+                                      )}
+                                    </For>
+                                  </div>
+                                </section>
+                              )}
+                            </For>
+                          </div>
+                        </form>
+                      </Match>
+
+                      <Match when={activeTab() === "members"}>
+                        <div class="grid gap-[1.5rem]">
+                           <div class="bg-bg-2 p-[1.5rem] border border-line-soft rounded-[0.6rem]">
+                             <p class="m-0 text-[0.9rem] text-ink-1 mb-[1.5rem]">
+                               Use the member role assignment tool below to grant or revoke this role for a specific user.
+                             </p>
+                             <div class="flex flex-col md:flex-row gap-[1rem] items-end">
+                                <label class={`${fieldLabelClass} flex-1 w-full`}>
+                                  Target user ULID
+                                  <input
+                                    class={fieldControlClass}
+                                    value={props.targetUserIdInput}
+                                    onInput={(event) => props.onTargetUserIdInput(event.currentTarget.value)}
+                                    maxlength="26"
+                                    placeholder="01ARZ..."
+                                    disabled={!props.canManageMemberRoles}
+                                  />
+                                </label>
+                                <div class="flex gap-[0.5rem] w-full md:w-auto">
+                                  <button
+                                    class={`${actionButtonClass} flex-1 md:flex-none border-brand text-brand hover:bg-brand hover:text-brand-ink disabled:hover:bg-transparent disabled:hover:text-brand`}
+                                    type="button"
+                                    disabled={props.isMutatingRoles || !props.canManageMemberRoles || !props.targetUserIdInput}
+                                    onClick={() => {
+                                      setAssignmentRoleId(roleAccessor().roleId);
+                                      void onAssignRole();
+                                    }}
+                                  >
+                                    Assign Role
+                                  </button>
+                                  <button
+                                    class={`${actionButtonClass} flex-1 md:flex-none`}
+                                    type="button"
+                                    disabled={props.isMutatingRoles || !props.canManageMemberRoles || !props.targetUserIdInput}
+                                    onClick={() => {
+                                      setAssignmentRoleId(roleAccessor().roleId);
+                                      void onUnassignRole();
+                                    }}
+                                  >
+                                    Revoke
+                                  </button>
+                                </div>
+                             </div>
+                             <Show when={!props.canManageMemberRoles}>
+                               <p class="mt-[0.5rem] text-[0.8rem] text-danger">You do not have permission to manage member roles.</p>
+                             </Show>
+                           </div>
+                           
+                           {/* Notice about member list integration */}
+                           <div class="bg-bg-0 p-[1.5rem] rounded-[0.6rem] border border-line-soft border-dashed text-center">
+                              <p class={mutedTextClass}>
+                                For a full list of members and bulk assignments, visit the <strong class="text-ink-1">Members</strong> section in Workspace Settings.
+                              </p>
+                           </div>
+                        </div>
+                      </Match>
+                    </Switch>
+                  </div>
+
+                  {/* Absolute positioning for the Save button so it doesn't get lost on long pages */}
+                  <Show when={activeTab() !== "members" && hasRoleDraftChanges() && !roleAccessor().isSystem}>
+                    <div class="absolute bottom-0 left-0 right-0 bg-bg-1 p-[1.5rem] border-t border-line-soft flex items-center justify-between shadow-[0_-4px_12px_rgba(0,0,0,0.1)]">
+                       <span class="text-[0.9rem] text-ink-2">You have unsaved changes to this role.</span>
+                       <div class="flex gap-[1rem]">
+                         <button
+                           class={actionButtonClass}
+                           type="button"
+                           onClick={onResetRoleDraft}
+                           disabled={props.isMutatingRoles}
+                         >
+                           Reset
+                         </button>
+                         <button
+                           class={primaryButtonClass}
+                           type="button"
+                           onClick={(e) => void onSaveRole(e as any)}
+                           disabled={props.isMutatingRoles || !isRoleNameValid()}
+                         >
+                           {props.isMutatingRoles ? "Saving..." : "Save Changes"}
+                         </button>
+                       </div>
+                    </div>
+                  </Show>
+                </div>
+              )}
+            </Show>
+          </div>
+        </div>
       </Show>
 
-      <Show when={props.roleManagementStatus}>
-        <p class={`${statusBaseClass} text-ok`}>{props.roleManagementStatus}</p>
-      </Show>
-      <Show when={props.roleManagementError || clientError()}>
-        <p class={`${statusBaseClass} text-danger`}>{props.roleManagementError || clientError()}</p>
-      </Show>
+      {/* Global Status indicators */}
+      <div class="fixed bottom-[2rem] left-1/2 -translate-x-1/2 z-50 flex flex-col gap-[0.5rem]">
+        <Show when={props.roleManagementStatus}>
+          <div class="px-[1.5rem] py-[0.8rem] rounded-[0.6rem] bg-bg-2 border border-ok text-[0.92rem] text-ok font-medium shadow-lg">
+            {props.roleManagementStatus}
+          </div>
+        </Show>
+        <Show when={props.roleManagementError || clientError()}>
+          <div class="px-[1.5rem] py-[0.8rem] rounded-[0.6rem] bg-bg-2 border border-danger text-[0.92rem] text-danger font-medium shadow-lg">
+            {props.roleManagementError || clientError()}
+          </div>
+        </Show>
+      </div>
 
       <Show when={dangerModal()}>
         {(dangerModalAccessor) => (
           <div
-            class="fixed inset-0 z-[80] grid place-items-center bg-bg-0/72 p-[1rem]"
+            class="fixed inset-0 z-[80] grid place-items-center bg-bg-0/80 p-[1rem] backdrop-blur-sm"
             role="dialog"
             aria-modal="true"
             aria-label="Dangerous operation confirmation"
           >
-            <section class="grid w-full max-w-[32rem] gap-[0.85rem] rounded-[0.82rem] border border-danger-panel-strong bg-bg-1 p-[1rem] text-ink-0">
-              <h5 class="m-0">{dangerModalAccessor().title}</h5>
-              <p class="m-0 text-[0.92rem] text-ink-2">{dangerModalAccessor().message}</p>
-              <div class={actionButtonRowClass}>
+            <section class="grid w-full max-w-[32rem] gap-[1rem] rounded-[0.6rem] border border-danger-panel-strong bg-bg-1 p-[1.5rem] text-ink-0 shadow-2xl">
+              <h5 class="m-0 text-[1.2rem] font-semibold">{dangerModalAccessor().title}</h5>
+              <p class="m-0 text-[0.95rem] text-ink-2 leading-relaxed">{dangerModalAccessor().message}</p>
+              <div class="flex justify-end gap-[0.8rem] mt-[1rem]">
                 <button
-                  class={rowActionButtonClass}
+                  class={actionButtonClass}
                   type="button"
                   onClick={() => setDangerModal(null)}
                 >
                   Cancel
                 </button>
                 <button
-                  class={`${rowActionButtonClass} border-danger-panel-strong bg-danger-panel text-danger-ink enabled:hover:bg-danger`}
+                  class="min-h-[2.2rem] rounded-[0.4rem] border border-danger bg-danger px-[1rem] py-[0.5rem] text-[0.92rem] font-medium text-danger-ink transition-colors duration-[120ms] ease-out hover:brightness-110"
                   type="button"
                   onClick={() => void onConfirmDangerModal()}
                 >

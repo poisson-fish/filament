@@ -86,52 +86,52 @@ const BANNER_PRESETS: BannerPreset[] = [
   {
     id: "sun",
     label: "Sun Glow",
-    gradient: "linear-gradient(135deg, #f4e4a2 0%, #d7bf63 100%)",
+    gradient: "var(--workspace-banner-sun)",
   },
   {
     id: "rose",
     label: "Rose Pulse",
-    gradient: "linear-gradient(135deg, #c74989 0%, #7d2f6a 100%)",
+    gradient: "var(--workspace-banner-rose)",
   },
   {
     id: "ember",
     label: "Ember Drift",
-    gradient: "linear-gradient(135deg, #b34d30 0%, #782530 100%)",
+    gradient: "var(--workspace-banner-ember)",
   },
   {
     id: "amber",
     label: "Amber Dusk",
-    gradient: "linear-gradient(135deg, #c67a32 0%, #7d5231 100%)",
+    gradient: "var(--workspace-banner-amber)",
   },
   {
     id: "citrus",
     label: "Citrus Moss",
-    gradient: "linear-gradient(135deg, #9e933f 0%, #5f7043 100%)",
+    gradient: "var(--workspace-banner-citrus)",
   },
   {
     id: "violet",
     label: "Violet Fog",
-    gradient: "linear-gradient(135deg, #5f4b82 0%, #7a5b91 100%)",
+    gradient: "var(--workspace-banner-violet)",
   },
   {
     id: "aqua",
     label: "Aqua Orbit",
-    gradient: "linear-gradient(135deg, #2f5d9f 0%, #3d8aa2 100%)",
+    gradient: "var(--workspace-banner-aqua)",
   },
   {
     id: "teal",
     label: "Teal Field",
-    gradient: "linear-gradient(135deg, #3f8b84 0%, #5ba8a2 100%)",
+    gradient: "var(--workspace-banner-teal)",
   },
   {
     id: "forest",
     label: "Forest Night",
-    gradient: "linear-gradient(135deg, #355b2a 0%, #1f2f2e 100%)",
+    gradient: "var(--workspace-banner-forest)",
   },
   {
     id: "slate",
     label: "Slate Fade",
-    gradient: "linear-gradient(135deg, #414651 0%, #252833 100%)",
+    gradient: "var(--workspace-banner-slate)",
   },
 ];
 
@@ -252,12 +252,15 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
     const draft = memberRoleDraftByUserId();
     const next: Record<string, WorkspaceRoleId | ""> = {};
     let changed = false;
+    const fallbackRoleId = assignableRoles()[0]?.roleId ?? "";
     for (const member of props.members) {
       const current = draft[member.userId];
-      if (typeof current === "string" && assignableRoleIdSet().has(current as WorkspaceRoleId)) {
-        next[member.userId] = current;
-      } else {
-        next[member.userId] = resolveDraftRoleIdForMember(member.userId);
+      const resolved =
+        typeof current === "string" && assignableRoleIdSet().has(current as WorkspaceRoleId)
+          ? (current as WorkspaceRoleId)
+          : fallbackRoleId;
+      next[member.userId] = resolved;
+      if (resolved !== current) {
         changed = true;
       }
     }
@@ -507,7 +510,12 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                     <article class="overflow-hidden rounded-[0.72rem] border border-line-soft bg-bg-2">
                       <div
                         class="h-[5.5rem] w-full transition-all duration-[180ms] ease-out"
-                        style={{ background: selectedBannerPreset()?.gradient ?? BANNER_PRESETS[0]?.gradient ?? "#2c313c" }}
+                        style={{
+                          background:
+                            selectedBannerPreset()?.gradient ??
+                            BANNER_PRESETS[0]?.gradient ??
+                            "var(--bg-4)",
+                        }}
                       />
                       <div class="relative grid gap-[0.4rem] px-[0.74rem] pb-[0.74rem] pt-[1.75rem]">
                         <span

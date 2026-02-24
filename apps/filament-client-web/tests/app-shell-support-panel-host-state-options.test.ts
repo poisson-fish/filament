@@ -64,6 +64,11 @@ describe("app shell support panel-host state options", () => {
     const viewAsRoleSimulatorRole = () => "moderator";
     const setViewAsRoleSimulatorEnabled = vi.fn();
     const setViewAsRoleSimulatorRole = vi.fn();
+    const workspaceMembersByGuildId = () => ({
+      "guild-1": ["user-1", "user-2"],
+    });
+    const isLoadingWorkspaceMembers = () => false;
+    const workspaceMembersError = () => "";
 
     const canManageWorkspaceRoles = () => true;
     const canManageMemberRoles = () => true;
@@ -216,6 +221,9 @@ describe("app shell support panel-host state options", () => {
       saveWorkspaceSettings,
       openOverlayPanel,
       displayUserLabel,
+      workspaceMembersByGuildId,
+      isLoadingWorkspaceMembers,
+      workspaceMembersError,
       isDevelopmentMode: true,
     });
 

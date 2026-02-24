@@ -11,9 +11,8 @@ use crate::server::{
 };
 
 pub(crate) async fn start_livekit_sync(state: AppState) {
-    let room_client = match &state.livekit_room {
-        Some(client) => client,
-        None => return,
+    let Some(room_client) = &state.livekit_room else {
+        return;
     };
 
     let mut ticker = interval(Duration::from_secs(15));
@@ -35,9 +34,8 @@ pub(crate) async fn start_livekit_sync(state: AppState) {
             let room_name = format!("filament.voice.{guild_id}.{channel_id}");
 
             // Fetch LiveKit participants
-            let lk_participants = match room_client.list_participants(&room_name).await {
-                Ok(participants) => participants,
-                Err(_) => continue, // Log if needed
+            let Ok(lk_participants) = room_client.list_participants(&room_name).await else {
+                continue; // Log if needed
             };
 
             let mut lk_identities = HashMap::new();
@@ -88,7 +86,7 @@ pub(crate) async fn start_livekit_sync(state: AppState) {
 
             // 2. Zombie Ghosting
             // In LiveKit, not in Filament -> Kicked/Banned!
-            for (lk_identity, _p) in &lk_identities {
+            for lk_identity in lk_identities.keys() {
                 let found_in_filament = filament_participants
                     .values()
                     .any(|fp| &fp.identity == lk_identity);
