@@ -42,6 +42,7 @@ import {
   createWorkspaceBootstrapController,
   createWorkspaceSelectionController,
 } from "../controllers/workspace-controller";
+import { createWorkspaceMembersController } from "../controllers/workspace-members-controller";
 import {
   userIdFromVoiceIdentity,
 } from "../helpers";
@@ -421,6 +422,15 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
       workspaceChannelState.unassignWorkspaceRoleFromUser,
   });
 
+  const workspaceMembersController = createWorkspaceMembersController({
+    session: auth.session,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeOverlayPanel: overlayState.activeOverlayPanel,
+    activeWorkspaceSettingsSection: overlayState.activeWorkspaceSettingsSection,
+    canManageMemberRoles: selectors.canManageMemberRoles,
+    setWorkspaceUserRolesByGuildId: workspaceChannelState.setWorkspaceUserRolesByGuildId,
+  });
+
   const { refreshWorkspacePermissionStateFromGateway } =
     createWorkspacePermissionActions({
       session: auth.session,
@@ -470,6 +480,13 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     onlineMembers: profileState.onlineMembers,
     voiceRosterEntries: selectors.voiceRosterEntries,
     searchResults: discoveryState.searchResults,
+    workspaceMembers: () => {
+      const guildId = workspaceChannelState.activeGuildId();
+      if (!guildId) {
+        return [];
+      }
+      return workspaceMembersController.membersByGuildId()[guildId] ?? [];
+    },
     profile: profileController.profile,
     selectedProfile: profileController.selectedProfile,
     friends: friendshipsState.friends,
@@ -641,6 +658,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
       saveWorkspaceSettings,
       openOverlayPanel,
       displayUserLabel: labels.displayUserLabel,
+      workspaceMembersByGuildId: workspaceMembersController.membersByGuildId,
+      isLoadingWorkspaceMembers: workspaceMembersController.isLoadingMembers,
+      workspaceMembersError: workspaceMembersController.memberListError,
       isDevelopmentMode: import.meta.env.DEV,
     },
     collaboration: {

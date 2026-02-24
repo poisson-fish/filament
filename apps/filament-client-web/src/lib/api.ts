@@ -105,6 +105,7 @@ export const joinPublicGuild = workspaceClient.joinPublicGuild;
 export const fetchGuildChannels = workspaceClient.fetchGuildChannels;
 export const createChannel = workspaceClient.createChannel;
 export const fetchChannelPermissionSnapshot = workspaceClient.fetchChannelPermissionSnapshot;
+export const fetchGuildMembers = workspaceClient.fetchGuildMembers;
 
 export const fetchChannelMessages = messagesClient.fetchChannelMessages;
 export const createChannelMessage = messagesClient.createChannelMessage;

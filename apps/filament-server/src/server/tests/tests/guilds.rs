@@ -242,6 +242,58 @@ async fn guild_and_channel_list_endpoints_are_member_scoped() {
 }
 
 #[tokio::test]
+async fn guild_member_list_includes_offline_members() {
+    let app = build_router(&AppConfig::default()).unwrap();
+    let owner_auth = register_and_login_as(&app, "owner_member_list", "203.0.113.120").await;
+    let member_auth = register_and_login_as(&app, "member_member_list", "203.0.113.121").await;
+
+    let owner_user_id = user_id_from_me(&app, &owner_auth, "203.0.113.120").await;
+    let member_user_id = user_id_from_me(&app, &member_auth, "203.0.113.121").await;
+    let guild_id = create_guild_for_test(&app, &owner_auth, "203.0.113.120").await;
+    add_member_for_test(
+        &app,
+        &owner_auth,
+        "203.0.113.120",
+        &guild_id,
+        &member_user_id,
+    )
+    .await;
+
+    let (status, payload) = authed_json_request(
+        &app,
+        "GET",
+        format!("/guilds/{guild_id}/members?limit=10"),
+        &owner_auth.access_token,
+        "203.0.113.120",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let members = payload
+        .expect("member list payload")
+        .get("members")
+        .and_then(|value| value.as_array())
+        .expect("member list members array");
+    assert!(members
+        .iter()
+        .any(|entry| entry.get("user_id") == Some(&Value::from(owner_user_id.clone()))));
+    assert!(members
+        .iter()
+        .any(|entry| entry.get("user_id") == Some(&Value::from(member_user_id))));
+
+    let (member_status, _) = authed_json_request(
+        &app,
+        "GET",
+        format!("/guilds/{guild_id}/members?limit=10"),
+        &member_auth.access_token,
+        "203.0.113.121",
+        None,
+    )
+    .await;
+    assert_eq!(member_status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn create_guild_enforces_per_user_creation_limit() {
     let app = build_router(&AppConfig {
         max_created_guilds_per_user: 1,

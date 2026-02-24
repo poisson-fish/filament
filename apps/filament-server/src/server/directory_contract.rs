@@ -11,6 +11,8 @@ pub const DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP: u32 = 60;
 pub const DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER: u32 = 30;
 pub const DEFAULT_AUDIT_LIST_LIMIT_MAX: usize = 100;
 pub const DEFAULT_GUILD_IP_BAN_MAX_ENTRIES: usize = 4_096;
+pub const DEFAULT_GUILD_MEMBER_LIST_LIMIT: usize = 50;
+pub const DEFAULT_GUILD_MEMBER_LIST_LIMIT_MAX: usize = 200;
 
 pub const DEFAULT_AUDIT_LIST_LIMIT: usize = 20;
 pub const DEFAULT_GUILD_IP_BAN_LIST_LIMIT: usize = 20;
@@ -319,6 +321,37 @@ impl AuditListQuery {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct GuildMemberListQueryDto {
+    pub cursor: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuildMemberListQuery {
+    pub cursor: Option<UserId>,
+    pub limit: usize,
+}
+
+impl TryFrom<GuildMemberListQueryDto> for GuildMemberListQuery {
+    type Error = DirectoryContractError;
+
+    fn try_from(value: GuildMemberListQueryDto) -> Result<Self, Self::Error> {
+        let limit = value.limit.unwrap_or(DEFAULT_GUILD_MEMBER_LIST_LIMIT);
+        if limit == 0 || limit > DEFAULT_GUILD_MEMBER_LIST_LIMIT_MAX {
+            return Err(DirectoryContractError::Limit);
+        }
+
+        let cursor = match value.cursor {
+            None => None,
+            Some(raw) => Some(UserId::try_from(raw).map_err(|_| DirectoryContractError::UserId)?),
+        };
+
+        Ok(Self { cursor, limit })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GuildIpBanListQueryDto {
     pub cursor: Option<String>,
     pub limit: Option<usize>,
@@ -442,8 +475,9 @@ mod tests {
         validate_workspace_role_name, AuditCursor, AuditListQuery, AuditListQueryDto,
         DirectoryContractError, DirectoryJoinOutcome, GuildIpBanByUserRequest,
         GuildIpBanByUserRequestDto, GuildIpBanId, GuildIpBanListQuery, GuildIpBanListQueryDto,
-        IpNetwork, WorkspaceRoleId, AUDIT_ACCESS_DENIED_ERROR, DIRECTORY_JOIN_IP_BANNED_ERROR,
-        DIRECTORY_JOIN_NOT_ALLOWED_ERROR, DIRECTORY_JOIN_USER_BANNED_ERROR, MAX_AUDIT_CURSOR_CHARS,
+        GuildMemberListQuery, GuildMemberListQueryDto, IpNetwork, WorkspaceRoleId,
+        AUDIT_ACCESS_DENIED_ERROR, DIRECTORY_JOIN_IP_BANNED_ERROR, DIRECTORY_JOIN_NOT_ALLOWED_ERROR,
+        DIRECTORY_JOIN_USER_BANNED_ERROR, MAX_AUDIT_CURSOR_CHARS,
     };
 
     #[test]
@@ -549,6 +583,27 @@ mod tests {
             limit: Some(101),
         });
         assert_eq!(invalid, Err(DirectoryContractError::Limit));
+    }
+
+    #[test]
+    fn guild_member_list_query_validation_enforces_limits_and_cursor() {
+        let query = GuildMemberListQuery::try_from(GuildMemberListQueryDto {
+            cursor: Some(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV")),
+            limit: Some(50),
+        });
+        assert!(query.is_ok());
+
+        let invalid_limit = GuildMemberListQuery::try_from(GuildMemberListQueryDto {
+            cursor: None,
+            limit: Some(0),
+        });
+        assert_eq!(invalid_limit, Err(DirectoryContractError::Limit));
+
+        let invalid_cursor = GuildMemberListQuery::try_from(GuildMemberListQueryDto {
+            cursor: Some(String::from("not-ulid")),
+            limit: Some(10),
+        });
+        assert_eq!(invalid_cursor, Err(DirectoryContractError::UserId));
     }
 
     #[test]

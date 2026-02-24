@@ -10,8 +10,7 @@ import type { createWorkspaceState } from "../state/workspace-state";
 import type { createSessionDiagnosticsActions } from "./session-diagnostics-actions";
 import type { SupportPanelPropGroupsStateOptions } from "./support-panel-prop-groups-options";
 import type { WorkspaceRoleId } from "../../../domain/chat";
-
-const MAX_WORKSPACE_SETTINGS_MEMBERS = 200;
+import { MAX_WORKSPACE_SETTINGS_MEMBERS } from "../config/workspace-member-list";
 
 export interface SupportPanelHostStateOptions {
   discoveryState: ReturnType<typeof createWorkspaceState>["discovery"];
@@ -34,6 +33,9 @@ export interface SupportPanelHostStateOptions {
   saveWorkspaceSettings: () => Promise<void>;
   openOverlayPanel: (panel: "moderation") => void;
   displayUserLabel: (userId: string) => string;
+  workspaceMembersByGuildId: () => Record<string, string[]>;
+  isLoadingWorkspaceMembers: () => boolean;
+  workspaceMembersError: () => string;
   isDevelopmentMode: boolean;
 }
 
@@ -52,6 +54,13 @@ export function createSupportPanelHostStateOptions(
     const assignmentsByUser =
       options.workspaceChannelState.workspaceUserRolesByGuildId()[guildId] ?? {};
     const knownMemberIds = new Set<string>();
+    const roster = options.workspaceMembersByGuildId()[guildId] ?? [];
+    for (const userId of roster) {
+      knownMemberIds.add(userId);
+      if (knownMemberIds.size >= MAX_WORKSPACE_SETTINGS_MEMBERS) {
+        break;
+      }
+    }
     const actorId = options.profileController.profile()?.userId;
     if (actorId) {
       knownMemberIds.add(actorId);
@@ -170,6 +179,8 @@ export function createSupportPanelHostStateOptions(
       options.workspaceChannelState.viewAsRoleSimulatorEnabled,
     viewAsRoleSimulatorRole: options.workspaceChannelState.viewAsRoleSimulatorRole,
     members: resolveWorkspaceSettingsMemberRows,
+    isLoadingWorkspaceMembers: options.isLoadingWorkspaceMembers,
+    workspaceMembersError: options.workspaceMembersError,
     assignableRoleIds: resolveAssignableRoleIds,
     setWorkspaceSettingsName: options.workspaceChannelState.setWorkspaceSettingsName,
     setWorkspaceSettingsVisibility:

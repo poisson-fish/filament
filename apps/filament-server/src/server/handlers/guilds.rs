@@ -28,7 +28,8 @@ use crate::server::{
     directory_contract::{
         validate_workspace_role_name, AuditListQuery, AuditListQueryDto, DirectoryContractError,
         DirectoryJoinOutcome, GuildIpBanByUserRequest, GuildIpBanByUserRequestDto, GuildIpBanId,
-        GuildIpBanListQuery, GuildIpBanListQueryDto, IpNetwork, WorkspaceRoleId,
+        GuildIpBanListQuery, GuildIpBanListQueryDto, GuildMemberListQuery, GuildMemberListQueryDto,
+        IpNetwork, WorkspaceRoleId,
     },
     domain::{
         enforce_guild_ip_ban_for_request, guild_has_active_ip_ban_for_client,
@@ -46,9 +47,10 @@ use crate::server::{
         CreateChannelRequest, CreateGuildRequest, CreateGuildRoleRequest,
         DirectoryJoinOutcomeResponse, DirectoryJoinResponse, GuildAuditEventResponse,
         GuildAuditListResponse, GuildIpBanApplyResponse, GuildIpBanListResponse, GuildIpBanPath,
-        GuildIpBanRecordResponse, GuildListResponse, GuildPath, GuildResponse,
-        GuildRoleListResponse, GuildRoleMemberPath, GuildRolePath, GuildRoleResponse, MemberPath,
-        ModerationResponse, PublicGuildListItem, PublicGuildListQuery, PublicGuildListResponse,
+        GuildIpBanRecordResponse, GuildListResponse, GuildMemberListResponse,
+        GuildMemberRecordResponse, GuildPath, GuildResponse, GuildRoleListResponse,
+        GuildRoleMemberPath, GuildRolePath, GuildRoleResponse, MemberPath, ModerationResponse,
+        PublicGuildListItem, PublicGuildListQuery, PublicGuildListResponse,
         ReorderGuildRolesRequest, UpdateChannelPermissionOverrideRequest,
         UpdateChannelRoleOverrideRequest, UpdateGuildRequest, UpdateGuildRoleRequest,
         UpdateMemberRoleRequest,
@@ -481,6 +483,12 @@ struct AuditCursorPosition {
     audit_id: String,
 }
 
+#[derive(Debug, Clone)]
+struct GuildMemberRecord {
+    user_id: String,
+    role_ids: Vec<String>,
+}
+
 const fn map_directory_contract_error_to_auth_failure(
     _error: DirectoryContractError,
 ) -> AuthFailure {
@@ -518,6 +526,13 @@ fn guild_audit_response_from_record(record: GuildAuditEventRecord) -> GuildAudit
         ip_ban_match: action_has_ip_ban_match(&record.action),
         action: record.action,
         created_at_unix: record.created_at_unix,
+    }
+}
+
+fn guild_member_response_from_record(record: GuildMemberRecord) -> GuildMemberRecordResponse {
+    GuildMemberRecordResponse {
+        user_id: record.user_id,
+        role_ids: record.role_ids,
     }
 }
 
@@ -1110,6 +1125,174 @@ pub(crate) async fn list_guild_audit(
         list_guild_audit_db(pool, &path.guild_id, &audit_query).await?
     } else {
         list_guild_audit_in_memory(&state, &path.guild_id, &audit_query).await?
+    };
+
+    Ok(Json(response))
+}
+
+async fn list_guild_members_db(
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+    query: &GuildMemberListQuery,
+) -> Result<GuildMemberListResponse, AuthFailure> {
+    let cursor = query.cursor.as_ref().map(|value| value.to_string());
+    let limit_plus_one = query
+        .limit
+        .checked_add(1)
+        .ok_or(AuthFailure::InvalidRequest)?;
+
+    let rows = sqlx::query(
+        "SELECT user_id
+         FROM guild_members
+         WHERE guild_id = $1
+           AND ($2::text IS NULL OR user_id > $2)
+         ORDER BY user_id ASC
+         LIMIT $3",
+    )
+    .bind(guild_id)
+    .bind(cursor)
+    .bind(i64::try_from(limit_plus_one).map_err(|_| AuthFailure::Internal)?)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+
+    let mut user_ids = Vec::with_capacity(rows.len());
+    for row in rows {
+        user_ids.push(row.try_get("user_id").map_err(|_| AuthFailure::Internal)?);
+    }
+
+    let next_cursor = if user_ids.len() > query.limit {
+        let cursor = user_ids
+            .get(query.limit)
+            .cloned()
+            .ok_or(AuthFailure::Internal)?;
+        user_ids.truncate(query.limit);
+        Some(cursor)
+    } else {
+        None
+    };
+
+    let mut role_ids_by_user: HashMap<String, Vec<String>> = HashMap::new();
+    if !user_ids.is_empty() {
+        let rows = sqlx::query(
+            "SELECT user_id, role_id
+             FROM guild_role_members
+             WHERE guild_id = $1 AND user_id = ANY($2)",
+        )
+        .bind(guild_id)
+        .bind(&user_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+        for row in rows {
+            let user_id: String = row.try_get("user_id").map_err(|_| AuthFailure::Internal)?;
+            let role_id: String = row.try_get("role_id").map_err(|_| AuthFailure::Internal)?;
+            role_ids_by_user.entry(user_id).or_default().push(role_id);
+        }
+    }
+
+    for role_ids in role_ids_by_user.values_mut() {
+        role_ids.sort();
+        role_ids.dedup();
+        if role_ids.len() > MAX_MEMBER_ROLE_ASSIGNMENTS {
+            role_ids.truncate(MAX_MEMBER_ROLE_ASSIGNMENTS);
+        }
+    }
+
+    Ok(GuildMemberListResponse {
+        members: user_ids
+            .into_iter()
+            .map(|user_id| GuildMemberRecord {
+                role_ids: role_ids_by_user.remove(&user_id).unwrap_or_default(),
+                user_id,
+            })
+            .map(guild_member_response_from_record)
+            .collect(),
+        next_cursor,
+    })
+}
+
+async fn list_guild_members_in_memory(
+    state: &AppState,
+    guild_id: &str,
+    query: &GuildMemberListQuery,
+) -> Result<GuildMemberListResponse, AuthFailure> {
+    let cursor = query.cursor.as_ref().map(|value| value.to_string());
+    let guilds = state.membership_store.guilds().read().await;
+    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+    let mut user_ids = guild
+        .members
+        .keys()
+        .map(|user_id| user_id.to_string())
+        .collect::<Vec<_>>();
+    drop(guilds);
+
+    user_ids.sort();
+    if let Some(cursor) = cursor.as_ref() {
+        user_ids.retain(|user_id| user_id > cursor);
+    }
+
+    let next_cursor = if user_ids.len() > query.limit {
+        let cursor = user_ids
+            .get(query.limit)
+            .cloned()
+            .ok_or(AuthFailure::Internal)?;
+        user_ids.truncate(query.limit);
+        Some(cursor)
+    } else {
+        None
+    };
+
+    let assignments = state.membership_store.guild_role_assignments().read().await;
+    let guild_assignments = assignments.get(guild_id);
+    let mut role_ids_by_user: HashMap<String, Vec<String>> = HashMap::new();
+    if let Some(guild_assignments) = guild_assignments {
+        for (user_id, role_ids) in guild_assignments {
+            let mut roles = role_ids.iter().cloned().collect::<Vec<_>>();
+            roles.sort();
+            roles.dedup();
+            if roles.len() > MAX_MEMBER_ROLE_ASSIGNMENTS {
+                roles.truncate(MAX_MEMBER_ROLE_ASSIGNMENTS);
+            }
+            role_ids_by_user.insert(user_id.to_string(), roles);
+        }
+    }
+
+    Ok(GuildMemberListResponse {
+        members: user_ids
+            .into_iter()
+            .map(|user_id| GuildMemberRecord {
+                role_ids: role_ids_by_user.remove(&user_id).unwrap_or_default(),
+                user_id,
+            })
+            .map(guild_member_response_from_record)
+            .collect(),
+        next_cursor,
+    })
+}
+
+pub(crate) async fn list_guild_members(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+    Query(query): Query<GuildMemberListQueryDto>,
+) -> Result<Json<GuildMemberListResponse>, AuthFailure> {
+    let auth = authenticate(&state, &headers).await?;
+    let member_query = GuildMemberListQuery::try_from(query)
+        .map_err(map_directory_contract_error_to_auth_failure)?;
+    let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
+    if !permissions.contains(Permission::ManageMemberRoles)
+        && !permissions.contains(Permission::ManageWorkspaceRoles)
+        && !permissions.contains(Permission::ManageRoles)
+    {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let response = if let Some(pool) = &state.db_pool {
+        list_guild_members_db(pool, &path.guild_id, &member_query).await?
+    } else {
+        list_guild_members_in_memory(&state, &path.guild_id, &member_query).await?
     };
 
     Ok(Json(response))

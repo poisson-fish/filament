@@ -529,6 +529,18 @@ pub(crate) struct GuildIpBanApplyResponse {
 }
 
 #[derive(Debug, Serialize, Clone)]
+pub(crate) struct GuildMemberRecordResponse {
+    pub(crate) user_id: String,
+    pub(crate) role_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GuildMemberListResponse {
+    pub(crate) members: Vec<GuildMemberRecordResponse>,
+    pub(crate) next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
 pub(crate) struct GuildRoleResponse {
     pub(crate) role_id: String,
     pub(crate) name: String,

@@ -41,8 +41,8 @@ use super::{
         guilds::{
             add_member, assign_guild_role, ban_member, create_channel, create_guild,
             create_guild_role, delete_guild_role, join_public_guild, kick_member, list_guild_audit,
-            list_guild_channels, list_guild_ip_bans, list_guild_roles, list_guilds,
-            list_public_guilds, remove_guild_ip_ban, reorder_guild_roles,
+            list_guild_channels, list_guild_ip_bans, list_guild_members, list_guild_roles,
+            list_guilds, list_public_guilds, remove_guild_ip_ban, reorder_guild_roles,
             set_channel_permission_override, set_channel_role_override, unassign_guild_role,
             update_guild, update_guild_role, update_member_role, upsert_guild_ip_bans_by_user,
         },
@@ -88,6 +88,7 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("GET", "/guilds/public"),
     ("POST", "/guilds/{guild_id}/join"),
     ("GET", "/guilds/{guild_id}/audit"),
+    ("GET", "/guilds/{guild_id}/members"),
     ("GET", "/guilds/{guild_id}/roles"),
     ("POST", "/guilds/{guild_id}/roles"),
     ("POST", "/guilds/{guild_id}/roles/reorder"),
@@ -466,6 +467,7 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
             "/guilds/{guild_id}/channels/{channel_id}/attachments/{attachment_id}",
             get(download_attachment).delete(delete_attachment),
         )
+        .route("/guilds/{guild_id}/members", get(list_guild_members))
         .route(
             "/guilds/{guild_id}/members/{user_id}",
             post(add_member).patch(update_member_role),

@@ -78,6 +78,8 @@ export interface SupportPanelPropGroupsStateOptions {
     label: string;
     roleIds: WorkspaceRoleId[];
   }>;
+  isLoadingWorkspaceMembers: () => boolean;
+  workspaceMembersError: () => string;
   assignableRoleIds: () => SupportPanelPropGroupsOptions["workspaceSettings"]["assignableRoleIds"];
   setWorkspaceSettingsName:
     SupportPanelPropGroupsOptions["workspaceSettings"]["setWorkspaceSettingsName"];
@@ -194,6 +196,8 @@ export function createSupportPanelPropGroupsOptions(
       viewAsRoleSimulatorEnabled: options.viewAsRoleSimulatorEnabled(),
       viewAsRoleSimulatorRole: options.viewAsRoleSimulatorRole(),
       members: options.members(),
+      isLoadingMembers: options.isLoadingWorkspaceMembers(),
+      memberListError: options.workspaceMembersError(),
       roles: options.roles(),
       assignableRoleIds: options.assignableRoleIds(),
       setWorkspaceSettingsName: options.setWorkspaceSettingsName,

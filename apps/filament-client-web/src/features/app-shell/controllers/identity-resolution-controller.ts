@@ -23,6 +23,7 @@ export interface IdentityResolutionControllerOptions {
   onlineMembers: Accessor<string[]>;
   voiceRosterEntries: Accessor<VoiceRosterEntry[]>;
   searchResults: Accessor<SearchResults | null>;
+  workspaceMembers: Accessor<string[]>;
   profile: Accessor<ProfileRecord | undefined>;
   selectedProfile: Accessor<ProfileRecord | null | undefined>;
   friends: Accessor<FriendRecord[]>;
@@ -49,6 +50,7 @@ export function collectVisibleUserIds(input: {
   onlineMembers: string[];
   voiceRosterEntries: VoiceRosterEntry[];
   searchResults: SearchResults | null;
+  workspaceMembers: string[];
 }): UserId[] {
   const lookupIds = new Set<UserId>();
   for (const message of input.messages) {
@@ -70,6 +72,13 @@ export function collectVisibleUserIds(input: {
   if (input.searchResults) {
     for (const message of input.searchResults.messages) {
       lookupIds.add(message.authorId);
+    }
+  }
+  for (const memberId of input.workspaceMembers) {
+    try {
+      lookupIds.add(userIdFromInput(memberId));
+    } catch {
+      continue;
     }
   }
   return [...lookupIds];
@@ -155,6 +164,7 @@ export function createIdentityResolutionController(
       onlineMembers: options.onlineMembers(),
       voiceRosterEntries: options.voiceRosterEntries(),
       searchResults: options.searchResults(),
+      workspaceMembers: options.workspaceMembers(),
     });
     if (lookupIds.length === 0) {
       return "";

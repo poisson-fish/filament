@@ -133,6 +133,8 @@ export interface WorkspaceSettingsPanelBuilderOptions {
   memberRoleStatus: string;
   memberRoleError: string;
   isMutatingMemberRoles: boolean;
+  isLoadingMembers: boolean;
+  memberListError: string;
   viewAsRoleSimulatorEnabled: boolean;
   viewAsRoleSimulatorRole: RoleName;
   members: Array<{
@@ -393,6 +395,8 @@ export function buildWorkspaceSettingsPanelProps(
     memberRoleStatus: options.memberRoleStatus,
     memberRoleError: options.memberRoleError,
     isMutatingMemberRoles: options.isMutatingMemberRoles,
+    isLoadingMembers: options.isLoadingMembers,
+    memberListError: options.memberListError,
     viewAsRoleSimulatorEnabled: options.viewAsRoleSimulatorEnabled,
     viewAsRoleSimulatorRole: options.viewAsRoleSimulatorRole,
     members: options.members,

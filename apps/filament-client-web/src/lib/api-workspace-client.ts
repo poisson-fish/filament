@@ -9,6 +9,7 @@ import {
   type GuildId,
   type GuildName,
   type GuildRecord,
+  type GuildMemberPage,
   type GuildRoleList,
   type GuildRoleRecord,
   type GuildVisibility,
@@ -59,6 +60,11 @@ export interface WorkspaceClient {
     guildId: GuildId,
     channelId: ChannelId,
   ): Promise<ChannelPermissionSnapshot>;
+  fetchGuildMembers(
+    session: AuthSession,
+    guildId: GuildId,
+    input?: { cursor?: UserId; limit?: number },
+  ): Promise<GuildMemberPage>;
   addGuildMember(
     session: AuthSession,
     guildId: GuildId,
@@ -168,6 +174,10 @@ export function createWorkspaceClient(input: WorkspaceClientDependencies): Works
 
     fetchChannelPermissionSnapshot(session, guildId, channelId) {
       return input.workspaceApi.fetchChannelPermissionSnapshot(session, guildId, channelId);
+    },
+
+    fetchGuildMembers(session, guildId, payload) {
+      return input.workspaceApi.fetchGuildMembers(session, guildId, payload);
     },
 
     addGuildMember(session, guildId, userId) {

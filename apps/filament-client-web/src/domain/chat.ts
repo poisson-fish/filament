@@ -69,9 +69,11 @@ const MAX_AUDIT_EVENTS_PER_PAGE = 100;
 const MAX_GUILD_IP_BANS_PER_PAGE = 100;
 const MAX_GUILD_IP_BAN_REASON_CHARS = 240;
 const MAX_APPLIED_GUILD_IP_BAN_IDS = 2048;
+const MAX_GUILD_MEMBERS_PER_PAGE = 200;
 const MAX_WORKSPACE_ROLE_NAME_CHARS = 32;
 const MAX_WORKSPACE_ROLES_PER_GUILD = 64;
 const MAX_WORKSPACE_ROLE_PERMISSIONS = 64;
+const MAX_WORKSPACE_ROLE_ASSIGNMENTS_PER_USER = 64;
 const IPV6_MAX_VALUE = (1n << 128n) - 1n;
 
 function idFromInput<
@@ -789,6 +791,16 @@ export interface GuildIpBanApplyResult {
   banIds: GuildIpBanId[];
 }
 
+export interface GuildMemberRecord {
+  userId: UserId;
+  roleIds: WorkspaceRoleId[];
+}
+
+export interface GuildMemberPage {
+  members: GuildMemberRecord[];
+  nextCursor: UserId | null;
+}
+
 export interface GuildRoleRecord {
   roleId: WorkspaceRoleId;
   name: WorkspaceRoleName;
@@ -799,6 +811,41 @@ export interface GuildRoleRecord {
 
 export interface GuildRoleList {
   roles: GuildRoleRecord[];
+}
+
+function guildMemberRecordFromResponse(dto: unknown): GuildMemberRecord {
+  const data = requireObject(dto, "guild member");
+  const roleIdsDto = data.role_ids;
+  const roleIdsRaw =
+    typeof roleIdsDto === "undefined"
+      ? []
+      : requireStringArray(roleIdsDto, "role_ids", 64);
+  if (roleIdsRaw.length > MAX_WORKSPACE_ROLE_ASSIGNMENTS_PER_USER) {
+    throw new DomainValidationError("Guild member roles exceeds per-user cap.");
+  }
+  const deduped = new Set<WorkspaceRoleId>();
+  for (const entry of roleIdsRaw) {
+    deduped.add(workspaceRoleIdFromInput(entry));
+  }
+  return {
+    userId: userIdFromInput(requireString(data.user_id, "user_id")),
+    roleIds: [...deduped.values()],
+  };
+}
+
+export function guildMemberPageFromResponse(dto: unknown): GuildMemberPage {
+  const data = requireObject(dto, "guild member page");
+  if (!Array.isArray(data.members) || data.members.length > MAX_GUILD_MEMBERS_PER_PAGE) {
+    throw new DomainValidationError("Guild member page members must be a bounded array.");
+  }
+  const nextCursorRaw = data.next_cursor;
+  return {
+    members: data.members.map((entry) => guildMemberRecordFromResponse(entry)),
+    nextCursor:
+      nextCursorRaw === null || typeof nextCursorRaw === "undefined"
+        ? null
+        : userIdFromInput(requireString(nextCursorRaw, "next_cursor")),
+  };
 }
 
 function guildIpBanRecordFromResponse(dto: unknown): GuildIpBanRecord {

@@ -30,6 +30,8 @@ export interface WorkspaceSettingsPanelProps {
   memberRoleStatus: string;
   memberRoleError: string;
   isMutatingMemberRoles: boolean;
+  isLoadingMembers: boolean;
+  memberListError: string;
   viewAsRoleSimulatorEnabled: boolean;
   viewAsRoleSimulatorRole: RoleName;
   members: WorkspaceSettingsMemberRecord[];
@@ -212,6 +214,12 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
     return props.members.filter((member) =>
       member.label.toLowerCase().includes(query) || member.userId.toLowerCase().includes(query),
     );
+  });
+  const emptyMemberMessage = createMemo(() => {
+    if (memberSearchQuery().trim().length > 0) {
+      return "No members matched this search.";
+    }
+    return "No members found in this workspace yet.";
   });
 
   const resolveDraftRoleIdForMember = (userId: string): WorkspaceRoleId | "" => {
@@ -573,7 +581,7 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                 <header class="grid gap-[0.34rem]">
                   <p class={sectionLabelClassName}>MEMBERS</p>
                   <h4 class="m-0 text-[1.34rem] leading-tight text-ink-0">Member Role Assignments</h4>
-                  <p class={mutedTextClass}>Grant or remove assignable roles for active workspace members.</p>
+                  <p class={mutedTextClass}>Grant or remove assignable roles for workspace members.</p>
                 </header>
                 <label class={fieldLabelClass}>
                   Search members
@@ -590,11 +598,17 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                     You need member-role permissions to edit assignments.
                   </p>
                 }>
+                  <Show when={props.isLoadingMembers && props.members.length === 0}>
+                    <p class={mutedTextClass}>Loading member roster…</p>
+                  </Show>
+                  <Show when={props.memberListError}>
+                    <p class={statusErrorClass}>{props.memberListError}</p>
+                  </Show>
                   <Show
                     when={filteredMembers().length > 0}
                     fallback={
                       <p class={mutedTextClass}>
-                        No known members yet. Member rows appear after presence or role events are received.
+                        {emptyMemberMessage()}
                       </p>
                     }
                   >

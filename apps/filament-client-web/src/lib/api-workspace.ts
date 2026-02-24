@@ -19,12 +19,14 @@ import {
   type PermissionName,
   type PublicGuildDirectory,
   type RoleName,
+  type GuildMemberPage,
   type UserId,
   type WorkspaceRoleId,
   type WorkspaceRoleName,
   channelFromResponse,
   channelPermissionSnapshotFromResponse,
   directoryJoinResultFromResponse,
+  guildMemberPageFromResponse,
   guildFromResponse,
   guildRoleListFromResponse,
   moderationResultFromResponse,
@@ -78,6 +80,11 @@ export interface WorkspaceApi {
     guildId: GuildId,
     channelId: ChannelId,
   ): Promise<ChannelPermissionSnapshot>;
+  fetchGuildMembers(
+    session: AuthSession,
+    guildId: GuildId,
+    input?: { cursor?: UserId; limit?: number },
+  ): Promise<GuildMemberPage>;
   addGuildMember(
     session: AuthSession,
     guildId: GuildId,
@@ -258,6 +265,28 @@ export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceAp
         accessToken: session.accessToken,
       });
       return channelPermissionSnapshotFromResponse(dto);
+    },
+
+    async fetchGuildMembers(session, guildId, memberInput) {
+      const params = new URLSearchParams();
+      if (memberInput?.cursor) {
+        params.set("cursor", memberInput.cursor);
+      }
+      if (
+        memberInput?.limit
+        && Number.isInteger(memberInput.limit)
+        && memberInput.limit > 0
+        && memberInput.limit <= 200
+      ) {
+        params.set("limit", String(memberInput.limit));
+      }
+      const suffix = params.size > 0 ? `?${params.toString()}` : "";
+      const dto = await input.requestJson({
+        method: "GET",
+        path: `/guilds/${guildId}/members${suffix}`,
+        accessToken: session.accessToken,
+      });
+      return guildMemberPageFromResponse(dto);
     },
 
     async addGuildMember(session, guildId, userId) {
