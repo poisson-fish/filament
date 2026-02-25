@@ -83,6 +83,16 @@ pub(crate) async fn execute_subscribe_command(
     if let Some(reason) = subscribe_ack_drop_metric_reason(&enqueue_result) {
         record_gateway_event_dropped("connection", subscribed_event.event_type, reason);
     }
+    if let Some(reason) = subscribe_ack_reject_log_reason(&enqueue_result) {
+        tracing::warn!(
+            event = "gateway.subscribe_ack.enqueue_rejected",
+            connection_id = %connection_id,
+            user_id = %user_id,
+            guild_id = %subscribe.guild_id,
+            channel_id = %subscribe.channel_id,
+            reason
+        );
+    }
     if let Some(reason) = subscribe_ack_error_reason(&enqueue_result) {
         return Err(reason);
     }
@@ -120,9 +130,23 @@ pub(crate) fn subscribe_ack_drop_metric_reason(
     }
 }
 
+pub(crate) fn subscribe_ack_reject_log_reason(
+    result: &SubscribeAckEnqueueResult,
+) -> Option<&'static str> {
+    match result {
+        SubscribeAckEnqueueResult::Enqueued => None,
+        SubscribeAckEnqueueResult::Full => Some("full_queue"),
+        SubscribeAckEnqueueResult::Closed => Some("closed"),
+        SubscribeAckEnqueueResult::Oversized => Some("oversized_outbound"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{subscribe_ack_drop_metric_reason, subscribe_ack_error_reason};
+    use super::{
+        subscribe_ack_drop_metric_reason, subscribe_ack_error_reason,
+        subscribe_ack_reject_log_reason,
+    };
     use crate::server::realtime::subscribe_ack::SubscribeAckEnqueueResult;
 
     #[test]
@@ -165,6 +189,26 @@ mod tests {
         );
         assert_eq!(
             subscribe_ack_drop_metric_reason(&SubscribeAckEnqueueResult::Oversized),
+            Some("oversized_outbound")
+        );
+    }
+
+    #[test]
+    fn subscribe_ack_reject_log_reason_maps_all_rejections() {
+        assert_eq!(
+            subscribe_ack_reject_log_reason(&SubscribeAckEnqueueResult::Enqueued),
+            None
+        );
+        assert_eq!(
+            subscribe_ack_reject_log_reason(&SubscribeAckEnqueueResult::Full),
+            Some("full_queue")
+        );
+        assert_eq!(
+            subscribe_ack_reject_log_reason(&SubscribeAckEnqueueResult::Closed),
+            Some("closed")
+        );
+        assert_eq!(
+            subscribe_ack_reject_log_reason(&SubscribeAckEnqueueResult::Oversized),
             Some("oversized_outbound")
         );
     }
