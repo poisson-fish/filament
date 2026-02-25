@@ -15,7 +15,6 @@ mod message_create_response;
 mod message_emit;
 mod message_record;
 mod message_store_in_memory;
-mod presence_subscribe_events;
 mod presence_sync_dispatch;
 mod ready_enqueue;
 mod search_apply_batch;

@@ -24,8 +24,7 @@ use super::{
     fanout_user::dispatch_user_payload,
     fanout_user_targets::connection_ids_for_user,
     presence_disconnect::compute_disconnect_presence_outcome,
-    presence_subscribe::apply_presence_subscribe,
-    presence_subscribe_events::build_presence_subscribe_events,
+    presence_subscribe::{apply_presence_subscribe, build_presence_subscribe_events},
     presence_sync_dispatch::{dispatch_presence_sync_event, presence_sync_reject_reason},
     subscription_insert::insert_connection_subscription,
     voice_cleanup_dispatch::{
