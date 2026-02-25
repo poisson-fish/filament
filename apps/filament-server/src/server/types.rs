@@ -622,22 +622,6 @@ impl MediaPublishSource {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GatewaySubscribe {
-    pub(crate) guild_id: String,
-    pub(crate) channel_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GatewayMessageCreate {
-    pub(crate) guild_id: String,
-    pub(crate) channel_id: String,
-    pub(crate) content: String,
-    pub(crate) attachment_ids: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(crate) struct GatewayAuthQuery {
     pub(crate) access_token: Option<String>,
 }

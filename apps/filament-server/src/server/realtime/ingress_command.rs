@@ -1,12 +1,25 @@
 use filament_protocol::Envelope;
+use serde::Deserialize;
 use serde_json::Value;
 use ulid::Ulid;
 
-use crate::server::{
-    auth::validate_message_content,
-    domain::parse_attachment_ids,
-    types::{GatewayMessageCreate, GatewaySubscribe},
-};
+use crate::server::{auth::validate_message_content, domain::parse_attachment_ids};
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GatewaySubscribeDto {
+    guild_id: String,
+    channel_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GatewayMessageCreateDto {
+    guild_id: String,
+    channel_id: String,
+    content: String,
+    attachment_ids: Option<Vec<String>>,
+}
 
 #[derive(Debug)]
 pub(crate) enum GatewayIngressCommand {
@@ -60,10 +73,10 @@ pub(crate) struct GatewaySubscribeCommand {
     pub(crate) channel_id: GatewayChannelId,
 }
 
-impl TryFrom<GatewaySubscribe> for GatewaySubscribeCommand {
+impl TryFrom<GatewaySubscribeDto> for GatewaySubscribeCommand {
     type Error = ();
 
-    fn try_from(value: GatewaySubscribe) -> Result<Self, Self::Error> {
+    fn try_from(value: GatewaySubscribeDto) -> Result<Self, Self::Error> {
         Ok(Self {
             guild_id: GatewayGuildId::try_from(value.guild_id)?,
             channel_id: GatewayChannelId::try_from(value.channel_id)?,
@@ -126,10 +139,10 @@ impl TryFrom<(String, bool)> for GatewayMessageContent {
     }
 }
 
-impl TryFrom<GatewayMessageCreate> for GatewayMessageCreateCommand {
+impl TryFrom<GatewayMessageCreateDto> for GatewayMessageCreateCommand {
     type Error = ();
 
-    fn try_from(value: GatewayMessageCreate) -> Result<Self, Self::Error> {
+    fn try_from(value: GatewayMessageCreateDto) -> Result<Self, Self::Error> {
         let attachment_ids =
             GatewayAttachmentIds::try_from(value.attachment_ids.unwrap_or_default())?;
         let content = GatewayMessageContent::try_from((value.content, !attachment_ids.is_empty()))?;
@@ -164,14 +177,14 @@ pub(crate) fn parse_gateway_ingress_command(
 ) -> Result<GatewayIngressCommand, GatewayIngressCommandParseError> {
     let event_type = envelope.t.as_str().to_owned();
     match event_type.as_str() {
-        "subscribe" => serde_json::from_value::<GatewaySubscribe>(envelope.d)
+        "subscribe" => serde_json::from_value::<GatewaySubscribeDto>(envelope.d)
             .map_err(|_| GatewayIngressCommandParseError::InvalidSubscribePayload)
             .and_then(|subscribe| {
                 GatewaySubscribeCommand::try_from(subscribe)
                     .map_err(|()| GatewayIngressCommandParseError::InvalidSubscribePayload)
             })
             .map(GatewayIngressCommand::Subscribe),
-        "message_create" => serde_json::from_value::<GatewayMessageCreate>(envelope.d)
+        "message_create" => serde_json::from_value::<GatewayMessageCreateDto>(envelope.d)
             .map_err(|_| GatewayIngressCommandParseError::InvalidMessageCreatePayload)
             .and_then(|message_create| {
                 GatewayMessageCreateCommand::try_from(message_create)
@@ -270,6 +283,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_subscribe_payload_with_unknown_fields() {
+        let error = parse_gateway_ingress_command(envelope(
+            "subscribe",
+            json!({
+                "guild_id": "01JYQ4V2YQ8B4FW9P51TE5Z1JK",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT",
+                "extra": "unexpected"
+            }),
+        ))
+        .expect_err("subscribe payload with unknown field should fail");
+
+        assert!(matches!(
+            error,
+            GatewayIngressCommandParseError::InvalidSubscribePayload
+        ));
+        assert_eq!(error.disconnect_reason(), "invalid_subscribe_payload");
+    }
+
+    #[test]
     fn rejects_message_create_payload_with_invalid_ids() {
         let error = parse_gateway_ingress_command(envelope(
             "message_create",
@@ -308,6 +340,26 @@ mod tests {
                 panic!("expected message_create command");
             }
         }
+    }
+
+    #[test]
+    fn rejects_message_create_payload_with_unknown_fields() {
+        let error = parse_gateway_ingress_command(envelope(
+            "message_create",
+            json!({
+                "guild_id": "01JYQ4V2YQ8B4FW9P51TE5Z1JK",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT",
+                "content": "hello",
+                "extra": "unexpected"
+            }),
+        ))
+        .expect_err("message_create payload with unknown field should fail");
+
+        assert!(matches!(
+            error,
+            GatewayIngressCommandParseError::InvalidMessageCreatePayload
+        ));
+        assert_eq!(error.disconnect_reason(), "invalid_message_create_payload");
     }
 
     #[test]
