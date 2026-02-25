@@ -39,7 +39,8 @@ mod tests {
     #[test]
     fn dispatch_voice_sync_event_returns_emitted_for_open_queue() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
-        let event = gateway_events::voice_participant_sync("g-1", "c-1", Vec::new(), 10);
+        let event = gateway_events::try_voice_participant_sync("g-1", "c-1", Vec::new(), 10)
+            .expect("voice_participant_sync event should serialize");
         let expected_payload = event.payload.clone();
 
         let outcome = dispatch_voice_sync_event(&tx, event);
@@ -59,7 +60,8 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
         tx.try_send(String::from("occupied"))
             .expect("queue should be full");
-        let event = gateway_events::voice_participant_sync("g-1", "c-1", Vec::new(), 10);
+        let event = gateway_events::try_voice_participant_sync("g-1", "c-1", Vec::new(), 10)
+            .expect("voice_participant_sync event should serialize");
 
         let outcome = dispatch_voice_sync_event(&tx, event);
 
@@ -70,7 +72,8 @@ mod tests {
     fn dispatch_voice_sync_event_returns_closed_for_closed_queue() {
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(1);
         drop(rx);
-        let event = gateway_events::voice_participant_sync("g-1", "c-1", Vec::new(), 10);
+        let event = gateway_events::try_voice_participant_sync("g-1", "c-1", Vec::new(), 10)
+            .expect("voice_participant_sync event should serialize");
 
         let outcome = dispatch_voice_sync_event(&tx, event);
 

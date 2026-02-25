@@ -38,7 +38,8 @@ mod tests {
     #[test]
     fn dispatch_presence_sync_event_returns_emitted_for_open_queue() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
-        let event = gateway_events::presence_sync("g-1", HashSet::new());
+        let event = gateway_events::try_presence_sync("g-1", HashSet::new())
+            .expect("presence_sync event should serialize");
         let expected_payload = event.payload.clone();
 
         let outcome = dispatch_presence_sync_event(&tx, event);
@@ -55,7 +56,8 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
         tx.try_send(String::from("occupied"))
             .expect("queue should be full");
-        let event = gateway_events::presence_sync("g-1", HashSet::new());
+        let event = gateway_events::try_presence_sync("g-1", HashSet::new())
+            .expect("presence_sync event should serialize");
 
         let outcome = dispatch_presence_sync_event(&tx, event);
 
@@ -66,7 +68,8 @@ mod tests {
     fn dispatch_presence_sync_event_returns_closed_for_closed_queue() {
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(1);
         drop(rx);
-        let event = gateway_events::presence_sync("g-1", HashSet::new());
+        let event = gateway_events::try_presence_sync("g-1", HashSet::new())
+            .expect("presence_sync event should serialize");
 
         let outcome = dispatch_presence_sync_event(&tx, event);
 

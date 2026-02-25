@@ -66,17 +66,18 @@ mod tests {
         vec![
             (
                 String::from("voice:guild-1:channel-1"),
-                gateway_events::voice_participant_leave(
+                gateway_events::try_voice_participant_leave(
                     "guild-1",
                     "channel-1",
                     filament_core::UserId::new(),
                     "alice",
                     123,
-                ),
+                )
+                .expect("voice_participant_leave event should serialize"),
             ),
             (
                 String::from("voice:guild-1:channel-1"),
-                gateway_events::voice_participant_update(
+                gateway_events::try_voice_participant_update(
                     "guild-1",
                     "channel-1",
                     filament_core::UserId::new(),
@@ -87,7 +88,8 @@ mod tests {
                     Some(false),
                     Some(false),
                     123,
-                ),
+                )
+                .expect("voice_participant_update event should serialize"),
             ),
         ]
     }
