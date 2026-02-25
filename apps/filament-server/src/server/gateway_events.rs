@@ -90,13 +90,13 @@ pub(crate) use workspace::workspace_role_reorder;
 #[cfg(test)]
 pub(crate) use workspace::workspace_role_update;
 pub(crate) use workspace::{
-    try_workspace_member_add, try_workspace_member_ban, try_workspace_member_remove,
-    try_workspace_member_update, try_workspace_role_assignment_add,
+    try_workspace_ip_ban_sync, try_workspace_member_add, try_workspace_member_ban,
+    try_workspace_member_remove, try_workspace_member_update, try_workspace_role_assignment_add,
     try_workspace_role_assignment_remove, try_workspace_role_create, try_workspace_role_delete,
     try_workspace_role_reorder, try_workspace_role_update, try_workspace_update,
     workspace_channel_override_update, workspace_channel_permission_override_update,
     workspace_channel_permission_override_update_legacy, workspace_channel_role_override_update,
-    workspace_ip_ban_sync, WorkspaceChannelOverrideFieldsPayload, WORKSPACE_MEMBER_ADD_EVENT,
+    WorkspaceChannelOverrideFieldsPayload, WORKSPACE_IP_BAN_SYNC_EVENT, WORKSPACE_MEMBER_ADD_EVENT,
     WORKSPACE_MEMBER_BAN_EVENT, WORKSPACE_MEMBER_REMOVE_EVENT, WORKSPACE_MEMBER_UPDATE_EVENT,
     WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT, WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT,
     WORKSPACE_ROLE_CREATE_EVENT, WORKSPACE_ROLE_DELETE_EVENT, WORKSPACE_ROLE_REORDER_EVENT,
@@ -506,8 +506,10 @@ mod tests {
         assert!(workspace_permission_override_payload["updated_fields"]["allow"].is_array());
         assert!(workspace_permission_override_payload["updated_fields"]["deny"].is_array());
 
-        let workspace_ip_ban_payload =
-            parse_event(&workspace_ip_ban_sync("g", "upsert", 2, 26, Some(user_id)));
+        let workspace_ip_ban_payload = parse_event(
+            &try_workspace_ip_ban_sync("g", "upsert", 2, 26, Some(user_id))
+                .expect("workspace_ip_ban_sync should serialize"),
+        );
         assert_eq!(
             workspace_ip_ban_payload["summary"]["changed_count"],
             Value::from(2)

@@ -2711,13 +2711,31 @@ pub(crate) async fn upsert_guild_ip_bans_by_user(
         )
         .await?;
 
-        let event = gateway_events::workspace_ip_ban_sync(
+        let event = match gateway_events::try_workspace_ip_ban_sync(
             &path.guild_id,
             "upsert",
             ban_ids.len(),
             now,
             Some(auth.user_id),
-        );
+        ) {
+            Ok(event) => event,
+            Err(error) => {
+                tracing::warn!(
+                    event = "gateway.workspace_ip_ban_sync.serialize_failed",
+                    event_type = gateway_events::WORKSPACE_IP_BAN_SYNC_EVENT,
+                    error = %error,
+                );
+                record_gateway_event_dropped(
+                    "guild",
+                    gateway_events::WORKSPACE_IP_BAN_SYNC_EVENT,
+                    "serialize_error",
+                );
+                return Ok(Json(GuildIpBanApplyResponse {
+                    created_count: ban_ids.len(),
+                    ban_ids,
+                }));
+            }
+        };
         broadcast_guild_event(&state, &path.guild_id, &event).await;
     }
 
@@ -2785,13 +2803,28 @@ pub(crate) async fn remove_guild_ip_ban(
     )
     .await?;
 
-    let event = gateway_events::workspace_ip_ban_sync(
+    let event = match gateway_events::try_workspace_ip_ban_sync(
         &path.guild_id,
         "remove",
         1,
         now_unix(),
         Some(auth.user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_ip_ban_sync.serialize_failed",
+                event_type = gateway_events::WORKSPACE_IP_BAN_SYNC_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::WORKSPACE_IP_BAN_SYNC_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(ModerationResponse { accepted: true }));
+        }
+    };
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     Ok(Json(ModerationResponse { accepted: true }))

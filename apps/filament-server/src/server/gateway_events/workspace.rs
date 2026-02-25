@@ -568,14 +568,14 @@ pub(crate) fn workspace_channel_permission_override_update_legacy(
     )
 }
 
-pub(crate) fn workspace_ip_ban_sync(
+pub(crate) fn try_workspace_ip_ban_sync(
     guild_id: &str,
     action: &'static str,
     changed_count: usize,
     updated_at_unix: i64,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_IP_BAN_SYNC_EVENT,
         WorkspaceIpBanSyncPayload {
             guild_id: guild_id.to_owned(),
@@ -778,5 +778,19 @@ mod tests {
         assert_eq!(payload["role"], Value::from("moderator"));
         assert!(payload["updated_fields"]["allow"].is_array());
         assert!(payload["updated_fields"]["deny"].is_array());
+    }
+
+    #[test]
+    fn workspace_ip_ban_sync_event_emits_summary_fields() {
+        let actor = UserId::new();
+        let event = try_workspace_ip_ban_sync("guild-1", "upsert", 3, 53, Some(actor))
+            .expect("workspace_ip_ban_sync should serialize");
+        let payload = parse_payload(&event);
+
+        assert_eq!(event.event_type, WORKSPACE_IP_BAN_SYNC_EVENT);
+        assert_eq!(payload["summary"]["action"], Value::from("upsert"));
+        assert_eq!(payload["summary"]["changed_count"], Value::from(3));
+        assert_eq!(payload["updated_at_unix"], Value::from(53));
+        assert_eq!(payload["actor_user_id"], Value::from(actor.to_string()));
     }
 }
