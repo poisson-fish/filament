@@ -68,16 +68,19 @@ pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: 
 
 pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, event: &GatewayEvent) {
     let mut slow_connections = Vec::new();
-    let mut subscriptions = state.realtime_registry.subscriptions().write().await;
+    let mut guild_connections = state.realtime_registry.guild_connections().write().await;
+    let mut senders = state.realtime_registry.connection_senders().write().await;
     let delivered = dispatch_guild_payload(
-        &mut subscriptions,
+        &mut guild_connections,
+        &mut senders,
         guild_id,
         &event.payload,
         state.runtime.max_gateway_event_bytes,
         event.event_type,
         &mut slow_connections,
     );
-    drop(subscriptions);
+    drop(senders);
+    drop(guild_connections);
 
     close_slow_connections(state, slow_connections).await;
     emit_gateway_delivery_metrics("guild", event.event_type, delivered);
