@@ -11,6 +11,7 @@ import type {
   MessageRecord,
   PermissionName,
   ReactionEmoji,
+  RoleColorHex,
   UserId,
   WorkspaceRoleId,
   WorkspaceRoleName,
@@ -93,6 +94,7 @@ export interface GatewayControllerOptions {
     updatedFields: {
       name?: WorkspaceRoleName;
       permissions?: ReadonlyArray<PermissionName>;
+      colorHex?: RoleColorHex | null;
     },
   ) => void;
   removeWorkspaceRoleFromGuild?: (
@@ -298,13 +300,18 @@ function toWorkspaceRoleRecord(
   if (!permissions) {
     return null;
   }
-  return {
+  const role: GuildRoleRecord = {
     roleId: payload.roleId,
     name,
     position: payload.position,
     isSystem: payload.isSystem,
     permissions,
   };
+  if (typeof payload.colorHex !== "undefined") {
+    role.colorHex = payload.colorHex;
+  }
+
+  return role;
 }
 
 function toWorkspaceRoleUpdatedFields(
@@ -312,10 +319,12 @@ function toWorkspaceRoleUpdatedFields(
 ): {
   name?: WorkspaceRoleName;
   permissions?: PermissionName[];
+  colorHex?: RoleColorHex | null;
 } | null {
   const updatedFields: {
     name?: WorkspaceRoleName;
     permissions?: PermissionName[];
+    colorHex?: RoleColorHex | null;
   } = {};
   if (typeof payload.updatedFields.name !== "undefined") {
     try {
@@ -331,9 +340,13 @@ function toWorkspaceRoleUpdatedFields(
     }
     updatedFields.permissions = permissions;
   }
+  if (typeof payload.updatedFields.colorHex !== "undefined") {
+    updatedFields.colorHex = payload.updatedFields.colorHex;
+  }
   if (
     typeof updatedFields.name === "undefined" &&
-    typeof updatedFields.permissions === "undefined"
+    typeof updatedFields.permissions === "undefined" &&
+    typeof updatedFields.colorHex === "undefined"
   ) {
     return null;
   }

@@ -18,6 +18,7 @@ import {
   type ModerationResult,
   type PermissionName,
   type PublicGuildDirectory,
+  type RoleColorHex,
   type RoleName,
   type GuildMemberPage,
   type UserId,
@@ -31,6 +32,7 @@ import {
   guildRoleListFromResponse,
   moderationResultFromResponse,
   publicGuildDirectoryFromResponse,
+  roleColorHexFromInput,
   workspaceRoleIdFromInput,
   workspaceRoleNameFromInput,
 } from "../domain/chat";
@@ -127,6 +129,7 @@ export interface WorkspaceApi {
       name: WorkspaceRoleName;
       permissions: PermissionName[];
       position?: number;
+      colorHex?: RoleColorHex | null;
     },
   ): Promise<GuildRoleRecord>;
   updateGuildRole(
@@ -136,6 +139,7 @@ export interface WorkspaceApi {
     input: {
       name?: WorkspaceRoleName;
       permissions?: PermissionName[];
+      colorHex?: RoleColorHex | null;
     },
   ): Promise<GuildRoleRecord>;
   deleteGuildRole(
@@ -351,24 +355,34 @@ export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceAp
     },
 
     async createGuildRole(session, guildId, roleInput) {
+      const body: Record<string, unknown> = {
+        name: workspaceRoleNameFromInput(roleInput.name),
+        permissions: roleInput.permissions,
+        position:
+          Number.isInteger(roleInput.position) && (roleInput.position as number) > 0
+            ? roleInput.position
+            : undefined,
+      };
+      if (typeof roleInput.colorHex !== "undefined") {
+        body.color_hex =
+          roleInput.colorHex === null ? null : roleColorHexFromInput(roleInput.colorHex);
+      }
+
       const dto = await input.requestJson({
         method: "POST",
         path: `/guilds/${guildId}/roles`,
         accessToken: session.accessToken,
-        body: {
-          name: workspaceRoleNameFromInput(roleInput.name),
-          permissions: roleInput.permissions,
-          position:
-            Number.isInteger(roleInput.position) && (roleInput.position as number) > 0
-              ? roleInput.position
-              : undefined,
-        },
+        body,
       });
       return guildRoleListFromResponse({ roles: [dto] }).roles[0]!;
     },
 
     async updateGuildRole(session, guildId, roleId, roleInput) {
-      if (typeof roleInput.name === "undefined" && typeof roleInput.permissions === "undefined") {
+      if (
+        typeof roleInput.name === "undefined" &&
+        typeof roleInput.permissions === "undefined" &&
+        typeof roleInput.colorHex === "undefined"
+      ) {
         throw input.createApiError(
           400,
           "invalid_request",
@@ -382,6 +396,10 @@ export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceAp
       }
       if (typeof roleInput.permissions !== "undefined") {
         body.permissions = roleInput.permissions;
+      }
+      if (typeof roleInput.colorHex !== "undefined") {
+        body.color_hex =
+          roleInput.colorHex === null ? null : roleColorHexFromInput(roleInput.colorHex);
       }
 
       const dto = await input.requestJson({

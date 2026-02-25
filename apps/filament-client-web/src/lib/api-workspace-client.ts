@@ -16,6 +16,7 @@ import {
   type ModerationResult,
   type PermissionName,
   type PublicGuildDirectory,
+  type RoleColorHex,
   type RoleName,
   type UserId,
   type WorkspaceRoleId,
@@ -107,6 +108,7 @@ export interface WorkspaceClient {
       name: WorkspaceRoleName;
       permissions: PermissionName[];
       position?: number;
+      colorHex?: RoleColorHex | null;
     },
   ): Promise<GuildRoleRecord>;
   updateGuildRole(
@@ -116,6 +118,7 @@ export interface WorkspaceClient {
     input: {
       name?: WorkspaceRoleName;
       permissions?: PermissionName[];
+      colorHex?: RoleColorHex | null;
     },
   ): Promise<GuildRoleRecord>;
   deleteGuildRole(

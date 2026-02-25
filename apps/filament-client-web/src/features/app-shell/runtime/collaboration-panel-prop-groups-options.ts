@@ -44,6 +44,8 @@ export interface CollaborationPanelPropGroupsStateOptions {
     CollaborationPanelPropGroupsOptions["search"]["onReconcileSearch"];
   displayUserLabel:
     CollaborationPanelPropGroupsOptions["search"]["displayUserLabel"];
+  resolveUserNameColor?:
+    CollaborationPanelPropGroupsOptions["search"]["resolveUserNameColor"];
   attachmentFilename: () => string;
   activeAttachments:
     CollaborationPanelPropGroupsOptions["attachments"]["activeAttachments"];
@@ -131,6 +133,7 @@ export function createCollaborationPanelPropGroupsOptions(
       onRebuildSearch: options.onRebuildSearch,
       onReconcileSearch: options.onReconcileSearch,
       displayUserLabel: options.displayUserLabel,
+      resolveUserNameColor: options.resolveUserNameColor,
     },
     attachments: {
       attachmentFilename: options.attachmentFilename(),

@@ -489,6 +489,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
 
   const labels = createAppShellRuntimeLabels({
     resolvedUsernames: profileState.resolvedUsernames,
+    activeGuildId: workspaceChannelState.activeGuildId,
+    workspaceRolesByGuildId: workspaceChannelState.workspaceRolesByGuildId,
+    workspaceUserRolesByGuildId: workspaceChannelState.workspaceUserRolesByGuildId,
   });
 
   createIdentityResolutionController({
@@ -753,7 +756,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setComposerInputRef,
     actorLookupId: labels.actorLookupId,
     actorLabel: labels.actorLabel,
+    actorColor: labels.actorColor,
     displayUserLabel: labels.displayUserLabel,
+    displayUserColor: labels.displayUserColor,
     voiceParticipantLabel: labels.voiceParticipantLabel,
     userIdFromVoiceIdentity,
     openTextChannelCreatePanel,

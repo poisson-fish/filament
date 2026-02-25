@@ -16,6 +16,7 @@ describe("decodeWorkspaceRoleCreateGatewayEvent", () => {
         position: 2,
         is_system: false,
         permissions: ["manage_roles", "create_message"],
+        color_hex: "#00aaff",
       },
     });
 
@@ -29,6 +30,36 @@ describe("decodeWorkspaceRoleCreateGatewayEvent", () => {
           position: 2,
           isSystem: false,
           permissions: ["manage_roles", "create_message"],
+          colorHex: "#00AAFF",
+        },
+      },
+    });
+  });
+
+  it("decodes nullable workspace role color payloads", () => {
+    const result = decodeWorkspaceRoleCreateGatewayEvent("workspace_role_create", {
+      guild_id: DEFAULT_GUILD_ID,
+      role: {
+        role_id: DEFAULT_ROLE_ID,
+        name: "moderator",
+        position: 2,
+        is_system: false,
+        permissions: ["manage_roles"],
+        color_hex: null,
+      },
+    });
+
+    expect(result).toEqual({
+      type: "workspace_role_create",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        role: {
+          roleId: DEFAULT_ROLE_ID,
+          name: "moderator",
+          position: 2,
+          isSystem: false,
+          permissions: ["manage_roles"],
+          colorHex: null,
         },
       },
     });
@@ -43,6 +74,22 @@ describe("decodeWorkspaceRoleCreateGatewayEvent", () => {
         position: 0,
         is_system: false,
         permissions: ["manage_roles"],
+      },
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("fails closed for invalid workspace role create color values", () => {
+    const result = decodeWorkspaceRoleCreateGatewayEvent("workspace_role_create", {
+      guild_id: DEFAULT_GUILD_ID,
+      role: {
+        role_id: DEFAULT_ROLE_ID,
+        name: "moderator",
+        position: 2,
+        is_system: false,
+        permissions: ["manage_roles"],
+        color_hex: "#12Z45G",
       },
     });
 

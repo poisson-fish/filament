@@ -88,7 +88,9 @@ export function AppShellPage() {
     openWorkspaceSettingsPanel,
     panelHostPropGroups,
     actorLabel,
+    actorColor,
     displayUserLabel,
+    displayUserColor,
     voiceParticipantLabel,
     userIdFromVoiceIdentity,
     joinVoiceChannel,
@@ -147,6 +149,7 @@ export function AppShellPage() {
           resolveAvatarUrl={avatarUrlForUser}
           userIdFromVoiceIdentity={userIdFromVoiceIdentity}
           actorLabel={actorLabel}
+          resolveUserNameColor={displayUserColor}
           voiceParticipantLabel={voiceParticipantLabel}
           onOpenUserProfile={openUserProfile}
           onOpenClientSettings={openClientSettingsPanel}
@@ -168,6 +171,7 @@ export function AppShellPage() {
             rtcSnapshot={voiceState.rtcSnapshot()}
             userIdFromVoiceIdentity={userIdFromVoiceIdentity}
             actorLabel={actorLabel}
+            resolveActorNameColor={actorColor}
             resolveAvatarUrl={avatarUrlForUser}
             attachVideoTrack={runtime.attachVideoTrack}
             detachVideoTrack={runtime.detachVideoTrack}
@@ -237,6 +241,7 @@ export function AppShellPage() {
               currentUserId={profile()?.userId ?? null}
               canDeleteMessages={canDeleteMessages()}
               displayUserLabel={displayUserLabel}
+              resolveUserNameColor={displayUserColor}
               resolveAvatarUrl={avatarUrlForUser}
               onOpenAuthorProfile={openUserProfile}
               editingMessageId={messageState.editingMessageId()}
@@ -313,6 +318,7 @@ export function AppShellPage() {
           hasRoleManagementAccess={hasRoleManagementAccess()}
           hasModerationAccess={hasModerationAccess()}
           displayUserLabel={displayUserLabel}
+          resolveUserNameColor={displayUserColor}
           onOpenPanel={openOverlayPanel}
           onOpenWorkspaceRoleSettings={() => openWorkspaceSettingsPanel("roles")}
         />

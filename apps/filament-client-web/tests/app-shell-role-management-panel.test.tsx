@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
 import {
   permissionFromInput,
+  roleColorHexFromInput,
   workspaceRoleIdFromInput,
   workspaceRoleNameFromInput,
 } from "../src/domain/chat";
@@ -326,6 +327,56 @@ describe("role management panel", () => {
 
     expect(onUpdateRole).toHaveBeenCalledWith(ROLE_ID, {
       name: "Captain",
+    });
+  });
+
+  it("saves role color changes from the display tab", async () => {
+    const onUpdateRole = vi.fn(async () => undefined);
+
+    render(() =>
+      RoleManagementPanel(
+        panelProps({
+          onUpdateRole,
+        }),
+      ),
+    );
+
+    fireEvent.input(screen.getByLabelText(/Role color/i), {
+      target: { value: "#00aaFF" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    expect(onUpdateRole).toHaveBeenCalledWith(ROLE_ID, {
+      colorHex: "#00AAFF",
+    });
+  });
+
+  it("clears role color from the display tab", async () => {
+    const onUpdateRole = vi.fn(async () => undefined);
+
+    render(() =>
+      RoleManagementPanel(
+        panelProps({
+          onUpdateRole,
+          roles: [
+            {
+              roleId: ROLE_ID,
+              name: workspaceRoleNameFromInput("Responder"),
+              position: 3,
+              isSystem: false,
+              permissions: [permissionFromInput("create_message")],
+              colorHex: roleColorHexFromInput("#FF5500"),
+            },
+          ],
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear color" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    expect(onUpdateRole).toHaveBeenCalledWith(ROLE_ID, {
+      colorHex: null,
     });
   });
 

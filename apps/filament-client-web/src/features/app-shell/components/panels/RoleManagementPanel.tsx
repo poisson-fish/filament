@@ -2,9 +2,12 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from
 import {
   type PermissionName,
   type GuildRoleRecord,
+  type RoleColorHex,
   type WorkspaceRoleId,
+  roleColorHexFromInput,
   workspaceRoleIdFromInput,
 } from "../../../../domain/chat";
+import { ROLE_COLOR_PICKER_FALLBACK } from "../../config/role-colors";
 import {
   PERMISSION_CATEGORIES,
   PERMISSION_MATRIX,
@@ -92,12 +95,14 @@ export interface RoleManagementPanelProps {
     name: string;
     permissions: PermissionName[];
     position?: number;
+    colorHex?: RoleColorHex | null;
   }) => Promise<void> | void;
   onUpdateRole: (
     roleId: WorkspaceRoleId,
     input: {
       name?: string;
       permissions?: PermissionName[];
+      colorHex?: RoleColorHex | null;
     },
   ) => Promise<void> | void;
   onDeleteRole: (roleId: WorkspaceRoleId) => Promise<void> | void;
@@ -187,6 +192,23 @@ function permissionsByCategory(
   return PERMISSION_MATRIX.filter((entry) => entry.category === category);
 }
 
+function normalizeRoleColorForSave(value: string): RoleColorHex | null {
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    return null;
+  }
+  return roleColorHexFromInput(normalized);
+}
+
+function areSameRoleColor(
+  draft: string,
+  persisted: RoleColorHex | null | undefined,
+): boolean {
+  const next = draft.trim().toUpperCase();
+  const current = persisted ?? "";
+  return next === current;
+}
+
 export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const [clientError, setClientError] = createSignal("");
 
@@ -199,6 +221,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const [selectedRoleId, setSelectedRoleId] = createSignal<WorkspaceRoleId | null>(null);
   const [editName, setEditName] = createSignal("");
   const [editPermissions, setEditPermissions] = createSignal<PermissionName[]>([]);
+  const [editColorHex, setEditColorHex] = createSignal("");
   const [dangerModal, setDangerModal] = createSignal<DangerModalState | null>(null);
 
   const [reorderDraftRoleIds, setReorderDraftRoleIds] = createSignal<WorkspaceRoleId[]>([]);
@@ -272,6 +295,9 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     if (editName().trim() !== role.name) {
       return true;
     }
+    if (!areSameRoleColor(editColorHex(), role.colorHex)) {
+      return true;
+    }
     return !areSamePermissions(editPermissions(), role.permissions);
   });
   const isRoleNameValid = createMemo(() => editName().trim().length > 0);
@@ -325,10 +351,12 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     if (!role) {
       setEditName("");
       setEditPermissions([]);
+      setEditColorHex("");
       return;
     }
     setEditName(role.name);
     setEditPermissions(role.permissions);
+    setEditColorHex(role.colorHex ?? "");
   });
 
   createEffect(() => {
@@ -420,17 +448,23 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     await invoke(async () => {
       const nextName = editName().trim();
       const normalizedPermissions = normalizePermissions(editPermissions());
+      const nextColorHex = normalizeRoleColorForSave(editColorHex());
       const roleNameChanged = nextName !== role.name;
       const permissionsChanged = !areSamePermissions(normalizedPermissions, role.permissions);
+      const colorChanged = !areSameRoleColor(editColorHex(), role.colorHex);
       const updateInput: {
         name?: string;
         permissions?: PermissionName[];
+        colorHex?: RoleColorHex | null;
       } = {};
       if (roleNameChanged) {
         updateInput.name = nextName;
       }
       if (permissionsChanged) {
         updateInput.permissions = normalizedPermissions;
+      }
+      if (colorChanged) {
+        updateInput.colorHex = nextColorHex;
       }
       await props.onUpdateRole(role.roleId, updateInput);
     });
@@ -572,6 +606,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     }
     setEditName(role.name);
     setEditPermissions(role.permissions);
+    setEditColorHex(role.colorHex ?? "");
     setClientError("");
   };
   const onSaveRoleNameOnly = async (): Promise<void> => {
@@ -607,17 +642,23 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
         }
         const nextName = editName().trim();
         const normalizedPermissions = normalizePermissions(editPermissions());
+        const nextColorHex = normalizeRoleColorForSave(editColorHex());
         const roleNameChanged = nextName !== role.name;
         const permissionsChanged = !areSamePermissions(normalizedPermissions, role.permissions);
+        const colorChanged = !areSameRoleColor(editColorHex(), role.colorHex);
         const updateInput: {
           name?: string;
           permissions?: PermissionName[];
+          colorHex?: RoleColorHex | null;
         } = {};
         if (roleNameChanged) {
           updateInput.name = nextName;
         }
         if (permissionsChanged) {
           updateInput.permissions = normalizedPermissions;
+        }
+        if (colorChanged) {
+          updateInput.colorHex = nextColorHex;
         }
         await props.onUpdateRole(role.roleId, updateInput);
       });
@@ -1017,6 +1058,50 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                                 maxlength="32"
                                 disabled={roleAccessor().isSystem || !props.canManageWorkspaceRoles}
                               />
+                            </label>
+                            <label class={fieldLabelClass}>
+                              Role color
+                              <div class="flex flex-wrap items-center gap-[0.6rem]">
+                                <input
+                                  type="color"
+                                  class="h-[2.2rem] w-[3.1rem] cursor-pointer rounded-[0.4rem] border border-line-soft bg-bg-0 p-[0.2rem] disabled:cursor-default disabled:opacity-60"
+                                  value={editColorHex() || ROLE_COLOR_PICKER_FALLBACK}
+                                  disabled={roleAccessor().isSystem || !props.canManageWorkspaceRoles}
+                                  onInput={(event) => {
+                                    setEditColorHex(event.currentTarget.value.toUpperCase());
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  class={actionButtonClass}
+                                  onClick={() => {
+                                    setEditColorHex("");
+                                  }}
+                                  disabled={
+                                    roleAccessor().isSystem ||
+                                    !props.canManageWorkspaceRoles ||
+                                    editColorHex().trim().length === 0
+                                  }
+                                >
+                                  Clear color
+                                </button>
+                                <span class="text-[0.84rem] text-ink-2 normal-case font-normal">
+                                  Preview:{" "}
+                                  <strong
+                                    class="font-[750]"
+                                    style={
+                                      editColorHex().trim().length > 0
+                                        ? { color: editColorHex().trim().toUpperCase() }
+                                        : undefined
+                                    }
+                                  >
+                                    {editName().trim() || roleAccessor().name}
+                                  </strong>
+                                </span>
+                              </div>
+                              <span class="text-[0.8rem] text-ink-2 normal-case font-normal">
+                                This sets the display color for member names assigned this role.
+                              </span>
                             </label>
                             <div class="flex items-center gap-[0.5rem]">
                               <button

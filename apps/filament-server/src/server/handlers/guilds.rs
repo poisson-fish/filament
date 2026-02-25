@@ -621,6 +621,7 @@ struct GuildRoleModel {
     is_system: bool,
     system_key: Option<String>,
     permissions: filament_core::PermissionSet,
+    color_hex: Option<String>,
     created_at_unix: i64,
 }
 
@@ -638,6 +639,7 @@ fn role_model_to_response(model: GuildRoleModel) -> GuildRoleResponse {
         position: model.position,
         is_system: model.is_system,
         permissions: crate::server::db::permission_list_from_set(model.permissions),
+        color_hex: model.color_hex,
     }
 }
 
@@ -661,6 +663,24 @@ fn validate_role_name_input(value: &str) -> Result<String, AuthFailure> {
         })
 }
 
+fn validate_role_color_hex_input(value: &str) -> Result<String, AuthFailure> {
+    let normalized = value.trim();
+    if normalized.len() != 7 || !normalized.starts_with('#') {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    let mut output = String::with_capacity(7);
+    output.push('#');
+    for ch in normalized.chars().skip(1) {
+        if !ch.is_ascii_hexdigit() {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        output.push(ch.to_ascii_uppercase());
+    }
+
+    Ok(output)
+}
+
 fn can_manage_role(model: &GuildRoleModel, context: RoleManageContext) -> bool {
     if context.is_server_owner {
         return true;
@@ -681,7 +701,7 @@ async fn guild_roles_db(
     guild_id: &str,
 ) -> Result<Vec<GuildRoleModel>, AuthFailure> {
     let rows = sqlx::query(
-        "SELECT role_id, name, position, is_system, system_key, permissions_allow_mask, created_at_unix
+        "SELECT role_id, name, position, is_system, system_key, permissions_allow_mask, color_hex, created_at_unix
          FROM guild_roles
          WHERE guild_id = $1
          ORDER BY position DESC, created_at_unix ASC, role_id ASC",
@@ -709,6 +729,9 @@ async fn guild_roles_db(
                 .try_get("system_key")
                 .map_err(|_| AuthFailure::Internal)?,
             permissions,
+            color_hex: row
+                .try_get("color_hex")
+                .map_err(|_| AuthFailure::Internal)?,
             created_at_unix: row
                 .try_get("created_at_unix")
                 .map_err(|_| AuthFailure::Internal)?,
@@ -732,6 +755,7 @@ async fn guild_roles_in_memory(
             is_system: role.is_system,
             system_key: role.system_key.clone(),
             permissions: role.permissions_allow,
+            color_hex: role.color_hex.clone(),
             created_at_unix: role.created_at_unix,
         })
         .collect::<Vec<_>>();
@@ -1454,6 +1478,11 @@ pub(crate) async fn create_guild_role(
     .await?;
     let name = validate_role_name_input(&payload.name)?;
     let permissions = permission_set_from_list(&payload.permissions);
+    let color_hex = payload
+        .color_hex
+        .as_deref()
+        .map(validate_role_color_hex_input)
+        .transpose()?;
 
     let position = payload
         .position
@@ -1479,15 +1508,16 @@ pub(crate) async fn create_guild_role(
 
         sqlx::query(
             "INSERT INTO guild_roles
-                (role_id, guild_id, name, position, permissions_allow_mask, is_system, system_key, created_at_unix)
+                (role_id, guild_id, name, position, permissions_allow_mask, is_system, system_key, color_hex, created_at_unix)
              VALUES
-                ($1, $2, $3, $4, $5, FALSE, NULL, $6)",
+                ($1, $2, $3, $4, $5, FALSE, NULL, $6, $7)",
         )
         .bind(&role_id)
         .bind(&path.guild_id)
         .bind(&name)
         .bind(position)
         .bind(permission_set_to_i64(permissions)?)
+        .bind(color_hex.clone())
         .bind(now_unix())
         .execute(pool)
         .await
@@ -1509,6 +1539,7 @@ pub(crate) async fn create_guild_role(
                 is_system: false,
                 system_key: None,
                 permissions_allow: permissions,
+                color_hex: color_hex.clone(),
                 created_at_unix: now_unix(),
             },
         );
@@ -1525,6 +1556,7 @@ pub(crate) async fn create_guild_role(
             "name": name,
             "position": position,
             "permissions": payload.permissions,
+            "color_hex": color_hex.clone(),
         }),
     )
     .await?;
@@ -1536,6 +1568,7 @@ pub(crate) async fn create_guild_role(
         position,
         false,
         payload.permissions.clone(),
+        color_hex.clone(),
         Some(auth.user_id),
     );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
@@ -1546,6 +1579,7 @@ pub(crate) async fn create_guild_role(
         position,
         is_system: false,
         permissions: payload.permissions,
+        color_hex,
     }))
 }
 
@@ -1558,7 +1592,7 @@ pub(crate) async fn update_guild_role(
 ) -> Result<Json<GuildRoleResponse>, AuthFailure> {
     let auth = authenticate(&state, &headers).await?;
     let role_id = parse_role_id(path.role_id)?;
-    if payload.name.is_none() && payload.permissions.is_none() {
+    if payload.name.is_none() && payload.permissions.is_none() && payload.color_hex.is_none() {
         return Err(AuthFailure::InvalidRequest);
     }
     let context = load_actor_role_context(
@@ -1595,17 +1629,23 @@ pub(crate) async fn update_guild_role(
         .map_or(current.permissions, |values| {
             permission_set_from_list(values)
         });
+    let next_color_hex = match payload.color_hex.as_ref() {
+        Some(Some(value)) => Some(validate_role_color_hex_input(value)?),
+        Some(None) => None,
+        None => current.color_hex.clone(),
+    };
 
     if let Some(pool) = &state.db_pool {
         sqlx::query(
             "UPDATE guild_roles
-             SET name = $3, permissions_allow_mask = $4
+             SET name = $3, permissions_allow_mask = $4, color_hex = $5
              WHERE guild_id = $1 AND role_id = $2",
         )
         .bind(&path.guild_id)
         .bind(&role_id)
         .bind(&next_name)
         .bind(permission_set_to_i64(next_permissions)?)
+        .bind(next_color_hex.clone())
         .execute(pool)
         .await
         .map_err(|_| AuthFailure::Internal)?;
@@ -1617,6 +1657,7 @@ pub(crate) async fn update_guild_role(
             .ok_or(AuthFailure::NotFound)?;
         role.name.clone_from(&next_name);
         role.permissions_allow = next_permissions;
+        role.color_hex = next_color_hex.clone();
     }
 
     if payload.permissions.is_some() {
@@ -1647,13 +1688,33 @@ pub(crate) async fn update_guild_role(
         )
         .await?;
     }
+    if payload.color_hex.is_some() {
+        write_audit_log(
+            &state,
+            Some(path.guild_id.clone()),
+            auth.user_id,
+            None,
+            "role.color.update",
+            serde_json::json!({
+                "role_id": role_id,
+                "color_hex": next_color_hex.clone(),
+            }),
+        )
+        .await?;
+    }
 
     let updated_at_unix = now_unix();
+    let event_color_hex = if payload.color_hex.is_some() {
+        Some(next_color_hex.clone())
+    } else {
+        None
+    };
     let event = gateway_events::workspace_role_update(
         &path.guild_id,
         &role_id,
         payload.name.as_deref(),
         payload.permissions.clone(),
+        event_color_hex,
         updated_at_unix,
         Some(auth.user_id),
     );
@@ -1665,6 +1726,7 @@ pub(crate) async fn update_guild_role(
         position: current.position,
         is_system: current.is_system,
         permissions: crate::server::db::permission_list_from_set(next_permissions),
+        color_hex: next_color_hex,
     }))
 }
 
@@ -3923,9 +3985,9 @@ pub(crate) async fn ban_member(
 mod tests {
     use super::{
         assign_default_join_role_in_memory, classify_directory_join_outcome, guild_roles_in_memory,
-        join_outcome_response, maybe_record_join_ip_observation, workspace_owner_count_in_memory,
-        DirectoryJoinBanStatus, DirectoryJoinMembershipStatus, DirectoryJoinPolicyInput,
-        DirectoryJoinVisibilityStatus,
+        join_outcome_response, maybe_record_join_ip_observation, validate_role_color_hex_input,
+        workspace_owner_count_in_memory, DirectoryJoinBanStatus, DirectoryJoinMembershipStatus,
+        DirectoryJoinPolicyInput, DirectoryJoinVisibilityStatus,
     };
     use crate::server::{
         auth::resolve_client_ip,
@@ -4051,6 +4113,7 @@ mod tests {
                 is_system: true,
                 system_key: Some(String::from("member")),
                 permissions_allow: filament_core::PermissionSet::empty(),
+                color_hex: None,
                 created_at_unix: 20,
             },
         );
@@ -4063,6 +4126,7 @@ mod tests {
                 is_system: true,
                 system_key: Some(String::from("workspace_owner")),
                 permissions_allow: filament_core::PermissionSet::empty(),
+                color_hex: None,
                 created_at_unix: 10,
             },
         );
@@ -4100,6 +4164,7 @@ mod tests {
                     is_system: true,
                     system_key: Some(String::from("workspace_owner")),
                     permissions_allow: filament_core::PermissionSet::empty(),
+                    color_hex: None,
                     created_at_unix: 1,
                 },
             )]),
@@ -4150,6 +4215,7 @@ mod tests {
                     is_system: false,
                     system_key: None,
                     permissions_allow: filament_core::PermissionSet::empty(),
+                    color_hex: None,
                     created_at_unix: 1,
                 },
             )]),
@@ -4166,5 +4232,15 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(assigned.contains(&role_id));
+    }
+
+    #[test]
+    fn role_color_hex_validation_normalizes_and_rejects_invalid_values() {
+        assert_eq!(
+            validate_role_color_hex_input(" #a1b2c3 ").expect("hex color should normalize"),
+            "#A1B2C3"
+        );
+        assert!(validate_role_color_hex_input("#12345").is_err());
+        assert!(validate_role_color_hex_input("#12Z45G").is_err());
     }
 }

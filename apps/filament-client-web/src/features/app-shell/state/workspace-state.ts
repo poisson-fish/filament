@@ -10,6 +10,7 @@ import type {
   GuildRecord,
   GuildVisibility,
   PermissionName,
+  RoleColorHex,
   RoleName,
   SearchResults,
   UserId,
@@ -129,11 +130,13 @@ function createWorkspaceChannelState() {
     updatedFields: {
       name?: WorkspaceRoleName;
       permissions?: ReadonlyArray<PermissionName>;
+      colorHex?: RoleColorHex | null;
     },
   ): void => {
     if (
       typeof updatedFields.name === "undefined" &&
-      typeof updatedFields.permissions === "undefined"
+      typeof updatedFields.permissions === "undefined" &&
+      typeof updatedFields.colorHex === "undefined"
     ) {
       return;
     }
@@ -156,6 +159,9 @@ function createWorkspaceChannelState() {
           ...entry,
           name: updatedFields.name ?? entry.name,
           permissions: normalizedPermissions ?? entry.permissions,
+          ...(typeof updatedFields.colorHex !== "undefined"
+            ? { colorHex: updatedFields.colorHex }
+            : {}),
         };
       });
       if (!changed) {

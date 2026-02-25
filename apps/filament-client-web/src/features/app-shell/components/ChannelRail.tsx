@@ -89,6 +89,7 @@ interface ChannelRailProps {
   currentUserLabel?: string;
   currentUserStatusLabel?: string;
   resolveAvatarUrl: (userId: string) => string | null;
+  resolveUserNameColor?: (userId: string) => string | null;
   userIdFromVoiceIdentity: (identity: string) => string | null;
   actorLabel: (actorId: string) => string;
   voiceParticipantLabel: (identity: string, isLocal: boolean) => string;
@@ -445,7 +446,22 @@ export function ChannelRail(props: ChannelRailProps) {
                                               </button>
                                             )}
                                           </Show>
-                                          <span class="flex-1 truncate text-left text-[0.8rem] text-ink-1">
+                                          <span
+                                            class="flex-1 truncate text-left text-[0.8rem] text-ink-1"
+                                            style={
+                                              props.resolveUserNameColor?.(
+                                                props.userIdFromVoiceIdentity(entry().identity) ?? "",
+                                              )
+                                                ? {
+                                                  color:
+                                                    props.resolveUserNameColor?.(
+                                                      props.userIdFromVoiceIdentity(entry().identity) ??
+                                                      "",
+                                                    ) ?? undefined,
+                                                }
+                                                : undefined
+                                            }
+                                          >
                                             {props.voiceParticipantLabel(entry().identity, entry().isLocal)}
                                           </span>
                                           {(() => {
@@ -755,7 +771,14 @@ export function ChannelRail(props: ChannelRailProps) {
                   )}
                 </Show>
                 <div class="grid min-w-0 gap-[0.02rem]">
-                  <p class="m-0 truncate text-[0.8rem] text-ink-0 font-[740]">
+                  <p
+                    class="m-0 truncate text-[0.8rem] text-ink-0 font-[740]"
+                    style={
+                      props.currentUserId && props.resolveUserNameColor?.(props.currentUserId)
+                        ? { color: props.resolveUserNameColor?.(props.currentUserId) ?? undefined }
+                        : undefined
+                    }
+                  >
                     {currentUserLabel()}
                   </p>
                   <p class="m-0 text-[0.72rem] text-ink-2">{currentUserStatusLabel()}</p>

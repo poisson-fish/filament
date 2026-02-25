@@ -25,6 +25,7 @@ export interface MessageRowProps {
   currentUserId: UserId | null;
   canDeleteMessages: boolean;
   displayUserLabel: (userId: string) => string;
+  resolveUserNameColor?: (userId: string) => string | null;
   resolveAvatarUrl: (userId: string) => string | null;
   onOpenAuthorProfile: (userId: UserId) => void;
   editingMessageId: MessageId | null;
@@ -74,6 +75,9 @@ export function MessageRow(props: MessageRowProps) {
     ),
   );
   const authorAvatarUrl = createMemo(() => props.resolveAvatarUrl(props.message.authorId));
+  const authorColor = createMemo(
+    () => props.resolveUserNameColor?.(props.message.authorId) ?? null,
+  );
 
   return (
     <article class="message-row group relative mt-[0.02rem] grid grid-cols-[2.35rem_minmax(0,1fr)] gap-[0.65rem] rounded-[0.45rem] border-0 bg-transparent px-[0.46rem] py-[0.34rem] transition-colors duration-[120ms] ease-out hover:bg-bg-3 focus-within:bg-bg-3 [&:first-of-type]:mt-auto">
@@ -104,7 +108,10 @@ export function MessageRow(props: MessageRowProps) {
       </button>
       <div class="min-w-0 pr-[7rem] [@media(hover:none)]:pr-[4.5rem]">
         <p class="m-0 flex flex-wrap items-baseline gap-[0.52rem]">
-          <strong class="m-0 text-[0.96rem] font-[790] text-ink-0">
+          <strong
+            class="m-0 text-[0.96rem] font-[790] text-ink-0"
+            style={authorColor() ? { color: authorColor()! } : undefined}
+          >
             {props.displayUserLabel(props.message.authorId)}
           </strong>
           <span class="text-[0.74rem] text-ink-2">

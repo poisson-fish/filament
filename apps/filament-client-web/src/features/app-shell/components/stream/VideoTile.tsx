@@ -5,6 +5,7 @@ export interface VideoTileProps {
     trackSnapshot: RtcVideoTrackSnapshot;
     userIdFromVoiceIdentity: (identity: string) => string | null;
     actorLabel: (id: string) => string;
+    resolveActorNameColor?: (id: string) => string | null;
     resolveAvatarUrl: (userId: string) => string | null | undefined;
     attachVideoTrack: (trackSid: string, element: HTMLVideoElement) => void;
     detachVideoTrack: (trackSid: string, element: HTMLVideoElement) => void;
@@ -16,6 +17,7 @@ export function VideoTile(props: VideoTileProps) {
     const resolvedUserId = () => props.userIdFromVoiceIdentity(props.trackSnapshot.participantIdentity);
     const labelId = () => resolvedUserId() ?? props.trackSnapshot.participantIdentity;
     const label = () => props.actorLabel(labelId());
+    const labelColor = () => props.resolveActorNameColor?.(labelId()) ?? null;
     const avatarUrl = () => {
         const id = resolvedUserId();
         return id ? props.resolveAvatarUrl(id) : undefined;
@@ -50,7 +52,7 @@ export function VideoTile(props: VideoTileProps) {
                         {(url) => <img src={url()} alt={`${label()} avatar`} class="absolute inset-0 z-[2] h-full w-full rounded-[inherit] object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />}
                     </Show>
                 </span>
-                <span>{label()}</span>
+                <span style={labelColor() ? { color: labelColor()! } : undefined}>{label()}</span>
                 <Show when={props.trackSnapshot.source === "screen_share"}>
                     <span class="bg-white/20 px-[0.35rem] py-[0.1rem] rounded-[0.2rem] text-[0.70rem] uppercase tracking-[0.05em] opacity-90">Screen</span>
                 </Show>

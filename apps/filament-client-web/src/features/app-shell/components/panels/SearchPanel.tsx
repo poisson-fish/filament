@@ -16,6 +16,7 @@ export interface SearchPanelProps {
   onRebuildSearch: () => Promise<void> | void;
   onReconcileSearch: () => Promise<void> | void;
   displayUserLabel: (userId: string) => string;
+  resolveUserNameColor?: (userId: string) => string | null;
 }
 
 export function SearchPanel(props: SearchPanelProps) {
@@ -93,7 +94,16 @@ export function SearchPanel(props: SearchPanelProps) {
                 <li class={resultsListItemClass}>
                   <span class={onlinePresenceDotClass} />
                   <span class={resultsListTextClass}>
-                    {props.displayUserLabel(message.authorId)}:{" "}
+                    <strong
+                      style={
+                        props.resolveUserNameColor?.(message.authorId)
+                          ? { color: props.resolveUserNameColor?.(message.authorId) ?? undefined }
+                          : undefined
+                      }
+                    >
+                      {props.displayUserLabel(message.authorId)}
+                    </strong>
+                    :{" "}
                     {(tokenizeToDisplayText(message.markdownTokens) || message.content).slice(0, 40)}
                   </span>
                 </li>

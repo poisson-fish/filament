@@ -711,6 +711,7 @@ pub(crate) struct WorkspaceRoleRecord {
     pub(crate) is_system: bool,
     pub(crate) system_key: Option<String>,
     pub(crate) permissions_allow: PermissionSet,
+    pub(crate) color_hex: Option<String>,
     pub(crate) created_at_unix: i64,
 }
 
@@ -1067,6 +1068,7 @@ mod tests {
                     is_system: false,
                     system_key: None,
                     permissions_allow: PermissionSet::empty(),
+                    color_hex: None,
                     created_at_unix: 1,
                 },
             )]),

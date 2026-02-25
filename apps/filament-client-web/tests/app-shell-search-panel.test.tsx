@@ -61,7 +61,11 @@ describe("app shell search panel", () => {
       />
     ));
 
-    const resultText = screen.getByText("Remote User: incident logs");
+    expect(screen.getByText("Remote User")).toBeInTheDocument();
+    const resultText = document.querySelector("li span.min-w-0.break-words");
+    if (!resultText) {
+      throw new Error("search result text element missing");
+    }
     expect(resultText).toBeInTheDocument();
     expect(resultText.closest("ul")).toHaveClass("list-none");
     expect(resultText.closest("li")).toHaveClass("rounded-[0.6rem]");

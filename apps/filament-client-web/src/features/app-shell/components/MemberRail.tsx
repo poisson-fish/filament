@@ -16,6 +16,7 @@ interface MemberRailProps {
   onlineMembers: string[];
   hasModerationAccess: boolean;
   displayUserLabel: (userId: string) => string;
+  resolveUserNameColor?: (userId: string) => string | null;
   onOpenPanel: (panel: OverlayPanel) => void;
   onOpenWorkspaceRoleSettings: () => void;
 }
@@ -76,7 +77,16 @@ export function MemberRail(props: MemberRailProps) {
               {(memberId) => (
                 <li class={memberListRowClass}>
                   <span class={onlinePresenceDotClass} />
-                  <span class="min-w-0 break-words">{props.displayUserLabel(memberId)}</span>
+                  <span
+                    class="min-w-0 break-words"
+                    style={
+                      props.resolveUserNameColor?.(memberId)
+                        ? { color: props.resolveUserNameColor?.(memberId) ?? undefined }
+                        : undefined
+                    }
+                  >
+                    {props.displayUserLabel(memberId)}
+                  </span>
                 </li>
               )}
             </For>

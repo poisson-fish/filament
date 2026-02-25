@@ -7,6 +7,7 @@ import {
 } from "solid-js";
 import type { AuthSession } from "../../../domain/auth";
 import {
+  roleColorHexFromInput,
   userIdFromInput,
   workspaceRoleNameFromInput,
   type ChannelId,
@@ -14,6 +15,7 @@ import {
   type GuildId,
   type GuildRoleRecord,
   type PermissionName,
+  type RoleColorHex,
   type UserId,
   type WorkspaceRoleId,
 } from "../../../domain/chat";
@@ -80,10 +82,11 @@ export interface RoleManagementController {
     name: string;
     permissions: PermissionName[];
     position?: number;
+    colorHex?: RoleColorHex | null;
   }) => Promise<void>;
   updateRole: (
     roleId: WorkspaceRoleId,
-    input: { name?: string; permissions?: PermissionName[] },
+    input: { name?: string; permissions?: PermissionName[]; colorHex?: RoleColorHex | null },
   ) => Promise<void>;
   deleteRole: (roleId: WorkspaceRoleId) => Promise<void>;
   reorderRoles: (roleIds: WorkspaceRoleId[]) => Promise<void>;
@@ -238,6 +241,7 @@ export function createRoleManagementController(
     name: string;
     permissions: PermissionName[];
     position?: number;
+    colorHex?: RoleColorHex | null;
   }): Promise<void> => {
     const session = options.session();
     const guildId = options.activeGuildId();
@@ -251,11 +255,25 @@ export function createRoleManagementController(
       setRoleManagementError("Role name is invalid.");
       return;
     }
+    let roleColorHex: RoleColorHex | null | undefined;
+    if (typeof input.colorHex !== "undefined") {
+      if (input.colorHex === null) {
+        roleColorHex = null;
+      } else {
+        try {
+          roleColorHex = roleColorHexFromInput(input.colorHex);
+        } catch {
+          setRoleManagementError("Role color must use #RRGGBB format.");
+          return;
+        }
+      }
+    }
     await runMutation(async () => {
       const createdRole = await deps.createGuildRole(session, guildId, {
         name: roleName,
         permissions: input.permissions,
         position: input.position,
+        ...(typeof roleColorHex !== "undefined" ? { colorHex: roleColorHex } : {}),
       });
       const nextRoles = sortWorkspaceRolesByPosition([
         ...roles().filter((role) => role.roleId !== createdRole.roleId),
@@ -268,7 +286,7 @@ export function createRoleManagementController(
 
   const updateRole = async (
     roleId: WorkspaceRoleId,
-    input: { name?: string; permissions?: PermissionName[] },
+    input: { name?: string; permissions?: PermissionName[]; colorHex?: RoleColorHex | null },
   ): Promise<void> => {
     const session = options.session();
     const guildId = options.activeGuildId();
@@ -284,10 +302,24 @@ export function createRoleManagementController(
         return;
       }
     }
+    let roleColorHex: RoleColorHex | null | undefined;
+    if (typeof input.colorHex !== "undefined") {
+      if (input.colorHex === null) {
+        roleColorHex = null;
+      } else {
+        try {
+          roleColorHex = roleColorHexFromInput(input.colorHex);
+        } catch {
+          setRoleManagementError("Role color must use #RRGGBB format.");
+          return;
+        }
+      }
+    }
     await runMutation(async () => {
       await deps.updateGuildRole(session, guildId, roleId, {
         name: roleName,
         permissions: input.permissions,
+        ...(typeof roleColorHex !== "undefined" ? { colorHex: roleColorHex } : {}),
       });
     }, "Role updated.");
   };

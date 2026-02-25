@@ -10,6 +10,7 @@ import type {
   GuildRoleRecord,
   PermissionName,
   ProfileRecord,
+  RoleColorHex,
   RoleName,
   SearchResults,
   UserId,
@@ -182,6 +183,7 @@ export interface SearchPanelBuilderOptions {
   onRebuildSearch: () => Promise<void> | void;
   onReconcileSearch: () => Promise<void> | void;
   displayUserLabel: (userId: string) => string;
+  resolveUserNameColor?: (userId: string) => string | null;
 }
 
 export interface AttachmentsPanelBuilderOptions {
@@ -250,12 +252,14 @@ export interface RoleManagementPanelBuilderOptions {
     name: string;
     permissions: PermissionName[];
     position?: number;
+    colorHex?: RoleColorHex | null;
   }) => Promise<void> | void;
   onUpdateRole: (
     roleId: WorkspaceRoleId,
     input: {
       name?: string;
       permissions?: PermissionName[];
+      colorHex?: RoleColorHex | null;
     },
   ) => Promise<void> | void;
   onDeleteRole: (roleId: WorkspaceRoleId) => Promise<void> | void;
@@ -452,6 +456,7 @@ export function buildSearchPanelProps(
     onRebuildSearch: options.onRebuildSearch,
     onReconcileSearch: options.onReconcileSearch,
     displayUserLabel: options.displayUserLabel,
+    resolveUserNameColor: options.resolveUserNameColor,
   };
 }
 

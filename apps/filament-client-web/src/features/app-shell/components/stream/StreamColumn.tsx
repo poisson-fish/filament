@@ -7,6 +7,7 @@ export interface StreamColumnProps {
     rtcSnapshot: RtcSnapshot;
     userIdFromVoiceIdentity: (identity: string) => string | null;
     actorLabel: (id: string) => string;
+    resolveActorNameColor?: (id: string) => string | null;
     resolveAvatarUrl: (userId: string) => string | null | undefined;
     attachVideoTrack: (trackSid: string, element: HTMLVideoElement) => void;
     detachVideoTrack: (trackSid: string, element: HTMLVideoElement) => void;
@@ -51,6 +52,7 @@ export function StreamColumn(props: StreamColumnProps) {
                             trackSnapshot={trackSnapshot}
                             userIdFromVoiceIdentity={props.userIdFromVoiceIdentity}
                             actorLabel={props.actorLabel}
+                            resolveActorNameColor={props.resolveActorNameColor}
                             resolveAvatarUrl={props.resolveAvatarUrl}
                             attachVideoTrack={props.attachVideoTrack}
                             detachVideoTrack={props.detachVideoTrack}

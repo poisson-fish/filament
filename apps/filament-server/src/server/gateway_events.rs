@@ -336,11 +336,16 @@ mod tests {
             90,
             false,
             vec![Permission::ManageRoles],
+            Some(String::from("#00AAFF")),
             Some(user_id),
         ));
         assert_eq!(
             workspace_role_create_payload["role"]["name"],
             Value::from("ops")
+        );
+        assert_eq!(
+            workspace_role_create_payload["role"]["color_hex"],
+            Value::from("#00AAFF")
         );
 
         let workspace_role_update_payload = parse_event(&workspace_role_update(
@@ -351,12 +356,17 @@ mod tests {
                 Permission::ManageRoles,
                 Permission::ManageChannelOverrides,
             ]),
+            Some(Some(String::from("#3366CC"))),
             18,
             Some(user_id),
         ));
         assert_eq!(
             workspace_role_update_payload["updated_fields"]["name"],
             Value::from("ops-v2")
+        );
+        assert_eq!(
+            workspace_role_update_payload["updated_fields"]["color_hex"],
+            Value::from("#3366CC")
         );
 
         let workspace_role_delete_payload =

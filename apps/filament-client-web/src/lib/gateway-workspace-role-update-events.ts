@@ -1,9 +1,11 @@
 import {
   guildIdFromInput,
   permissionFromInput,
+  roleColorHexFromInput,
   workspaceRoleIdFromInput,
   type GuildId,
   type PermissionName,
+  type RoleColorHex,
   type WorkspaceRoleId,
 } from "../domain/chat";
 import type { WorkspaceRoleUpdatePayload } from "./gateway-contracts";
@@ -14,6 +16,7 @@ export type WorkspaceRoleUpdateGatewayEvent = {
 };
 
 type WorkspaceRoleUpdateGatewayEventType = WorkspaceRoleUpdateGatewayEvent["type"];
+const hasOwn = Object.prototype.hasOwnProperty;
 
 function parseWorkspaceRoleUpdatePayload(payload: unknown): WorkspaceRoleUpdatePayload | null {
   if (!payload || typeof payload !== "object") {
@@ -44,6 +47,7 @@ function parseWorkspaceRoleUpdatePayload(payload: unknown): WorkspaceRoleUpdateP
   const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
   let name: string | undefined;
   let permissions: PermissionName[] | undefined;
+  let colorHex: RoleColorHex | null | undefined;
   if (typeof updatedFieldsDto.name !== "undefined") {
     if (typeof updatedFieldsDto.name !== "string") {
       return null;
@@ -66,7 +70,24 @@ function parseWorkspaceRoleUpdatePayload(payload: unknown): WorkspaceRoleUpdateP
       }
     }
   }
-  if (typeof name === "undefined" && typeof permissions === "undefined") {
+  if (hasOwn.call(updatedFieldsDto, "color_hex")) {
+    if (updatedFieldsDto.color_hex === null) {
+      colorHex = null;
+    } else if (typeof updatedFieldsDto.color_hex === "string") {
+      try {
+        colorHex = roleColorHexFromInput(updatedFieldsDto.color_hex);
+      } catch {
+        return null;
+      }
+    } else {
+      return null;
+    }
+  }
+  if (
+    typeof name === "undefined" &&
+    typeof permissions === "undefined" &&
+    typeof colorHex === "undefined"
+  ) {
     return null;
   }
 
@@ -76,6 +97,7 @@ function parseWorkspaceRoleUpdatePayload(payload: unknown): WorkspaceRoleUpdateP
     updatedFields: {
       name,
       permissions,
+      ...(typeof colorHex !== "undefined" ? { colorHex } : {}),
     },
     updatedAtUnix: value.updated_at_unix,
   };

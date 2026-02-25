@@ -14,6 +14,7 @@ describe("decodeWorkspaceRoleUpdateGatewayEvent", () => {
       updated_fields: {
         name: "moderator",
         permissions: ["manage_roles", "create_message"],
+        color_hex: "#3366cc",
       },
       updated_at_unix: 1710000001,
     });
@@ -26,6 +27,30 @@ describe("decodeWorkspaceRoleUpdateGatewayEvent", () => {
         updatedFields: {
           name: "moderator",
           permissions: ["manage_roles", "create_message"],
+          colorHex: "#3366CC",
+        },
+        updatedAtUnix: 1710000001,
+      },
+    });
+  });
+
+  it("decodes null color updates for workspace_role_update payload", () => {
+    const result = decodeWorkspaceRoleUpdateGatewayEvent("workspace_role_update", {
+      guild_id: DEFAULT_GUILD_ID,
+      role_id: DEFAULT_ROLE_ID,
+      updated_fields: {
+        color_hex: null,
+      },
+      updated_at_unix: 1710000001,
+    });
+
+    expect(result).toEqual({
+      type: "workspace_role_update",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        roleId: DEFAULT_ROLE_ID,
+        updatedFields: {
+          colorHex: null,
         },
         updatedAtUnix: 1710000001,
       },
@@ -49,6 +74,19 @@ describe("decodeWorkspaceRoleUpdateGatewayEvent", () => {
       role_id: DEFAULT_ROLE_ID,
       updated_fields: {
         name: "moderator",
+      },
+      updated_at_unix: 1710000001,
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("fails closed for invalid workspace role update color values", () => {
+    const result = decodeWorkspaceRoleUpdateGatewayEvent("workspace_role_update", {
+      guild_id: DEFAULT_GUILD_ID,
+      role_id: DEFAULT_ROLE_ID,
+      updated_fields: {
+        color_hex: "#ZZ11FF",
       },
       updated_at_unix: 1710000001,
     });

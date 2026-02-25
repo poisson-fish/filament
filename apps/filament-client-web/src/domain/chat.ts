@@ -11,6 +11,7 @@ export type WorkspaceRoleId = string & { readonly __brand: "workspace_role_id" }
 export type GuildName = string & { readonly __brand: "guild_name" };
 export type ChannelName = string & { readonly __brand: "channel_name" };
 export type WorkspaceRoleName = string & { readonly __brand: "workspace_role_name" };
+export type RoleColorHex = string & { readonly __brand: "role_color_hex" };
 export type MessageContent = string & { readonly __brand: "message_content" };
 export type SearchQuery = string & { readonly __brand: "search_query" };
 export type ReactionEmoji = string & { readonly __brand: "reaction_emoji" };
@@ -71,6 +72,7 @@ const MAX_GUILD_IP_BAN_REASON_CHARS = 240;
 const MAX_APPLIED_GUILD_IP_BAN_IDS = 2048;
 const MAX_GUILD_MEMBERS_PER_PAGE = 200;
 const MAX_WORKSPACE_ROLE_NAME_CHARS = 32;
+const ROLE_COLOR_HEX_PATTERN = /^#[0-9A-Fa-f]{6}$/;
 const MAX_WORKSPACE_ROLES_PER_GUILD = 64;
 const MAX_WORKSPACE_ROLE_PERMISSIONS = 64;
 const MAX_WORKSPACE_ROLE_ASSIGNMENTS_PER_USER = 64;
@@ -406,6 +408,14 @@ export function workspaceRoleNameFromInput(input: string): WorkspaceRoleName {
     throw new DomainValidationError("Workspace role name is reserved.");
   }
   return normalized as WorkspaceRoleName;
+}
+
+export function roleColorHexFromInput(input: string): RoleColorHex {
+  const normalized = input.trim();
+  if (!ROLE_COLOR_HEX_PATTERN.test(normalized)) {
+    throw new DomainValidationError("Role color must be a #RRGGBB hex value.");
+  }
+  return normalized.toUpperCase() as RoleColorHex;
 }
 
 function normalizeWorkspaceRoleName(input: string): string {
@@ -819,6 +829,7 @@ export interface GuildRoleRecord {
   position: number;
   isSystem: boolean;
   permissions: PermissionName[];
+  colorHex?: RoleColorHex | null;
 }
 
 export interface GuildRoleList {
@@ -922,6 +933,7 @@ function guildRoleFromResponse(dto: unknown): GuildRoleRecord {
   if (permissions.length > MAX_WORKSPACE_ROLE_PERMISSIONS) {
     throw new DomainValidationError("Guild role permissions exceeds per-role cap.");
   }
+  const colorHexRaw = data.color_hex;
   return {
     roleId: workspaceRoleIdFromInput(requireString(data.role_id, "role_id")),
     name: workspaceRoleNameFromResponse(data.name),
@@ -929,6 +941,10 @@ function guildRoleFromResponse(dto: unknown): GuildRoleRecord {
     position: requireNonNegativeInteger(data.position, "position"),
     isSystem: requireBoolean(data.is_system, "is_system"),
     permissions: permissions.map((entry) => permissionFromInput(entry)),
+    colorHex:
+      colorHexRaw === null || typeof colorHexRaw === "undefined"
+        ? null
+        : roleColorHexFromInput(requireString(colorHexRaw, "color_hex", 7)),
   };
 }
 

@@ -216,6 +216,7 @@ export function createCollaborationPanelHostStateOptions(
     onRebuildSearch: options.searchActions.rebuildSearch,
     onReconcileSearch: options.searchActions.reconcileSearch,
     displayUserLabel: options.labels.displayUserLabel,
+    resolveUserNameColor: options.labels.displayUserColor,
     attachmentFilename: options.messageState.attachmentFilename,
     activeAttachments: options.selectors.activeAttachments(),
     isUploadingAttachment: options.messageState.isUploadingAttachment,

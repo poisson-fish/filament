@@ -1,0 +1,1 @@
+export const ROLE_COLOR_PICKER_FALLBACK = "#99AAB5";

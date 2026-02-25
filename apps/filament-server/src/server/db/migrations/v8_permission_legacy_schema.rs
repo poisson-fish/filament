@@ -17,6 +17,7 @@ const CREATE_GUILD_ROLES_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS guild_rol
                     permissions_allow_mask BIGINT NOT NULL,
                     is_system BOOLEAN NOT NULL DEFAULT FALSE,
                     system_key TEXT NULL,
+                    color_hex TEXT NULL,
                     created_at_unix BIGINT NOT NULL
                 )";
 const CREATE_GUILD_ROLE_MEMBERS_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS guild_role_members (

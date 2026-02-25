@@ -260,6 +260,7 @@ pub(crate) struct CreateGuildRoleRequest {
     pub(crate) name: String,
     pub(crate) permissions: Vec<Permission>,
     pub(crate) position: Option<i32>,
+    pub(crate) color_hex: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -267,6 +268,7 @@ pub(crate) struct CreateGuildRoleRequest {
 pub(crate) struct UpdateGuildRoleRequest {
     pub(crate) name: Option<String>,
     pub(crate) permissions: Option<Vec<Permission>>,
+    pub(crate) color_hex: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -553,6 +555,7 @@ pub(crate) struct GuildRoleResponse {
     pub(crate) position: i32,
     pub(crate) is_system: bool,
     pub(crate) permissions: Vec<Permission>,
+    pub(crate) color_hex: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

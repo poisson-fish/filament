@@ -88,6 +88,8 @@ struct WorkspaceRolePayload {
     position: i32,
     is_system: bool,
     permissions: Vec<filament_core::Permission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color_hex: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -114,6 +116,8 @@ struct WorkspaceRoleUpdateFieldsPayload {
     name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     permissions: Option<Vec<filament_core::Permission>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color_hex: Option<Option<String>>,
 }
 
 #[derive(Serialize)]
@@ -307,6 +311,7 @@ pub(crate) fn workspace_role_create(
     position: i32,
     is_system: bool,
     permissions: Vec<filament_core::Permission>,
+    color_hex: Option<String>,
     actor_user_id: Option<UserId>,
 ) -> GatewayEvent {
     build_event(
@@ -319,6 +324,7 @@ pub(crate) fn workspace_role_create(
                 position,
                 is_system,
                 permissions,
+                color_hex,
             },
             actor_user_id: actor_user_id.map(|id| id.to_string()),
         },
@@ -330,6 +336,7 @@ pub(crate) fn workspace_role_update(
     role_id: &str,
     name: Option<&str>,
     permissions: Option<Vec<filament_core::Permission>>,
+    color_hex: Option<Option<String>>,
     updated_at_unix: i64,
     actor_user_id: Option<UserId>,
 ) -> GatewayEvent {
@@ -341,6 +348,7 @@ pub(crate) fn workspace_role_update(
             updated_fields: WorkspaceRoleUpdateFieldsPayload {
                 name: name.map(ToOwned::to_owned),
                 permissions,
+                color_hex,
             },
             updated_at_unix,
             actor_user_id: actor_user_id.map(|id| id.to_string()),
@@ -530,10 +538,26 @@ mod tests {
             10,
             false,
             vec![Permission::ManageRoles],
+            Some(String::from("#00AAFF")),
             Some(user_id),
         ));
         assert_eq!(payload["role"]["role_id"], Value::from("role-1"));
         assert_eq!(payload["role"]["name"], Value::from("ops"));
+        assert_eq!(payload["role"]["color_hex"], Value::from("#00AAFF"));
+    }
+
+    #[test]
+    fn workspace_role_update_event_serializes_nullable_color_field() {
+        let payload = parse_payload(&workspace_role_update(
+            "guild-1",
+            "role-1",
+            None,
+            None,
+            Some(None),
+            42,
+            None,
+        ));
+        assert!(payload["updated_fields"]["color_hex"].is_null());
     }
 
     #[test]

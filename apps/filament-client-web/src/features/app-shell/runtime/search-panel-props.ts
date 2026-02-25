@@ -14,6 +14,7 @@ export interface SearchPanelPropsOptions {
   onRebuildSearch: () => Promise<void> | void;
   onReconcileSearch: () => Promise<void> | void;
   displayUserLabel: (userId: string) => string;
+  resolveUserNameColor?: (userId: string) => string | null;
 }
 
 export function createSearchPanelProps(
@@ -33,5 +34,6 @@ export function createSearchPanelProps(
     onRebuildSearch: options.onRebuildSearch,
     onReconcileSearch: options.onReconcileSearch,
     displayUserLabel: options.displayUserLabel,
+    resolveUserNameColor: options.resolveUserNameColor,
   };
 }

@@ -1,5 +1,6 @@
 import type {
   PermissionName,
+  RoleColorHex,
   WorkspaceRoleId,
 } from "../../../domain/chat";
 import type {
@@ -23,12 +24,14 @@ export interface RoleManagementPanelPropsOptions {
     name: string;
     permissions: PermissionName[];
     position?: number;
+    colorHex?: RoleColorHex | null;
   }) => Promise<void> | void;
   onUpdateRole: (
     roleId: WorkspaceRoleId,
     input: {
       name?: string;
       permissions?: PermissionName[];
+      colorHex?: RoleColorHex | null;
     },
   ) => Promise<void> | void;
   onDeleteRole: (roleId: WorkspaceRoleId) => Promise<void> | void;

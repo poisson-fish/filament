@@ -93,6 +93,7 @@ export function MessageList(props: MessageListProps) {
             currentUserId={props.currentUserId}
             canDeleteMessages={props.canDeleteMessages}
             displayUserLabel={props.displayUserLabel}
+            resolveUserNameColor={props.resolveUserNameColor}
             resolveAvatarUrl={props.resolveAvatarUrl}
             onOpenAuthorProfile={props.onOpenAuthorProfile}
             editingMessageId={props.editingMessageId}

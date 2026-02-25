@@ -126,6 +126,7 @@ pub(crate) fn ensure_required_roles(roles: &mut HashMap<String, WorkspaceRoleRec
                 is_system: true,
                 system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
                 permissions_allow: default_everyone_permissions(),
+                color_hex: None,
                 created_at_unix,
             },
         );
@@ -149,6 +150,7 @@ pub(crate) fn ensure_required_roles(roles: &mut HashMap<String, WorkspaceRoleRec
                 is_system: true,
                 system_key: Some(String::from(SYSTEM_ROLE_WORKSPACE_OWNER)),
                 permissions_allow: all_permissions(),
+                color_hex: None,
                 created_at_unix,
             },
         );
@@ -175,6 +177,7 @@ pub(crate) fn ensure_required_roles(roles: &mut HashMap<String, WorkspaceRoleRec
                 is_system: false,
                 system_key: Some(String::from(DEFAULT_ROLE_MODERATOR)),
                 permissions_allow: default_moderator_permissions(),
+                color_hex: None,
                 created_at_unix,
             },
         );
@@ -201,6 +204,7 @@ pub(crate) fn ensure_required_roles(roles: &mut HashMap<String, WorkspaceRoleRec
                 is_system: false,
                 system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
                 permissions_allow: default_member_permissions(),
+                color_hex: None,
                 created_at_unix,
             },
         );
@@ -307,6 +311,7 @@ pub(crate) fn role_records_from_db_rows(
                 is_system: row.is_system,
                 system_key: row.system_key,
                 permissions_allow,
+                color_hex: None,
                 created_at_unix: 0,
             },
         );
@@ -991,6 +996,7 @@ mod tests {
                     is_system: true,
                     system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
                     permissions_allow: permission_set(&[Permission::DeleteMessage]),
+                    color_hex: None,
                     created_at_unix,
                 },
             ),
@@ -1003,6 +1009,7 @@ mod tests {
                     is_system: false,
                     system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
                     permissions_allow: permission_set(&[Permission::CreateMessage]),
+                    color_hex: None,
                     created_at_unix,
                 },
             ),
@@ -1015,6 +1022,7 @@ mod tests {
                     is_system: false,
                     system_key: Some(String::from(DEFAULT_ROLE_MODERATOR)),
                     permissions_allow: permission_set(&[Permission::ManageRoles]),
+                    color_hex: None,
                     created_at_unix,
                 },
             ),
@@ -1027,6 +1035,7 @@ mod tests {
                     is_system: true,
                     system_key: Some(String::from(SYSTEM_ROLE_WORKSPACE_OWNER)),
                     permissions_allow: PermissionSet::empty(),
+                    color_hex: None,
                     created_at_unix,
                 },
             ),
@@ -1099,6 +1108,7 @@ mod tests {
                 is_system: true,
                 system_key: Some(String::from("everyone")),
                 permissions_allow: PermissionSet::empty(),
+                color_hex: None,
                 created_at_unix,
             },
         );
@@ -1111,6 +1121,7 @@ mod tests {
                 is_system: true,
                 system_key: Some(String::from("workspace_owner")),
                 permissions_allow: PermissionSet::empty(),
+                color_hex: None,
                 created_at_unix,
             },
         );
@@ -1123,6 +1134,7 @@ mod tests {
                 is_system: false,
                 system_key: Some(String::from("member")),
                 permissions_allow: PermissionSet::empty(),
+                color_hex: None,
                 created_at_unix,
             },
         );
@@ -1135,6 +1147,7 @@ mod tests {
                 is_system: false,
                 system_key: Some(String::from("moderator")),
                 permissions_allow: PermissionSet::empty(),
+                color_hex: None,
                 created_at_unix,
             },
         );
@@ -1237,6 +1250,7 @@ mod tests {
                     is_system: false,
                     system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
                     permissions_allow: PermissionSet::empty(),
+                    color_hex: None,
                     created_at_unix,
                 },
             ),
@@ -1249,6 +1263,7 @@ mod tests {
                     is_system: false,
                     system_key: None,
                     permissions_allow: PermissionSet::empty(),
+                    color_hex: None,
                     created_at_unix,
                 },
             ),
@@ -1279,6 +1294,7 @@ mod tests {
                     is_system: true,
                     system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
                     permissions_allow: permission_set(&[Permission::DeleteMessage]),
+                    color_hex: None,
                     created_at_unix,
                 },
             ),
@@ -1291,6 +1307,7 @@ mod tests {
                     is_system: false,
                     system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
                     permissions_allow: permission_set(&[Permission::CreateMessage]),
+                    color_hex: None,
                     created_at_unix,
                 },
             ),
@@ -1530,6 +1547,7 @@ mod tests {
                 is_system: true,
                 system_key: Some(String::from(SYSTEM_ROLE_EVERYONE)),
                 permissions_allow: permission_set(&[]),
+                color_hex: None,
                 created_at_unix: now_unix(),
             },
         );
@@ -1542,6 +1560,7 @@ mod tests {
                 is_system: false,
                 system_key: Some(String::from(DEFAULT_ROLE_MEMBER)),
                 permissions_allow: permission_set(&[Permission::CreateMessage]),
+                color_hex: None,
                 created_at_unix: now_unix(),
             },
         );
@@ -1554,6 +1573,7 @@ mod tests {
                 is_system: false,
                 system_key: Some(String::from(DEFAULT_ROLE_MODERATOR)),
                 permissions_allow: permission_set(&[Permission::DeleteMessage]),
+                color_hex: None,
                 created_at_unix: now_unix(),
             },
         );
@@ -1566,6 +1586,7 @@ mod tests {
                 is_system: true,
                 system_key: Some(String::from(SYSTEM_ROLE_WORKSPACE_OWNER)),
                 permissions_allow: crate::server::permissions::all_permissions(),
+                color_hex: None,
                 created_at_unix: now_unix(),
             },
         );

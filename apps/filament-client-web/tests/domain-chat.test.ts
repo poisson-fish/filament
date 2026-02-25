@@ -27,6 +27,7 @@ import {
   publicGuildDirectoryFromResponse,
   reactionEmojiFromInput,
   reactionFromResponse,
+  roleColorHexFromInput,
   roleFromInput,
   searchQueryFromInput,
   userLookupListFromResponse,
@@ -297,6 +298,9 @@ describe("chat domain invariants", () => {
     expect(workspaceRoleNameFromInput(" Incident Lead ")).toBe("Incident Lead");
     expect(() => workspaceRoleNameFromInput("@everyone")).toThrow();
     expect(() => workspaceRoleNameFromInput("workspace_owner")).toThrow();
+    expect(roleColorHexFromInput(" #a1b2c3 ")).toBe("#A1B2C3");
+    expect(() => roleColorHexFromInput("#12345")).toThrow();
+    expect(() => roleColorHexFromInput("#12G45Z")).toThrow();
   });
 
   it("validates directory join DTO and error-code mapping", () => {
@@ -414,6 +418,7 @@ describe("chat domain invariants", () => {
           position: 3,
           is_system: false,
           permissions: ["create_message", "subscribe_streams"],
+          color_hex: "#3366CC",
         },
       ],
     });
@@ -422,15 +427,17 @@ describe("chat domain invariants", () => {
       "create_message",
       "subscribe_streams",
     ]);
+    expect(roleList.roles[0]?.colorHex).toBe("#3366CC");
     expect(() =>
       guildRoleListFromResponse({
         roles: [
           {
             role_id: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
-            name: "@everyone",
+            name: "Responder",
             position: 3,
             is_system: false,
             permissions: ["create_message"],
+            color_hex: "#12345",
           },
         ],
       }),

@@ -9,6 +9,7 @@ import {
   type MessageRecord,
   type PermissionName,
   type ReactionEmoji,
+  type RoleColorHex,
   type RoleName,
   type WorkspaceRoleId,
 } from "../domain/chat";
@@ -139,6 +140,7 @@ export interface WorkspaceRoleRecordPayload {
   position: number;
   isSystem: boolean;
   permissions: PermissionName[];
+  colorHex?: RoleColorHex | null;
 }
 
 export interface WorkspaceRoleCreatePayload {
@@ -152,6 +154,7 @@ export interface WorkspaceRoleUpdatePayload {
   updatedFields: {
     name?: string;
     permissions?: PermissionName[];
+    colorHex?: RoleColorHex | null;
   };
   updatedAtUnix: number;
 }

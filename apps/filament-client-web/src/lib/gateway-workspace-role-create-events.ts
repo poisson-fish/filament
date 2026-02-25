@@ -1,9 +1,11 @@
 import {
   guildIdFromInput,
   permissionFromInput,
+  roleColorHexFromInput,
   workspaceRoleIdFromInput,
   type GuildId,
   type PermissionName,
+  type RoleColorHex,
   type WorkspaceRoleId,
 } from "../domain/chat";
 import type { WorkspaceRoleCreatePayload, WorkspaceRoleRecordPayload } from "./gateway-contracts";
@@ -14,6 +16,7 @@ export type WorkspaceRoleCreateGatewayEvent = {
 };
 
 type WorkspaceRoleCreateGatewayEventType = WorkspaceRoleCreateGatewayEvent["type"];
+const hasOwn = Object.prototype.hasOwnProperty;
 
 function parseWorkspaceRolePayload(payload: unknown): WorkspaceRoleRecordPayload | null {
   if (!payload || typeof payload !== "object") {
@@ -51,13 +54,33 @@ function parseWorkspaceRolePayload(payload: unknown): WorkspaceRoleRecordPayload
     }
   }
 
-  return {
+  let colorHex: RoleColorHex | null | undefined;
+  if (hasOwn.call(value, "color_hex")) {
+    if (value.color_hex === null) {
+      colorHex = null;
+    } else if (typeof value.color_hex === "string") {
+      try {
+        colorHex = roleColorHexFromInput(value.color_hex);
+      } catch {
+        return null;
+      }
+    } else {
+      return null;
+    }
+  }
+
+  const role: WorkspaceRoleRecordPayload = {
     roleId,
     name: value.name,
     position: value.position,
     isSystem: value.is_system,
     permissions,
   };
+  if (typeof colorHex !== "undefined") {
+    role.colorHex = colorHex;
+  }
+
+  return role;
 }
 
 function parseWorkspaceRoleCreatePayload(payload: unknown): WorkspaceRoleCreatePayload | null {
