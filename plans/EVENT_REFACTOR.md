@@ -100,7 +100,7 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 Make event emission fail-fast and enforce outbound size limits universally.
 
 ### Completion Status
-`NOT STARTED`
+`IN PROGRESS`
 
 ### Tasks
 - [ ] Replace fallback event serialization paths with explicit `Result` handling.
@@ -121,6 +121,9 @@ Make event emission fail-fast and enforce outbound size limits universally.
 - [ ] Unit tests for outbound size rejection.
 - [ ] Integration test that oversized outbound payload is dropped and counted.
 - [ ] Regression test proving normal payloads still fan out.
+
+### Progress Notes
+- 2026-02-25 (Slice 1): Removed silent fallback-to-`ready` behavior from `outbound_event` by switching to explicit `Result` errors for invalid event types and serialization/encoding failures; added unit tests proving valid envelope output and fail-closed rejection for invalid outbound event names. Gateway event envelope builder now fails loudly on build errors instead of silently emitting fallback payloads.
 
 ### Exit Criteria
 - Outbound and inbound both enforce size caps.

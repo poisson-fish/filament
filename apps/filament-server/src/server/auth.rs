@@ -298,17 +298,18 @@ async fn maybe_sweep_rate_limit_state(state: &AppState, now: i64) {
     }
 }
 
-pub(crate) fn outbound_event<T: Serialize>(event_type: &str, data: T) -> String {
+pub(crate) fn outbound_event<T: Serialize>(event_type: &str, data: T) -> anyhow::Result<String> {
     let envelope = Envelope {
         v: PROTOCOL_VERSION,
-        t: EventType::try_from(event_type.to_owned()).unwrap_or_else(|_| {
-            EventType::try_from(String::from("ready")).expect("valid event type")
-        }),
-        d: serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
+        t: EventType::try_from(event_type.to_owned())
+            .map_err(|_| anyhow!("invalid outbound event type: {event_type}"))?,
+        d: serde_json::to_value(data).map_err(|error| {
+            anyhow!("failed to serialize outbound event payload {event_type}: {error}")
+        })?,
     };
 
     serde_json::to_string(&envelope)
-        .unwrap_or_else(|_| String::from(r#"{"v":1,"t":"ready","d":{}}"#))
+        .map_err(|error| anyhow!("failed to encode outbound event envelope {event_type}: {error}"))
 }
 
 pub(crate) fn channel_key(guild_id: &str, channel_id: &str) -> String {
@@ -655,12 +656,46 @@ fn parse_forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_captcha_config, enforce_auth_route_rate_limit, resolve_client_ip, ClientIp,
-        ClientIpSource,
+        build_captcha_config, enforce_auth_route_rate_limit, outbound_event, resolve_client_ip,
+        ClientIp, ClientIpSource,
     };
     use crate::server::core::{AppConfig, AppState};
     use crate::server::directory_contract::IpNetwork;
     use axum::http::HeaderMap;
+    use serde::Serialize;
+    use serde_json::Value;
+
+    #[derive(Serialize)]
+    struct OutboundEventTestPayload<'a> {
+        field: &'a str,
+    }
+
+    #[test]
+    fn outbound_event_wraps_payload_with_event_envelope() {
+        let encoded = outbound_event(
+            "message_create",
+            OutboundEventTestPayload { field: "value" },
+        )
+        .expect("event should serialize");
+        let decoded: Value =
+            serde_json::from_str(&encoded).expect("encoded outbound event should be valid json");
+        assert_eq!(decoded["v"], Value::from(1));
+        assert_eq!(decoded["t"], Value::from("message_create"));
+        assert_eq!(decoded["d"]["field"], Value::from("value"));
+    }
+
+    #[test]
+    fn outbound_event_rejects_invalid_event_type() {
+        let error = outbound_event(
+            "MESSAGE_CREATE",
+            OutboundEventTestPayload { field: "value" },
+        )
+        .expect_err("invalid event type should be rejected");
+        assert!(
+            error.to_string().contains("invalid outbound event type"),
+            "error should explain invalid event type, got: {error}"
+        );
+    }
 
     #[test]
     fn captcha_config_includes_site_key_for_siteverify_binding() {

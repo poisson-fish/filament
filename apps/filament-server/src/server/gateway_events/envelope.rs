@@ -10,7 +10,9 @@ pub(crate) struct GatewayEvent {
 pub(super) fn build_event<T: Serialize>(event_type: &'static str, payload: T) -> GatewayEvent {
     GatewayEvent {
         event_type,
-        payload: outbound_event(event_type, payload),
+        payload: outbound_event(event_type, payload).unwrap_or_else(|error| {
+            panic!("failed to build outbound gateway event {event_type}: {error}")
+        }),
     }
 }
 
