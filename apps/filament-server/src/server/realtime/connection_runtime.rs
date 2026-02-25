@@ -56,6 +56,7 @@ pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: 
         &mut subscriptions,
         key,
         &event.payload,
+        state.runtime.max_gateway_event_bytes,
         event.event_type,
         &mut slow_connections,
     );

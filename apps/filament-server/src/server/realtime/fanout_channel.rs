@@ -8,13 +8,20 @@ pub(crate) fn dispatch_channel_payload(
     subscriptions: &mut Subscriptions,
     key: &str,
     payload: &str,
+    max_payload_bytes: usize,
     event_type: &'static str,
     slow_connections: &mut Vec<Uuid>,
 ) -> usize {
     let mut delivered = 0usize;
     if let Some(listeners) = subscriptions.get_mut(key) {
-        delivered =
-            dispatch_gateway_payload(listeners, payload, event_type, "channel", slow_connections);
+        delivered = dispatch_gateway_payload(
+            listeners,
+            payload,
+            max_payload_bytes,
+            event_type,
+            "channel",
+            slow_connections,
+        );
         if listeners.is_empty() {
             subscriptions.remove(key);
         }
@@ -46,6 +53,7 @@ mod tests {
             &mut subscriptions,
             "g1:c1",
             "payload",
+            "payload".len(),
             "message_create",
             &mut slow_connections,
         );
@@ -83,6 +91,7 @@ mod tests {
             &mut subscriptions,
             "g1:c1",
             "payload",
+            "payload".len(),
             "message_create",
             &mut slow_connections,
         );

@@ -8,10 +8,16 @@ use crate::server::metrics::record_gateway_event_dropped;
 pub(crate) fn dispatch_gateway_payload(
     listeners: &mut HashMap<Uuid, mpsc::Sender<String>>,
     payload: &str,
+    max_payload_bytes: usize,
     event_type: &'static str,
     scope: &'static str,
     slow_connections: &mut Vec<Uuid>,
 ) -> usize {
+    if payload.len() > max_payload_bytes {
+        record_gateway_event_dropped(scope, event_type, "oversized_outbound");
+        return 0;
+    }
+
     let mut delivered = 0usize;
     listeners.retain(
         |connection_id, sender| match sender.try_send(payload.to_owned()) {
@@ -40,6 +46,8 @@ mod tests {
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
+    use crate::server::metrics::metrics_state;
+
     use super::dispatch_gateway_payload;
 
     #[tokio::test]
@@ -53,6 +61,7 @@ mod tests {
         let delivered = dispatch_gateway_payload(
             &mut listeners,
             "payload",
+            "payload".len(),
             "message_create",
             "channel",
             &mut slow_connections,
@@ -87,6 +96,7 @@ mod tests {
         let delivered = dispatch_gateway_payload(
             &mut listeners,
             "payload",
+            "payload".len(),
             "message_create",
             "channel",
             &mut slow_connections,
@@ -103,5 +113,43 @@ mod tests {
             .await
             .expect("full queue should still hold occupied message");
         assert_eq!(drained, "occupied");
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_outbound_payload_before_enqueue() {
+        if let Ok(mut counters) = metrics_state().gateway_events_dropped.lock() {
+            counters.clear();
+        }
+
+        let connection_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel::<String>(1);
+        let mut listeners = HashMap::from([(connection_id, sender)]);
+        let mut slow_connections = Vec::new();
+        let payload = "payload";
+
+        let delivered = dispatch_gateway_payload(
+            &mut listeners,
+            payload,
+            payload.len() - 1,
+            "message_create",
+            "channel",
+            &mut slow_connections,
+        );
+
+        assert_eq!(delivered, 0);
+        assert!(slow_connections.is_empty());
+        assert!(listeners.contains_key(&connection_id));
+        assert!(receiver.try_recv().is_err());
+
+        let dropped = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .expect("gateway dropped metrics mutex should not be poisoned");
+        let key = (
+            String::from("channel"),
+            String::from("message_create"),
+            String::from("oversized_outbound"),
+        );
+        assert_eq!(dropped.get(&key).copied(), Some(1));
     }
 }
