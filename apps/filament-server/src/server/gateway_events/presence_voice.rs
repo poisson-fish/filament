@@ -164,16 +164,6 @@ pub(crate) fn try_presence_sync(
     )
 }
 
-pub(crate) fn presence_update(
-    guild_id: &str,
-    user_id: UserId,
-    status: &'static str,
-) -> GatewayEvent {
-    try_presence_update(guild_id, user_id, status).unwrap_or_else(|error| {
-        panic!("failed to build outbound gateway event {PRESENCE_UPDATE_EVENT}: {error}")
-    })
-}
-
 pub(crate) fn try_presence_update(
     guild_id: &str,
     user_id: UserId,
@@ -349,7 +339,10 @@ mod tests {
     #[test]
     fn presence_update_event_emits_status_and_user() {
         let user_id = UserId::new();
-        let payload = parse_payload(&presence_update("guild-1", user_id, "online"));
+        let payload = parse_payload(
+            &try_presence_update("guild-1", user_id, "online")
+                .expect("presence_update should serialize"),
+        );
         assert_eq!(payload["guild_id"], Value::from("guild-1"));
         assert_eq!(payload["user_id"], Value::from(user_id.to_string()));
         assert_eq!(payload["status"], Value::from("online"));

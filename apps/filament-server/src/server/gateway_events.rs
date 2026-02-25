@@ -58,10 +58,9 @@ pub(crate) use message_channel::{
 #[cfg(test)]
 pub(crate) use presence_voice::presence_sync;
 pub(crate) use presence_voice::{
-    presence_update, try_presence_sync, try_presence_update, voice_participant_join,
-    voice_participant_leave, voice_participant_sync, voice_participant_update,
-    voice_stream_publish, voice_stream_unpublish, VoiceParticipantSnapshot, PRESENCE_SYNC_EVENT,
-    PRESENCE_UPDATE_EVENT,
+    try_presence_sync, try_presence_update, voice_participant_join, voice_participant_leave,
+    voice_participant_sync, voice_participant_update, voice_stream_publish, voice_stream_unpublish,
+    VoiceParticipantSnapshot, PRESENCE_SYNC_EVENT, PRESENCE_UPDATE_EVENT,
 };
 #[cfg(test)]
 pub(crate) use presence_voice::{
@@ -195,7 +194,9 @@ mod tests {
         );
         assert!(presence_sync_payload["user_ids"].is_array());
 
-        let presence_update_payload = parse_event(&presence_update("g", user_id, "online"));
+        let presence_update_payload = parse_event(
+            &try_presence_update("g", user_id, "online").expect("presence_update should serialize"),
+        );
         assert_eq!(presence_update_payload["status"], Value::from("online"));
 
         let voice_sync_payload = parse_event(&voice_participant_sync(

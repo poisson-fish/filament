@@ -317,7 +317,20 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
         let remaining = state.realtime_registry.connection_presence().read().await;
         compute_disconnect_presence_outcome(&remaining, &removed_presence)
     };
-    let followups = plan_disconnect_followups(outcome, removed_presence.user_id);
+    let followups = match plan_disconnect_followups(outcome, removed_presence.user_id) {
+        Ok(followups) => followups,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.presence_disconnect.serialize_failed",
+                connection_id = %connection_id,
+                user_id = %removed_presence.user_id,
+                event_type = error.event_type,
+                error = %error.source
+            );
+            record_gateway_event_dropped("guild", error.event_type, "serialize_error");
+            return;
+        }
+    };
 
     if followups.remove_voice_participants {
         release_media_subscribe_leases_for_user(state, removed_presence.user_id).await;

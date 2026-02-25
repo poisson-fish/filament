@@ -139,7 +139,8 @@ async fn guild_broadcast_delivers_once_per_connection_and_skips_other_guilds() {
     )
     .await;
 
-    let event = gateway_events::presence_update("g-main", UserId::new(), "online");
+    let event = gateway_events::try_presence_update("g-main", UserId::new(), "online")
+        .expect("presence_update should serialize");
     broadcast_guild_event(&state, "g-main", &event).await;
 
     let first = rx_target.recv().await.expect("guild event");
