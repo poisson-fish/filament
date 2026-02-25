@@ -48,6 +48,7 @@ pub(crate) fn voice_sync_reject_reason(outcome: &VoiceSyncDispatchOutcome) -> Op
 mod tests {
     use super::{dispatch_voice_sync_event, voice_sync_reject_reason};
     use crate::server::gateway_events;
+    use crate::server::metrics::metrics_state;
     use crate::server::realtime::voice_presence::VoiceSyncDispatchOutcome;
 
     #[test]
@@ -106,6 +107,43 @@ mod tests {
             outcome,
             VoiceSyncDispatchOutcome::DroppedOversized
         ));
+    }
+
+    #[test]
+    fn oversized_voice_sync_rejection_is_counted_as_drop() {
+        let before = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .expect("gateway dropped metrics mutex should not be poisoned")
+            .get(&(
+                String::from("connection"),
+                String::from(gateway_events::VOICE_PARTICIPANT_SYNC_EVENT),
+                String::from("oversized_outbound"),
+            ))
+            .copied()
+            .unwrap_or(0);
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
+        let event = gateway_events::try_voice_participant_sync("g-1", "c-1", Vec::new(), 10)
+            .expect("voice_participant_sync event should serialize");
+
+        let outcome = dispatch_voice_sync_event(&tx, event, 3);
+
+        assert!(matches!(
+            outcome,
+            VoiceSyncDispatchOutcome::DroppedOversized
+        ));
+        let after = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .expect("gateway dropped metrics mutex should not be poisoned")
+            .get(&(
+                String::from("connection"),
+                String::from(gateway_events::VOICE_PARTICIPANT_SYNC_EVENT),
+                String::from("oversized_outbound"),
+            ))
+            .copied()
+            .unwrap_or(0);
+        assert!(after > before);
     }
 
     #[test]

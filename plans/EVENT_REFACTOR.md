@@ -100,13 +100,13 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 Make event emission fail-fast and enforce outbound size limits universally.
 
 ### Completion Status
-`IN PROGRESS`
+`DONE`
 
 ### Tasks
 - [x] Replace fallback event serialization paths with explicit `Result` handling.
 - [x] Add outbound payload size guard before enqueue/fanout.
 - [x] Add metric labels for outbound rejection reasons (`oversized_outbound`, `serialize_error`).
-- [ ] Ensure dropped/rejected emits are observable but never panic the server.
+- [x] Ensure dropped/rejected emits are observable but never panic the server.
 
 ### Tentative File Touch List
 - `apps/filament-server/src/server/auth.rs` (remove fallback-to-`ready` behavior for outbound event building)
@@ -118,7 +118,7 @@ Make event emission fail-fast and enforce outbound size limits universally.
 - `apps/filament-server/src/server/metrics.rs`
 
 ### Tests
-- [ ] Unit tests for outbound size rejection.
+- [x] Unit tests for outbound size rejection.
 - [x] Integration test that oversized outbound payload is dropped and counted.
 - [x] Regression test proving normal payloads still fan out.
 
@@ -168,6 +168,7 @@ Make event emission fail-fast and enforce outbound size limits universally.
 - 2026-02-25 (Slice 43): Hardened shared channel fanout reject observability by adding structured warning logs in `dispatch_gateway_payload` for `oversized_outbound`, `closed`, and `full_queue` drop paths while preserving existing fail-closed prune/slow-consumer behavior and metric labels. Added focused unit coverage asserting closed/full rejection counters are recorded under stable reason labels in `filament_gateway_events_dropped_total`.
 - 2026-02-25 (Slice 44): Hardened remaining non-shared fanout reject observability by adding structured warning logs to user and guild dispatch paths for `oversized_outbound`, `closed`, and `full_queue`, while preserving existing bounded-queue pruning and slow-consumer eviction behavior. Added focused unit tests in `fanout_user` and `fanout_guild` asserting drop reason metrics increment correctly under concurrent test execution (delta-based assertions with unique event types).
 - 2026-02-25 (Slice 45): Hardened subscribe-ack reject observability by adding structured warning logs for connection-scope `subscribed` enqueue rejections (`full_queue`, `closed`, `oversized_outbound`) in `execute_subscribe_command`, while preserving existing fail-closed disconnect/error behavior and drop metrics. Added focused unit tests for stable subscribe-ack reject reason mapping used by logging.
+- 2026-02-25 (Slice 46): Added focused unit observability coverage for connection-scope oversized snapshot rejects by asserting `filament_gateway_events_dropped_total{scope=\"connection\",event_type in {\"presence_sync\",\"voice_participant_sync\"},reason=\"oversized_outbound\"}` increments in `dispatch_presence_sync_event` and `dispatch_voice_sync_event` oversized paths. This closes the remaining outbound-size unit-test checkbox and completes Phase 1’s final observability/non-panic hardening task.
 
 ### Exit Criteria
 - Outbound and inbound both enforce size caps.
