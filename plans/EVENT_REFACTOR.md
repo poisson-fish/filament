@@ -184,7 +184,7 @@ Remove O(N) guild prefix scans and use explicit indices for routing.
 `IN PROGRESS`
 
 ### Tasks
-- [ ] Introduce indexed subscription registry:
+- [x] Introduce indexed subscription registry:
   - channel key -> listeners
   - guild id -> connection ids
   - user id -> connection ids (verify this remains authoritative)
@@ -209,6 +209,7 @@ Remove O(N) guild prefix scans and use explicit indices for routing.
 ### Progress Notes
 - 2026-02-25 (Slice 1): Introduced explicit realtime subscription index storage in `RealtimeRegistry` (`guild_connections` and `user_connections`) while preserving the existing channel-key subscription map and current fanout behavior. Wired index maintenance into connection lifecycle/subscription paths: user index now records each connection at gateway connect, guild index now records connection ids on subscribe key insert (parsing `guild_id` from `guild:channel` keys), and both indexes are pruned on disconnect alongside existing subscription cleanup. Added focused unit coverage for index access, subscription key parsing, and index prune semantics without changing protocol/event shapes or existing limits/rate caps.
 - 2026-02-25 (Slice 2): Refactored guild fanout dispatch to use direct `guild_id -> connection_ids` index lookup plus `connection_senders`, removing the O(N) subscription-key prefix scan path. `broadcast_guild_event` now dispatches through guild/user indices under existing outbound size caps and drop metrics; closed/full/missing senders are pruned from the guild index while preserving slow-consumer signaling and reject observability labels. Added focused guild fanout unit coverage for delivery parity, closed/full pruning, oversized rejection, and a large-index regression (`2,048` non-target guild entries) validating targeted non-scan behavior.
+- 2026-02-25 (Slice 3): Made user fanout target resolution index-based by switching `broadcast_user_event` from `connection_presence` scans to authoritative `user_connections` lookups via `fanout_user_targets::connection_ids_for_user`. Updated target-resolution unit tests to validate `UserConnectionIndex` behavior directly, preserving existing user fanout dispatch semantics (dedup via set membership, slow-consumer close signaling, and outbound size/drop handling) with no protocol changes.
 
 ### Exit Criteria
 - Guild broadcast complexity is index-based.

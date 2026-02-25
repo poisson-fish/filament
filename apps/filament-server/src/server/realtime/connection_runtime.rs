@@ -101,8 +101,8 @@ fn presence_event_scope(event_type: &'static str) -> &'static str {
 #[allow(dead_code)]
 pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, event: &GatewayEvent) {
     let connection_ids = {
-        let presence = state.realtime_registry.connection_presence().read().await;
-        connection_ids_for_user(&presence, user_id)
+        let user_connections = state.realtime_registry.user_connections().read().await;
+        connection_ids_for_user(&user_connections, user_id)
     };
     if should_skip_user_broadcast(&connection_ids) {
         return;
