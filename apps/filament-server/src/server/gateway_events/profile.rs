@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::{envelope::build_event, GatewayEvent};
+use super::{envelope::try_build_event, GatewayEvent};
 
 pub(crate) const PROFILE_UPDATE_EVENT: &str = "profile_update";
 pub(crate) const PROFILE_AVATAR_UPDATE_EVENT: &str = "profile_avatar_update";
@@ -29,14 +29,14 @@ struct ProfileAvatarUpdatePayload<'a> {
     updated_at_unix: i64,
 }
 
-pub(crate) fn profile_update(
+pub(crate) fn try_profile_update(
     user_id: &str,
     username: Option<&str>,
     about_markdown: Option<&str>,
     about_markdown_tokens: Option<&[filament_core::MarkdownToken]>,
     updated_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         PROFILE_UPDATE_EVENT,
         ProfileUpdatePayload {
             user_id,
@@ -50,12 +50,12 @@ pub(crate) fn profile_update(
     )
 }
 
-pub(crate) fn profile_avatar_update(
+pub(crate) fn try_profile_avatar_update(
     user_id: &str,
     avatar_version: i64,
     updated_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         PROFILE_AVATAR_UPDATE_EVENT,
         ProfileAvatarUpdatePayload {
             user_id,
@@ -82,22 +82,28 @@ mod tests {
 
     #[test]
     fn profile_update_event_emits_profile_fields() {
-        let payload = parse_payload(&profile_update(
-            "user-1",
-            Some("alice"),
-            Some("about"),
-            Some(&[MarkdownToken::Text {
-                text: String::from("about"),
-            }]),
-            44,
-        ));
+        let payload = parse_payload(
+            &try_profile_update(
+                "user-1",
+                Some("alice"),
+                Some("about"),
+                Some(&[MarkdownToken::Text {
+                    text: String::from("about"),
+                }]),
+                44,
+            )
+            .expect("profile_update should serialize"),
+        );
         assert_eq!(payload["user_id"], Value::from("user-1"));
         assert_eq!(payload["updated_fields"]["username"], Value::from("alice"));
     }
 
     #[test]
     fn profile_avatar_update_event_emits_avatar_version() {
-        let payload = parse_payload(&profile_avatar_update("user-1", 3, 55));
+        let payload = parse_payload(
+            &try_profile_avatar_update("user-1", 3, 55)
+                .expect("profile_avatar_update should serialize"),
+        );
         assert_eq!(payload["avatar_version"], Value::from(3));
         assert_eq!(payload["updated_at_unix"], Value::from(55));
     }

@@ -21,6 +21,7 @@ use crate::server::{
     },
     errors::AuthFailure,
     gateway_events,
+    metrics::record_gateway_event_dropped,
     realtime::broadcast_user_event,
     types::{UpdateProfileRequest, UserPath, UserProfileResponse},
 };
@@ -543,13 +544,20 @@ async fn broadcast_profile_update(
     about_markdown_tokens: Option<&[filament_core::MarkdownToken]>,
 ) -> Result<(), AuthFailure> {
     let updated_at_unix = now_unix();
-    let event = gateway_events::profile_update(
+    let Ok(event) = gateway_events::try_profile_update(
         &response.user_id,
         username,
         about_markdown,
         about_markdown_tokens,
         updated_at_unix,
-    );
+    ) else {
+        record_gateway_event_dropped(
+            "user",
+            gateway_events::PROFILE_UPDATE_EVENT,
+            "serialize_error",
+        );
+        return Ok(());
+    };
     broadcast_user_event(state, actor_user_id, &event).await;
 
     for observer in profile_observer_user_ids(state, actor_user_id).await? {
@@ -564,11 +572,18 @@ async fn broadcast_profile_avatar_update(
     response: &UserProfileResponse,
 ) -> Result<(), AuthFailure> {
     let updated_at_unix = now_unix();
-    let event = gateway_events::profile_avatar_update(
+    let Ok(event) = gateway_events::try_profile_avatar_update(
         &response.user_id,
         response.avatar_version,
         updated_at_unix,
-    );
+    ) else {
+        record_gateway_event_dropped(
+            "user",
+            gateway_events::PROFILE_AVATAR_UPDATE_EVENT,
+            "serialize_error",
+        );
+        return Ok(());
+    };
     broadcast_user_event(state, actor_user_id, &event).await;
 
     for observer in profile_observer_user_ids(state, actor_user_id).await? {

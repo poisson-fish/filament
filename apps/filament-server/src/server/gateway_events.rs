@@ -65,7 +65,10 @@ pub(crate) use presence_voice::{
     VOICE_PARTICIPANT_JOIN_EVENT, VOICE_PARTICIPANT_LEAVE_EVENT, VOICE_PARTICIPANT_UPDATE_EVENT,
     VOICE_STREAM_PUBLISH_EVENT, VOICE_STREAM_UNPUBLISH_EVENT,
 };
-pub(crate) use profile::{profile_avatar_update, profile_update};
+pub(crate) use profile::{
+    try_profile_avatar_update, try_profile_update, PROFILE_AVATAR_UPDATE_EVENT,
+    PROFILE_UPDATE_EVENT,
+};
 pub(crate) use workspace::{
     workspace_channel_override_update, workspace_channel_permission_override_update,
     workspace_channel_permission_override_update_legacy, workspace_channel_role_override_update,
@@ -481,22 +484,27 @@ mod tests {
         );
         assert!(!contains_ip_field(&workspace_ip_ban_payload));
 
-        let profile_update_payload = parse_event(&profile_update(
-            &user_id.to_string(),
-            Some("alice"),
-            Some("about"),
-            Some(&[MarkdownToken::Text {
-                text: String::from("about"),
-            }]),
-            26,
-        ));
+        let profile_update_payload = parse_event(
+            &try_profile_update(
+                &user_id.to_string(),
+                Some("alice"),
+                Some("about"),
+                Some(&[MarkdownToken::Text {
+                    text: String::from("about"),
+                }]),
+                26,
+            )
+            .expect("profile_update should serialize"),
+        );
         assert_eq!(
             profile_update_payload["updated_fields"]["username"],
             Value::from("alice")
         );
 
-        let profile_avatar_payload =
-            parse_event(&profile_avatar_update(&user_id.to_string(), 3, 27));
+        let profile_avatar_payload = parse_event(
+            &try_profile_avatar_update(&user_id.to_string(), 3, 27)
+                .expect("profile_avatar_update should serialize"),
+        );
         assert_eq!(profile_avatar_payload["avatar_version"], Value::from(3));
 
         let friend_request_create_payload = parse_event(&friend_request_create(
