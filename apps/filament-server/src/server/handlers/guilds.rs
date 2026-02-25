@@ -1742,7 +1742,16 @@ pub(crate) async fn update_guild_role(
     } else {
         None
     };
-    let event = gateway_events::workspace_role_update(
+    let response = GuildRoleResponse {
+        role_id: role_id.clone(),
+        name: next_name,
+        position: current.position,
+        is_system: current.is_system,
+        permissions: crate::server::db::permission_list_from_set(next_permissions),
+        color_hex: next_color_hex,
+    };
+
+    let event = match gateway_events::try_workspace_role_update(
         &path.guild_id,
         &role_id,
         payload.name.as_deref(),
@@ -1750,17 +1759,25 @@ pub(crate) async fn update_guild_role(
         event_color_hex,
         updated_at_unix,
         Some(auth.user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_role_update.serialize_failed",
+                event_type = gateway_events::WORKSPACE_ROLE_UPDATE_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::WORKSPACE_ROLE_UPDATE_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(response));
+        }
+    };
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
-    Ok(Json(GuildRoleResponse {
-        role_id: role_id.clone(),
-        name: next_name,
-        position: current.position,
-        is_system: current.is_system,
-        permissions: crate::server::db::permission_list_from_set(next_permissions),
-        color_hex: next_color_hex,
-    }))
+    Ok(Json(response))
 }
 
 pub(crate) async fn delete_guild_role(

@@ -338,6 +338,7 @@ pub(crate) fn try_workspace_role_create(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn workspace_role_update(
     guild_id: &str,
     role_id: &str,
@@ -348,6 +349,31 @@ pub(crate) fn workspace_role_update(
     actor_user_id: Option<UserId>,
 ) -> GatewayEvent {
     build_event(
+        WORKSPACE_ROLE_UPDATE_EVENT,
+        WorkspaceRoleUpdatePayload {
+            guild_id: guild_id.to_owned(),
+            role_id: role_id.to_owned(),
+            updated_fields: WorkspaceRoleUpdateFieldsPayload {
+                name: name.map(ToOwned::to_owned),
+                permissions,
+                color_hex,
+            },
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn try_workspace_role_update(
+    guild_id: &str,
+    role_id: &str,
+    name: Option<&str>,
+    permissions: Option<Vec<filament_core::Permission>>,
+    color_hex: Option<Option<String>>,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_ROLE_UPDATE_EVENT,
         WorkspaceRoleUpdatePayload {
             guild_id: guild_id.to_owned(),
@@ -605,15 +631,10 @@ mod tests {
 
     #[test]
     fn workspace_role_update_event_serializes_nullable_color_field() {
-        let payload = parse_payload(&workspace_role_update(
-            "guild-1",
-            "role-1",
-            None,
-            None,
-            Some(None),
-            42,
-            None,
-        ));
+        let payload = parse_payload(
+            &try_workspace_role_update("guild-1", "role-1", None, None, Some(None), 42, None)
+                .expect("workspace_role_update should serialize"),
+        );
         assert!(payload["updated_fields"]["color_hex"].is_null());
     }
 
