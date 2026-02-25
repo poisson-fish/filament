@@ -32,11 +32,22 @@ pub(crate) fn dispatch_presence_sync_event(
     outcome
 }
 
+pub(crate) fn presence_sync_reject_reason(
+    outcome: &PresenceSyncDispatchOutcome,
+) -> Option<&'static str> {
+    match outcome {
+        PresenceSyncDispatchOutcome::Emitted => None,
+        PresenceSyncDispatchOutcome::DroppedClosed => Some("closed"),
+        PresenceSyncDispatchOutcome::DroppedFull => Some("full_queue"),
+        PresenceSyncDispatchOutcome::DroppedOversized => Some("oversized_outbound"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
-    use super::dispatch_presence_sync_event;
+    use super::{dispatch_presence_sync_event, presence_sync_reject_reason};
     use crate::server::gateway_events;
     use crate::server::realtime::presence_subscribe::PresenceSyncDispatchOutcome;
 
@@ -96,5 +107,25 @@ mod tests {
             outcome,
             PresenceSyncDispatchOutcome::DroppedOversized
         ));
+    }
+
+    #[test]
+    fn presence_sync_reject_reason_maps_dispatch_outcomes() {
+        assert_eq!(
+            presence_sync_reject_reason(&PresenceSyncDispatchOutcome::Emitted),
+            None
+        );
+        assert_eq!(
+            presence_sync_reject_reason(&PresenceSyncDispatchOutcome::DroppedClosed),
+            Some("closed")
+        );
+        assert_eq!(
+            presence_sync_reject_reason(&PresenceSyncDispatchOutcome::DroppedFull),
+            Some("full_queue")
+        );
+        assert_eq!(
+            presence_sync_reject_reason(&PresenceSyncDispatchOutcome::DroppedOversized),
+            Some("oversized_outbound")
+        );
     }
 }

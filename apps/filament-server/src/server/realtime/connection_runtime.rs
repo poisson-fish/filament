@@ -26,7 +26,7 @@ use super::{
     presence_disconnect::compute_disconnect_presence_outcome,
     presence_subscribe::apply_presence_subscribe,
     presence_subscribe_events::build_presence_subscribe_events,
-    presence_sync_dispatch::dispatch_presence_sync_event,
+    presence_sync_dispatch::{dispatch_presence_sync_event, presence_sync_reject_reason},
     subscription_insert::insert_connection_subscription,
     voice_cleanup_dispatch::{
         broadcast_disconnected_user_voice_removals, broadcast_expired_voice_removals,
@@ -37,7 +37,7 @@ use super::{
     voice_registration_events::plan_voice_registration_events,
     voice_registry::update_channel_user_voice_participant_audio_state,
     voice_subscribe_sync::try_build_voice_subscribe_sync_event,
-    voice_sync_dispatch::dispatch_voice_sync_event,
+    voice_sync_dispatch::{dispatch_voice_sync_event, voice_sync_reject_reason},
 };
 
 async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
@@ -305,11 +305,20 @@ pub(crate) async fn handle_voice_subscribe(
             return;
         }
     };
-    dispatch_voice_sync_event(
+    let outcome = dispatch_voice_sync_event(
         outbound_tx,
         sync_event,
         state.runtime.max_gateway_event_bytes,
     );
+    if let Some(reason) = voice_sync_reject_reason(&outcome) {
+        tracing::warn!(
+            event = "gateway.voice_subscribe.enqueue_rejected",
+            guild_id,
+            channel_id,
+            event_type = gateway_events::VOICE_PARTICIPANT_SYNC_EVENT,
+            reject_reason = reason
+        );
+    }
 }
 
 async fn remove_disconnected_user_voice_participants(
@@ -354,11 +363,21 @@ pub(crate) async fn handle_presence_subscribe(
             return;
         }
     };
-    dispatch_presence_sync_event(
+    let outcome = dispatch_presence_sync_event(
         outbound_tx,
         events.snapshot,
         state.runtime.max_gateway_event_bytes,
     );
+    if let Some(reason) = presence_sync_reject_reason(&outcome) {
+        tracing::warn!(
+            event = "gateway.presence_subscribe.enqueue_rejected",
+            connection_id = %connection_id,
+            user_id = %user_id,
+            guild_id,
+            event_type = gateway_events::PRESENCE_SYNC_EVENT,
+            reject_reason = reason
+        );
+    }
 
     if let Some(update) = events.online_update {
         broadcast_guild_event(state, guild_id, &update).await;

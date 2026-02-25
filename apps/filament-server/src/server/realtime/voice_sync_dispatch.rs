@@ -35,9 +35,18 @@ pub(crate) fn dispatch_voice_sync_event(
     outcome
 }
 
+pub(crate) fn voice_sync_reject_reason(outcome: &VoiceSyncDispatchOutcome) -> Option<&'static str> {
+    match outcome {
+        VoiceSyncDispatchOutcome::EmittedAndRepaired => None,
+        VoiceSyncDispatchOutcome::DroppedClosed => Some("closed"),
+        VoiceSyncDispatchOutcome::DroppedFull => Some("full_queue"),
+        VoiceSyncDispatchOutcome::DroppedOversized => Some("oversized_outbound"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::dispatch_voice_sync_event;
+    use super::{dispatch_voice_sync_event, voice_sync_reject_reason};
     use crate::server::gateway_events;
     use crate::server::realtime::voice_presence::VoiceSyncDispatchOutcome;
 
@@ -97,5 +106,25 @@ mod tests {
             outcome,
             VoiceSyncDispatchOutcome::DroppedOversized
         ));
+    }
+
+    #[test]
+    fn voice_sync_reject_reason_maps_dispatch_outcomes() {
+        assert_eq!(
+            voice_sync_reject_reason(&VoiceSyncDispatchOutcome::EmittedAndRepaired),
+            None
+        );
+        assert_eq!(
+            voice_sync_reject_reason(&VoiceSyncDispatchOutcome::DroppedClosed),
+            Some("closed")
+        );
+        assert_eq!(
+            voice_sync_reject_reason(&VoiceSyncDispatchOutcome::DroppedFull),
+            Some("full_queue")
+        );
+        assert_eq!(
+            voice_sync_reject_reason(&VoiceSyncDispatchOutcome::DroppedOversized),
+            Some("oversized_outbound")
+        );
     }
 }
