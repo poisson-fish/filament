@@ -295,6 +295,7 @@ Reduce fragmentation and simplify navigation while preserving testable seams.
 
 ### Progress Notes
 - 2026-02-25 (Slice 1): Started Phase 4 module consolidation by collapsing the tiny ingress parse-classification wrapper module into `realtime/ingress_command.rs` and removing `realtime/ingress_parse.rs`. `realtime.rs` now imports ingress parse classification directly from `ingress_command`, preserving parse-rejected/unknown-event classification behavior and disconnect/metric semantics while reducing ingress module count by one.
+- 2026-02-25 (Slice 2): Continued Phase 4 wrapper consolidation by folding `realtime/presence_disconnect_events.rs` into `realtime/connection_disconnect_followups.rs` and removing the standalone module from `realtime.rs`. Disconnect followup planning still builds offline `presence_update` events via the same fallible `try_presence_update` path (same fail-closed serialize-error propagation and followup semantics), while reducing one-function presence module fragmentation and keeping focused followup/offline event tests in place.
 
 ### Exit Criteria
 - Lower module count and shallower call graph.
