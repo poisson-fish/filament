@@ -16,6 +16,7 @@ import type {
 
 type WorkspaceChannelOverrideGatewayEventType =
   | "workspace_channel_override_update"
+  | "workspace_channel_role_override_update"
   | "workspace_channel_permission_override_update";
 
 export type WorkspaceChannelOverrideGatewayEvent =
@@ -182,6 +183,7 @@ export function isWorkspaceChannelOverrideGatewayEventType(
 ): value is WorkspaceChannelOverrideGatewayEventType {
   return (
     value === "workspace_channel_override_update"
+    || value === "workspace_channel_role_override_update"
     || value === "workspace_channel_permission_override_update"
   );
 }

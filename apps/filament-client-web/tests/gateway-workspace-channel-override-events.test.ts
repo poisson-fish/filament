@@ -11,6 +11,12 @@ describe("decodeWorkspaceChannelOverrideGatewayEvent", () => {
     expect(isWorkspaceChannelOverrideGatewayEventType("workspace_channel_override_update")).toBe(
       true,
     );
+    expect(
+      isWorkspaceChannelOverrideGatewayEventType("workspace_channel_role_override_update"),
+    ).toBe(true);
+    expect(
+      isWorkspaceChannelOverrideGatewayEventType("workspace_channel_permission_override_update"),
+    ).toBe(true);
     expect(isWorkspaceChannelOverrideGatewayEventType("workspace_update")).toBe(false);
   });
 
