@@ -10,6 +10,7 @@ use crate::server::{
     },
     errors::AuthFailure,
     gateway_events::{self, GatewayEvent},
+    metrics::record_gateway_event_dropped,
 };
 
 use super::{
@@ -82,6 +83,14 @@ pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, even
 
 fn should_skip_user_broadcast(connection_ids: &[Uuid]) -> bool {
     connection_ids.is_empty()
+}
+
+fn presence_event_scope(event_type: &'static str) -> &'static str {
+    if event_type == gateway_events::PRESENCE_UPDATE_EVENT {
+        "guild"
+    } else {
+        "connection"
+    }
 }
 
 #[allow(dead_code)]
@@ -253,7 +262,25 @@ pub(crate) async fn handle_presence_subscribe(
         return;
     };
 
-    let events = build_presence_subscribe_events(guild_id, user_id, result);
+    let events = match build_presence_subscribe_events(guild_id, user_id, result) {
+        Ok(events) => events,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.presence_subscribe.serialize_failed",
+                connection_id = %connection_id,
+                user_id = %user_id,
+                guild_id,
+                event_type = error.event_type,
+                error = %error.source
+            );
+            record_gateway_event_dropped(
+                presence_event_scope(error.event_type),
+                error.event_type,
+                "serialize_error",
+            );
+            return;
+        }
+    };
     dispatch_presence_sync_event(outbound_tx, events.snapshot);
 
     if let Some(update) = events.online_update {
@@ -307,7 +334,8 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
 mod tests {
     use uuid::Uuid;
 
-    use super::should_skip_user_broadcast;
+    use super::{presence_event_scope, should_skip_user_broadcast};
+    use crate::server::gateway_events;
 
     #[test]
     fn should_skip_user_broadcast_when_no_targets() {
@@ -317,5 +345,17 @@ mod tests {
     #[test]
     fn should_not_skip_user_broadcast_when_targets_exist() {
         assert!(!should_skip_user_broadcast(&[Uuid::new_v4()]));
+    }
+
+    #[test]
+    fn presence_event_scope_matches_fanout_target() {
+        assert_eq!(
+            presence_event_scope(gateway_events::PRESENCE_SYNC_EVENT),
+            "connection"
+        );
+        assert_eq!(
+            presence_event_scope(gateway_events::PRESENCE_UPDATE_EVENT),
+            "guild"
+        );
     }
 }

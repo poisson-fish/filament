@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use filament_core::UserId;
 use serde::Serialize;
 
-use super::{envelope::build_event, GatewayEvent};
+use super::{
+    envelope::{build_event, try_build_event},
+    GatewayEvent,
+};
 use crate::server::core::VoiceStreamKind;
 
 pub(crate) const PRESENCE_SYNC_EVENT: &str = "presence_sync";
@@ -141,8 +144,18 @@ impl From<VoiceParticipantSnapshot> for VoiceParticipantPayload {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn presence_sync(guild_id: &str, user_ids: HashSet<String>) -> GatewayEvent {
-    build_event(
+    try_presence_sync(guild_id, user_ids).unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {PRESENCE_SYNC_EVENT}: {error}")
+    })
+}
+
+pub(crate) fn try_presence_sync(
+    guild_id: &str,
+    user_ids: HashSet<String>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         PRESENCE_SYNC_EVENT,
         PresenceSyncPayload {
             guild_id: guild_id.to_owned(),
@@ -156,7 +169,17 @@ pub(crate) fn presence_update(
     user_id: UserId,
     status: &'static str,
 ) -> GatewayEvent {
-    build_event(
+    try_presence_update(guild_id, user_id, status).unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {PRESENCE_UPDATE_EVENT}: {error}")
+    })
+}
+
+pub(crate) fn try_presence_update(
+    guild_id: &str,
+    user_id: UserId,
+    status: &'static str,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         PRESENCE_UPDATE_EVENT,
         PresenceUpdatePayload {
             guild_id: guild_id.to_owned(),

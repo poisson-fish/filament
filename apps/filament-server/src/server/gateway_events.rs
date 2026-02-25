@@ -55,10 +55,13 @@ pub(crate) use message_channel::{
     channel_create, message_delete, message_reaction, try_message_create, try_message_update,
     MESSAGE_CREATE_EVENT, MESSAGE_UPDATE_EVENT,
 };
+#[cfg(test)]
+pub(crate) use presence_voice::presence_sync;
 pub(crate) use presence_voice::{
-    presence_sync, presence_update, voice_participant_join, voice_participant_leave,
-    voice_participant_sync, voice_participant_update, voice_stream_publish, voice_stream_unpublish,
-    VoiceParticipantSnapshot,
+    presence_update, try_presence_sync, try_presence_update, voice_participant_join,
+    voice_participant_leave, voice_participant_sync, voice_participant_update,
+    voice_stream_publish, voice_stream_unpublish, VoiceParticipantSnapshot, PRESENCE_SYNC_EVENT,
+    PRESENCE_UPDATE_EVENT,
 };
 #[cfg(test)]
 pub(crate) use presence_voice::{
@@ -181,12 +184,15 @@ mod tests {
             Value::from("general")
         );
 
-        let presence_sync_payload = parse_event(&presence_sync(
-            "g",
-            [user_id.to_string(), friend_id.to_string()]
-                .into_iter()
-                .collect(),
-        ));
+        let presence_sync_payload = parse_event(
+            &try_presence_sync(
+                "g",
+                [user_id.to_string(), friend_id.to_string()]
+                    .into_iter()
+                    .collect(),
+            )
+            .expect("presence_sync should serialize"),
+        );
         assert!(presence_sync_payload["user_ids"].is_array());
 
         let presence_update_payload = parse_event(&presence_update("g", user_id, "online"));

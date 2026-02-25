@@ -10,21 +10,40 @@ pub(crate) struct PresenceSubscribeEvents {
     pub(crate) online_update: Option<GatewayEvent>,
 }
 
+#[derive(Debug)]
+pub(crate) struct PresenceSubscribeEventBuildError {
+    pub(crate) event_type: &'static str,
+    pub(crate) source: anyhow::Error,
+}
+
 pub(crate) fn build_presence_subscribe_events(
     guild_id: &str,
     user_id: UserId,
     result: PresenceSubscribeResult,
-) -> PresenceSubscribeEvents {
-    let snapshot = gateway_events::presence_sync(guild_id, result.snapshot_user_ids);
+) -> Result<PresenceSubscribeEvents, PresenceSubscribeEventBuildError> {
+    let snapshot =
+        gateway_events::try_presence_sync(guild_id, result.snapshot_user_ids).map_err(|error| {
+            PresenceSubscribeEventBuildError {
+                event_type: gateway_events::PRESENCE_SYNC_EVENT,
+                source: error,
+            }
+        })?;
     let online_update = if result.became_online {
-        Some(gateway_events::presence_update(guild_id, user_id, "online"))
+        Some(
+            gateway_events::try_presence_update(guild_id, user_id, "online").map_err(|error| {
+                PresenceSubscribeEventBuildError {
+                    event_type: gateway_events::PRESENCE_UPDATE_EVENT,
+                    source: error,
+                }
+            })?,
+        )
     } else {
         None
     };
-    PresenceSubscribeEvents {
+    Ok(PresenceSubscribeEvents {
         snapshot,
         online_update,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -44,7 +63,8 @@ mod tests {
             became_online: true,
         };
 
-        let events = build_presence_subscribe_events("g1", user_id, result);
+        let events =
+            build_presence_subscribe_events("g1", user_id, result).expect("events should build");
 
         assert_eq!(events.snapshot.event_type, "presence_sync");
         assert!(events.online_update.is_some());
@@ -63,7 +83,8 @@ mod tests {
             became_online: false,
         };
 
-        let events = build_presence_subscribe_events("g1", user_id, result);
+        let events =
+            build_presence_subscribe_events("g1", user_id, result).expect("events should build");
 
         assert_eq!(events.snapshot.event_type, "presence_sync");
         assert!(events.online_update.is_none());
@@ -83,7 +104,8 @@ mod tests {
             became_online: false,
         };
 
-        let events = build_presence_subscribe_events("g1", UserId::new(), result);
+        let events = build_presence_subscribe_events("g1", UserId::new(), result)
+            .expect("events should build");
 
         for user_id in expected {
             assert!(events.snapshot.payload.contains(&user_id));
