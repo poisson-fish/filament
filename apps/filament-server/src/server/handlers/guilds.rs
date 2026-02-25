@@ -37,6 +37,7 @@ use crate::server::{
     },
     errors::AuthFailure,
     gateway_events,
+    metrics::record_gateway_event_dropped,
     permissions::{
         DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, MAX_GUILD_ROLES, MAX_MEMBER_ROLE_ASSIGNMENTS,
         MAX_ROLE_NAME_CHARS, SYSTEM_ROLE_EVERYONE, SYSTEM_ROLE_WORKSPACE_OWNER,
@@ -320,13 +321,28 @@ pub(crate) async fn update_guild(
     };
 
     if changed_name.is_some() || changed_visibility.is_some() {
-        let event = gateway_events::workspace_update(
+        let event = match gateway_events::try_workspace_update(
             &path.guild_id,
             changed_name.as_deref(),
             changed_visibility,
             updated_at_unix,
             Some(auth.user_id),
-        );
+        ) {
+            Ok(event) => event,
+            Err(error) => {
+                tracing::warn!(
+                    event = "gateway.workspace_update.serialize_failed",
+                    event_type = gateway_events::WORKSPACE_UPDATE_EVENT,
+                    error = %error,
+                );
+                record_gateway_event_dropped(
+                    "guild",
+                    gateway_events::WORKSPACE_UPDATE_EVENT,
+                    "serialize_error",
+                );
+                return Ok(Json(response));
+            }
+        };
         broadcast_guild_event(&state, &path.guild_id, &event).await;
     }
 

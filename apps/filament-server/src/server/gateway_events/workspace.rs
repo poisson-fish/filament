@@ -1,7 +1,10 @@
 use filament_core::UserId;
 use serde::Serialize;
 
-use super::{envelope::build_event, GatewayEvent};
+use super::{
+    envelope::{build_event, try_build_event},
+    GatewayEvent,
+};
 use crate::server::core::GuildVisibility;
 
 pub(crate) const WORKSPACE_UPDATE_EVENT: &str = "workspace_update";
@@ -215,14 +218,14 @@ struct WorkspaceIpBanSyncSummaryPayload {
     changed_count: usize,
 }
 
-pub(crate) fn workspace_update(
+pub(crate) fn try_workspace_update(
     guild_id: &str,
     name: Option<&str>,
     visibility: Option<GuildVisibility>,
     updated_at_unix: i64,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_UPDATE_EVENT,
         WorkspaceUpdatePayload {
             guild_id,
@@ -559,13 +562,16 @@ mod tests {
 
     #[test]
     fn workspace_update_event_emits_updated_fields() {
-        let payload = parse_payload(&workspace_update(
-            "guild-1",
-            Some("Guild Prime"),
-            Some(GuildVisibility::Public),
-            123,
-            None,
-        ));
+        let payload = parse_payload(
+            &try_workspace_update(
+                "guild-1",
+                Some("Guild Prime"),
+                Some(GuildVisibility::Public),
+                123,
+                None,
+            )
+            .expect("workspace_update should serialize"),
+        );
         assert_eq!(
             payload["updated_fields"]["name"],
             Value::from("Guild Prime")

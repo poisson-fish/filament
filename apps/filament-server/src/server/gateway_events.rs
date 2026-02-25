@@ -81,12 +81,13 @@ pub(crate) use profile::{
     PROFILE_UPDATE_EVENT,
 };
 pub(crate) use workspace::{
-    workspace_channel_override_update, workspace_channel_permission_override_update,
+    try_workspace_update, workspace_channel_override_update,
+    workspace_channel_permission_override_update,
     workspace_channel_permission_override_update_legacy, workspace_channel_role_override_update,
     workspace_ip_ban_sync, workspace_member_add, workspace_member_ban, workspace_member_remove,
     workspace_member_update, workspace_role_assignment_add, workspace_role_assignment_remove,
     workspace_role_create, workspace_role_delete, workspace_role_reorder, workspace_role_update,
-    workspace_update, WorkspaceChannelOverrideFieldsPayload,
+    WorkspaceChannelOverrideFieldsPayload, WORKSPACE_UPDATE_EVENT,
 };
 #[cfg(test)]
 mod tests {
@@ -304,13 +305,16 @@ mod tests {
             Value::from("screen_share")
         );
 
-        let workspace_update_payload = parse_event(&workspace_update(
-            "g",
-            Some("Guild Prime"),
-            Some(crate::server::core::GuildVisibility::Public),
-            13,
-            Some(user_id),
-        ));
+        let workspace_update_payload = parse_event(
+            &try_workspace_update(
+                "g",
+                Some("Guild Prime"),
+                Some(crate::server::core::GuildVisibility::Public),
+                13,
+                Some(user_id),
+            )
+            .expect("workspace_update should serialize"),
+        );
         assert_eq!(
             workspace_update_payload["updated_fields"]["name"],
             Value::from("Guild Prime")
