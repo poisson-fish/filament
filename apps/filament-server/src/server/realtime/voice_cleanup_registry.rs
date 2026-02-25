@@ -4,7 +4,7 @@ use crate::server::{
     core::VoiceParticipantsByChannel,
     gateway_events::GatewayEvent,
     realtime::{
-        voice_cleanup_events::plan_voice_removal_broadcasts,
+        voice_cleanup_events::{plan_voice_removal_broadcasts, VoiceCleanupEventBuildError},
         voice_registry::{
             remove_channel_user_voice_participant_removal, remove_user_voice_participant_removals,
             take_expired_voice_participant_removals,
@@ -15,7 +15,7 @@ use crate::server::{
 pub(crate) fn expired_voice_removal_broadcasts(
     voice: &mut VoiceParticipantsByChannel,
     now_unix: i64,
-) -> Vec<(String, GatewayEvent)> {
+) -> Result<Vec<(String, GatewayEvent)>, VoiceCleanupEventBuildError> {
     let removed = take_expired_voice_participant_removals(voice, now_unix);
     plan_voice_removal_broadcasts(removed, now_unix)
 }
@@ -24,7 +24,7 @@ pub(crate) fn disconnected_user_voice_removal_broadcasts(
     voice: &mut VoiceParticipantsByChannel,
     user_id: UserId,
     disconnected_at_unix: i64,
-) -> Vec<(String, GatewayEvent)> {
+) -> Result<Vec<(String, GatewayEvent)>, VoiceCleanupEventBuildError> {
     let removed = remove_user_voice_participant_removals(voice, user_id);
     plan_voice_removal_broadcasts(removed, disconnected_at_unix)
 }
@@ -35,7 +35,7 @@ pub(crate) fn channel_user_voice_removal_broadcasts(
     channel_id: &str,
     user_id: UserId,
     removed_at_unix: i64,
-) -> Vec<(String, GatewayEvent)> {
+) -> Result<Vec<(String, GatewayEvent)>, VoiceCleanupEventBuildError> {
     let removed =
         remove_channel_user_voice_participant_removal(voice, guild_id, channel_id, user_id)
             .into_iter()
@@ -82,7 +82,8 @@ mod tests {
             HashMap::from([(expiring_user, participant(expiring_user, "alice", 5))]),
         )]);
 
-        let planned = expired_voice_removal_broadcasts(&mut voice, 10);
+        let planned = expired_voice_removal_broadcasts(&mut voice, 10)
+            .expect("expired cleanup events should serialize");
 
         assert_eq!(planned.len(), 2);
         assert_eq!(planned[0].0, "g1:c1");
@@ -100,7 +101,8 @@ mod tests {
             HashMap::from([(expiring_user, participant(expiring_user, "alice", 5))]),
         )]);
 
-        let planned = expired_voice_removal_broadcasts(&mut voice, 10);
+        let planned = expired_voice_removal_broadcasts(&mut voice, 10)
+            .expect("expired cleanup events should serialize");
 
         assert!(planned.is_empty());
         assert!(voice.is_empty());
@@ -118,7 +120,8 @@ mod tests {
             ]),
         )]);
 
-        let planned = disconnected_user_voice_removal_broadcasts(&mut voice, target_user, 10);
+        let planned = disconnected_user_voice_removal_broadcasts(&mut voice, target_user, 10)
+            .expect("disconnected cleanup events should serialize");
 
         assert_eq!(planned.len(), 2);
         assert_eq!(planned[0].0, "g1:c1");
@@ -137,7 +140,8 @@ mod tests {
             HashMap::from([(target_user, participant(target_user, "alice", 30))]),
         )]);
 
-        let planned = disconnected_user_voice_removal_broadcasts(&mut voice, target_user, 10);
+        let planned = disconnected_user_voice_removal_broadcasts(&mut voice, target_user, 10)
+            .expect("disconnected cleanup events should serialize");
 
         assert!(planned.is_empty());
         assert!(voice.is_empty());
@@ -162,7 +166,8 @@ mod tests {
         ]);
 
         let planned =
-            channel_user_voice_removal_broadcasts(&mut voice, "g2", "c1", target_user, 10);
+            channel_user_voice_removal_broadcasts(&mut voice, "g2", "c1", target_user, 10)
+                .expect("channel-scoped cleanup events should serialize");
 
         assert_eq!(planned.len(), 2);
         assert_eq!(planned[0].0, "g2:c1");

@@ -179,7 +179,7 @@ pub(crate) async fn remove_voice_participant_for_channel(
     channel_id: &str,
     removed_at_unix: i64,
 ) {
-    let planned = {
+    let planned = match {
         let mut voice = state.realtime_registry.voice_participants().write().await;
         channel_user_voice_removal_broadcasts(
             &mut voice,
@@ -188,6 +188,20 @@ pub(crate) async fn remove_voice_participant_for_channel(
             user_id,
             removed_at_unix,
         )
+    } {
+        Ok(planned) => planned,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.voice_cleanup.serialize_failed",
+                guild_id,
+                channel_id,
+                user_id = %user_id,
+                event_type = error.event_type,
+                error = %error.source,
+            );
+            record_gateway_event_dropped("channel", error.event_type, "serialize_error");
+            return;
+        }
     };
 
     for (channel_subscription_key, event) in planned {

@@ -5,37 +5,53 @@ use crate::server::{
     realtime::voice_registry::VoiceParticipantRemoval,
 };
 
+#[derive(Debug)]
+pub(crate) struct VoiceCleanupEventBuildError {
+    pub(crate) event_type: &'static str,
+    pub(crate) source: anyhow::Error,
+}
+
 pub(crate) fn build_voice_removal_events(
     guild_id: &str,
     channel_id: &str,
     participant: &VoiceParticipant,
     event_at_unix: i64,
-) -> Vec<GatewayEvent> {
+) -> Result<Vec<GatewayEvent>, VoiceCleanupEventBuildError> {
     let mut events = Vec::with_capacity(participant.published_streams.len().saturating_add(1));
     for stream in &participant.published_streams {
-        events.push(gateway_events::voice_stream_unpublish(
+        let event = gateway_events::try_voice_stream_unpublish(
             guild_id,
             channel_id,
             participant.user_id,
             &participant.identity,
             *stream,
             event_at_unix,
-        ));
+        )
+        .map_err(|source| VoiceCleanupEventBuildError {
+            event_type: gateway_events::VOICE_STREAM_UNPUBLISH_EVENT,
+            source,
+        })?;
+        events.push(event);
     }
-    events.push(gateway_events::voice_participant_leave(
+    let event = gateway_events::try_voice_participant_leave(
         guild_id,
         channel_id,
         participant.user_id,
         &participant.identity,
         event_at_unix,
-    ));
-    events
+    )
+    .map_err(|source| VoiceCleanupEventBuildError {
+        event_type: gateway_events::VOICE_PARTICIPANT_LEAVE_EVENT,
+        source,
+    })?;
+    events.push(event);
+    Ok(events)
 }
 
 pub(crate) fn plan_voice_removal_broadcasts(
     removals: Vec<VoiceParticipantRemoval>,
     event_at_unix: i64,
-) -> Vec<(String, GatewayEvent)> {
+) -> Result<Vec<(String, GatewayEvent)>, VoiceCleanupEventBuildError> {
     let mut planned = Vec::new();
     for removed in removals {
         let subscription_key = channel_key(&removed.guild_id, &removed.channel_id);
@@ -44,11 +60,11 @@ pub(crate) fn plan_voice_removal_broadcasts(
             &removed.channel_id,
             &removed.participant,
             event_at_unix,
-        ) {
+        )? {
             planned.push((subscription_key.clone(), event));
         }
     }
-    planned
+    Ok(planned)
 }
 
 #[cfg(test)]
@@ -87,7 +103,8 @@ mod tests {
             VoiceStreamKind::Camera,
         ]));
 
-        let events = build_voice_removal_events("g1", "c1", &participant, 10);
+        let events = build_voice_removal_events("g1", "c1", &participant, 10)
+            .expect("voice removal events should serialize");
 
         assert_eq!(events.len(), 3);
         let unpublish_count = events
@@ -105,7 +122,8 @@ mod tests {
     fn includes_only_leave_when_no_published_streams() {
         let participant = participant(HashSet::new());
 
-        let events = build_voice_removal_events("g1", "c1", &participant, 10);
+        let events = build_voice_removal_events("g1", "c1", &participant, 10)
+            .expect("voice removal events should serialize");
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, VOICE_PARTICIPANT_LEAVE_EVENT);
@@ -124,7 +142,8 @@ mod tests {
             participant: participant(HashSet::new()),
         };
 
-        let planned = plan_voice_removal_broadcasts(vec![first, second], 12);
+        let planned = plan_voice_removal_broadcasts(vec![first, second], 12)
+            .expect("voice removal broadcasts should serialize");
 
         assert_eq!(planned.len(), 3);
         assert_eq!(planned[0].0, "g1:c1");

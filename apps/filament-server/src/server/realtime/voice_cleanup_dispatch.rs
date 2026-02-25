@@ -1,6 +1,6 @@
 use filament_core::UserId;
 
-use crate::server::core::AppState;
+use crate::server::{core::AppState, metrics::record_gateway_event_dropped};
 
 use super::{
     broadcast_channel_event,
@@ -10,9 +10,20 @@ use super::{
 };
 
 pub(crate) async fn broadcast_expired_voice_removals(state: &AppState, now_unix: i64) {
-    let planned = {
+    let planned = match {
         let mut voice = state.realtime_registry.voice_participants().write().await;
         expired_voice_removal_broadcasts(&mut voice, now_unix)
+    } {
+        Ok(planned) => planned,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.voice_cleanup.serialize_failed",
+                event_type = error.event_type,
+                error = %error.source
+            );
+            record_gateway_event_dropped("channel", error.event_type, "serialize_error");
+            return;
+        }
     };
 
     for (channel_subscription_key, event) in planned {
@@ -25,9 +36,21 @@ pub(crate) async fn broadcast_disconnected_user_voice_removals(
     user_id: UserId,
     disconnected_at_unix: i64,
 ) {
-    let planned = {
+    let planned = match {
         let mut voice = state.realtime_registry.voice_participants().write().await;
         disconnected_user_voice_removal_broadcasts(&mut voice, user_id, disconnected_at_unix)
+    } {
+        Ok(planned) => planned,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.voice_cleanup.serialize_failed",
+                user_id = %user_id,
+                event_type = error.event_type,
+                error = %error.source
+            );
+            record_gateway_event_dropped("channel", error.event_type, "serialize_error");
+            return;
+        }
     };
 
     for (channel_subscription_key, event) in planned {

@@ -236,6 +236,7 @@ pub(crate) fn try_voice_participant_join(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn voice_participant_leave(
     guild_id: &str,
     channel_id: &str,
@@ -313,6 +314,7 @@ pub(crate) fn try_voice_stream_publish(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn voice_stream_unpublish(
     guild_id: &str,
     channel_id: &str,
