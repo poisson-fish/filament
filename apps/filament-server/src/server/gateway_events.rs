@@ -52,7 +52,8 @@ pub(crate) use friend::{
     friend_remove, friend_request_create, friend_request_delete, friend_request_update,
 };
 pub(crate) use message_channel::{
-    channel_create, message_create, message_delete, message_reaction, message_update,
+    channel_create, message_delete, message_reaction, message_update, try_message_create,
+    MESSAGE_CREATE_EVENT,
 };
 pub(crate) use presence_voice::{
     presence_sync, presence_update, voice_participant_join, voice_participant_leave,
@@ -139,7 +140,8 @@ mod tests {
         assert_eq!(subscribed_payload["guild_id"], Value::from("g"));
         assert_eq!(subscribed_payload["channel_id"], Value::from("c"));
 
-        let message_create_payload = parse_event(&message_create(&message));
+        let message_create_payload =
+            parse_event(&try_message_create(&message).expect("message_create should serialize"));
         assert_eq!(
             message_create_payload["message_id"],
             Value::from(message.message_id)

@@ -3,6 +3,7 @@ use crate::server::{
     core::{AppState, SearchOperation},
     errors::AuthFailure,
     gateway_events,
+    metrics::record_gateway_event_dropped,
     types::MessageResponse,
 };
 
@@ -18,8 +19,20 @@ pub(crate) async fn emit_message_create_and_index(
     channel_id: &str,
     response: &MessageResponse,
 ) -> Result<(), AuthFailure> {
-    let event = gateway_events::message_create(response);
-    broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+    if let Ok(event) = gateway_events::try_message_create(response) {
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+    } else {
+        record_gateway_event_dropped(
+            "channel",
+            gateway_events::MESSAGE_CREATE_EVENT,
+            "serialize_error",
+        );
+        tracing::warn!(
+            guild_id,
+            channel_id,
+            "dropped message_create outbound event because serialization failed"
+        );
+    }
     enqueue_search_operation(state, message_upsert_operation(response), true).await
 }
 

@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use super::{envelope::build_event, GatewayEvent};
+use super::{
+    envelope::{build_event, try_build_event},
+    GatewayEvent,
+};
 use crate::server::types::{ChannelResponse, MessageResponse};
 
 pub(crate) const MESSAGE_CREATE_EVENT: &str = "message_create";
@@ -54,8 +57,8 @@ struct ChannelCreateChannelPayload<'a> {
     kind: filament_core::ChannelKind,
 }
 
-pub(crate) fn message_create(message: &MessageResponse) -> GatewayEvent {
-    build_event(MESSAGE_CREATE_EVENT, message)
+pub(crate) fn try_message_create(message: &MessageResponse) -> anyhow::Result<GatewayEvent> {
+    try_build_event(MESSAGE_CREATE_EVENT, message)
 }
 
 pub(crate) fn message_reaction(
@@ -163,7 +166,8 @@ mod tests {
             created_at_unix: 1,
         };
 
-        let payload = parse_payload(&message_create(&message));
+        let payload =
+            parse_payload(&try_message_create(&message).expect("message_create should serialize"));
         assert_eq!(payload["message_id"], Value::from("msg-1"));
     }
 

@@ -7,21 +7,28 @@ pub(crate) struct GatewayEvent {
     pub(crate) payload: String,
 }
 
-pub(super) fn build_event<T: Serialize>(event_type: &'static str, payload: T) -> GatewayEvent {
-    GatewayEvent {
+pub(super) fn try_build_event<T: Serialize>(
+    event_type: &'static str,
+    payload: T,
+) -> anyhow::Result<GatewayEvent> {
+    Ok(GatewayEvent {
         event_type,
-        payload: outbound_event(event_type, payload).unwrap_or_else(|error| {
-            panic!("failed to build outbound gateway event {event_type}: {error}")
-        }),
-    }
+        payload: outbound_event(event_type, payload)?,
+    })
+}
+
+pub(super) fn build_event<T: Serialize>(event_type: &'static str, payload: T) -> GatewayEvent {
+    try_build_event(event_type, payload).unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {event_type}: {error}")
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use serde::Serialize;
+    use serde::{ser, Serialize, Serializer};
     use serde_json::Value;
 
-    use super::{build_event, GatewayEvent};
+    use super::{build_event, try_build_event, GatewayEvent};
 
     #[derive(Serialize)]
     struct EnvelopeTestPayload<'a> {
@@ -39,5 +46,30 @@ mod tests {
         assert_eq!(envelope["v"], Value::from(1));
         assert_eq!(envelope["t"], Value::from("test_event"));
         assert_eq!(envelope["d"]["value"], Value::from("ok"));
+    }
+
+    struct AlwaysFailPayload;
+
+    impl Serialize for AlwaysFailPayload {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            Err(ser::Error::custom("forced serialize failure"))
+        }
+    }
+
+    #[test]
+    fn try_build_event_rejects_unserializable_payload() {
+        let result = try_build_event("test_event", AlwaysFailPayload);
+        let Err(error) = result else {
+            panic!("serialization failure must be rejected");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("failed to serialize outbound event payload test_event"),
+            "unexpected error: {error}"
+        );
     }
 }
