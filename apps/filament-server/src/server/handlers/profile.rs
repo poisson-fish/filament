@@ -21,7 +21,7 @@ use crate::server::{
     },
     errors::AuthFailure,
     gateway_events,
-    metrics::record_gateway_event_dropped,
+    metrics::record_gateway_event_serialize_error,
     realtime::broadcast_user_event,
     types::{UpdateProfileRequest, UserPath, UserProfileResponse},
 };
@@ -551,10 +551,10 @@ async fn broadcast_profile_update(
         about_markdown_tokens,
         updated_at_unix,
     ) else {
-        record_gateway_event_dropped(
-            "user",
+        record_profile_emit_serialize_drop(
             gateway_events::PROFILE_UPDATE_EVENT,
-            "serialize_error",
+            &response.user_id,
+            "gateway.profile_update.serialize_failed",
         );
         return Ok(());
     };
@@ -577,10 +577,10 @@ async fn broadcast_profile_avatar_update(
         response.avatar_version,
         updated_at_unix,
     ) else {
-        record_gateway_event_dropped(
-            "user",
+        record_profile_emit_serialize_drop(
             gateway_events::PROFILE_AVATAR_UPDATE_EVENT,
-            "serialize_error",
+            &response.user_id,
+            "gateway.profile_avatar_update.serialize_failed",
         );
         return Ok(());
     };
@@ -590,6 +590,20 @@ async fn broadcast_profile_avatar_update(
         broadcast_user_event(state, observer, &event).await;
     }
     Ok(())
+}
+
+fn record_profile_emit_serialize_drop(
+    event_type: &'static str,
+    user_id: &str,
+    log_event: &'static str,
+) {
+    tracing::warn!(
+        event = log_event,
+        event_type,
+        user_id,
+        "dropped profile outbound event because serialization failed"
+    );
+    record_gateway_event_serialize_error("user", event_type);
 }
 
 async fn profile_observer_user_ids(
@@ -676,4 +690,42 @@ async fn profile_observer_user_ids(
     }
 
     Ok(unique.into_iter().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_profile_emit_serialize_drop;
+    use crate::server::{
+        gateway_events,
+        metrics::{metrics_state, GATEWAY_DROP_REASON_SERIALIZE_ERROR},
+    };
+
+    #[test]
+    fn profile_emit_serialize_drop_records_canonical_drop_reason() {
+        let key = (
+            String::from("user"),
+            String::from(gateway_events::PROFILE_UPDATE_EVENT),
+            String::from(GATEWAY_DROP_REASON_SERIALIZE_ERROR),
+        );
+        let before = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .ok()
+            .and_then(|counters| counters.get(&key).copied())
+            .unwrap_or(0);
+
+        record_profile_emit_serialize_drop(
+            gateway_events::PROFILE_UPDATE_EVENT,
+            "user-test",
+            "gateway.profile_update.serialize_failed",
+        );
+
+        let after = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .ok()
+            .and_then(|counters| counters.get(&key).copied())
+            .unwrap_or(0);
+        assert!(after >= before.saturating_add(1));
+    }
 }
