@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use super::*;
 
@@ -76,6 +79,76 @@ fn parse_client_override_migration_decode_set(client_source: &str) -> BTreeSet<S
         }
     }
     decoded
+}
+
+fn parse_quoted_tokens(source: &str) -> BTreeSet<String> {
+    let mut tokens = BTreeSet::new();
+    let mut quote: Option<char> = None;
+    let mut start = 0usize;
+    for (index, ch) in source.char_indices() {
+        match quote {
+            None => {
+                if ch == '"' || ch == '\'' {
+                    quote = Some(ch);
+                    start = index + ch.len_utf8();
+                }
+            }
+            Some(active_quote) => {
+                if ch == active_quote {
+                    let token = &source[start..index];
+                    tokens.insert(token.to_owned());
+                    quote = None;
+                }
+            }
+        }
+    }
+    tokens
+}
+
+fn collect_gateway_client_sources(root: &Path, collected: &mut Vec<PathBuf>) {
+    let entries = std::fs::read_dir(root)
+        .unwrap_or_else(|error| panic!("failed to read directory {}: {error}", root.display()));
+
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!("failed to enumerate directory {}: {error}", root.display());
+        });
+        let path = entry.path();
+        if path.is_dir() {
+            collect_gateway_client_sources(&path, collected);
+            continue;
+        }
+
+        let file_name = path.file_name().and_then(|name| name.to_str());
+        if let Some(file_name) = file_name {
+            if file_name.starts_with("gateway-")
+                && Path::new(file_name)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ts"))
+            {
+                collected.push(path);
+            }
+        }
+    }
+}
+
+fn parse_client_gateway_event_literal_set() -> BTreeSet<String> {
+    let mut paths = Vec::new();
+    let root = repo_root().join("apps/filament-client-web/src/lib");
+    collect_gateway_client_sources(&root, &mut paths);
+
+    let mut tokens = BTreeSet::new();
+    for path in paths {
+        let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "failed to read client gateway source {}: {error}",
+                path.display()
+            );
+        });
+        tokens.extend(parse_quoted_tokens(&source));
+    }
+
+    tokens
 }
 
 #[test]
@@ -168,5 +241,45 @@ fn override_migration_event_set_is_aligned_across_server_docs_and_client_decoder
     assert_eq!(
         client_decode_set, required_override_events,
         "client override decoder event set drifted"
+    );
+}
+
+#[test]
+fn emitted_domain_event_manifest_is_aligned_across_server_docs_and_client() {
+    let excluded_connection_events =
+        BTreeSet::from([String::from("ready"), String::from("subscribed")]);
+
+    let emitted_domain_events: BTreeSet<String> = gateway_events::EMITTED_EVENT_TYPES
+        .iter()
+        .filter(|event| !excluded_connection_events.contains(**event))
+        .map(|event| (*event).to_owned())
+        .collect();
+    assert!(
+        !emitted_domain_events.is_empty(),
+        "emitted domain event set unexpectedly empty"
+    );
+
+    let documented = parse_documented_gateway_events(&read_doc("docs/GATEWAY_EVENTS.md"));
+    let undocumented: Vec<String> = emitted_domain_events
+        .iter()
+        .filter(|event| !documented.contains(*event))
+        .cloned()
+        .collect();
+    assert!(
+        undocumented.is_empty(),
+        "domain events present in emitted manifest but missing in docs/GATEWAY_EVENTS.md: {}",
+        undocumented.join(", ")
+    );
+
+    let client_literals = parse_client_gateway_event_literal_set();
+    let undecodable_by_client: Vec<String> = emitted_domain_events
+        .iter()
+        .filter(|event| !client_literals.contains(*event))
+        .cloned()
+        .collect();
+    assert!(
+        undecodable_by_client.is_empty(),
+        "domain events present in emitted manifest but absent from client gateway decoder/dispatch source: {}",
+        undecodable_by_client.join(", ")
     );
 }

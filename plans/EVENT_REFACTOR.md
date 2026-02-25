@@ -86,6 +86,7 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 - 2026-02-25 (Slice 5): Updated gateway/protocol docs to explicitly codify the override migration split (`workspace_channel_override_update` legacy role shape, plus explicit role and permission override event names) and added a server contract test to fail if docs drift on this migration contract.
 - 2026-02-25 (Slice 6): Added a focused cross-contract parity test for the override migration event trio to enforce alignment across server emitted manifest, `docs/GATEWAY_EVENTS.md`, and client decoder event-type acceptance; also fixed drift by including `workspace_channel_role_override_update` in server emitted manifest and client override type guard.
 - 2026-02-25 (Slice 7): Added focused web decoder tests for all override migration event variants (`workspace_channel_override_update`, `workspace_channel_role_override_update`, `workspace_channel_permission_override_update`) and explicit fail-closed cases for malformed role and permission payloads.
+- 2026-02-25 (Slice 8): Added a server contract test enforcing cross-contract parity for all emitted domain event names across `EMITTED_EVENT_TYPES`, `docs/GATEWAY_EVENTS.md`, and web gateway source literals (`apps/filament-client-web/src/lib/gateway-*.ts`), intentionally excluding connection-only `ready`/`subscribed` pending a dedicated client subscribe-ack contract slice.
 
 ### Exit Criteria
 - One logical event name maps to one payload shape.
