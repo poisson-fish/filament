@@ -16,6 +16,10 @@ All gateway events are encoded as a strict JSON envelope:
 - Unknown or unsupported versions are rejected before event routing.
 - Unknown top-level fields are rejected (`deny_unknown_fields`).
 - Unknown event types are rejected at the boundary.
+- Event contract migration rule:
+  - one event name maps to one payload shape.
+  - during migration windows, legacy and explicit replacement event names may be dual-emitted.
+  - clients must accept both names during the migration window and ignore unknown future types.
 
 ## Size Limits
 - Maximum decoded event size: `64 KiB`.

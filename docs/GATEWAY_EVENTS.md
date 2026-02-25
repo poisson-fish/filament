@@ -336,7 +336,23 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_channel_override_update` (planned)
+#### `workspace_channel_override_update` (legacy migration event)
+- Scope: guild
+- Visibility: authorized guild members
+- Minimum payload:
+  - `guild_id`
+  - `channel_id`
+  - `role`
+  - `updated_fields`
+  - `updated_at_unix`
+- Optional:
+  - `actor_user_id`
+- Migration notes:
+  - This legacy event name is retained only for mixed-version rollout safety.
+  - Payload shape is role-based only (`role` + `updated_fields`).
+  - New producers should emit the explicit events below.
+
+#### `workspace_channel_role_override_update`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -348,7 +364,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_channel_permission_override_update` (planned)
+#### `workspace_channel_permission_override_update`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:

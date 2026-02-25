@@ -96,3 +96,25 @@ fn gateway_docs_cover_emitted_event_manifest() {
         undocumented.join(", ")
     );
 }
+
+#[test]
+fn gateway_docs_capture_override_migration_contract() {
+    let gateway_doc = read_doc("docs/GATEWAY_EVENTS.md");
+    let documented = parse_documented_gateway_events(&gateway_doc);
+
+    for required_event in [
+        "workspace_channel_override_update",
+        "workspace_channel_role_override_update",
+        "workspace_channel_permission_override_update",
+    ] {
+        assert!(
+            documented.contains(required_event),
+            "docs/GATEWAY_EVENTS.md must document override migration event `{required_event}`"
+        );
+    }
+
+    assert!(
+        gateway_doc.contains("legacy migration event"),
+        "docs/GATEWAY_EVENTS.md must mark the legacy override event as migration-only"
+    );
+}

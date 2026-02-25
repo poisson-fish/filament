@@ -59,7 +59,7 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 - [x] Keep backward compatibility strategy explicit:
   - temporary dual-emit window or controlled migration flag
   - client accepts both during migration window
-- [ ] Update `docs/GATEWAY_EVENTS.md` and protocol contract notes.
+- [x] Update `docs/GATEWAY_EVENTS.md` and protocol contract notes.
 - [ ] Add cross-contract tests proving server emit set, docs set, and client decode set stay aligned.
 
 ### Tentative File Touch List
@@ -83,6 +83,7 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 - 2026-02-25 (Slice 2): Updated web workspace gateway decoding/dispatch to accept migration dual-emit payloads under both event names, normalize principal/target payloads to `workspace_channel_permission_override_update`, and add targeted dispatch tests for legacy role payload, legacy permission payload, and explicit permission event type.
 - 2026-02-25 (Slice 3): Added gateway network integration coverage for the permission-override REST route to assert dual-emit behavior (`workspace_channel_override_update` legacy + `workspace_channel_permission_override_update` explicit) and payload shape consistency for target-based overrides.
 - 2026-02-25 (Slice 4): Added explicit server event type `workspace_channel_role_override_update` for role override payload shape, kept temporary dual-emit from the role-override route (`workspace_channel_override_update` legacy + explicit role event), and extended builder/network tests for role override migration behavior.
+- 2026-02-25 (Slice 5): Updated gateway/protocol docs to explicitly codify the override migration split (`workspace_channel_override_update` legacy role shape, plus explicit role and permission override event names) and added a server contract test to fail if docs drift on this migration contract.
 
 ### Exit Criteria
 - One logical event name maps to one payload shape.
