@@ -90,13 +90,14 @@ pub(crate) use workspace::workspace_role_reorder;
 #[cfg(test)]
 pub(crate) use workspace::workspace_role_update;
 pub(crate) use workspace::{
+    try_workspace_member_add, try_workspace_member_ban, try_workspace_member_remove,
     try_workspace_member_update, try_workspace_role_assignment_add,
     try_workspace_role_assignment_remove, try_workspace_role_create, try_workspace_role_delete,
     try_workspace_role_reorder, try_workspace_role_update, try_workspace_update,
     workspace_channel_override_update, workspace_channel_permission_override_update,
     workspace_channel_permission_override_update_legacy, workspace_channel_role_override_update,
-    workspace_ip_ban_sync, workspace_member_add, workspace_member_ban, workspace_member_remove,
-    WorkspaceChannelOverrideFieldsPayload, WORKSPACE_MEMBER_UPDATE_EVENT,
+    workspace_ip_ban_sync, WorkspaceChannelOverrideFieldsPayload, WORKSPACE_MEMBER_ADD_EVENT,
+    WORKSPACE_MEMBER_BAN_EVENT, WORKSPACE_MEMBER_REMOVE_EVENT, WORKSPACE_MEMBER_UPDATE_EVENT,
     WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT, WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT,
     WORKSPACE_ROLE_CREATE_EVENT, WORKSPACE_ROLE_DELETE_EVENT, WORKSPACE_ROLE_REORDER_EVENT,
     WORKSPACE_ROLE_UPDATE_EVENT, WORKSPACE_UPDATE_EVENT,
@@ -336,13 +337,10 @@ mod tests {
             Value::from("public")
         );
 
-        let workspace_member_add_payload = parse_event(&workspace_member_add(
-            "g",
-            friend_id,
-            Role::Member,
-            14,
-            Some(user_id),
-        ));
+        let workspace_member_add_payload = parse_event(
+            &try_workspace_member_add("g", friend_id, Role::Member, 14, Some(user_id))
+                .expect("workspace_member_add should serialize"),
+        );
         assert_eq!(workspace_member_add_payload["role"], Value::from("member"));
 
         let workspace_member_update_payload = parse_event(
@@ -354,20 +352,19 @@ mod tests {
             Value::from("moderator")
         );
 
-        let workspace_member_remove_payload = parse_event(&workspace_member_remove(
-            "g",
-            friend_id,
-            "kick",
-            16,
-            Some(user_id),
-        ));
+        let workspace_member_remove_payload = parse_event(
+            &try_workspace_member_remove("g", friend_id, "kick", 16, Some(user_id))
+                .expect("workspace_member_remove should serialize"),
+        );
         assert_eq!(
             workspace_member_remove_payload["reason"],
             Value::from("kick")
         );
 
-        let workspace_member_ban_payload =
-            parse_event(&workspace_member_ban("g", friend_id, 17, Some(user_id)));
+        let workspace_member_ban_payload = parse_event(
+            &try_workspace_member_ban("g", friend_id, 17, Some(user_id))
+                .expect("workspace_member_ban should serialize"),
+        );
         assert_eq!(
             workspace_member_ban_payload["banned_at_unix"],
             Value::from(17)

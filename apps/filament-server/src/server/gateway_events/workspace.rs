@@ -236,14 +236,14 @@ pub(crate) fn try_workspace_update(
     )
 }
 
-pub(crate) fn workspace_member_add(
+pub(crate) fn try_workspace_member_add(
     guild_id: &str,
     user_id: UserId,
     role: filament_core::Role,
     joined_at_unix: i64,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_MEMBER_ADD_EVENT,
         WorkspaceMemberAddPayload {
             guild_id: guild_id.to_owned(),
@@ -274,14 +274,14 @@ pub(crate) fn try_workspace_member_update(
     )
 }
 
-pub(crate) fn workspace_member_remove(
+pub(crate) fn try_workspace_member_remove(
     guild_id: &str,
     user_id: UserId,
     reason: &'static str,
     removed_at_unix: i64,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_MEMBER_REMOVE_EVENT,
         WorkspaceMemberRemovePayload {
             guild_id: guild_id.to_owned(),
@@ -293,13 +293,13 @@ pub(crate) fn workspace_member_remove(
     )
 }
 
-pub(crate) fn workspace_member_ban(
+pub(crate) fn try_workspace_member_ban(
     guild_id: &str,
     user_id: UserId,
     banned_at_unix: i64,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_MEMBER_BAN_EVENT,
         WorkspaceMemberBanPayload {
             guild_id: guild_id.to_owned(),

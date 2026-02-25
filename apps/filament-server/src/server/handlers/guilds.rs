@@ -3155,14 +3155,31 @@ pub(crate) async fn join_public_guild(
     }
     if outcome == DirectoryJoinOutcome::Accepted {
         let joined_at_unix = now_unix();
-        let event = gateway_events::workspace_member_add(
+        match gateway_events::try_workspace_member_add(
             &path.guild_id,
             auth.user_id,
             Role::Member,
             joined_at_unix,
             Some(auth.user_id),
-        );
-        broadcast_guild_event(&state, &path.guild_id, &event).await;
+        ) {
+            Ok(event) => {
+                broadcast_guild_event(&state, &path.guild_id, &event).await;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = "gateway.workspace_member_add.serialize_failed",
+                    event_type = gateway_events::WORKSPACE_MEMBER_ADD_EVENT,
+                    guild_id = %path.guild_id,
+                    user_id = %auth.user_id,
+                    error = %error,
+                );
+                record_gateway_event_dropped(
+                    "guild",
+                    gateway_events::WORKSPACE_MEMBER_ADD_EVENT,
+                    "serialize_error",
+                );
+            }
+        }
     }
     Ok(Json(DirectoryJoinResponse {
         guild_id: path.guild_id,
@@ -3415,14 +3432,31 @@ pub(crate) async fn add_member(
 
     if added {
         let joined_at_unix = now_unix();
-        let event = gateway_events::workspace_member_add(
+        match gateway_events::try_workspace_member_add(
             &path.guild_id,
             target_user_id,
             Role::Member,
             joined_at_unix,
             Some(auth.user_id),
-        );
-        broadcast_guild_event(&state, &path.guild_id, &event).await;
+        ) {
+            Ok(event) => {
+                broadcast_guild_event(&state, &path.guild_id, &event).await;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = "gateway.workspace_member_add.serialize_failed",
+                    event_type = gateway_events::WORKSPACE_MEMBER_ADD_EVENT,
+                    guild_id = %path.guild_id,
+                    user_id = %target_user_id,
+                    error = %error,
+                );
+                record_gateway_event_dropped(
+                    "guild",
+                    gateway_events::WORKSPACE_MEMBER_ADD_EVENT,
+                    "serialize_error",
+                );
+            }
+        }
     }
 
     Ok(Json(ModerationResponse { accepted: true }))
@@ -4027,13 +4061,30 @@ pub(crate) async fn kick_member(
     }
 
     let removed_at_unix = now_unix();
-    let event = gateway_events::workspace_member_remove(
+    let event = match gateway_events::try_workspace_member_remove(
         &path.guild_id,
         target_user_id,
         "kick",
         removed_at_unix,
         Some(auth.user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_member_remove.serialize_failed",
+                event_type = gateway_events::WORKSPACE_MEMBER_REMOVE_EVENT,
+                guild_id = %path.guild_id,
+                user_id = %target_user_id,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::WORKSPACE_MEMBER_REMOVE_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(ModerationResponse { accepted: true }));
+        }
+    };
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     remove_member_from_voice_channels(&state, &path.guild_id, target_user_id, removed_at_unix)
@@ -4133,20 +4184,54 @@ pub(crate) async fn ban_member(
         banned_at_unix,
     )
     .await?;
-    let ban_event = gateway_events::workspace_member_ban(
+    let ban_event = match gateway_events::try_workspace_member_ban(
         &path.guild_id,
         target_user_id,
         banned_at_unix,
         Some(auth.user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_member_ban.serialize_failed",
+                event_type = gateway_events::WORKSPACE_MEMBER_BAN_EVENT,
+                guild_id = %path.guild_id,
+                user_id = %target_user_id,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::WORKSPACE_MEMBER_BAN_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(ModerationResponse { accepted: true }));
+        }
+    };
     broadcast_guild_event(&state, &path.guild_id, &ban_event).await;
-    let remove_event = gateway_events::workspace_member_remove(
+    let remove_event = match gateway_events::try_workspace_member_remove(
         &path.guild_id,
         target_user_id,
         "ban",
         banned_at_unix,
         Some(auth.user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_member_remove.serialize_failed",
+                event_type = gateway_events::WORKSPACE_MEMBER_REMOVE_EVENT,
+                guild_id = %path.guild_id,
+                user_id = %target_user_id,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::WORKSPACE_MEMBER_REMOVE_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(ModerationResponse { accepted: true }));
+        }
+    };
     broadcast_guild_event(&state, &path.guild_id, &remove_event).await;
 
     remove_member_from_voice_channels(&state, &path.guild_id, target_user_id, banned_at_unix).await;
