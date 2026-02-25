@@ -1962,12 +1962,27 @@ pub(crate) async fn reorder_guild_roles(
     )
     .await?;
 
-    let event = gateway_events::workspace_role_reorder(
+    let event = match gateway_events::try_workspace_role_reorder(
         &path.guild_id,
         requested_ids.clone(),
         now_unix(),
         Some(auth.user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_role_reorder.serialize_failed",
+                event_type = gateway_events::WORKSPACE_ROLE_REORDER_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::WORKSPACE_ROLE_REORDER_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(ModerationResponse { accepted: true }));
+        }
+    };
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     Ok(Json(ModerationResponse { accepted: true }))

@@ -406,6 +406,7 @@ pub(crate) fn try_workspace_role_delete(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn workspace_role_reorder(
     guild_id: &str,
     role_ids: Vec<String>,
@@ -413,6 +414,23 @@ pub(crate) fn workspace_role_reorder(
     actor_user_id: Option<UserId>,
 ) -> GatewayEvent {
     build_event(
+        WORKSPACE_ROLE_REORDER_EVENT,
+        WorkspaceRoleReorderPayload {
+            guild_id: guild_id.to_owned(),
+            role_ids,
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
+pub(crate) fn try_workspace_role_reorder(
+    guild_id: &str,
+    role_ids: Vec<String>,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_ROLE_REORDER_EVENT,
         WorkspaceRoleReorderPayload {
             guild_id: guild_id.to_owned(),
@@ -646,6 +664,22 @@ mod tests {
         );
         assert_eq!(payload["role_id"], Value::from("role-1"));
         assert_eq!(payload["deleted_at_unix"], Value::from(77));
+    }
+
+    #[test]
+    fn workspace_role_reorder_event_emits_role_ids_and_timestamp() {
+        let payload = parse_payload(
+            &try_workspace_role_reorder(
+                "guild-1",
+                vec![String::from("role-2"), String::from("role-1")],
+                88,
+                None,
+            )
+            .expect("workspace_role_reorder should serialize"),
+        );
+        assert_eq!(payload["role_ids"][0], Value::from("role-2"));
+        assert_eq!(payload["role_ids"][1], Value::from("role-1"));
+        assert_eq!(payload["updated_at_unix"], Value::from(88));
     }
 
     #[test]

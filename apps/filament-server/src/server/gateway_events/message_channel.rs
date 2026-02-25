@@ -1,9 +1,6 @@
 use serde::Serialize;
 
-use super::{
-    envelope::try_build_event,
-    GatewayEvent,
-};
+use super::{envelope::try_build_event, GatewayEvent};
 use crate::server::types::{ChannelResponse, MessageResponse};
 
 pub(crate) const MESSAGE_CREATE_EVENT: &str = "message_create";

@@ -59,13 +59,13 @@ pub(crate) use friend::{
 };
 #[cfg(test)]
 pub(crate) use message_channel::channel_create;
+#[cfg(test)]
+pub(crate) use message_channel::message_reaction;
 pub(crate) use message_channel::{
     try_channel_create, try_message_create, try_message_delete, try_message_reaction,
     try_message_update, CHANNEL_CREATE_EVENT, MESSAGE_CREATE_EVENT, MESSAGE_DELETE_EVENT,
     MESSAGE_REACTION_EVENT, MESSAGE_UPDATE_EVENT,
 };
-#[cfg(test)]
-pub(crate) use message_channel::message_reaction;
 #[cfg(test)]
 pub(crate) use presence_voice::presence_sync;
 pub(crate) use presence_voice::{
@@ -86,16 +86,19 @@ pub(crate) use profile::{
     PROFILE_UPDATE_EVENT,
 };
 #[cfg(test)]
+pub(crate) use workspace::workspace_role_reorder;
+#[cfg(test)]
 pub(crate) use workspace::workspace_role_update;
 pub(crate) use workspace::{
-    try_workspace_role_create, try_workspace_role_delete, try_workspace_role_update,
-    try_workspace_update, workspace_channel_override_update,
+    try_workspace_role_create, try_workspace_role_delete, try_workspace_role_reorder,
+    try_workspace_role_update, try_workspace_update, workspace_channel_override_update,
     workspace_channel_permission_override_update,
     workspace_channel_permission_override_update_legacy, workspace_channel_role_override_update,
     workspace_ip_ban_sync, workspace_member_add, workspace_member_ban, workspace_member_remove,
     workspace_member_update, workspace_role_assignment_add, workspace_role_assignment_remove,
-    workspace_role_reorder, WorkspaceChannelOverrideFieldsPayload, WORKSPACE_ROLE_CREATE_EVENT,
-    WORKSPACE_ROLE_DELETE_EVENT, WORKSPACE_ROLE_UPDATE_EVENT, WORKSPACE_UPDATE_EVENT,
+    WorkspaceChannelOverrideFieldsPayload, WORKSPACE_ROLE_CREATE_EVENT,
+    WORKSPACE_ROLE_DELETE_EVENT, WORKSPACE_ROLE_REORDER_EVENT, WORKSPACE_ROLE_UPDATE_EVENT,
+    WORKSPACE_UPDATE_EVENT,
 };
 #[cfg(test)]
 mod tests {
