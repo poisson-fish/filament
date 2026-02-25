@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use tokio::sync::mpsc;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::server::metrics::{
@@ -17,6 +18,14 @@ pub(crate) fn dispatch_gateway_payload(
 ) -> usize {
     if payload.len() > max_payload_bytes {
         record_gateway_event_oversized_outbound(scope, event_type);
+        warn!(
+            event = "gateway.fanout_dispatch.oversized_outbound",
+            scope,
+            event_type,
+            payload_bytes = payload.len(),
+            max_payload_bytes,
+            "dropped outbound payload because it exceeds configured max size"
+        );
         return 0;
     }
 
@@ -29,10 +38,24 @@ pub(crate) fn dispatch_gateway_payload(
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 record_gateway_event_dropped(scope, event_type, "closed");
+                warn!(
+                    event = "gateway.fanout_dispatch.closed",
+                    scope,
+                    event_type,
+                    connection_id = %connection_id,
+                    "dropped outbound payload for closed websocket queue"
+                );
                 false
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 record_gateway_event_dropped(scope, event_type, "full_queue");
+                warn!(
+                    event = "gateway.fanout_dispatch.full_queue",
+                    scope,
+                    event_type,
+                    connection_id = %connection_id,
+                    "dropped outbound payload for full websocket queue"
+                );
                 slow_connections.push(*connection_id);
                 false
             }
@@ -153,5 +176,58 @@ mod tests {
             String::from(GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND),
         );
         assert_eq!(dropped.get(&key).copied(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn records_closed_and_full_queue_drop_reasons() {
+        if let Ok(mut counters) = metrics_state().gateway_events_dropped.lock() {
+            counters.clear();
+        }
+
+        let full_id = Uuid::new_v4();
+        let closed_id = Uuid::new_v4();
+        let event_type = "message_create_reason_test";
+        let scope = "channel_reason_test";
+
+        let (full_sender, mut full_receiver) = mpsc::channel::<String>(1);
+        full_sender
+            .try_send(String::from("occupied"))
+            .expect("queue should accept first message");
+        let (closed_sender, closed_receiver) = mpsc::channel::<String>(1);
+        drop(closed_receiver);
+
+        let mut listeners = HashMap::from([(full_id, full_sender), (closed_id, closed_sender)]);
+        let mut slow_connections = Vec::new();
+
+        let delivered = dispatch_gateway_payload(
+            &mut listeners,
+            "payload",
+            "payload".len(),
+            event_type,
+            scope,
+            &mut slow_connections,
+        );
+
+        assert_eq!(delivered, 0);
+        assert_eq!(slow_connections, vec![full_id]);
+        assert_eq!(full_receiver.recv().await.as_deref(), Some("occupied"));
+        assert!(listeners.is_empty());
+
+        let dropped = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .expect("gateway dropped metrics mutex should not be poisoned");
+        let closed_key = (
+            String::from(scope),
+            String::from(event_type),
+            String::from("closed"),
+        );
+        let full_key = (
+            String::from(scope),
+            String::from(event_type),
+            String::from("full_queue"),
+        );
+        assert_eq!(dropped.get(&closed_key).copied(), Some(1));
+        assert_eq!(dropped.get(&full_key).copied(), Some(1));
     }
 }
