@@ -12,6 +12,7 @@ use crate::server::{
     core::{AppState, FriendshipRequestRecord},
     errors::AuthFailure,
     gateway_events,
+    metrics::record_gateway_event_dropped,
     realtime::broadcast_user_event,
     types::{
         CreateFriendRequest, FriendListResponse, FriendPath, FriendRecordResponse,
@@ -143,14 +144,29 @@ pub(crate) async fn create_friend_request(
         recipient_user_id: recipient_id,
         created_at_unix,
     };
-    let event = gateway_events::friend_request_create(
+    let event = match gateway_events::try_friend_request_create(
         &response.request_id,
         &response.sender_user_id,
         &sender_username,
         &response.recipient_user_id,
         &recipient_username,
         response.created_at_unix,
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.friend_request_create.serialize_failed",
+                event_type = gateway_events::FRIEND_REQUEST_CREATE_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "user",
+                gateway_events::FRIEND_REQUEST_CREATE_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(response));
+        }
+    };
     broadcast_user_event(&state, auth.user_id, &event).await;
     broadcast_user_event(&state, recipient_user_id, &event).await;
 

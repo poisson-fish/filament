@@ -1,7 +1,10 @@
 use filament_core::UserId;
 use serde::Serialize;
 
-use super::{envelope::build_event, GatewayEvent};
+use super::{
+    envelope::{build_event, try_build_event},
+    GatewayEvent,
+};
 
 pub(crate) const FRIEND_REQUEST_CREATE_EVENT: &str = "friend_request_create";
 pub(crate) const FRIEND_REQUEST_UPDATE_EVENT: &str = "friend_request_update";
@@ -49,6 +52,7 @@ struct FriendRemovePayload<'a> {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn friend_request_create(
     request_id: &str,
     sender_user_id: &str,
@@ -57,7 +61,29 @@ pub(crate) fn friend_request_create(
     recipient_username: &str,
     created_at_unix: i64,
 ) -> GatewayEvent {
-    build_event(
+    try_friend_request_create(
+        request_id,
+        sender_user_id,
+        sender_username,
+        recipient_user_id,
+        recipient_username,
+        created_at_unix,
+    )
+    .unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {FRIEND_REQUEST_CREATE_EVENT}: {error}")
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_friend_request_create(
+    request_id: &str,
+    sender_user_id: &str,
+    sender_username: &str,
+    recipient_user_id: &str,
+    recipient_username: &str,
+    created_at_unix: i64,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_friend_request_create_event(
         FRIEND_REQUEST_CREATE_EVENT,
         FriendRequestCreatePayload {
             request_id,
@@ -68,6 +94,13 @@ pub(crate) fn friend_request_create(
             created_at_unix,
         },
     )
+}
+
+fn try_build_friend_request_create_event(
+    event_type: &'static str,
+    payload: FriendRequestCreatePayload<'_>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(event_type, payload)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -147,6 +180,36 @@ mod tests {
             "req-1", "user-1", "alice", "user-2", "bob", 77,
         ));
         assert_eq!(payload["recipient_username"], Value::from("bob"));
+    }
+
+    #[test]
+    fn try_friend_request_create_emits_recipient_username() {
+        let payload = parse_payload(
+            &try_friend_request_create("req-1", "user-1", "alice", "user-2", "bob", 77)
+                .expect("friend_request_create should serialize"),
+        );
+        assert_eq!(payload["recipient_username"], Value::from("bob"));
+    }
+
+    #[test]
+    fn try_friend_request_create_rejects_invalid_event_type() {
+        let Err(error) = try_build_friend_request_create_event(
+            "friend request create",
+            FriendRequestCreatePayload {
+                request_id: "req-1",
+                sender_user_id: "user-1",
+                sender_username: "alice",
+                recipient_user_id: "user-2",
+                recipient_username: "bob",
+                created_at_unix: 77,
+            },
+        ) else {
+            panic!("invalid event type should fail");
+        };
+        assert!(
+            error.to_string().contains("invalid outbound event type"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
