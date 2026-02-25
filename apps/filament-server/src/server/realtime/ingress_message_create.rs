@@ -30,7 +30,7 @@ pub(crate) async fn execute_message_create_command(
         auth,
         request.guild_id.as_str(),
         request.channel_id.as_str(),
-        request.content,
+        request.content.into_string(),
         request.attachment_ids.into_vec(),
     )
     .await

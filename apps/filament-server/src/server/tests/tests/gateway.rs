@@ -203,7 +203,10 @@ async fn user_broadcast_targets_only_requested_authenticated_user() {
         .user_connections()
         .write()
         .await
-        .insert(user_a, std::collections::HashSet::from([connection_a1, connection_a2]));
+        .insert(
+            user_a,
+            std::collections::HashSet::from([connection_a1, connection_a2]),
+        );
     state
         .realtime_registry
         .user_connections()
