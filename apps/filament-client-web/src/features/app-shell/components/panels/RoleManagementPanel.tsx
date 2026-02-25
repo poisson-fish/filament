@@ -224,7 +224,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const mutedTextClass = "m-0 text-[0.88rem] text-ink-2 leading-relaxed";
   
   // Right pane tab styles
-  const tabButtonClass = "px-[0.5rem] pb-[0.6rem] text-[0.96rem] font-medium transition-colors border-b-[2px] -mb-[1px]";
+  const tabButtonClass = "appearance-none bg-transparent rounded-none border-0 border-b-[2px] px-[0.5rem] pb-[0.6rem] text-[0.96rem] font-medium transition-colors -mb-[1px] cursor-pointer";
   const tabButtonActive = "border-brand text-ink-0";
   const tabButtonInactive = "border-transparent text-ink-2 hover:text-ink-1 hover:border-line-soft";
 
@@ -305,7 +305,8 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     }
     const current = selectedRoleId();
     if (!current || !roles.some((entry) => entry.roleId === current)) {
-      setSelectedRoleId(roles[0]!.roleId);
+      const firstCustomRole = roles.find((entry) => !entry.isSystem);
+      setSelectedRoleId((firstCustomRole ?? roles[0])!.roleId);
     }
   });
 
@@ -437,6 +438,23 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
       confirmLabel: "Delete role",
     });
   };
+  const onDeleteRoleFromList = (roleId: WorkspaceRoleId): void => {
+    if (!props.canManageWorkspaceRoles || !props.hasActiveWorkspace) {
+      return;
+    }
+    const role = hierarchyRoles().find((entry) => entry.roleId === roleId);
+    if (!role || role.isSystem) {
+      return;
+    }
+    setIsCreatingRole(false);
+    setSelectedRoleId(roleId);
+    setDangerModal({
+      operation: "delete_role",
+      title: "Delete role?",
+      message: `Role "${role.name}" will be permanently removed from this workspace. This cannot be undone.`,
+      confirmLabel: "Delete role",
+    });
+  };
 
   const moveRoleToTarget = (roleId: WorkspaceRoleId, targetRoleId: WorkspaceRoleId): void => {
     setReorderDraftRoleIds((current) => {
@@ -524,6 +542,24 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     setEditPermissions(role.permissions);
     setClientError("");
   };
+  const onSaveRoleNameOnly = async (): Promise<void> => {
+    const role = editableRole();
+    if (!role || !props.canManageWorkspaceRoles || !props.hasActiveWorkspace) {
+      return;
+    }
+    const nextName = editName().trim();
+    if (!nextName) {
+      setClientError("Role name must include visible characters.");
+      return;
+    }
+    if (nextName === role.name) {
+      setClientError("Role name is unchanged.");
+      return;
+    }
+    await invoke(async () => {
+      await props.onUpdateRole(role.roleId, { name: nextName });
+    });
+  };
 
   const onConfirmDangerModal = async (): Promise<void> => {
     const pending = dangerModal();
@@ -591,7 +627,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
               <button
                 class={toolbarButtonClass}
                 type="button"
-                onClick={onOpenModerationPanel()}
+                onClick={() => onOpenModerationPanel()}
               >
                 Moderation tools
               </button>
@@ -629,7 +665,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                     <button
                       type="button"
                       classList={{
-                        "flex items-center justify-between gap-[0.5rem] px-[0.6rem] py-[0.5rem] rounded-[0.4rem] text-left transition-colors": true,
+                        "flex items-center justify-between gap-[0.5rem] px-[0.6rem] py-[0.5rem] rounded-[0.4rem] text-left transition-colors border border-transparent bg-transparent": true,
                         "bg-bg-3 text-ink-0": !isCreatingRole() && selectedRoleId() === role.roleId,
                         "hover:bg-bg-2 text-ink-1 opacity-80": isCreatingRole() || selectedRoleId() !== role.roleId,
                       }}
@@ -655,10 +691,9 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                     const role = hierarchyRoles().find(r => r.roleId === roleId);
                     if (!role) return null;
                     return (
-                      <button
-                        type="button"
+                      <div
                         classList={{
-                          "flex items-center justify-between gap-[0.5rem] px-[0.6rem] py-[0.5rem] rounded-[0.4rem] text-left transition-colors cursor-pointer select-none border-t-[2px]": true,
+                          "flex items-center gap-[0.3rem] rounded-[0.4rem] transition-colors cursor-pointer select-none border border-transparent bg-transparent px-[0.25rem]": true,
                           "bg-bg-3 text-ink-0 border-transparent": !isCreatingRole() && selectedRoleId() === role.roleId && dragOverRoleId() !== roleId,
                           "hover:bg-bg-2 text-ink-1 border-transparent": (isCreatingRole() || selectedRoleId() !== role.roleId) && dragOverRoleId() !== roleId,
                           "border-brand bg-bg-2": dragOverRoleId() === roleId,
@@ -675,22 +710,52 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                           onReorderDrop(roleId);
                         }}
                         onDragEnd={onReorderDragEnd}
-                        onClick={() => { setIsCreatingRole(false); setSelectedRoleId(role.roleId); }}
                       >
-                        <span class="truncate font-medium flex-1">{role.name}</span>
-                        <Show when={props.canManageWorkspaceRoles}>
-                          <div class="cursor-grab active:cursor-grabbing p-[0.2rem] text-ink-3 hover:text-ink-1" aria-label="Drag to reorder">
-                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                              <line x1="8" y1="6" x2="21" y2="6" />
-                              <line x1="8" y1="12" x2="21" y2="12" />
+                        <button
+                          type="button"
+                          class="min-w-0 flex-1 truncate px-[0.35rem] py-[0.5rem] text-left font-medium text-inherit bg-transparent border-0"
+                          onClick={() => { setIsCreatingRole(false); setSelectedRoleId(role.roleId); }}
+                        >
+                          {role.name}
+                        </button>
+                        <div class="flex items-center gap-[0.2rem]">
+                          <button
+                            type="button"
+                            class="inline-flex h-[1.45rem] w-[1.45rem] items-center justify-center rounded-[0.35rem] border border-danger bg-danger text-danger-ink transition-colors hover:brightness-110 disabled:cursor-default disabled:opacity-60"
+                            aria-label={`Delete role ${role.name}`}
+                            title={
+                              props.canManageWorkspaceRoles
+                                ? `Delete role ${role.name}`
+                                : "You do not have permission to delete roles."
+                            }
+                            disabled={props.isMutatingRoles || !props.canManageWorkspaceRoles}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void onDeleteRoleFromList(role.roleId);
+                            }}
+                          >
+                            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                              <path d="M10 11v6" />
+                              <path d="M14 11v6" />
+                              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                            </svg>
+                          </button>
+                          <Show when={props.canManageWorkspaceRoles}>
+                            <div class="cursor-grab active:cursor-grabbing p-[0.2rem] text-ink-3 hover:text-ink-1" aria-label="Drag to reorder">
+                              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="8" y1="6" x2="21" y2="6" />
+                                <line x1="8" y1="12" x2="21" y2="12" />
                               <line x1="8" y1="18" x2="21" y2="18" />
                               <line x1="3" y1="6" x2="3.01" y2="6" />
                               <line x1="3" y1="12" x2="3.01" y2="12" />
-                              <line x1="3" y1="18" x2="3.01" y2="18" />
-                            </svg>
-                          </div>
-                        </Show>
-                      </button>
+                                <line x1="3" y1="18" x2="3.01" y2="18" />
+                              </svg>
+                            </div>
+                          </Show>
+                        </div>
+                      </div>
                     );
                   }}
                 </For>
@@ -837,26 +902,29 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                       <Show when={hasRoleDraftChanges() && !roleAccessor().isSystem}>
                         <div class="flex items-center gap-[0.5rem] bg-bg-2 px-[0.8rem] py-[0.4rem] rounded-[0.4rem] border border-line-soft">
                            <span class="text-[0.8rem] text-ink-1 font-medium mr-[0.5rem]">Unsaved changes</span>
-                           <button class="text-[0.8rem] hover:underline text-ink-2" onClick={onResetRoleDraft}>Reset</button>
-                           <button class="text-[0.8rem] bg-brand text-brand-ink px-[0.6rem] py-[0.2rem] rounded hover:brightness-110 font-medium" onClick={(e) => void onSaveRole(e as any)}>Save</button>
+                           <button type="button" class="text-[0.8rem] hover:underline text-ink-2" onClick={onResetRoleDraft}>Reset</button>
+                           <button type="button" class="text-[0.8rem] bg-brand text-brand-ink px-[0.6rem] py-[0.2rem] rounded hover:brightness-110 font-medium" onClick={(e) => void onSaveRole(e as any)}>Save</button>
                         </div>
                       </Show>
                     </div>
 
                     <nav class="flex gap-[1.5rem]" aria-label="Role settings tabs">
                       <button
+                        type="button"
                         class={`${tabButtonClass} ${activeTab() === "display" ? tabButtonActive : tabButtonInactive}`}
                         onClick={() => setActiveTab("display")}
                       >
                         Display
                       </button>
                       <button
+                        type="button"
                         class={`${tabButtonClass} ${activeTab() === "permissions" ? tabButtonActive : tabButtonInactive}`}
                         onClick={() => setActiveTab("permissions")}
                       >
                         Permissions
                       </button>
                       <button
+                        type="button"
                         class={`${tabButtonClass} ${activeTab() === "members" ? tabButtonActive : tabButtonInactive}`}
                         onClick={() => setActiveTab("members")}
                       >
@@ -881,11 +949,29 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                                 disabled={roleAccessor().isSystem || !props.canManageWorkspaceRoles}
                               />
                             </label>
+                            <div class="flex items-center gap-[0.5rem]">
+                              <button
+                                type="button"
+                                class={primaryButtonClass}
+                                onClick={() => void onSaveRoleNameOnly()}
+                                disabled={
+                                  props.isMutatingRoles ||
+                                  !isRoleNameValid() ||
+                                  roleAccessor().isSystem ||
+                                  !props.canManageWorkspaceRoles
+                                }
+                              >
+                                Save name
+                              </button>
+                            </div>
 
                             <Show when={roleAccessor().isSystem}>
                               <div class="bg-bg-2 p-[1rem] rounded-[0.4rem] border border-line-soft">
                                 <p class={mutedTextClass}>
                                   This is a system role. Its name and core permissions cannot be modified.
+                                </p>
+                                <p class="m-0 mt-[0.45rem] text-[0.8rem] text-ink-2">
+                                  Select a custom role from the list to rename it.
                                 </p>
                               </div>
                             </Show>

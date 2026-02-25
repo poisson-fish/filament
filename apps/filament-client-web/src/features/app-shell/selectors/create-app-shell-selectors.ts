@@ -268,6 +268,43 @@ export function createAppShellSelectors(
     });
     return permissionListFromBits(bits);
   });
+  const workspaceEffectivePermissions = createMemo<PermissionName[]>(() => {
+    const guildId = options.activeGuildId();
+    if (!guildId) {
+      return permissionListFromBits(0);
+    }
+
+    const roles = options.workspaceRolesByGuildId()[guildId] ?? [];
+    const userRoleAssignments = options.workspaceUserRolesByGuildId()[guildId];
+    const assignedRoleIds = resolveAssignedRoleIdsForUser(
+      options.currentUserId(),
+      userRoleAssignments,
+    );
+    if (options.viewAsRoleSimulatorEnabled()) {
+      return permissionListFromBits(
+        resolveEffectiveLegacyRolePermissions({
+          role: options.viewAsRoleSimulatorRole(),
+          guildRoles: roles,
+          channelOverrides: [],
+        }),
+      );
+    }
+    const assignedRoleBits = resolveEffectiveChannelPermissions({
+      channelPermissionsSnapshot: null,
+      guildRoles: roles,
+      assignedRoleIds,
+      channelOverrides: [],
+    });
+    const snapshotRole = options.channelPermissions()?.role ?? null;
+    const legacyRoleBits = snapshotRole
+      ? resolveEffectiveLegacyRolePermissions({
+          role: snapshotRole,
+          guildRoles: roles,
+          channelOverrides: [],
+        })
+      : 0;
+    return permissionListFromBits(assignedRoleBits | legacyRoleBits);
+  });
 
   const canAccessActiveChannel = createMemo(() =>
     hasChannelPermission(effectivePermissions(), "create_message"),
@@ -287,13 +324,13 @@ export function createAppShellSelectors(
   const canManageSearchMaintenance = createMemo(() => canManageWorkspaceChannels());
   const canManageWorkspaceRoles = createMemo(
     () =>
-      hasChannelPermission(effectivePermissions(), "manage_workspace_roles") ||
-      hasChannelPermission(effectivePermissions(), "manage_roles"),
+      hasChannelPermission(workspaceEffectivePermissions(), "manage_workspace_roles") ||
+      hasChannelPermission(workspaceEffectivePermissions(), "manage_roles"),
   );
   const canManageMemberRoles = createMemo(
     () =>
-      hasChannelPermission(effectivePermissions(), "manage_member_roles") ||
-      hasChannelPermission(effectivePermissions(), "manage_roles"),
+      hasChannelPermission(workspaceEffectivePermissions(), "manage_member_roles") ||
+      hasChannelPermission(workspaceEffectivePermissions(), "manage_roles"),
   );
   const hasRoleManagementAccess = createMemo(
     () => canManageWorkspaceRoles() || canManageMemberRoles(),

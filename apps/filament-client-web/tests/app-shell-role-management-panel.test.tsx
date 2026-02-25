@@ -223,6 +223,22 @@ describe("role management panel", () => {
     expect(onDeleteRole).toHaveBeenCalledWith(ROLE_ID);
   });
 
+  it("opens delete confirmation from the role list delete control", async () => {
+    const onDeleteRole = vi.fn(async () => undefined);
+
+    render(() => RoleManagementPanel(panelProps({ onDeleteRole })));
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete role Responder" }));
+
+    const deleteDialog = screen.getByRole("dialog", {
+      name: "Dangerous operation confirmation",
+    });
+    expect(within(deleteDialog).getByRole("heading", { name: "Delete role?" })).toBeInTheDocument();
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: /^Delete role$/ }));
+
+    expect(onDeleteRole).toHaveBeenCalledWith(ROLE_ID);
+  });
+
   it("warns and requires modal confirmation for dangerous permission changes", async () => {
     const onUpdateRole = vi.fn(async () => undefined);
 
@@ -292,6 +308,27 @@ describe("role management panel", () => {
     });
   });
 
+  it("saves only role name from display actions", async () => {
+    const onUpdateRole = vi.fn(async () => undefined);
+
+    render(() =>
+      RoleManagementPanel(
+        panelProps({
+          onUpdateRole,
+        }),
+      ),
+    );
+
+    fireEvent.input(screen.getByLabelText("Role name"), {
+      target: { value: "  Captain  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+
+    expect(onUpdateRole).toHaveBeenCalledWith(ROLE_ID, {
+      name: "Captain",
+    });
+  });
+
   it("disables saving when no edits exist and supports draft reset", async () => {
     const onUpdateRole = vi.fn(async () => undefined);
 
@@ -358,8 +395,8 @@ describe("role management panel", () => {
       ),
     );
 
-    const incidentReorderRow = screen.getByRole("button", { name: /incident lead/i });
-    const responderReorderRow = screen.getByRole("button", { name: /responder/i });
+    const incidentReorderRow = screen.getByRole("button", { name: /^incident lead$/i });
+    const responderReorderRow = screen.getByRole("button", { name: /^responder$/i });
 
     fireEvent.dragStart(incidentReorderRow);
     fireEvent.dragOver(responderReorderRow);
