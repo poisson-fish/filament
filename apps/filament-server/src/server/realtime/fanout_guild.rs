@@ -9,9 +9,15 @@ pub(crate) fn dispatch_guild_payload(
     subscriptions: &mut HashMap<String, HashMap<Uuid, mpsc::Sender<String>>>,
     guild_id: &str,
     payload: &str,
+    max_payload_bytes: usize,
     event_type: &'static str,
     slow_connections: &mut Vec<Uuid>,
 ) -> usize {
+    if payload.len() > max_payload_bytes {
+        record_gateway_event_dropped("guild", event_type, "oversized_outbound");
+        return 0;
+    }
+
     let mut seen_connections = HashSet::new();
     let mut delivered = 0usize;
 
@@ -56,6 +62,8 @@ mod tests {
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
+    use crate::server::metrics::metrics_state;
+
     use super::dispatch_guild_payload;
 
     #[tokio::test]
@@ -84,6 +92,7 @@ mod tests {
             &mut subscriptions,
             guild_id,
             "payload",
+            "payload".len(),
             "presence_update",
             &mut slow_connections,
         );
@@ -125,6 +134,7 @@ mod tests {
             &mut subscriptions,
             "g-1",
             "payload",
+            "payload".len(),
             "message_create",
             &mut slow_connections,
         );
@@ -140,5 +150,50 @@ mod tests {
         assert!(!listeners.contains_key(&closed_id));
 
         assert_eq!(full_receiver.recv().await.as_deref(), Some("occupied"));
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_outbound_payload_before_scan() {
+        if let Ok(mut counters) = metrics_state().gateway_events_dropped.lock() {
+            counters.clear();
+        }
+
+        let connection_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel::<String>(1);
+        let mut subscriptions: HashMap<String, HashMap<Uuid, mpsc::Sender<String>>> =
+            HashMap::from([(
+                String::from("g-1:c-1"),
+                HashMap::from([(connection_id, sender)]),
+            )]);
+        let mut slow_connections = Vec::new();
+        let payload = "payload";
+
+        let delivered = dispatch_guild_payload(
+            &mut subscriptions,
+            "g-1",
+            payload,
+            payload.len() - 1,
+            "message_create",
+            &mut slow_connections,
+        );
+
+        assert_eq!(delivered, 0);
+        assert!(slow_connections.is_empty());
+        assert!(subscriptions
+            .get("g-1:c-1")
+            .expect("guild key should remain after oversized rejection")
+            .contains_key(&connection_id));
+        assert!(receiver.try_recv().is_err());
+
+        let dropped = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .expect("gateway dropped metrics mutex should not be poisoned");
+        let key = (
+            String::from("guild"),
+            String::from("message_create"),
+            String::from("oversized_outbound"),
+        );
+        assert_eq!(dropped.get(&key).copied(), Some(1));
     }
 }

@@ -73,6 +73,7 @@ pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, even
         &mut subscriptions,
         guild_id,
         &event.payload,
+        state.runtime.max_gateway_event_bytes,
         event.event_type,
         &mut slow_connections,
     );
