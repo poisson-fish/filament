@@ -175,13 +175,25 @@ pub(crate) fn friend_request_delete(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn friend_remove(
     user_id: &str,
     friend_user_id: &str,
     removed_at_unix: i64,
     actor_user_id: Option<UserId>,
 ) -> GatewayEvent {
-    build_event(
+    try_friend_remove(user_id, friend_user_id, removed_at_unix, actor_user_id).unwrap_or_else(
+        |error| panic!("failed to build outbound gateway event {FRIEND_REMOVE_EVENT}: {error}"),
+    )
+}
+
+pub(crate) fn try_friend_remove(
+    user_id: &str,
+    friend_user_id: &str,
+    removed_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_friend_remove_event(
         FRIEND_REMOVE_EVENT,
         FriendRemovePayload {
             user_id,
@@ -190,6 +202,13 @@ pub(crate) fn friend_remove(
             actor_user_id: actor_user_id.map(|id| id.to_string()),
         },
     )
+}
+
+fn try_build_friend_remove_event(
+    event_type: &'static str,
+    payload: FriendRemovePayload<'_>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(event_type, payload)
 }
 
 #[cfg(test)]
@@ -278,7 +297,29 @@ mod tests {
 
     #[test]
     fn friend_remove_event_emits_removed_timestamp() {
-        let payload = parse_payload(&friend_remove("user-1", "user-2", 99, None));
+        let payload = parse_payload(
+            &try_friend_remove("user-1", "user-2", 99, None)
+                .expect("friend_remove should serialize"),
+        );
         assert_eq!(payload["removed_at_unix"], Value::from(99));
+    }
+
+    #[test]
+    fn try_friend_remove_rejects_invalid_event_type() {
+        let Err(error) = try_build_friend_remove_event(
+            "friend remove",
+            FriendRemovePayload {
+                user_id: "user-1",
+                friend_user_id: "user-2",
+                removed_at_unix: 99,
+                actor_user_id: None,
+            },
+        ) else {
+            panic!("invalid event type should fail");
+        };
+        assert!(
+            error.to_string().contains("invalid outbound event type"),
+            "unexpected error: {error}"
+        );
     }
 }

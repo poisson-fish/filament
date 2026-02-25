@@ -652,20 +652,54 @@ pub(crate) async fn remove_friend(
 
     if removed {
         let removed_at_unix = now_unix();
-        let actor_event = gateway_events::friend_remove(
-            &auth.user_id.to_string(),
-            &friend_user_id.to_string(),
+        let actor_user_id = auth.user_id.to_string();
+        let peer_user_id = friend_user_id.to_string();
+
+        match gateway_events::try_friend_remove(
+            &actor_user_id,
+            &peer_user_id,
             removed_at_unix,
             Some(auth.user_id),
-        );
-        broadcast_user_event(&state, auth.user_id, &actor_event).await;
-        let friend_event = gateway_events::friend_remove(
-            &friend_user_id.to_string(),
-            &auth.user_id.to_string(),
+        ) {
+            Ok(event) => broadcast_user_event(&state, auth.user_id, &event).await,
+            Err(error) => {
+                tracing::warn!(
+                    event = "gateway.friend_remove.serialize_failed",
+                    event_type = gateway_events::FRIEND_REMOVE_EVENT,
+                    user_id = actor_user_id,
+                    friend_user_id = peer_user_id,
+                    error = %error,
+                );
+                record_gateway_event_dropped(
+                    "user",
+                    gateway_events::FRIEND_REMOVE_EVENT,
+                    "serialize_error",
+                );
+            }
+        }
+
+        match gateway_events::try_friend_remove(
+            &peer_user_id,
+            &actor_user_id,
             removed_at_unix,
             Some(auth.user_id),
-        );
-        broadcast_user_event(&state, friend_user_id, &friend_event).await;
+        ) {
+            Ok(event) => broadcast_user_event(&state, friend_user_id, &event).await,
+            Err(error) => {
+                tracing::warn!(
+                    event = "gateway.friend_remove.serialize_failed",
+                    event_type = gateway_events::FRIEND_REMOVE_EVENT,
+                    user_id = peer_user_id,
+                    friend_user_id = actor_user_id,
+                    error = %error,
+                );
+                record_gateway_event_dropped(
+                    "user",
+                    gateway_events::FRIEND_REMOVE_EVENT,
+                    "serialize_error",
+                );
+            }
+        }
     }
 
     Ok(StatusCode::NO_CONTENT)
