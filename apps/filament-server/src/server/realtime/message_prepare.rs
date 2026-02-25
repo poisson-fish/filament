@@ -28,9 +28,23 @@ pub(crate) fn prepare_message_body(
     })
 }
 
+pub(crate) fn prepare_prevalidated_message_body(content: String) -> PreparedMessageBody {
+    if content.is_empty() {
+        return PreparedMessageBody {
+            content,
+            markdown_tokens: Vec::new(),
+        };
+    }
+
+    PreparedMessageBody {
+        markdown_tokens: tokenize_markdown(&content),
+        content,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::prepare_message_body;
+    use super::{prepare_message_body, prepare_prevalidated_message_body};
     use crate::server::errors::AuthFailure;
 
     #[test]
@@ -63,5 +77,21 @@ mod tests {
         let result = prepare_message_body(oversized, false);
 
         assert!(matches!(result, Err(AuthFailure::InvalidRequest)));
+    }
+
+    #[test]
+    fn prevalidated_prepare_preserves_empty_content_without_tokens() {
+        let prepared = prepare_prevalidated_message_body(String::new());
+
+        assert!(prepared.content.is_empty());
+        assert!(prepared.markdown_tokens.is_empty());
+    }
+
+    #[test]
+    fn prevalidated_prepare_tokenizes_non_empty_content() {
+        let prepared = prepare_prevalidated_message_body(String::from("hello **world**"));
+
+        assert_eq!(prepared.content, "hello **world**");
+        assert!(!prepared.markdown_tokens.is_empty());
     }
 }

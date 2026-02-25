@@ -104,7 +104,10 @@ use hydration_in_memory::collect_hydrated_messages_in_memory;
 use hydration_in_memory_attachments::apply_hydration_attachments;
 use hydration_merge::merge_hydration_maps;
 pub(crate) use hydration_order::collect_hydrated_in_request_order;
-use ingress_command::{parse_gateway_ingress_command, GatewayIngressCommand};
+use ingress_command::{
+    parse_gateway_ingress_command, GatewayAttachmentIds, GatewayIngressCommand,
+    GatewayMessageContent,
+};
 use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
 use ingress_message_create::execute_message_create_command;
 use ingress_parse::{classify_ingress_command_parse_error, IngressCommandParseClassification};
@@ -113,7 +116,7 @@ use ingress_subscribe::execute_subscribe_command;
 use message_attachment_bind::bind_message_attachments_in_memory;
 use message_create_response::build_db_created_message_response;
 use message_emit::emit_message_create_and_index;
-use message_prepare::prepare_message_body;
+use message_prepare::{prepare_message_body, prepare_prevalidated_message_body};
 use message_record::{build_in_memory_message_record, build_message_response_from_record};
 use message_store_in_memory::append_message_record;
 use ready_enqueue::{ready_drop_metric_reason, ready_error_reason, try_enqueue_ready_event};
@@ -392,8 +395,49 @@ pub(crate) async fn create_message_internal(
 ) -> Result<MessageResponse, AuthFailure> {
     let attachment_ids = parse_attachment_ids(attachment_ids)?;
     let prepared = prepare_message_body(content, !attachment_ids.is_empty())?;
-    let content = prepared.content;
-    let markdown_tokens = prepared.markdown_tokens;
+    create_message_internal_prepared(
+        state,
+        auth,
+        guild_id,
+        channel_id,
+        prepared.content,
+        prepared.markdown_tokens,
+        attachment_ids,
+    )
+    .await
+}
+
+pub(crate) async fn create_message_internal_from_ingress_validated(
+    state: &AppState,
+    auth: &AuthContext,
+    guild_id: &str,
+    channel_id: &str,
+    content: GatewayMessageContent,
+    attachment_ids: GatewayAttachmentIds,
+) -> Result<MessageResponse, AuthFailure> {
+    let attachment_ids = attachment_ids.into_vec();
+    let prepared = prepare_prevalidated_message_body(content.into_string());
+    create_message_internal_prepared(
+        state,
+        auth,
+        guild_id,
+        channel_id,
+        prepared.content,
+        prepared.markdown_tokens,
+        attachment_ids,
+    )
+    .await
+}
+
+async fn create_message_internal_prepared(
+    state: &AppState,
+    auth: &AuthContext,
+    guild_id: &str,
+    channel_id: &str,
+    content: String,
+    markdown_tokens: Vec<filament_core::MarkdownToken>,
+    attachment_ids: Vec<String>,
+) -> Result<MessageResponse, AuthFailure> {
     let (_, permissions) =
         channel_permission_snapshot(state, auth.user_id, guild_id, channel_id).await?;
     if !permissions.contains(Permission::CreateMessage) {

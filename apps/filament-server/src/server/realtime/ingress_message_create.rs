@@ -4,7 +4,9 @@ use crate::server::{
     domain::enforce_guild_ip_ban_for_request,
 };
 
-use super::{create_message_internal, ingress_command::GatewayMessageCreateCommand};
+use super::{
+    create_message_internal_from_ingress_validated, ingress_command::GatewayMessageCreateCommand,
+};
 
 pub(crate) async fn execute_message_create_command(
     state: &AppState,
@@ -25,13 +27,13 @@ pub(crate) async fn execute_message_create_command(
         return Err("ip_banned");
     }
 
-    if create_message_internal(
+    if create_message_internal_from_ingress_validated(
         state,
         auth,
         request.guild_id.as_str(),
         request.channel_id.as_str(),
-        request.content.into_string(),
-        request.attachment_ids.into_vec(),
+        request.content,
+        request.attachment_ids,
     )
     .await
     .is_err()
