@@ -216,7 +216,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     "rounded-[0.4rem] border border-line-soft bg-bg-0 px-[0.7rem] py-[0.62rem] text-[0.92rem] text-ink-0 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-default disabled:opacity-62 transition-shadow";
   const actionButtonClass =
     "min-h-[2.2rem] rounded-[0.4rem] border border-line-soft bg-bg-2 px-[1rem] py-[0.5rem] text-[0.92rem] font-medium text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-3 enabled:hover:text-ink-0 disabled:cursor-default disabled:opacity-50";
-  const primaryButtonClass = "min-h-[2.2rem] rounded-[0.4rem] border border-brand bg-brand px-[1rem] py-[0.5rem] text-[0.92rem] font-medium text-brand-ink transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:brightness-110 disabled:cursor-default disabled:opacity-50";
+  const primaryButtonClass = "min-h-[2.2rem] rounded-[0.4rem] bg-ink-0 px-[1rem] py-[0.5rem] text-[0.92rem] font-medium text-bg-0 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-ink-1 disabled:cursor-default disabled:opacity-50";
   const toolbarButtonClass =
     "min-h-[1.8rem] rounded-[0.4rem] border border-line-soft bg-bg-2 px-[0.6rem] py-[0.3rem] text-[0.75rem] font-medium text-ink-1 transition-colors duration-[120ms] ease-out enabled:cursor-pointer enabled:hover:bg-bg-3 enabled:hover:text-ink-0 disabled:cursor-default disabled:opacity-60";
   const statusChipClass =
@@ -577,6 +577,27 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   return (
     <section class={panelSectionClass}>
       <Show when={props.hasActiveWorkspace} fallback={<p class={mutedTextClass}>Select a workspace first.</p>}>
+        <div class="flex justify-end gap-[0.5rem] mb-[0.5rem]">
+          <button
+            class={toolbarButtonClass}
+            type="button"
+            onClick={() => void props.onRefreshRoles()}
+            disabled={props.isLoadingRoles || !props.hasActiveWorkspace}
+          >
+            {props.isLoadingRoles ? "Refreshing..." : "Refresh roles"}
+          </button>
+          <Show when={props.onOpenModerationPanel}>
+            {(onOpenModerationPanel) => (
+              <button
+                class={toolbarButtonClass}
+                type="button"
+                onClick={onOpenModerationPanel()}
+              >
+                Moderation tools
+              </button>
+            )}
+          </Show>
+        </div>
         <div class="flex h-[80vh] min-h-[500px] w-full flex-col md:flex-row bg-bg-1 rounded-[0.5rem] overflow-hidden border border-line-soft">
           {/* Left Sidebar: Roles List */}
           <div class="flex flex-col w-full md:w-[280px] flex-shrink-0 bg-bg-1 border-r border-line-soft">
@@ -585,11 +606,11 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
               <Show when={props.canManageWorkspaceRoles}>
                 <button
                   type="button"
-                  class="text-[0.8rem] text-brand hover:underline font-medium flex items-center gap-[0.2rem]"
+                  class={`${toolbarButtonClass} flex items-center gap-[0.3rem]`}
                   onClick={() => setIsCreatingRole(true)}
                   disabled={props.isMutatingRoles}
                 >
-                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19"></line>
                     <line x1="5" y1="12" x2="19" y2="12"></line>
                   </svg>
@@ -598,28 +619,6 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
               </Show>
             </div>
 
-            <div class="px-[1rem] pb-[0.8rem] pt-[0.6rem] border-b border-line-soft flex flex-wrap gap-[0.5rem]">
-              <button
-                class={toolbarButtonClass}
-                type="button"
-                onClick={() => void props.onRefreshRoles()}
-                disabled={props.isLoadingRoles || !props.hasActiveWorkspace}
-              >
-                {props.isLoadingRoles ? "Refreshing..." : "Refresh roles"}
-              </button>
-              <Show when={props.onOpenModerationPanel}>
-                {(onOpenModerationPanel) => (
-                  <button
-                    class={toolbarButtonClass}
-                    type="button"
-                    onClick={onOpenModerationPanel()}
-                  >
-                    Moderation tools
-                  </button>
-                )}
-              </Show>
-            </div>
-            
             <div class="flex-1 overflow-y-auto p-[0.5rem] flex flex-col gap-[0.2rem]">
               <Show when={getSystemRoles().length > 0}>
                 <div class="px-[0.5rem] py-[0.4rem] mt-[0.4rem]">
@@ -723,7 +722,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                 </header>
 
                 <form class={formClass} onSubmit={onCreateRole}>
-                  <section class="grid gap-[1rem] p-[1.5rem] bg-bg-2 border border-line-soft rounded-[0.6rem]">
+                  <section class="grid gap-[1rem] p-[1.5rem] bg-bg-2 border border-line-soft rounded-[0.6rem] max-w-[500px]">
                     <label class={fieldLabelClass}>
                       Role name
                       <input
@@ -801,7 +800,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                     </div>
                   </section>
 
-                  <div class="absolute bottom-0 left-0 right-0 bg-bg-1 p-[1.5rem] border-t border-line-soft flex justify-end gap-[1rem]">
+                  <div class="p-[1.5rem] border-t border-line-soft flex justify-end gap-[1rem] mt-[2rem] -mx-[2rem] px-[2rem]">
                     <button
                       class={actionButtonClass}
                       type="button"
@@ -871,7 +870,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                     <Switch>
                       <Match when={activeTab() === "display"}>
                         <form class={formClass} onSubmit={onSaveRole}>
-                          <section class="grid gap-[1.5rem]">
+                          <section class="grid gap-[1.5rem] max-w-[500px]">
                             <label class={fieldLabelClass}>
                               Role name
                               <input
@@ -969,7 +968,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
 
                       <Match when={activeTab() === "members"}>
                         <div class="grid gap-[1.5rem]">
-                           <div class="bg-bg-2 p-[1.5rem] border border-line-soft rounded-[0.6rem]">
+                           <div class="bg-bg-2 p-[1.5rem] border border-line-soft rounded-[0.6rem] max-w-[500px]">
                              <p class="m-0 text-[0.9rem] text-ink-1 mb-[1.5rem]">
                                Use the member role assignment tool below to grant or revoke this role for a specific user.
                              </p>
@@ -1027,8 +1026,9 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                   </div>
 
                   {/* Absolute positioning for the Save button so it doesn't get lost on long pages */}
+                  {/* Sticky positioning for the Save button so it doesn't get lost on long pages */}
                   <Show when={activeTab() !== "members" && hasRoleDraftChanges() && !roleAccessor().isSystem}>
-                    <div class="absolute bottom-0 left-0 right-0 bg-bg-1 p-[1.5rem] border-t border-line-soft flex items-center justify-between shadow-[0_-4px_12px_rgba(0,0,0,0.1)]">
+                    <div class="sticky bottom-0 left-0 right-0 bg-bg-1 p-[1.5rem] border-t border-line-soft flex items-center justify-between shadow-[0_-4px_12px_rgba(0,0,0,0.1)] z-10 mt-auto">
                        <span class="text-[0.9rem] text-ink-2">You have unsaved changes to this role.</span>
                        <div class="flex gap-[1rem]">
                          <button

@@ -198,4 +198,20 @@ describe("app shell workspace settings panel", () => {
     expect(screen.getByRole("button", { name: "Create role" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refresh roles" })).toBeInTheDocument();
   });
+
+  it("syncs section changes to host state for rerender stability", async () => {
+    const setWorkspaceSettingsSection = vi.fn();
+    render(() => (
+      <WorkspaceSettingsPanel
+        {...workspaceSettingsPanelPropsFixture({
+          setWorkspaceSettingsSection,
+        })}
+      />
+    ));
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Open Roles & Hierarchy workspace section" }),
+    );
+    expect(setWorkspaceSettingsSection).toHaveBeenCalledWith("roles");
+  });
 });

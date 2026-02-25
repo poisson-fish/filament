@@ -401,6 +401,14 @@ export function channelNameFromInput(input: string): ChannelName {
 }
 
 export function workspaceRoleNameFromInput(input: string): WorkspaceRoleName {
+  const normalized = normalizeWorkspaceRoleName(input);
+  if (normalized === "@everyone" || normalized.toLowerCase() === "workspace_owner") {
+    throw new DomainValidationError("Workspace role name is reserved.");
+  }
+  return normalized as WorkspaceRoleName;
+}
+
+function normalizeWorkspaceRoleName(input: string): string {
   const normalized = input.trim();
   if (normalized.length < 1 || normalized.length > MAX_WORKSPACE_ROLE_NAME_CHARS) {
     throw new DomainValidationError("Workspace role name must be 1-32 characters.");
@@ -411,10 +419,14 @@ export function workspaceRoleNameFromInput(input: string): WorkspaceRoleName {
       throw new DomainValidationError("Workspace role name contains invalid characters.");
     }
   }
-  if (normalized === "@everyone" || normalized.toLowerCase() === "workspace_owner") {
-    throw new DomainValidationError("Workspace role name is reserved.");
-  }
-  return normalized as WorkspaceRoleName;
+  return normalized;
+}
+
+function workspaceRoleNameFromResponse(input: unknown): WorkspaceRoleName {
+  // Server may return reserved system role names (e.g., @everyone, workspace_owner).
+  return normalizeWorkspaceRoleName(
+    requireString(input, "name", MAX_WORKSPACE_ROLE_NAME_CHARS),
+  ) as WorkspaceRoleName;
 }
 
 export function channelKindFromInput(input: string): ChannelKindName {
@@ -911,8 +923,9 @@ function guildRoleFromResponse(dto: unknown): GuildRoleRecord {
   }
   return {
     roleId: workspaceRoleIdFromInput(requireString(data.role_id, "role_id")),
-    name: workspaceRoleNameFromInput(requireString(data.name, "name", MAX_WORKSPACE_ROLE_NAME_CHARS)),
-    position: requirePositiveInteger(data.position, "position"),
+    name: workspaceRoleNameFromResponse(data.name),
+    // System roles can legitimately use position 0 in server responses.
+    position: requireNonNegativeInteger(data.position, "position"),
     isSystem: requireBoolean(data.is_system, "is_system"),
     permissions: permissions.map((entry) => permissionFromInput(entry)),
   };

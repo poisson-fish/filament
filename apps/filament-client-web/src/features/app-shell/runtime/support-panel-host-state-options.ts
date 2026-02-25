@@ -182,6 +182,8 @@ export function createSupportPanelHostStateOptions(
     isLoadingWorkspaceMembers: options.isLoadingWorkspaceMembers,
     workspaceMembersError: options.workspaceMembersError,
     assignableRoleIds: resolveAssignableRoleIds,
+    setWorkspaceSettingsSection:
+      options.overlayState.setActiveWorkspaceSettingsSection,
     setWorkspaceSettingsName: options.workspaceChannelState.setWorkspaceSettingsName,
     setWorkspaceSettingsVisibility:
       options.workspaceChannelState.setWorkspaceSettingsVisibility,

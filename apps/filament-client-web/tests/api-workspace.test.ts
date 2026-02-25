@@ -73,6 +73,52 @@ describe("api-workspace", () => {
     });
   });
 
+  it("fetchGuildRoles accepts system roles at position zero", async () => {
+    const requestJson = vi.fn(async () => ({
+      roles: [
+        {
+          role_id: roleId,
+          name: "everyone",
+          position: 0,
+          is_system: true,
+          permissions: ["create_message"],
+        },
+      ],
+    }));
+
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(api.fetchGuildRoles(session, guildId)).resolves.toMatchObject({
+      roles: [{ roleId, position: 0, isSystem: true }],
+    });
+  });
+
+  it("fetchGuildRoles accepts reserved system role names from server responses", async () => {
+    const requestJson = vi.fn(async () => ({
+      roles: [
+        {
+          role_id: roleId,
+          name: "workspace_owner",
+          position: 10_000,
+          is_system: true,
+          permissions: ["manage_workspace_roles"],
+        },
+      ],
+    }));
+
+    const api = createWorkspaceApi({
+      requestJson,
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+    });
+
+    await expect(api.fetchGuildRoles(session, guildId)).resolves.toMatchObject({
+      roles: [{ roleId, name: "workspace_owner", isSystem: true }],
+    });
+  });
+
   it("createGuild delegates and parses strict guild response", async () => {
     const requestJson = vi.fn(async () => ({
       guild_id: guildId,

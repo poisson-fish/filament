@@ -144,6 +144,7 @@ export interface WorkspaceSettingsPanelBuilderOptions {
   }>;
   roles: GuildRoleRecord[];
   assignableRoleIds: WorkspaceRoleId[];
+  setWorkspaceSettingsSection?: (value: WorkspaceSettingsSection) => void;
   setWorkspaceSettingsName: (value: string) => void;
   setWorkspaceSettingsVisibility: (value: GuildVisibility) => void;
   setViewAsRoleSimulatorEnabled: (value: boolean) => void;
@@ -402,6 +403,7 @@ export function buildWorkspaceSettingsPanelProps(
     members: options.members,
     roles: options.roles,
     assignableRoleIds: options.assignableRoleIds,
+    setWorkspaceSettingsSection: options.setWorkspaceSettingsSection,
     onWorkspaceNameInput: options.setWorkspaceSettingsName,
     onWorkspaceVisibilityChange: options.setWorkspaceSettingsVisibility,
     onViewAsRoleSimulatorToggle: options.setViewAsRoleSimulatorEnabled,

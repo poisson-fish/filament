@@ -83,6 +83,8 @@ export interface SupportPanelPropGroupsStateOptions {
   assignableRoleIds: () => SupportPanelPropGroupsOptions["workspaceSettings"]["assignableRoleIds"];
   setWorkspaceSettingsName:
     SupportPanelPropGroupsOptions["workspaceSettings"]["setWorkspaceSettingsName"];
+  setWorkspaceSettingsSection?:
+    SupportPanelPropGroupsOptions["workspaceSettings"]["setWorkspaceSettingsSection"];
   setWorkspaceSettingsVisibility:
     SupportPanelPropGroupsOptions["workspaceSettings"]["setWorkspaceSettingsVisibility"];
   setViewAsRoleSimulatorEnabled:
@@ -200,6 +202,7 @@ export function createSupportPanelPropGroupsOptions(
       memberListError: options.workspaceMembersError(),
       roles: options.roles(),
       assignableRoleIds: options.assignableRoleIds(),
+      setWorkspaceSettingsSection: options.setWorkspaceSettingsSection,
       setWorkspaceSettingsName: options.setWorkspaceSettingsName,
       setWorkspaceSettingsVisibility: options.setWorkspaceSettingsVisibility,
       setViewAsRoleSimulatorEnabled: options.setViewAsRoleSimulatorEnabled,

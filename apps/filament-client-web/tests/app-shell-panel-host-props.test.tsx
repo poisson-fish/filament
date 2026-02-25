@@ -337,6 +337,19 @@ function baseOptions(
 }
 
 describe("app shell panel host props adapter", () => {
+  it("forwards workspace section setter to workspace settings panel props", () => {
+    const setWorkspaceSettingsSection = vi.fn();
+    const propGroups = buildPanelHostPropGroups(
+      baseOptions({
+        workspaceSettings: {
+          setWorkspaceSettingsSection,
+        },
+      }),
+    );
+    propGroups.workspaceSettingsPanelProps.setWorkspaceSettingsSection?.("roles");
+    expect(setWorkspaceSettingsSection).toHaveBeenCalledWith("roles");
+  });
+
   it("keeps workspace panel interactions wired to typed handlers", () => {
     const setCreateGuildName = vi.fn();
     const setCreateGuildVisibility = vi.fn();

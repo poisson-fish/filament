@@ -37,6 +37,7 @@ export interface WorkspaceSettingsPanelProps {
   members: WorkspaceSettingsMemberRecord[];
   roles: GuildRoleRecord[];
   assignableRoleIds: WorkspaceRoleId[];
+  setWorkspaceSettingsSection?: (value: WorkspaceSettingsSection) => void;
   roleManagementPanelProps: RoleManagementPanelProps;
   onWorkspaceNameInput: (value: string) => void;
   onWorkspaceVisibilityChange: (value: GuildVisibility) => void;
@@ -327,7 +328,10 @@ export function WorkspaceSettingsPanel(props: WorkspaceSettingsPanelProps) {
                     classList={{
                       "border-brand/85 bg-brand/20 text-ink-0": isActive(),
                     }}
-                    onClick={() => setActiveSectionId(section.id)}
+                    onClick={() => {
+                      setActiveSectionId(section.id);
+                      props.setWorkspaceSettingsSection?.(section.id);
+                    }}
                     aria-label={`Open ${section.label} workspace section`}
                     aria-current={isActive() ? "page" : undefined}
                   >

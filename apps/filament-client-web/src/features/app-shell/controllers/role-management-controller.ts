@@ -184,8 +184,6 @@ export function createRoleManagementController(
       if (requestVersion !== loadVersion) {
         return;
       }
-      setRoles([]);
-      options.setWorkspaceRolesForGuild?.(guildId, []);
       setRoleManagementError(
         deps.mapError(error, "Unable to load workspace roles."),
       );
@@ -199,6 +197,7 @@ export function createRoleManagementController(
   const runMutation = async (
     operation: () => Promise<void>,
     successMessage: string,
+    mutationOptions: { refreshRoles?: boolean } = {},
   ): Promise<void> => {
     const session = options.session();
     const guildId = options.activeGuildId();
@@ -212,7 +211,9 @@ export function createRoleManagementController(
 
     try {
       await operation();
-      await refreshRoles();
+      if (mutationOptions.refreshRoles ?? true) {
+        await refreshRoles();
+      }
       await refreshChannelPermissions(session, guildId);
       setRoleManagementStatus(successMessage);
     } catch (error) {
@@ -244,12 +245,18 @@ export function createRoleManagementController(
       return;
     }
     await runMutation(async () => {
-      await deps.createGuildRole(session, guildId, {
+      const createdRole = await deps.createGuildRole(session, guildId, {
         name: roleName,
         permissions: input.permissions,
         position: input.position,
       });
-    }, `Role ${roleName} created.`);
+      const nextRoles = sortWorkspaceRolesByPosition([
+        ...roles().filter((role) => role.roleId !== createdRole.roleId),
+        createdRole,
+      ]);
+      setRoles(nextRoles);
+      options.setWorkspaceRolesForGuild?.(guildId, nextRoles);
+    }, `Role ${roleName} created.`, { refreshRoles: false });
   };
 
   const updateRole = async (

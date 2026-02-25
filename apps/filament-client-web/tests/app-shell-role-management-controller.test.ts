@@ -170,7 +170,7 @@ describe("app shell role management controller", () => {
         controller.roles(),
       );
 
-      expect(fetchGuildRolesMock).toHaveBeenCalledTimes(7);
+      expect(fetchGuildRolesMock).toHaveBeenCalledTimes(6);
       expect(controller.roleManagementStatus()).toBe("Role deleted.");
       expect(controller.roleManagementError()).toBe("");
       dispose();
@@ -210,6 +210,75 @@ describe("app shell role management controller", () => {
       await controller.assignRoleToMember("not-ulid", ROLE_ID);
       expect(assignGuildRoleMock).not.toHaveBeenCalled();
       expect(controller.roleManagementError()).toContain("Target user ID is invalid");
+      dispose();
+    });
+  });
+
+  it("preserves previous role list when refresh fails after a mutation", async () => {
+    await createRoot(async (dispose) => {
+      const [session] = createSignal(SESSION);
+      const [activeGuildId] = createSignal(GUILD_ID);
+      const [activeChannelId] = createSignal(CHANNEL_ID);
+      const [_channelPermissions, setChannelPermissions] =
+        createSignal<ChannelPermissionSnapshot | null>(null);
+
+      const existingRole = {
+        roleId: ROLE_ID,
+        name: workspaceRoleNameFromInput("Responder"),
+        position: 3,
+        isSystem: false,
+        permissions: [permissionFromInput("create_message")],
+      };
+      const createdRoleId = workspaceRoleIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
+      const createdRole = {
+        roleId: createdRoleId,
+        name: workspaceRoleNameFromInput("Ops"),
+        position: 2,
+        isSystem: false,
+        permissions: [permissionFromInput("subscribe_streams")],
+      };
+
+      let fetchCount = 0;
+      const fetchGuildRolesMock = vi.fn(async () => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          return { roles: [existingRole] };
+        }
+        throw new Error("refresh failed");
+      });
+
+      const controller = createRoleManagementController(
+        {
+          session,
+          activeGuildId,
+          activeChannelId,
+          setChannelPermissions,
+        },
+        {
+          fetchGuildRoles: fetchGuildRolesMock,
+          createGuildRole: vi.fn(async () => createdRole),
+          updateGuildRole: vi.fn(),
+          deleteGuildRole: vi.fn(),
+          reorderGuildRoles: vi.fn(),
+          assignGuildRole: vi.fn(),
+          unassignGuildRole: vi.fn(),
+          fetchChannelPermissionSnapshot: vi.fn(async () => ({
+            role: roleFromInput("member"),
+            permissions: [permissionFromInput("create_message")],
+          })),
+        },
+      );
+
+      await flushPromises();
+      expect(controller.roles()).toEqual([existingRole]);
+
+      await controller.createRole({
+        name: "Ops",
+        permissions: ["subscribe_streams"],
+      });
+
+      expect(controller.roles()).toEqual([existingRole, createdRole]);
+      expect(controller.roleManagementError()).toBe("");
       dispose();
     });
   });

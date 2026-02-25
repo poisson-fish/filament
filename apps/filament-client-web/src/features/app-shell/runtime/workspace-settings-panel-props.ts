@@ -22,6 +22,8 @@ export interface WorkspaceSettingsPanelPropsOptions {
   members: WorkspaceSettingsPanelBuilderOptions["members"];
   roles: WorkspaceSettingsPanelBuilderOptions["roles"];
   assignableRoleIds: WorkspaceSettingsPanelBuilderOptions["assignableRoleIds"];
+  setWorkspaceSettingsSection?:
+    WorkspaceSettingsPanelBuilderOptions["setWorkspaceSettingsSection"];
   setWorkspaceSettingsName: (value: string) => void;
   setWorkspaceSettingsVisibility: (value: GuildVisibility) => void;
   setWorkspaceSettingsStatus: (value: string) => void;
@@ -56,6 +58,7 @@ export function createWorkspaceSettingsPanelProps(
     members: options.members,
     roles: options.roles,
     assignableRoleIds: options.assignableRoleIds,
+    setWorkspaceSettingsSection: options.setWorkspaceSettingsSection,
     setWorkspaceSettingsName: (value) => {
       options.setWorkspaceSettingsName(value);
       options.setWorkspaceSettingsStatus("");
