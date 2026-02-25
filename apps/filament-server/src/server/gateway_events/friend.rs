@@ -104,6 +104,7 @@ fn try_build_friend_request_create_event(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn friend_request_update(
     request_id: &str,
     user_id: &str,
@@ -113,7 +114,31 @@ pub(crate) fn friend_request_update(
     updated_at_unix: i64,
     actor_user_id: Option<UserId>,
 ) -> GatewayEvent {
-    build_event(
+    try_friend_request_update(
+        request_id,
+        user_id,
+        friend_user_id,
+        friend_username,
+        friendship_created_at_unix,
+        updated_at_unix,
+        actor_user_id,
+    )
+    .unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {FRIEND_REQUEST_UPDATE_EVENT}: {error}")
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_friend_request_update(
+    request_id: &str,
+    user_id: &str,
+    friend_user_id: &str,
+    friend_username: &str,
+    friendship_created_at_unix: i64,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_friend_request_update(
         FRIEND_REQUEST_UPDATE_EVENT,
         FriendRequestUpdatePayload {
             request_id,
@@ -126,6 +151,13 @@ pub(crate) fn friend_request_update(
             actor_user_id: actor_user_id.map(|id| id.to_string()),
         },
     )
+}
+
+fn try_build_friend_request_update(
+    event_type: &'static str,
+    payload: FriendRequestUpdatePayload<'_>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(event_type, payload)
 }
 
 pub(crate) fn friend_request_delete(
@@ -214,10 +246,34 @@ mod tests {
 
     #[test]
     fn friend_request_update_event_emits_accepted_state() {
-        let payload = parse_payload(&friend_request_update(
-            "req-1", "user-1", "user-2", "bob", 88, 89, None,
-        ));
+        let payload = parse_payload(
+            &try_friend_request_update("req-1", "user-1", "user-2", "bob", 88, 89, None)
+                .expect("friend_request_update should serialize"),
+        );
         assert_eq!(payload["state"], Value::from("accepted"));
+    }
+
+    #[test]
+    fn try_friend_request_update_rejects_invalid_event_type() {
+        let Err(error) = try_build_friend_request_update(
+            "friend request update",
+            FriendRequestUpdatePayload {
+                request_id: "req-1",
+                state: "accepted",
+                user_id: "user-1",
+                friend_user_id: "user-2",
+                friend_username: "bob",
+                friendship_created_at_unix: 88,
+                updated_at_unix: 89,
+                actor_user_id: None,
+            },
+        ) else {
+            panic!("invalid event type should fail");
+        };
+        assert!(
+            error.to_string().contains("invalid outbound event type"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

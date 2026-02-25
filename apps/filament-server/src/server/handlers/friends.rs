@@ -358,7 +358,7 @@ pub(crate) async fn accept_friend_request(
         tx.commit().await.map_err(|_| AuthFailure::Internal)?;
 
         let updated_at_unix = now_unix();
-        let recipient_event = gateway_events::friend_request_update(
+        let recipient_event = match gateway_events::try_friend_request_update(
             &path.request_id,
             &auth.user_id.to_string(),
             &sender_user_id.to_string(),
@@ -366,9 +366,27 @@ pub(crate) async fn accept_friend_request(
             friendship_created_at_unix,
             updated_at_unix,
             Some(auth.user_id),
-        );
-        broadcast_user_event(&state, auth.user_id, &recipient_event).await;
-        let sender_event = gateway_events::friend_request_update(
+        ) {
+            Ok(event) => Some(event),
+            Err(error) => {
+                tracing::warn!(
+                    event = "gateway.friend_request_update.serialize_failed",
+                    event_type = gateway_events::FRIEND_REQUEST_UPDATE_EVENT,
+                    error = %error,
+                );
+                record_gateway_event_dropped(
+                    "user",
+                    gateway_events::FRIEND_REQUEST_UPDATE_EVENT,
+                    "serialize_error",
+                );
+                None
+            }
+        };
+        if let Some(event) = recipient_event.as_ref() {
+            broadcast_user_event(&state, auth.user_id, event).await;
+        }
+
+        let sender_event = match gateway_events::try_friend_request_update(
             &path.request_id,
             &sender_user_id.to_string(),
             &auth.user_id.to_string(),
@@ -376,8 +394,25 @@ pub(crate) async fn accept_friend_request(
             friendship_created_at_unix,
             updated_at_unix,
             Some(auth.user_id),
-        );
-        broadcast_user_event(&state, sender_user_id, &sender_event).await;
+        ) {
+            Ok(event) => Some(event),
+            Err(error) => {
+                tracing::warn!(
+                    event = "gateway.friend_request_update.serialize_failed",
+                    event_type = gateway_events::FRIEND_REQUEST_UPDATE_EVENT,
+                    error = %error,
+                );
+                record_gateway_event_dropped(
+                    "user",
+                    gateway_events::FRIEND_REQUEST_UPDATE_EVENT,
+                    "serialize_error",
+                );
+                None
+            }
+        };
+        if let Some(event) = sender_event.as_ref() {
+            broadcast_user_event(&state, sender_user_id, event).await;
+        }
 
         return Ok(Json(ModerationResponse { accepted: true }));
     }
@@ -408,7 +443,7 @@ pub(crate) async fn accept_friend_request(
     let friendship_created_at_unix = now_unix();
     state.friendships.write().await.insert((pair_a, pair_b));
     let updated_at_unix = now_unix();
-    let recipient_event = gateway_events::friend_request_update(
+    let recipient_event = match gateway_events::try_friend_request_update(
         &path.request_id,
         &recipient_user_id.to_string(),
         &sender_user_id.to_string(),
@@ -416,9 +451,26 @@ pub(crate) async fn accept_friend_request(
         friendship_created_at_unix,
         updated_at_unix,
         Some(auth.user_id),
-    );
-    broadcast_user_event(&state, recipient_user_id, &recipient_event).await;
-    let sender_event = gateway_events::friend_request_update(
+    ) {
+        Ok(event) => Some(event),
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.friend_request_update.serialize_failed",
+                event_type = gateway_events::FRIEND_REQUEST_UPDATE_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "user",
+                gateway_events::FRIEND_REQUEST_UPDATE_EVENT,
+                "serialize_error",
+            );
+            None
+        }
+    };
+    if let Some(event) = recipient_event.as_ref() {
+        broadcast_user_event(&state, recipient_user_id, event).await;
+    }
+    let sender_event = match gateway_events::try_friend_request_update(
         &path.request_id,
         &sender_user_id.to_string(),
         &recipient_user_id.to_string(),
@@ -426,8 +478,25 @@ pub(crate) async fn accept_friend_request(
         friendship_created_at_unix,
         updated_at_unix,
         Some(auth.user_id),
-    );
-    broadcast_user_event(&state, sender_user_id, &sender_event).await;
+    ) {
+        Ok(event) => Some(event),
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.friend_request_update.serialize_failed",
+                event_type = gateway_events::FRIEND_REQUEST_UPDATE_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "user",
+                gateway_events::FRIEND_REQUEST_UPDATE_EVENT,
+                "serialize_error",
+            );
+            None
+        }
+    };
+    if let Some(event) = sender_event.as_ref() {
+        broadcast_user_event(&state, sender_user_id, event).await;
+    }
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
