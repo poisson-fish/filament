@@ -49,10 +49,13 @@ pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
 pub(crate) use connection::{try_ready, try_subscribed, READY_EVENT, SUBSCRIBED_EVENT};
 pub(crate) use envelope::GatewayEvent;
 #[cfg(test)]
+pub(crate) use friend::friend_request_delete;
+#[cfg(test)]
 pub(crate) use friend::{friend_remove, friend_request_create, friend_request_update};
 pub(crate) use friend::{
-    friend_request_delete, try_friend_remove, try_friend_request_create, try_friend_request_update,
-    FRIEND_REMOVE_EVENT, FRIEND_REQUEST_CREATE_EVENT, FRIEND_REQUEST_UPDATE_EVENT,
+    try_friend_remove, try_friend_request_create, try_friend_request_delete,
+    try_friend_request_update, FRIEND_REMOVE_EVENT, FRIEND_REQUEST_CREATE_EVENT,
+    FRIEND_REQUEST_DELETE_EVENT, FRIEND_REQUEST_UPDATE_EVENT,
 };
 pub(crate) use message_channel::{
     channel_create, message_reaction, try_message_create, try_message_delete, try_message_update,

@@ -1,10 +1,7 @@
 use filament_core::UserId;
 use serde::Serialize;
 
-use super::{
-    envelope::{build_event, try_build_event},
-    GatewayEvent,
-};
+use super::{envelope::try_build_event, GatewayEvent};
 
 pub(crate) const FRIEND_REQUEST_CREATE_EVENT: &str = "friend_request_create";
 pub(crate) const FRIEND_REQUEST_UPDATE_EVENT: &str = "friend_request_update";
@@ -160,12 +157,23 @@ fn try_build_friend_request_update(
     try_build_event(event_type, payload)
 }
 
+#[cfg(test)]
 pub(crate) fn friend_request_delete(
     request_id: &str,
     deleted_at_unix: i64,
     actor_user_id: Option<UserId>,
 ) -> GatewayEvent {
-    build_event(
+    try_friend_request_delete(request_id, deleted_at_unix, actor_user_id).unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {FRIEND_REQUEST_DELETE_EVENT}: {error}")
+    })
+}
+
+pub(crate) fn try_friend_request_delete(
+    request_id: &str,
+    deleted_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_friend_request_delete_event(
         FRIEND_REQUEST_DELETE_EVENT,
         FriendRequestDeletePayload {
             request_id,
@@ -173,6 +181,13 @@ pub(crate) fn friend_request_delete(
             actor_user_id: actor_user_id.map(|id| id.to_string()),
         },
     )
+}
+
+fn try_build_friend_request_delete_event(
+    event_type: &'static str,
+    payload: FriendRequestDeletePayload<'_>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(event_type, payload)
 }
 
 #[cfg(test)]
@@ -284,6 +299,33 @@ mod tests {
                 friend_username: "bob",
                 friendship_created_at_unix: 88,
                 updated_at_unix: 89,
+                actor_user_id: None,
+            },
+        ) else {
+            panic!("invalid event type should fail");
+        };
+        assert!(
+            error.to_string().contains("invalid outbound event type"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn friend_request_delete_event_emits_deleted_timestamp() {
+        let payload = parse_payload(
+            &try_friend_request_delete("req-1", 91, None)
+                .expect("friend_request_delete should serialize"),
+        );
+        assert_eq!(payload["deleted_at_unix"], Value::from(91));
+    }
+
+    #[test]
+    fn try_friend_request_delete_rejects_invalid_event_type() {
+        let Err(error) = try_build_friend_request_delete_event(
+            "friend request delete",
+            FriendRequestDeletePayload {
+                request_id: "req-1",
+                deleted_at_unix: 91,
                 actor_user_id: None,
             },
         ) else {

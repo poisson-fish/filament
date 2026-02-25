@@ -537,10 +537,31 @@ pub(crate) async fn delete_friend_request(
         let sender_user_id = UserId::try_from(sender_user_id).map_err(|_| AuthFailure::Internal)?;
         let recipient_user_id =
             UserId::try_from(recipient_user_id).map_err(|_| AuthFailure::Internal)?;
-        let event =
-            gateway_events::friend_request_delete(&path.request_id, now_unix(), Some(auth.user_id));
-        broadcast_user_event(&state, sender_user_id, &event).await;
-        broadcast_user_event(&state, recipient_user_id, &event).await;
+        match gateway_events::try_friend_request_delete(
+            &path.request_id,
+            now_unix(),
+            Some(auth.user_id),
+        ) {
+            Ok(event) => {
+                broadcast_user_event(&state, sender_user_id, &event).await;
+                broadcast_user_event(&state, recipient_user_id, &event).await;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = "gateway.friend_request_delete.serialize_failed",
+                    event_type = gateway_events::FRIEND_REQUEST_DELETE_EVENT,
+                    request_id = path.request_id,
+                    sender_user_id = sender_user_id.to_string(),
+                    recipient_user_id = recipient_user_id.to_string(),
+                    error = %error,
+                );
+                record_gateway_event_dropped(
+                    "user",
+                    gateway_events::FRIEND_REQUEST_DELETE_EVENT,
+                    "serialize_error",
+                );
+            }
+        }
         return Ok(StatusCode::NO_CONTENT);
     }
 
@@ -555,10 +576,31 @@ pub(crate) async fn delete_friend_request(
     let sender_user_id = request.sender_user_id;
     let recipient_user_id = request.recipient_user_id;
     requests.remove(&path.request_id);
-    let event =
-        gateway_events::friend_request_delete(&path.request_id, now_unix(), Some(auth.user_id));
-    broadcast_user_event(&state, sender_user_id, &event).await;
-    broadcast_user_event(&state, recipient_user_id, &event).await;
+    match gateway_events::try_friend_request_delete(
+        &path.request_id,
+        now_unix(),
+        Some(auth.user_id),
+    ) {
+        Ok(event) => {
+            broadcast_user_event(&state, sender_user_id, &event).await;
+            broadcast_user_event(&state, recipient_user_id, &event).await;
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.friend_request_delete.serialize_failed",
+                event_type = gateway_events::FRIEND_REQUEST_DELETE_EVENT,
+                request_id = path.request_id,
+                sender_user_id = sender_user_id.to_string(),
+                recipient_user_id = recipient_user_id.to_string(),
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "user",
+                gateway_events::FRIEND_REQUEST_DELETE_EVENT,
+                "serialize_error",
+            );
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
