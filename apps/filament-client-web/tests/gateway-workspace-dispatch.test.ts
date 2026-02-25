@@ -53,6 +53,114 @@ describe("dispatchWorkspaceGatewayEvent", () => {
     expect(onWorkspaceMemberAdd).not.toHaveBeenCalled();
   });
 
+  it("dispatches role override updates to legacy override handler", () => {
+    const onWorkspaceChannelOverrideUpdate = vi.fn();
+
+    const handled = dispatchWorkspaceGatewayEvent(
+      "workspace_channel_override_update",
+      {
+        guild_id: DEFAULT_GUILD_ID,
+        channel_id: DEFAULT_CHANNEL_ID,
+        role: "member",
+        updated_fields: {
+          allow: ["create_message"],
+          deny: ["ban_member"],
+        },
+        updated_at_unix: 1710000001,
+      },
+      { onWorkspaceChannelOverrideUpdate },
+    );
+
+    expect(handled).toBe(true);
+    expect(onWorkspaceChannelOverrideUpdate).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceChannelOverrideUpdate).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      channelId: DEFAULT_CHANNEL_ID,
+      role: "member",
+      updatedFields: {
+        allow: ["create_message"],
+        deny: ["ban_member"],
+      },
+      updatedAtUnix: 1710000001,
+    });
+  });
+
+  it("normalizes legacy permission payload shape to permission override handler", () => {
+    const onWorkspaceChannelOverrideUpdate = vi.fn();
+    const onWorkspaceChannelPermissionOverrideUpdate = vi.fn();
+    const onWorkspaceIpBanSync = vi.fn();
+
+    const handled = dispatchWorkspaceGatewayEvent(
+      "workspace_channel_override_update",
+      {
+        guild_id: DEFAULT_GUILD_ID,
+        channel_id: DEFAULT_CHANNEL_ID,
+        target_kind: "member",
+        target_id: DEFAULT_USER_ID,
+        updated_fields: {
+          allow: ["create_message"],
+          deny: ["ban_member"],
+        },
+        updated_at_unix: 1710000001,
+      },
+      {
+        onWorkspaceChannelOverrideUpdate,
+        onWorkspaceChannelPermissionOverrideUpdate,
+        onWorkspaceIpBanSync,
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(onWorkspaceChannelOverrideUpdate).not.toHaveBeenCalled();
+    expect(onWorkspaceChannelPermissionOverrideUpdate).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceChannelPermissionOverrideUpdate).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      channelId: DEFAULT_CHANNEL_ID,
+      targetKind: "member",
+      targetId: DEFAULT_USER_ID,
+      updatedFields: {
+        allow: ["create_message"],
+        deny: ["ban_member"],
+      },
+      updatedAtUnix: 1710000001,
+    });
+    expect(onWorkspaceIpBanSync).not.toHaveBeenCalled();
+  });
+
+  it("dispatches explicit permission override event type to permission override handler", () => {
+    const onWorkspaceChannelPermissionOverrideUpdate = vi.fn();
+
+    const handled = dispatchWorkspaceGatewayEvent(
+      "workspace_channel_permission_override_update",
+      {
+        guild_id: DEFAULT_GUILD_ID,
+        channel_id: DEFAULT_CHANNEL_ID,
+        target_kind: "role",
+        target_id: "member",
+        updated_fields: {
+          allow: ["create_message"],
+          deny: ["ban_member"],
+        },
+        updated_at_unix: 1710000001,
+      },
+      { onWorkspaceChannelPermissionOverrideUpdate },
+    );
+
+    expect(handled).toBe(true);
+    expect(onWorkspaceChannelPermissionOverrideUpdate).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceChannelPermissionOverrideUpdate).toHaveBeenCalledWith({
+      guildId: DEFAULT_GUILD_ID,
+      channelId: DEFAULT_CHANNEL_ID,
+      targetKind: "role",
+      targetId: "member",
+      updatedFields: {
+        allow: ["create_message"],
+        deny: ["ban_member"],
+      },
+      updatedAtUnix: 1710000001,
+    });
+  });
+
   it("returns false for non-workspace event types", () => {
     const onWorkspaceIpBanSync = vi.fn();
 

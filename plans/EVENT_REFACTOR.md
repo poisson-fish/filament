@@ -56,7 +56,7 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 - [ ] Split `workspace_channel_override_update` into explicit contracts:
   - role override event
   - principal/target override event
-- [ ] Keep backward compatibility strategy explicit:
+- [x] Keep backward compatibility strategy explicit:
   - temporary dual-emit window or controlled migration flag
   - client accepts both during migration window
 - [ ] Update `docs/GATEWAY_EVENTS.md` and protocol contract notes.
@@ -80,6 +80,7 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 
 ### Progress Notes
 - 2026-02-25 (Slice 1): Added explicit server event type `workspace_channel_permission_override_update` for principal/target override payload shape, kept temporary dual-emit from the permission-override route (`workspace_channel_override_update` legacy + explicit event), and updated server/docs event manifests plus gateway event builder tests.
+- 2026-02-25 (Slice 2): Updated web workspace gateway decoding/dispatch to accept migration dual-emit payloads under both event names, normalize principal/target payloads to `workspace_channel_permission_override_update`, and add targeted dispatch tests for legacy role payload, legacy permission payload, and explicit permission event type.
 
 ### Exit Criteria
 - One logical event name maps to one payload shape.

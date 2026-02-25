@@ -196,6 +196,18 @@ export interface WorkspaceChannelOverrideUpdatePayload {
   updatedAtUnix: number;
 }
 
+export interface WorkspaceChannelPermissionOverrideUpdatePayload {
+  guildId: GuildId;
+  channelId: ChannelId;
+  targetKind: "role" | "member";
+  targetId: string;
+  updatedFields: {
+    allow: PermissionName[];
+    deny: PermissionName[];
+  };
+  updatedAtUnix: number;
+}
+
 export interface WorkspaceIpBanSyncPayload {
   guildId: GuildId;
   summary: {
@@ -299,6 +311,9 @@ export interface GatewayHandlers {
   ) => void;
   onWorkspaceChannelOverrideUpdate?: (
     payload: WorkspaceChannelOverrideUpdatePayload,
+  ) => void;
+  onWorkspaceChannelPermissionOverrideUpdate?: (
+    payload: WorkspaceChannelPermissionOverrideUpdatePayload,
   ) => void;
   onWorkspaceIpBanSync?: (payload: WorkspaceIpBanSyncPayload) => void;
   onProfileUpdate?: (payload: ProfileUpdatePayload) => void;

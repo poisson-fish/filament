@@ -1,5 +1,6 @@
 import type {
   ChannelCreatePayload,
+  WorkspaceChannelPermissionOverrideUpdatePayload,
   WorkspaceChannelOverrideUpdatePayload,
   WorkspaceIpBanSyncPayload,
   WorkspaceMemberAddPayload,
@@ -36,6 +37,9 @@ export interface WorkspaceGatewayDispatchHandlers {
   ) => void;
   onWorkspaceChannelOverrideUpdate?: (
     payload: WorkspaceChannelOverrideUpdatePayload,
+  ) => void;
+  onWorkspaceChannelPermissionOverrideUpdate?: (
+    payload: WorkspaceChannelPermissionOverrideUpdatePayload,
   ) => void;
   onWorkspaceIpBanSync?: (payload: WorkspaceIpBanSyncPayload) => void;
 }
@@ -104,6 +108,10 @@ export function dispatchWorkspaceGatewayEvent(
   }
   if (workspaceEvent.type === "workspace_channel_override_update") {
     handlers.onWorkspaceChannelOverrideUpdate?.(workspaceEvent.payload);
+    return true;
+  }
+  if (workspaceEvent.type === "workspace_channel_permission_override_update") {
+    handlers.onWorkspaceChannelPermissionOverrideUpdate?.(workspaceEvent.payload);
     return true;
   }
 
