@@ -225,6 +225,7 @@ export function createSupportPanelPropGroupsOptions(
       isMutatingRoles: options.isMutatingRoles(),
       roleManagementStatus: options.roleManagementStatus(),
       roleManagementError: options.roleManagementError(),
+      defaultJoinRoleId: options.defaultJoinRoleId?.() ?? null,
       targetUserIdInput: options.targetUserIdInput(),
       setTargetUserIdInput: options.setTargetUserIdInput,
       onRefreshRoles: options.onRefreshRoles,
@@ -234,6 +235,7 @@ export function createSupportPanelPropGroupsOptions(
       onReorderRoles: options.onReorderRoles,
       onAssignRole: options.onAssignRole,
       onUnassignRole: options.onUnassignRole,
+      onUpdateDefaultJoinRole: options.onUpdateDefaultJoinRole,
       onOpenModerationPanel: options.onOpenModerationPanel,
     },
     utility: {

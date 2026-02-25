@@ -206,6 +206,9 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const [dragOverRoleId, setDragOverRoleId] = createSignal<WorkspaceRoleId | null>(null);
 
   const [assignmentRoleId, setAssignmentRoleId] = createSignal<WorkspaceRoleId | null>(null);
+  const [defaultJoinRoleDraft, setDefaultJoinRoleDraft] = createSignal<WorkspaceRoleId | null>(
+    props.defaultJoinRoleId ?? null,
+  );
 
   // Layout states
   const [isCreatingRole, setIsCreatingRole] = createSignal(false);
@@ -238,7 +241,10 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const assignableRoles = createMemo(() =>
     hierarchyRoles().filter((role) => !role.isSystem),
   );
-  const defaultJoinRoleControlValue = createMemo(() => props.defaultJoinRoleId ?? "");
+  const defaultJoinRoleControlValue = createMemo(() => defaultJoinRoleDraft() ?? "");
+  const hasDefaultJoinRoleDraftChanges = createMemo(
+    () => (props.defaultJoinRoleId ?? null) !== defaultJoinRoleDraft(),
+  );
 
   const selectedRole = createMemo<GuildRoleRecord | null>(() => {
     const roleId = selectedRoleId();
@@ -537,13 +543,24 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     });
   };
 
-  const onDefaultJoinRoleChange = async (value: string): Promise<void> => {
+  createEffect(() => {
+    if (typeof props.defaultJoinRoleId === "undefined") {
+      return;
+    }
+    setDefaultJoinRoleDraft(props.defaultJoinRoleId);
+  });
+
+  const onDefaultJoinRoleChange = (value: string): void => {
+    setDefaultJoinRoleDraft(value.length > 0 ? workspaceRoleIdFromInput(value) : null);
+  };
+
+  const onSaveDefaultJoinRole = async (): Promise<void> => {
     if (!props.canManageWorkspaceRoles || !props.hasActiveWorkspace) {
       return;
     }
     await invoke(async () => {
       await props.onUpdateDefaultJoinRole?.(
-        value.length > 0 ? workspaceRoleIdFromInput(value) : null,
+        defaultJoinRoleDraft(),
       );
     });
   };
@@ -706,7 +723,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                     class={fieldControlClass}
                     value={defaultJoinRoleControlValue()}
                     onChange={(event) => {
-                      void onDefaultJoinRoleChange(event.currentTarget.value);
+                      onDefaultJoinRoleChange(event.currentTarget.value);
                     }}
                     disabled={!props.canManageWorkspaceRoles || props.isMutatingRoles}
                   >
@@ -716,6 +733,25 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
                     </For>
                   </select>
                 </label>
+                <div class="mt-[0.45rem] flex items-center gap-[0.45rem]">
+                  <button
+                    type="button"
+                    class={toolbarButtonClass}
+                    disabled={
+                      !props.canManageWorkspaceRoles
+                      || props.isMutatingRoles
+                      || !hasDefaultJoinRoleDraftChanges()
+                    }
+                    onClick={() => {
+                      void onSaveDefaultJoinRole();
+                    }}
+                  >
+                    Save default role
+                  </button>
+                  <Show when={hasDefaultJoinRoleDraftChanges()}>
+                    <span class="text-[0.72rem] text-ink-2">Unsaved change</span>
+                  </Show>
+                </div>
               </div>
               
               <div class="flex flex-col gap-[0.2rem]">
