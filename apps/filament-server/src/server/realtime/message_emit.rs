@@ -3,7 +3,7 @@ use crate::server::{
     core::{AppState, SearchOperation},
     errors::AuthFailure,
     gateway_events,
-    metrics::record_gateway_event_dropped,
+    metrics::record_gateway_event_serialize_error,
     types::MessageResponse,
 };
 
@@ -22,11 +22,7 @@ pub(crate) async fn emit_message_create_and_index(
     if let Ok(event) = gateway_events::try_message_create(response) {
         broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
     } else {
-        record_gateway_event_dropped(
-            "channel",
-            gateway_events::MESSAGE_CREATE_EVENT,
-            "serialize_error",
-        );
+        record_gateway_event_serialize_error("channel", gateway_events::MESSAGE_CREATE_EVENT);
         tracing::warn!(
             guild_id,
             channel_id,

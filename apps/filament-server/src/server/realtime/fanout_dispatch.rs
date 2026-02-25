@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::server::metrics::record_gateway_event_dropped;
+use crate::server::metrics::{
+    record_gateway_event_dropped, record_gateway_event_oversized_outbound,
+};
 
 pub(crate) fn dispatch_gateway_payload(
     listeners: &mut HashMap<Uuid, mpsc::Sender<String>>,
@@ -14,7 +16,7 @@ pub(crate) fn dispatch_gateway_payload(
     slow_connections: &mut Vec<Uuid>,
 ) -> usize {
     if payload.len() > max_payload_bytes {
-        record_gateway_event_dropped(scope, event_type, "oversized_outbound");
+        record_gateway_event_oversized_outbound(scope, event_type);
         return 0;
     }
 
@@ -46,7 +48,7 @@ mod tests {
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
-    use crate::server::metrics::metrics_state;
+    use crate::server::metrics::{metrics_state, GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND};
 
     use super::dispatch_gateway_payload;
 
@@ -148,7 +150,7 @@ mod tests {
         let key = (
             String::from("channel"),
             String::from("message_create"),
-            String::from("oversized_outbound"),
+            String::from(GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND),
         );
         assert_eq!(dropped.get(&key).copied(), Some(1));
     }

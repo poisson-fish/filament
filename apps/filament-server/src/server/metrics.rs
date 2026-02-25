@@ -2,6 +2,9 @@ use std::{collections::HashMap, fmt::Write as _};
 
 use super::core::{MetricsState, METRICS_STATE};
 
+pub(crate) const GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND: &str = "oversized_outbound";
+pub(crate) const GATEWAY_DROP_REASON_SERIALIZE_ERROR: &str = "serialize_error";
+
 pub(crate) fn metrics_state() -> &'static MetricsState {
     METRICS_STATE.get_or_init(MetricsState::default)
 }
@@ -204,6 +207,14 @@ pub(crate) fn record_gateway_event_dropped(
     }
 }
 
+pub(crate) fn record_gateway_event_serialize_error(scope: &'static str, event_type: &str) {
+    record_gateway_event_dropped(scope, event_type, GATEWAY_DROP_REASON_SERIALIZE_ERROR);
+}
+
+pub(crate) fn record_gateway_event_oversized_outbound(scope: &'static str, event_type: &str) {
+    record_gateway_event_dropped(scope, event_type, GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND);
+}
+
 pub(crate) fn record_gateway_event_unknown_received(scope: &'static str, event_type: &str) {
     if let Ok(mut counters) = metrics_state().gateway_events_unknown_received.lock() {
         let entry = counters
@@ -226,5 +237,50 @@ pub(crate) fn record_voice_sync_repair(reason: &'static str) {
     if let Ok(mut counters) = metrics_state().voice_sync_repairs.lock() {
         let entry = counters.entry(reason.to_owned()).or_insert(0);
         *entry += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::{
+        metrics_state, record_gateway_event_oversized_outbound,
+        record_gateway_event_serialize_error, GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND,
+        GATEWAY_DROP_REASON_SERIALIZE_ERROR,
+    };
+
+    #[test]
+    fn records_serialize_error_with_canonical_reason_label() {
+        let event_type = format!("serialize_test_{}", Uuid::new_v4());
+        record_gateway_event_serialize_error("connection", &event_type);
+
+        let dropped = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .expect("gateway dropped metrics mutex should not be poisoned");
+        let key = (
+            String::from("connection"),
+            event_type,
+            String::from(GATEWAY_DROP_REASON_SERIALIZE_ERROR),
+        );
+        assert_eq!(dropped.get(&key).copied(), Some(1));
+    }
+
+    #[test]
+    fn records_oversized_outbound_with_canonical_reason_label() {
+        let event_type = format!("oversized_test_{}", Uuid::new_v4());
+        record_gateway_event_oversized_outbound("guild", &event_type);
+
+        let dropped = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .expect("gateway dropped metrics mutex should not be poisoned");
+        let key = (
+            String::from("guild"),
+            event_type,
+            String::from(GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND),
+        );
+        assert_eq!(dropped.get(&key).copied(), Some(1));
     }
 }

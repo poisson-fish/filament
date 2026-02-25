@@ -105,7 +105,7 @@ Make event emission fail-fast and enforce outbound size limits universally.
 ### Tasks
 - [x] Replace fallback event serialization paths with explicit `Result` handling.
 - [x] Add outbound payload size guard before enqueue/fanout.
-- [ ] Add metric labels for outbound rejection reasons (`oversized_outbound`, `serialize_error`).
+- [x] Add metric labels for outbound rejection reasons (`oversized_outbound`, `serialize_error`).
 - [ ] Ensure dropped/rejected emits are observable but never panic the server.
 
 ### Tentative File Touch List
@@ -160,6 +160,7 @@ Make event emission fail-fast and enforce outbound size limits universally.
 - 2026-02-25 (Slice 35): Removed the last non-fallible gateway event builder callsites in server realtime tests (`presence_sync_dispatch`, `voice_sync_dispatch`, `voice_cleanup_dispatch`) by switching to `try_presence_sync`, `try_voice_participant_sync`, `try_voice_participant_leave`, and `try_voice_participant_update` with explicit `expect` checks. This completes the explicit `Result`-handling migration for server-side event construction callsites under `src/server` and closes Phase 1 Task 1.
 - 2026-02-25 (Slice 36): Added outbound payload size-cap enforcement for connection-scope `presence_sync` snapshot enqueue by extending presence enqueue classification with `Oversized` and wiring `dispatch_presence_sync_event` to use `max_gateway_event_bytes`. Presence subscribe runtime now fail-closes oversized snapshot enqueue at dispatch time with `filament_gateway_events_dropped_total{scope=\"connection\",event_type=\"presence_sync\",reason=\"oversized_outbound\"}` and no queue mutation; added focused unit tests for oversized enqueue and dispatch outcome mapping.
 - 2026-02-25 (Slice 37): Added outbound payload size-cap enforcement for connection-scope `voice_participant_sync` snapshot enqueue by extending voice enqueue classification with `Oversized` and wiring `dispatch_voice_sync_event` to use `max_gateway_event_bytes` from runtime config. Voice subscribe snapshot dispatch now records `filament_gateway_events_dropped_total{scope=\"connection\",event_type=\"voice_participant_sync\",reason=\"oversized_outbound\"}` and skips enqueue on oversized payloads; added focused unit tests for oversized enqueue classification and dispatch outcome mapping.
+- 2026-02-25 (Slice 38): Canonicalized outbound rejection reason labels in metrics by introducing shared constants/helpers for `serialize_error` and `oversized_outbound` (`record_gateway_event_serialize_error`, `record_gateway_event_oversized_outbound`), migrated representative runtime callsites (`ready` serialize drop, message-create serialize drop, and shared fanout oversized drop), and added focused unit tests asserting those exact labels are recorded in `filament_gateway_events_dropped_total`.
 
 ### Exit Criteria
 - Outbound and inbound both enforce size caps.
