@@ -19,6 +19,7 @@ mod message_store_in_memory;
 mod presence_disconnect_events;
 mod presence_subscribe_events;
 mod presence_sync_dispatch;
+mod ready_enqueue;
 mod search_apply_batch;
 mod search_batch_drain;
 mod search_bootstrap;
@@ -115,6 +116,7 @@ use message_emit::emit_message_create_and_index;
 use message_prepare::prepare_message_body;
 use message_record::{build_in_memory_message_record, build_message_response_from_record};
 use message_store_in_memory::append_message_record;
+use ready_enqueue::{ready_drop_metric_reason, ready_error_reason, try_enqueue_ready_event};
 use search_blocking::run_search_blocking_with_timeout;
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 pub(crate) use search_index_lookup::collect_index_message_ids_for_guild;
@@ -232,7 +234,25 @@ pub(crate) async fn handle_gateway_connection(
             return;
         }
     };
-    let _ = outbound_tx.send(ready_event.payload).await;
+    let enqueue_result = try_enqueue_ready_event(
+        &outbound_tx,
+        ready_event.payload,
+        state.runtime.max_gateway_event_bytes,
+    );
+    if let Some(reason) = ready_drop_metric_reason(&enqueue_result) {
+        record_gateway_event_dropped("connection", ready_event.event_type, reason);
+    }
+    if let Some(reason) = ready_error_reason(&enqueue_result) {
+        tracing::warn!(
+            event = "gateway.ready.enqueue_rejected",
+            connection_id = %connection_id,
+            user_id = %auth.user_id,
+            reject_reason = reason
+        );
+        record_ws_disconnect(reason);
+        remove_connection(&state, connection_id).await;
+        return;
+    }
     record_gateway_event_emitted("connection", ready_event.event_type);
 
     let slow_consumer_disconnect_send = Arc::clone(&slow_consumer_disconnect);

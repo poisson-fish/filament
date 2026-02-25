@@ -1,9 +1,9 @@
 use filament_core::UserId;
 use serde::Serialize;
 
-use super::{envelope::try_build_event, GatewayEvent};
 #[cfg(test)]
 use super::envelope::build_event;
+use super::{envelope::try_build_event, GatewayEvent};
 use crate::server::core::GuildVisibility;
 
 pub(crate) const WORKSPACE_UPDATE_EVENT: &str = "workspace_update";
