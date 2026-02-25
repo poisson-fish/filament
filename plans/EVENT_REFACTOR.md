@@ -104,7 +104,7 @@ Make event emission fail-fast and enforce outbound size limits universally.
 
 ### Tasks
 - [x] Replace fallback event serialization paths with explicit `Result` handling.
-- [ ] Add outbound payload size guard before enqueue/fanout.
+- [x] Add outbound payload size guard before enqueue/fanout.
 - [ ] Add metric labels for outbound rejection reasons (`oversized_outbound`, `serialize_error`).
 - [ ] Ensure dropped/rejected emits are observable but never panic the server.
 
@@ -159,6 +159,7 @@ Make event emission fail-fast and enforce outbound size limits universally.
 - 2026-02-25 (Slice 34): Hardened connection bootstrap `ready` emission enqueue path by adding explicit enqueue classification (`Enqueued`/`Full`/`Closed`/`Oversized`) with max outbound payload byte enforcement before queueing. `handle_gateway_connection` now records `filament_gateway_events_dropped_total{scope=\"connection\",event_type=\"ready\",reason in {\"full_queue\",\"closed\",\"oversized_outbound\"}}` on rejected enqueue attempts, records matching disconnect reasons (`outbound_queue_full`, `outbound_queue_closed`, `outbound_payload_too_large`), and fail-closes the connection instead of ignoring send failures; added focused unit coverage for ready enqueue/reason mapping.
 - 2026-02-25 (Slice 35): Removed the last non-fallible gateway event builder callsites in server realtime tests (`presence_sync_dispatch`, `voice_sync_dispatch`, `voice_cleanup_dispatch`) by switching to `try_presence_sync`, `try_voice_participant_sync`, `try_voice_participant_leave`, and `try_voice_participant_update` with explicit `expect` checks. This completes the explicit `Result`-handling migration for server-side event construction callsites under `src/server` and closes Phase 1 Task 1.
 - 2026-02-25 (Slice 36): Added outbound payload size-cap enforcement for connection-scope `presence_sync` snapshot enqueue by extending presence enqueue classification with `Oversized` and wiring `dispatch_presence_sync_event` to use `max_gateway_event_bytes`. Presence subscribe runtime now fail-closes oversized snapshot enqueue at dispatch time with `filament_gateway_events_dropped_total{scope=\"connection\",event_type=\"presence_sync\",reason=\"oversized_outbound\"}` and no queue mutation; added focused unit tests for oversized enqueue and dispatch outcome mapping.
+- 2026-02-25 (Slice 37): Added outbound payload size-cap enforcement for connection-scope `voice_participant_sync` snapshot enqueue by extending voice enqueue classification with `Oversized` and wiring `dispatch_voice_sync_event` to use `max_gateway_event_bytes` from runtime config. Voice subscribe snapshot dispatch now records `filament_gateway_events_dropped_total{scope=\"connection\",event_type=\"voice_participant_sync\",reason=\"oversized_outbound\"}` and skips enqueue on oversized payloads; added focused unit tests for oversized enqueue classification and dispatch outcome mapping.
 
 ### Exit Criteria
 - Outbound and inbound both enforce size caps.

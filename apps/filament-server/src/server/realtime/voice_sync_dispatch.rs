@@ -12,8 +12,10 @@ use super::voice_presence::{
 pub(crate) fn dispatch_voice_sync_event(
     outbound_tx: &mpsc::Sender<String>,
     event: GatewayEvent,
+    max_gateway_event_bytes: usize,
 ) -> VoiceSyncDispatchOutcome {
-    let enqueue_result = try_enqueue_voice_sync_event(outbound_tx, event.payload);
+    let enqueue_result =
+        try_enqueue_voice_sync_event(outbound_tx, event.payload, max_gateway_event_bytes);
     let outcome = voice_sync_dispatch_outcome(&enqueue_result);
     match outcome {
         VoiceSyncDispatchOutcome::EmittedAndRepaired => {
@@ -25,6 +27,9 @@ pub(crate) fn dispatch_voice_sync_event(
         }
         VoiceSyncDispatchOutcome::DroppedFull => {
             record_gateway_event_dropped("connection", event.event_type, "full_queue");
+        }
+        VoiceSyncDispatchOutcome::DroppedOversized => {
+            record_gateway_event_dropped("connection", event.event_type, "oversized_outbound");
         }
     }
     outcome
@@ -43,7 +48,7 @@ mod tests {
             .expect("voice_participant_sync event should serialize");
         let expected_payload = event.payload.clone();
 
-        let outcome = dispatch_voice_sync_event(&tx, event);
+        let outcome = dispatch_voice_sync_event(&tx, event, 1024);
 
         assert!(matches!(
             outcome,
@@ -63,7 +68,7 @@ mod tests {
         let event = gateway_events::try_voice_participant_sync("g-1", "c-1", Vec::new(), 10)
             .expect("voice_participant_sync event should serialize");
 
-        let outcome = dispatch_voice_sync_event(&tx, event);
+        let outcome = dispatch_voice_sync_event(&tx, event, 1024);
 
         assert!(matches!(outcome, VoiceSyncDispatchOutcome::DroppedFull));
     }
@@ -75,8 +80,22 @@ mod tests {
         let event = gateway_events::try_voice_participant_sync("g-1", "c-1", Vec::new(), 10)
             .expect("voice_participant_sync event should serialize");
 
-        let outcome = dispatch_voice_sync_event(&tx, event);
+        let outcome = dispatch_voice_sync_event(&tx, event, 1024);
 
         assert!(matches!(outcome, VoiceSyncDispatchOutcome::DroppedClosed));
+    }
+
+    #[test]
+    fn dispatch_voice_sync_event_returns_oversized_for_large_payload() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
+        let event = gateway_events::try_voice_participant_sync("g-1", "c-1", Vec::new(), 10)
+            .expect("voice_participant_sync event should serialize");
+
+        let outcome = dispatch_voice_sync_event(&tx, event, 3);
+
+        assert!(matches!(
+            outcome,
+            VoiceSyncDispatchOutcome::DroppedOversized
+        ));
     }
 }

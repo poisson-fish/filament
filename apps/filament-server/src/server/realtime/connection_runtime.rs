@@ -305,7 +305,11 @@ pub(crate) async fn handle_voice_subscribe(
             return;
         }
     };
-    dispatch_voice_sync_event(outbound_tx, sync_event);
+    dispatch_voice_sync_event(
+        outbound_tx,
+        sync_event,
+        state.runtime.max_gateway_event_bytes,
+    );
 }
 
 async fn remove_disconnected_user_voice_participants(

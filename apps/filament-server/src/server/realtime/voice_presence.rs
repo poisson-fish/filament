@@ -9,12 +9,14 @@ pub(crate) enum OutboundEnqueueResult {
     Enqueued,
     Closed,
     Full,
+    Oversized,
 }
 
 pub(crate) enum VoiceSyncDispatchOutcome {
     EmittedAndRepaired,
     DroppedClosed,
     DroppedFull,
+    DroppedOversized,
 }
 
 pub(crate) fn voice_channel_key(guild_id: &str, channel_id: &str) -> String {
@@ -60,7 +62,11 @@ pub(crate) fn collect_voice_snapshots(
 pub(crate) fn try_enqueue_voice_sync_event(
     outbound_tx: &mpsc::Sender<String>,
     payload: String,
+    max_gateway_event_bytes: usize,
 ) -> OutboundEnqueueResult {
+    if payload.len() > max_gateway_event_bytes {
+        return OutboundEnqueueResult::Oversized;
+    }
     match outbound_tx.try_send(payload) {
         Ok(()) => OutboundEnqueueResult::Enqueued,
         Err(mpsc::error::TrySendError::Closed(_)) => OutboundEnqueueResult::Closed,
@@ -75,6 +81,7 @@ pub(crate) fn voice_sync_dispatch_outcome(
         OutboundEnqueueResult::Enqueued => VoiceSyncDispatchOutcome::EmittedAndRepaired,
         OutboundEnqueueResult::Closed => VoiceSyncDispatchOutcome::DroppedClosed,
         OutboundEnqueueResult::Full => VoiceSyncDispatchOutcome::DroppedFull,
+        OutboundEnqueueResult::Oversized => VoiceSyncDispatchOutcome::DroppedOversized,
     }
 }
 
@@ -186,7 +193,7 @@ mod tests {
     fn enqueue_voice_sync_event_reports_enqueued() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
 
-        let result = try_enqueue_voice_sync_event(&tx, String::from("payload"));
+        let result = try_enqueue_voice_sync_event(&tx, String::from("payload"), 1024);
 
         assert!(matches!(result, OutboundEnqueueResult::Enqueued));
         let received = rx.try_recv().expect("payload should be queued");
@@ -197,11 +204,11 @@ mod tests {
     fn enqueue_voice_sync_event_reports_full() {
         let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
         assert!(matches!(
-            try_enqueue_voice_sync_event(&tx, String::from("first")),
+            try_enqueue_voice_sync_event(&tx, String::from("first"), 1024),
             OutboundEnqueueResult::Enqueued
         ));
 
-        let result = try_enqueue_voice_sync_event(&tx, String::from("second"));
+        let result = try_enqueue_voice_sync_event(&tx, String::from("second"), 1024);
 
         assert!(matches!(result, OutboundEnqueueResult::Full));
     }
@@ -211,9 +218,18 @@ mod tests {
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(1);
         drop(rx);
 
-        let result = try_enqueue_voice_sync_event(&tx, String::from("payload"));
+        let result = try_enqueue_voice_sync_event(&tx, String::from("payload"), 1024);
 
         assert!(matches!(result, OutboundEnqueueResult::Closed));
+    }
+
+    #[test]
+    fn enqueue_voice_sync_event_reports_oversized() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
+
+        let result = try_enqueue_voice_sync_event(&tx, String::from("payload"), 3);
+
+        assert!(matches!(result, OutboundEnqueueResult::Oversized));
     }
 
     #[test]
@@ -229,6 +245,10 @@ mod tests {
         assert!(matches!(
             voice_sync_dispatch_outcome(&OutboundEnqueueResult::Full),
             VoiceSyncDispatchOutcome::DroppedFull
+        ));
+        assert!(matches!(
+            voice_sync_dispatch_outcome(&OutboundEnqueueResult::Oversized),
+            VoiceSyncDispatchOutcome::DroppedOversized
         ));
     }
 }
