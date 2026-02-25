@@ -60,10 +60,12 @@ pub(crate) use friend::{
 #[cfg(test)]
 pub(crate) use message_channel::channel_create;
 pub(crate) use message_channel::{
-    message_reaction, try_channel_create, try_message_create, try_message_delete,
+    try_channel_create, try_message_create, try_message_delete, try_message_reaction,
     try_message_update, CHANNEL_CREATE_EVENT, MESSAGE_CREATE_EVENT, MESSAGE_DELETE_EVENT,
-    MESSAGE_UPDATE_EVENT,
+    MESSAGE_REACTION_EVENT, MESSAGE_UPDATE_EVENT,
 };
+#[cfg(test)]
+pub(crate) use message_channel::message_reaction;
 #[cfg(test)]
 pub(crate) use presence_voice::presence_sync;
 pub(crate) use presence_voice::{

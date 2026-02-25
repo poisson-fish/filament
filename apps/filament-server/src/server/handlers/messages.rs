@@ -34,13 +34,27 @@ use crate::server::{
 };
 
 async fn broadcast_message_reaction_event(state: &AppState, path: &ReactionPath, count: usize) {
-    let event = gateway_events::message_reaction(
+    let Ok(event) = gateway_events::try_message_reaction(
         &path.guild_id,
         &path.channel_id,
         &path.message_id,
         &path.emoji,
         count,
-    );
+    ) else {
+        record_gateway_event_dropped(
+            "channel",
+            gateway_events::MESSAGE_REACTION_EVENT,
+            "serialize_error",
+        );
+        tracing::warn!(
+            guild_id = path.guild_id,
+            channel_id = path.channel_id,
+            message_id = path.message_id,
+            emoji = path.emoji,
+            "dropped message_reaction outbound event because serialization failed"
+        );
+        return;
+    };
     broadcast_channel_event(
         state,
         &channel_key(&path.guild_id, &path.channel_id),

@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use super::{
-    envelope::{build_event, try_build_event},
+    envelope::try_build_event,
     GatewayEvent,
 };
 use crate::server::types::{ChannelResponse, MessageResponse};
@@ -101,14 +101,14 @@ pub(crate) fn try_message_delete(
     )
 }
 
-pub(crate) fn message_reaction(
+pub(crate) fn try_message_reaction(
     guild_id: &str,
     channel_id: &str,
     message_id: &str,
     emoji: &str,
     count: usize,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_message_reaction_event(
         MESSAGE_REACTION_EVENT,
         MessageReactionPayload {
             guild_id,
@@ -118,6 +118,19 @@ pub(crate) fn message_reaction(
             count,
         },
     )
+}
+
+#[cfg(test)]
+pub(crate) fn message_reaction(
+    guild_id: &str,
+    channel_id: &str,
+    message_id: &str,
+    emoji: &str,
+    count: usize,
+) -> GatewayEvent {
+    try_message_reaction(guild_id, channel_id, message_id, emoji, count).unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {MESSAGE_REACTION_EVENT}: {error}")
+    })
 }
 
 pub(crate) fn try_channel_create(
@@ -147,6 +160,13 @@ pub(crate) fn channel_create(guild_id: &str, channel: &ChannelResponse) -> Gatew
 fn try_build_channel_create_event(
     event_type: &'static str,
     payload: ChannelCreatePayload<'_>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(event_type, payload)
+}
+
+fn try_build_message_reaction_event(
+    event_type: &'static str,
+    payload: MessageReactionPayload<'_>,
 ) -> anyhow::Result<GatewayEvent> {
     try_build_event(event_type, payload)
 }
@@ -215,6 +235,39 @@ mod tests {
         );
         assert_eq!(payload["message_id"], Value::from("msg-1"));
         assert_eq!(payload["deleted_at_unix"], Value::from(77));
+    }
+
+    #[test]
+    fn message_reaction_event_emits_reaction_fields() {
+        let payload = parse_payload(
+            &try_message_reaction("guild-1", "channel-1", "msg-1", ":+1:", 4)
+                .expect("message_reaction should serialize"),
+        );
+        assert_eq!(payload["guild_id"], Value::from("guild-1"));
+        assert_eq!(payload["channel_id"], Value::from("channel-1"));
+        assert_eq!(payload["message_id"], Value::from("msg-1"));
+        assert_eq!(payload["emoji"], Value::from(":+1:"));
+        assert_eq!(payload["count"], Value::from(4));
+    }
+
+    #[test]
+    fn try_message_reaction_rejects_invalid_event_type() {
+        let Err(error) = try_build_message_reaction_event(
+            "message reaction",
+            MessageReactionPayload {
+                guild_id: "guild-1",
+                channel_id: "channel-1",
+                message_id: "msg-1",
+                emoji: ":+1:",
+                count: 1,
+            },
+        ) else {
+            panic!("invalid event type should fail");
+        };
+        assert!(
+            error.to_string().contains("invalid outbound event type"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
