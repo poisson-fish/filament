@@ -470,6 +470,66 @@ async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() 
         .expect("unknown event should send");
     let _ = tokio::time::timeout(Duration::from_secs(1), unknown_socket.next()).await;
 
+    let mut invalid_subscribe_request = ws_url
+        .as_str()
+        .into_client_request()
+        .expect("invalid subscribe ws request should build");
+    invalid_subscribe_request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.31".parse().expect("valid ip header"),
+    );
+    let (mut invalid_subscribe_socket, _) = connect_async(invalid_subscribe_request)
+        .await
+        .expect("ws should connect");
+    let _ = next_event_of_type(&mut invalid_subscribe_socket, "ready").await;
+    invalid_subscribe_socket
+        .send(Message::Text(
+            json!({
+                "v": 1,
+                "t": "subscribe",
+                "d": {
+                    "guild_id": "not-a-ulid",
+                    "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT"
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("invalid subscribe payload should send");
+    let _ = tokio::time::timeout(Duration::from_secs(1), invalid_subscribe_socket.next()).await;
+
+    let mut invalid_message_create_request = ws_url
+        .as_str()
+        .into_client_request()
+        .expect("invalid message_create ws request should build");
+    invalid_message_create_request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.31".parse().expect("valid ip header"),
+    );
+    let (mut invalid_message_create_socket, _) = connect_async(invalid_message_create_request)
+        .await
+        .expect("ws should connect");
+    let _ = next_event_of_type(&mut invalid_message_create_socket, "ready").await;
+    invalid_message_create_socket
+        .send(Message::Text(
+            json!({
+                "v": 1,
+                "t": "message_create",
+                "d": {
+                    "guild_id": "not-a-ulid",
+                    "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT",
+                    "content": "hello"
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("invalid message_create payload should send");
+    let _ =
+        tokio::time::timeout(Duration::from_secs(1), invalid_message_create_socket.next()).await;
+
     let metrics = metrics_text(&app).await;
     assert!(metrics.contains("filament_gateway_events_unknown_received_total"));
     assert!(metrics.contains("filament_gateway_events_parse_rejected_total"));
@@ -478,6 +538,12 @@ async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() 
     ));
     assert!(metrics.contains(
         "filament_gateway_events_parse_rejected_total{scope=\"ingress\",reason=\"invalid_envelope\"}",
+    ));
+    assert!(metrics.contains(
+        "filament_gateway_events_parse_rejected_total{scope=\"ingress\",reason=\"invalid_subscribe_payload\"}",
+    ));
+    assert!(metrics.contains(
+        "filament_gateway_events_parse_rejected_total{scope=\"ingress\",reason=\"invalid_message_create_payload\"}",
     ));
 }
 
