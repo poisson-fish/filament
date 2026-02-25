@@ -328,14 +328,15 @@ function resolveEffectiveRoleIds(
   snapshotRole: RoleName | null,
   buckets: LegacyRoleBuckets,
 ): Set<WorkspaceRoleId> {
-  const effective = new Set<WorkspaceRoleId>(
-    dedupeRoleIds(assignedRoleIds.slice(0, MAX_TRACKED_ROLE_ASSIGNMENTS_PER_USER)),
+  const dedupedAssignedRoleIds = dedupeRoleIds(
+    assignedRoleIds.slice(0, MAX_TRACKED_ROLE_ASSIGNMENTS_PER_USER),
   );
+  const effective = new Set<WorkspaceRoleId>(dedupedAssignedRoleIds);
   for (const roleId of buckets.everyoneRoleIds) {
     effective.add(roleId);
   }
 
-  if (effective.size === 0 && snapshotRole) {
+  if (dedupedAssignedRoleIds.length === 0 && snapshotRole) {
     for (const roleId of roleIdsForLegacyRole(snapshotRole, buckets)) {
       effective.add(roleId);
     }
@@ -355,6 +356,7 @@ function buildLegacyRoleBuckets(
   };
   for (const role of roles) {
     const normalizedName = role.name.trim().toLowerCase();
+    const canonicalName = normalizedName.replace(/[\s-]+/g, "_");
     if (
       normalizedName === "@everyone" ||
       (role.isSystem && role.position === 0)
@@ -362,15 +364,15 @@ function buildLegacyRoleBuckets(
       buckets.everyoneRoleIds.add(role.roleId);
       continue;
     }
-    if (normalizedName === "workspace_owner" || normalizedName === "owner") {
+    if (canonicalName === "workspace_owner" || canonicalName === "owner") {
       buckets.ownerRoleIds.add(role.roleId);
       continue;
     }
-    if (normalizedName === "moderator") {
+    if (canonicalName === "moderator") {
       buckets.moderatorRoleIds.add(role.roleId);
       continue;
     }
-    if (normalizedName === "member") {
+    if (canonicalName === "member") {
       buckets.memberRoleIds.add(role.roleId);
     }
   }

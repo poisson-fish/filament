@@ -90,6 +90,38 @@ describe("app shell effective permissions", () => {
     expect((bits & permissionBitsFromList(["publish_screen_share"])) !== 0).toBe(true);
   });
 
+  it("falls back to snapshot owner role when assigned role ids are not cached", () => {
+    const bits = resolveEffectiveChannelPermissions({
+      channelPermissionsSnapshot: {
+        role: "owner",
+        permissions: ["create_message"],
+      },
+      guildRoles: roleFixtures(),
+      assignedRoleIds: [],
+      channelOverrides: [],
+    });
+    expect((bits & permissionBitsFromList(["manage_roles"])) !== 0).toBe(true);
+    expect((bits & permissionBitsFromList(["publish_screen_share"])) !== 0).toBe(true);
+  });
+
+  it("matches owner roles with normalized naming variants", () => {
+    const bits = resolveEffectiveChannelPermissions({
+      channelPermissionsSnapshot: {
+        role: "owner",
+        permissions: ["create_message"],
+      },
+      guildRoles: roleFixtures().map((role) =>
+        role.roleId === ROLE_OWNER
+          ? { ...role, name: "workspace owner" as GuildRoleRecord["name"] }
+          : role,
+      ),
+      assignedRoleIds: [],
+      channelOverrides: [],
+    });
+    expect((bits & permissionBitsFromList(["manage_roles"])) !== 0).toBe(true);
+    expect((bits & permissionBitsFromList(["publish_screen_share"])) !== 0).toBe(true);
+  });
+
   it("applies matching legacy role overrides for assigned roles", () => {
     const bits = resolveEffectiveChannelPermissions({
       channelPermissionsSnapshot: {

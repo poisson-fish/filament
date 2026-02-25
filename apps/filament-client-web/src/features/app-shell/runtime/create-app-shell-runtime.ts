@@ -37,6 +37,7 @@ import {
 import {
   createVoiceSessionLifecycleController,
 } from "../controllers/voice-controller";
+import { createVoicePermissionSyncController } from "../controllers/voice-permission-controller";
 import {
   createChannelPermissionsController,
   createWorkspaceBootstrapController,
@@ -47,6 +48,7 @@ import {
   userIdFromVoiceIdentity,
 } from "../helpers";
 import { createAppShellSelectors } from "../selectors/create-app-shell-selectors";
+import { createClientPermissionLayer } from "../permissions/client-permission-layer";
 import { createDiagnosticsState } from "../state/diagnostics-state";
 import { createMessageState } from "../state/message-state";
 import { createOverlayState } from "../state/overlay-state";
@@ -115,6 +117,19 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setSelectedProfileError: profileState.setSelectedProfileError,
   });
 
+  const permissionLayer = createClientPermissionLayer({
+    activeGuildId: workspaceChannelState.activeGuildId,
+    activeChannelId: workspaceChannelState.activeChannelId,
+    currentUserId: () => profileController.profile()?.userId ?? null,
+    channelPermissions: workspaceChannelState.channelPermissions,
+    workspaceRolesByGuildId: workspaceChannelState.workspaceRolesByGuildId,
+    workspaceUserRolesByGuildId: workspaceChannelState.workspaceUserRolesByGuildId,
+    workspaceChannelOverridesByGuildId:
+      workspaceChannelState.workspaceChannelOverridesByGuildId,
+    viewAsRoleSimulatorEnabled: workspaceChannelState.viewAsRoleSimulatorEnabled,
+    viewAsRoleSimulatorRole: workspaceChannelState.viewAsRoleSimulatorRole,
+  });
+
   const selectors = createAppShellSelectors({
     workspaces: workspaceChannelState.workspaces,
     activeGuildId: workspaceChannelState.activeGuildId,
@@ -135,6 +150,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     voiceSessionStartedAtUnixMs: voiceState.voiceSessionStartedAtUnixMs,
     voiceDurationClockUnixMs: voiceState.voiceDurationClockUnixMs,
     activeOverlayPanel: overlayState.activeOverlayPanel,
+    permissionLayer,
   });
 
   const workspaceSettingsActions = createWorkspaceSettingsActions({
@@ -211,6 +227,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const {
     releaseRtcClient,
     joinVoiceChannel,
+    refreshVoiceSessionPermissions,
     leaveVoiceChannel,
     toggleVoiceMicrophone,
     toggleVoiceDeafen,
@@ -596,6 +613,20 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     defaultVoiceSessionCapabilities: DEFAULT_VOICE_SESSION_CAPABILITIES,
     setVoiceStatus: voiceState.setVoiceStatus,
     setVoiceError: voiceState.setVoiceError,
+  });
+
+  createVoicePermissionSyncController({
+    session: auth.session,
+    isVoiceSessionActive: selectors.isVoiceSessionActive,
+    isVoiceSessionForActiveChannel: selectors.isVoiceSessionForActiveChannel,
+    voiceSessionChannelKey: voiceState.voiceSessionChannelKey,
+    isJoiningVoice: voiceState.isJoiningVoice,
+    isLeavingVoice: voiceState.isLeavingVoice,
+    canPublishVoiceCamera: permissionLayer.canPublishVoiceCamera,
+    canPublishVoiceScreenShare: permissionLayer.canPublishVoiceScreenShare,
+    canSubscribeVoiceStreams: permissionLayer.canSubscribeVoiceStreams,
+    voiceSessionCapabilities: voiceState.voiceSessionCapabilities,
+    refreshVoiceSessionPermissions,
   });
 
   const sessionDiagnostics = createSessionDiagnosticsActions({

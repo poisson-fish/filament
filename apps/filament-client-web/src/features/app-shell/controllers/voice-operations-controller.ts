@@ -17,6 +17,7 @@ import {
   channelKey,
   mapRtcError,
   mapVoiceJoinError,
+  parseChannelKey,
 } from "../helpers";
 import {
   reduceAsyncOperationState,
@@ -96,6 +97,7 @@ export interface VoiceOperationsController {
   releaseRtcClient: () => Promise<void>;
   peekRtcClient: () => RtcClient | null;
   joinVoiceChannel: () => Promise<void>;
+  refreshVoiceSessionPermissions: () => Promise<void>;
   leaveVoiceChannel: (statusMessage?: string) => Promise<void>;
   toggleVoiceMicrophone: () => Promise<void>;
   toggleVoiceDeafen: () => Promise<void>;
@@ -207,31 +209,28 @@ export function createVoiceOperationsController(
     }
   };
 
-  const joinVoiceChannel = async (): Promise<void> => {
-    const session = options.session();
-    const guildId = options.activeGuildId();
-    const channel = options.activeChannel();
-    if (options.isJoiningVoice() || options.isLeavingVoice()) {
-      return;
+  const requestedVoicePublishSources = (): MediaPublishSource[] => {
+    const requestedPublishSources: MediaPublishSource[] = ["microphone"];
+    if (options.canPublishVoiceCamera()) {
+      requestedPublishSources.push("camera");
     }
-
-    if (
-      !session ||
-      !guildId ||
-      !channel ||
-      channel.kind !== "voice"
-    ) {
-      applyVoiceJoinTransition({
-        type: "reset",
-      });
-      return;
+    if (options.canPublishVoiceScreenShare()) {
+      requestedPublishSources.push("screen_share");
     }
+    return requestedPublishSources;
+  };
 
-    const targetVoiceSessionChannelKey = deps.channelKey(guildId, channel.channelId);
+  const connectToVoiceChannel = async (
+    session: AuthSession,
+    guildId: GuildId,
+    channelId: ChannelRecord["channelId"],
+    targetVoiceSessionChannelKey: string,
+    connectionStatusMessage = "Voice connected.",
+  ): Promise<void> => {
     if (options.voiceSessionChannelKey() === targetVoiceSessionChannelKey) {
       applyVoiceJoinTransition({
         type: "succeed",
-        statusMessage: "Voice connected.",
+        statusMessage: connectionStatusMessage,
       });
       return;
     }
@@ -241,16 +240,9 @@ export function createVoiceOperationsController(
     });
     options.setVoiceSessionCapabilities(options.defaultVoiceSessionCapabilities);
     try {
-      const requestedPublishSources: MediaPublishSource[] = ["microphone"];
-      if (options.canPublishVoiceCamera()) {
-        requestedPublishSources.push("camera");
-      }
-      if (options.canPublishVoiceScreenShare()) {
-        requestedPublishSources.push("screen_share");
-      }
-      const token = await deps.issueVoiceToken(session, guildId, channel.channelId, {
+      const token = await deps.issueVoiceToken(session, guildId, channelId, {
         canSubscribe: options.canSubscribeVoiceStreams(),
-        publishSources: requestedPublishSources,
+        publishSources: requestedVoicePublishSources(),
       });
 
       const client = ensureRtcClient();
@@ -284,12 +276,12 @@ export function createVoiceOperationsController(
           await client.setMicrophoneEnabled(true);
           applyVoiceJoinTransition({
             type: "succeed",
-            statusMessage: "Voice connected. Microphone enabled.",
+            statusMessage: `${connectionStatusMessage} Microphone enabled.`,
           });
         } catch (error) {
           applyVoiceJoinTransition({
             type: "succeed",
-            statusMessage: "Voice connected.",
+            statusMessage: connectionStatusMessage,
           });
           options.setVoiceError(
             deps.mapRtcError(error, "Connected, but microphone activation failed."),
@@ -309,6 +301,60 @@ export function createVoiceOperationsController(
         errorMessage,
       });
     }
+  };
+
+  const joinVoiceChannel = async (): Promise<void> => {
+    const session = options.session();
+    const guildId = options.activeGuildId();
+    const channel = options.activeChannel();
+    if (options.isJoiningVoice() || options.isLeavingVoice()) {
+      return;
+    }
+
+    if (
+      !session ||
+      !guildId ||
+      !channel ||
+      channel.kind !== "voice"
+    ) {
+      applyVoiceJoinTransition({
+        type: "reset",
+      });
+      return;
+    }
+
+    const targetVoiceSessionChannelKey = deps.channelKey(guildId, channel.channelId);
+    await connectToVoiceChannel(
+      session,
+      guildId,
+      channel.channelId,
+      targetVoiceSessionChannelKey,
+    );
+  };
+
+  const refreshVoiceSessionPermissions = async (): Promise<void> => {
+    if (options.isJoiningVoice() || options.isLeavingVoice()) {
+      return;
+    }
+
+    const session = options.session();
+    const connectedChannelKey = options.voiceSessionChannelKey();
+    if (!session || !connectedChannelKey) {
+      return;
+    }
+    const connectedChannel = parseChannelKey(connectedChannelKey);
+    if (!connectedChannel) {
+      return;
+    }
+
+    await leaveVoiceChannel();
+    await connectToVoiceChannel(
+      session,
+      connectedChannel.guildId,
+      connectedChannel.channelId,
+      connectedChannelKey,
+      "Voice permissions refreshed.",
+    );
   };
 
   const toggleVoiceMicrophone = async (): Promise<void> => {
@@ -432,6 +478,7 @@ export function createVoiceOperationsController(
     releaseRtcClient,
     peekRtcClient: () => rtcClient,
     joinVoiceChannel,
+    refreshVoiceSessionPermissions,
     leaveVoiceChannel,
     toggleVoiceMicrophone,
     toggleVoiceDeafen,

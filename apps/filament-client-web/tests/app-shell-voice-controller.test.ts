@@ -606,6 +606,67 @@ describe("app shell voice controller", () => {
     expect(harness.voiceError()).toBe("");
   });
 
+  it("refreshes active voice session permissions using the connected voice channel key", async () => {
+    const issueVoiceTokenMock = vi.fn(async () =>
+      voiceTokenFromResponse({
+        token: "T".repeat(96),
+        livekit_url: "wss://livekit.example.com",
+        room: "filament.voice.room",
+        identity: "u.identity.refresh",
+        can_publish: true,
+        can_subscribe: true,
+        publish_sources: ["microphone", "screen_share"],
+        expires_in_secs: 300,
+      }),
+    );
+    const leave = vi.fn(async () => { });
+    const join = vi.fn(async () => { });
+    const setMicrophoneEnabled = vi.fn(async (_enabled: boolean) => { });
+    const leaveVoiceChannelApi = vi.fn(async () => { });
+    const harness = createRoot(() =>
+      createVoiceOperationsHarness({
+        activeChannel: TEXT_CHANNEL,
+        canPublishVoiceScreenShare: true,
+        canSubscribeVoiceStreams: true,
+        initialVoiceSessionChannelKey: `${GUILD_ID}|${VOICE_CHANNEL.channelId}`,
+        dependencies: {
+          issueVoiceToken: issueVoiceTokenMock,
+          leaveVoiceChannel: leaveVoiceChannelApi,
+          createRtcClient: () =>
+            createRtcClientMock({
+              leave,
+              join,
+              setMicrophoneEnabled,
+            }),
+        },
+      }),
+    );
+
+    harness.controller.ensureRtcClient();
+    await harness.controller.refreshVoiceSessionPermissions();
+
+    expect(leave).toHaveBeenCalledTimes(1);
+    expect(leaveVoiceChannelApi).toHaveBeenCalledWith(
+      SESSION,
+      GUILD_ID,
+      VOICE_CHANNEL.channelId,
+    );
+    expect(issueVoiceTokenMock).toHaveBeenCalledWith(
+      SESSION,
+      GUILD_ID,
+      VOICE_CHANNEL.channelId,
+      {
+        canSubscribe: true,
+        publishSources: ["microphone", "screen_share"],
+      },
+    );
+    expect(join).toHaveBeenCalledTimes(1);
+    expect(setMicrophoneEnabled).toHaveBeenCalledWith(true);
+    expect(harness.voiceSessionChannelKey()).toBe(`${GUILD_ID}|${VOICE_CHANNEL.channelId}`);
+    expect(harness.voiceStatus()).toBe("Voice permissions refreshed. Microphone enabled.");
+    expect(harness.voiceError()).toBe("");
+  });
+
   it("keeps running join state on duplicate join attempts", async () => {
     const issueVoiceTokenGate = deferred<ReturnType<typeof voiceTokenFromResponse>>();
     const issueVoiceTokenMock = vi.fn(() => issueVoiceTokenGate.promise);

@@ -5,7 +5,6 @@ import type {
   ChannelPermissionSnapshot,
   GuildId,
   MediaPublishSource,
-  PermissionName,
   RoleName,
   UserId,
   WorkspaceRecord,
@@ -19,11 +18,9 @@ import {
   voiceConnectionLabel,
 } from "../helpers";
 import {
-  permissionListFromBits,
-  resolveEffectiveLegacyRolePermissions,
-  resolveAssignedRoleIdsForUser,
-  resolveEffectiveChannelPermissions,
-} from "../permissions/effective-permissions";
+  createClientPermissionLayer,
+  type ClientPermissionLayer,
+} from "../permissions/client-permission-layer";
 import type {
   WorkspaceChannelOverridesByGuildId,
   WorkspaceRolesByGuildId,
@@ -60,6 +57,7 @@ export interface CreateAppShellSelectorsOptions {
   voiceSessionStartedAtUnixMs: Accessor<number | null>;
   voiceDurationClockUnixMs: Accessor<number>;
   activeOverlayPanel: Accessor<OverlayPanel | null>;
+  permissionLayer?: ClientPermissionLayer;
 }
 
 export interface CreateAppShellSelectorsResult {
@@ -104,13 +102,6 @@ export interface VoiceStreamPermissionHintInput {
   canPublishVoiceScreenShare: boolean;
   canSubscribeVoiceStreams: boolean;
   voiceSessionCapabilities: VoiceSessionCapabilities;
-}
-
-function hasChannelPermission(
-  effectivePermissions: PermissionName[],
-  permission: PermissionName,
-): boolean {
-  return effectivePermissions.includes(permission);
 }
 
 function hasVoicePublishGrant(
@@ -215,6 +206,19 @@ export function buildVoiceStreamPermissionHints(input: VoiceStreamPermissionHint
 export function createAppShellSelectors(
   options: CreateAppShellSelectorsOptions,
 ): CreateAppShellSelectorsResult {
+  const permissionLayer = options.permissionLayer ??
+    createClientPermissionLayer({
+      activeGuildId: options.activeGuildId,
+      activeChannelId: options.activeChannelId,
+      currentUserId: options.currentUserId,
+      channelPermissions: options.channelPermissions,
+      workspaceRolesByGuildId: options.workspaceRolesByGuildId,
+      workspaceUserRolesByGuildId: options.workspaceUserRolesByGuildId,
+      workspaceChannelOverridesByGuildId: options.workspaceChannelOverridesByGuildId,
+      viewAsRoleSimulatorEnabled: options.viewAsRoleSimulatorEnabled,
+      viewAsRoleSimulatorRole: options.viewAsRoleSimulatorRole,
+    });
+
   const activeWorkspace = createMemo(
     () =>
       options.workspaces().find((workspace) => workspace.guildId === options.activeGuildId()) ??
@@ -236,118 +240,20 @@ export function createAppShellSelectors(
   );
   const isActiveVoiceChannel = createMemo(() => activeChannel()?.kind === "voice");
 
-  const effectivePermissions = createMemo<PermissionName[]>(() => {
-    const guildId = options.activeGuildId();
-    const channelId = options.activeChannelId();
-    if (!guildId || !channelId) {
-      return permissionListFromBits(0);
-    }
-
-    const roles = options.workspaceRolesByGuildId()[guildId] ?? [];
-    const userRoleAssignments = options.workspaceUserRolesByGuildId()[guildId];
-    const assignedRoleIds = resolveAssignedRoleIdsForUser(
-      options.currentUserId(),
-      userRoleAssignments,
-    );
-    const channelOverrides =
-      options.workspaceChannelOverridesByGuildId()[guildId]?.[channelId] ?? [];
-    if (options.viewAsRoleSimulatorEnabled()) {
-      return permissionListFromBits(
-        resolveEffectiveLegacyRolePermissions({
-          role: options.viewAsRoleSimulatorRole(),
-          guildRoles: roles,
-          channelOverrides,
-        }),
-      );
-    }
-    const bits = resolveEffectiveChannelPermissions({
-      channelPermissionsSnapshot: options.channelPermissions(),
-      guildRoles: roles,
-      assignedRoleIds,
-      channelOverrides,
-    });
-    return permissionListFromBits(bits);
-  });
-  const workspaceEffectivePermissions = createMemo<PermissionName[]>(() => {
-    const guildId = options.activeGuildId();
-    if (!guildId) {
-      return permissionListFromBits(0);
-    }
-
-    const roles = options.workspaceRolesByGuildId()[guildId] ?? [];
-    const userRoleAssignments = options.workspaceUserRolesByGuildId()[guildId];
-    const assignedRoleIds = resolveAssignedRoleIdsForUser(
-      options.currentUserId(),
-      userRoleAssignments,
-    );
-    if (options.viewAsRoleSimulatorEnabled()) {
-      return permissionListFromBits(
-        resolveEffectiveLegacyRolePermissions({
-          role: options.viewAsRoleSimulatorRole(),
-          guildRoles: roles,
-          channelOverrides: [],
-        }),
-      );
-    }
-    const assignedRoleBits = resolveEffectiveChannelPermissions({
-      channelPermissionsSnapshot: null,
-      guildRoles: roles,
-      assignedRoleIds,
-      channelOverrides: [],
-    });
-    const snapshotRole = options.channelPermissions()?.role ?? null;
-    const legacyRoleBits = snapshotRole
-      ? resolveEffectiveLegacyRolePermissions({
-          role: snapshotRole,
-          guildRoles: roles,
-          channelOverrides: [],
-        })
-      : 0;
-    return permissionListFromBits(assignedRoleBits | legacyRoleBits);
-  });
-
-  const canAccessActiveChannel = createMemo(() =>
-    hasChannelPermission(effectivePermissions(), "create_message"),
-  );
-  const canPublishVoiceCamera = createMemo(() =>
-    hasChannelPermission(effectivePermissions(), "publish_video"),
-  );
-  const canPublishVoiceScreenShare = createMemo(() =>
-    hasChannelPermission(effectivePermissions(), "publish_screen_share"),
-  );
-  const canSubscribeVoiceStreams = createMemo(() =>
-    hasChannelPermission(effectivePermissions(), "subscribe_streams"),
-  );
-  const canManageWorkspaceChannels = createMemo(() =>
-    hasChannelPermission(effectivePermissions(), "manage_channel_overrides"),
-  );
-  const canManageSearchMaintenance = createMemo(() => canManageWorkspaceChannels());
-  const canManageWorkspaceRoles = createMemo(
-    () =>
-      hasChannelPermission(workspaceEffectivePermissions(), "manage_workspace_roles") ||
-      hasChannelPermission(workspaceEffectivePermissions(), "manage_roles"),
-  );
-  const canManageMemberRoles = createMemo(
-    () =>
-      hasChannelPermission(workspaceEffectivePermissions(), "manage_member_roles") ||
-      hasChannelPermission(workspaceEffectivePermissions(), "manage_roles"),
-  );
-  const hasRoleManagementAccess = createMemo(
-    () => canManageWorkspaceRoles() || canManageMemberRoles(),
-  );
-  const canManageRoles = createMemo(() => hasRoleManagementAccess());
-  const canManageChannelOverrides = createMemo(() =>
-    hasChannelPermission(effectivePermissions(), "manage_channel_overrides"),
-  );
-  const canBanMembers = createMemo(() =>
-    hasChannelPermission(effectivePermissions(), "ban_member"),
-  );
-  const canDeleteMessages = createMemo(() =>
-    hasChannelPermission(effectivePermissions(), "delete_message"),
-  );
-  const hasModerationAccess = createMemo(
-    () => canManageRoles() || canBanMembers() || canManageChannelOverrides(),
-  );
+  const canAccessActiveChannel = permissionLayer.canAccessActiveChannel;
+  const canPublishVoiceCamera = permissionLayer.canPublishVoiceCamera;
+  const canPublishVoiceScreenShare = permissionLayer.canPublishVoiceScreenShare;
+  const canSubscribeVoiceStreams = permissionLayer.canSubscribeVoiceStreams;
+  const canManageWorkspaceChannels = permissionLayer.canManageWorkspaceChannels;
+  const canManageSearchMaintenance = permissionLayer.canManageSearchMaintenance;
+  const canManageWorkspaceRoles = permissionLayer.canManageWorkspaceRoles;
+  const canManageMemberRoles = permissionLayer.canManageMemberRoles;
+  const hasRoleManagementAccess = permissionLayer.hasRoleManagementAccess;
+  const canManageRoles = permissionLayer.canManageRoles;
+  const canManageChannelOverrides = permissionLayer.canManageChannelOverrides;
+  const canBanMembers = permissionLayer.canBanMembers;
+  const canDeleteMessages = permissionLayer.canDeleteMessages;
+  const hasModerationAccess = permissionLayer.hasModerationAccess;
   const canDismissWorkspaceCreateForm = createMemo(() => options.workspaces().length > 0);
 
   const activeChannelKey = createMemo(() => {
