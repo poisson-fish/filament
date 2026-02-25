@@ -206,7 +206,7 @@ pub(crate) async fn update_voice_participant_audio_state_for_channel(
     else {
         return;
     };
-    let event = gateway_events::voice_participant_update(
+    let event = match gateway_events::try_voice_participant_update(
         guild_id,
         channel_id,
         participant.user_id,
@@ -217,7 +217,24 @@ pub(crate) async fn update_voice_participant_audio_state_for_channel(
         None,
         None,
         participant.updated_at_unix,
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.voice_participant_update.serialize_failed",
+                guild_id,
+                channel_id,
+                event_type = gateway_events::VOICE_PARTICIPANT_UPDATE_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "channel",
+                gateway_events::VOICE_PARTICIPANT_UPDATE_EVENT,
+                "serialize_error",
+            );
+            return;
+        }
+    };
     broadcast_channel_event(state, &channel_subscription_key, &event).await;
 }
 

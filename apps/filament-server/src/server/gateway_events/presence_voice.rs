@@ -260,7 +260,37 @@ pub(crate) fn voice_participant_update(
     is_screen_share_enabled: Option<bool>,
     updated_at_unix: i64,
 ) -> GatewayEvent {
-    build_event(
+    try_voice_participant_update(
+        guild_id,
+        channel_id,
+        user_id,
+        identity,
+        is_muted,
+        is_deafened,
+        is_speaking,
+        is_video_enabled,
+        is_screen_share_enabled,
+        updated_at_unix,
+    )
+    .unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {VOICE_PARTICIPANT_UPDATE_EVENT}: {error}")
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_voice_participant_update(
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+    identity: &str,
+    is_muted: Option<bool>,
+    is_deafened: Option<bool>,
+    is_speaking: Option<bool>,
+    is_video_enabled: Option<bool>,
+    is_screen_share_enabled: Option<bool>,
+    updated_at_unix: i64,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         VOICE_PARTICIPANT_UPDATE_EVENT,
         VoiceParticipantUpdatePayload {
             guild_id: guild_id.to_owned(),
@@ -394,5 +424,28 @@ mod tests {
         ));
         assert_eq!(payload["stream"], Value::from("screen_share"));
         assert_eq!(payload["published_at_unix"], Value::from(123));
+    }
+
+    #[test]
+    fn voice_participant_update_try_event_emits_changed_audio_fields() {
+        let user_id = UserId::new();
+        let payload = parse_payload(
+            &try_voice_participant_update(
+                "guild-1",
+                "channel-1",
+                user_id,
+                "u.identity",
+                Some(true),
+                Some(false),
+                None,
+                None,
+                None,
+                321,
+            )
+            .expect("voice_participant_update should serialize"),
+        );
+        assert_eq!(payload["updated_fields"]["is_muted"], Value::from(true));
+        assert_eq!(payload["updated_fields"]["is_deafened"], Value::from(false));
+        assert_eq!(payload["updated_at_unix"], Value::from(321));
     }
 }
