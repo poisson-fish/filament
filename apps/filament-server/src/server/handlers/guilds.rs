@@ -3597,16 +3597,7 @@ pub(crate) async fn set_channel_role_override(
     )
     .await?;
 
-    let event = gateway_events::workspace_channel_override_update(
-        &path.guild_id,
-        &path.channel_id,
-        path.role,
-        payload.allow.clone(),
-        payload.deny.clone(),
-        now_unix(),
-        Some(auth.user_id),
-    );
-    broadcast_guild_event(&state, &path.guild_id, &event).await;
+    emit_channel_role_override_events(&state, &path, &payload, auth.user_id).await;
 
     crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(
         &state,
@@ -3614,6 +3605,39 @@ pub(crate) async fn set_channel_role_override(
     );
 
     Ok(Json(ModerationResponse { accepted: true }))
+}
+
+async fn emit_channel_role_override_events(
+    state: &AppState,
+    path: &ChannelRolePath,
+    payload: &UpdateChannelRoleOverrideRequest,
+    actor_user_id: UserId,
+) {
+    // Dual emit during migration to keep older clients that only observe the legacy
+    // event name functional while introducing explicit role-override contract.
+    let legacy_event = gateway_events::workspace_channel_override_update(
+        &path.guild_id,
+        &path.channel_id,
+        path.role,
+        payload.allow.clone(),
+        payload.deny.clone(),
+        now_unix(),
+        Some(actor_user_id),
+    );
+    broadcast_guild_event(state, &path.guild_id, &legacy_event).await;
+
+    let event = gateway_events::workspace_channel_role_override_update(
+        &path.guild_id,
+        &path.channel_id,
+        path.role,
+        gateway_events::WorkspaceChannelOverrideFieldsPayload::new(
+            payload.allow.clone(),
+            payload.deny.clone(),
+        ),
+        now_unix(),
+        Some(actor_user_id),
+    );
+    broadcast_guild_event(state, &path.guild_id, &event).await;
 }
 
 fn parse_channel_permission_override_masks(

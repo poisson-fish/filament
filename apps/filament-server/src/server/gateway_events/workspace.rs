@@ -17,6 +17,8 @@ pub(crate) const WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT: &str = "workspace_role_ass
 pub(crate) const WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT: &str = "workspace_role_assignment_remove";
 pub(crate) const WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT: &str =
     "workspace_channel_override_update";
+pub(crate) const WORKSPACE_CHANNEL_ROLE_OVERRIDE_UPDATE_EVENT: &str =
+    "workspace_channel_role_override_update";
 pub(crate) const WORKSPACE_CHANNEL_PERMISSION_OVERRIDE_UPDATE_EVENT: &str =
     "workspace_channel_permission_override_update";
 pub(crate) const WORKSPACE_IP_BAN_SYNC_EVENT: &str = "workspace_ip_ban_sync";
@@ -475,6 +477,27 @@ pub(crate) fn workspace_channel_permission_override_update(
     )
 }
 
+pub(crate) fn workspace_channel_role_override_update(
+    guild_id: &str,
+    channel_id: &str,
+    role: filament_core::Role,
+    updated_fields: WorkspaceChannelOverrideFieldsPayload,
+    updated_at_unix: i64,
+    actor_user_id: Option<UserId>,
+) -> GatewayEvent {
+    build_event(
+        WORKSPACE_CHANNEL_ROLE_OVERRIDE_UPDATE_EVENT,
+        WorkspaceChannelOverrideUpdatePayload {
+            guild_id: guild_id.to_owned(),
+            channel_id: channel_id.to_owned(),
+            role,
+            updated_fields,
+            updated_at_unix,
+            actor_user_id: actor_user_id.map(|id| id.to_string()),
+        },
+    )
+}
+
 pub(crate) fn workspace_channel_permission_override_update_legacy(
     guild_id: &str,
     channel_id: &str,
@@ -622,6 +645,29 @@ mod tests {
         );
         assert_eq!(payload["target_kind"], Value::from("member"));
         assert!(payload["target_id"].is_string());
+        assert!(payload["updated_fields"]["allow"].is_array());
+        assert!(payload["updated_fields"]["deny"].is_array());
+    }
+
+    #[test]
+    fn workspace_channel_role_override_event_uses_explicit_event_type() {
+        let event = workspace_channel_role_override_update(
+            "guild-1",
+            "channel-1",
+            Role::Moderator,
+            WorkspaceChannelOverrideFieldsPayload::new(
+                vec![Permission::CreateMessage],
+                vec![Permission::BanMember],
+            ),
+            52,
+            None,
+        );
+        let payload = parse_payload(&event);
+        assert_eq!(
+            event.event_type,
+            WORKSPACE_CHANNEL_ROLE_OVERRIDE_UPDATE_EVENT
+        );
+        assert_eq!(payload["role"], Value::from("moderator"));
         assert!(payload["updated_fields"]["allow"].is_array());
         assert!(payload["updated_fields"]["deny"].is_array());
     }

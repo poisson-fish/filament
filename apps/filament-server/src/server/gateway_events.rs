@@ -66,11 +66,11 @@ pub(crate) use presence_voice::{
 pub(crate) use profile::{profile_avatar_update, profile_update};
 pub(crate) use workspace::{
     workspace_channel_override_update, workspace_channel_permission_override_update,
-    workspace_channel_permission_override_update_legacy, workspace_ip_ban_sync,
-    workspace_member_add, workspace_member_ban, workspace_member_remove, workspace_member_update,
-    workspace_role_assignment_add, workspace_role_assignment_remove, workspace_role_create,
-    workspace_role_delete, workspace_role_reorder, workspace_role_update, workspace_update,
-    WorkspaceChannelOverrideFieldsPayload,
+    workspace_channel_permission_override_update_legacy, workspace_channel_role_override_update,
+    workspace_ip_ban_sync, workspace_member_add, workspace_member_ban, workspace_member_remove,
+    workspace_member_update, workspace_role_assignment_add, workspace_role_assignment_remove,
+    workspace_role_create, workspace_role_delete, workspace_role_reorder, workspace_role_update,
+    workspace_update, WorkspaceChannelOverrideFieldsPayload,
 };
 #[cfg(test)]
 mod tests {
@@ -426,6 +426,24 @@ mod tests {
         assert!(workspace_override_payload["updated_fields"]["allow"].is_array());
         assert!(workspace_override_payload["updated_fields"]["deny"].is_array());
 
+        let workspace_role_override_payload = parse_event(&workspace_channel_role_override_update(
+            "g",
+            "c",
+            Role::Moderator,
+            WorkspaceChannelOverrideFieldsPayload::new(
+                vec![Permission::CreateMessage],
+                vec![Permission::BanMember],
+            ),
+            24,
+            Some(user_id),
+        ));
+        assert_eq!(
+            workspace_role_override_payload["role"],
+            Value::from("moderator")
+        );
+        assert!(workspace_role_override_payload["updated_fields"]["allow"].is_array());
+        assert!(workspace_role_override_payload["updated_fields"]["deny"].is_array());
+
         let workspace_permission_override_payload =
             parse_event(&workspace_channel_permission_override_update(
                 "g",
@@ -436,7 +454,7 @@ mod tests {
                     vec![Permission::CreateMessage],
                     vec![Permission::BanMember],
                 ),
-                24,
+                25,
                 Some(user_id),
             ));
         assert_eq!(
@@ -451,7 +469,7 @@ mod tests {
         assert!(workspace_permission_override_payload["updated_fields"]["deny"].is_array());
 
         let workspace_ip_ban_payload =
-            parse_event(&workspace_ip_ban_sync("g", "upsert", 2, 25, Some(user_id)));
+            parse_event(&workspace_ip_ban_sync("g", "upsert", 2, 26, Some(user_id)));
         assert_eq!(
             workspace_ip_ban_payload["summary"]["changed_count"],
             Value::from(2)
