@@ -1,0 +1,320 @@
+# EVENT_REFACTOR.md
+
+## Objective
+Refactor the realtime event system to reduce accidental complexity while preserving or improving security boundaries, protocol compatibility, and operational robustness.
+
+## Scope
+- `apps/filament-server` gateway ingress, event construction, fanout, and observability.
+- `apps/filament-client-web` gateway envelope parsing, domain dispatch, and payload decoding.
+- `crates/filament-protocol` event contract ownership and envelope validation.
+- Event contract docs and contract-consistency tests.
+
+## Non-Goals
+- No federation work.
+- No E2EE or cryptography changes.
+- No relaxation of payload limits, queue limits, timeouts, or rate limits.
+- No introduction of unsafe Rust.
+
+## Security and Architecture Constraints
+- Keep strict envelope `{ v, t, d }` and explicit event versioning.
+- Fail closed at every network boundary.
+- Enforce hard caps for ingress and outbound payloads.
+- Prefer typed domain conversion over stringly routing.
+- Preserve bounded queues and slow-consumer eviction behavior.
+
+## Code-State Snapshot (2026-02-25)
+- Ingress validation is strict and mostly correct.
+- Fanout backpressure behavior is strong.
+- Contract drift exists for `workspace_channel_override_update` (two payload shapes under one event name).
+- Guild fanout currently scans all subscription keys by prefix.
+- Event construction has fallback behavior that can silently mask emit defects.
+- Server/client gateway logic is heavily split into small modules, increasing maintenance overhead.
+
+## Success Metrics
+- Zero known contract drift between emitted events, client decoders, and docs.
+- Outbound payload cap enforced for all event paths.
+- Guild fanout no longer requires prefix-scanning all subscriptions.
+- Realtime module count and call-chain depth reduced without reducing test coverage.
+- Existing gateway network flow and security-limits tests remain green.
+
+## Status Legend
+- `NOT STARTED`
+- `IN PROGRESS`
+- `DONE`
+- `BLOCKED`
+
+---
+
+## Phase 0 - Contract Freeze and Drift Elimination
+### Goal
+Make event contracts unambiguous and eliminate current payload-shape drift.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Split `workspace_channel_override_update` into explicit contracts:
+  - role override event
+  - principal/target override event
+- [ ] Keep backward compatibility strategy explicit:
+  - temporary dual-emit window or controlled migration flag
+  - client accepts both during migration window
+- [ ] Update `docs/GATEWAY_EVENTS.md` and protocol contract notes.
+- [ ] Add cross-contract tests proving server emit set, docs set, and client decode set stay aligned.
+
+### Tentative File Touch List
+- `apps/filament-server/src/server/gateway_events/workspace.rs`
+- `apps/filament-server/src/server/gateway_events.rs`
+- `apps/filament-server/src/server/handlers/guilds.rs`
+- `apps/filament-server/src/server/tests/tests/contract.rs`
+- `apps/filament-server/tests/gateway_network_flow.rs`
+- `apps/filament-client-web/src/lib/gateway-workspace-*.ts`
+- `apps/filament-client-web/tests/gateway-workspace-*.test.ts`
+- `docs/GATEWAY_EVENTS.md`
+- `docs/PROTOCOL.md`
+
+### Tests
+- [ ] Server integration test for both override event variants.
+- [ ] Web decoder tests for each variant and fail-closed invalid payloads.
+- [ ] Contract manifest parity tests (server/doc/client).
+
+### Exit Criteria
+- One logical event name maps to one payload shape.
+- Docs and tests reflect actual emitted behavior.
+
+---
+
+## Phase 1 - Outbound Event Hardening
+### Goal
+Make event emission fail-fast and enforce outbound size limits universally.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Replace fallback event serialization paths with explicit `Result` handling.
+- [ ] Add outbound payload size guard before enqueue/fanout.
+- [ ] Add metric labels for outbound rejection reasons (`oversized_outbound`, `serialize_error`).
+- [ ] Ensure dropped/rejected emits are observable but never panic the server.
+
+### Tentative File Touch List
+- `apps/filament-server/src/server/auth.rs` (remove fallback-to-`ready` behavior for outbound event building)
+- `apps/filament-server/src/server/gateway_events/envelope.rs`
+- `apps/filament-server/src/server/realtime/fanout_dispatch.rs`
+- `apps/filament-server/src/server/realtime/presence_sync_dispatch.rs`
+- `apps/filament-server/src/server/realtime/voice_sync_dispatch.rs`
+- `apps/filament-server/src/server/realtime/subscribe_ack.rs`
+- `apps/filament-server/src/server/metrics.rs`
+
+### Tests
+- [ ] Unit tests for outbound size rejection.
+- [ ] Integration test that oversized outbound payload is dropped and counted.
+- [ ] Regression test proving normal payloads still fan out.
+
+### Exit Criteria
+- Outbound and inbound both enforce size caps.
+- No silent fallback to unrelated event types.
+
+---
+
+## Phase 2 - Fanout Data Model Refactor
+### Goal
+Remove O(N) guild prefix scans and use explicit indices for routing.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Introduce indexed subscription registry:
+  - channel key -> listeners
+  - guild id -> connection ids
+  - user id -> connection ids (verify this remains authoritative)
+- [ ] Update subscription insert/remove paths to maintain all indexes atomically.
+- [ ] Refactor guild broadcast path to direct index lookup (no string prefix scans).
+- [ ] Keep dedup semantics and slow-consumer handling unchanged.
+
+### Tentative File Touch List
+- `apps/filament-server/src/server/core.rs` (registry types)
+- `apps/filament-server/src/server/realtime/subscription_insert.rs`
+- `apps/filament-server/src/server/realtime/connection_subscriptions.rs`
+- `apps/filament-server/src/server/realtime/connection_registry.rs`
+- `apps/filament-server/src/server/realtime/fanout_guild.rs`
+- `apps/filament-server/src/server/realtime/connection_runtime.rs`
+- `apps/filament-server/src/server/tests/tests/gateway.rs`
+
+### Tests
+- [ ] Unit tests for index maintenance on subscribe/disconnect.
+- [ ] Existing dedup test still passes.
+- [ ] Add stress-oriented test for large subscription maps to validate non-scan path.
+
+### Exit Criteria
+- Guild broadcast complexity is index-based.
+- Behavior parity for delivery, dedup, and slow-consumer close.
+
+---
+
+## Phase 3 - Ingress Domain Typing and Boundary Cleanup
+### Goal
+Reduce stringly-typed command handling at ingress boundary.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Introduce gateway ingress domain types (validated IDs, bounded fields) from DTO conversion.
+- [ ] Keep DTO structs at transport boundary with `deny_unknown_fields`.
+- [ ] Move all ID/shape validation into `TryFrom` conversions before handler execution.
+- [ ] Ensure ingress parse and unknown-event metrics stay intact.
+
+### Tentative File Touch List
+- `apps/filament-server/src/server/types.rs`
+- `apps/filament-server/src/server/realtime/ingress_command.rs`
+- `apps/filament-server/src/server/realtime/ingress_parse.rs`
+- `apps/filament-server/src/server/realtime/ingress_subscribe.rs`
+- `apps/filament-server/src/server/realtime/ingress_message_create.rs`
+- `apps/filament-server/src/server/domain.rs` (if newtypes/helpers live here)
+
+### Tests
+- [ ] Unit tests for newtype invariants and `TryFrom` conversions.
+- [ ] Ingress parse tests for invalid IDs and malformed payloads.
+- [ ] Gateway network tests still pass for subscribe/message_create.
+
+### Exit Criteria
+- Handlers execute only with validated domain input.
+- No behavior regressions in disconnect semantics.
+
+---
+
+## Phase 4 - Module Consolidation Without Behavior Changes
+### Goal
+Reduce fragmentation and simplify navigation while preserving testable seams.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Consolidate tiny wrapper modules into cohesive components:
+  - `realtime/ingress/*`
+  - `realtime/fanout/*`
+  - `realtime/presence/*`
+  - `realtime/voice/*`
+- [ ] Keep pure helper functions and tests, but reduce one-function files.
+- [ ] Preserve public/internal function signatures where practical to minimize churn.
+
+### Tentative File Touch List
+- `apps/filament-server/src/server/realtime.rs`
+- `apps/filament-server/src/server/realtime/*` (module moves/merges)
+- `apps/filament-server/src/server/README.md`
+
+### Tests
+- [ ] Full server test suite plus gateway network flow.
+- [ ] Clippy and rustdoc clean for moved modules.
+
+### Exit Criteria
+- Lower module count and shallower call graph.
+- No functional diffs beyond import/move cleanup.
+
+---
+
+## Phase 5 - Client Dispatcher Simplification
+### Goal
+Keep fail-closed parsing while reducing repetitive dispatch boilerplate.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Replace long `if` chains in dispatchers with table-driven handler maps.
+- [ ] Keep domain decoders explicit and strict.
+- [ ] Centralize event-type registry used by dispatcher + tests.
+- [ ] Preserve unknown-event ignore behavior.
+
+### Tentative File Touch List
+- `apps/filament-client-web/src/lib/gateway.ts`
+- `apps/filament-client-web/src/lib/gateway-domain-dispatch.ts`
+- `apps/filament-client-web/src/lib/gateway-*-dispatch.ts`
+- `apps/filament-client-web/src/lib/gateway-*-events.ts`
+- `apps/filament-client-web/tests/gateway-*.test.ts`
+
+### Tests
+- [ ] Existing gateway parser/dispatch tests remain green.
+- [ ] Add tests for registry completeness and duplicate-type detection.
+
+### Exit Criteria
+- Client dispatch is data-driven and easier to extend.
+- Strict payload parsing behavior unchanged.
+
+---
+
+## Phase 6 - Contract Source-of-Truth Enforcement
+### Goal
+Prevent future drift between server emitters, docs, and web decoders.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Introduce machine-readable event manifest (event type + schema version + scope).
+- [ ] Add CI check that compares:
+  - emitted server event list
+  - documented event list
+  - client-supported event list
+- [ ] Require explicit migration entry for additive/deprecated events.
+
+### Tentative File Touch List
+- `crates/filament-protocol/src/lib.rs` (or new `events` module)
+- `apps/filament-server/src/server/tests/tests/contract.rs`
+- `apps/filament-client-web/tests/gateway-contract-manifest.test.ts` (new)
+- `docs/GATEWAY_EVENTS.md`
+- `.github/workflows/ci.yml`
+
+### Tests
+- [ ] Contract parity tests fail if any event appears in only one surface.
+- [ ] Backward-compat tests for additive field changes.
+
+### Exit Criteria
+- Contract drift becomes CI-blocked by default.
+
+---
+
+## Phase 7 - Rollout, Telemetry, and Cleanup
+### Goal
+Ship safely with progressive rollout and remove migration compatibility code.
+
+### Completion Status
+`NOT STARTED`
+
+### Tasks
+- [ ] Add temporary compatibility counters for dual-decoder/dual-emitter paths.
+- [ ] Define sunset criteria for deprecated payloads/event names.
+- [ ] Remove compatibility code after stability window and update docs.
+- [ ] Capture post-refactor benchmark snapshots for fanout hot paths.
+
+### Tests
+- [ ] Regression pass of gateway network flow, security limits, and websocket lifecycle.
+- [ ] Verify telemetry counters for dropped/rejected events in staging.
+
+### Exit Criteria
+- Deprecated event compatibility paths removed.
+- Observability confirms stable behavior.
+
+---
+
+## Recommended PR Sequence (Small Safe Increments)
+1. Phase 0 contract split for override events + docs + tests.
+2. Phase 1 outbound hardening and metrics.
+3. Phase 2 guild fanout index.
+4. Phase 3 ingress domain typing.
+5. Phase 4 server module consolidation.
+6. Phase 5 client dispatcher simplification.
+7. Phase 6 manifest/CI parity gates.
+8. Phase 7 cleanup/removal of transition code.
+
+## Required Validation Per Phase
+- `cargo fmt`
+- `cargo clippy`
+- `cargo test`
+- `cargo audit` (where available in environment)
+- `cargo deny` (where available in environment)
+- `npm test` for `apps/filament-client-web` gateway-related suites
+
