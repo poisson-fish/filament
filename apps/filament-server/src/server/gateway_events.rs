@@ -90,15 +90,16 @@ pub(crate) use workspace::workspace_role_reorder;
 #[cfg(test)]
 pub(crate) use workspace::workspace_role_update;
 pub(crate) use workspace::{
+    try_workspace_role_assignment_add, try_workspace_role_assignment_remove,
     try_workspace_role_create, try_workspace_role_delete, try_workspace_role_reorder,
     try_workspace_role_update, try_workspace_update, workspace_channel_override_update,
     workspace_channel_permission_override_update,
     workspace_channel_permission_override_update_legacy, workspace_channel_role_override_update,
     workspace_ip_ban_sync, workspace_member_add, workspace_member_ban, workspace_member_remove,
-    workspace_member_update, workspace_role_assignment_add, workspace_role_assignment_remove,
-    WorkspaceChannelOverrideFieldsPayload, WORKSPACE_ROLE_CREATE_EVENT,
-    WORKSPACE_ROLE_DELETE_EVENT, WORKSPACE_ROLE_REORDER_EVENT, WORKSPACE_ROLE_UPDATE_EVENT,
-    WORKSPACE_UPDATE_EVENT,
+    workspace_member_update, WorkspaceChannelOverrideFieldsPayload,
+    WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT, WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT,
+    WORKSPACE_ROLE_CREATE_EVENT, WORKSPACE_ROLE_DELETE_EVENT, WORKSPACE_ROLE_REORDER_EVENT,
+    WORKSPACE_ROLE_UPDATE_EVENT, WORKSPACE_UPDATE_EVENT,
 };
 #[cfg(test)]
 mod tests {
@@ -438,25 +439,19 @@ mod tests {
             Value::from("role-1")
         );
 
-        let workspace_assignment_add_payload = parse_event(&workspace_role_assignment_add(
-            "g",
-            friend_id,
-            "role-1",
-            21,
-            Some(user_id),
-        ));
+        let workspace_assignment_add_payload = parse_event(
+            &try_workspace_role_assignment_add("g", friend_id, "role-1", 21, Some(user_id))
+                .expect("workspace_role_assignment_add should serialize"),
+        );
         assert_eq!(
             workspace_assignment_add_payload["assigned_at_unix"],
             Value::from(21)
         );
 
-        let workspace_assignment_remove_payload = parse_event(&workspace_role_assignment_remove(
-            "g",
-            friend_id,
-            "role-1",
-            22,
-            Some(user_id),
-        ));
+        let workspace_assignment_remove_payload = parse_event(
+            &try_workspace_role_assignment_remove("g", friend_id, "role-1", 22, Some(user_id))
+                .expect("workspace_role_assignment_remove should serialize"),
+        );
         assert_eq!(
             workspace_assignment_remove_payload["removed_at_unix"],
             Value::from(22)

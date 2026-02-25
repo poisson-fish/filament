@@ -441,14 +441,14 @@ pub(crate) fn try_workspace_role_reorder(
     )
 }
 
-pub(crate) fn workspace_role_assignment_add(
+pub(crate) fn try_workspace_role_assignment_add(
     guild_id: &str,
     user_id: UserId,
     role_id: &str,
     assigned_at_unix: i64,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT,
         WorkspaceRoleAssignmentPayload {
             guild_id: guild_id.to_owned(),
@@ -460,14 +460,14 @@ pub(crate) fn workspace_role_assignment_add(
     )
 }
 
-pub(crate) fn workspace_role_assignment_remove(
+pub(crate) fn try_workspace_role_assignment_remove(
     guild_id: &str,
     user_id: UserId,
     role_id: &str,
     removed_at_unix: i64,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT,
         WorkspaceRoleAssignmentRemovePayload {
             guild_id: guild_id.to_owned(),
@@ -680,6 +680,24 @@ mod tests {
         assert_eq!(payload["role_ids"][0], Value::from("role-2"));
         assert_eq!(payload["role_ids"][1], Value::from("role-1"));
         assert_eq!(payload["updated_at_unix"], Value::from(88));
+    }
+
+    #[test]
+    fn workspace_role_assignment_add_event_emits_assignment_timestamp() {
+        let payload = parse_payload(
+            &try_workspace_role_assignment_add("guild-1", UserId::new(), "role-1", 21, None)
+                .expect("workspace_role_assignment_add should serialize"),
+        );
+        assert_eq!(payload["assigned_at_unix"], Value::from(21));
+    }
+
+    #[test]
+    fn workspace_role_assignment_remove_event_emits_removal_timestamp() {
+        let payload = parse_payload(
+            &try_workspace_role_assignment_remove("guild-1", UserId::new(), "role-1", 22, None)
+                .expect("workspace_role_assignment_remove should serialize"),
+        );
+        assert_eq!(payload["removed_at_unix"], Value::from(22));
     }
 
     #[test]
