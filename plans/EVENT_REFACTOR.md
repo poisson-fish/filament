@@ -227,7 +227,7 @@ Reduce stringly-typed command handling at ingress boundary.
 `IN PROGRESS`
 
 ### Tasks
-- [ ] Introduce gateway ingress domain types (validated IDs, bounded fields) from DTO conversion.
+- [x] Introduce gateway ingress domain types (validated IDs, bounded fields) from DTO conversion.
 - [ ] Keep DTO structs at transport boundary with `deny_unknown_fields`.
 - [ ] Move all ID/shape validation into `TryFrom` conversions before handler execution.
 - [ ] Ensure ingress parse and unknown-event metrics stay intact.
