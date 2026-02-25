@@ -3279,8 +3279,25 @@ pub(crate) async fn create_channel(
         name: name.as_str().to_owned(),
         kind,
     };
-    let event = gateway_events::channel_create(&path.guild_id, &response);
-    broadcast_guild_event(&state, &path.guild_id, &event).await;
+    match gateway_events::try_channel_create(&path.guild_id, &response) {
+        Ok(event) => {
+            broadcast_guild_event(&state, &path.guild_id, &event).await;
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.channel_create.serialize_failed",
+                event_type = gateway_events::CHANNEL_CREATE_EVENT,
+                guild_id = %path.guild_id,
+                channel_id = %response.channel_id,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::CHANNEL_CREATE_EVENT,
+                "serialize_error",
+            );
+        }
+    }
 
     Ok(Json(response))
 }

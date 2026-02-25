@@ -57,9 +57,12 @@ pub(crate) use friend::{
     try_friend_request_update, FRIEND_REMOVE_EVENT, FRIEND_REQUEST_CREATE_EVENT,
     FRIEND_REQUEST_DELETE_EVENT, FRIEND_REQUEST_UPDATE_EVENT,
 };
+#[cfg(test)]
+pub(crate) use message_channel::channel_create;
 pub(crate) use message_channel::{
-    channel_create, message_reaction, try_message_create, try_message_delete, try_message_update,
-    MESSAGE_CREATE_EVENT, MESSAGE_DELETE_EVENT, MESSAGE_UPDATE_EVENT,
+    message_reaction, try_channel_create, try_message_create, try_message_delete,
+    try_message_update, CHANNEL_CREATE_EVENT, MESSAGE_CREATE_EVENT, MESSAGE_DELETE_EVENT,
+    MESSAGE_UPDATE_EVENT,
 };
 #[cfg(test)]
 pub(crate) use presence_voice::presence_sync;

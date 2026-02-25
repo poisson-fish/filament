@@ -120,8 +120,11 @@ pub(crate) fn message_reaction(
     )
 }
 
-pub(crate) fn channel_create(guild_id: &str, channel: &ChannelResponse) -> GatewayEvent {
-    build_event(
+pub(crate) fn try_channel_create(
+    guild_id: &str,
+    channel: &ChannelResponse,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_channel_create_event(
         CHANNEL_CREATE_EVENT,
         ChannelCreatePayload {
             guild_id,
@@ -132,6 +135,20 @@ pub(crate) fn channel_create(guild_id: &str, channel: &ChannelResponse) -> Gatew
             },
         },
     )
+}
+
+#[cfg(test)]
+pub(crate) fn channel_create(guild_id: &str, channel: &ChannelResponse) -> GatewayEvent {
+    try_channel_create(guild_id, channel).unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {CHANNEL_CREATE_EVENT}: {error}")
+    })
+}
+
+fn try_build_channel_create_event(
+    event_type: &'static str,
+    payload: ChannelCreatePayload<'_>,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(event_type, payload)
 }
 
 #[cfg(test)]
@@ -208,8 +225,36 @@ mod tests {
             kind: ChannelKind::Text,
         };
 
-        let payload = parse_payload(&channel_create("guild-1", &channel));
+        let payload = parse_payload(
+            &try_channel_create("guild-1", &channel).expect("channel_create should serialize"),
+        );
         assert_eq!(payload["guild_id"], Value::from("guild-1"));
         assert_eq!(payload["channel"]["name"], Value::from("general"));
+    }
+
+    #[test]
+    fn try_channel_create_rejects_invalid_event_type() {
+        let channel = ChannelResponse {
+            channel_id: String::from("channel-1"),
+            name: String::from("general"),
+            kind: ChannelKind::Text,
+        };
+        let Err(error) = try_build_channel_create_event(
+            "channel create",
+            ChannelCreatePayload {
+                guild_id: "guild-1",
+                channel: ChannelCreateChannelPayload {
+                    channel_id: channel.channel_id.as_str(),
+                    name: channel.name.as_str(),
+                    kind: channel.kind,
+                },
+            },
+        ) else {
+            panic!("invalid event type should fail");
+        };
+        assert!(
+            error.to_string().contains("invalid outbound event type"),
+            "unexpected error: {error}"
+        );
     }
 }
