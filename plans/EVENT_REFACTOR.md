@@ -224,7 +224,7 @@ Remove O(N) guild prefix scans and use explicit indices for routing.
 Reduce stringly-typed command handling at ingress boundary.
 
 ### Completion Status
-`NOT STARTED`
+`IN PROGRESS`
 
 ### Tasks
 - [ ] Introduce gateway ingress domain types (validated IDs, bounded fields) from DTO conversion.
@@ -244,6 +244,9 @@ Reduce stringly-typed command handling at ingress boundary.
 - [ ] Unit tests for newtype invariants and `TryFrom` conversions.
 - [ ] Ingress parse tests for invalid IDs and malformed payloads.
 - [ ] Gateway network tests still pass for subscribe/message_create.
+
+### Progress Notes
+- 2026-02-25 (Slice 1): Introduced ingress subscribe domain types with invariant constructors (`GatewayGuildId`, `GatewayChannelId`, `GatewaySubscribeCommand`) and moved subscribe ID validation into `TryFrom<GatewaySubscribe>` during ingress parsing. `execute_subscribe_command` now accepts only validated domain input, preserving fail-closed behavior (`invalid_subscribe_payload`) and existing ingress parse/unknown-event metric classification; added focused parser tests for valid ULID subscribe payloads and malformed/invalid-ID rejection.
 
 ### Exit Criteria
 - Handlers execute only with validated domain input.

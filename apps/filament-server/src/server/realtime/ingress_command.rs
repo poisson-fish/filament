@@ -1,12 +1,70 @@
 use filament_protocol::Envelope;
 use serde_json::Value;
+use ulid::Ulid;
 
 use crate::server::types::{GatewayMessageCreate, GatewaySubscribe};
 
 #[derive(Debug)]
 pub(crate) enum GatewayIngressCommand {
-    Subscribe(GatewaySubscribe),
+    Subscribe(GatewaySubscribeCommand),
     MessageCreate(GatewayMessageCreate),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatewayGuildId(String);
+
+impl GatewayGuildId {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for GatewayGuildId {
+    type Error = ();
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if Ulid::from_string(&value).is_err() {
+            return Err(());
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatewayChannelId(String);
+
+impl GatewayChannelId {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for GatewayChannelId {
+    type Error = ();
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if Ulid::from_string(&value).is_err() {
+            return Err(());
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatewaySubscribeCommand {
+    pub(crate) guild_id: GatewayGuildId,
+    pub(crate) channel_id: GatewayChannelId,
+}
+
+impl TryFrom<GatewaySubscribe> for GatewaySubscribeCommand {
+    type Error = ();
+
+    fn try_from(value: GatewaySubscribe) -> Result<Self, Self::Error> {
+        Ok(Self {
+            guild_id: GatewayGuildId::try_from(value.guild_id)?,
+            channel_id: GatewayChannelId::try_from(value.channel_id)?,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -32,8 +90,12 @@ pub(crate) fn parse_gateway_ingress_command(
     let event_type = envelope.t.as_str().to_owned();
     match event_type.as_str() {
         "subscribe" => serde_json::from_value::<GatewaySubscribe>(envelope.d)
-            .map(GatewayIngressCommand::Subscribe)
-            .map_err(|_| GatewayIngressCommandParseError::InvalidSubscribePayload),
+            .map_err(|_| GatewayIngressCommandParseError::InvalidSubscribePayload)
+            .and_then(|subscribe| {
+                GatewaySubscribeCommand::try_from(subscribe)
+                    .map_err(|()| GatewayIngressCommandParseError::InvalidSubscribePayload)
+            })
+            .map(GatewayIngressCommand::Subscribe),
         "message_create" => serde_json::from_value::<GatewayMessageCreate>(envelope.d)
             .map(GatewayIngressCommand::MessageCreate)
             .map_err(|_| GatewayIngressCommandParseError::InvalidMessageCreatePayload),
@@ -65,16 +127,16 @@ mod tests {
         let command = parse_gateway_ingress_command(envelope(
             "subscribe",
             json!({
-                "guild_id": "g1",
-                "channel_id": "c1"
+                "guild_id": "01JYQ4V2YQ8B4FW9P51TE5Z1JK",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT"
             }),
         ))
         .expect("subscribe payload should parse");
 
         match command {
             GatewayIngressCommand::Subscribe(subscribe) => {
-                assert_eq!(subscribe.guild_id, "g1");
-                assert_eq!(subscribe.channel_id, "c1");
+                assert_eq!(subscribe.guild_id.as_str(), "01JYQ4V2YQ8B4FW9P51TE5Z1JK");
+                assert_eq!(subscribe.channel_id.as_str(), "01JYQ4V3E2BTRWCHKRHV9K8HXT");
             }
             GatewayIngressCommand::MessageCreate(_) => {
                 panic!("expected subscribe command");
@@ -116,10 +178,28 @@ mod tests {
         let error = parse_gateway_ingress_command(envelope(
             "subscribe",
             json!({
-                "guild_id": "g1"
+                "guild_id": "01JYQ4V2YQ8B4FW9P51TE5Z1JK"
             }),
         ))
         .expect_err("invalid subscribe payload should fail");
+
+        assert!(matches!(
+            error,
+            GatewayIngressCommandParseError::InvalidSubscribePayload
+        ));
+        assert_eq!(error.disconnect_reason(), "invalid_subscribe_payload");
+    }
+
+    #[test]
+    fn rejects_subscribe_payload_with_invalid_ids() {
+        let error = parse_gateway_ingress_command(envelope(
+            "subscribe",
+            json!({
+                "guild_id": "not-a-ulid",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT"
+            }),
+        ))
+        .expect_err("invalid subscribe IDs should fail");
 
         assert!(matches!(
             error,
