@@ -35,6 +35,7 @@ pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
     workspace::WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT,
     workspace::WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT,
     workspace::WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT,
+    workspace::WORKSPACE_CHANNEL_PERMISSION_OVERRIDE_UPDATE_EVENT,
     workspace::WORKSPACE_IP_BAN_SYNC_EVENT,
     profile::PROFILE_UPDATE_EVENT,
     profile::PROFILE_AVATAR_UPDATE_EVENT,
@@ -65,10 +66,11 @@ pub(crate) use presence_voice::{
 pub(crate) use profile::{profile_avatar_update, profile_update};
 pub(crate) use workspace::{
     workspace_channel_override_update, workspace_channel_permission_override_update,
-    workspace_ip_ban_sync, workspace_member_add, workspace_member_ban, workspace_member_remove,
-    workspace_member_update, workspace_role_assignment_add, workspace_role_assignment_remove,
-    workspace_role_create, workspace_role_delete, workspace_role_reorder, workspace_role_update,
-    workspace_update, WorkspaceChannelOverrideFieldsPayload,
+    workspace_channel_permission_override_update_legacy, workspace_ip_ban_sync,
+    workspace_member_add, workspace_member_ban, workspace_member_remove, workspace_member_update,
+    workspace_role_assignment_add, workspace_role_assignment_remove, workspace_role_create,
+    workspace_role_delete, workspace_role_reorder, workspace_role_update, workspace_update,
+    WorkspaceChannelOverrideFieldsPayload,
 };
 #[cfg(test)]
 mod tests {
@@ -424,8 +426,32 @@ mod tests {
         assert!(workspace_override_payload["updated_fields"]["allow"].is_array());
         assert!(workspace_override_payload["updated_fields"]["deny"].is_array());
 
+        let workspace_permission_override_payload =
+            parse_event(&workspace_channel_permission_override_update(
+                "g",
+                "c",
+                crate::server::types::PermissionOverrideTargetKind::Member,
+                &friend_id.to_string(),
+                WorkspaceChannelOverrideFieldsPayload::new(
+                    vec![Permission::CreateMessage],
+                    vec![Permission::BanMember],
+                ),
+                24,
+                Some(user_id),
+            ));
+        assert_eq!(
+            workspace_permission_override_payload["target_kind"],
+            Value::from("member")
+        );
+        assert_eq!(
+            workspace_permission_override_payload["target_id"],
+            Value::from(friend_id.to_string())
+        );
+        assert!(workspace_permission_override_payload["updated_fields"]["allow"].is_array());
+        assert!(workspace_permission_override_payload["updated_fields"]["deny"].is_array());
+
         let workspace_ip_ban_payload =
-            parse_event(&workspace_ip_ban_sync("g", "upsert", 2, 24, Some(user_id)));
+            parse_event(&workspace_ip_ban_sync("g", "upsert", 2, 25, Some(user_id)));
         assert_eq!(
             workspace_ip_ban_payload["summary"]["changed_count"],
             Value::from(2)
@@ -439,7 +465,7 @@ mod tests {
             Some(&[MarkdownToken::Text {
                 text: String::from("about"),
             }]),
-            25,
+            26,
         ));
         assert_eq!(
             profile_update_payload["updated_fields"]["username"],
@@ -447,7 +473,7 @@ mod tests {
         );
 
         let profile_avatar_payload =
-            parse_event(&profile_avatar_update(&user_id.to_string(), 3, 26));
+            parse_event(&profile_avatar_update(&user_id.to_string(), 3, 27));
         assert_eq!(profile_avatar_payload["avatar_version"], Value::from(3));
 
         let friend_request_create_payload = parse_event(&friend_request_create(
@@ -456,7 +482,7 @@ mod tests {
             "alice",
             &friend_id.to_string(),
             "bob",
-            27,
+            28,
         ));
         assert_eq!(
             friend_request_create_payload["recipient_username"],
@@ -468,8 +494,8 @@ mod tests {
             &user_id.to_string(),
             &friend_id.to_string(),
             "bob",
-            28,
             29,
+            30,
             Some(user_id),
         ));
         assert_eq!(
@@ -478,18 +504,18 @@ mod tests {
         );
 
         let friend_request_delete_payload =
-            parse_event(&friend_request_delete("req-1", 30, Some(user_id)));
+            parse_event(&friend_request_delete("req-1", 31, Some(user_id)));
         assert_eq!(
             friend_request_delete_payload["deleted_at_unix"],
-            Value::from(30)
+            Value::from(31)
         );
 
         let friend_remove_payload = parse_event(&friend_remove(
             &user_id.to_string(),
             &friend_id.to_string(),
-            31,
+            32,
             Some(user_id),
         ));
-        assert_eq!(friend_remove_payload["removed_at_unix"], Value::from(31));
+        assert_eq!(friend_remove_payload["removed_at_unix"], Value::from(32));
     }
 }

@@ -348,6 +348,19 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
+#### `workspace_channel_permission_override_update` (planned)
+- Scope: guild
+- Visibility: authorized guild members
+- Minimum payload:
+  - `guild_id`
+  - `channel_id`
+  - `target_kind` (`role` | `member`)
+  - `target_id`
+  - `updated_fields`
+  - `updated_at_unix`
+- Optional:
+  - `actor_user_id`
+
 #### `workspace_ip_ban_sync` (planned, redacted)
 - Scope: guild moderation views
 - Visibility: authorized owner/moderator viewers only

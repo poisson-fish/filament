@@ -78,6 +78,9 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 - [ ] Web decoder tests for each variant and fail-closed invalid payloads.
 - [ ] Contract manifest parity tests (server/doc/client).
 
+### Progress Notes
+- 2026-02-25 (Slice 1): Added explicit server event type `workspace_channel_permission_override_update` for principal/target override payload shape, kept temporary dual-emit from the permission-override route (`workspace_channel_override_update` legacy + explicit event), and updated server/docs event manifests plus gateway event builder tests.
+
 ### Exit Criteria
 - One logical event name maps to one payload shape.
 - Docs and tests reflect actual emitted behavior.
@@ -317,4 +320,3 @@ Ship safely with progressive rollout and remove migration compatibility code.
 - `cargo audit` (where available in environment)
 - `cargo deny` (where available in environment)
 - `npm test` for `apps/filament-client-web` gateway-related suites
-
