@@ -230,7 +230,7 @@ Remove O(N) guild prefix scans and use explicit indices for routing.
 Reduce stringly-typed command handling at ingress boundary.
 
 ### Completion Status
-`IN PROGRESS`
+`DONE`
 
 ### Tasks
 - [x] Introduce gateway ingress domain types (validated IDs, bounded fields) from DTO conversion.
