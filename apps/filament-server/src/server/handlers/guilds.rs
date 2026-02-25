@@ -3613,13 +3613,28 @@ pub(crate) async fn update_member_role(
     }
 
     let updated_at_unix = now_unix();
-    let event = gateway_events::workspace_member_update(
+    let event = match gateway_events::try_workspace_member_update(
         &path.guild_id,
         target_user_id,
         Some(payload.role),
         updated_at_unix,
         Some(auth.user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_member_update.serialize_failed",
+                event_type = gateway_events::WORKSPACE_MEMBER_UPDATE_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::WORKSPACE_MEMBER_UPDATE_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(ModerationResponse { accepted: true }));
+        }
+    };
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(

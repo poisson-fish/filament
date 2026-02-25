@@ -255,14 +255,14 @@ pub(crate) fn workspace_member_add(
     )
 }
 
-pub(crate) fn workspace_member_update(
+pub(crate) fn try_workspace_member_update(
     guild_id: &str,
     user_id: UserId,
     role: Option<filament_core::Role>,
     updated_at_unix: i64,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_MEMBER_UPDATE_EVENT,
         WorkspaceMemberUpdatePayload {
             guild_id: guild_id.to_owned(),
@@ -624,6 +624,22 @@ mod tests {
             payload["updated_fields"]["visibility"],
             Value::from("public")
         );
+    }
+
+    #[test]
+    fn workspace_member_update_event_emits_role_and_timestamp() {
+        let payload = parse_payload(
+            &try_workspace_member_update(
+                "guild-1",
+                UserId::new(),
+                Some(Role::Moderator),
+                124,
+                None,
+            )
+            .expect("workspace_member_update should serialize"),
+        );
+        assert_eq!(payload["updated_fields"]["role"], Value::from("moderator"));
+        assert_eq!(payload["updated_at_unix"], Value::from(124));
     }
 
     #[test]
