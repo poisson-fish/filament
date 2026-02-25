@@ -74,13 +74,14 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 - `docs/PROTOCOL.md`
 
 ### Tests
-- [ ] Server integration test for both override event variants.
+- [x] Server integration test for both override event variants.
 - [ ] Web decoder tests for each variant and fail-closed invalid payloads.
 - [ ] Contract manifest parity tests (server/doc/client).
 
 ### Progress Notes
 - 2026-02-25 (Slice 1): Added explicit server event type `workspace_channel_permission_override_update` for principal/target override payload shape, kept temporary dual-emit from the permission-override route (`workspace_channel_override_update` legacy + explicit event), and updated server/docs event manifests plus gateway event builder tests.
 - 2026-02-25 (Slice 2): Updated web workspace gateway decoding/dispatch to accept migration dual-emit payloads under both event names, normalize principal/target payloads to `workspace_channel_permission_override_update`, and add targeted dispatch tests for legacy role payload, legacy permission payload, and explicit permission event type.
+- 2026-02-25 (Slice 3): Added gateway network integration coverage for the permission-override REST route to assert dual-emit behavior (`workspace_channel_override_update` legacy + `workspace_channel_permission_override_update` explicit) and payload shape consistency for target-based overrides.
 
 ### Exit Criteria
 - One logical event name maps to one payload shape.

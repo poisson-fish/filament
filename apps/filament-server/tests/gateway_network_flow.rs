@@ -1916,6 +1916,61 @@ async fn websocket_subscription_receives_phase4_permission_and_moderation_events
         json!(["ban_member"])
     );
 
+    let permission_override_update = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/permission-overrides/role/{role_id}",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::from(
+            json!({"allow":["manage_roles"],"deny":["ban_member"]}).to_string(),
+        ))
+        .expect("permission override update request should build");
+    let permission_override_update_response = app
+        .clone()
+        .oneshot(permission_override_update)
+        .await
+        .expect("permission override update request should execute");
+    assert_eq!(permission_override_update_response.status(), StatusCode::OK);
+
+    let legacy_permission_override_event =
+        next_event_of_type(&mut owner_socket, "workspace_channel_override_update").await;
+    assert_eq!(
+        legacy_permission_override_event["d"]["target_kind"],
+        Value::from("role")
+    );
+    assert_eq!(legacy_permission_override_event["d"]["target_id"], role_id);
+    assert_eq!(
+        legacy_permission_override_event["d"]["updated_fields"]["allow"],
+        json!(["manage_roles"])
+    );
+    assert_eq!(
+        legacy_permission_override_event["d"]["updated_fields"]["deny"],
+        json!(["ban_member"])
+    );
+
+    let permission_override_event = next_event_of_type(
+        &mut owner_socket,
+        "workspace_channel_permission_override_update",
+    )
+    .await;
+    assert_eq!(
+        permission_override_event["d"]["target_kind"],
+        Value::from("role")
+    );
+    assert_eq!(permission_override_event["d"]["target_id"], role_id);
+    assert_eq!(
+        permission_override_event["d"]["updated_fields"]["allow"],
+        json!(["manage_roles"])
+    );
+    assert_eq!(
+        permission_override_event["d"]["updated_fields"]["deny"],
+        json!(["ban_member"])
+    );
+
     let delete_role = Request::builder()
         .method("DELETE")
         .uri(format!("/guilds/{}/roles/{role_id}", channel.guild_id))
