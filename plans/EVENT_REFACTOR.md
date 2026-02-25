@@ -247,6 +247,7 @@ Reduce stringly-typed command handling at ingress boundary.
 
 ### Progress Notes
 - 2026-02-25 (Slice 1): Introduced ingress subscribe domain types with invariant constructors (`GatewayGuildId`, `GatewayChannelId`, `GatewaySubscribeCommand`) and moved subscribe ID validation into `TryFrom<GatewaySubscribe>` during ingress parsing. `execute_subscribe_command` now accepts only validated domain input, preserving fail-closed behavior (`invalid_subscribe_payload`) and existing ingress parse/unknown-event metric classification; added focused parser tests for valid ULID subscribe payloads and malformed/invalid-ID rejection.
+- 2026-02-25 (Slice 2): Introduced a typed ingress message-create domain command (`GatewayMessageCreateCommand`) and moved message-create guild/channel ULID validation into `TryFrom<GatewayMessageCreate>` during ingress parsing, so handler execution now receives validated IDs only. `execute_message_create_command` now accepts typed IDs while preserving existing fail-closed parse behavior (`invalid_message_create_payload`) and ingress parse/unknown-event metric classification; added focused parser coverage for valid typed message-create payloads plus invalid-ID rejection.
 
 ### Exit Criteria
 - Handlers execute only with validated domain input.

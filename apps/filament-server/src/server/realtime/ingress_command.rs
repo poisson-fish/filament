@@ -7,7 +7,7 @@ use crate::server::types::{GatewayMessageCreate, GatewaySubscribe};
 #[derive(Debug)]
 pub(crate) enum GatewayIngressCommand {
     Subscribe(GatewaySubscribeCommand),
-    MessageCreate(GatewayMessageCreate),
+    MessageCreate(GatewayMessageCreateCommand),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +67,27 @@ impl TryFrom<GatewaySubscribe> for GatewaySubscribeCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatewayMessageCreateCommand {
+    pub(crate) guild_id: GatewayGuildId,
+    pub(crate) channel_id: GatewayChannelId,
+    pub(crate) content: String,
+    pub(crate) attachment_ids: Option<Vec<String>>,
+}
+
+impl TryFrom<GatewayMessageCreate> for GatewayMessageCreateCommand {
+    type Error = ();
+
+    fn try_from(value: GatewayMessageCreate) -> Result<Self, Self::Error> {
+        Ok(Self {
+            guild_id: GatewayGuildId::try_from(value.guild_id)?,
+            channel_id: GatewayChannelId::try_from(value.channel_id)?,
+            content: value.content,
+            attachment_ids: value.attachment_ids,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum GatewayIngressCommandParseError {
     InvalidSubscribePayload,
@@ -97,8 +118,12 @@ pub(crate) fn parse_gateway_ingress_command(
             })
             .map(GatewayIngressCommand::Subscribe),
         "message_create" => serde_json::from_value::<GatewayMessageCreate>(envelope.d)
-            .map(GatewayIngressCommand::MessageCreate)
-            .map_err(|_| GatewayIngressCommandParseError::InvalidMessageCreatePayload),
+            .map_err(|_| GatewayIngressCommandParseError::InvalidMessageCreatePayload)
+            .and_then(|message_create| {
+                GatewayMessageCreateCommand::try_from(message_create)
+                    .map_err(|()| GatewayIngressCommandParseError::InvalidMessageCreatePayload)
+            })
+            .map(GatewayIngressCommand::MessageCreate),
         _ => Err(GatewayIngressCommandParseError::UnknownEventType(
             event_type,
         )),
@@ -149,8 +174,8 @@ mod tests {
         let command = parse_gateway_ingress_command(envelope(
             "message_create",
             json!({
-                "guild_id": "g1",
-                "channel_id": "c1",
+                "guild_id": "01JYQ4V2YQ8B4FW9P51TE5Z1JK",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT",
                 "content": "hello",
                 "attachment_ids": ["a1"]
             }),
@@ -159,8 +184,8 @@ mod tests {
 
         match command {
             GatewayIngressCommand::MessageCreate(request) => {
-                assert_eq!(request.guild_id, "g1");
-                assert_eq!(request.channel_id, "c1");
+                assert_eq!(request.guild_id.as_str(), "01JYQ4V2YQ8B4FW9P51TE5Z1JK");
+                assert_eq!(request.channel_id.as_str(), "01JYQ4V3E2BTRWCHKRHV9K8HXT");
                 assert_eq!(request.content, "hello");
                 assert_eq!(
                     request.attachment_ids.as_deref(),
@@ -188,6 +213,25 @@ mod tests {
             GatewayIngressCommandParseError::InvalidSubscribePayload
         ));
         assert_eq!(error.disconnect_reason(), "invalid_subscribe_payload");
+    }
+
+    #[test]
+    fn rejects_message_create_payload_with_invalid_ids() {
+        let error = parse_gateway_ingress_command(envelope(
+            "message_create",
+            json!({
+                "guild_id": "not-a-ulid",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT",
+                "content": "hello"
+            }),
+        ))
+        .expect_err("invalid message_create IDs should fail");
+
+        assert!(matches!(
+            error,
+            GatewayIngressCommandParseError::InvalidMessageCreatePayload
+        ));
+        assert_eq!(error.disconnect_reason(), "invalid_message_create_payload");
     }
 
     #[test]
