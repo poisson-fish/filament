@@ -214,6 +214,14 @@ pub(crate) async fn handle_gateway_connection(
                 guild_ids: HashSet::new(),
             },
         );
+    state
+        .realtime_registry
+        .user_connections()
+        .write()
+        .await
+        .entry(auth.user_id)
+        .or_default()
+        .insert(connection_id);
 
     let ready_event = match gateway_events::try_ready(auth.user_id) {
         Ok(event) => event,

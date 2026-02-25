@@ -206,6 +206,9 @@ Remove O(N) guild prefix scans and use explicit indices for routing.
 - [ ] Existing dedup test still passes.
 - [ ] Add stress-oriented test for large subscription maps to validate non-scan path.
 
+### Progress Notes
+- 2026-02-25 (Slice 1): Introduced explicit realtime subscription index storage in `RealtimeRegistry` (`guild_connections` and `user_connections`) while preserving the existing channel-key subscription map and current fanout behavior. Wired index maintenance into connection lifecycle/subscription paths: user index now records each connection at gateway connect, guild index now records connection ids on subscribe key insert (parsing `guild_id` from `guild:channel` keys), and both indexes are pruned on disconnect alongside existing subscription cleanup. Added focused unit coverage for index access, subscription key parsing, and index prune semantics without changing protocol/event shapes or existing limits/rate caps.
+
 ### Exit Criteria
 - Guild broadcast complexity is index-based.
 - Behavior parity for delivery, dedup, and slow-consumer close.

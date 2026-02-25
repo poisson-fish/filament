@@ -31,6 +31,8 @@ use super::{
 
 pub(crate) type ChannelSubscriptions = HashMap<Uuid, mpsc::Sender<String>>;
 pub(crate) type Subscriptions = HashMap<String, ChannelSubscriptions>;
+pub(crate) type GuildConnectionIndex = HashMap<String, HashSet<Uuid>>;
+pub(crate) type UserConnectionIndex = HashMap<UserId, HashSet<Uuid>>;
 pub(crate) type GuildIpBanMap = HashMap<String, Vec<GuildIpBanRecord>>;
 pub(crate) type GuildRoleMap = HashMap<String, HashMap<String, WorkspaceRoleRecord>>;
 pub(crate) type GuildRoleAssignmentMap = HashMap<String, HashMap<UserId, HashSet<String>>>;
@@ -343,6 +345,8 @@ impl AppState {
         let guild_role_assignments = Arc::new(RwLock::new(HashMap::new()));
         let guild_channel_permission_overrides = Arc::new(RwLock::new(HashMap::new()));
         let subscriptions = Arc::new(RwLock::new(HashMap::new()));
+        let guild_connections = Arc::new(RwLock::new(HashMap::new()));
+        let user_connections = Arc::new(RwLock::new(HashMap::new()));
         let connection_senders = Arc::new(RwLock::new(HashMap::new()));
         let connection_controls = Arc::new(RwLock::new(HashMap::new()));
         let connection_presence = Arc::new(RwLock::new(HashMap::new()));
@@ -355,6 +359,8 @@ impl AppState {
         );
         let realtime_registry = RealtimeRegistry::new(
             subscriptions.clone(),
+            guild_connections.clone(),
+            user_connections.clone(),
             connection_senders.clone(),
             connection_controls.clone(),
             connection_presence.clone(),
@@ -474,6 +480,8 @@ impl MembershipStore {
 #[derive(Clone)]
 pub(crate) struct RealtimeRegistry {
     subscriptions: Arc<RwLock<Subscriptions>>,
+    guild_connections: Arc<RwLock<GuildConnectionIndex>>,
+    user_connections: Arc<RwLock<UserConnectionIndex>>,
     connection_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>>,
     connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
     connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
@@ -483,6 +491,8 @@ pub(crate) struct RealtimeRegistry {
 impl RealtimeRegistry {
     pub(crate) fn new(
         subscriptions: Arc<RwLock<Subscriptions>>,
+        guild_connections: Arc<RwLock<GuildConnectionIndex>>,
+        user_connections: Arc<RwLock<UserConnectionIndex>>,
         connection_senders: Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>>,
         connection_controls: Arc<RwLock<HashMap<Uuid, watch::Sender<ConnectionControl>>>>,
         connection_presence: Arc<RwLock<HashMap<Uuid, ConnectionPresence>>>,
@@ -490,6 +500,8 @@ impl RealtimeRegistry {
     ) -> Self {
         Self {
             subscriptions,
+            guild_connections,
+            user_connections,
             connection_senders,
             connection_controls,
             connection_presence,
@@ -499,6 +511,14 @@ impl RealtimeRegistry {
 
     pub(crate) fn subscriptions(&self) -> &Arc<RwLock<Subscriptions>> {
         &self.subscriptions
+    }
+
+    pub(crate) fn guild_connections(&self) -> &Arc<RwLock<GuildConnectionIndex>> {
+        &self.guild_connections
+    }
+
+    pub(crate) fn user_connections(&self) -> &Arc<RwLock<UserConnectionIndex>> {
+        &self.user_connections
     }
 
     pub(crate) fn connection_senders(&self) -> &Arc<RwLock<HashMap<Uuid, mpsc::Sender<String>>>> {
@@ -1099,5 +1119,49 @@ mod tests {
 
         let presence = state.realtime_registry.connection_presence().read().await;
         assert!(presence.contains_key(&connection_id));
+    }
+
+    #[tokio::test]
+    async fn realtime_registry_provides_guild_connection_index_access() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        let connection_id = Uuid::new_v4();
+        let guild_id = String::from("guild-index-test");
+
+        state
+            .realtime_registry
+            .guild_connections()
+            .write()
+            .await
+            .entry(guild_id.clone())
+            .or_default()
+            .insert(connection_id);
+
+        let guild_connections = state.realtime_registry.guild_connections().read().await;
+        assert!(guild_connections
+            .get(&guild_id)
+            .expect("guild index entry should exist")
+            .contains(&connection_id));
+    }
+
+    #[tokio::test]
+    async fn realtime_registry_provides_user_connection_index_access() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        let connection_id = Uuid::new_v4();
+        let user_id = UserId::new();
+
+        state
+            .realtime_registry
+            .user_connections()
+            .write()
+            .await
+            .entry(user_id)
+            .or_default()
+            .insert(connection_id);
+
+        let user_connections = state.realtime_registry.user_connections().read().await;
+        assert!(user_connections
+            .get(&user_id)
+            .expect("user index entry should exist")
+            .contains(&connection_id));
     }
 }
