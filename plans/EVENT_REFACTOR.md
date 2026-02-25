@@ -188,7 +188,7 @@ Remove O(N) guild prefix scans and use explicit indices for routing.
   - channel key -> listeners
   - guild id -> connection ids
   - user id -> connection ids (verify this remains authoritative)
-- [ ] Update subscription insert/remove paths to maintain all indexes atomically.
+- [x] Update subscription insert/remove paths to maintain all indexes atomically.
 - [x] Refactor guild broadcast path to direct index lookup (no string prefix scans).
 - [ ] Keep dedup semantics and slow-consumer handling unchanged.
 
@@ -202,7 +202,7 @@ Remove O(N) guild prefix scans and use explicit indices for routing.
 - `apps/filament-server/src/server/tests/tests/gateway.rs`
 
 ### Tests
-- [ ] Unit tests for index maintenance on subscribe/disconnect.
+- [x] Unit tests for index maintenance on subscribe/disconnect.
 - [x] Existing dedup test still passes.
 - [x] Add stress-oriented test for large subscription maps to validate non-scan path.
 
@@ -210,6 +210,7 @@ Remove O(N) guild prefix scans and use explicit indices for routing.
 - 2026-02-25 (Slice 1): Introduced explicit realtime subscription index storage in `RealtimeRegistry` (`guild_connections` and `user_connections`) while preserving the existing channel-key subscription map and current fanout behavior. Wired index maintenance into connection lifecycle/subscription paths: user index now records each connection at gateway connect, guild index now records connection ids on subscribe key insert (parsing `guild_id` from `guild:channel` keys), and both indexes are pruned on disconnect alongside existing subscription cleanup. Added focused unit coverage for index access, subscription key parsing, and index prune semantics without changing protocol/event shapes or existing limits/rate caps.
 - 2026-02-25 (Slice 2): Refactored guild fanout dispatch to use direct `guild_id -> connection_ids` index lookup plus `connection_senders`, removing the O(N) subscription-key prefix scan path. `broadcast_guild_event` now dispatches through guild/user indices under existing outbound size caps and drop metrics; closed/full/missing senders are pruned from the guild index while preserving slow-consumer signaling and reject observability labels. Added focused guild fanout unit coverage for delivery parity, closed/full pruning, oversized rejection, and a large-index regression (`2,048` non-target guild entries) validating targeted non-scan behavior.
 - 2026-02-25 (Slice 3): Made user fanout target resolution index-based by switching `broadcast_user_event` from `connection_presence` scans to authoritative `user_connections` lookups via `fanout_user_targets::connection_ids_for_user`. Updated target-resolution unit tests to validate `UserConnectionIndex` behavior directly, preserving existing user fanout dispatch semantics (dedup via set membership, slow-consumer close signaling, and outbound size/drop handling) with no protocol changes.
+- 2026-02-25 (Slice 4): Made subscribe/disconnect index maintenance atomic at the mutation boundary by updating realtime subscription insert/remove paths to mutate `subscriptions`, `guild_connections`, and `user_connections` within single coordinated write sections. `add_subscription` now acquires subscription + guild index locks together and updates both via a unified insert helper; `remove_connection` now prunes all three index maps in one lock scope via a unified removal helper. Added focused unit tests covering subscribe index insertion (valid/invalid key shapes) and disconnect prune behavior across all indexes, while preserving existing fanout/dedup behavior, queue limits, and drop handling.
 
 ### Exit Criteria
 - Guild broadcast complexity is index-based.
