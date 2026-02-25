@@ -75,10 +75,16 @@ pub(crate) async fn execute_subscribe_command(
                 return Err("outbound_serialize_error");
             }
         };
-    let enqueue_result = try_enqueue_subscribed_event(outbound_tx, subscribed_event.payload);
-    if subscribe_ack_rejected(&enqueue_result) {
-        record_gateway_event_dropped("connection", subscribed_event.event_type, "full_queue");
-        return Err("outbound_queue_full");
+    let enqueue_result = try_enqueue_subscribed_event(
+        outbound_tx,
+        subscribed_event.payload,
+        state.runtime.max_gateway_event_bytes,
+    );
+    if let Some(reason) = subscribe_ack_drop_metric_reason(&enqueue_result) {
+        record_gateway_event_dropped("connection", subscribed_event.event_type, reason);
+    }
+    if let Some(reason) = subscribe_ack_error_reason(&enqueue_result) {
+        return Err(reason);
     }
     record_gateway_event_emitted("connection", subscribed_event.event_type);
 
@@ -92,24 +98,74 @@ pub(crate) async fn execute_subscribe_command(
     Ok(())
 }
 
-pub(crate) fn subscribe_ack_rejected(result: &SubscribeAckEnqueueResult) -> bool {
-    matches!(result, SubscribeAckEnqueueResult::Rejected)
+pub(crate) fn subscribe_ack_error_reason(
+    result: &SubscribeAckEnqueueResult,
+) -> Option<&'static str> {
+    match result {
+        SubscribeAckEnqueueResult::Enqueued => None,
+        SubscribeAckEnqueueResult::Full => Some("outbound_queue_full"),
+        SubscribeAckEnqueueResult::Closed => Some("outbound_queue_closed"),
+        SubscribeAckEnqueueResult::Oversized => Some("outbound_payload_too_large"),
+    }
+}
+
+pub(crate) fn subscribe_ack_drop_metric_reason(
+    result: &SubscribeAckEnqueueResult,
+) -> Option<&'static str> {
+    match result {
+        SubscribeAckEnqueueResult::Enqueued => None,
+        SubscribeAckEnqueueResult::Full => Some("full_queue"),
+        SubscribeAckEnqueueResult::Closed => Some("closed"),
+        SubscribeAckEnqueueResult::Oversized => Some("oversized_outbound"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::subscribe_ack_rejected;
+    use super::{subscribe_ack_drop_metric_reason, subscribe_ack_error_reason};
     use crate::server::realtime::subscribe_ack::SubscribeAckEnqueueResult;
 
     #[test]
-    fn subscribe_ack_rejected_returns_true_for_rejected() {
-        assert!(subscribe_ack_rejected(&SubscribeAckEnqueueResult::Rejected));
+    fn subscribe_ack_error_reason_returns_none_for_enqueued() {
+        assert_eq!(
+            subscribe_ack_error_reason(&SubscribeAckEnqueueResult::Enqueued),
+            None
+        );
     }
 
     #[test]
-    fn subscribe_ack_rejected_returns_false_for_enqueued() {
-        assert!(!subscribe_ack_rejected(
-            &SubscribeAckEnqueueResult::Enqueued
-        ));
+    fn subscribe_ack_error_reason_maps_all_rejections() {
+        assert_eq!(
+            subscribe_ack_error_reason(&SubscribeAckEnqueueResult::Full),
+            Some("outbound_queue_full")
+        );
+        assert_eq!(
+            subscribe_ack_error_reason(&SubscribeAckEnqueueResult::Closed),
+            Some("outbound_queue_closed")
+        );
+        assert_eq!(
+            subscribe_ack_error_reason(&SubscribeAckEnqueueResult::Oversized),
+            Some("outbound_payload_too_large")
+        );
+    }
+
+    #[test]
+    fn subscribe_ack_drop_metric_reason_maps_all_rejections() {
+        assert_eq!(
+            subscribe_ack_drop_metric_reason(&SubscribeAckEnqueueResult::Enqueued),
+            None
+        );
+        assert_eq!(
+            subscribe_ack_drop_metric_reason(&SubscribeAckEnqueueResult::Full),
+            Some("full_queue")
+        );
+        assert_eq!(
+            subscribe_ack_drop_metric_reason(&SubscribeAckEnqueueResult::Closed),
+            Some("closed")
+        );
+        assert_eq!(
+            subscribe_ack_drop_metric_reason(&SubscribeAckEnqueueResult::Oversized),
+            Some("oversized_outbound")
+        );
     }
 }
