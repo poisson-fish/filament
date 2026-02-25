@@ -52,8 +52,8 @@ pub(crate) use friend::{
     friend_remove, friend_request_create, friend_request_delete, friend_request_update,
 };
 pub(crate) use message_channel::{
-    channel_create, message_delete, message_reaction, message_update, try_message_create,
-    MESSAGE_CREATE_EVENT,
+    channel_create, message_delete, message_reaction, try_message_create, try_message_update,
+    MESSAGE_CREATE_EVENT, MESSAGE_UPDATE_EVENT,
 };
 pub(crate) use presence_voice::{
     presence_sync, presence_update, voice_participant_join, voice_participant_leave,
@@ -153,16 +153,19 @@ mod tests {
         let message_reaction_payload = parse_event(&message_reaction("g", "c", "m", "👍", 2));
         assert_eq!(message_reaction_payload["count"], Value::from(2));
 
-        let message_update_payload = parse_event(&message_update(
-            "g",
-            "c",
-            "m",
-            "updated",
-            &[MarkdownToken::Text {
-                text: String::from("updated"),
-            }],
-            11,
-        ));
+        let message_update_payload = parse_event(
+            &try_message_update(
+                "g",
+                "c",
+                "m",
+                "updated",
+                &[MarkdownToken::Text {
+                    text: String::from("updated"),
+                }],
+                11,
+            )
+            .expect("message_update should serialize"),
+        );
         assert_eq!(
             message_update_payload["updated_fields"]["content"],
             Value::from("updated")

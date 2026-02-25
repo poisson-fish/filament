@@ -21,6 +21,7 @@ use crate::server::{
     },
     errors::AuthFailure,
     gateway_events,
+    metrics::record_gateway_event_dropped,
     realtime::{
         broadcast_channel_event, create_message_internal, enqueue_search_operation,
         indexed_message_from_response,
@@ -49,14 +50,27 @@ async fn broadcast_message_reaction_event(state: &AppState, path: &ReactionPath,
 }
 
 async fn broadcast_message_update_event(state: &AppState, response: &MessageResponse) {
-    let event = gateway_events::message_update(
+    let Ok(event) = gateway_events::try_message_update(
         &response.guild_id,
         &response.channel_id,
         &response.message_id,
         &response.content,
         &response.markdown_tokens,
         now_unix(),
-    );
+    ) else {
+        record_gateway_event_dropped(
+            "channel",
+            gateway_events::MESSAGE_UPDATE_EVENT,
+            "serialize_error",
+        );
+        tracing::warn!(
+            guild_id = response.guild_id,
+            channel_id = response.channel_id,
+            message_id = response.message_id,
+            "dropped message_update outbound event because serialization failed"
+        );
+        return;
+    };
     broadcast_channel_event(
         state,
         &channel_key(&response.guild_id, &response.channel_id),

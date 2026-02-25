@@ -61,6 +61,29 @@ pub(crate) fn try_message_create(message: &MessageResponse) -> anyhow::Result<Ga
     try_build_event(MESSAGE_CREATE_EVENT, message)
 }
 
+pub(crate) fn try_message_update(
+    guild_id: &str,
+    channel_id: &str,
+    message_id: &str,
+    content: &str,
+    markdown_tokens: &[filament_core::MarkdownToken],
+    updated_at_unix: i64,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
+        MESSAGE_UPDATE_EVENT,
+        MessageUpdatePayload {
+            guild_id,
+            channel_id,
+            message_id,
+            updated_fields: MessageUpdateFieldsPayload {
+                content,
+                markdown_tokens,
+            },
+            updated_at_unix,
+        },
+    )
+}
+
 pub(crate) fn message_reaction(
     guild_id: &str,
     channel_id: &str,
@@ -76,29 +99,6 @@ pub(crate) fn message_reaction(
             message_id,
             emoji,
             count,
-        },
-    )
-}
-
-pub(crate) fn message_update(
-    guild_id: &str,
-    channel_id: &str,
-    message_id: &str,
-    content: &str,
-    markdown_tokens: &[filament_core::MarkdownToken],
-    updated_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        MESSAGE_UPDATE_EVENT,
-        MessageUpdatePayload {
-            guild_id,
-            channel_id,
-            message_id,
-            updated_fields: MessageUpdateFieldsPayload {
-                content,
-                markdown_tokens,
-            },
-            updated_at_unix,
         },
     )
 }
@@ -173,16 +173,19 @@ mod tests {
 
     #[test]
     fn message_update_event_emits_updated_fields() {
-        let payload = parse_payload(&message_update(
-            "guild-1",
-            "channel-1",
-            "msg-1",
-            "updated",
-            &[MarkdownToken::Text {
-                text: String::from("updated"),
-            }],
-            99,
-        ));
+        let payload = parse_payload(
+            &try_message_update(
+                "guild-1",
+                "channel-1",
+                "msg-1",
+                "updated",
+                &[MarkdownToken::Text {
+                    text: String::from("updated"),
+                }],
+                99,
+            )
+            .expect("message_update should serialize"),
+        );
         assert_eq!(payload["updated_fields"]["content"], Value::from("updated"));
         assert_eq!(payload["updated_at_unix"], Value::from(99));
     }
