@@ -247,6 +247,7 @@ pub(crate) fn voice_participant_leave(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn voice_participant_update(
     guild_id: &str,

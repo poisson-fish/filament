@@ -9,6 +9,12 @@ use super::{
     voice_presence::voice_snapshot_from_record, voice_registration::VoiceRegistrationTransition,
 };
 
+#[derive(Debug)]
+pub(crate) struct VoiceRegistrationEventBuildError {
+    pub(crate) event_type: &'static str,
+    pub(crate) source: anyhow::Error,
+}
+
 pub(crate) fn plan_voice_registration_events(
     transition: VoiceRegistrationTransition,
     guild_id: &str,
@@ -16,7 +22,7 @@ pub(crate) fn plan_voice_registration_events(
     user_id: UserId,
     identity: &str,
     event_at_unix: i64,
-) -> Vec<(String, GatewayEvent)> {
+) -> Result<Vec<(String, GatewayEvent)>, VoiceRegistrationEventBuildError> {
     let mut planned = Vec::new();
 
     for (old_key, participant) in transition.removed {
@@ -61,21 +67,23 @@ pub(crate) fn plan_voice_registration_events(
         ));
     }
     if let Some(participant) = transition.updated {
-        planned.push((
-            subscription_key.clone(),
-            gateway_events::voice_participant_update(
-                guild_id,
-                channel_id,
-                participant.user_id,
-                &participant.identity,
-                None,
-                None,
-                Some(participant.is_speaking),
-                Some(participant.is_video_enabled),
-                Some(participant.is_screen_share_enabled),
-                participant.updated_at_unix,
-            ),
-        ));
+        let event = gateway_events::try_voice_participant_update(
+            guild_id,
+            channel_id,
+            participant.user_id,
+            &participant.identity,
+            None,
+            None,
+            Some(participant.is_speaking),
+            Some(participant.is_video_enabled),
+            Some(participant.is_screen_share_enabled),
+            participant.updated_at_unix,
+        )
+        .map_err(|source| VoiceRegistrationEventBuildError {
+            event_type: gateway_events::VOICE_PARTICIPANT_UPDATE_EVENT,
+            source,
+        })?;
+        planned.push((subscription_key.clone(), event));
     }
     for stream in transition.unpublished {
         planned.push((
@@ -104,7 +112,7 @@ pub(crate) fn plan_voice_registration_events(
         ));
     }
 
-    planned
+    Ok(planned)
 }
 
 #[cfg(test)]
@@ -184,7 +192,8 @@ mod tests {
         };
 
         let planned =
-            plan_voice_registration_events(transition, "g2", "c2", current_user, "current", 9);
+            plan_voice_registration_events(transition, "g2", "c2", current_user, "current", 9)
+                .expect("voice registration events should serialize");
 
         assert_eq!(planned.len(), 7);
         let removed_key_events = planned.iter().filter(|(key, _)| key == "g1:c1").count();
@@ -227,7 +236,8 @@ mod tests {
             unpublished: Vec::new(),
         };
 
-        let planned = plan_voice_registration_events(transition, "g1", "c1", UserId::new(), "u", 5);
+        let planned = plan_voice_registration_events(transition, "g1", "c1", UserId::new(), "u", 5)
+            .expect("voice registration events should serialize");
 
         assert!(planned.is_empty());
     }

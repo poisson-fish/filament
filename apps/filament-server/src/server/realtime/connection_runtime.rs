@@ -148,9 +148,23 @@ pub(crate) async fn register_voice_participant_from_token(
             MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
         )?
     };
-    for (subscription_key, event) in
-        plan_voice_registration_events(transition, guild_id, channel_id, user_id, identity, now)
-    {
+    let planned = match plan_voice_registration_events(
+        transition, guild_id, channel_id, user_id, identity, now,
+    ) {
+        Ok(planned) => planned,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.voice_registration.serialize_failed",
+                guild_id,
+                channel_id,
+                event_type = error.event_type,
+                error = %error.source,
+            );
+            record_gateway_event_dropped("channel", error.event_type, "serialize_error");
+            return Ok(());
+        }
+    };
+    for (subscription_key, event) in planned {
         broadcast_channel_event(state, &subscription_key, &event).await;
     }
 
