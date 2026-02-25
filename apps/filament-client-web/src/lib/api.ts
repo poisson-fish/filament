@@ -133,6 +133,7 @@ export const deleteGuildRole = workspaceClient.deleteGuildRole;
 export const reorderGuildRoles = workspaceClient.reorderGuildRoles;
 export const assignGuildRole = workspaceClient.assignGuildRole;
 export const unassignGuildRole = workspaceClient.unassignGuildRole;
+export const updateGuildDefaultJoinRole = workspaceClient.updateGuildDefaultJoinRole;
 
 export const issueVoiceToken = voiceClient.issueVoiceToken;
 export const leaveVoiceChannel = voiceClient.leaveVoiceChannel;

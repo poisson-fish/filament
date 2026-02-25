@@ -11,6 +11,7 @@ use self::migrations::v5_identity_schema::apply_identity_schema;
 use self::migrations::v6_workspace_schema::apply_workspace_schema;
 use self::migrations::v7_message_schema::apply_message_schema;
 use self::migrations::v8_permission_legacy_schema::apply_permission_legacy_schema;
+use self::migrations::v9_default_join_role_schema::apply_default_join_role_schema;
 
 use super::{
     core::{AppState, GuildVisibility},
@@ -44,6 +45,7 @@ pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure
             apply_moderation_audit_schema(&mut tx).await?;
 
             backfill_hierarchical_permission_schema(&mut tx).await?;
+            apply_default_join_role_schema(&mut tx).await?;
 
             tx.commit().await?;
 

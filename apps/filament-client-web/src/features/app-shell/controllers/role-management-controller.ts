@@ -26,6 +26,7 @@ import {
   fetchGuildRoles,
   reorderGuildRoles,
   unassignGuildRole,
+  updateGuildDefaultJoinRole,
   updateGuildRole,
 } from "../../../lib/api";
 import { mapError } from "../helpers";
@@ -62,6 +63,7 @@ export interface RoleManagementControllerDependencies {
   reorderGuildRoles: typeof reorderGuildRoles;
   assignGuildRole: typeof assignGuildRole;
   unassignGuildRole: typeof unassignGuildRole;
+  updateGuildDefaultJoinRole: typeof updateGuildDefaultJoinRole;
   fetchChannelPermissionSnapshot: typeof fetchChannelPermissionSnapshot;
   mapError: (error: unknown, fallback: string) => string;
 }
@@ -72,6 +74,7 @@ export interface RoleManagementController {
   isMutatingRoles: Accessor<boolean>;
   roleManagementStatus: Accessor<string>;
   roleManagementError: Accessor<string>;
+  defaultJoinRoleId: Accessor<WorkspaceRoleId | null>;
   refreshRoles: () => Promise<void>;
   createRole: (input: {
     name: string;
@@ -89,6 +92,7 @@ export interface RoleManagementController {
     targetUserIdInput: string,
     roleId: WorkspaceRoleId,
   ) => Promise<void>;
+  updateDefaultJoinRole: (roleId: WorkspaceRoleId | null) => Promise<void>;
 }
 
 const DEFAULT_ROLE_MANAGEMENT_CONTROLLER_DEPENDENCIES: RoleManagementControllerDependencies = {
@@ -99,6 +103,7 @@ const DEFAULT_ROLE_MANAGEMENT_CONTROLLER_DEPENDENCIES: RoleManagementControllerD
   reorderGuildRoles,
   assignGuildRole,
   unassignGuildRole,
+  updateGuildDefaultJoinRole,
   fetchChannelPermissionSnapshot,
   mapError,
 };
@@ -135,6 +140,7 @@ export function createRoleManagementController(
   const [isMutatingRoles, setMutatingRoles] = createSignal(false);
   const [roleManagementStatus, setRoleManagementStatus] = createSignal("");
   const [roleManagementError, setRoleManagementError] = createSignal("");
+  const [defaultJoinRoleId, setDefaultJoinRoleId] = createSignal<WorkspaceRoleId | null>(null);
 
   let loadVersion = 0;
 
@@ -179,6 +185,7 @@ export function createRoleManagementController(
       }
       const orderedRoles = sortWorkspaceRolesByPosition(response.roles);
       setRoles(orderedRoles);
+      setDefaultJoinRoleId(response.defaultJoinRoleId ?? null);
       options.setWorkspaceRolesForGuild?.(guildId, orderedRoles);
     } catch (error) {
       if (requestVersion !== loadVersion) {
@@ -358,6 +365,20 @@ export function createRoleManagementController(
     }, "Role removed from member.");
   };
 
+  const updateDefaultJoinRole = async (
+    roleId: WorkspaceRoleId | null,
+  ): Promise<void> => {
+    const session = options.session();
+    const guildId = options.activeGuildId();
+    if (!session || !guildId) {
+      return;
+    }
+    await runMutation(async () => {
+      await deps.updateGuildDefaultJoinRole(session, guildId, roleId);
+      setDefaultJoinRoleId(roleId);
+    }, "Default join role updated.");
+  };
+
   createEffect(() => {
     const session = options.session();
     const guildId = options.activeGuildId();
@@ -367,6 +388,7 @@ export function createRoleManagementController(
     if (!session || !guildId) {
       setRoles([]);
       setLoadingRoles(false);
+      setDefaultJoinRoleId(null);
       return;
     }
     void untrack(() => refreshRoles());
@@ -378,6 +400,7 @@ export function createRoleManagementController(
     isMutatingRoles,
     roleManagementStatus,
     roleManagementError,
+    defaultJoinRoleId,
     refreshRoles,
     createRole,
     updateRole,
@@ -385,5 +408,6 @@ export function createRoleManagementController(
     reorderRoles: reorderRolesById,
     assignRoleToMember,
     unassignRoleFromMember,
+    updateDefaultJoinRole,
   };
 }

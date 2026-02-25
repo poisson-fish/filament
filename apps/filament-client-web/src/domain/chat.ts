@@ -823,6 +823,7 @@ export interface GuildRoleRecord {
 
 export interface GuildRoleList {
   roles: GuildRoleRecord[];
+  defaultJoinRoleId?: WorkspaceRoleId | null;
 }
 
 function guildMemberRecordFromResponse(dto: unknown): GuildMemberRecord {
@@ -936,8 +937,15 @@ export function guildRoleListFromResponse(dto: unknown): GuildRoleList {
   if (!Array.isArray(data.roles) || data.roles.length > MAX_WORKSPACE_ROLES_PER_GUILD) {
     throw new DomainValidationError("Guild role list must be a bounded array.");
   }
+  const defaultJoinRoleIdRaw = data.default_join_role_id;
   return {
     roles: data.roles.map((entry) => guildRoleFromResponse(entry)),
+    defaultJoinRoleId:
+      defaultJoinRoleIdRaw === null || typeof defaultJoinRoleIdRaw === "undefined"
+        ? null
+        : workspaceRoleIdFromInput(
+            requireString(defaultJoinRoleIdRaw, "default_join_role_id"),
+          ),
   };
 }
 

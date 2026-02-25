@@ -206,6 +206,7 @@ mod tests {
             name: String::from("livekit-reeval-test"),
             visibility: GuildVisibility::Private,
             created_by_user_id: user_id,
+            default_join_role_id: None,
             members: HashMap::new(),
             banned_members: HashSet::new(),
             channels: HashMap::new(),

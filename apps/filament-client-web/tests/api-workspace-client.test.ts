@@ -197,6 +197,11 @@ describe("api-workspace-client", () => {
           guild_id: guildId,
         }),
       ),
+      updateGuildDefaultJoinRole: vi.fn(async () =>
+        moderationResultFromResponse({
+          accepted: true,
+        }),
+      ),
     };
 
     return {

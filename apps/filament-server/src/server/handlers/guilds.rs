@@ -52,8 +52,8 @@ use crate::server::{
         GuildRoleMemberPath, GuildRolePath, GuildRoleResponse, MemberPath, ModerationResponse,
         PublicGuildListItem, PublicGuildListQuery, PublicGuildListResponse,
         ReorderGuildRolesRequest, UpdateChannelPermissionOverrideRequest,
-        UpdateChannelRoleOverrideRequest, UpdateGuildRequest, UpdateGuildRoleRequest,
-        UpdateMemberRoleRequest,
+        UpdateChannelRoleOverrideRequest, UpdateGuildDefaultJoinRoleRequest, UpdateGuildRequest,
+        UpdateGuildRoleRequest, UpdateMemberRoleRequest,
     },
 };
 
@@ -93,8 +93,9 @@ pub(crate) async fn create_guild(
             return Err(AuthFailure::GuildCreationLimitReached);
         }
         sqlx::query(
-            "INSERT INTO guilds (guild_id, name, visibility, created_by_user_id, created_at_unix)
-             VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO guilds
+                (guild_id, name, visibility, created_by_user_id, default_join_role_id, created_at_unix)
+             VALUES ($1, $2, $3, $4, NULL, $5)",
         )
         .bind(&guild_id)
         .bind(name.as_str())
@@ -147,6 +148,7 @@ pub(crate) async fn create_guild(
             name: name.as_str().to_owned(),
             visibility,
             created_by_user_id: auth.user_id,
+            default_join_role_id: None,
             members,
             banned_members: HashSet::new(),
             channels: HashMap::new(),
@@ -1314,6 +1316,31 @@ fn parse_role_id_list(role_ids: &[String]) -> Result<Vec<String>, AuthFailure> {
     Ok(parsed)
 }
 
+async fn guild_default_join_role_id_db(
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+) -> Result<Option<String>, AuthFailure> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT default_join_role_id
+         FROM guilds
+         WHERE guild_id = $1",
+    )
+    .bind(guild_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    .ok_or(AuthFailure::NotFound)
+}
+
+async fn guild_default_join_role_id_in_memory(
+    state: &AppState,
+    guild_id: &str,
+) -> Result<Option<String>, AuthFailure> {
+    let guilds = state.membership_store.guilds().read().await;
+    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+    Ok(guild.default_join_role_id.clone())
+}
+
 pub(crate) async fn list_guild_roles(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1332,10 +1359,83 @@ pub(crate) async fn list_guild_roles(
     } else {
         guild_roles_in_memory(&state, &path.guild_id).await?
     };
+    let default_join_role_id = if let Some(pool) = &state.db_pool {
+        guild_default_join_role_id_db(pool, &path.guild_id).await?
+    } else {
+        guild_default_join_role_id_in_memory(&state, &path.guild_id).await?
+    };
 
     Ok(Json(GuildRoleListResponse {
         roles: roles.into_iter().map(role_model_to_response).collect(),
+        default_join_role_id,
     }))
+}
+
+pub(crate) async fn update_guild_default_join_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<GuildPath>,
+    Json(payload): Json<UpdateGuildDefaultJoinRoleRequest>,
+) -> Result<Json<ModerationResponse>, AuthFailure> {
+    let auth = authenticate(&state, &headers).await?;
+    let context = load_actor_role_context(
+        &state,
+        &path.guild_id,
+        auth.user_id,
+        Permission::ManageWorkspaceRoles,
+    )
+    .await?;
+
+    let next_role_id = payload.role_id.map(parse_role_id).transpose()?;
+    if let Some(ref role_id) = next_role_id {
+        let roles = if let Some(pool) = &state.db_pool {
+            guild_roles_db(pool, &path.guild_id).await?
+        } else {
+            guild_roles_in_memory(&state, &path.guild_id).await?
+        };
+        let role = roles
+            .iter()
+            .find(|entry| &entry.role_id == role_id)
+            .cloned()
+            .ok_or(AuthFailure::InvalidRequest)?;
+        if role.is_system || !can_manage_role(&role, context) {
+            return Err(AuthFailure::Forbidden);
+        }
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let result = sqlx::query(
+            "UPDATE guilds
+             SET default_join_role_id = $2
+             WHERE guild_id = $1",
+        )
+        .bind(&path.guild_id)
+        .bind(next_role_id.clone())
+        .execute(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        if result.rows_affected() == 0 {
+            return Err(AuthFailure::NotFound);
+        }
+    } else {
+        let mut guilds = state.membership_store.guilds().write().await;
+        let guild = guilds
+            .get_mut(&path.guild_id)
+            .ok_or(AuthFailure::NotFound)?;
+        guild.default_join_role_id = next_role_id.clone();
+    }
+
+    write_audit_log(
+        &state,
+        Some(path.guild_id.clone()),
+        auth.user_id,
+        None,
+        "role.default_join.update",
+        serde_json::json!({ "role_id": next_role_id }),
+    )
+    .await?;
+
+    Ok(Json(ModerationResponse { accepted: true }))
 }
 
 pub(crate) async fn create_guild_role(
@@ -2621,6 +2721,104 @@ fn join_failure_from_outcome(outcome: DirectoryJoinOutcome) -> Option<AuthFailur
     }
 }
 
+async fn assign_default_join_role_db(
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+    user_id: UserId,
+) -> Result<(), AuthFailure> {
+    let role_id = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT default_join_role_id
+         FROM guilds
+         WHERE guild_id = $1",
+    )
+    .bind(guild_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    .ok_or(AuthFailure::NotFound)?;
+    let Some(role_id) = role_id else {
+        return Ok(());
+    };
+    let role = sqlx::query(
+        "SELECT role_id, is_system, system_key
+         FROM guild_roles
+         WHERE guild_id = $1 AND role_id = $2",
+    )
+    .bind(guild_id)
+    .bind(&role_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let Some(role) = role else {
+        return Ok(());
+    };
+    let is_system: bool = role
+        .try_get("is_system")
+        .map_err(|_| AuthFailure::Internal)?;
+    let system_key = role
+        .try_get::<Option<String>, _>("system_key")
+        .map_err(|_| AuthFailure::Internal)?;
+    if is_system || system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE) {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (guild_id, role_id, user_id) DO NOTHING",
+    )
+    .bind(guild_id)
+    .bind(role_id)
+    .bind(user_id.to_string())
+    .bind(now_unix())
+    .execute(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let _ = sync_legacy_role_from_assignments_db(pool, guild_id, user_id).await?;
+    Ok(())
+}
+
+async fn assign_default_join_role_in_memory(
+    state: &AppState,
+    guild_id: &str,
+    user_id: UserId,
+) -> Result<(), AuthFailure> {
+    let default_join_role_id = {
+        let guilds = state.membership_store.guilds().read().await;
+        guilds
+            .get(guild_id)
+            .ok_or(AuthFailure::NotFound)?
+            .default_join_role_id
+            .clone()
+    };
+    let Some(role_id) = default_join_role_id else {
+        return Ok(());
+    };
+    let is_assignable = {
+        let role_maps = state.membership_store.guild_roles().read().await;
+        role_maps
+            .get(guild_id)
+            .and_then(|roles| roles.get(&role_id))
+            .is_some_and(|role| {
+                !(role.is_system || role.system_key.as_deref() == Some(SYSTEM_ROLE_EVERYONE))
+            })
+    };
+    if !is_assignable {
+        return Ok(());
+    }
+    let mut assignments = state
+        .membership_store
+        .guild_role_assignments()
+        .write()
+        .await;
+    assignments
+        .entry(guild_id.to_owned())
+        .or_default()
+        .entry(user_id)
+        .or_default()
+        .insert(role_id);
+    Ok(())
+}
+
 async fn resolve_directory_join_outcome_db(
     state: &AppState,
     pool: &sqlx::PgPool,
@@ -2695,6 +2893,8 @@ async fn resolve_directory_join_outcome_db(
     .map_err(|_| AuthFailure::Internal)?;
     if insert.rows_affected() == 0 {
         outcome = DirectoryJoinOutcome::AlreadyMember;
+    } else {
+        assign_default_join_role_db(pool, guild_id, user_id).await?;
     }
     Ok(outcome)
 }
@@ -2746,6 +2946,8 @@ async fn resolve_directory_join_outcome_in_memory(
     let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
     if let std::collections::hash_map::Entry::Vacant(entry) = guild.members.entry(user_id) {
         entry.insert(Role::Member);
+        drop(guilds);
+        assign_default_join_role_in_memory(state, guild_id, user_id).await?;
     } else {
         outcome = DirectoryJoinOutcome::AlreadyMember;
     }
@@ -2999,6 +3201,9 @@ pub(crate) async fn add_member(
             }
         })?;
         added = insert.rows_affected() > 0;
+        if added {
+            assign_default_join_role_db(pool, &path.guild_id, target_user_id).await?;
+        }
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
@@ -3012,6 +3217,10 @@ pub(crate) async fn add_member(
         {
             entry.insert(Role::Member);
             added = true;
+        }
+        drop(guilds);
+        if added {
+            assign_default_join_role_in_memory(&state, &path.guild_id, target_user_id).await?;
         }
     }
 
@@ -3713,19 +3922,20 @@ pub(crate) async fn ban_member(
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_directory_join_outcome, guild_roles_in_memory, join_outcome_response,
-        maybe_record_join_ip_observation, workspace_owner_count_in_memory, DirectoryJoinBanStatus,
-        DirectoryJoinMembershipStatus, DirectoryJoinPolicyInput, DirectoryJoinVisibilityStatus,
+        assign_default_join_role_in_memory, classify_directory_join_outcome, guild_roles_in_memory,
+        join_outcome_response, maybe_record_join_ip_observation, workspace_owner_count_in_memory,
+        DirectoryJoinBanStatus, DirectoryJoinMembershipStatus, DirectoryJoinPolicyInput,
+        DirectoryJoinVisibilityStatus,
     };
     use crate::server::{
         auth::resolve_client_ip,
-        core::{AppConfig, AppState, WorkspaceRoleRecord},
+        core::{AppConfig, AppState, GuildRecord, GuildVisibility, WorkspaceRoleRecord},
         directory_contract::DirectoryJoinOutcome,
         types::DirectoryJoinOutcomeResponse,
     };
     use axum::http::HeaderMap;
-    use filament_core::UserId;
-    use std::collections::HashMap;
+    use filament_core::{Role, UserId};
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn directory_join_state_transition_precedence_is_stable() {
@@ -3908,5 +4118,53 @@ mod tests {
             .await
             .expect("workspace owner count should resolve");
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn assign_default_join_role_in_memory_applies_non_system_default_role() {
+        let state = AppState::new(&AppConfig::default()).expect("state should initialize");
+        let guild_id = String::from("guild-default-join-role-in-memory");
+        let role_id = String::from("custom-default-role");
+        let user_id = UserId::new();
+
+        state.membership_store.guilds().write().await.insert(
+            guild_id.clone(),
+            GuildRecord {
+                name: String::from("default-role-test"),
+                visibility: GuildVisibility::Private,
+                created_by_user_id: user_id,
+                default_join_role_id: Some(role_id.clone()),
+                members: HashMap::from([(user_id, Role::Member)]),
+                banned_members: HashSet::new(),
+                channels: HashMap::new(),
+            },
+        );
+        state.membership_store.guild_roles().write().await.insert(
+            guild_id.clone(),
+            HashMap::from([(
+                role_id.clone(),
+                WorkspaceRoleRecord {
+                    role_id: role_id.clone(),
+                    name: String::from("Default"),
+                    position: 1,
+                    is_system: false,
+                    system_key: None,
+                    permissions_allow: filament_core::PermissionSet::empty(),
+                    created_at_unix: 1,
+                },
+            )]),
+        );
+
+        assign_default_join_role_in_memory(&state, &guild_id, user_id)
+            .await
+            .expect("default role assignment should succeed");
+
+        let assignments = state.membership_store.guild_role_assignments().read().await;
+        let assigned = assignments
+            .get(&guild_id)
+            .and_then(|guild| guild.get(&user_id))
+            .cloned()
+            .unwrap_or_default();
+        assert!(assigned.contains(&role_id));
     }
 }

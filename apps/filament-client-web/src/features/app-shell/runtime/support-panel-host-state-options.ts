@@ -201,6 +201,7 @@ export function createSupportPanelHostStateOptions(
     isMutatingRoles: options.roleManagementActions.isMutatingRoles,
     roleManagementStatus: options.roleManagementActions.roleManagementStatus,
     roleManagementError: options.roleManagementActions.roleManagementError,
+    defaultJoinRoleId: options.roleManagementActions.defaultJoinRoleId,
     targetUserIdInput: options.diagnosticsState.moderationUserIdInput,
     setTargetUserIdInput: options.diagnosticsState.setModerationUserIdInput,
     onRefreshRoles: options.roleManagementActions.refreshRoles,
@@ -210,6 +211,7 @@ export function createSupportPanelHostStateOptions(
     onReorderRoles: options.roleManagementActions.reorderRoles,
     onAssignRole: options.roleManagementActions.assignRoleToMember,
     onUnassignRole: options.roleManagementActions.unassignRoleFromMember,
+    onUpdateDefaultJoinRole: options.roleManagementActions.updateDefaultJoinRole,
     onOpenModerationPanel: () => options.openOverlayPanel("moderation"),
     onAssignMemberRole: (userId, roleId) =>
       options.roleManagementActions.assignRoleToMember(userId, roleId),

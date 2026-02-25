@@ -15,6 +15,7 @@ export interface RoleManagementPanelPropsOptions {
   isMutatingRoles: boolean;
   roleManagementStatus: string;
   roleManagementError: string;
+  defaultJoinRoleId?: WorkspaceRoleId | null;
   targetUserIdInput: string;
   setTargetUserIdInput: (value: string) => void;
   onRefreshRoles: () => Promise<void> | void;
@@ -34,6 +35,7 @@ export interface RoleManagementPanelPropsOptions {
   onReorderRoles: (roleIds: WorkspaceRoleId[]) => Promise<void> | void;
   onAssignRole: (targetUserIdInput: string, roleId: WorkspaceRoleId) => Promise<void> | void;
   onUnassignRole: (targetUserIdInput: string, roleId: WorkspaceRoleId) => Promise<void> | void;
+  onUpdateDefaultJoinRole?: (roleId: WorkspaceRoleId | null) => Promise<void> | void;
   onOpenModerationPanel: () => void;
 }
 
@@ -49,6 +51,7 @@ export function createRoleManagementPanelProps(
     isMutatingRoles: options.isMutatingRoles,
     roleManagementStatus: options.roleManagementStatus,
     roleManagementError: options.roleManagementError,
+    defaultJoinRoleId: options.defaultJoinRoleId,
     targetUserIdInput: options.targetUserIdInput,
     setTargetUserIdInput: options.setTargetUserIdInput,
     onRefreshRoles: options.onRefreshRoles,
@@ -58,6 +61,7 @@ export function createRoleManagementPanelProps(
     onReorderRoles: options.onReorderRoles,
     onAssignRole: options.onAssignRole,
     onUnassignRole: options.onUnassignRole,
+    onUpdateDefaultJoinRole: options.onUpdateDefaultJoinRole,
     onOpenModerationPanel: options.onOpenModerationPanel,
   };
 }

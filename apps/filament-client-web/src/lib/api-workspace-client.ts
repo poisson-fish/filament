@@ -140,6 +140,11 @@ export interface WorkspaceClient {
     roleId: WorkspaceRoleId,
     userId: UserId,
   ): Promise<ModerationResult>;
+  updateGuildDefaultJoinRole(
+    session: AuthSession,
+    guildId: GuildId,
+    roleId: WorkspaceRoleId | null,
+  ): Promise<ModerationResult>;
 }
 
 export function createWorkspaceClient(input: WorkspaceClientDependencies): WorkspaceClient {
@@ -226,6 +231,10 @@ export function createWorkspaceClient(input: WorkspaceClientDependencies): Works
 
     unassignGuildRole(session, guildId, roleId, userId) {
       return input.workspaceApi.unassignGuildRole(session, guildId, roleId, userId);
+    },
+
+    updateGuildDefaultJoinRole(session, guildId, roleId) {
+      return input.workspaceApi.updateGuildDefaultJoinRole(session, guildId, roleId);
     },
   };
 }

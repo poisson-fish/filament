@@ -74,6 +74,7 @@ mod tests {
             name: String::from("guild"),
             visibility: GuildVisibility::Private,
             created_by_user_id: author,
+            default_join_role_id: None,
             members: HashMap::from([(author, Role::Owner)]),
             banned_members: HashSet::new(),
             channels: HashMap::from([

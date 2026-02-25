@@ -6,3 +6,4 @@ pub(crate) mod v5_identity_schema;
 pub(crate) mod v6_workspace_schema;
 pub(crate) mod v7_message_schema;
 pub(crate) mod v8_permission_legacy_schema;
+pub(crate) mod v9_default_join_role_schema;

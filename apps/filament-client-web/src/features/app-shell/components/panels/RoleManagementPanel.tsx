@@ -3,6 +3,7 @@ import {
   type PermissionName,
   type GuildRoleRecord,
   type WorkspaceRoleId,
+  workspaceRoleIdFromInput,
 } from "../../../../domain/chat";
 import {
   PERMISSION_CATEGORIES,
@@ -83,6 +84,7 @@ export interface RoleManagementPanelProps {
   isMutatingRoles: boolean;
   roleManagementStatus: string;
   roleManagementError: string;
+  defaultJoinRoleId?: WorkspaceRoleId | null;
   targetUserIdInput: string;
   onTargetUserIdInput: (value: string) => void;
   onRefreshRoles: () => Promise<void> | void;
@@ -102,6 +104,7 @@ export interface RoleManagementPanelProps {
   onReorderRoles: (roleIds: WorkspaceRoleId[]) => Promise<void> | void;
   onAssignRole: (targetUserIdInput: string, roleId: WorkspaceRoleId) => Promise<void> | void;
   onUnassignRole: (targetUserIdInput: string, roleId: WorkspaceRoleId) => Promise<void> | void;
+  onUpdateDefaultJoinRole?: (roleId: WorkspaceRoleId | null) => Promise<void> | void;
   onOpenModerationPanel?: () => void;
   embedded?: boolean;
 }
@@ -235,6 +238,7 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
   const assignableRoles = createMemo(() =>
     hierarchyRoles().filter((role) => !role.isSystem),
   );
+  const defaultJoinRoleControlValue = createMemo(() => props.defaultJoinRoleId ?? "");
 
   const selectedRole = createMemo<GuildRoleRecord | null>(() => {
     const roleId = selectedRoleId();
@@ -533,6 +537,17 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
     });
   };
 
+  const onDefaultJoinRoleChange = async (value: string): Promise<void> => {
+    if (!props.canManageWorkspaceRoles || !props.hasActiveWorkspace) {
+      return;
+    }
+    await invoke(async () => {
+      await props.onUpdateDefaultJoinRole?.(
+        value.length > 0 ? workspaceRoleIdFromInput(value) : null,
+      );
+    });
+  };
+
   const onResetRoleDraft = (): void => {
     const role = selectedRole();
     if (!role) {
@@ -683,6 +698,24 @@ export function RoleManagementPanel(props: RoleManagementPanelProps) {
 
               <div class="px-[0.5rem] py-[0.4rem] mt-[0.8rem]">
                 <span class="text-[0.7rem] uppercase tracking-wider text-ink-3 font-semibold">Custom Roles</span>
+              </div>
+              <div class="px-[0.5rem] pb-[0.7rem]">
+                <label class="grid gap-[0.35rem] text-[0.72rem] uppercase tracking-wider text-ink-3 font-semibold">
+                  Default Join Role
+                  <select
+                    class={fieldControlClass}
+                    value={defaultJoinRoleControlValue()}
+                    onChange={(event) => {
+                      void onDefaultJoinRoleChange(event.currentTarget.value);
+                    }}
+                    disabled={!props.canManageWorkspaceRoles || props.isMutatingRoles}
+                  >
+                    <option value="">No default custom role</option>
+                    <For each={assignableRoles()}>
+                      {(role) => <option value={role.roleId}>{role.name}</option>}
+                    </For>
+                  </select>
+                </label>
               </div>
               
               <div class="flex flex-col gap-[0.2rem]">

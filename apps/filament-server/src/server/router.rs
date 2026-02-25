@@ -44,7 +44,8 @@ use super::{
             list_guild_channels, list_guild_ip_bans, list_guild_members, list_guild_roles,
             list_guilds, list_public_guilds, remove_guild_ip_ban, reorder_guild_roles,
             set_channel_permission_override, set_channel_role_override, unassign_guild_role,
-            update_guild, update_guild_role, update_member_role, upsert_guild_ip_bans_by_user,
+            update_guild, update_guild_default_join_role, update_guild_role, update_member_role,
+            upsert_guild_ip_bans_by_user,
         },
         media::{
             delete_attachment, download_attachment, issue_voice_token, leave_voice_channel,
@@ -92,6 +93,7 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("GET", "/guilds/{guild_id}/roles"),
     ("POST", "/guilds/{guild_id}/roles"),
     ("POST", "/guilds/{guild_id}/roles/reorder"),
+    ("POST", "/guilds/{guild_id}/roles/default"),
     ("PATCH", "/guilds/{guild_id}/roles/{role_id}"),
     ("DELETE", "/guilds/{guild_id}/roles/{role_id}"),
     (
@@ -396,6 +398,10 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route(
             "/guilds/{guild_id}/roles/reorder",
             post(reorder_guild_roles),
+        )
+        .route(
+            "/guilds/{guild_id}/roles/default",
+            post(update_guild_default_join_role),
         )
         .route(
             "/guilds/{guild_id}/roles/{role_id}",

@@ -30,6 +30,7 @@ async fn gateway_broadcasts_message_to_subscribed_connection() {
         name: String::from("Gateway Test"),
         visibility: GuildVisibility::Private,
         created_by_user_id: user_id,
+        default_join_role_id: None,
         members: HashMap::new(),
         banned_members: std::collections::HashSet::new(),
         channels: HashMap::new(),

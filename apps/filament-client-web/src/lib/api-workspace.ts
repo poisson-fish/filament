@@ -160,6 +160,11 @@ export interface WorkspaceApi {
     roleId: WorkspaceRoleId,
     userId: UserId,
   ): Promise<ModerationResult>;
+  updateGuildDefaultJoinRole(
+    session: AuthSession,
+    guildId: GuildId,
+    roleId: WorkspaceRoleId | null,
+  ): Promise<ModerationResult>;
 }
 
 export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceApi {
@@ -440,6 +445,18 @@ export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceAp
         method: "DELETE",
         path: `/guilds/${guildId}/roles/${workspaceRoleIdFromInput(roleId)}/members/${userId}`,
         accessToken: session.accessToken,
+      });
+      return moderationResultFromResponse(dto);
+    },
+
+    async updateGuildDefaultJoinRole(session, guildId, roleId) {
+      const dto = await input.requestJson({
+        method: "POST",
+        path: `/guilds/${guildId}/roles/default`,
+        accessToken: session.accessToken,
+        body: {
+          role_id: roleId === null ? null : workspaceRoleIdFromInput(roleId),
+        },
       });
       return moderationResultFromResponse(dto);
     },

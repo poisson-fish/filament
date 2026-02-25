@@ -277,6 +277,12 @@ pub(crate) struct ReorderGuildRolesRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct UpdateGuildDefaultJoinRoleRequest {
+    pub(crate) role_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct UpdateChannelRoleOverrideRequest {
     pub(crate) allow: Vec<Permission>,
     pub(crate) deny: Vec<Permission>,
@@ -552,6 +558,7 @@ pub(crate) struct GuildRoleResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct GuildRoleListResponse {
     pub(crate) roles: Vec<GuildRoleResponse>,
+    pub(crate) default_join_role_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

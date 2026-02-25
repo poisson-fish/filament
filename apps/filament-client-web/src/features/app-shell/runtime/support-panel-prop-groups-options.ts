@@ -104,6 +104,7 @@ export interface SupportPanelPropGroupsStateOptions {
   isMutatingRoles: () => boolean;
   roleManagementStatus: () => string;
   roleManagementError: () => string;
+  defaultJoinRoleId?: () => WorkspaceRoleId | null;
   targetUserIdInput: () => string;
   setTargetUserIdInput:
     SupportPanelPropGroupsOptions["roleManagement"]["setTargetUserIdInput"];
@@ -121,6 +122,8 @@ export interface SupportPanelPropGroupsStateOptions {
     SupportPanelPropGroupsOptions["roleManagement"]["onAssignRole"];
   onUnassignRole:
     SupportPanelPropGroupsOptions["roleManagement"]["onUnassignRole"];
+  onUpdateDefaultJoinRole?:
+    SupportPanelPropGroupsOptions["roleManagement"]["onUpdateDefaultJoinRole"];
   onOpenModerationPanel:
     SupportPanelPropGroupsOptions["roleManagement"]["onOpenModerationPanel"];
   onAssignMemberRole:
