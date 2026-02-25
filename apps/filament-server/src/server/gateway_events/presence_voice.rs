@@ -3,10 +3,7 @@ use std::collections::HashSet;
 use filament_core::UserId;
 use serde::Serialize;
 
-use super::{
-    envelope::{build_event, try_build_event},
-    GatewayEvent,
-};
+use super::{envelope::try_build_event, GatewayEvent};
 use crate::server::core::VoiceStreamKind;
 
 pub(crate) const PRESENCE_SYNC_EVENT: &str = "presence_sync";
@@ -213,12 +210,23 @@ pub(crate) fn voice_participant_sync(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn voice_participant_join(
     guild_id: &str,
     channel_id: &str,
     participant: VoiceParticipantSnapshot,
 ) -> GatewayEvent {
-    build_event(
+    try_voice_participant_join(guild_id, channel_id, participant).unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {VOICE_PARTICIPANT_JOIN_EVENT}: {error}")
+    })
+}
+
+pub(crate) fn try_voice_participant_join(
+    guild_id: &str,
+    channel_id: &str,
+    participant: VoiceParticipantSnapshot,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         VOICE_PARTICIPANT_JOIN_EVENT,
         VoiceParticipantJoinPayload {
             guild_id: guild_id.to_owned(),
@@ -235,7 +243,22 @@ pub(crate) fn voice_participant_leave(
     identity: &str,
     left_at_unix: i64,
 ) -> GatewayEvent {
-    build_event(
+    try_voice_participant_leave(guild_id, channel_id, user_id, identity, left_at_unix)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to build outbound gateway event {VOICE_PARTICIPANT_LEAVE_EVENT}: {error}"
+            )
+        })
+}
+
+pub(crate) fn try_voice_participant_leave(
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+    identity: &str,
+    left_at_unix: i64,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         VOICE_PARTICIPANT_LEAVE_EVENT,
         VoiceParticipantLeavePayload {
             guild_id: guild_id.to_owned(),
@@ -243,6 +266,91 @@ pub(crate) fn voice_participant_leave(
             user_id: user_id.to_string(),
             identity: identity.to_owned(),
             left_at_unix,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn voice_stream_publish(
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+    identity: &str,
+    stream: VoiceStreamKind,
+    published_at_unix: i64,
+) -> GatewayEvent {
+    try_voice_stream_publish(
+        guild_id,
+        channel_id,
+        user_id,
+        identity,
+        stream,
+        published_at_unix,
+    )
+    .unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {VOICE_STREAM_PUBLISH_EVENT}: {error}")
+    })
+}
+
+pub(crate) fn try_voice_stream_publish(
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+    identity: &str,
+    stream: VoiceStreamKind,
+    published_at_unix: i64,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
+        VOICE_STREAM_PUBLISH_EVENT,
+        VoiceStreamPublishPayload {
+            guild_id: guild_id.to_owned(),
+            channel_id: channel_id.to_owned(),
+            user_id: user_id.to_string(),
+            identity: identity.to_owned(),
+            stream,
+            published_at_unix,
+        },
+    )
+}
+
+pub(crate) fn voice_stream_unpublish(
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+    identity: &str,
+    stream: VoiceStreamKind,
+    unpublished_at_unix: i64,
+) -> GatewayEvent {
+    try_voice_stream_unpublish(
+        guild_id,
+        channel_id,
+        user_id,
+        identity,
+        stream,
+        unpublished_at_unix,
+    )
+    .unwrap_or_else(|error| {
+        panic!("failed to build outbound gateway event {VOICE_STREAM_UNPUBLISH_EVENT}: {error}")
+    })
+}
+
+pub(crate) fn try_voice_stream_unpublish(
+    guild_id: &str,
+    channel_id: &str,
+    user_id: UserId,
+    identity: &str,
+    stream: VoiceStreamKind,
+    unpublished_at_unix: i64,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
+        VOICE_STREAM_UNPUBLISH_EVENT,
+        VoiceStreamUnpublishPayload {
+            guild_id: guild_id.to_owned(),
+            channel_id: channel_id.to_owned(),
+            user_id: user_id.to_string(),
+            identity: identity.to_owned(),
+            stream,
+            unpublished_at_unix,
         },
     )
 }
@@ -306,48 +414,6 @@ pub(crate) fn try_voice_participant_update(
                 is_screen_share_enabled,
             },
             updated_at_unix,
-        },
-    )
-}
-
-pub(crate) fn voice_stream_publish(
-    guild_id: &str,
-    channel_id: &str,
-    user_id: UserId,
-    identity: &str,
-    stream: VoiceStreamKind,
-    published_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        VOICE_STREAM_PUBLISH_EVENT,
-        VoiceStreamPublishPayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            user_id: user_id.to_string(),
-            identity: identity.to_owned(),
-            stream,
-            published_at_unix,
-        },
-    )
-}
-
-pub(crate) fn voice_stream_unpublish(
-    guild_id: &str,
-    channel_id: &str,
-    user_id: UserId,
-    identity: &str,
-    stream: VoiceStreamKind,
-    unpublished_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        VOICE_STREAM_UNPUBLISH_EVENT,
-        VoiceStreamUnpublishPayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            user_id: user_id.to_string(),
-            identity: identity.to_owned(),
-            stream,
-            unpublished_at_unix,
         },
     )
 }
@@ -448,5 +514,50 @@ mod tests {
         assert_eq!(payload["updated_fields"]["is_muted"], Value::from(true));
         assert_eq!(payload["updated_fields"]["is_deafened"], Value::from(false));
         assert_eq!(payload["updated_at_unix"], Value::from(321));
+    }
+
+    #[test]
+    fn voice_try_event_builders_emit_join_leave_and_stream_events() {
+        let user_id = UserId::new();
+        let join_payload = parse_payload(
+            &try_voice_participant_join("guild-1", "channel-1", snapshot(user_id))
+                .expect("voice_participant_join should serialize"),
+        );
+        assert_eq!(
+            join_payload["participant"]["user_id"],
+            Value::from(user_id.to_string())
+        );
+
+        let leave_payload = parse_payload(
+            &try_voice_participant_leave("guild-1", "channel-1", user_id, "u.identity", 444)
+                .expect("voice_participant_leave should serialize"),
+        );
+        assert_eq!(leave_payload["left_at_unix"], Value::from(444));
+
+        let publish_payload = parse_payload(
+            &try_voice_stream_publish(
+                "guild-1",
+                "channel-1",
+                user_id,
+                "u.identity",
+                VoiceStreamKind::Camera,
+                555,
+            )
+            .expect("voice_stream_publish should serialize"),
+        );
+        assert_eq!(publish_payload["stream"], Value::from("camera"));
+
+        let unpublish_payload = parse_payload(
+            &try_voice_stream_unpublish(
+                "guild-1",
+                "channel-1",
+                user_id,
+                "u.identity",
+                VoiceStreamKind::ScreenShare,
+                666,
+            )
+            .expect("voice_stream_unpublish should serialize"),
+        );
+        assert_eq!(unpublish_payload["stream"], Value::from("screen_share"));
     }
 }

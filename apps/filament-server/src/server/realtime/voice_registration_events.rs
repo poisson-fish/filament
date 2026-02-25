@@ -31,40 +31,46 @@ pub(crate) fn plan_voice_registration_events(
         };
         let subscription_key = channel_key(old_guild_id, old_channel_id);
         for stream in participant.published_streams {
-            planned.push((
-                subscription_key.clone(),
-                gateway_events::voice_stream_unpublish(
-                    old_guild_id,
-                    old_channel_id,
-                    participant.user_id,
-                    &participant.identity,
-                    stream,
-                    event_at_unix,
-                ),
-            ));
-        }
-        planned.push((
-            subscription_key,
-            gateway_events::voice_participant_leave(
+            let event = gateway_events::try_voice_stream_unpublish(
                 old_guild_id,
                 old_channel_id,
                 participant.user_id,
                 &participant.identity,
+                stream,
                 event_at_unix,
-            ),
-        ));
+            )
+            .map_err(|source| VoiceRegistrationEventBuildError {
+                event_type: gateway_events::VOICE_STREAM_UNPUBLISH_EVENT,
+                source,
+            })?;
+            planned.push((subscription_key.clone(), event));
+        }
+        let event = gateway_events::try_voice_participant_leave(
+            old_guild_id,
+            old_channel_id,
+            participant.user_id,
+            &participant.identity,
+            event_at_unix,
+        )
+        .map_err(|source| VoiceRegistrationEventBuildError {
+            event_type: gateway_events::VOICE_PARTICIPANT_LEAVE_EVENT,
+            source,
+        })?;
+        planned.push((subscription_key, event));
     }
 
     let subscription_key = channel_key(guild_id, channel_id);
     if let Some(participant) = transition.joined {
-        planned.push((
-            subscription_key.clone(),
-            gateway_events::voice_participant_join(
-                guild_id,
-                channel_id,
-                voice_snapshot_from_record(&participant),
-            ),
-        ));
+        let event = gateway_events::try_voice_participant_join(
+            guild_id,
+            channel_id,
+            voice_snapshot_from_record(&participant),
+        )
+        .map_err(|source| VoiceRegistrationEventBuildError {
+            event_type: gateway_events::VOICE_PARTICIPANT_JOIN_EVENT,
+            source,
+        })?;
+        planned.push((subscription_key.clone(), event));
     }
     if let Some(participant) = transition.updated {
         let event = gateway_events::try_voice_participant_update(
@@ -86,30 +92,34 @@ pub(crate) fn plan_voice_registration_events(
         planned.push((subscription_key.clone(), event));
     }
     for stream in transition.unpublished {
-        planned.push((
-            subscription_key.clone(),
-            gateway_events::voice_stream_unpublish(
-                guild_id,
-                channel_id,
-                user_id,
-                identity,
-                stream,
-                event_at_unix,
-            ),
-        ));
+        let event = gateway_events::try_voice_stream_unpublish(
+            guild_id,
+            channel_id,
+            user_id,
+            identity,
+            stream,
+            event_at_unix,
+        )
+        .map_err(|source| VoiceRegistrationEventBuildError {
+            event_type: gateway_events::VOICE_STREAM_UNPUBLISH_EVENT,
+            source,
+        })?;
+        planned.push((subscription_key.clone(), event));
     }
     for stream in transition.newly_published {
-        planned.push((
-            subscription_key.clone(),
-            gateway_events::voice_stream_publish(
-                guild_id,
-                channel_id,
-                user_id,
-                identity,
-                stream,
-                event_at_unix,
-            ),
-        ));
+        let event = gateway_events::try_voice_stream_publish(
+            guild_id,
+            channel_id,
+            user_id,
+            identity,
+            stream,
+            event_at_unix,
+        )
+        .map_err(|source| VoiceRegistrationEventBuildError {
+            event_type: gateway_events::VOICE_STREAM_PUBLISH_EVENT,
+            source,
+        })?;
+        planned.push((subscription_key.clone(), event));
     }
 
     Ok(planned)

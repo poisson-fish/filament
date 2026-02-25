@@ -58,15 +58,16 @@ pub(crate) use message_channel::{
 #[cfg(test)]
 pub(crate) use presence_voice::presence_sync;
 pub(crate) use presence_voice::{
-    try_presence_sync, try_presence_update, try_voice_participant_sync,
-    try_voice_participant_update, voice_participant_join, voice_participant_leave,
-    voice_stream_publish, voice_stream_unpublish, VoiceParticipantSnapshot, PRESENCE_SYNC_EVENT,
-    PRESENCE_UPDATE_EVENT, VOICE_PARTICIPANT_SYNC_EVENT, VOICE_PARTICIPANT_UPDATE_EVENT,
+    try_presence_sync, try_presence_update, try_voice_participant_join,
+    try_voice_participant_leave, try_voice_participant_sync, try_voice_participant_update,
+    try_voice_stream_publish, try_voice_stream_unpublish, voice_participant_leave,
+    voice_stream_unpublish, VoiceParticipantSnapshot, PRESENCE_SYNC_EVENT, PRESENCE_UPDATE_EVENT,
+    VOICE_PARTICIPANT_JOIN_EVENT, VOICE_PARTICIPANT_LEAVE_EVENT, VOICE_PARTICIPANT_SYNC_EVENT,
+    VOICE_PARTICIPANT_UPDATE_EVENT, VOICE_STREAM_PUBLISH_EVENT, VOICE_STREAM_UNPUBLISH_EVENT,
 };
 #[cfg(test)]
 pub(crate) use presence_voice::{
-    voice_participant_sync, voice_participant_update, VOICE_PARTICIPANT_JOIN_EVENT,
-    VOICE_PARTICIPANT_LEAVE_EVENT, VOICE_STREAM_PUBLISH_EVENT, VOICE_STREAM_UNPUBLISH_EVENT,
+    voice_participant_join, voice_participant_sync, voice_participant_update, voice_stream_publish,
 };
 pub(crate) use profile::{
     try_profile_avatar_update, try_profile_update, PROFILE_AVATAR_UPDATE_EVENT,
