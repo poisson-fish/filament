@@ -52,8 +52,8 @@ pub(crate) use friend::{
     friend_remove, friend_request_create, friend_request_delete, friend_request_update,
 };
 pub(crate) use message_channel::{
-    channel_create, message_delete, message_reaction, try_message_create, try_message_update,
-    MESSAGE_CREATE_EVENT, MESSAGE_UPDATE_EVENT,
+    channel_create, message_reaction, try_message_create, try_message_delete, try_message_update,
+    MESSAGE_CREATE_EVENT, MESSAGE_DELETE_EVENT, MESSAGE_UPDATE_EVENT,
 };
 #[cfg(test)]
 pub(crate) use presence_voice::presence_sync;
@@ -174,7 +174,9 @@ mod tests {
         );
         assert_eq!(message_update_payload["updated_at_unix"], Value::from(11));
 
-        let message_delete_payload = parse_event(&message_delete("g", "c", "m", 12));
+        let message_delete_payload = parse_event(
+            &try_message_delete("g", "c", "m", 12).expect("message_delete should serialize"),
+        );
         assert_eq!(message_delete_payload["deleted_at_unix"], Value::from(12));
 
         let channel_create_payload = parse_event(&channel_create("g", &channel));

@@ -80,12 +80,25 @@ async fn broadcast_message_update_event(state: &AppState, response: &MessageResp
 }
 
 async fn broadcast_message_delete_event(state: &AppState, path: &MessagePath) {
-    let event = gateway_events::message_delete(
+    let Ok(event) = gateway_events::try_message_delete(
         &path.guild_id,
         &path.channel_id,
         &path.message_id,
         now_unix(),
-    );
+    ) else {
+        record_gateway_event_dropped(
+            "channel",
+            gateway_events::MESSAGE_DELETE_EVENT,
+            "serialize_error",
+        );
+        tracing::warn!(
+            guild_id = path.guild_id,
+            channel_id = path.channel_id,
+            message_id = path.message_id,
+            "dropped message_delete outbound event because serialization failed"
+        );
+        return;
+    };
     broadcast_channel_event(
         state,
         &channel_key(&path.guild_id, &path.channel_id),

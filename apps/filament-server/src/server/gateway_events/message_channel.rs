@@ -84,6 +84,23 @@ pub(crate) fn try_message_update(
     )
 }
 
+pub(crate) fn try_message_delete(
+    guild_id: &str,
+    channel_id: &str,
+    message_id: &str,
+    deleted_at_unix: i64,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
+        MESSAGE_DELETE_EVENT,
+        MessageDeletePayload {
+            guild_id,
+            channel_id,
+            message_id,
+            deleted_at_unix,
+        },
+    )
+}
+
 pub(crate) fn message_reaction(
     guild_id: &str,
     channel_id: &str,
@@ -99,23 +116,6 @@ pub(crate) fn message_reaction(
             message_id,
             emoji,
             count,
-        },
-    )
-}
-
-pub(crate) fn message_delete(
-    guild_id: &str,
-    channel_id: &str,
-    message_id: &str,
-    deleted_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
-        MESSAGE_DELETE_EVENT,
-        MessageDeletePayload {
-            guild_id,
-            channel_id,
-            message_id,
-            deleted_at_unix,
         },
     )
 }
@@ -188,6 +188,16 @@ mod tests {
         );
         assert_eq!(payload["updated_fields"]["content"], Value::from("updated"));
         assert_eq!(payload["updated_at_unix"], Value::from(99));
+    }
+
+    #[test]
+    fn message_delete_event_emits_deleted_timestamp() {
+        let payload = parse_payload(
+            &try_message_delete("guild-1", "channel-1", "msg-1", 77)
+                .expect("message_delete should serialize"),
+        );
+        assert_eq!(payload["message_id"], Value::from("msg-1"));
+        assert_eq!(payload["deleted_at_unix"], Value::from(77));
     }
 
     #[test]
