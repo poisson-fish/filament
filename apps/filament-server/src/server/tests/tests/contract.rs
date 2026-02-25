@@ -246,40 +246,36 @@ fn override_migration_event_set_is_aligned_across_server_docs_and_client_decoder
 
 #[test]
 fn emitted_domain_event_manifest_is_aligned_across_server_docs_and_client() {
-    let excluded_connection_events =
-        BTreeSet::from([String::from("ready"), String::from("subscribed")]);
-
-    let emitted_domain_events: BTreeSet<String> = gateway_events::EMITTED_EVENT_TYPES
+    let emitted_events: BTreeSet<String> = gateway_events::EMITTED_EVENT_TYPES
         .iter()
-        .filter(|event| !excluded_connection_events.contains(**event))
         .map(|event| (*event).to_owned())
         .collect();
     assert!(
-        !emitted_domain_events.is_empty(),
-        "emitted domain event set unexpectedly empty"
+        !emitted_events.is_empty(),
+        "emitted event set unexpectedly empty"
     );
 
     let documented = parse_documented_gateway_events(&read_doc("docs/GATEWAY_EVENTS.md"));
-    let undocumented: Vec<String> = emitted_domain_events
+    let undocumented: Vec<String> = emitted_events
         .iter()
         .filter(|event| !documented.contains(*event))
         .cloned()
         .collect();
     assert!(
         undocumented.is_empty(),
-        "domain events present in emitted manifest but missing in docs/GATEWAY_EVENTS.md: {}",
+        "events present in emitted manifest but missing in docs/GATEWAY_EVENTS.md: {}",
         undocumented.join(", ")
     );
 
     let client_literals = parse_client_gateway_event_literal_set();
-    let undecodable_by_client: Vec<String> = emitted_domain_events
+    let undecodable_by_client: Vec<String> = emitted_events
         .iter()
         .filter(|event| !client_literals.contains(*event))
         .cloned()
         .collect();
     assert!(
         undecodable_by_client.is_empty(),
-        "domain events present in emitted manifest but absent from client gateway decoder/dispatch source: {}",
+        "events present in emitted manifest but absent from client gateway decoder/dispatch source: {}",
         undecodable_by_client.join(", ")
     );
 }

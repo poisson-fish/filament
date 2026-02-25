@@ -60,7 +60,7 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
   - temporary dual-emit window or controlled migration flag
   - client accepts both during migration window
 - [x] Update `docs/GATEWAY_EVENTS.md` and protocol contract notes.
-- [ ] Add cross-contract tests proving server emit set, docs set, and client decode set stay aligned.
+- [x] Add cross-contract tests proving server emit set, docs set, and client decode set stay aligned.
 
 ### Tentative File Touch List
 - `apps/filament-server/src/server/gateway_events/workspace.rs`
@@ -76,7 +76,7 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 ### Tests
 - [x] Server integration test for both override event variants.
 - [x] Web decoder tests for each variant and fail-closed invalid payloads.
-- [ ] Contract manifest parity tests (server/doc/client).
+- [x] Contract manifest parity tests (server/doc/client).
 
 ### Progress Notes
 - 2026-02-25 (Slice 1): Added explicit server event type `workspace_channel_permission_override_update` for principal/target override payload shape, kept temporary dual-emit from the permission-override route (`workspace_channel_override_update` legacy + explicit event), and updated server/docs event manifests plus gateway event builder tests.
@@ -87,6 +87,7 @@ Make event contracts unambiguous and eliminate current payload-shape drift.
 - 2026-02-25 (Slice 6): Added a focused cross-contract parity test for the override migration event trio to enforce alignment across server emitted manifest, `docs/GATEWAY_EVENTS.md`, and client decoder event-type acceptance; also fixed drift by including `workspace_channel_role_override_update` in server emitted manifest and client override type guard.
 - 2026-02-25 (Slice 7): Added focused web decoder tests for all override migration event variants (`workspace_channel_override_update`, `workspace_channel_role_override_update`, `workspace_channel_permission_override_update`) and explicit fail-closed cases for malformed role and permission payloads.
 - 2026-02-25 (Slice 8): Added a server contract test enforcing cross-contract parity for all emitted domain event names across `EMITTED_EVENT_TYPES`, `docs/GATEWAY_EVENTS.md`, and web gateway source literals (`apps/filament-client-web/src/lib/gateway-*.ts`), intentionally excluding connection-only `ready`/`subscribed` pending a dedicated client subscribe-ack contract slice.
+- 2026-02-25 (Slice 9): Added explicit client decode support for `subscribed` connection events (fail-closed payload validation), then tightened server manifest parity assertions to include connection events so emitted server/docs/client event sets are now enforced without exclusions.
 
 ### Exit Criteria
 - One logical event name maps to one payload shape.

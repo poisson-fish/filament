@@ -10,6 +10,7 @@ import {
   dispatchGatewayDomainEvent,
 } from "./gateway-domain-dispatch";
 import {
+  dispatchSubscribedGatewayEvent,
   dispatchReadyGatewayEvent,
 } from "./gateway-ready-dispatch";
 import {
@@ -147,6 +148,10 @@ export function connectGateway(
     }
 
     if (dispatchReadyGatewayEvent(envelope.t, envelope.d, handlers)) {
+      return;
+    }
+
+    if (dispatchSubscribedGatewayEvent(envelope.t, envelope.d, handlers)) {
       return;
     }
 
