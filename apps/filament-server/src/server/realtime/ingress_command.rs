@@ -27,6 +27,33 @@ pub(crate) enum GatewayIngressCommand {
     MessageCreate(GatewayMessageCreateCommand),
 }
 
+impl TryFrom<Envelope<Value>> for GatewayIngressCommand {
+    type Error = GatewayIngressCommandParseError;
+
+    fn try_from(envelope: Envelope<Value>) -> Result<Self, Self::Error> {
+        let event_type = envelope.t.as_str().to_owned();
+        match event_type.as_str() {
+            "subscribe" => serde_json::from_value::<GatewaySubscribeDto>(envelope.d)
+                .map_err(|_| GatewayIngressCommandParseError::InvalidSubscribePayload)
+                .and_then(|subscribe| {
+                    GatewaySubscribeCommand::try_from(subscribe)
+                        .map_err(|()| GatewayIngressCommandParseError::InvalidSubscribePayload)
+                })
+                .map(Self::Subscribe),
+            "message_create" => serde_json::from_value::<GatewayMessageCreateDto>(envelope.d)
+                .map_err(|_| GatewayIngressCommandParseError::InvalidMessageCreatePayload)
+                .and_then(|message_create| {
+                    GatewayMessageCreateCommand::try_from(message_create)
+                        .map_err(|()| GatewayIngressCommandParseError::InvalidMessageCreatePayload)
+                })
+                .map(Self::MessageCreate),
+            _ => Err(GatewayIngressCommandParseError::UnknownEventType(
+                event_type,
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GatewayGuildId(String);
 
@@ -192,26 +219,7 @@ impl GatewayIngressCommandParseError {
 pub(crate) fn parse_gateway_ingress_command(
     envelope: Envelope<Value>,
 ) -> Result<GatewayIngressCommand, GatewayIngressCommandParseError> {
-    let event_type = envelope.t.as_str().to_owned();
-    match event_type.as_str() {
-        "subscribe" => serde_json::from_value::<GatewaySubscribeDto>(envelope.d)
-            .map_err(|_| GatewayIngressCommandParseError::InvalidSubscribePayload)
-            .and_then(|subscribe| {
-                GatewaySubscribeCommand::try_from(subscribe)
-                    .map_err(|()| GatewayIngressCommandParseError::InvalidSubscribePayload)
-            })
-            .map(GatewayIngressCommand::Subscribe),
-        "message_create" => serde_json::from_value::<GatewayMessageCreateDto>(envelope.d)
-            .map_err(|_| GatewayIngressCommandParseError::InvalidMessageCreatePayload)
-            .and_then(|message_create| {
-                GatewayMessageCreateCommand::try_from(message_create)
-                    .map_err(|()| GatewayIngressCommandParseError::InvalidMessageCreatePayload)
-            })
-            .map(GatewayIngressCommand::MessageCreate),
-        _ => Err(GatewayIngressCommandParseError::UnknownEventType(
-            event_type,
-        )),
-    }
+    GatewayIngressCommand::try_from(envelope)
 }
 
 #[cfg(test)]
@@ -258,6 +266,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_subscribe_command_with_invalid_ulid_in_try_from() {
+        let envelope = envelope(
+            "subscribe",
+            json!({
+                "guild_id": "not-a-ulid",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT"
+            }),
+        );
+
+        let error = GatewayIngressCommand::try_from(envelope)
+            .expect_err("invalid subscribe ids should fail in try_from");
+
+        assert!(matches!(
+            error,
+            GatewayIngressCommandParseError::InvalidSubscribePayload
+        ));
+    }
+
+    #[test]
     fn parses_message_create_command() {
         let command = parse_gateway_ingress_command(envelope(
             "message_create",
@@ -284,6 +311,27 @@ mod tests {
                 panic!("expected message_create command");
             }
         }
+    }
+
+    #[test]
+    fn rejects_message_create_command_with_invalid_attachment_ids_in_try_from() {
+        let envelope = envelope(
+            "message_create",
+            json!({
+                "guild_id": "01JYQ4V2YQ8B4FW9P51TE5Z1JK",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT",
+                "content": "hello",
+                "attachment_ids": ["not-a-ulid"]
+            }),
+        );
+
+        let error = GatewayIngressCommand::try_from(envelope)
+            .expect_err("invalid attachment ids should fail in try_from");
+
+        assert!(matches!(
+            error,
+            GatewayIngressCommandParseError::InvalidMessageCreatePayload
+        ));
     }
 
     #[test]

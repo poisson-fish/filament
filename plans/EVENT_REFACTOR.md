@@ -235,7 +235,7 @@ Reduce stringly-typed command handling at ingress boundary.
 ### Tasks
 - [x] Introduce gateway ingress domain types (validated IDs, bounded fields) from DTO conversion.
 - [x] Keep DTO structs at transport boundary with `deny_unknown_fields`.
-- [ ] Move all ID/shape validation into `TryFrom` conversions before handler execution.
+- [x] Move all ID/shape validation into `TryFrom` conversions before handler execution.
 - [ ] Ensure ingress parse and unknown-event metrics stay intact.
 
 ### Tentative File Touch List
@@ -247,8 +247,8 @@ Reduce stringly-typed command handling at ingress boundary.
 - `apps/filament-server/src/server/domain.rs` (if newtypes/helpers live here)
 
 ### Tests
-- [ ] Unit tests for newtype invariants and `TryFrom` conversions.
-- [ ] Ingress parse tests for invalid IDs and malformed payloads.
+- [x] Unit tests for newtype invariants and `TryFrom` conversions.
+- [x] Ingress parse tests for invalid IDs and malformed payloads.
 - [ ] Gateway network tests still pass for subscribe/message_create.
 
 ### Progress Notes
@@ -259,6 +259,7 @@ Reduce stringly-typed command handling at ingress boundary.
 - 2026-02-25 (Slice 5): Localized gateway transport DTOs to `realtime/ingress_command.rs` (`GatewaySubscribeDto`, `GatewayMessageCreateDto`) with explicit `#[serde(deny_unknown_fields)]` at the websocket ingress boundary, and removed the generic `types.rs` ingress DTO copies to reduce drift risk. Added focused ingress parser tests proving unknown payload fields fail closed for both `subscribe` and `message_create` with unchanged disconnect reasons/parse classification (`invalid_subscribe_payload`, `invalid_message_create_payload`).
 - 2026-02-25 (Slice 6): Moved websocket `message_create` payload shape reliance fully to ingress `TryFrom` output by adding an ingress-only prevalidated create path (`create_message_internal_from_ingress_validated`) that consumes `GatewayMessageContent` and `GatewayAttachmentIds` directly, instead of re-running attachment/content boundary validation inside the handler path. REST `create_message_internal` keeps its existing validation logic unchanged, preserving fail-closed behavior for non-websocket boundaries; added focused unit coverage for prevalidated message body preparation/tokenization behavior.
 - 2026-02-25 (Slice 7): Moved subscribe routing-key shape construction (`guild_id:channel_id`) from handler execution into ingress DTO conversion by introducing typed `GatewaySubscriptionKey` in `TryFrom<GatewaySubscribeDto>`. `execute_subscribe_command` now consumes only prevalidated domain input (`GatewayGuildId`, `GatewayChannelId`, `GatewaySubscriptionKey`) and no longer builds subscription keys from raw strings at execution time; updated ingress parser tests to assert typed key derivation while preserving existing parse-failure metrics/disconnect behavior.
+- 2026-02-25 (Slice 8): Moved gateway command event-shape validation into domain conversion by implementing `TryFrom<Envelope<Value>> for GatewayIngressCommand` and making `parse_gateway_ingress_command` a thin wrapper over that conversion. Added focused `TryFrom` coverage for invalid subscribe ULIDs and invalid message attachment IDs to prove ID/payload-shape rejection happens before handler execution while preserving existing parse error kinds (`invalid_subscribe_payload`, `invalid_message_create_payload`, `unknown_event`).
 
 ### Exit Criteria
 - Handlers execute only with validated domain input.
