@@ -46,7 +46,7 @@ pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
     friend::FRIEND_REMOVE_EVENT,
 ];
 
-pub(crate) use connection::{ready, subscribed};
+pub(crate) use connection::{try_ready, try_subscribed, READY_EVENT, SUBSCRIBED_EVENT};
 pub(crate) use envelope::GatewayEvent;
 pub(crate) use friend::{
     friend_remove, friend_request_create, friend_request_delete, friend_request_update,
@@ -130,10 +130,12 @@ mod tests {
             kind: ChannelKind::Text,
         };
 
-        let ready_payload = parse_event(&ready(user_id));
+        let ready_event = try_ready(user_id).expect("ready event should serialize");
+        let ready_payload = parse_event(&ready_event);
         assert_eq!(ready_payload["user_id"], Value::from(user_id.to_string()));
 
-        let subscribed_payload = parse_event(&subscribed("g", "c"));
+        let subscribed_event = try_subscribed("g", "c").expect("subscribed event should serialize");
+        let subscribed_payload = parse_event(&subscribed_event);
         assert_eq!(subscribed_payload["guild_id"], Value::from("g"));
         assert_eq!(subscribed_payload["channel_id"], Value::from("c"));
 

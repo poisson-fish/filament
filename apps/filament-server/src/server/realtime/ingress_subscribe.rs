@@ -55,7 +55,26 @@ pub(crate) async fn execute_subscribe_command(
     )
     .await;
 
-    let subscribed_event = gateway_events::subscribed(&subscribe.guild_id, &subscribe.channel_id);
+    let subscribed_event =
+        match gateway_events::try_subscribed(&subscribe.guild_id, &subscribe.channel_id) {
+            Ok(event) => event,
+            Err(error) => {
+                tracing::error!(
+                    event = "gateway.subscribe_ack.serialize_failed",
+                    connection_id = %connection_id,
+                    user_id = %user_id,
+                    guild_id = %subscribe.guild_id,
+                    channel_id = %subscribe.channel_id,
+                    error = %error
+                );
+                record_gateway_event_dropped(
+                    "connection",
+                    gateway_events::SUBSCRIBED_EVENT,
+                    "serialize_error",
+                );
+                return Err("outbound_serialize_error");
+            }
+        };
     let enqueue_result = try_enqueue_subscribed_event(outbound_tx, subscribed_event.payload);
     if subscribe_ack_rejected(&enqueue_result) {
         record_gateway_event_dropped("connection", subscribed_event.event_type, "full_queue");

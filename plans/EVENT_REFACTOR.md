@@ -124,6 +124,7 @@ Make event emission fail-fast and enforce outbound size limits universally.
 
 ### Progress Notes
 - 2026-02-25 (Slice 1): Removed silent fallback-to-`ready` behavior from `outbound_event` by switching to explicit `Result` errors for invalid event types and serialization/encoding failures; added unit tests proving valid envelope output and fail-closed rejection for invalid outbound event names. Gateway event envelope builder now fails loudly on build errors instead of silently emitting fallback payloads.
+- 2026-02-25 (Slice 2): Removed panic-based connection-event wrappers (`ready`/`subscribed`) from the server gateway API and switched websocket connection + subscribe-ack paths to explicit `try_ready`/`try_subscribed` `Result` handling. Serialization failures are now observed via `filament_gateway_events_dropped_total{scope=\"connection\",reason=\"serialize_error\"}` and fail-closed disconnect/error paths, with targeted tests updated to use explicit builders.
 
 ### Exit Criteria
 - Outbound and inbound both enforce size caps.

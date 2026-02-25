@@ -97,7 +97,8 @@ async fn channel_broadcast_targets_only_matching_subscription_key() {
     )
     .await;
 
-    let event = gateway_events::subscribed("g", "c-target");
+    let event =
+        gateway_events::try_subscribed("g", "c-target").expect("subscribed event should serialize");
     broadcast_channel_event(&state, &channel_key("g", "c-target"), &event).await;
 
     let target_payload = rx_target.recv().await.expect("target payload");
@@ -220,7 +221,7 @@ async fn user_broadcast_targets_only_requested_authenticated_user() {
             },
         );
 
-    let event = gateway_events::ready(user_a);
+    let event = gateway_events::try_ready(user_a).expect("ready event should serialize");
     broadcast_user_event(&state, user_a, &event).await;
 
     let payload_a1 = rx_a1.recv().await.expect("first session");
@@ -260,7 +261,8 @@ async fn slow_consumer_signal_is_sent_when_outbound_queue_is_full() {
         .insert(connection_id, tx.clone());
 
     tx.try_send(String::from("first")).unwrap();
-    let event = gateway_events::subscribed("g", "c");
+    let event =
+        gateway_events::try_subscribed("g", "c").expect("subscribed event should serialize");
     broadcast_channel_event(&state, &channel_key("g", "c"), &event).await;
 
     assert_eq!(*control_rx.borrow(), ConnectionControl::Close);

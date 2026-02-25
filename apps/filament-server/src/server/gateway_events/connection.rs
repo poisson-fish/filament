@@ -1,7 +1,9 @@
 use filament_core::UserId;
 use serde::Serialize;
 
-use super::{envelope::build_event, GatewayEvent};
+use crate::server::auth::outbound_event;
+
+use super::GatewayEvent;
 
 pub(crate) const READY_EVENT: &str = "ready";
 pub(crate) const SUBSCRIBED_EVENT: &str = "subscribed";
@@ -17,8 +19,8 @@ struct SubscribedPayload<'a> {
     channel_id: &'a str,
 }
 
-pub(crate) fn ready(user_id: UserId) -> GatewayEvent {
-    build_event(
+pub(crate) fn try_ready(user_id: UserId) -> anyhow::Result<GatewayEvent> {
+    build_connection_event(
         READY_EVENT,
         ReadyPayload {
             user_id: user_id.to_string(),
@@ -26,14 +28,25 @@ pub(crate) fn ready(user_id: UserId) -> GatewayEvent {
     )
 }
 
-pub(crate) fn subscribed(guild_id: &str, channel_id: &str) -> GatewayEvent {
-    build_event(
+pub(crate) fn try_subscribed(guild_id: &str, channel_id: &str) -> anyhow::Result<GatewayEvent> {
+    build_connection_event(
         SUBSCRIBED_EVENT,
         SubscribedPayload {
             guild_id,
             channel_id,
         },
     )
+}
+
+fn build_connection_event<T: Serialize>(
+    event_type: &'static str,
+    payload: T,
+) -> anyhow::Result<GatewayEvent> {
+    let payload = outbound_event(event_type, payload)?;
+    Ok(GatewayEvent {
+        event_type,
+        payload,
+    })
 }
 
 #[cfg(test)]
@@ -53,14 +66,33 @@ mod tests {
     #[test]
     fn ready_event_contains_authenticated_user_id() {
         let user_id = UserId::new();
-        let payload = parse_payload(&ready(user_id));
+        let event = try_ready(user_id).expect("ready event should serialize");
+        let payload = parse_payload(&event);
         assert_eq!(payload["user_id"], Value::from(user_id.to_string()));
     }
 
     #[test]
     fn subscribed_event_contains_guild_and_channel_scope() {
-        let payload = parse_payload(&subscribed("guild-1", "channel-1"));
+        let event =
+            try_subscribed("guild-1", "channel-1").expect("subscribed event should serialize");
+        let payload = parse_payload(&event);
         assert_eq!(payload["guild_id"], Value::from("guild-1"));
         assert_eq!(payload["channel_id"], Value::from("channel-1"));
+    }
+
+    #[test]
+    fn try_builder_rejects_invalid_event_type() {
+        #[derive(Serialize)]
+        struct Payload {
+            value: &'static str,
+        }
+
+        let Err(error) = build_connection_event("INVALID_EVENT", Payload { value: "x" }) else {
+            panic!("invalid event type should fail");
+        };
+        assert!(
+            error.to_string().contains("invalid outbound event type"),
+            "expected invalid outbound type error, got: {error}"
+        );
     }
 }

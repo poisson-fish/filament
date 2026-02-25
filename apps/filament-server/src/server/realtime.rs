@@ -144,8 +144,9 @@ use super::{
     errors::AuthFailure,
     gateway_events::{self},
     metrics::{
-        record_gateway_event_emitted, record_gateway_event_parse_rejected,
-        record_gateway_event_unknown_received, record_ws_disconnect,
+        record_gateway_event_dropped, record_gateway_event_emitted,
+        record_gateway_event_parse_rejected, record_gateway_event_unknown_received,
+        record_ws_disconnect,
     },
     types::{GatewayAuthQuery, MessageResponse},
 };
@@ -212,7 +213,25 @@ pub(crate) async fn handle_gateway_connection(
             },
         );
 
-    let ready_event = gateway_events::ready(auth.user_id);
+    let ready_event = match gateway_events::try_ready(auth.user_id) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::error!(
+                event = "gateway.ready.serialize_failed",
+                connection_id = %connection_id,
+                user_id = %auth.user_id,
+                error = %error
+            );
+            record_gateway_event_dropped(
+                "connection",
+                gateway_events::READY_EVENT,
+                "serialize_error",
+            );
+            record_ws_disconnect("ready_serialize_error");
+            remove_connection(&state, connection_id).await;
+            return;
+        }
+    };
     let _ = outbound_tx.send(ready_event.payload).await;
     record_gateway_event_emitted("connection", ready_event.event_type);
 
