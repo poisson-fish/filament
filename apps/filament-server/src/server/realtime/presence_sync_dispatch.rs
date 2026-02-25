@@ -10,8 +10,10 @@ use super::presence_subscribe::{
 pub(crate) fn dispatch_presence_sync_event(
     outbound_tx: &mpsc::Sender<String>,
     event: GatewayEvent,
+    max_gateway_event_bytes: usize,
 ) -> PresenceSyncDispatchOutcome {
-    let enqueue_result = try_enqueue_presence_sync_event(outbound_tx, event.payload);
+    let enqueue_result =
+        try_enqueue_presence_sync_event(outbound_tx, event.payload, max_gateway_event_bytes);
     let outcome = presence_sync_dispatch_outcome(&enqueue_result);
     match outcome {
         PresenceSyncDispatchOutcome::Emitted => {
@@ -22,6 +24,9 @@ pub(crate) fn dispatch_presence_sync_event(
         }
         PresenceSyncDispatchOutcome::DroppedFull => {
             record_gateway_event_dropped("connection", event.event_type, "full_queue");
+        }
+        PresenceSyncDispatchOutcome::DroppedOversized => {
+            record_gateway_event_dropped("connection", event.event_type, "oversized_outbound");
         }
     }
     outcome
@@ -42,7 +47,7 @@ mod tests {
             .expect("presence_sync event should serialize");
         let expected_payload = event.payload.clone();
 
-        let outcome = dispatch_presence_sync_event(&tx, event);
+        let outcome = dispatch_presence_sync_event(&tx, event, 1024);
 
         assert!(matches!(outcome, PresenceSyncDispatchOutcome::Emitted));
         assert_eq!(
@@ -59,7 +64,7 @@ mod tests {
         let event = gateway_events::try_presence_sync("g-1", HashSet::new())
             .expect("presence_sync event should serialize");
 
-        let outcome = dispatch_presence_sync_event(&tx, event);
+        let outcome = dispatch_presence_sync_event(&tx, event, 1024);
 
         assert!(matches!(outcome, PresenceSyncDispatchOutcome::DroppedFull));
     }
@@ -71,11 +76,25 @@ mod tests {
         let event = gateway_events::try_presence_sync("g-1", HashSet::new())
             .expect("presence_sync event should serialize");
 
-        let outcome = dispatch_presence_sync_event(&tx, event);
+        let outcome = dispatch_presence_sync_event(&tx, event, 1024);
 
         assert!(matches!(
             outcome,
             PresenceSyncDispatchOutcome::DroppedClosed
+        ));
+    }
+
+    #[test]
+    fn dispatch_presence_sync_event_returns_oversized_for_large_payload() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
+        let event = gateway_events::try_presence_sync("g-1", HashSet::new())
+            .expect("presence_sync event should serialize");
+
+        let outcome = dispatch_presence_sync_event(&tx, event, 3);
+
+        assert!(matches!(
+            outcome,
+            PresenceSyncDispatchOutcome::DroppedOversized
         ));
     }
 }

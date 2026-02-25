@@ -15,12 +15,14 @@ pub(crate) enum PresenceSyncEnqueueResult {
     Enqueued,
     Closed,
     Full,
+    Oversized,
 }
 
 pub(crate) enum PresenceSyncDispatchOutcome {
     Emitted,
     DroppedClosed,
     DroppedFull,
+    DroppedOversized,
 }
 
 pub(crate) fn apply_presence_subscribe(
@@ -55,7 +57,11 @@ pub(crate) fn apply_presence_subscribe(
 pub(crate) fn try_enqueue_presence_sync_event(
     outbound_tx: &mpsc::Sender<String>,
     payload: String,
+    max_gateway_event_bytes: usize,
 ) -> PresenceSyncEnqueueResult {
+    if payload.len() > max_gateway_event_bytes {
+        return PresenceSyncEnqueueResult::Oversized;
+    }
     match outbound_tx.try_send(payload) {
         Ok(()) => PresenceSyncEnqueueResult::Enqueued,
         Err(mpsc::error::TrySendError::Closed(_)) => PresenceSyncEnqueueResult::Closed,
@@ -70,6 +76,7 @@ pub(crate) fn presence_sync_dispatch_outcome(
         PresenceSyncEnqueueResult::Enqueued => PresenceSyncDispatchOutcome::Emitted,
         PresenceSyncEnqueueResult::Closed => PresenceSyncDispatchOutcome::DroppedClosed,
         PresenceSyncEnqueueResult::Full => PresenceSyncDispatchOutcome::DroppedFull,
+        PresenceSyncEnqueueResult::Oversized => PresenceSyncDispatchOutcome::DroppedOversized,
     }
 }
 
@@ -159,7 +166,7 @@ mod tests {
     fn enqueue_presence_sync_event_reports_enqueued() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
 
-        let result = try_enqueue_presence_sync_event(&tx, String::from("payload"));
+        let result = try_enqueue_presence_sync_event(&tx, String::from("payload"), 1024);
 
         assert!(matches!(result, PresenceSyncEnqueueResult::Enqueued));
         let received = rx.try_recv().expect("payload should be queued");
@@ -170,11 +177,11 @@ mod tests {
     fn enqueue_presence_sync_event_reports_full() {
         let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
         assert!(matches!(
-            try_enqueue_presence_sync_event(&tx, String::from("first")),
+            try_enqueue_presence_sync_event(&tx, String::from("first"), 1024),
             PresenceSyncEnqueueResult::Enqueued
         ));
 
-        let result = try_enqueue_presence_sync_event(&tx, String::from("second"));
+        let result = try_enqueue_presence_sync_event(&tx, String::from("second"), 1024);
 
         assert!(matches!(result, PresenceSyncEnqueueResult::Full));
     }
@@ -184,9 +191,18 @@ mod tests {
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(1);
         drop(rx);
 
-        let result = try_enqueue_presence_sync_event(&tx, String::from("payload"));
+        let result = try_enqueue_presence_sync_event(&tx, String::from("payload"), 1024);
 
         assert!(matches!(result, PresenceSyncEnqueueResult::Closed));
+    }
+
+    #[test]
+    fn enqueue_presence_sync_event_reports_oversized() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(1);
+
+        let result = try_enqueue_presence_sync_event(&tx, String::from("payload"), 3);
+
+        assert!(matches!(result, PresenceSyncEnqueueResult::Oversized));
     }
 
     #[test]
@@ -202,6 +218,10 @@ mod tests {
         assert!(matches!(
             presence_sync_dispatch_outcome(&PresenceSyncEnqueueResult::Full),
             PresenceSyncDispatchOutcome::DroppedFull
+        ));
+        assert!(matches!(
+            presence_sync_dispatch_outcome(&PresenceSyncEnqueueResult::Oversized),
+            PresenceSyncDispatchOutcome::DroppedOversized
         ));
     }
 }

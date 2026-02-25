@@ -350,7 +350,11 @@ pub(crate) async fn handle_presence_subscribe(
             return;
         }
     };
-    dispatch_presence_sync_event(outbound_tx, events.snapshot);
+    dispatch_presence_sync_event(
+        outbound_tx,
+        events.snapshot,
+        state.runtime.max_gateway_event_bytes,
+    );
 
     if let Some(update) = events.online_update {
         broadcast_guild_event(state, guild_id, &update).await;
