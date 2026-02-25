@@ -3824,7 +3824,7 @@ async fn emit_channel_role_override_events(
 ) {
     // Dual emit during migration to keep older clients that only observe the legacy
     // event name functional while introducing explicit role-override contract.
-    let legacy_event = gateway_events::workspace_channel_override_update(
+    match gateway_events::try_workspace_channel_override_update(
         &path.guild_id,
         &path.channel_id,
         path.role,
@@ -3832,10 +3832,27 @@ async fn emit_channel_role_override_events(
         payload.deny.clone(),
         now_unix(),
         Some(actor_user_id),
-    );
-    broadcast_guild_event(state, &path.guild_id, &legacy_event).await;
+    ) {
+        Ok(event) => {
+            broadcast_guild_event(state, &path.guild_id, &event).await;
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_channel_override_update.serialize_failed",
+                guild_id = %path.guild_id,
+                channel_id = %path.channel_id,
+                role = ?path.role,
+                error = %error
+            );
+            record_gateway_event_dropped(
+                "guild",
+                "workspace_channel_override_update",
+                "serialize_error",
+            );
+        }
+    }
 
-    let event = gateway_events::workspace_channel_role_override_update(
+    let event = match gateway_events::try_workspace_channel_role_override_update(
         &path.guild_id,
         &path.channel_id,
         path.role,
@@ -3845,7 +3862,24 @@ async fn emit_channel_role_override_events(
         ),
         now_unix(),
         Some(actor_user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_channel_role_override_update.serialize_failed",
+                guild_id = %path.guild_id,
+                channel_id = %path.channel_id,
+                role = ?path.role,
+                error = %error
+            );
+            record_gateway_event_dropped(
+                "guild",
+                "workspace_channel_role_override_update",
+                "serialize_error",
+            );
+            return;
+        }
+    };
     broadcast_guild_event(state, &path.guild_id, &event).await;
 }
 
@@ -3974,7 +4008,7 @@ pub(crate) async fn set_channel_permission_override(
 
     // Dual emit during migration to keep older clients that only observe the legacy
     // event name functional while introducing explicit permission-override contract.
-    let legacy_event = gateway_events::workspace_channel_permission_override_update_legacy(
+    match gateway_events::try_workspace_channel_permission_override_update_legacy(
         &path.guild_id,
         &path.channel_id,
         path.target_kind,
@@ -3985,10 +4019,28 @@ pub(crate) async fn set_channel_permission_override(
         ),
         now_unix(),
         Some(auth.user_id),
-    );
-    broadcast_guild_event(&state, &path.guild_id, &legacy_event).await;
+    ) {
+        Ok(event) => {
+            broadcast_guild_event(&state, &path.guild_id, &event).await;
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_channel_permission_override_update_legacy.serialize_failed",
+                guild_id = %path.guild_id,
+                channel_id = %path.channel_id,
+                target_kind = ?path.target_kind,
+                target_id = %path.target_id,
+                error = %error
+            );
+            record_gateway_event_dropped(
+                "guild",
+                "workspace_channel_override_update",
+                "serialize_error",
+            );
+        }
+    }
 
-    let event = gateway_events::workspace_channel_permission_override_update(
+    let event = match gateway_events::try_workspace_channel_permission_override_update(
         &path.guild_id,
         &path.channel_id,
         path.target_kind,
@@ -3999,7 +4051,25 @@ pub(crate) async fn set_channel_permission_override(
         ),
         now_unix(),
         Some(auth.user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_channel_permission_override_update.serialize_failed",
+                guild_id = %path.guild_id,
+                channel_id = %path.channel_id,
+                target_kind = ?path.target_kind,
+                target_id = %path.target_id,
+                error = %error
+            );
+            record_gateway_event_dropped(
+                "guild",
+                "workspace_channel_permission_override_update",
+                "serialize_error",
+            );
+            return Ok(Json(ModerationResponse { accepted: true }));
+        }
+    };
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(

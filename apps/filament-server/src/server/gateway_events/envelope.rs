@@ -17,6 +17,7 @@ pub(super) fn try_build_event<T: Serialize>(
     })
 }
 
+#[cfg(test)]
 pub(super) fn build_event<T: Serialize>(event_type: &'static str, payload: T) -> GatewayEvent {
     try_build_event(event_type, payload).unwrap_or_else(|error| {
         panic!("failed to build outbound gateway event {event_type}: {error}")
