@@ -1,7 +1,7 @@
 # EVENT_REFACTOR.md
 
 ## Objective
-Refactor the realtime event system to reduce accidental complexity while preserving or improving security boundaries, protocol compatibility, and operational robustness.
+Refactor the realtime event system to reduce accidental complexity while preserving or improving security boundaries and operational robustness.
 
 ## Scope
 - `apps/filament-server` gateway ingress, event construction, fanout, and observability.
@@ -21,6 +21,12 @@ Refactor the realtime event system to reduce accidental complexity while preserv
 - Enforce hard caps for ingress and outbound payloads.
 - Prefer typed domain conversion over stringly routing.
 - Preserve bounded queues and slow-consumer eviction behavior.
+
+## Pre-Deploy Compatibility Policy (2026-02-25)
+- Protocol-breaking refactor changes are allowed because the app is not officially deployed.
+- Backward-compatibility shims (dual emit/dual decode/migration flags) are optional, not required.
+- When a protocol/event contract is changed, server emitters, client decoders, docs, and contract tests must be updated in the same slice/PR.
+- Security controls remain non-negotiable: no relaxation of limits, timeouts, rate caps, fail-closed behavior, or input validation.
 
 ## Code-State Snapshot (2026-02-25)
 - Ingress validation is strict and mostly correct.
