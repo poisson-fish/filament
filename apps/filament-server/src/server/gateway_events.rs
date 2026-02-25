@@ -81,13 +81,13 @@ pub(crate) use profile::{
     PROFILE_UPDATE_EVENT,
 };
 pub(crate) use workspace::{
-    try_workspace_update, workspace_channel_override_update,
+    try_workspace_role_create, try_workspace_update, workspace_channel_override_update,
     workspace_channel_permission_override_update,
     workspace_channel_permission_override_update_legacy, workspace_channel_role_override_update,
     workspace_ip_ban_sync, workspace_member_add, workspace_member_ban, workspace_member_remove,
     workspace_member_update, workspace_role_assignment_add, workspace_role_assignment_remove,
-    workspace_role_create, workspace_role_delete, workspace_role_reorder, workspace_role_update,
-    WorkspaceChannelOverrideFieldsPayload, WORKSPACE_UPDATE_EVENT,
+    workspace_role_delete, workspace_role_reorder, workspace_role_update,
+    WorkspaceChannelOverrideFieldsPayload, WORKSPACE_ROLE_CREATE_EVENT, WORKSPACE_UPDATE_EVENT,
 };
 #[cfg(test)]
 mod tests {
@@ -364,16 +364,19 @@ mod tests {
             Value::from(17)
         );
 
-        let workspace_role_create_payload = parse_event(&workspace_role_create(
-            "g",
-            "role-1",
-            "ops",
-            90,
-            false,
-            vec![Permission::ManageRoles],
-            Some(String::from("#00AAFF")),
-            Some(user_id),
-        ));
+        let workspace_role_create_payload = parse_event(
+            &try_workspace_role_create(
+                "g",
+                "role-1",
+                "ops",
+                90,
+                false,
+                vec![Permission::ManageRoles],
+                Some(String::from("#00AAFF")),
+                Some(user_id),
+            )
+            .expect("workspace_role_create should serialize"),
+        );
         assert_eq!(
             workspace_role_create_payload["role"]["name"],
             Value::from("ops")

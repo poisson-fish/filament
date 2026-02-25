@@ -311,7 +311,7 @@ pub(crate) fn workspace_member_ban(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn workspace_role_create(
+pub(crate) fn try_workspace_role_create(
     guild_id: &str,
     role_id: &str,
     name: &str,
@@ -320,8 +320,8 @@ pub(crate) fn workspace_role_create(
     permissions: Vec<filament_core::Permission>,
     color_hex: Option<String>,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_ROLE_CREATE_EVENT,
         WorkspaceRoleCreatePayload {
             guild_id: guild_id.to_owned(),
@@ -585,16 +585,19 @@ mod tests {
     #[test]
     fn workspace_role_create_event_emits_role_payload() {
         let user_id = UserId::new();
-        let payload = parse_payload(&workspace_role_create(
-            "guild-1",
-            "role-1",
-            "ops",
-            10,
-            false,
-            vec![Permission::ManageRoles],
-            Some(String::from("#00AAFF")),
-            Some(user_id),
-        ));
+        let payload = parse_payload(
+            &try_workspace_role_create(
+                "guild-1",
+                "role-1",
+                "ops",
+                10,
+                false,
+                vec![Permission::ManageRoles],
+                Some(String::from("#00AAFF")),
+                Some(user_id),
+            )
+            .expect("workspace_role_create should serialize"),
+        );
         assert_eq!(payload["role"]["role_id"], Value::from("role-1"));
         assert_eq!(payload["role"]["name"], Value::from("ops"));
         assert_eq!(payload["role"]["color_hex"], Value::from("#00AAFF"));

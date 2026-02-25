@@ -1577,26 +1577,43 @@ pub(crate) async fn create_guild_role(
     )
     .await?;
 
-    let event = gateway_events::workspace_role_create(
-        &path.guild_id,
-        &role_id,
-        &name,
-        position,
-        false,
-        payload.permissions.clone(),
-        color_hex.clone(),
-        Some(auth.user_id),
-    );
-    broadcast_guild_event(&state, &path.guild_id, &event).await;
-
-    Ok(Json(GuildRoleResponse {
-        role_id,
-        name,
+    let response = GuildRoleResponse {
+        role_id: role_id.clone(),
+        name: name.clone(),
         position,
         is_system: false,
-        permissions: payload.permissions,
-        color_hex,
-    }))
+        permissions: payload.permissions.clone(),
+        color_hex: color_hex.clone(),
+    };
+
+    let event = match gateway_events::try_workspace_role_create(
+        &path.guild_id,
+        &response.role_id,
+        &response.name,
+        response.position,
+        response.is_system,
+        response.permissions.clone(),
+        response.color_hex.clone(),
+        Some(auth.user_id),
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_role_create.serialize_failed",
+                event_type = gateway_events::WORKSPACE_ROLE_CREATE_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::WORKSPACE_ROLE_CREATE_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(response));
+        }
+    };
+    broadcast_guild_event(&state, &path.guild_id, &event).await;
+
+    Ok(Json(response))
 }
 
 #[allow(clippy::too_many_lines)]
