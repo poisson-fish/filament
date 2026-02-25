@@ -119,7 +119,7 @@ Make event emission fail-fast and enforce outbound size limits universally.
 
 ### Tests
 - [ ] Unit tests for outbound size rejection.
-- [ ] Integration test that oversized outbound payload is dropped and counted.
+- [x] Integration test that oversized outbound payload is dropped and counted.
 - [ ] Regression test proving normal payloads still fan out.
 
 ### Progress Notes
@@ -161,6 +161,7 @@ Make event emission fail-fast and enforce outbound size limits universally.
 - 2026-02-25 (Slice 36): Added outbound payload size-cap enforcement for connection-scope `presence_sync` snapshot enqueue by extending presence enqueue classification with `Oversized` and wiring `dispatch_presence_sync_event` to use `max_gateway_event_bytes`. Presence subscribe runtime now fail-closes oversized snapshot enqueue at dispatch time with `filament_gateway_events_dropped_total{scope=\"connection\",event_type=\"presence_sync\",reason=\"oversized_outbound\"}` and no queue mutation; added focused unit tests for oversized enqueue and dispatch outcome mapping.
 - 2026-02-25 (Slice 37): Added outbound payload size-cap enforcement for connection-scope `voice_participant_sync` snapshot enqueue by extending voice enqueue classification with `Oversized` and wiring `dispatch_voice_sync_event` to use `max_gateway_event_bytes` from runtime config. Voice subscribe snapshot dispatch now records `filament_gateway_events_dropped_total{scope=\"connection\",event_type=\"voice_participant_sync\",reason=\"oversized_outbound\"}` and skips enqueue on oversized payloads; added focused unit tests for oversized enqueue classification and dispatch outcome mapping.
 - 2026-02-25 (Slice 38): Canonicalized outbound rejection reason labels in metrics by introducing shared constants/helpers for `serialize_error` and `oversized_outbound` (`record_gateway_event_serialize_error`, `record_gateway_event_oversized_outbound`), migrated representative runtime callsites (`ready` serialize drop, message-create serialize drop, and shared fanout oversized drop), and added focused unit tests asserting those exact labels are recorded in `filament_gateway_events_dropped_total`.
+- 2026-02-25 (Slice 39): Added network integration coverage for channel-scope oversized outbound rejection by introducing `oversized_outbound_channel_event_is_dropped_and_counted` in `gateway_network_flow`. The test constrains `max_gateway_event_bytes`, validates REST message create still succeeds, asserts no websocket `message_create` fanout is emitted for oversized outbound payloads, and verifies drop observability via `filament_gateway_events_dropped_total{scope=\"channel\",event_type=\"message_create\",reason=\"oversized_outbound\"}`.
 
 ### Exit Criteria
 - Outbound and inbound both enforce size caps.

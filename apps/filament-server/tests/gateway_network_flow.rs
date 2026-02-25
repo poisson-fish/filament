@@ -168,6 +168,10 @@ async fn add_member(
 }
 
 fn test_app() -> axum::Router {
+    test_app_with_max_gateway_event_bytes(AppConfig::default().max_gateway_event_bytes)
+}
+
+fn test_app_with_max_gateway_event_bytes(max_gateway_event_bytes: usize) -> axum::Router {
     build_router(&AppConfig {
         max_body_bytes: 1024 * 32,
         request_timeout: Duration::from_secs(2),
@@ -176,7 +180,7 @@ fn test_app() -> axum::Router {
         gateway_ingress_events_per_window: 20,
         gateway_ingress_window: Duration::from_secs(10),
         gateway_outbound_queue: 256,
-        max_gateway_event_bytes: AppConfig::default().max_gateway_event_bytes,
+        max_gateway_event_bytes,
         ..AppConfig::default()
     })
     .expect("router should build")
@@ -648,6 +652,82 @@ async fn websocket_subscription_receives_reaction_updates_from_rest() {
     assert_eq!(remove_event["d"]["message_id"], message_id);
     assert_eq!(remove_event["d"]["emoji"], "👍");
     assert_eq!(remove_event["d"]["count"], 0);
+
+    socket
+        .close(None)
+        .await
+        .expect("socket close should succeed");
+    server.abort();
+}
+
+#[tokio::test]
+async fn oversized_outbound_channel_event_is_dropped_and_counted() {
+    let app = test_app_with_max_gateway_event_bytes(200);
+
+    let auth = register_and_login(&app, "203.0.113.91").await;
+    let channel = create_channel_context(&app, &auth, "203.0.113.91").await;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener addr should be readable");
+    let server_app = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_app)
+            .await
+            .expect("server should run without errors");
+    });
+
+    let ws_url = format!("ws://{addr}/gateway/ws?access_token={}", auth.access_token);
+    let mut ws_request = ws_url
+        .into_client_request()
+        .expect("websocket request should build");
+    ws_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.91"),
+    );
+    let (mut socket, _response) = connect_async(ws_request)
+        .await
+        .expect("websocket handshake should succeed");
+
+    let ready_json = next_text_event(&mut socket).await;
+    assert_eq!(ready_json["t"], "ready");
+    subscribe_to_channel(&mut socket, &channel).await;
+
+    let oversized_content = "x".repeat(180);
+    let create_message = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.91")
+        .body(Body::from(
+            json!({ "content": oversized_content }).to_string(),
+        ))
+        .expect("create message request should build");
+    let create_message_response = app
+        .clone()
+        .oneshot(create_message)
+        .await
+        .expect("create message request should execute");
+    assert_eq!(create_message_response.status(), StatusCode::OK);
+
+    let maybe_message_create =
+        maybe_next_event_of_type(&mut socket, "message_create", Duration::from_millis(300)).await;
+    assert!(
+        maybe_message_create.is_none(),
+        "oversized outbound message_create should be dropped before fanout",
+    );
+
+    let metrics = metrics_text(&app).await;
+    assert!(metrics.contains(
+        "filament_gateway_events_dropped_total{scope=\"channel\",event_type=\"message_create\",reason=\"oversized_outbound\"}",
+    ));
 
     socket
         .close(None)
