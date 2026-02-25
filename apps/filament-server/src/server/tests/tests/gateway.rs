@@ -115,6 +115,7 @@ async fn channel_broadcast_targets_only_matching_subscription_key() {
 async fn guild_broadcast_delivers_once_per_connection_and_skips_other_guilds() {
     let state = AppState::new(&AppConfig::default()).unwrap();
     let connection_id = Uuid::new_v4();
+    let other_connection_id = Uuid::new_v4();
     let (tx_target, mut rx_target) = mpsc::channel::<String>(4);
     let (tx_other, mut rx_other) = mpsc::channel::<String>(4);
     add_subscription(
@@ -128,16 +129,28 @@ async fn guild_broadcast_delivers_once_per_connection_and_skips_other_guilds() {
         &state,
         connection_id,
         channel_key("g-main", "c-2"),
-        tx_target,
+        tx_target.clone(),
     )
     .await;
     add_subscription(
         &state,
-        Uuid::new_v4(),
+        other_connection_id,
         channel_key("g-other", "c-1"),
-        tx_other,
+        tx_other.clone(),
     )
     .await;
+    state
+        .realtime_registry
+        .connection_senders()
+        .write()
+        .await
+        .insert(connection_id, tx_target);
+    state
+        .realtime_registry
+        .connection_senders()
+        .write()
+        .await
+        .insert(other_connection_id, tx_other);
 
     let event = gateway_events::try_presence_update("g-main", UserId::new(), "online")
         .expect("presence_update should serialize");
@@ -187,40 +200,16 @@ async fn user_broadcast_targets_only_requested_authenticated_user() {
         .insert(connection_b, tx_b);
     state
         .realtime_registry
-        .connection_presence()
+        .user_connections()
         .write()
         .await
-        .insert(
-            connection_a1,
-            ConnectionPresence {
-                user_id: user_a,
-                guild_ids: std::collections::HashSet::new(),
-            },
-        );
+        .insert(user_a, std::collections::HashSet::from([connection_a1, connection_a2]));
     state
         .realtime_registry
-        .connection_presence()
+        .user_connections()
         .write()
         .await
-        .insert(
-            connection_a2,
-            ConnectionPresence {
-                user_id: user_a,
-                guild_ids: std::collections::HashSet::new(),
-            },
-        );
-    state
-        .realtime_registry
-        .connection_presence()
-        .write()
-        .await
-        .insert(
-            connection_b,
-            ConnectionPresence {
-                user_id: user_b,
-                guild_ids: std::collections::HashSet::new(),
-            },
-        );
+        .insert(user_b, std::collections::HashSet::from([connection_b]));
 
     let event = gateway_events::try_ready(user_a).expect("ready event should serialize");
     broadcast_user_event(&state, user_a, &event).await;
@@ -265,6 +254,77 @@ async fn slow_consumer_signal_is_sent_when_outbound_queue_is_full() {
     let event =
         gateway_events::try_subscribed("g", "c").expect("subscribed event should serialize");
     broadcast_channel_event(&state, &channel_key("g", "c"), &event).await;
+
+    assert_eq!(*control_rx.borrow(), ConnectionControl::Close);
+}
+
+#[tokio::test]
+async fn slow_consumer_signal_is_sent_for_guild_fanout_when_outbound_queue_is_full() {
+    let state = AppState::new(&AppConfig {
+        gateway_outbound_queue: 1,
+        ..AppConfig::default()
+    })
+    .unwrap();
+
+    let connection_id = Uuid::new_v4();
+    let (tx, _rx) = mpsc::channel::<String>(1);
+    let (control_tx, control_rx) = watch::channel(ConnectionControl::Open);
+    state
+        .realtime_registry
+        .connection_controls()
+        .write()
+        .await
+        .insert(connection_id, control_tx);
+    add_subscription(&state, connection_id, channel_key("g", "c"), tx.clone()).await;
+    state
+        .realtime_registry
+        .connection_senders()
+        .write()
+        .await
+        .insert(connection_id, tx.clone());
+
+    tx.try_send(String::from("first")).unwrap();
+    let event = gateway_events::try_presence_update("g", UserId::new(), "online")
+        .expect("presence_update should serialize");
+    broadcast_guild_event(&state, "g", &event).await;
+
+    assert_eq!(*control_rx.borrow(), ConnectionControl::Close);
+}
+
+#[tokio::test]
+async fn slow_consumer_signal_is_sent_for_user_fanout_when_outbound_queue_is_full() {
+    let state = AppState::new(&AppConfig {
+        gateway_outbound_queue: 1,
+        ..AppConfig::default()
+    })
+    .unwrap();
+
+    let user_id = UserId::new();
+    let connection_id = Uuid::new_v4();
+    let (tx, _rx) = mpsc::channel::<String>(1);
+    let (control_tx, control_rx) = watch::channel(ConnectionControl::Open);
+    state
+        .realtime_registry
+        .connection_controls()
+        .write()
+        .await
+        .insert(connection_id, control_tx);
+    state
+        .realtime_registry
+        .connection_senders()
+        .write()
+        .await
+        .insert(connection_id, tx.clone());
+    state
+        .realtime_registry
+        .user_connections()
+        .write()
+        .await
+        .insert(user_id, std::collections::HashSet::from([connection_id]));
+
+    tx.try_send(String::from("first")).unwrap();
+    let event = gateway_events::try_ready(user_id).expect("ready event should serialize");
+    broadcast_user_event(&state, user_id, &event).await;
 
     assert_eq!(*control_rx.borrow(), ConnectionControl::Close);
 }

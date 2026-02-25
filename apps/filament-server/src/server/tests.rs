@@ -4,8 +4,8 @@ mod tests {
     use super::super::{
         auth::{channel_key, hash_password},
         core::{
-            AppConfig, AppState, AuthContext, ChannelRecord, ConnectionControl, ConnectionPresence,
-            GuildRecord, GuildVisibility, UserRecord, DEFAULT_MAX_GATEWAY_EVENT_BYTES,
+            AppConfig, AppState, AuthContext, ChannelRecord, ConnectionControl, GuildRecord,
+            GuildVisibility, UserRecord, DEFAULT_MAX_GATEWAY_EVENT_BYTES,
         },
         directory_contract::IpNetwork,
         gateway_events,
