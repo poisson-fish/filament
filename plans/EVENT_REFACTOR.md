@@ -50,7 +50,7 @@ Refactor the realtime event system to reduce accidental complexity while preserv
 Make event contracts unambiguous and eliminate current payload-shape drift.
 
 ### Completion Status
-`NOT STARTED`
+`IN PROGRESS`
 
 ### Tasks
 - [ ] Split `workspace_channel_override_update` into explicit contracts:
