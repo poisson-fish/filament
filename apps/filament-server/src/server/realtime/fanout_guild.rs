@@ -1,9 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use tokio::sync::mpsc;
+use tracing::warn;
 use uuid::Uuid;
 
-use crate::server::metrics::record_gateway_event_dropped;
+use crate::server::metrics::{
+    record_gateway_event_dropped, record_gateway_event_oversized_outbound,
+};
 
 pub(crate) fn dispatch_guild_payload(
     subscriptions: &mut HashMap<String, HashMap<Uuid, mpsc::Sender<String>>>,
@@ -14,7 +17,15 @@ pub(crate) fn dispatch_guild_payload(
     slow_connections: &mut Vec<Uuid>,
 ) -> usize {
     if payload.len() > max_payload_bytes {
-        record_gateway_event_dropped("guild", event_type, "oversized_outbound");
+        record_gateway_event_oversized_outbound("guild", event_type);
+        warn!(
+            event = "gateway.guild_fanout.oversized_outbound",
+            event_type,
+            guild_id,
+            payload_bytes = payload.len(),
+            max_payload_bytes,
+            "dropped outbound payload for guild fanout because it exceeds configured max size"
+        );
         return 0;
     }
 
@@ -36,10 +47,24 @@ pub(crate) fn dispatch_guild_payload(
                 Ok(()) => delivered += 1,
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     record_gateway_event_dropped("guild", event_type, "closed");
+                    warn!(
+                        event = "gateway.guild_fanout.closed",
+                        event_type,
+                        guild_id,
+                        connection_id = %connection_id,
+                        "dropped outbound payload for closed websocket queue in guild fanout"
+                    );
                     stale_connections.push(*connection_id);
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     record_gateway_event_dropped("guild", event_type, "full_queue");
+                    warn!(
+                        event = "gateway.guild_fanout.full_queue",
+                        event_type,
+                        guild_id,
+                        connection_id = %connection_id,
+                        "dropped outbound payload for full websocket queue in guild fanout"
+                    );
                     slow_connections.push(*connection_id);
                     stale_connections.push(*connection_id);
                 }
@@ -154,10 +179,6 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_oversized_outbound_payload_before_scan() {
-        if let Ok(mut counters) = metrics_state().gateway_events_dropped.lock() {
-            counters.clear();
-        }
-
         let connection_id = Uuid::new_v4();
         let (sender, mut receiver) = mpsc::channel::<String>(1);
         let mut subscriptions: HashMap<String, HashMap<Uuid, mpsc::Sender<String>>> =
@@ -167,13 +188,25 @@ mod tests {
             )]);
         let mut slow_connections = Vec::new();
         let payload = "payload";
+        let event_type = "message_create_oversized_reason_test";
+        let key = (
+            String::from("guild"),
+            String::from(event_type),
+            String::from("oversized_outbound"),
+        );
+        let before = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .ok()
+            .and_then(|dropped| dropped.get(&key).copied())
+            .unwrap_or(0);
 
         let delivered = dispatch_guild_payload(
             &mut subscriptions,
             "g-1",
             payload,
             payload.len() - 1,
-            "message_create",
+            event_type,
             &mut slow_connections,
         );
 
@@ -189,11 +222,69 @@ mod tests {
             .gateway_events_dropped
             .lock()
             .expect("gateway dropped metrics mutex should not be poisoned");
-        let key = (
+        assert_eq!(dropped.get(&key).copied(), Some(before + 1));
+    }
+
+    #[tokio::test]
+    async fn records_closed_and_full_queue_drop_reasons() {
+        let full_id = Uuid::new_v4();
+        let closed_id = Uuid::new_v4();
+        let event_type = "presence_update_reason_test";
+        let closed_key = (
             String::from("guild"),
-            String::from("message_create"),
-            String::from("oversized_outbound"),
+            String::from(event_type),
+            String::from("closed"),
         );
-        assert_eq!(dropped.get(&key).copied(), Some(1));
+        let full_key = (
+            String::from("guild"),
+            String::from(event_type),
+            String::from("full_queue"),
+        );
+        let (closed_before, full_before) = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .ok()
+            .map(|dropped| {
+                (
+                    dropped.get(&closed_key).copied().unwrap_or(0),
+                    dropped.get(&full_key).copied().unwrap_or(0),
+                )
+            })
+            .unwrap_or((0, 0));
+
+        let (full_sender, mut full_receiver) = mpsc::channel::<String>(1);
+        full_sender
+            .try_send(String::from("occupied"))
+            .expect("queue should fill");
+        let (closed_sender, closed_receiver) = mpsc::channel::<String>(1);
+        drop(closed_receiver);
+
+        let mut subscriptions: HashMap<String, HashMap<Uuid, mpsc::Sender<String>>> =
+            HashMap::from([(
+                String::from("g-1:c-1"),
+                HashMap::from([(full_id, full_sender), (closed_id, closed_sender)]),
+            )]);
+        let mut slow_connections = Vec::new();
+
+        let delivered = dispatch_guild_payload(
+            &mut subscriptions,
+            "g-1",
+            "payload",
+            "payload".len(),
+            event_type,
+            &mut slow_connections,
+        );
+
+        assert_eq!(delivered, 0);
+        assert_eq!(slow_connections, vec![full_id]);
+        assert!(subscriptions.is_empty());
+        assert_eq!(full_receiver.recv().await.as_deref(), Some("occupied"));
+
+        let dropped = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .expect("gateway dropped metrics mutex should not be poisoned");
+        assert_eq!(dropped.get(&closed_key).copied(), Some(closed_before + 1));
+        assert_eq!(dropped.get(&full_key).copied(), Some(full_before + 1));
     }
 }
