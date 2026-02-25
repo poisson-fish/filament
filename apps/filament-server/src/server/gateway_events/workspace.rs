@@ -389,13 +389,13 @@ pub(crate) fn try_workspace_role_update(
     )
 }
 
-pub(crate) fn workspace_role_delete(
+pub(crate) fn try_workspace_role_delete(
     guild_id: &str,
     role_id: &str,
     deleted_at_unix: i64,
     actor_user_id: Option<UserId>,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         WORKSPACE_ROLE_DELETE_EVENT,
         WorkspaceRoleDeletePayload {
             guild_id: guild_id.to_owned(),
@@ -636,6 +636,16 @@ mod tests {
                 .expect("workspace_role_update should serialize"),
         );
         assert!(payload["updated_fields"]["color_hex"].is_null());
+    }
+
+    #[test]
+    fn workspace_role_delete_event_emits_role_and_timestamp() {
+        let payload = parse_payload(
+            &try_workspace_role_delete("guild-1", "role-1", 77, None)
+                .expect("workspace_role_delete should serialize"),
+        );
+        assert_eq!(payload["role_id"], Value::from("role-1"));
+        assert_eq!(payload["deleted_at_unix"], Value::from(77));
     }
 
     #[test]

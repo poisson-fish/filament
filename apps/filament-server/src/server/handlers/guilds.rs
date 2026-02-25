@@ -1855,12 +1855,27 @@ pub(crate) async fn delete_guild_role(
     )
     .await?;
 
-    let event = gateway_events::workspace_role_delete(
+    let event = match gateway_events::try_workspace_role_delete(
         &path.guild_id,
         &role_id,
         now_unix(),
         Some(auth.user_id),
-    );
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.workspace_role_delete.serialize_failed",
+                event_type = gateway_events::WORKSPACE_ROLE_DELETE_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::WORKSPACE_ROLE_DELETE_EVENT,
+                "serialize_error",
+            );
+            return Ok(Json(ModerationResponse { accepted: true }));
+        }
+    };
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(
