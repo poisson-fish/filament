@@ -179,13 +179,13 @@ pub(crate) fn try_presence_update(
     )
 }
 
-pub(crate) fn voice_participant_sync(
+pub(crate) fn try_voice_participant_sync(
     guild_id: &str,
     channel_id: &str,
     participants: Vec<VoiceParticipantSnapshot>,
     synced_at_unix: i64,
-) -> GatewayEvent {
-    build_event(
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
         VOICE_PARTICIPANT_SYNC_EVENT,
         VoiceParticipantSyncPayload {
             guild_id: guild_id.to_owned(),
@@ -195,6 +195,20 @@ pub(crate) fn voice_participant_sync(
                 .map(VoiceParticipantPayload::from)
                 .collect(),
             synced_at_unix,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn voice_participant_sync(
+    guild_id: &str,
+    channel_id: &str,
+    participants: Vec<VoiceParticipantSnapshot>,
+    synced_at_unix: i64,
+) -> GatewayEvent {
+    try_voice_participant_sync(guild_id, channel_id, participants, synced_at_unix).unwrap_or_else(
+        |error| {
+            panic!("failed to build outbound gateway event {VOICE_PARTICIPANT_SYNC_EVENT}: {error}")
         },
     )
 }

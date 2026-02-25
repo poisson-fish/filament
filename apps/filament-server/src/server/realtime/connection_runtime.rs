@@ -36,7 +36,7 @@ use super::{
     voice_registration::apply_voice_registration_transition,
     voice_registration_events::plan_voice_registration_events,
     voice_registry::update_channel_user_voice_participant_audio_state,
-    voice_subscribe_sync::build_voice_subscribe_sync_event,
+    voice_subscribe_sync::try_build_voice_subscribe_sync_event,
     voice_sync_dispatch::dispatch_voice_sync_event,
 };
 
@@ -234,8 +234,29 @@ pub(crate) async fn handle_voice_subscribe(
         collect_voice_snapshots(&voice, &key)
     };
 
-    let sync_event =
-        build_voice_subscribe_sync_event(guild_id, channel_id, participants, now_unix());
+    let sync_event = match try_build_voice_subscribe_sync_event(
+        guild_id,
+        channel_id,
+        participants,
+        now_unix(),
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.voice_subscribe.serialize_failed",
+                guild_id,
+                channel_id,
+                event_type = gateway_events::VOICE_PARTICIPANT_SYNC_EVENT,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "connection",
+                gateway_events::VOICE_PARTICIPANT_SYNC_EVENT,
+                "serialize_error",
+            );
+            return;
+        }
+    };
     dispatch_voice_sync_event(outbound_tx, sync_event);
 }
 

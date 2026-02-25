@@ -1,19 +1,19 @@
 use crate::server::gateway_events::{self, GatewayEvent, VoiceParticipantSnapshot};
 
-pub(crate) fn build_voice_subscribe_sync_event(
+pub(crate) fn try_build_voice_subscribe_sync_event(
     guild_id: &str,
     channel_id: &str,
     participants: Vec<VoiceParticipantSnapshot>,
     now_unix: i64,
-) -> GatewayEvent {
-    gateway_events::voice_participant_sync(guild_id, channel_id, participants, now_unix)
+) -> anyhow::Result<GatewayEvent> {
+    gateway_events::try_voice_participant_sync(guild_id, channel_id, participants, now_unix)
 }
 
 #[cfg(test)]
 mod tests {
     use filament_core::UserId;
 
-    use super::build_voice_subscribe_sync_event;
+    use super::try_build_voice_subscribe_sync_event;
     use crate::server::gateway_events::VoiceParticipantSnapshot;
 
     #[test]
@@ -30,7 +30,8 @@ mod tests {
             is_screen_share_enabled: false,
         };
 
-        let event = build_voice_subscribe_sync_event("g1", "c1", vec![participant], 123);
+        let event = try_build_voice_subscribe_sync_event("g1", "c1", vec![participant], 123)
+            .expect("voice sync event should serialize");
 
         assert_eq!(event.event_type, "voice_participant_sync");
         assert!(event.payload.contains("\"guild_id\":\"g1\""));
@@ -41,7 +42,8 @@ mod tests {
 
     #[test]
     fn supports_empty_participant_snapshot() {
-        let event = build_voice_subscribe_sync_event("g1", "c1", Vec::new(), 456);
+        let event = try_build_voice_subscribe_sync_event("g1", "c1", Vec::new(), 456)
+            .expect("voice sync event should serialize");
 
         assert_eq!(event.event_type, "voice_participant_sync");
         assert!(event.payload.contains("\"participants\":[]"));
