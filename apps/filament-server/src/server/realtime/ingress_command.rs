@@ -72,7 +72,16 @@ pub(crate) struct GatewayMessageCreateCommand {
     pub(crate) guild_id: GatewayGuildId,
     pub(crate) channel_id: GatewayChannelId,
     pub(crate) content: String,
-    pub(crate) attachment_ids: Option<Vec<String>>,
+    pub(crate) attachment_ids: GatewayAttachmentIds,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatewayAttachmentIds(Vec<String>);
+
+impl GatewayAttachmentIds {
+    pub(crate) fn into_vec(self) -> Vec<String> {
+        self.0
+    }
 }
 
 impl TryFrom<GatewayMessageCreate> for GatewayMessageCreateCommand {
@@ -83,7 +92,7 @@ impl TryFrom<GatewayMessageCreate> for GatewayMessageCreateCommand {
             guild_id: GatewayGuildId::try_from(value.guild_id)?,
             channel_id: GatewayChannelId::try_from(value.channel_id)?,
             content: value.content,
-            attachment_ids: value.attachment_ids,
+            attachment_ids: GatewayAttachmentIds(value.attachment_ids.unwrap_or_default()),
         })
     }
 }
@@ -187,10 +196,7 @@ mod tests {
                 assert_eq!(request.guild_id.as_str(), "01JYQ4V2YQ8B4FW9P51TE5Z1JK");
                 assert_eq!(request.channel_id.as_str(), "01JYQ4V3E2BTRWCHKRHV9K8HXT");
                 assert_eq!(request.content, "hello");
-                assert_eq!(
-                    request.attachment_ids.as_deref(),
-                    Some(&[String::from("a1")][..])
-                );
+                assert_eq!(request.attachment_ids.into_vec(), vec![String::from("a1")]);
             }
             GatewayIngressCommand::Subscribe(_) => {
                 panic!("expected message_create command");
@@ -232,6 +238,28 @@ mod tests {
             GatewayIngressCommandParseError::InvalidMessageCreatePayload
         ));
         assert_eq!(error.disconnect_reason(), "invalid_message_create_payload");
+    }
+
+    #[test]
+    fn parses_message_create_without_attachment_ids_as_empty_vec() {
+        let command = parse_gateway_ingress_command(envelope(
+            "message_create",
+            json!({
+                "guild_id": "01JYQ4V2YQ8B4FW9P51TE5Z1JK",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT",
+                "content": "hello"
+            }),
+        ))
+        .expect("message_create payload should parse");
+
+        match command {
+            GatewayIngressCommand::MessageCreate(request) => {
+                assert!(request.attachment_ids.into_vec().is_empty());
+            }
+            GatewayIngressCommand::Subscribe(_) => {
+                panic!("expected message_create command");
+            }
+        }
     }
 
     #[test]
