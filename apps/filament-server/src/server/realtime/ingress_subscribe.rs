@@ -8,7 +8,7 @@ use super::{
     subscribe_ack::{try_enqueue_subscribed_event, SubscribeAckEnqueueResult},
 };
 use crate::server::{
-    auth::{channel_key, ClientIp},
+    auth::ClientIp,
     core::AppState,
     domain::{enforce_guild_ip_ban_for_request, user_can_write_channel},
     gateway_events,
@@ -23,8 +23,13 @@ pub(crate) async fn execute_subscribe_command(
     subscribe: GatewaySubscribeCommand,
     outbound_tx: &mpsc::Sender<String>,
 ) -> Result<(), &'static str> {
-    let guild_id = subscribe.guild_id.as_str();
-    let channel_id = subscribe.channel_id.as_str();
+    let GatewaySubscribeCommand {
+        guild_id,
+        channel_id,
+        subscription_key,
+    } = subscribe;
+    let guild_id = guild_id.as_str();
+    let channel_id = channel_id.as_str();
 
     if enforce_guild_ip_ban_for_request(state, guild_id, user_id, client_ip, "gateway.subscribe")
         .await
@@ -39,7 +44,7 @@ pub(crate) async fn execute_subscribe_command(
     add_subscription(
         state,
         connection_id,
-        channel_key(guild_id, channel_id),
+        subscription_key.into_string(),
         outbound_tx.clone(),
     )
     .await;

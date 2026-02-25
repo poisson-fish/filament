@@ -71,15 +71,32 @@ impl TryFrom<String> for GatewayChannelId {
 pub(crate) struct GatewaySubscribeCommand {
     pub(crate) guild_id: GatewayGuildId,
     pub(crate) channel_id: GatewayChannelId,
+    pub(crate) subscription_key: GatewaySubscriptionKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatewaySubscriptionKey(String);
+
+impl GatewaySubscriptionKey {
+    pub(crate) fn into_string(self) -> String {
+        self.0
+    }
 }
 
 impl TryFrom<GatewaySubscribeDto> for GatewaySubscribeCommand {
     type Error = ();
 
     fn try_from(value: GatewaySubscribeDto) -> Result<Self, Self::Error> {
+        let guild_id = GatewayGuildId::try_from(value.guild_id)?;
+        let channel_id = GatewayChannelId::try_from(value.channel_id)?;
         Ok(Self {
-            guild_id: GatewayGuildId::try_from(value.guild_id)?,
-            channel_id: GatewayChannelId::try_from(value.channel_id)?,
+            subscription_key: GatewaySubscriptionKey(format!(
+                "{}:{}",
+                guild_id.as_str(),
+                channel_id.as_str()
+            )),
+            guild_id,
+            channel_id,
         })
     }
 }
@@ -229,6 +246,10 @@ mod tests {
             GatewayIngressCommand::Subscribe(subscribe) => {
                 assert_eq!(subscribe.guild_id.as_str(), "01JYQ4V2YQ8B4FW9P51TE5Z1JK");
                 assert_eq!(subscribe.channel_id.as_str(), "01JYQ4V3E2BTRWCHKRHV9K8HXT");
+                assert_eq!(
+                    subscribe.subscription_key.into_string(),
+                    "01JYQ4V2YQ8B4FW9P51TE5Z1JK:01JYQ4V3E2BTRWCHKRHV9K8HXT"
+                );
             }
             GatewayIngressCommand::MessageCreate(_) => {
                 panic!("expected subscribe command");
