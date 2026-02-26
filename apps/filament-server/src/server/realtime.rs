@@ -33,7 +33,6 @@ mod subscription_insert;
 mod voice_cleanup_dispatch;
 mod voice_cleanup_registry;
 mod voice_registration_events;
-mod voice_subscribe_sync;
 mod voice_sync_dispatch;
 use std::{
     collections::{HashSet, VecDeque},
