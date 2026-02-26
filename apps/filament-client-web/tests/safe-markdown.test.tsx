@@ -45,7 +45,7 @@ describe("safe markdown", () => {
     expect(safeLink).toHaveAttribute("target", "_blank");
     expect(safeLink).toHaveAttribute("rel", "noopener noreferrer");
     const mailLink = screen.getByRole("link", { name: "mail" });
-    expect(mailLink).toHaveAttribute("href", "MAILTO:admin@filament.test");
+    expect(mailLink).toHaveAttribute("href", "mailto:admin@filament.test");
     expect(screen.queryByRole("link", { name: "pwnd" })).toBeNull();
     expect(screen.queryByRole("link", { name: "data" })).toBeNull();
     expect(screen.queryByRole("link", { name: "mixed-case-js" })).toBeNull();
@@ -75,7 +75,7 @@ describe("safe markdown", () => {
     expect(screen.queryByRole("dialog", { name: "External link confirmation" })).toBeNull();
   });
 
-  it("allows trusting a host to bypass future confirmations", () => {
+  it("requires confirmation for every activation and never bypasses future prompts", () => {
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     renderMarkdown([
       { type: "link_start", href: "https://filament.test/docs" },
@@ -84,17 +84,51 @@ describe("safe markdown", () => {
     ]);
 
     fireEvent.click(screen.getByRole("link", { name: "docs" }));
-    fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: "Visit Site" }));
     openSpy.mockClear();
 
     fireEvent.click(screen.getByRole("link", { name: "docs" }));
-    expect(screen.queryByRole("dialog", { name: "External link confirmation" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "External link confirmation" })).toBeInTheDocument();
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it("normalizes destinations before confirmation/open and rejects credentialed links", () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    renderMarkdown([
+      { type: "link_start", href: "HTTPS://Filament.test:443/Docs" },
+      { type: "text", text: "normalized" },
+      { type: "link_end" },
+      { type: "text", text: " " },
+      { type: "link_start", href: "https://user:pass@filament.test/private" },
+      { type: "text", text: "credentialed" },
+      { type: "link_end" },
+    ]);
+
+    fireEvent.click(screen.getByRole("link", { name: "normalized" }));
+    expect(screen.getByText("https://filament.test/Docs")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Visit Site" }));
     expect(openSpy).toHaveBeenCalledWith(
-      "https://filament.test/docs",
+      "https://filament.test/Docs",
       "_blank",
       "noopener,noreferrer",
     );
+    expect(screen.queryByRole("link", { name: "credentialed" })).toBeNull();
+  });
+
+  it("routes auxiliary-clicked links through confirmation instead of direct browser navigation", () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    renderMarkdown([
+      { type: "link_start", href: "https://filament.test/docs" },
+      { type: "text", text: "docs" },
+      { type: "link_end" },
+    ]);
+
+    fireEvent(
+      screen.getByRole("link", { name: "docs" }),
+      new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
+    );
+    expect(screen.getByRole("dialog", { name: "External link confirmation" })).toBeInTheDocument();
+    expect(openSpy).not.toHaveBeenCalled();
   });
 
   it("treats raw html as inert text and never emits script nodes", () => {

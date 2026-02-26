@@ -36,22 +36,19 @@ interface ExternalLinkConfirmState {
 }
 
 const markdownHighlighter = createFilamentMarkdownHighlighter();
-const TRUSTED_EXTERNAL_LINK_HOSTS_STORAGE_KEY = "filament.trusted_external_link_hosts";
 
 export function SafeMarkdown(props: SafeMarkdownProps) {
   const [pendingExternalLink, setPendingExternalLink] =
     createSignal<ExternalLinkConfirmState | null>(null);
-  const [trustHostForFuture, setTrustHostForFuture] = createSignal(false);
   const nodes = renderTokens(props.tokens, (event, href) => {
     event.preventDefault();
-    if (isTrustedExternalLink(href)) {
-      openExternalLink(href);
+    const parsedHref = normalizeExternalUrl(href);
+    if (!parsedHref) {
       return;
     }
-    setTrustHostForFuture(false);
     setPendingExternalLink({
-      url: href,
-      host: externalLinkHost(href),
+      url: parsedHref.toString(),
+      host: parsedHref.host || null,
     });
   });
 
@@ -79,16 +76,9 @@ export function SafeMarkdown(props: SafeMarkdownProps) {
                   {state.url}
                 </pre>
                 <Show when={state.host}>
-                  {(hostAccessor) => (
-                    <label class="mt-[0.92rem] flex cursor-pointer items-center gap-[0.62rem] text-[1.02rem] text-ink-1">
-                      <input
-                        type="checkbox"
-                        checked={trustHostForFuture()}
-                        onInput={(event) => setTrustHostForFuture(event.currentTarget.checked)}
-                      />
-                      <span>Trust {hostAccessor()} links from now on</span>
-                    </label>
-                  )}
+                  <p class="m-[0.65rem_0_0_0] text-[0.95rem] text-ink-2">
+                    Destination host: {state.host}
+                  </p>
                 </Show>
                 <div class="mt-[1rem] grid grid-cols-2 gap-[0.65rem] max-[620px]:grid-cols-1">
                   <button
@@ -102,9 +92,6 @@ export function SafeMarkdown(props: SafeMarkdownProps) {
                     type="button"
                     class="rounded-[0.72rem] border border-brand bg-brand px-[0.92rem] py-[0.7rem] text-[1.02rem] font-[700] text-white transition-colors hover:bg-brand-strong"
                     onClick={() => {
-                      if (trustHostForFuture()) {
-                        addTrustedExternalLinkHost(state.url);
-                      }
                       openExternalLink(state.url);
                       setPendingExternalLink(null);
                     }}
@@ -378,6 +365,9 @@ function containerToElement(
       href={node.href}
       target="_blank"
       rel="noopener noreferrer"
+      onAuxClick={(event) => onOpenExternalLink(event, node.href!)}
+      onContextMenu={(event) => event.preventDefault()}
+      onDragStart={(event) => event.preventDefault()}
       onClick={(event) => onOpenExternalLink(event, node.href!)}
     >
       {node.children}
@@ -386,23 +376,7 @@ function containerToElement(
 }
 
 function sanitizeLink(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-  try {
-    const url = new URL(trimmed);
-    if (
-      url.protocol === "https:" ||
-      url.protocol === "http:" ||
-      url.protocol === "mailto:"
-    ) {
-      return trimmed;
-    }
-  } catch {
-    return null;
-  }
-  return null;
+  return normalizeExternalUrl(raw)?.toString() ?? null;
 }
 
 function headingKindFromLevel(level: number): HeadingContainerKind {
@@ -434,55 +408,36 @@ function closeHeadingContainer(closeOne: (kind: ContainerKind) => void): void {
 }
 
 function openExternalLink(url: string): void {
-  window.open(url, "_blank", "noopener,noreferrer");
+  const sanitized = sanitizeLink(url);
+  if (!sanitized) {
+    return;
+  }
+  window.open(sanitized, "_blank", "noopener,noreferrer");
 }
 
-function externalLinkHost(rawUrl: string): string | null {
+function normalizeExternalUrl(rawUrl: string): URL | null {
+  const trimmed = rawUrl.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
   try {
-    return new URL(rawUrl).host || null;
+    const parsed = new URL(trimmed);
+    if (
+      parsed.protocol !== "https:" &&
+      parsed.protocol !== "http:" &&
+      parsed.protocol !== "mailto:"
+    ) {
+      return null;
+    }
+    if (parsed.username.length > 0 || parsed.password.length > 0) {
+      return null;
+    }
+    if ((parsed.protocol === "https:" || parsed.protocol === "http:") && !parsed.hostname) {
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
-}
-
-function trustedExternalLinkHosts(): Set<string> {
-  if (typeof window === "undefined") {
-    return new Set();
-  }
-  const rawHosts = window.localStorage.getItem(TRUSTED_EXTERNAL_LINK_HOSTS_STORAGE_KEY);
-  if (!rawHosts) {
-    return new Set();
-  }
-  try {
-    const parsed = JSON.parse(rawHosts);
-    if (!Array.isArray(parsed)) {
-      return new Set();
-    }
-    return new Set(
-      parsed.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
-    );
-  } catch {
-    return new Set();
-  }
-}
-
-function isTrustedExternalLink(rawUrl: string): boolean {
-  const host = externalLinkHost(rawUrl);
-  if (!host) {
-    return false;
-  }
-  return trustedExternalLinkHosts().has(host);
-}
-
-function addTrustedExternalLinkHost(rawUrl: string): void {
-  const host = externalLinkHost(rawUrl);
-  if (!host || typeof window === "undefined") {
-    return;
-  }
-  const nextHosts = trustedExternalLinkHosts();
-  nextHosts.add(host);
-  window.localStorage.setItem(
-    TRUSTED_EXTERNAL_LINK_HOSTS_STORAGE_KEY,
-    JSON.stringify([...nextHosts]),
-  );
 }
