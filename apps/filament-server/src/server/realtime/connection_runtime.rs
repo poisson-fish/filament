@@ -1,7 +1,8 @@
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, future::Future, time::Instant};
 
 use filament_core::UserId;
 use tokio::sync::{mpsc, watch};
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
 use crate::server::{
@@ -42,6 +43,8 @@ use super::{
         voice_channel_key, voice_sync_reject_reason,
     },
 };
+
+const REALTIME_DISPATCH_TIMEOUT: Duration = Duration::from_millis(200);
 
 fn signal_slow_connections_close(
     controls: &HashMap<Uuid, watch::Sender<ConnectionControl>>,
@@ -140,60 +143,96 @@ async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
     signal_slow_connections_close(&controls, slow_connections);
 }
 
-pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: &GatewayEvent) {
-    let timing_enabled = std::env::var_os("FILAMENT_DEBUG_REQUEST_TIMINGS").is_some();
-    let total_start = Instant::now();
-    let mut slow_connections = Vec::new();
-    let mut subscriptions = state.realtime_registry.subscriptions().write().await;
-    let listener_count_before = subscriptions.get(key).map_or(0, HashMap::len);
-    let dispatch_start = Instant::now();
-    let delivered = dispatch_channel_payload(
-        &mut subscriptions,
-        key,
-        &event.payload,
-        state.runtime.max_gateway_event_bytes,
-        event.event_type,
-        &mut slow_connections,
-    );
-    let dispatch_ms = dispatch_start.elapsed().as_millis();
-    drop(subscriptions);
-
-    let close_start = Instant::now();
-    close_slow_connections(state, slow_connections).await;
-    let close_ms = close_start.elapsed().as_millis();
-    if timing_enabled {
-        tracing::info!(
-            event = "debug.gateway.broadcast_channel_event.timing",
-            key,
-            event_type = event.event_type,
-            listener_count_before,
-            delivered,
-            dispatch_ms,
-            close_slow_connections_ms = close_ms,
-            total_ms = total_start.elapsed().as_millis()
-        );
+async fn with_realtime_dispatch_timeout<T, F>(
+    scope: &'static str,
+    event_type: &'static str,
+    operation: F,
+) -> Option<T>
+where
+    F: Future<Output = T>,
+{
+    match timeout(REALTIME_DISPATCH_TIMEOUT, operation).await {
+        Ok(value) => Some(value),
+        Err(_) => {
+            record_gateway_event_dropped(scope, event_type, "dispatch_timeout");
+            tracing::warn!(
+                event = "gateway.dispatch.timeout",
+                scope,
+                event_type,
+                timeout_ms = REALTIME_DISPATCH_TIMEOUT.as_millis(),
+                "dropping realtime dispatch after timeout to protect request path",
+            );
+            None
+        }
     }
-    emit_gateway_delivery_metrics("channel", event.event_type, delivered);
+}
+
+pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: &GatewayEvent) {
+    let delivered = with_realtime_dispatch_timeout("channel", event.event_type, async {
+        let timing_enabled = std::env::var_os("FILAMENT_DEBUG_REQUEST_TIMINGS").is_some();
+        let total_start = Instant::now();
+        let mut slow_connections = Vec::new();
+        let mut subscriptions = state.realtime_registry.subscriptions().write().await;
+        let listener_count_before = subscriptions.get(key).map_or(0, HashMap::len);
+        let dispatch_start = Instant::now();
+        let delivered = dispatch_channel_payload(
+            &mut subscriptions,
+            key,
+            &event.payload,
+            state.runtime.max_gateway_event_bytes,
+            event.event_type,
+            &mut slow_connections,
+        );
+        let dispatch_ms = dispatch_start.elapsed().as_millis();
+        drop(subscriptions);
+
+        let close_start = Instant::now();
+        close_slow_connections(state, slow_connections).await;
+        let close_ms = close_start.elapsed().as_millis();
+        if timing_enabled {
+            tracing::info!(
+                event = "debug.gateway.broadcast_channel_event.timing",
+                key,
+                event_type = event.event_type,
+                listener_count_before,
+                delivered,
+                dispatch_ms,
+                close_slow_connections_ms = close_ms,
+                total_ms = total_start.elapsed().as_millis()
+            );
+        }
+        delivered
+    })
+    .await;
+    if let Some(delivered) = delivered {
+        emit_gateway_delivery_metrics("channel", event.event_type, delivered);
+    }
 }
 
 pub(crate) async fn broadcast_guild_event(state: &AppState, guild_id: &str, event: &GatewayEvent) {
-    let mut slow_connections = Vec::new();
-    let mut guild_connections = state.realtime_registry.guild_connections().write().await;
-    let mut senders = state.realtime_registry.connection_senders().write().await;
-    let delivered = dispatch_guild_payload(
-        &mut guild_connections,
-        &mut senders,
-        guild_id,
-        &event.payload,
-        state.runtime.max_gateway_event_bytes,
-        event.event_type,
-        &mut slow_connections,
-    );
-    drop(senders);
-    drop(guild_connections);
+    let delivered = with_realtime_dispatch_timeout("guild", event.event_type, async {
+        let mut slow_connections = Vec::new();
+        let mut guild_connections = state.realtime_registry.guild_connections().write().await;
+        let mut senders = state.realtime_registry.connection_senders().write().await;
+        let delivered = dispatch_guild_payload(
+            &mut guild_connections,
+            &mut senders,
+            guild_id,
+            &event.payload,
+            state.runtime.max_gateway_event_bytes,
+            event.event_type,
+            &mut slow_connections,
+        );
+        drop(senders);
+        drop(guild_connections);
 
-    close_slow_connections(state, slow_connections).await;
-    emit_gateway_delivery_metrics("guild", event.event_type, delivered);
+        close_slow_connections(state, slow_connections).await;
+        delivered
+    })
+    .await;
+    if let Some(delivered) = delivered {
+        emit_gateway_delivery_metrics("guild", event.event_type, delivered);
+    }
 }
 
 fn should_skip_user_broadcast(connection_ids: &[Uuid]) -> bool {
@@ -218,20 +257,26 @@ pub(crate) async fn broadcast_user_event(state: &AppState, user_id: UserId, even
         return;
     }
 
-    let mut slow_connections = Vec::new();
-    let mut senders = state.realtime_registry.connection_senders().write().await;
-    let delivered = dispatch_user_payload(
-        &mut senders,
-        &connection_ids,
-        &event.payload,
-        state.runtime.max_gateway_event_bytes,
-        event.event_type,
-        &mut slow_connections,
-    );
-    drop(senders);
+    let delivered = with_realtime_dispatch_timeout("user", event.event_type, async {
+        let mut slow_connections = Vec::new();
+        let mut senders = state.realtime_registry.connection_senders().write().await;
+        let delivered = dispatch_user_payload(
+            &mut senders,
+            &connection_ids,
+            &event.payload,
+            state.runtime.max_gateway_event_bytes,
+            event.event_type,
+            &mut slow_connections,
+        );
+        drop(senders);
 
-    close_slow_connections(state, slow_connections).await;
-    emit_gateway_delivery_metrics("user", event.event_type, delivered);
+        close_slow_connections(state, slow_connections).await;
+        delivered
+    })
+    .await;
+    if let Some(delivered) = delivered {
+        emit_gateway_delivery_metrics("user", event.event_type, delivered);
+    }
 }
 
 async fn prune_expired_voice_participants(state: &AppState, now_unix: i64) {
@@ -573,13 +618,14 @@ mod tests {
     use filament_core::UserId;
     use tokio::sync::mpsc;
     use tokio::sync::watch;
+    use tokio::time::Duration;
     use uuid::Uuid;
 
     use super::{
         emit_gateway_delivery_metrics, guild_id_from_subscription_key,
         insert_connection_subscription, presence_event_scope,
-        remove_connection_from_subscription_indexes, remove_connection_state,
-        should_skip_user_broadcast, signal_slow_connections_close,
+        remove_connection_from_subscription_indexes, remove_connection_state, should_skip_user_broadcast,
+        signal_slow_connections_close, with_realtime_dispatch_timeout, REALTIME_DISPATCH_TIMEOUT,
     };
     use crate::server::{
         core::{
@@ -597,6 +643,23 @@ mod tests {
     #[test]
     fn should_not_skip_user_broadcast_when_targets_exist() {
         assert!(!should_skip_user_broadcast(&[Uuid::new_v4()]));
+    }
+
+    #[tokio::test]
+    async fn realtime_dispatch_timeout_returns_none_for_slow_operation() {
+        let result = with_realtime_dispatch_timeout("channel", "message.create", async {
+            tokio::time::sleep(Duration::from_millis(REALTIME_DISPATCH_TIMEOUT.as_millis() as u64 + 25)).await;
+            1_usize
+        })
+        .await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn realtime_dispatch_timeout_returns_value_for_fast_operation() {
+        let result =
+            with_realtime_dispatch_timeout("channel", "message.create", async { 7_usize }).await;
+        assert_eq!(result, Some(7));
     }
 
     #[test]

@@ -56,6 +56,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - `docker exec infra-reverse-proxy-1 sh -lc "curl -sS -o /dev/null -w 'container POST %{http_code} %{time_total}\n' -X POST http://filament-server:3000/echo -H 'content-type: application/json' -d '{}'"`
   - Key output: domain GET `200 0.073950`, domain POST `422 0.057694`; localhost GET `200 0.001422`, POST `422 0.001399`; container GET `200 0.001171`, POST `422 0.001269`.
   - 2026-02-26 rerun evidence: domain GET `200 0.065735`, domain POST `422 0.082019`; localhost GET `200 0.002709`, POST `422 0.001670`; container GET `200 0.001556`, POST `422 0.001180`.
+  - 2026-02-26 incident rerun (VPS): domain GET `200 0.082565`, domain POST `422 0.058129`; localhost GET `200 0.002738`, POST `422 0.001305`; container GET `200 0.001661`, POST `422 0.001235`.
   - Verdict: `PASS` (no hop exhibited ~10s latency in this baseline probe).
 - [x] **A2 - Confirm Caddy is not imposing hidden POST behavior**
   - Owner: `subagent-caddy-path`
@@ -71,6 +72,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - Config validated by Caddy.
     - POST probe timings stayed near ~60ms, not ~10s.
     - 2026-02-26 rerun: `caddy validate` passed; warning only about unnecessary `header_up X-Forwarded-For`, no timeout directives.
+    - 2026-02-26 incident rerun (VPS): `caddy validate` remained valid; `POST https://filamentapp.net/api/echo` returned `422 0.065485` (no ~10s delay).
   - Verdict: `PASS` (no hidden Caddy timeout behavior observed).
 
 ### B. App Middleware / Router Cross-Cutting
@@ -86,6 +88,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - Body limits are global (`DefaultBodyLimit::max`) plus explicit upload override (`DefaultBodyLimit::disable`) only on upload routes.
     - No POST-specific timeout middleware found.
     - 2026-02-26 rerun confirmed same ordering in `router.rs:509-519`.
+    - 2026-02-26 incident rerun (VPS) reconfirmed same ordering at `router.rs:509-519` (`TimeoutLayer` before `GovernorLayer`, global body limit retained).
   - Verdict: `PASS` (no unexpected POST-only timeout stack divergence found).
 - [x] **B2 - Add temporary per-request timing spans (local branch only)**
   - Owner: `subagent-instrumentation-http`
@@ -98,6 +101,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
       - `join_public_guild` (`apps/filament-server/src/server/handlers/guilds.rs`)
   - Key output:
     - Timing logs are only emitted when `FILAMENT_DEBUG_REQUEST_TIMINGS` is set.
+    - 2026-02-26 incident rerun (VPS): guarded timing hooks still present in `auth.rs` and `handlers/guilds.rs` (`debug.auth.authenticate_with_token.timing`, `debug.guild.join_public_guild.timing`), with no always-on logging path introduced.
   - Verdict: `PASS` (diagnostic coverage added without changing security controls).
 
 ### C. Auth Path (shared by most POST handlers)
@@ -116,6 +120,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - `/auth/me` no-load: `n=30 avg=0.0022s p95=0.002625s max=0.002750s`.
     - `/auth/me` under load: `n=100 avg=0.0062s p95=0.024847s max=0.032059s`.
     - 2026-02-26 rerun: DB execution `0.057 ms`; `/auth/me` sample `n=30 avg=0.017659s p95=0.043189s max=0.077503s`.
+    - 2026-02-26 incident rerun (VPS): DB `Execution Time: 0.070 ms`; `/auth/me` no-load `n=30 avg=0.013536s p95=0.040198s max=0.054252s`; under load (100@20) `avg=0.005914s p95=0.017279s max=0.035535s`.
   - Verdict: `PASS` (`authenticate()` path is far below 100ms and nowhere near 10s timeout budget).
 - [x] **C2 - Validate token/key consistency and failure mode**
   - Owner: `subagent-auth-integrity`
@@ -129,6 +134,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - Responses were immediate `401` in ~1-2ms.
     - No DB wait/lock pressure during probes.
     - 2026-02-26 rerun via domain: no-token `401 0.072816s`, malformed token `401 0.054727s`.
+    - 2026-02-26 incident rerun (VPS): no-token `401 0.066667s`, malformed token `401 0.073194s`, invalid token `401 0.069078s` (all fail-fast, no timeout behavior).
   - Verdict: `PASS` (auth failure mode is fail-fast, not timeout-driven).
 - [x] **C3 - Reproduce and validate auth rate-limit behavior**
   - Owner: `subagent-auth-rate-limit-repro`
@@ -148,7 +154,9 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
       - `ip1: 40x200`
       - `ip2: 20x200, then 20x429`
       - Logs showed `client_ip="172.21.0.1" client_ip_source="forwarded"` at limit time, proving both synthetic IPs collapsed into one bucket.
-  - Verdict: `FAIL` (root-cause indicator confirmed: auth limit keying ignores forwarded client IP in current deployment, collapsing clients into proxy peer bucket).
+    - 2026-02-26 incident rerun (VPS, post-fix behavior): 100-attempt split run produced `203.0.113.10:50x200` and `198.51.100.20:50x200` (no false-positive throttling on first/second attempts); clean-threshold run with fresh IP `203.0.113.77` yielded first `429` at request `61` (`60x200 + 20x429`); alternate IP immediately after stayed `10x200`; logs showed `event="auth.rate_limit"` with `client_ip_source="forwarded"`.
+    - 2026-02-26 direct domain check: `POST https://filamentapp.net/api/auth/login` returned `200` on attempts 1-5.
+  - Verdict: `FAIL -> PASS after remediation` (historical root-cause indicator was confirmed, and current VPS rerun shows forwarded client-IP keying works with expected threshold behavior and no first/second-attempt false positives).
 - [x] **C4 - Audit/fix auth rate-limit keying and counters**
   - Owner: `subagent-auth-rate-limit-correctness`
   - Inspect `auth_route_hits` update/sweep semantics, key construction, and trust model interaction with proxies.
@@ -169,6 +177,11 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - 80-login controlled run after fix: `203.0.113.10 -> 40x200`, `198.51.100.20 -> 20x200 + 20x429` (independent per-IP buckets).
     - Server logs show limiter source switched to `client_ip_source="forwarded"` after fix.
     - 2026-02-26 post-fix rerun (`CF-Connecting-IP` switched 40/40): `ip1:40x200`, `ip2:40x200` with no 429s.
+    - 2026-02-26 incident rerun (VPS): targeted unit tests passed for proxy/header keying and sweep behavior:
+      - `client_ip_uses_cf_connecting_ip_when_peer_proxy_is_trusted`
+      - `client_ip_falls_back_to_xff_when_cf_connecting_ip_is_invalid`
+      - `auth_rate_limit_sweep_prunes_stale_keys`
+      - `rate_limit_sweep_keeps_maps_bounded_under_many_unique_stale_keys`
   - Verdict: `PASS` (root cause fixed).
 
 ### D. Postgres / sqlx Pool / Locking
@@ -184,6 +197,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - During load: consistently `active=1`, `waiting=0`, `total=3`.
     - No blocked chains or long-running application queries observed.
     - 2026-02-26 rerun during 100-login flood: 10 samples all `active=1|waiting=0|total=11`.
+    - 2026-02-26 incident rerun (VPS): 20-sample probe during 120-login flood showed `active` mostly `1` (peak `2`), `wait_event_type='Lock'` `0`, `wait_event_type='LWLock'` `0`, `active>1s` `0`, `total` `5`; blocker-chain query count `0`.
   - Verdict: `PASS` (no evidence of DB saturation or starvation in failure window).
 - [x] **D2 - Check lock contention on hot tables used by POSTs**
   - Owner: `subagent-db-locks`
@@ -197,6 +211,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - No blocking chains found.
     - No waiting lock entries on target tables during probe window.
     - 2026-02-26 rerun: blocker query returned 0 rows; only `pg_locks AccessShareLock` observed.
+    - 2026-02-26 incident rerun (VPS): blocker-chain query returned `0`; lock summary showed only `virtualxid ExclusiveLock` and `relation AccessShareLock` (`granted=true`), no waiting lock contention.
   - Verdict: `PASS`.
 - [ ] **D3 - Check DB-side timeouts and DNS/network latency from app container**
   - Owner: `subagent-db-network`
@@ -215,6 +230,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - `write_audit_log` performs single `INSERT ... execute(pool).await`.
     - Insert benchmark summary: `latency average = 3.555 ms`, `failed transactions = 0`.
     - 2026-02-26 rerun `EXPLAIN (ANALYZE)` insert: execution `2.770 ms` (including FK trigger `1.500 ms`), then cleanup delete succeeded.
+    - 2026-02-26 incident rerun (VPS): insert probe execution `2.545 ms` with FK trigger `1.603 ms`; cleanup delete succeeded.
   - Verdict: `PASS` (audit insert path does not explain 10s timeouts in observed environment).
 - [x] **E2 - Broadcast/fanout backpressure check**
   - Owner: `subagent-realtime-fanout`
@@ -226,6 +242,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Key output:
     - Fanout uses `try_send` with bounded queue.
     - Slow consumers are dropped/closed; no await-on-send in hot path.
+    - 2026-02-26 incident rerun (VPS): `fanout_dispatch.rs` still uses `sender.try_send(...)` with explicit `full_queue`/`closed` drop handling and tests for oversized/closed/full-queue behavior.
   - Verdict: `PASS` (fanout path is non-blocking).
 
 ### F. Runtime Resource Pressure
@@ -239,6 +256,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Key output:
     - Low load, ample free memory, no container CPU/memory throttling.
     - 2026-02-26 rerun: load `2.59/3.02/1.64`, available RAM `~27GB`, `infra-filament-server-1` memory `81.91MiB` (0.26%).
+    - 2026-02-26 incident rerun (VPS): load `0.10/0.77/1.00`, available RAM `~27.5GB`, `infra-filament-server-1` memory `171.1MiB` (0.53%), no container pressure symptoms.
   - Verdict: `PASS` (no resource starvation evidence).
 
 ### G. Build/Deploy Drift
@@ -253,6 +271,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - Initial drift found: runtime env lacked `FILAMENT_TRUSTED_PROXY_CIDRS` pass-through.
     - Fixed by compose change; runtime env now contains trusted CIDRs.
     - 2026-02-26 rerun: compose config includes `FILAMENT_TRUSTED_PROXY_CIDRS=172.20.0.6/32,172.21.0.4/32`; runtime container env matches.
+    - 2026-02-26 incident rerun (VPS): repo HEAD `2808029`; runtime env includes `FILAMENT_TRUSTED_PROXY_CIDRS=172.20.0.6/32,172.21.0.4/32`; running image `infra-filament-server@sha256:bea081d99aa6601b47a8f4aaaa759cc5126d66b666fdf6794a5e91927f13c037`.
   - Verdict: `FAIL -> PASS after remediation` (drift identified and corrected).
 
 ### H. Remediation and Hardening
@@ -268,6 +287,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Security posture:
     - Global timeout unchanged.
     - Rate limits/body limits/auth checks unchanged.
+  - 2026-02-26 incident rerun (VPS): no additional code/config fix required; existing targeted proxy/IP-keying remediation remains active and effective.
   - Verdict: `PASS`.
 - [x] **H2 - Add regression tests and diagnostics coverage**
   - Owner: `subagent-fix-tests`
@@ -280,6 +300,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - `cargo test -p filament-server client_ip_falls_back_to_xff_when_cf_connecting_ip_is_invalid`
   - Diagnostics:
     - Added guarded timing logs (`FILAMENT_DEBUG_REQUEST_TIMINGS`) for auth and directory join phases.
+  - 2026-02-26 incident rerun (VPS): targeted regression tests for trusted-proxy header parsing and auth limiter sweep/keying passed locally.
   - Verdict: `PASS`.
 - [x] **H3 - Validate in staging-like runtime and production**
   - Owner: `subagent-fix-verify`
@@ -290,6 +311,11 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - `POST https://filamentapp.net/api/echo` with `{}` -> `422` ~`0.07s` (fast validation response, no timeout).
     - Repeated `POST /api/auth/login` through domain -> sustained `200` responses, no first/second-try false positive limiter behavior.
     - `POST /api/guilds/{guild_id}/join` returns promptly (observed `404` in `0.108887s` for chosen guild context), not timeout.
+    - 2026-02-26 incident rerun (VPS):
+      - `GET /api/health` -> `200 0.066572s`
+      - `POST /api/echo` -> `422 0.056607s`
+      - `POST /api/auth/login` (5 attempts) -> all `200` (`0.136s-0.157s`)
+      - `POST /api/guilds/01KJCCPY6NJXB34J0VE3FEBC1F/join` -> `200 0.089679s` with `{"outcome":"accepted"}` (no 408).
   - Verdict: `PASS`.
 
 ### I. Regression Follow-Up (2026-02-26)

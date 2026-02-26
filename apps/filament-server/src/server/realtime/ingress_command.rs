@@ -345,7 +345,16 @@ pub(crate) async fn execute_subscribe_command(
         return Err("ip_banned");
     }
     if !user_can_write_channel(state, user_id, guild_id, channel_id).await {
-        return Err("forbidden_channel");
+        tracing::warn!(
+            event = "gateway.subscribe.rejected",
+            connection_id = %connection_id,
+            user_id = %user_id,
+            guild_id,
+            channel_id,
+            reject_reason = "forbidden_channel",
+            "gateway subscribe rejected for unauthorized channel",
+        );
+        return Ok(());
     }
 
     add_subscription(

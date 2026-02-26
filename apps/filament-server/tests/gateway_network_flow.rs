@@ -397,6 +397,80 @@ async fn subscribe_to_channel(
 }
 
 #[tokio::test]
+async fn forbidden_subscribe_does_not_disconnect_gateway_connection() {
+    let app = test_app();
+    let owner = register_and_login_as(&app, "gateway_owner_subscribe", "203.0.113.210").await;
+    let member = register_and_login_as(&app, "gateway_member_subscribe", "203.0.113.211").await;
+    let member_id = user_id_from_me(&app, &member, "203.0.113.211").await;
+
+    let allowed_channel = create_channel_context(&app, &owner, "203.0.113.210").await;
+    add_member(
+        &app,
+        &owner.access_token,
+        "203.0.113.210",
+        &allowed_channel.guild_id,
+        &member_id,
+    )
+    .await;
+    let forbidden_channel = create_channel_context(&app, &owner, "203.0.113.210").await;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener addr should be readable");
+    let server_app = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_app)
+            .await
+            .expect("server should run without errors");
+    });
+
+    let ws_url = format!(
+        "ws://{addr}/gateway/ws?access_token={}",
+        member.access_token
+    );
+    let mut ws_request = ws_url
+        .into_client_request()
+        .expect("websocket request should build");
+    ws_request.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.211"),
+    );
+
+    let (mut socket, _response) = connect_async(ws_request)
+        .await
+        .expect("websocket handshake should succeed");
+    let _ = next_event_of_type(&mut socket, "ready").await;
+
+    socket
+        .send(Message::Text(
+            json!({
+                "v": 1,
+                "t": "subscribe",
+                "d": {
+                    "guild_id": forbidden_channel.guild_id,
+                    "channel_id": forbidden_channel.channel_id,
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("forbidden subscribe should send");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    subscribe_to_channel(&mut socket, &allowed_channel).await;
+
+    socket
+        .close(None)
+        .await
+        .expect("socket close should succeed");
+    server.abort();
+}
+
+#[tokio::test]
 async fn websocket_handshake_and_message_flow_work_over_network() {
     let app = test_app();
 
