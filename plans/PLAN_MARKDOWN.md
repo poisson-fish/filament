@@ -14,6 +14,10 @@ Ship secure markdown rendering in chat message text and user profile surfaces, w
 
 ## Locked Product Decisions (2026-02-25)
 - Hostile-server model remains strict: no server-side HTML rendering path for markdown, and no client `innerHTML` rendering path.
+- Markdown surface is a strict safe subset for pre-deploy:
+  - allowed: paragraphs, emphasis/strong, lists, line breaks, inline code, fenced code, sanitized links
+  - disallowed: image rendering (`![...]()`), HTML blocks/inline HTML, iframes/media embeds, any URL-driven inline media
+  - image/media embeds are deferred to the dedicated embeds system
 - Banner uploads allow animated GIF in v1 (alongside existing image formats).
 - Profile about markdown cap remains `2048` characters.
 - Markdown scope should expand as far as safely possible this sprint, including fenced code blocks with language labels from triple-backtick syntax.
@@ -37,6 +41,7 @@ Ship secure markdown rendering in chat message text and user profile surfaces, w
 
 ## Non-Goals
 - No raw HTML rendering path for markdown.
+- No markdown image/media embedding path in messages or profiles.
 - No custom crypto or token format changes.
 - No federation/E2EE work.
 - No relaxation of existing request limits, WS limits, or rate limiting.
@@ -53,6 +58,7 @@ Ship secure markdown rendering in chat message text and user profile surfaces, w
 ## Locked Security Constraints
 - Markdown rendering stays token-driven (`MarkdownToken[]`) with no `innerHTML` or HTML passthrough.
 - Server does not render markdown to HTML for transport; API returns markdown tokens only.
+- Markdown image/media tokens must fail closed (not rendered) until the embeds system is implemented.
 - Link allowlist remains strict (`http`, `https`, `mailto`) with explicit sanitization on server and client.
 - Uploads remain raw binary with:
   - byte caps
@@ -117,6 +123,7 @@ Lock markdown/profile-banner behavior before implementation.
 - 2026-02-26: Updated `docs/API.md` profile contract to `about_markdown` with `2048` max and documented fenced-code token limits.
 - 2026-02-26: Locked profile about cap at `2048` across web domain parsing + save-path validation + settings UX counter.
 - 2026-02-26: Added web tests for profile about cap enforcement, zero-remaining counter behavior, and local rejection before API call.
+- 2026-02-26: Locked markdown subset for messages/profiles to exclude image/media embedding until the dedicated embeds system lands.
 - 2026-02-26: Remaining Phase 0 items still open: banner media/API contract lock, and highlight dependency decision.
 
 ### Exit Criteria
