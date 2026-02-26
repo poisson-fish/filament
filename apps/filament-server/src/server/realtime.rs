@@ -80,7 +80,6 @@ mod search_query_exec;
 mod search_reconcile;
 mod search_schema;
 mod search_validation;
-mod voice_cleanup_events;
 mod voice_presence;
 mod voice_registration;
 mod voice_registry;
