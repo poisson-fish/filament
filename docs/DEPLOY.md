@@ -239,3 +239,11 @@ curl -fsS http://<filament-host>/metrics > /tmp/filament-metrics-after.txt
 - `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_subscribe_payload"}`
 - `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_message_create_payload"}`
 - `filament_gateway_events_dropped_total{scope="channel",event_type="message_create",reason="oversized_outbound"}`
+
+5. Run the repo verifier script (fails non-zero if any required counter delta is not positive):
+
+```bash
+infra/scripts/verify_gateway_telemetry.sh \
+  /tmp/filament-metrics-before.txt \
+  /tmp/filament-metrics-after.txt
+```

@@ -460,6 +460,8 @@ All events use the versioned envelope:
     - `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_subscribe_payload"}`
     - `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_message_create_payload"}`
     - `filament_gateway_events_dropped_total{scope="channel",event_type="message_create",reason="oversized_outbound"}`
+  - validate before/after snapshots with:
+    - `infra/scripts/verify_gateway_telemetry.sh /tmp/filament-metrics-before.txt /tmp/filament-metrics-after.txt`
 - Roll out web/desktop clients gradually and confirm critical realtime paths:
   - message create/update/delete
   - workspace rename/visibility update

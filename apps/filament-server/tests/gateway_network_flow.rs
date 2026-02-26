@@ -633,6 +633,217 @@ async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() 
 }
 
 #[tokio::test]
+async fn gateway_staging_telemetry_verification_counters_increase_with_controlled_traffic() {
+    let app = test_app_with_max_gateway_event_bytes(200);
+    let metrics_before = metrics_text(&app).await;
+    let unknown_before = ingress_unknown_counter(&metrics_before, "unknown_ingress_event");
+    let invalid_envelope_before =
+        ingress_parse_rejected_counter(&metrics_before, "invalid_envelope");
+    let invalid_subscribe_before =
+        ingress_parse_rejected_counter(&metrics_before, "invalid_subscribe_payload");
+    let invalid_message_create_before =
+        ingress_parse_rejected_counter(&metrics_before, "invalid_message_create_payload");
+    let oversized_before =
+        dropped_channel_counter(&metrics_before, "message_create", "oversized_outbound");
+
+    let auth = register_and_login(&app, "198.51.100.201").await;
+    let channel = create_channel_context(&app, &auth, "198.51.100.201").await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener.local_addr().expect("listener should expose addr");
+    let app_clone = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app_clone.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("server should run");
+    });
+
+    let ws_url = format!("ws://{addr}/gateway/ws?access_token={}", auth.access_token);
+
+    let mut malformed_request = ws_url
+        .as_str()
+        .into_client_request()
+        .expect("malformed ws request should build");
+    malformed_request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.201".parse().expect("valid ip header"),
+    );
+    let (mut malformed_socket, _) = connect_async(malformed_request)
+        .await
+        .expect("ws should connect");
+    let _ = next_event_of_type(&mut malformed_socket, "ready").await;
+    malformed_socket
+        .send(Message::Text(String::from("not-json").into()))
+        .await
+        .expect("invalid envelope should send");
+    let _ = tokio::time::timeout(Duration::from_secs(1), malformed_socket.next()).await;
+
+    let mut unknown_request = ws_url
+        .as_str()
+        .into_client_request()
+        .expect("unknown ws request should build");
+    unknown_request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.201".parse().expect("valid ip header"),
+    );
+    let (mut unknown_socket, _) = connect_async(unknown_request)
+        .await
+        .expect("ws should connect");
+    let _ = next_event_of_type(&mut unknown_socket, "ready").await;
+    unknown_socket
+        .send(Message::Text(
+            json!({
+                "v": 1,
+                "t": "unknown_ingress_event",
+                "d": {}
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("unknown event should send");
+    let _ = tokio::time::timeout(Duration::from_secs(1), unknown_socket.next()).await;
+
+    let mut invalid_subscribe_request = ws_url
+        .as_str()
+        .into_client_request()
+        .expect("invalid subscribe ws request should build");
+    invalid_subscribe_request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.201".parse().expect("valid ip header"),
+    );
+    let (mut invalid_subscribe_socket, _) = connect_async(invalid_subscribe_request)
+        .await
+        .expect("ws should connect");
+    let _ = next_event_of_type(&mut invalid_subscribe_socket, "ready").await;
+    invalid_subscribe_socket
+        .send(Message::Text(
+            json!({
+                "v": 1,
+                "t": "subscribe",
+                "d": {
+                    "guild_id": "not-a-ulid",
+                    "channel_id": channel.channel_id
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("invalid subscribe payload should send");
+    let _ = tokio::time::timeout(Duration::from_secs(1), invalid_subscribe_socket.next()).await;
+
+    let mut invalid_message_create_request = ws_url
+        .as_str()
+        .into_client_request()
+        .expect("invalid message_create ws request should build");
+    invalid_message_create_request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.201".parse().expect("valid ip header"),
+    );
+    let (mut invalid_message_create_socket, _) = connect_async(invalid_message_create_request)
+        .await
+        .expect("ws should connect");
+    let _ = next_event_of_type(&mut invalid_message_create_socket, "ready").await;
+    invalid_message_create_socket
+        .send(Message::Text(
+            json!({
+                "v": 1,
+                "t": "message_create",
+                "d": {
+                    "guild_id": "not-a-ulid",
+                    "channel_id": channel.channel_id,
+                    "content": "hello"
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("invalid message_create payload should send");
+    let _ =
+        tokio::time::timeout(Duration::from_secs(1), invalid_message_create_socket.next()).await;
+
+    let mut oversized_request = ws_url
+        .as_str()
+        .into_client_request()
+        .expect("oversized ws request should build");
+    oversized_request.headers_mut().insert(
+        "x-forwarded-for",
+        "198.51.100.201".parse().expect("valid ip header"),
+    );
+    let (mut oversized_socket, _) = connect_async(oversized_request)
+        .await
+        .expect("ws should connect");
+    let _ = next_event_of_type(&mut oversized_socket, "ready").await;
+    subscribe_to_channel(&mut oversized_socket, &channel).await;
+
+    let create_message = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "198.51.100.201")
+        .body(Body::from(json!({"content":"x".repeat(180)}).to_string()))
+        .expect("create message request should build");
+    let create_message_response = app
+        .clone()
+        .oneshot(create_message)
+        .await
+        .expect("create message request should execute");
+    assert_eq!(create_message_response.status(), StatusCode::OK);
+    let maybe_message_create = maybe_next_event_of_type(
+        &mut oversized_socket,
+        "message_create",
+        Duration::from_millis(300),
+    )
+    .await;
+    assert!(
+        maybe_message_create.is_none(),
+        "oversized outbound message_create should be dropped before fanout",
+    );
+
+    let metrics_after = metrics_text(&app).await;
+    assert!(
+        ingress_unknown_counter(&metrics_after, "unknown_ingress_event") > unknown_before,
+        "unknown ingress event counter should increment",
+    );
+    assert!(
+        ingress_parse_rejected_counter(&metrics_after, "invalid_envelope")
+            > invalid_envelope_before,
+        "invalid_envelope parse-rejected counter should increment",
+    );
+    assert!(
+        ingress_parse_rejected_counter(&metrics_after, "invalid_subscribe_payload")
+            > invalid_subscribe_before,
+        "invalid_subscribe_payload parse-rejected counter should increment",
+    );
+    assert!(
+        ingress_parse_rejected_counter(&metrics_after, "invalid_message_create_payload")
+            > invalid_message_create_before,
+        "invalid_message_create_payload parse-rejected counter should increment",
+    );
+    assert!(
+        dropped_channel_counter(&metrics_after, "message_create", "oversized_outbound")
+            > oversized_before,
+        "oversized outbound dropped counter should increment",
+    );
+
+    oversized_socket
+        .close(None)
+        .await
+        .expect("socket close should succeed");
+    server.abort();
+}
+
+#[tokio::test]
 async fn websocket_disconnect_does_not_block_rest_message_create() {
     let app = test_app();
 
