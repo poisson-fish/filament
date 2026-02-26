@@ -11,6 +11,8 @@ const REFRESH_TOKEN = "B".repeat(64);
 const USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+const OWNER_ROLE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
+const MEMBER_ROLE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB2";
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -162,6 +164,7 @@ function createSettingsFixtureFetch(options?: {
           { type: "paragraph_end" },
         ],
         avatar_version: 1,
+        banner_version: 0,
       });
     }
     if (method === "GET" && url.endsWith("/guilds")) {
@@ -180,6 +183,37 @@ function createSettingsFixtureFetch(options?: {
     if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/channels`)) {
       return jsonResponse({
         channels: [{ channel_id: CHANNEL_ID, name: "incident-room", kind: "text" }],
+      });
+    }
+    if (method === "GET" && url.endsWith(`/guilds/${GUILD_ID}/roles`)) {
+      return jsonResponse({
+        roles: [
+          {
+            role_id: OWNER_ROLE_ID,
+            name: "owner",
+            position: 0,
+            is_system: true,
+            permissions: [
+              "manage_roles",
+              "manage_workspace_roles",
+              "manage_member_roles",
+              "create_message",
+              "publish_video",
+              "publish_screen_share",
+              "subscribe_streams",
+            ],
+            color_hex: null,
+          },
+          {
+            role_id: MEMBER_ROLE_ID,
+            name: "member",
+            position: 1,
+            is_system: true,
+            permissions: ["create_message", "subscribe_streams"],
+            color_hex: null,
+          },
+        ],
+        default_join_role_id: MEMBER_ROLE_ID,
       });
     }
     if (

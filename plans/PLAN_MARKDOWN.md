@@ -330,7 +330,7 @@ Expose banner and improved about-markdown UX in web client profile surfaces.
 Close security/test/docs gaps and lock rollout criteria.
 
 ### Completion Status
-`IN PROGRESS`
+`DONE`
 
 ### Tasks
 - [x] Add focused markdown safety regression vectors (server + web):
@@ -355,11 +355,11 @@ Close security/test/docs gaps and lock rollout criteria.
   - `cargo-deny.toml` (Rust-side only if touched; expected none for this sprint)
 
 ### Validation Gate
-- [ ] `cargo fmt`
-- [ ] `cargo clippy`
-- [ ] `cargo test`
-- [ ] `pnpm -C apps/filament-client-web run typecheck`
-- [ ] `pnpm -C apps/filament-client-web run test`
+- [x] `cargo fmt`
+- [x] `cargo clippy`
+- [x] `cargo test`
+- [x] `pnpm -C apps/filament-client-web run typecheck`
+- [x] `pnpm -C apps/filament-client-web run test`
 
 ### Exit Criteria
 - Security posture is unchanged or improved, tests are green, and contracts/docs match implementation.
@@ -373,6 +373,10 @@ Close security/test/docs gaps and lock rollout criteria.
   - `docs/API.md` markdown token sanitization notes (case-insensitive scheme checks and obfuscated scheme drop behavior).
   - `docs/GATEWAY_EVENTS.md` `profile_banner_update` client cache-bump handling note.
   - `plans/PLAN_UX.md` progress entry for this hardening slice.
+- 2026-02-26: Completed Phase 4 validation gate and stabilized web regression suite:
+  - ran `cargo fmt`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`,
+  - ran `pnpm -C apps/filament-client-web run typecheck` and `pnpm -C apps/filament-client-web run test`,
+  - updated failing web tests for current overlay sizing contract, profile fixture `banner_version` requirement, and voice-control clamp assertions.
 
 ---
 

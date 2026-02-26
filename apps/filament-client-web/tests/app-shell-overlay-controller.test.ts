@@ -51,7 +51,7 @@ describe("app shell overlay controller", () => {
     expect(overlayPanelTitle("workspace-settings")).toBe("Workspace settings");
     expect(overlayPanelClassName("workspace-create")).toBe("panel-window panel-window-compact");
     expect(overlayPanelClassName("client-settings")).toBe("panel-window panel-window-wide");
-    expect(overlayPanelClassName("workspace-settings")).toBe("panel-window panel-window-medium");
+    expect(overlayPanelClassName("workspace-settings")).toBe("panel-window panel-window-wide");
     expect(overlayPanelClassName("utility")).toBe("panel-window");
   });
 
