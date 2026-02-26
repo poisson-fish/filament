@@ -55,6 +55,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - `docker exec infra-reverse-proxy-1 sh -lc "curl -sS -o /dev/null -w 'container GET %{http_code} %{time_total}\n' http://filament-server:3000/health"`
     - `docker exec infra-reverse-proxy-1 sh -lc "curl -sS -o /dev/null -w 'container POST %{http_code} %{time_total}\n' -X POST http://filament-server:3000/echo -H 'content-type: application/json' -d '{}'"`
   - Key output: domain GET `200 0.073950`, domain POST `422 0.057694`; localhost GET `200 0.001422`, POST `422 0.001399`; container GET `200 0.001171`, POST `422 0.001269`.
+  - 2026-02-26 rerun evidence: domain GET `200 0.065735`, domain POST `422 0.082019`; localhost GET `200 0.002709`, POST `422 0.001670`; container GET `200 0.001556`, POST `422 0.001180`.
   - Verdict: `PASS` (no hop exhibited ~10s latency in this baseline probe).
 - [x] **A2 - Confirm Caddy is not imposing hidden POST behavior**
   - Owner: `subagent-caddy-path`
@@ -69,6 +70,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - No method-specific timeout directives present.
     - Config validated by Caddy.
     - POST probe timings stayed near ~60ms, not ~10s.
+    - 2026-02-26 rerun: `caddy validate` passed; warning only about unnecessary `header_up X-Forwarded-For`, no timeout directives.
   - Verdict: `PASS` (no hidden Caddy timeout behavior observed).
 
 ### B. App Middleware / Router Cross-Cutting
@@ -83,6 +85,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - `TimeoutLayer` present in global `ServiceBuilder` before `GovernorLayer`.
     - Body limits are global (`DefaultBodyLimit::max`) plus explicit upload override (`DefaultBodyLimit::disable`) only on upload routes.
     - No POST-specific timeout middleware found.
+    - 2026-02-26 rerun confirmed same ordering in `router.rs:509-519`.
   - Verdict: `PASS` (no unexpected POST-only timeout stack divergence found).
 - [x] **B2 - Add temporary per-request timing spans (local branch only)**
   - Owner: `subagent-instrumentation-http`
@@ -112,6 +115,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - DB execution time `0.066 ms` for lookup query.
     - `/auth/me` no-load: `n=30 avg=0.0022s p95=0.002625s max=0.002750s`.
     - `/auth/me` under load: `n=100 avg=0.0062s p95=0.024847s max=0.032059s`.
+    - 2026-02-26 rerun: DB execution `0.057 ms`; `/auth/me` sample `n=30 avg=0.017659s p95=0.043189s max=0.077503s`.
   - Verdict: `PASS` (`authenticate()` path is far below 100ms and nowhere near 10s timeout budget).
 - [x] **C2 - Validate token/key consistency and failure mode**
   - Owner: `subagent-auth-integrity`
@@ -124,6 +128,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Key output:
     - Responses were immediate `401` in ~1-2ms.
     - No DB wait/lock pressure during probes.
+    - 2026-02-26 rerun via domain: no-token `401 0.072816s`, malformed token `401 0.054727s`.
   - Verdict: `PASS` (auth failure mode is fail-fast, not timeout-driven).
 - [x] **C3 - Reproduce and validate auth rate-limit behavior**
   - Owner: `subagent-auth-rate-limit-repro`
@@ -139,6 +144,10 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - Requests 1-60 returned `200`; request 61 returned `429 {"error":"rate_limited"}`.
     - Post-limit attempts with different `X-Forwarded-For` still returned `429`.
     - Server logs show `event="auth.rate_limit" ... client_ip="172.21.0.4" client_ip_source="peer"`.
+    - 2026-02-26 clean rerun against local Caddy (`--resolve filamentapp.net:443:127.0.0.1`, `CF-Connecting-IP` switched at request 41):
+      - `ip1: 40x200`
+      - `ip2: 20x200, then 20x429`
+      - Logs showed `client_ip="172.21.0.1" client_ip_source="forwarded"` at limit time, proving both synthetic IPs collapsed into one bucket.
   - Verdict: `FAIL` (root-cause indicator confirmed: auth limit keying ignores forwarded client IP in current deployment, collapsing clients into proxy peer bucket).
 - [x] **C4 - Audit/fix auth rate-limit keying and counters**
   - Owner: `subagent-auth-rate-limit-correctness`
@@ -155,9 +164,11 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - Added `FILAMENT_TRUSTED_PROXY_CIDRS` pass-through to `filament-server` in `infra/docker-compose.yml`.
     - Set trusted proxy CIDRs on host runtime (`infra/.env`, local ops file): `172.20.0.6/32,172.21.0.4/32`.
     - Updated `infra/Caddyfile` to set upstream `X-Forwarded-For`/`X-Real-IP` from `CF-Connecting-IP` for HTTPS API/gateway and `remote_host` on legacy port.
+    - Added trusted-proxy header parsing fix in `apps/filament-server/src/server/auth.rs`: when peer is trusted, parse `CF-Connecting-IP` first, then fallback to `X-Forwarded-For`.
   - Validation:
     - 80-login controlled run after fix: `203.0.113.10 -> 40x200`, `198.51.100.20 -> 20x200 + 20x429` (independent per-IP buckets).
     - Server logs show limiter source switched to `client_ip_source="forwarded"` after fix.
+    - 2026-02-26 post-fix rerun (`CF-Connecting-IP` switched 40/40): `ip1:40x200`, `ip2:40x200` with no 429s.
   - Verdict: `PASS` (root cause fixed).
 
 ### D. Postgres / sqlx Pool / Locking
@@ -172,6 +183,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Key output:
     - During load: consistently `active=1`, `waiting=0`, `total=3`.
     - No blocked chains or long-running application queries observed.
+    - 2026-02-26 rerun during 100-login flood: 10 samples all `active=1|waiting=0|total=11`.
   - Verdict: `PASS` (no evidence of DB saturation or starvation in failure window).
 - [x] **D2 - Check lock contention on hot tables used by POSTs**
   - Owner: `subagent-db-locks`
@@ -184,6 +196,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Key output:
     - No blocking chains found.
     - No waiting lock entries on target tables during probe window.
+    - 2026-02-26 rerun: blocker query returned 0 rows; only `pg_locks AccessShareLock` observed.
   - Verdict: `PASS`.
 - [ ] **D3 - Check DB-side timeouts and DNS/network latency from app container**
   - Owner: `subagent-db-network`
@@ -201,6 +214,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Key output:
     - `write_audit_log` performs single `INSERT ... execute(pool).await`.
     - Insert benchmark summary: `latency average = 3.555 ms`, `failed transactions = 0`.
+    - 2026-02-26 rerun `EXPLAIN (ANALYZE)` insert: execution `2.770 ms` (including FK trigger `1.500 ms`), then cleanup delete succeeded.
   - Verdict: `PASS` (audit insert path does not explain 10s timeouts in observed environment).
 - [x] **E2 - Broadcast/fanout backpressure check**
   - Owner: `subagent-realtime-fanout`
@@ -224,6 +238,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - `uptime`, `free -m`, `df -h`, `docker stats --no-stream`, top CPU process snapshot.
   - Key output:
     - Low load, ample free memory, no container CPU/memory throttling.
+    - 2026-02-26 rerun: load `2.59/3.02/1.64`, available RAM `~27GB`, `infra-filament-server-1` memory `81.91MiB` (0.26%).
   - Verdict: `PASS` (no resource starvation evidence).
 
 ### G. Build/Deploy Drift
@@ -237,6 +252,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Key output:
     - Initial drift found: runtime env lacked `FILAMENT_TRUSTED_PROXY_CIDRS` pass-through.
     - Fixed by compose change; runtime env now contains trusted CIDRs.
+    - 2026-02-26 rerun: compose config includes `FILAMENT_TRUSTED_PROXY_CIDRS=172.20.0.6/32,172.21.0.4/32`; runtime container env matches.
   - Verdict: `FAIL -> PASS after remediation` (drift identified and corrected).
 
 ### H. Remediation and Hardening
@@ -248,6 +264,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
     - `infra/docker-compose.yml`: wire `FILAMENT_TRUSTED_PROXY_CIDRS`.
     - `infra/Caddyfile`: explicit upstream client IP headers (`CF-Connecting-IP` path).
     - Optional diagnostics behind env flag (`FILAMENT_DEBUG_REQUEST_TIMINGS`).
+    - `apps/filament-server/src/server/auth.rs`: trusted-proxy IP extraction now prefers `CF-Connecting-IP` then `X-Forwarded-For`.
   - Security posture:
     - Global timeout unchanged.
     - Rate limits/body limits/auth checks unchanged.
@@ -259,6 +276,8 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Tests executed:
     - `cargo test -p filament-server auth_rate_limit_uses_forwarded_headers_for_trusted_proxy_peers`
     - `cargo test -p filament-server auth_rate_limit_ignores_forwarded_headers_when_proxy_is_untrusted`
+    - `cargo test -p filament-server client_ip_uses_cf_connecting_ip_when_peer_proxy_is_trusted`
+    - `cargo test -p filament-server client_ip_falls_back_to_xff_when_cf_connecting_ip_is_invalid`
   - Diagnostics:
     - Added guarded timing logs (`FILAMENT_DEBUG_REQUEST_TIMINGS`) for auth and directory join phases.
   - Verdict: `PASS`.
@@ -268,10 +287,71 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
   - Success criteria: no 10s timeout pattern; p95 latency within budget; no security regression.
   - Verification run:
     - `GET https://filamentapp.net/api/health` -> `200` ~`0.06s`.
-    - `POST https://filamentapp.net/api/echo` with valid payload -> `200` ~`0.06s`.
+    - `POST https://filamentapp.net/api/echo` with `{}` -> `422` ~`0.07s` (fast validation response, no timeout).
     - Repeated `POST /api/auth/login` through domain -> sustained `200` responses, no first/second-try false positive limiter behavior.
-    - `POST /api/guilds/{guild_id}/join` returns promptly (observed `404` in ~`0.08s` for chosen guild context), not timeout.
+    - `POST /api/guilds/{guild_id}/join` returns promptly (observed `404` in `0.108887s` for chosen guild context), not timeout.
   - Verdict: `PASS`.
+
+### I. Regression Follow-Up (2026-02-26)
+- [x] **I1 - Reproduce new timeout regression on message + voice token routes**
+  - Owner: `subagent-regression-repro`
+  - Hypothesis: a shared post-auth/post-DB path regressed and now hits global 10s timeout for mutating channel/voice flows.
+  - Commands:
+    - `POST /api/guilds/{guild_id}/channels/{channel_id}/messages` with `tester1` token (6 attempts).
+    - `POST /api/guilds/{guild_id}/channels/{channel_id}/voice/token` with `tester1` token (6 attempts).
+    - Control probes (`GET /api/health`, `POST /api/echo`) remained fast.
+  - Key output:
+    - Messages: repeated `408` around `10.06s`.
+    - Voice token: repeated `408` around `10.06s`.
+    - Health/echo remained fast (`~0.08s` class).
+  - Verdict: `FAIL` (regression confirmed).
+
+- [x] **I2 - Determine whether timeout occurs before or after DB write**
+  - Owner: `subagent-regression-boundary`
+  - Hypothesis: requests are timing out after persistence, indicating downstream stall (fanout/search/realtime side effects).
+  - Commands:
+    - Before/after `count(*)` on `messages` for target channel around a timed-out message create.
+    - Before/after `count(*)` on `audit_logs` (`action='media.token.issue'`) around a timed-out voice token issue.
+  - Key output:
+    - Message request returned `408 10.064708`, while DB count increased (`delta=1`) and new message row existed.
+    - Voice token request returned `408 10.068632`, while audit log count increased (`delta=1`) with new `media.token.issue` record.
+  - Verdict: `FAIL` (stall confirmed after DB write boundary).
+
+- [x] **I3 - Cross-check related routes and live runtime symptoms**
+  - Owner: `subagent-regression-scope`
+  - Hypothesis: not all guild/channel routes are broken; regression is path-specific.
+  - Commands:
+    - `GET /api/guilds/{guild}/channels/{channel}/permissions/self`
+    - `GET /api/guilds/{guild}/channels/{channel}/messages?limit=5`
+    - `POST /api/guilds/{guild}/channels/{channel}/voice/state`
+    - `POST /api/guilds/{guild}/channels/{channel}/voice/leave`
+  - Key output:
+    - Permissions/get-messages/voice-state were fast (`200/204` around `~0.06s`).
+    - Voice leave timed out at `408 ~10.06s`.
+  - Verdict: `FAIL` (regression appears concentrated in paths with realtime broadcast side effects).
+
+- [x] **I4 - Apply incident-safe runtime recovery + verify**
+  - Owner: `subagent-regression-recover`
+  - Hypothesis: runtime process state was wedged; recreating `filament-server` should clear transient lock/contention without relaxing controls.
+  - Commands:
+    - `docker compose --profile web --env-file infra/.env -f infra/docker-compose.yml up -d --build filament-server`
+    - Post-recreate timed loops: 12 message posts + 12 voice-token posts.
+  - Key output:
+    - After recreate, message posts were stable `200` (`~0.07s-0.20s`).
+    - After recreate, voice token posts were stable `200` (`~0.06s-0.09s`).
+  - Verdict: `PASS` (symptom cleared, but underlying trigger remains unproven).
+
+- [x] **I5 - Add guarded diagnostics for next recurrence**
+  - Owner: `subagent-regression-instrument`
+  - Hypothesis: recurrence needs phase timing around suspected shared hot path (channel fanout + search enqueue ack).
+  - Changes:
+    - `apps/filament-server/src/server/realtime/connection_runtime.rs`
+      - Added `debug.gateway.broadcast_channel_event.timing` log (behind `FILAMENT_DEBUG_REQUEST_TIMINGS`).
+    - `apps/filament-server/src/server/realtime/search_runtime.rs`
+      - Added `debug.search.enqueue_search_command.timing` log (behind `FILAMENT_DEBUG_REQUEST_TIMINGS`).
+  - Notes:
+    - Existing debug flag wiring in compose currently does not pass `FILAMENT_DEBUG_REQUEST_TIMINGS` to the running service by default in this run.
+  - Verdict: `PASS` (instrumentation added; enable flag on next recurrence to localize blocking segment quickly).
 
 ## Root Cause Decision Tree
 - If POST is slow only through proxy: prioritize A2 fix.
@@ -295,6 +375,7 @@ Identify and fix the shared bottleneck causing POST handlers to exceed the 10s r
 - Caddy did not have access logging enabled in this deployment profile, so request-id correlation across Caddy/server was not available during incident. Enabling JSON access logs with upstream response headers is recommended for future incident forensics.
 - In Cloudflare-fronted mode, forwarding `{header.CF-Connecting-IP}` to upstream is required for accurate client-IP keyed limits; relying on default proxy headers can collapse traffic into peer buckets.
 - `.env` is gitignored in this repo. Runtime changes to `FILAMENT_TRUSTED_PROXY_CIDRS` must be applied operationally on host in addition to tracked compose/Caddy updates.
+- 2026-02-26 regression follow-up showed a transient process-state failure mode: writes succeeded but HTTP request still hit global timeout on message/voice token/voice leave; service recreate cleared symptoms. Keep guarded fanout/search timing instrumentation available for next recurrence.
 
 ## Exit Criteria
 - POST endpoints no longer hit 10s timeout under normal load.

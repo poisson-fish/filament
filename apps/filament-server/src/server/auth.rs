@@ -10,7 +10,7 @@ use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use axum::http::{header::AUTHORIZATION, HeaderMap};
+use axum::http::{header::AUTHORIZATION, HeaderMap, HeaderValue};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use filament_core::{Permission, PermissionSet, UserId};
 use filament_protocol::{Envelope, EventType, PROTOCOL_VERSION};
@@ -656,13 +656,27 @@ pub(crate) fn extract_client_ip(
 }
 
 fn parse_forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    headers
-        .get("x-forwarded-for")
+    parse_header_ip(
+        headers.get("cf-connecting-ip"),
+        MAX_X_FORWARDED_FOR_ENTRY_CHARS,
+    )
+    .or_else(|| {
+        headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| value.len() <= MAX_X_FORWARDED_FOR_HEADER_CHARS)
+            .and_then(|value| value.split(',').next())
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= MAX_X_FORWARDED_FOR_ENTRY_CHARS)
+            .and_then(|value| value.parse::<IpAddr>().ok())
+    })
+}
+
+fn parse_header_ip(value: Option<&HeaderValue>, max_len: usize) -> Option<IpAddr> {
+    value
         .and_then(|value| value.to_str().ok())
-        .filter(|value| value.len() <= MAX_X_FORWARDED_FOR_HEADER_CHARS)
-        .and_then(|value| value.split(',').next())
         .map(str::trim)
-        .filter(|value| !value.is_empty() && value.len() <= MAX_X_FORWARDED_FOR_ENTRY_CHARS)
+        .filter(|value| !value.is_empty() && value.len() <= max_len)
         .and_then(|value| value.parse::<IpAddr>().ok())
 }
 
@@ -815,6 +829,60 @@ mod tests {
                 .expect("peer ip should be present")
                 .to_string(),
             "10.2.0.8"
+        );
+    }
+
+    #[test]
+    fn client_ip_uses_cf_connecting_ip_when_peer_proxy_is_trusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cf-connecting-ip",
+            "198.51.100.77".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.44, 203.0.113.10".parse().expect("valid header"),
+        );
+        let trusted = vec![IpNetwork::try_from(String::from("10.0.0.0/8")).expect("valid cidr")];
+        let resolved = resolve_client_ip(
+            &headers,
+            Some("10.2.0.8".parse().expect("valid ip")),
+            &trusted,
+        );
+        assert_eq!(resolved.source(), ClientIpSource::Forwarded);
+        assert_eq!(
+            resolved
+                .ip()
+                .expect("forwarded ip should be present")
+                .to_string(),
+            "198.51.100.77"
+        );
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_xff_when_cf_connecting_ip_is_invalid() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cf-connecting-ip",
+            "198.51.100.77:443".parse().expect("valid header"),
+        );
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.44, 203.0.113.10".parse().expect("valid header"),
+        );
+        let trusted = vec![IpNetwork::try_from(String::from("10.0.0.0/8")).expect("valid cidr")];
+        let resolved = resolve_client_ip(
+            &headers,
+            Some("10.2.0.8".parse().expect("valid ip")),
+            &trusted,
+        );
+        assert_eq!(resolved.source(), ClientIpSource::Forwarded);
+        assert_eq!(
+            resolved
+                .ip()
+                .expect("forwarded ip should be present")
+                .to_string(),
+            "198.51.100.44"
         );
     }
 

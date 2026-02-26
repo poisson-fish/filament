@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use anyhow::anyhow;
 use tantivy::{
@@ -34,7 +34,10 @@ pub(crate) async fn enqueue_search_command(
     op: SearchOperation,
     wait_for_apply: bool,
 ) -> Result<(), AuthFailure> {
+    let timing_enabled = std::env::var_os("FILAMENT_DEBUG_REQUEST_TIMINGS").is_some();
+    let total_start = Instant::now();
     if wait_for_apply {
+        let send_start = Instant::now();
         let (ack_tx, ack_rx) = oneshot::channel();
         tx.send(SearchCommand {
             op,
@@ -42,11 +45,32 @@ pub(crate) async fn enqueue_search_command(
         })
         .await
         .map_err(|_| AuthFailure::Internal)?;
-        ack_rx.await.map_err(|_| AuthFailure::Internal)?
+        let send_ms = send_start.elapsed().as_millis();
+        let ack_start = Instant::now();
+        let result = ack_rx.await.map_err(|_| AuthFailure::Internal)?;
+        if timing_enabled {
+            tracing::info!(
+                event = "debug.search.enqueue_search_command.timing",
+                wait_for_apply,
+                send_ms,
+                ack_wait_ms = ack_start.elapsed().as_millis(),
+                total_ms = total_start.elapsed().as_millis()
+            );
+        }
+        result
     } else {
-        tx.send(SearchCommand { op, ack: None })
+        let result = tx
+            .send(SearchCommand { op, ack: None })
             .await
-            .map_err(|_| AuthFailure::Internal)
+            .map_err(|_| AuthFailure::Internal);
+        if timing_enabled {
+            tracing::info!(
+                event = "debug.search.enqueue_search_command.timing",
+                wait_for_apply,
+                total_ms = total_start.elapsed().as_millis()
+            );
+        }
+        result
     }
 }
 
@@ -510,13 +534,12 @@ mod tests {
 
     use super::{
         apply_search_batch_with_ack, apply_search_operation, build_search_rebuild_operation,
-        build_search_schema,
-        collect_all_indexed_messages_in_memory, collect_all_indexed_messages_rows,
-        collect_indexed_messages_for_guild_in_memory, collect_indexed_messages_for_guild_rows,
-        drain_search_batch, effective_search_limit, enforce_guild_collect_doc_cap,
-        enqueue_search_command, guild_collect_fetch_limit, indexed_message_from_response,
-        map_collect_all_rows, map_collect_guild_rows, normalize_search_query,
-        validate_search_query_limits, validate_search_query_with_limits,
+        build_search_schema, collect_all_indexed_messages_in_memory,
+        collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_in_memory,
+        collect_indexed_messages_for_guild_rows, drain_search_batch, effective_search_limit,
+        enforce_guild_collect_doc_cap, enqueue_search_command, guild_collect_fetch_limit,
+        indexed_message_from_response, map_collect_all_rows, map_collect_guild_rows,
+        normalize_search_query, validate_search_query_limits, validate_search_query_with_limits,
     };
     use crate::server::{
         core::{

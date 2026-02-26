@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use filament_core::UserId;
 use tokio::sync::{mpsc, watch};
@@ -141,8 +141,12 @@ async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
 }
 
 pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: &GatewayEvent) {
+    let timing_enabled = std::env::var_os("FILAMENT_DEBUG_REQUEST_TIMINGS").is_some();
+    let total_start = Instant::now();
     let mut slow_connections = Vec::new();
     let mut subscriptions = state.realtime_registry.subscriptions().write().await;
+    let listener_count_before = subscriptions.get(key).map_or(0, HashMap::len);
+    let dispatch_start = Instant::now();
     let delivered = dispatch_channel_payload(
         &mut subscriptions,
         key,
@@ -151,9 +155,24 @@ pub(crate) async fn broadcast_channel_event(state: &AppState, key: &str, event: 
         event.event_type,
         &mut slow_connections,
     );
+    let dispatch_ms = dispatch_start.elapsed().as_millis();
     drop(subscriptions);
 
+    let close_start = Instant::now();
     close_slow_connections(state, slow_connections).await;
+    let close_ms = close_start.elapsed().as_millis();
+    if timing_enabled {
+        tracing::info!(
+            event = "debug.gateway.broadcast_channel_event.timing",
+            key,
+            event_type = event.event_type,
+            listener_count_before,
+            delivered,
+            dispatch_ms,
+            close_slow_connections_ms = close_ms,
+            total_ms = total_start.elapsed().as_millis()
+        );
+    }
     emit_gateway_delivery_metrics("channel", event.event_type, delivered);
 }
 
