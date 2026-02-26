@@ -8,7 +8,6 @@ mod hydration_in_memory_attachments;
 mod hydration_merge;
 mod hydration_runtime;
 pub mod livekit_sync;
-mod message_create_response;
 mod message_emit;
 mod message_record;
 mod message_store_in_memory;
@@ -81,10 +80,12 @@ use ingress_command::{
     GatewayMessageContent, IngressCommandParseClassification,
 };
 use message_attachment_bind::bind_message_attachments_in_memory;
-use message_create_response::build_db_created_message_response;
 use message_emit::emit_message_create_and_index;
 use message_prepare::{prepare_message_body, prepare_prevalidated_message_body};
-use message_record::{build_in_memory_message_record, build_message_response_from_record};
+use message_record::{
+    build_db_created_message_response, build_in_memory_message_record,
+    build_message_response_from_record,
+};
 use message_store_in_memory::append_message_record;
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 pub(crate) use search_query_run::run_search_query;
