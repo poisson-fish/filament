@@ -18,6 +18,11 @@ export interface ReadyGatewayDispatchHandlers {
   onSubscribed?: (payload: SubscribedPayload) => void;
 }
 
+export const READY_GATEWAY_DISPATCH_EVENT_TYPES: readonly string[] = [
+  "ready",
+  "subscribed",
+];
+
 function parseReadyPayload(payload: unknown): ReadyPayload | null {
   if (!payload || typeof payload !== "object") {
     return null;

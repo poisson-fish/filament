@@ -84,6 +84,9 @@ jobs:
       - name: Unit and integration tests
         run: cargo test --workspace --all-targets --locked
 
+      - name: Gateway contract parity check (server + docs manifest)
+        run: cargo test -p filament-server gateway_event_manifest_is_aligned_across_server_and_docs -- --exact
+
   web-tests:
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.web == 'true'
@@ -121,6 +124,10 @@ jobs:
 
       - name: Web tests (sharded)
         run: npx vitest run --shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}
+
+      - name: Gateway contract parity check (client manifest)
+        if: matrix.shard_index == 1
+        run: npx vitest run tests/gateway-contract-manifest.test.ts
 
       - name: Operator permission fixture tests
         if: matrix.shard_index == 1

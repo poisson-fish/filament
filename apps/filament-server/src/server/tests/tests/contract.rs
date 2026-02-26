@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use filament_protocol::gateway_event_manifest;
+
 use super::*;
 
 const HTTP_METHODS: [&str; 5] = ["GET", "POST", "PATCH", "PUT", "DELETE"];
@@ -51,6 +53,7 @@ fn parse_documented_routes(api_doc: &str) -> BTreeSet<(String, String)> {
 fn parse_documented_gateway_events(gateway_doc: &str) -> BTreeSet<String> {
     gateway_doc
         .lines()
+        .filter(|line| !line.contains("(planned)"))
         .filter_map(|line| line.strip_prefix("#### `"))
         .filter_map(|line| line.split('`').next())
         .filter(|event| {
@@ -169,19 +172,30 @@ fn api_docs_cover_router_manifest_routes() {
 }
 
 #[test]
-fn gateway_docs_cover_emitted_event_manifest() {
-    let documented = parse_documented_gateway_events(&read_doc("docs/GATEWAY_EVENTS.md"));
-    let mut undocumented = Vec::new();
-    for event in gateway_events::EMITTED_EVENT_TYPES {
-        if !documented.contains(*event) {
-            undocumented.push((*event).to_owned());
-        }
-    }
-
+fn gateway_event_manifest_is_aligned_across_server_and_docs() {
+    let manifest_events: BTreeSet<String> = gateway_event_manifest()
+        .events
+        .iter()
+        .map(|entry| entry.event_type.clone())
+        .collect();
     assert!(
-        undocumented.is_empty(),
-        "events present in emitted manifest but missing in docs/GATEWAY_EVENTS.md: {}",
-        undocumented.join(", ")
+        !manifest_events.is_empty(),
+        "gateway event manifest unexpectedly empty"
+    );
+
+    let emitted_events: BTreeSet<String> = gateway_events::EMITTED_EVENT_TYPES
+        .iter()
+        .map(|event| (*event).to_owned())
+        .collect();
+    assert_eq!(
+        emitted_events, manifest_events,
+        "server emitted event set drifted from protocol gateway event manifest"
+    );
+
+    let documented = parse_documented_gateway_events(&read_doc("docs/GATEWAY_EVENTS.md"));
+    assert_eq!(
+        documented, manifest_events,
+        "docs/GATEWAY_EVENTS.md documented event set drifted from protocol gateway event manifest (planned events excluded)"
     );
 }
 
@@ -246,17 +260,22 @@ fn override_migration_event_set_is_aligned_across_server_docs_and_client_decoder
 
 #[test]
 fn emitted_domain_event_manifest_is_aligned_across_server_docs_and_client() {
+    let manifest_events: BTreeSet<String> = gateway_event_manifest()
+        .events
+        .iter()
+        .map(|entry| entry.event_type.clone())
+        .collect();
     let emitted_events: BTreeSet<String> = gateway_events::EMITTED_EVENT_TYPES
         .iter()
         .map(|event| (*event).to_owned())
         .collect();
-    assert!(
-        !emitted_events.is_empty(),
-        "emitted event set unexpectedly empty"
+    assert_eq!(
+        emitted_events, manifest_events,
+        "server emitted event set drifted from protocol gateway event manifest"
     );
 
     let documented = parse_documented_gateway_events(&read_doc("docs/GATEWAY_EVENTS.md"));
-    let undocumented: Vec<String> = emitted_events
+    let undocumented: Vec<String> = manifest_events
         .iter()
         .filter(|event| !documented.contains(*event))
         .cloned()
@@ -268,7 +287,7 @@ fn emitted_domain_event_manifest_is_aligned_across_server_docs_and_client() {
     );
 
     let client_literals = parse_client_gateway_event_literal_set();
-    let undecodable_by_client: Vec<String> = emitted_events
+    let undecodable_by_client: Vec<String> = manifest_events
         .iter()
         .filter(|event| !client_literals.contains(*event))
         .cloned()

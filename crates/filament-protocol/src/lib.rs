@@ -1,6 +1,13 @@
 #![forbid(unsafe_code)]
 
+mod events;
+
 use serde::{Deserialize, Serialize};
+
+pub use events::{
+    gateway_event_manifest, parse_gateway_event_manifest, GatewayEventLifecycle,
+    GatewayEventManifest, GatewayEventManifestEntry, GatewayEventManifestError, GatewayEventScope,
+};
 
 /// Current gateway envelope version.
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -67,7 +74,7 @@ pub fn parse_envelope(input: &[u8]) -> Result<Envelope<serde_json::Value>, Proto
     Ok(envelope)
 }
 
-fn validate_event_type(value: &str) -> Result<(), ProtocolError> {
+pub(crate) fn validate_event_type(value: &str) -> Result<(), ProtocolError> {
     const MAX_LEN: usize = 64;
 
     if value.is_empty() || value.len() > MAX_LEN {

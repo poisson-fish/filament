@@ -1,6 +1,7 @@
 # Filament Gateway Events
 
 This document is the canonical contract for server-emitted realtime events.
+Machine-readable source of truth: `crates/filament-protocol/src/events/gateway_events_manifest.json`.
 
 ## Envelope
 All events use the versioned envelope:
@@ -17,6 +18,7 @@ All events use the versioned envelope:
 - Clients must ignore unknown event types to support mixed-version rollout.
 - Clients must reject malformed envelopes/payloads.
 - Server must emit additive payload changes only (new optional fields), never breaking required fields.
+- Deprecated events must include an explicit migration note in the protocol manifest before they are emitted.
 
 ## Scope and Visibility Rules
 - Channel-scoped events are delivered only to authenticated connections subscribed to the matching
@@ -274,7 +276,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_role_create` (planned)
+#### `workspace_role_create`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -283,7 +285,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_role_update` (planned)
+#### `workspace_role_update`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -294,7 +296,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_role_delete` (planned)
+#### `workspace_role_delete`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -304,7 +306,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_role_reorder` (planned)
+#### `workspace_role_reorder`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -314,7 +316,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_role_assignment_add` (planned)
+#### `workspace_role_assignment_add`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
@@ -325,7 +327,7 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
-#### `workspace_role_assignment_remove` (planned)
+#### `workspace_role_assignment_remove`
 - Scope: guild
 - Visibility: authorized guild members
 - Minimum payload:
