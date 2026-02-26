@@ -12,11 +12,11 @@ import {
   formatBytes,
   formatMessageTime,
   reactionViewsForMessage,
-  tokenizeToDisplayText,
   type MessageMediaPreview,
   type ReactionView,
 } from "../../helpers";
-import { initEmojiMart, renderEmojiMixedText, renderTwemojiNative } from "./emoji-utils";
+import { SafeMarkdown } from "../SafeMarkdown";
+import { initEmojiMart, renderTwemojiNative } from "./emoji-utils";
 
 initEmojiMart();
 
@@ -78,6 +78,11 @@ export function MessageRow(props: MessageRowProps) {
   const authorColor = createMemo(
     () => props.resolveUserNameColor?.(props.message.authorId) ?? null,
   );
+  const markdownTokens = createMemo(() =>
+    props.message.markdownTokens.length > 0
+      ? props.message.markdownTokens
+      : [{ type: "text" as const, text: props.message.content }],
+  );
 
   return (
     <article class="message-row group relative mt-[0.02rem] grid grid-cols-[2.35rem_minmax(0,1fr)] gap-[0.65rem] rounded-[0.45rem] border-0 bg-transparent px-[0.46rem] py-[0.34rem] transition-colors duration-[120ms] ease-out hover:bg-bg-3 focus-within:bg-bg-3 [&:first-of-type]:mt-auto">
@@ -121,13 +126,10 @@ export function MessageRow(props: MessageRowProps) {
         <Show
           when={isEditing()}
           fallback={
-            <Show when={tokenizeToDisplayText(props.message.markdownTokens) || props.message.content}>
-              <p class="message-tokenized mt-[0.08rem] whitespace-pre-wrap break-words leading-[1.38] text-ink-1">
-                {renderEmojiMixedText(
-                  tokenizeToDisplayText(props.message.markdownTokens) || props.message.content
-                )}
-              </p>
-            </Show>
+            <SafeMarkdown
+              class="message-markdown mt-[0.08rem] break-words leading-[1.38] text-ink-1"
+              tokens={markdownTokens()}
+            />
           }
         >
           <form

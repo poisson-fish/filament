@@ -1,5 +1,9 @@
 import type { JSX } from "solid-js";
 import type { MarkdownToken } from "../../../domain/chat";
+import {
+  createFilamentMarkdownHighlighter,
+  resolveHighlightLanguage,
+} from "./markdown-highlight";
 
 type ContainerKind = "root" | "p" | "em" | "strong" | "a" | "li" | "ul" | "ol";
 
@@ -14,9 +18,11 @@ export interface SafeMarkdownProps {
   class?: string;
 }
 
+const markdownHighlighter = createFilamentMarkdownHighlighter();
+
 export function SafeMarkdown(props: SafeMarkdownProps) {
   const nodes = renderTokens(props.tokens);
-  return <div class={props.class}>{nodes}</div>;
+  return <div class={`safe-markdown ${props.class ?? ""}`.trim()}>{nodes}</div>;
 }
 
 function renderTokens(tokens: MarkdownToken[]): Array<JSX.Element | string> {
@@ -112,10 +118,17 @@ function renderTokens(tokens: MarkdownToken[]): Array<JSX.Element | string> {
       continue;
     }
     if (token.type === "fenced_code") {
+      const language = resolveHighlightLanguage(token.language);
+      const codeChildren = language
+        ? renderHighlightedCode(token.code, language)
+        : [token.code];
       append(
-        <pre>
-          <code data-language={token.language ?? undefined}>{token.code}</code>
-        </pre>,
+        <div class="safe-markdown-code-block">
+          <ShowLanguageLabel language={language} />
+          <pre>
+            <code data-language={language ?? undefined}>{codeChildren}</code>
+          </pre>
+        </div>,
       );
       continue;
     }
@@ -133,6 +146,73 @@ function renderTokens(tokens: MarkdownToken[]): Array<JSX.Element | string> {
   }
 
   return stack[0]?.children ?? [];
+}
+
+function ShowLanguageLabel(props: { language: string | null }): JSX.Element {
+  if (!props.language) {
+    return <p class="safe-markdown-code-label">```</p>;
+  }
+  return <p class="safe-markdown-code-label">{`\`\`\`${props.language}`}</p>;
+}
+
+function renderHighlightedCode(code: string, language: string): Array<JSX.Element | string> {
+  const tree = markdownHighlighter.highlight(language, code);
+  return tree.children.flatMap((child, index) => renderHighlightNode(child, `${index}`));
+}
+
+function renderHighlightNode(
+  node: unknown,
+  key: string,
+): Array<JSX.Element | string> {
+  if (!node || typeof node !== "object") {
+    return [];
+  }
+  const textNode = node as { type?: unknown; value?: unknown };
+  if (textNode.type === "text" && typeof textNode.value === "string") {
+    return [textNode.value];
+  }
+
+  const elementNode = node as {
+    type?: unknown;
+    tagName?: unknown;
+    properties?: unknown;
+    children?: unknown;
+  };
+  if (elementNode.type !== "element" || elementNode.tagName !== "span") {
+    if (Array.isArray(elementNode.children)) {
+      return elementNode.children.flatMap((child, childIndex) =>
+        renderHighlightNode(child, `${key}-${childIndex}`),
+      );
+    }
+    return [];
+  }
+
+  const classNames = extractHighlightClassNames(elementNode.properties);
+  const children = Array.isArray(elementNode.children)
+    ? elementNode.children.flatMap((child, childIndex) =>
+        renderHighlightNode(child, `${key}-${childIndex}`),
+      )
+    : [];
+
+  return [
+    <span class={classNames.length > 0 ? classNames.join(" ") : undefined}>
+      {children}
+    </span>,
+  ];
+}
+
+function extractHighlightClassNames(properties: unknown): string[] {
+  if (!properties || typeof properties !== "object") {
+    return [];
+  }
+  const record = properties as { className?: unknown };
+  if (!Array.isArray(record.className)) {
+    return [];
+  }
+  return record.className.filter(
+    (entry): entry is string =>
+      typeof entry === "string" && /^hljs[0-9a-z-]*$/i.test(entry),
+  );
 }
 
 function containerToElement(node: ContainerNode): JSX.Element | string {

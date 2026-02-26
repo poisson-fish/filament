@@ -144,24 +144,24 @@ Lock markdown/profile-banner behavior before implementation.
 Render safe markdown tokens in message rows instead of flattening to plain text.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Update `MessageRow` display path to render `message.markdownTokens` with `SafeMarkdown`.
-- [ ] Keep edit-mode input behavior unchanged (plain text textarea/input).
-- [ ] Add message-markdown styling hooks for readable paragraphs/lists/links/inline code/fenced code blocks.
-- [ ] Ensure message link rendering remains sandboxed (`target="_blank"`, `rel="noopener noreferrer"`, sanitized href).
-- [ ] Remove or reduce `tokenizeToDisplayText` usage where no longer needed for message rows.
-- [ ] Add language-labelled fenced code rendering UI (` ```lang ` style) with safe syntax highlighting.
+- [x] Update `MessageRow` display path to render `message.markdownTokens` with `SafeMarkdown`.
+- [x] Keep edit-mode input behavior unchanged (plain text textarea/input).
+- [x] Add message-markdown styling hooks for readable paragraphs/lists/links/inline code/fenced code blocks.
+- [x] Ensure message link rendering remains sandboxed (`target="_blank"`, `rel="noopener noreferrer"`, sanitized href).
+- [x] Remove or reduce `tokenizeToDisplayText` usage where no longer needed for message rows.
+- [x] Add language-labelled fenced code rendering UI (` ```lang ` style) with safe syntax highlighting.
 
 ### Tests
-- [ ] Component tests for message markdown rendering:
+- [x] Component tests for message markdown rendering:
   - emphasis/strong/list/inline code/fenced code blocks/line breaks/links
-- [ ] Security tests for message markdown:
+- [x] Security tests for message markdown:
   - malicious raw HTML content stays inert
   - `javascript:`/`data:` links never render clickable anchors
   - hostile/invalid code-block language labels are rejected or safely downgraded
-- [ ] Regression test for existing message-row interactions (reactions/edit/delete/profile click).
+- [x] Regression test for existing message-row interactions (reactions/edit/delete/profile click).
 
 ### Tentative Dependency Changes
 - `apps/filament-client-web/package.json`
@@ -184,6 +184,13 @@ Render safe markdown tokens in message rows instead of flattening to plain text.
 
 ### Exit Criteria
 - Message rows render markdown structure securely with no XSS-capable path.
+
+### Progress Notes
+- 2026-02-26: Migrated message row body rendering from flattened `tokenizeToDisplayText(...)` to token-driven `SafeMarkdown`.
+- 2026-02-26: Preserved message edit mode input path unchanged; markdown rendering applies only to read mode.
+- 2026-02-26: Added fenced code rendering with language labels (` ```lang `) and allowlisted AST-based syntax highlighting via existing `lowlight` integration.
+- 2026-02-26: Added scoped message markdown styling hooks for paragraphs, lists, links, inline code, and fenced-code overflow containers.
+- 2026-02-26: Added focused markdown security tests proving raw HTML remains inert, `javascript:`/`data:` links are non-clickable, and invalid language labels downgrade safely.
 
 ---
 

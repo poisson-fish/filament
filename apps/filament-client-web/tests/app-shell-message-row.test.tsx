@@ -90,10 +90,10 @@ describe("app shell message row", () => {
     expect(row).toHaveClass("grid");
     expect(row).toHaveClass("[&:first-of-type]:mt-auto");
 
-    const tokenized = screen.getByText("primary alert");
-    expect(tokenized).toHaveClass("message-tokenized");
-    expect(tokenized).toHaveClass("whitespace-pre-wrap");
-    expect(tokenized).toHaveClass("text-ink-1");
+    const markdownBody = document.querySelector(".message-row .message-markdown");
+    expect(markdownBody).not.toBeNull();
+    expect(markdownBody).toHaveClass("text-ink-1");
+    expect(screen.getByText("primary alert")).toBeInTheDocument();
 
     const downloadButton = screen.getByRole("button", {
       name: "Download evidence.png",
@@ -178,5 +178,45 @@ describe("app shell message row", () => {
     expect(deleteButton).toHaveClass("text-danger");
     expect(deleteButton.querySelector(".icon-mask")).toHaveClass("animate-pulse");
     expect(onRemoveMessage).not.toHaveBeenCalled();
+  });
+
+  it("renders structured markdown tokens in message content", () => {
+    const message = messageFixture();
+    message.markdownTokens = [
+      { type: "paragraph_start" },
+      { type: "text", text: "alpha " },
+      { type: "emphasis_start" },
+      { type: "text", text: "em" },
+      { type: "emphasis_end" },
+      { type: "text", text: " " },
+      { type: "strong_start" },
+      { type: "text", text: "strong" },
+      { type: "strong_end" },
+      { type: "paragraph_end" },
+      { type: "list_start", ordered: false },
+      { type: "list_item_start" },
+      { type: "text", text: "item one" },
+      { type: "list_item_end" },
+      { type: "list_end" },
+      { type: "link_start", href: "https://filament.test/docs" },
+      { type: "text", text: "docs" },
+      { type: "link_end" },
+      { type: "hard_break" },
+      { type: "code", code: "inline()" },
+      { type: "fenced_code", language: "rust", code: "fn main() {}\n" },
+    ];
+
+    render(() => <MessageRow {...rowPropsFixture({ message })} />);
+
+    expect(document.querySelector(".message-markdown p")).not.toBeNull();
+    expect(screen.getByText("em").tagName).toBe("EM");
+    expect(screen.getByText("strong").tagName).toBe("STRONG");
+    expect(document.querySelectorAll(".message-markdown li")).toHaveLength(1);
+    const link = screen.getByRole("link", { name: "docs" });
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(screen.getByText("inline()").tagName).toBe("CODE");
+    expect(screen.getByText("```rust")).toBeInTheDocument();
+    expect(screen.getByText("fn")).toBeInTheDocument();
   });
 });

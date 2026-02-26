@@ -102,7 +102,7 @@ function seedAuthenticatedWorkspace(
 }
 
 function renderedMessageTexts(): string[] {
-  return [...document.querySelectorAll(".message-row .message-tokenized")]
+  return [...document.querySelectorAll(".message-row .message-markdown")]
     .map((node) => node.textContent?.trim() ?? "")
     .filter((text) => text.length > 0);
 }

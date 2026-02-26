@@ -146,6 +146,23 @@ describe("app style token manifest", () => {
     ]);
   });
 
+  it("defines message markdown styling hooks in shell-refresh.css", () => {
+    const shellRefreshCss = readFileSync(shellRefreshCssPath, "utf8");
+    const requiredSelectors = [
+      ".message-markdown {",
+      ".message-markdown p + p {",
+      ".message-markdown ul,",
+      ".message-markdown a {",
+      ".message-markdown .safe-markdown-code-block {",
+      ".message-markdown .safe-markdown-code-label {",
+      ".message-markdown .safe-markdown-code-block pre {",
+    ];
+
+    for (const selector of requiredSelectors) {
+      expect(shellRefreshCss).toContain(selector);
+    }
+  });
+
   it("defines canonical palette tokens in tokens.css", () => {
     const tokensCss = readFileSync(tokensCssPath, "utf8");
     const requiredTokenNames = [
