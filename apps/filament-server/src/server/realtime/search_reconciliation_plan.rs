@@ -7,7 +7,7 @@ use crate::server::{
 
 use super::{
     collect_index_message_ids_for_guild_from_index, collect_indexed_messages_for_guild,
-    compute_reconciliation, search_query_run::run_search_blocking_with_timeout,
+    search_query_run::run_search_blocking_with_timeout,
 };
 
 pub(crate) fn build_search_reconciliation_plan(
@@ -15,6 +15,27 @@ pub(crate) fn build_search_reconciliation_plan(
     index_ids: std::collections::HashSet<String>,
 ) -> (Vec<IndexedMessage>, Vec<String>) {
     compute_reconciliation(source_docs, index_ids)
+}
+
+pub(crate) fn compute_reconciliation(
+    source_docs: Vec<IndexedMessage>,
+    index_ids: HashSet<String>,
+) -> (Vec<IndexedMessage>, Vec<String>) {
+    let source_ids: HashSet<String> = source_docs
+        .iter()
+        .map(|doc| doc.message_id.clone())
+        .collect();
+    let mut upserts: Vec<IndexedMessage> = source_docs
+        .into_iter()
+        .filter(|doc| !index_ids.contains(&doc.message_id))
+        .collect();
+    let mut delete_message_ids: Vec<String> = index_ids
+        .into_iter()
+        .filter(|message_id| !source_ids.contains(message_id))
+        .collect();
+    upserts.sort_by(|a, b| a.message_id.cmp(&b.message_id));
+    delete_message_ids.sort_unstable();
+    (upserts, delete_message_ids)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +83,8 @@ pub(crate) async fn plan_search_reconciliation(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_search_index_lookup_input, build_search_reconciliation_plan, SearchIndexLookupInput,
+        build_search_index_lookup_input, build_search_reconciliation_plan, compute_reconciliation,
+        SearchIndexLookupInput,
     };
     use crate::server::core::IndexedMessage;
     use std::collections::HashSet;
@@ -99,6 +121,18 @@ mod tests {
 
         assert!(upserts.is_empty());
         assert!(deletes.is_empty());
+    }
+
+    #[test]
+    fn compute_reconciliation_returns_sorted_upserts_and_deletes() {
+        let source_docs = vec![doc("m3"), doc("m1"), doc("m2")];
+        let index_ids = HashSet::from([String::from("m2"), String::from("m4")]);
+
+        let (upserts, deletes) = compute_reconciliation(source_docs, index_ids);
+
+        let upsert_ids: Vec<String> = upserts.into_iter().map(|entry| entry.message_id).collect();
+        assert_eq!(upsert_ids, vec![String::from("m1"), String::from("m3")]);
+        assert_eq!(deletes, vec![String::from("m4")]);
     }
 
     #[test]

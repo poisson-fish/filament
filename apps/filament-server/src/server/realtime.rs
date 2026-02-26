@@ -57,8 +57,6 @@ mod search_apply;
 mod search_collect_all;
 mod search_collect_guild;
 mod search_collect_index_ids;
-mod search_reconcile;
-mod search_validation;
 mod voice_registration;
 mod voice_registry;
 
@@ -89,7 +87,6 @@ use message_record::{
 use message_store_in_memory::append_message_record;
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 pub(crate) use search_query_run::run_search_query;
-pub(crate) use search_reconcile::compute_reconciliation;
 pub(crate) use search_reconciliation_plan::plan_search_reconciliation;
 pub(crate) use search_runtime::{
     collect_all_indexed_messages, collect_indexed_messages_for_guild, enqueue_search_operation,

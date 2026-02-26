@@ -7,7 +7,8 @@ use tokio::sync::mpsc;
 use crate::server::{
     core::{
         AppState, IndexedMessage, SearchCommand, SearchFields, SearchIndexState, SearchOperation,
-        SearchService, DEFAULT_SEARCH_RESULT_LIMIT, SEARCH_INDEX_QUEUE_CAPACITY,
+        SearchService, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_FUZZY, MAX_SEARCH_TERMS,
+        MAX_SEARCH_WILDCARDS, SEARCH_INDEX_QUEUE_CAPACITY,
     },
     errors::AuthFailure,
     types::{MessageResponse, SearchQuery},
@@ -25,7 +26,6 @@ use super::{
     },
     search_collect_guild::collect_indexed_messages_for_guild_in_memory,
     search_enqueue::enqueue_search_command,
-    search_validation::validate_search_query_limits,
 };
 
 const SEARCH_WORKER_BATCH_LIMIT: usize = 128;
@@ -122,6 +122,34 @@ pub(crate) fn validate_search_query(
         state.runtime.search_query_max_chars,
         state.runtime.search_result_limit_max,
     )
+}
+
+pub(crate) fn validate_search_query_limits(
+    raw_query: &str,
+    limit: usize,
+    max_query_chars: usize,
+    max_result_limit: usize,
+) -> Result<(), AuthFailure> {
+    if raw_query.is_empty() || raw_query.len() > max_query_chars {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if limit == 0 || limit > max_result_limit {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if raw_query.split_whitespace().count() > MAX_SEARCH_TERMS {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let wildcard_count = raw_query.matches('*').count() + raw_query.matches('?').count();
+    if wildcard_count > MAX_SEARCH_WILDCARDS {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if raw_query.matches('~').count() > MAX_SEARCH_FUZZY {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if raw_query.contains(':') {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(())
 }
 
 fn build_search_rebuild_operation(docs: Vec<IndexedMessage>) -> SearchOperation {
@@ -240,7 +268,7 @@ mod tests {
     use super::{
         build_search_rebuild_operation, build_search_schema, effective_search_limit,
         indexed_message_from_response, map_collect_all_rows, map_collect_guild_rows,
-        normalize_search_query, validate_search_query_with_limits,
+        normalize_search_query, validate_search_query_limits, validate_search_query_with_limits,
     };
     use crate::server::{
         core::{IndexedMessage, SearchOperation},
@@ -283,6 +311,26 @@ mod tests {
         let result = validate_search_query_with_limits(&query, 20, 256, 50);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_search_query_limits_rejects_invalid_limit_values() {
+        assert!(validate_search_query_limits("ok", 0, 256, 50).is_err());
+        assert!(validate_search_query_limits("ok", 51, 256, 50).is_err());
+    }
+
+    #[test]
+    fn validate_search_query_limits_rejects_abusive_patterns() {
+        assert!(validate_search_query_limits(
+            "a b c d e f g h i j k l m n o p q r s t u",
+            20,
+            256,
+            50
+        )
+        .is_err());
+        assert!(validate_search_query_limits("a*b?c*d?e*f", 20, 256, 50).is_err());
+        assert!(validate_search_query_limits("a~b~c~", 20, 256, 50).is_err());
+        assert!(validate_search_query_limits("author:alice", 20, 256, 50).is_err());
     }
 
     #[test]
