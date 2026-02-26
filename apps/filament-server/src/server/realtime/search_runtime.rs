@@ -22,7 +22,6 @@ use super::{
         collect_all_indexed_messages_runtime, collect_indexed_messages_for_guild_runtime,
     },
     search_enqueue::enqueue_search_command,
-    search_indexed_message::indexed_message_from_response as indexed_message_from_response_impl,
     search_query_input::validate_search_query_request,
     search_schema::build_search_schema as build_search_schema_impl,
 };
@@ -77,7 +76,14 @@ pub(crate) fn apply_search_operation(
 }
 
 pub(crate) fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
-    indexed_message_from_response_impl(message)
+    IndexedMessage {
+        message_id: message.message_id.clone(),
+        guild_id: message.guild_id.clone(),
+        channel_id: message.channel_id.clone(),
+        author_id: message.author_id.clone(),
+        created_at_unix: message.created_at_unix,
+        content: message.content.clone(),
+    }
 }
 
 pub(crate) fn validate_search_query(
@@ -151,11 +157,14 @@ pub(crate) async fn hydrate_messages_by_id(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_search_rebuild_operation, validate_search_query_with_limits};
+    use super::{
+        build_search_rebuild_operation, indexed_message_from_response,
+        validate_search_query_with_limits,
+    };
     use crate::server::{
         core::{IndexedMessage, SearchOperation},
         errors::AuthFailure,
-        types::SearchQuery,
+        types::{MessageResponse, SearchQuery},
     };
 
     fn sample_doc(id: &str) -> IndexedMessage {
@@ -217,5 +226,29 @@ mod tests {
             SearchOperation::Rebuild { docs } => assert!(docs.is_empty()),
             _ => panic!("expected rebuild operation"),
         }
+    }
+
+    #[test]
+    fn indexed_message_from_response_maps_all_fields() {
+        let response = MessageResponse {
+            message_id: String::from("m1"),
+            guild_id: String::from("g1"),
+            channel_id: String::from("c1"),
+            author_id: String::from("u1"),
+            content: String::from("hello"),
+            markdown_tokens: Vec::new(),
+            attachments: Vec::new(),
+            reactions: Vec::new(),
+            created_at_unix: 42,
+        };
+
+        let indexed = indexed_message_from_response(&response);
+
+        assert_eq!(indexed.message_id, "m1");
+        assert_eq!(indexed.guild_id, "g1");
+        assert_eq!(indexed.channel_id, "c1");
+        assert_eq!(indexed.author_id, "u1");
+        assert_eq!(indexed.content, "hello");
+        assert_eq!(indexed.created_at_unix, 42);
     }
 }

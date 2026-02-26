@@ -68,7 +68,6 @@ mod search_blocking;
 mod search_collect_all;
 mod search_collect_guild;
 mod search_collect_index_ids;
-mod search_indexed_message;
 mod search_query_exec;
 mod search_reconcile;
 mod search_schema;
