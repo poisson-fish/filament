@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::anyhow;
 use tantivy::schema::{NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::server::{
     core::{
@@ -17,15 +17,31 @@ use crate::server::{
 use super::{
     hydration_runtime::hydrate_messages_by_id_runtime,
     search_apply::apply_search_operation as apply_search_operation_impl,
-    search_collect_db::{
-        collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows,
-        enforce_guild_collect_doc_cap, guild_collect_fetch_limit,
-    },
-    search_enqueue::enqueue_search_command,
 };
 
 const SEARCH_WORKER_BATCH_LIMIT: usize = 128;
 type IndexedMessageRow = (String, String, String, String, String, i64);
+
+pub(crate) async fn enqueue_search_command(
+    tx: &mpsc::Sender<SearchCommand>,
+    op: SearchOperation,
+    wait_for_apply: bool,
+) -> Result<(), AuthFailure> {
+    if wait_for_apply {
+        let (ack_tx, ack_rx) = oneshot::channel();
+        tx.send(SearchCommand {
+            op,
+            ack: Some(ack_tx),
+        })
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        ack_rx.await.map_err(|_| AuthFailure::Internal)?
+    } else {
+        tx.send(SearchCommand { op, ack: None })
+            .await
+            .map_err(|_| AuthFailure::Internal)
+    }
+}
 
 pub(crate) fn drain_search_batch(
     first: SearchCommand,
@@ -68,6 +84,49 @@ pub(crate) fn build_search_schema() -> (Schema, SearchFields) {
             content,
         },
     )
+}
+
+fn indexed_messages_from_rows(rows: Vec<IndexedMessageRow>) -> Vec<IndexedMessage> {
+    rows.into_iter()
+        .map(
+            |(message_id, guild_id, channel_id, author_id, content, created_at_unix)| {
+                IndexedMessage {
+                    message_id,
+                    guild_id,
+                    channel_id,
+                    author_id,
+                    created_at_unix,
+                    content,
+                }
+            },
+        )
+        .collect()
+}
+
+pub(crate) fn collect_all_indexed_messages_rows(
+    rows: Vec<IndexedMessageRow>,
+) -> Vec<IndexedMessage> {
+    indexed_messages_from_rows(rows)
+}
+
+pub(crate) fn collect_indexed_messages_for_guild_rows(
+    rows: Vec<IndexedMessageRow>,
+) -> Vec<IndexedMessage> {
+    indexed_messages_from_rows(rows)
+}
+
+pub(crate) fn guild_collect_fetch_limit(max_docs: usize) -> Result<i64, AuthFailure> {
+    i64::try_from(max_docs.saturating_add(1)).map_err(|_| AuthFailure::InvalidRequest)
+}
+
+pub(crate) fn enforce_guild_collect_doc_cap(
+    row_count: usize,
+    max_docs: usize,
+) -> Result<(), AuthFailure> {
+    if row_count > max_docs {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(())
 }
 
 pub(crate) fn init_search_service() -> anyhow::Result<SearchService> {
@@ -377,8 +436,10 @@ mod tests {
 
     use super::{
         apply_search_batch_with_ack, build_search_rebuild_operation, build_search_schema,
-        collect_all_indexed_messages_in_memory, collect_indexed_messages_for_guild_in_memory,
-        drain_search_batch, effective_search_limit, indexed_message_from_response,
+        collect_all_indexed_messages_in_memory, collect_all_indexed_messages_rows,
+        collect_indexed_messages_for_guild_in_memory, collect_indexed_messages_for_guild_rows,
+        drain_search_batch, effective_search_limit, enforce_guild_collect_doc_cap,
+        enqueue_search_command, guild_collect_fetch_limit, indexed_message_from_response,
         map_collect_all_rows, map_collect_guild_rows, normalize_search_query,
         validate_search_query_limits, validate_search_query_with_limits,
     };
@@ -660,6 +721,75 @@ mod tests {
     }
 
     #[test]
+    fn collect_all_indexed_messages_rows_maps_all_fields() {
+        let docs = collect_all_indexed_messages_rows(vec![
+            (
+                String::from("m1"),
+                String::from("g1"),
+                String::from("c1"),
+                String::from("u1"),
+                String::from("hello"),
+                7,
+            ),
+            (
+                String::from("m2"),
+                String::from("g2"),
+                String::from("c2"),
+                String::from("u2"),
+                String::from("world"),
+                8,
+            ),
+        ]);
+
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].message_id, "m1");
+        assert_eq!(docs[0].guild_id, "g1");
+        assert_eq!(docs[0].channel_id, "c1");
+        assert_eq!(docs[0].author_id, "u1");
+        assert_eq!(docs[0].content, "hello");
+        assert_eq!(docs[0].created_at_unix, 7);
+    }
+
+    #[test]
+    fn collect_indexed_messages_for_guild_rows_preserves_row_order() {
+        let docs = collect_indexed_messages_for_guild_rows(vec![
+            (
+                String::from("newest"),
+                String::from("g1"),
+                String::from("c1"),
+                String::from("u1"),
+                String::from("new"),
+                11,
+            ),
+            (
+                String::from("older"),
+                String::from("g1"),
+                String::from("c1"),
+                String::from("u1"),
+                String::from("old"),
+                10,
+            ),
+        ]);
+
+        let ids: Vec<&str> = docs.iter().map(|doc| doc.message_id.as_str()).collect();
+        assert_eq!(ids, vec!["newest", "older"]);
+    }
+
+    #[test]
+    fn guild_collect_fetch_limit_adds_one_for_fail_closed_cap_check() {
+        let limit = guild_collect_fetch_limit(50).expect("valid max docs should convert");
+        assert_eq!(limit, 51);
+    }
+
+    #[test]
+    fn enforce_guild_collect_doc_cap_rejects_over_cap_results() {
+        assert!(enforce_guild_collect_doc_cap(2, 2).is_ok());
+        let error =
+            enforce_guild_collect_doc_cap(3, 2).expect_err("over-cap row count should fail closed");
+        assert!(matches!(error, AuthFailure::InvalidRequest));
+    }
+
+    #[test]
     fn drain_search_batch_drains_up_to_max_batch_size() {
         let (tx, mut rx) = mpsc::channel::<SearchCommand>(8);
         tx.try_send(command("m2"))
@@ -830,5 +960,90 @@ mod tests {
             Ok(Err(AuthFailure::Internal))
         ));
         drop(writer_guard);
+    }
+
+    #[tokio::test]
+    async fn enqueue_search_command_sends_without_ack_when_wait_is_false() {
+        let (tx, mut rx) =
+            mpsc::channel::<SearchCommand>(crate::server::core::SEARCH_INDEX_QUEUE_CAPACITY);
+
+        enqueue_search_command(
+            &tx,
+            SearchOperation::Delete {
+                message_id: String::from("m1"),
+            },
+            false,
+        )
+        .await
+        .expect("enqueue should succeed");
+
+        let command = rx.recv().await.expect("command should be queued");
+        assert!(command.ack.is_none());
+        match command.op {
+            SearchOperation::Delete { message_id } => assert_eq!(message_id, "m1"),
+            _ => panic!("expected delete operation"),
+        }
+    }
+
+    #[tokio::test]
+    async fn enqueue_search_command_waits_for_ack_when_wait_is_true() {
+        let (tx, mut rx) =
+            mpsc::channel::<SearchCommand>(crate::server::core::SEARCH_INDEX_QUEUE_CAPACITY);
+        let receive_task = tokio::spawn(async move {
+            let command = rx.recv().await.expect("command should be queued");
+            let ack = command.ack.expect("ack channel should be present");
+            ack.send(Ok(())).expect("ack should be delivered");
+        });
+
+        enqueue_search_command(
+            &tx,
+            SearchOperation::Delete {
+                message_id: String::from("m2"),
+            },
+            true,
+        )
+        .await
+        .expect("enqueue should succeed with ack");
+
+        receive_task.await.expect("receiver task should join");
+    }
+
+    #[tokio::test]
+    async fn enqueue_search_command_returns_internal_when_ack_channel_closes_without_response() {
+        let (tx, mut rx) =
+            mpsc::channel::<SearchCommand>(crate::server::core::SEARCH_INDEX_QUEUE_CAPACITY);
+        let receive_task = tokio::spawn(async move {
+            let _command = rx.recv().await.expect("command should be queued");
+        });
+
+        let result = enqueue_search_command(
+            &tx,
+            SearchOperation::Delete {
+                message_id: String::from("m3"),
+            },
+            true,
+        )
+        .await;
+
+        assert!(matches!(result, Err(AuthFailure::Internal)));
+        receive_task.await.expect("receiver task should join");
+    }
+
+    #[tokio::test]
+    async fn enqueue_search_command_returns_internal_when_sender_channel_is_closed() {
+        let (tx, rx) =
+            mpsc::channel::<SearchCommand>(crate::server::core::SEARCH_INDEX_QUEUE_CAPACITY);
+        drop(rx);
+
+        let result = enqueue_search_command(
+            &tx,
+            SearchOperation::Delete {
+                message_id: String::from("m4"),
+            },
+            false,
+        )
+        .await;
+
+        assert!(matches!(result, Err(AuthFailure::Internal)));
     }
 }

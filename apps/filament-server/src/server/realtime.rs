@@ -6,8 +6,6 @@ mod hydration_runtime;
 pub mod livekit_sync;
 mod message_record;
 mod message_store_in_memory;
-mod search_collect_db;
-mod search_enqueue;
 mod search_query_run;
 mod search_reconciliation_plan;
 mod search_runtime;
@@ -45,7 +43,6 @@ mod message_attachment_bind;
 mod message_prepare;
 mod presence_subscribe;
 mod search_apply;
-mod search_collect_index_ids;
 mod voice_registration;
 mod voice_registry;
 
@@ -70,7 +67,6 @@ use message_record::{
     build_message_response_from_record,
 };
 use message_store_in_memory::append_message_record;
-use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 pub(crate) use search_query_run::run_search_query;
 pub(crate) use search_reconciliation_plan::plan_search_reconciliation;
 pub(crate) use search_runtime::{
