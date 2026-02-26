@@ -91,6 +91,57 @@ export function clearKeysByPrefix<T>(existing: Record<string, T>, prefix: string
   return changed ? next : existing;
 }
 
+export function applyMessageReactionSnapshot(
+  existing: Record<string, ReactionView>,
+  messageId: MessageId,
+  reactions: ReadonlyArray<MessageRecord["reactions"][number]>,
+): Record<string, ReactionView> {
+  const prior = existing;
+  let next = clearKeysByPrefix(existing, `${messageId}|`);
+  for (const reaction of reactions) {
+    if (reaction.count < 1) {
+      continue;
+    }
+    const key = reactionKey(messageId, reaction.emoji);
+    next = upsertReactionEntry(next, key, {
+      count: reaction.count,
+      reacted: prior[key]?.reacted ?? false,
+    });
+  }
+  return next;
+}
+
+export function mergeReactionStateFromMessages(
+  existing: Record<string, ReactionView>,
+  messages: ReadonlyArray<MessageRecord>,
+): Record<string, ReactionView> {
+  let next = existing;
+  for (const message of messages) {
+    next = applyMessageReactionSnapshot(next, message.messageId, message.reactions);
+  }
+  return next;
+}
+
+export function replaceReactionStateFromMessages(
+  existing: Record<string, ReactionView>,
+  messages: ReadonlyArray<MessageRecord>,
+): Record<string, ReactionView> {
+  let next: Record<string, ReactionView> = {};
+  for (const message of messages) {
+    for (const reaction of message.reactions) {
+      if (reaction.count < 1) {
+        continue;
+      }
+      const key = reactionKey(message.messageId, reaction.emoji);
+      next = upsertReactionEntry(next, key, {
+        count: reaction.count,
+        reacted: existing[key]?.reacted ?? false,
+      });
+    }
+  }
+  return next;
+}
+
 export function reactionViewsForMessage(
   messageId: MessageId,
   reactions: Record<string, ReactionView>,

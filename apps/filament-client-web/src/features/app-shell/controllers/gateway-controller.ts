@@ -55,6 +55,7 @@ import {
 import {
   clearKeysByPrefix,
   mergeMessage,
+  mergeReactionStateFromMessages,
   reactionKey,
   upsertWorkspace,
   upsertReactionEntry,
@@ -738,6 +739,9 @@ export function createGatewayController(
         }
         const shouldStickToBottom = options.isMessageListNearBottom();
         options.setMessages((existing) => mergeMessage(existing, message));
+        options.setReactionState((existing) =>
+          mergeReactionStateFromMessages(existing, [message]),
+        );
         if (shouldStickToBottom) {
           options.scrollMessageListToBottom();
         }

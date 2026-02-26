@@ -10,8 +10,10 @@ import type {
 import { fetchChannelMessages } from "../../../lib/api";
 import {
   mapError,
+  mergeReactionStateFromMessages,
   mergeMessageHistory,
   normalizeMessageOrder,
+  replaceReactionStateFromMessages,
   type ReactionView,
 } from "../helpers";
 import {
@@ -116,7 +118,11 @@ export function createMessageHistoryController(
       if (requestVersion !== historyRequestVersion) {
         return;
       }
-      options.setMessages(normalizeMessageOrder(history.messages));
+      const normalizedMessages = normalizeMessageOrder(history.messages);
+      options.setMessages(normalizedMessages);
+      options.setReactionState((existing) =>
+        replaceReactionStateFromMessages(existing, normalizedMessages),
+      );
       options.setNextBefore(history.nextBefore);
       options.setEditingMessageId(null);
       options.setEditingDraft("");
@@ -174,6 +180,9 @@ export function createMessageHistoryController(
       }
       options.setMessages((existing) =>
         mergeMessageHistory(existing, history.messages),
+      );
+      options.setReactionState((existing) =>
+        mergeReactionStateFromMessages(existing, history.messages),
       );
       options.setNextBefore(history.nextBefore);
       options.restoreScrollAfterPrepend(previousScrollMetrics);

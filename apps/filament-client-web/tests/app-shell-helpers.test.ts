@@ -15,10 +15,12 @@ import {
   mapVoiceJoinError,
   mergeMessage,
   mergeMessageHistory,
+  mergeReactionStateFromMessages,
   parseChannelKey,
   parsePermissionCsv,
   reactionKey,
   reactionViewsForMessage,
+  replaceReactionStateFromMessages,
   resolveAttachmentPreviewType,
   tokenizeToDisplayText,
   userIdFromVoiceIdentity,
@@ -37,6 +39,7 @@ function buildMessage(input: {
   messageId: string;
   content: string;
   createdAtUnix: number;
+  reactions?: Array<{ emoji: string; count: number }>;
 }) {
   return messageFromResponse({
     message_id: input.messageId,
@@ -46,6 +49,7 @@ function buildMessage(input: {
     content: input.content,
     markdown_tokens: [{ type: "text", text: input.content }],
     attachments: [],
+    reactions: input.reactions,
     created_at_unix: input.createdAtUnix,
   });
 }
@@ -145,6 +149,58 @@ describe("app shell helpers", () => {
 
     const historyMerged = mergeMessageHistory([second, third], [first, secondReplacement]);
     expect(historyMerged.map((message) => message.content)).toEqual(["first", "second", "third"]);
+  });
+
+  it("merges reaction snapshots for targeted messages and preserves local reacted flags", () => {
+    const messageId = messageIdFromInput(MESSAGE_ID_1);
+    const thumbsUp = reactionEmojiFromInput("👍");
+    const fire = reactionEmojiFromInput("🔥");
+    const stale = reactionEmojiFromInput("✅");
+
+    const existing = {
+      [reactionKey(messageId, thumbsUp)]: { count: 1, reacted: true },
+      [reactionKey(messageIdFromInput(MESSAGE_ID_2), stale)]: { count: 4, reacted: false },
+    };
+    const messages = [
+      buildMessage({
+        messageId: MESSAGE_ID_1,
+        content: "updated",
+        createdAtUnix: 10,
+        reactions: [
+          { emoji: thumbsUp, count: 3 },
+          { emoji: fire, count: 2 },
+        ],
+      }),
+    ];
+
+    expect(mergeReactionStateFromMessages(existing, messages)).toEqual({
+      [reactionKey(messageId, thumbsUp)]: { count: 3, reacted: true },
+      [reactionKey(messageId, fire)]: { count: 2, reacted: false },
+      [reactionKey(messageIdFromInput(MESSAGE_ID_2), stale)]: { count: 4, reacted: false },
+    });
+  });
+
+  it("replaces reaction state from snapshots and drops stale message keys", () => {
+    const messageId = messageIdFromInput(MESSAGE_ID_1);
+    const thumbsUp = reactionEmojiFromInput("👍");
+    const stale = reactionEmojiFromInput("✅");
+
+    const existing = {
+      [reactionKey(messageId, thumbsUp)]: { count: 1, reacted: true },
+      [reactionKey(messageIdFromInput(MESSAGE_ID_2), stale)]: { count: 4, reacted: false },
+    };
+    const messages = [
+      buildMessage({
+        messageId: MESSAGE_ID_1,
+        content: "latest",
+        createdAtUnix: 20,
+        reactions: [{ emoji: thumbsUp, count: 5 }],
+      }),
+    ];
+
+    expect(replaceReactionStateFromMessages(existing, messages)).toEqual({
+      [reactionKey(messageId, thumbsUp)]: { count: 5, reacted: true },
+    });
   });
 
   it("renders markdown tokens into safe display text", () => {
