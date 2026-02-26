@@ -66,7 +66,6 @@ mod fanout_channel;
 mod fanout_dispatch;
 mod fanout_guild;
 mod fanout_user;
-mod fanout_user_targets;
 mod hydration_order;
 mod ingress_command;
 mod ingress_message;
