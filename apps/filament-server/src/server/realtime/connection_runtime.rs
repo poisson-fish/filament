@@ -1,26 +1,27 @@
+use std::collections::HashMap;
+
 use filament_core::UserId;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use crate::server::{
     auth::{now_unix, release_media_subscribe_leases_for_user},
+    core::ConnectionControl,
     core::{
         AppState, VoiceStreamKind, MAX_TRACKED_VOICE_CHANNELS,
         MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
     },
     errors::AuthFailure,
     gateway_events::{self, GatewayEvent},
-    metrics::record_gateway_event_dropped,
+    metrics::{record_gateway_event_dropped, record_gateway_event_emitted},
 };
 
 use super::{
-    connection_control::signal_slow_connections_close,
     connection_disconnect_followups::{
         compute_disconnect_presence_outcome, plan_disconnect_followups,
     },
     connection_registry::remove_connection_state,
     connection_subscriptions::remove_connection_from_subscription_indexes,
-    emit_metrics::emit_gateway_delivery_metrics,
     fanout_channel::dispatch_channel_payload,
     fanout_guild::dispatch_guild_payload,
     fanout_user::{connection_ids_for_user, dispatch_user_payload},
@@ -40,6 +41,34 @@ use super::{
         dispatch_voice_sync_event, try_build_voice_subscribe_sync_event, voice_sync_reject_reason,
     },
 };
+
+fn signal_slow_connections_close(
+    controls: &HashMap<Uuid, watch::Sender<ConnectionControl>>,
+    slow_connections: Vec<Uuid>,
+) {
+    for connection_id in slow_connections {
+        if let Some(control) = controls.get(&connection_id) {
+            let _ = control.send(ConnectionControl::Close);
+        }
+    }
+}
+
+fn emit_gateway_delivery_metrics(
+    scope: &'static str,
+    event_type: &'static str,
+    delivered: usize,
+) -> usize {
+    if delivered == 0 {
+        return 0;
+    }
+
+    tracing::debug!(event = "gateway.event.emit", scope, event_type, delivered);
+    for _ in 0..delivered {
+        record_gateway_event_emitted(scope, event_type);
+    }
+
+    delivered
+}
 
 async fn close_slow_connections(state: &AppState, slow_connections: Vec<Uuid>) {
     if slow_connections.is_empty() {
@@ -468,10 +497,16 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use tokio::sync::watch;
     use uuid::Uuid;
 
-    use super::{guild_id_from_subscription_key, presence_event_scope, should_skip_user_broadcast};
-    use crate::server::gateway_events;
+    use super::{
+        emit_gateway_delivery_metrics, guild_id_from_subscription_key, presence_event_scope,
+        should_skip_user_broadcast, signal_slow_connections_close,
+    };
+    use crate::server::{core::ConnectionControl, gateway_events};
 
     #[test]
     fn should_skip_user_broadcast_when_no_targets() {
@@ -505,5 +540,37 @@ mod tests {
         assert_eq!(guild_id_from_subscription_key(""), None);
         assert_eq!(guild_id_from_subscription_key(":c-1"), None);
         assert_eq!(guild_id_from_subscription_key("g-1"), None);
+    }
+
+    #[test]
+    fn closes_only_requested_connections_with_registered_controls() {
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let missing = Uuid::new_v4();
+
+        let (first_tx, first_rx) = watch::channel(ConnectionControl::Open);
+        let (second_tx, second_rx) = watch::channel(ConnectionControl::Open);
+        let mut controls = HashMap::new();
+        controls.insert(first, first_tx);
+        controls.insert(second, second_tx);
+
+        signal_slow_connections_close(&controls, vec![first, missing]);
+
+        assert_eq!(*first_rx.borrow(), ConnectionControl::Close);
+        assert_eq!(*second_rx.borrow(), ConnectionControl::Open);
+    }
+
+    #[test]
+    fn returns_zero_when_nothing_delivered() {
+        let emitted = emit_gateway_delivery_metrics("channel", "message_create", 0);
+
+        assert_eq!(emitted, 0);
+    }
+
+    #[test]
+    fn returns_delivered_count_when_events_emitted() {
+        let emitted = emit_gateway_delivery_metrics("guild", "presence_update", 3);
+
+        assert_eq!(emitted, 3);
     }
 }

@@ -2,7 +2,6 @@ mod connection_disconnect_followups;
 mod connection_registry;
 mod connection_runtime;
 mod connection_subscriptions;
-mod emit_metrics;
 mod hydration_db;
 mod hydration_in_memory;
 mod hydration_in_memory_attachments;
@@ -56,7 +55,6 @@ use tokio::sync::{mpsc, watch};
 use ulid::Ulid;
 use uuid::Uuid;
 
-mod connection_control;
 mod fanout_channel;
 mod fanout_dispatch;
 mod fanout_guild;
