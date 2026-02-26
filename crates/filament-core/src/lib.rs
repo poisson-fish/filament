@@ -517,7 +517,13 @@ pub fn tokenize_markdown(markdown: &str) -> Vec<MarkdownToken> {
                 &mut fenced_code_count,
             ),
             Event::Text(text) => {
-                handle_markdown_text(text.as_ref(), &mut tokens, &mut active_fenced_code);
+                let in_link_context = !link_stack.is_empty();
+                handle_markdown_text(
+                    text.as_ref(),
+                    &mut tokens,
+                    &mut active_fenced_code,
+                    in_link_context,
+                );
             }
             Event::Code(code) => push_markdown_token(
                 &mut tokens,
@@ -611,16 +617,19 @@ fn handle_markdown_text(
     text: &str,
     tokens: &mut Vec<MarkdownToken>,
     active_fenced_code: &mut Option<(Option<String>, String)>,
+    in_link_context: bool,
 ) {
     if let Some((_language, code)) = active_fenced_code.as_mut() {
         append_code_block_chunk(code, text);
-    } else if !text.is_empty() {
+    } else if in_link_context {
         push_markdown_token(
             tokens,
             MarkdownToken::Text {
                 text: truncate_to_char_boundary(text, MAX_MARKDOWN_INLINE_CHARS).to_owned(),
             },
         );
+    } else if !text.is_empty() {
+        push_markdown_text_with_autolinks(text, tokens);
     }
 }
 
@@ -654,6 +663,104 @@ fn push_markdown_token(tokens: &mut Vec<MarkdownToken>, token: MarkdownToken) {
     if tokens.len() < MAX_MARKDOWN_TOKENS {
         tokens.push(token);
     }
+}
+
+fn push_markdown_text_with_autolinks(text: &str, tokens: &mut Vec<MarkdownToken>) {
+    let mut cursor = 0usize;
+    while cursor < text.len() {
+        let Some(link_start) = find_next_link_start(text, cursor) else {
+            push_markdown_text_chunk(&text[cursor..], tokens);
+            return;
+        };
+
+        if link_start > cursor {
+            push_markdown_text_chunk(&text[cursor..link_start], tokens);
+        }
+
+        let Some((link_end, href)) = parse_autolink_candidate(text, link_start) else {
+            push_markdown_text_chunk(&text[link_start..], tokens);
+            return;
+        };
+
+        let label = &text[link_start..link_end];
+        push_markdown_token(tokens, MarkdownToken::LinkStart { href });
+        push_markdown_text_chunk(label, tokens);
+        push_markdown_token(tokens, MarkdownToken::LinkEnd);
+        cursor = link_end;
+    }
+}
+
+fn push_markdown_text_chunk(text: &str, tokens: &mut Vec<MarkdownToken>) {
+    if text.is_empty() {
+        return;
+    }
+    push_markdown_token(
+        tokens,
+        MarkdownToken::Text {
+            text: truncate_to_char_boundary(text, MAX_MARKDOWN_INLINE_CHARS).to_owned(),
+        },
+    );
+}
+
+fn find_next_link_start(text: &str, from: usize) -> Option<usize> {
+    let mut i = from;
+    while i < text.len() {
+        if !text.is_char_boundary(i) {
+            i += 1;
+            continue;
+        }
+        if starts_with_ascii_case_insensitive(text, i, "http://")
+            || starts_with_ascii_case_insensitive(text, i, "https://")
+            || starts_with_ascii_case_insensitive(text, i, "mailto:")
+        {
+            return Some(i);
+        }
+        let remainder = &text[i..];
+        let mut iter = remainder.chars();
+        let ch = iter.next()?;
+        i += ch.len_utf8();
+    }
+    None
+}
+
+fn parse_autolink_candidate(text: &str, start: usize) -> Option<(usize, String)> {
+    let mut end = start;
+    while end < text.len() {
+        if !text.is_char_boundary(end) {
+            end += 1;
+            continue;
+        }
+        let mut iter = text[end..].chars();
+        let ch = iter.next()?;
+        if ch.is_whitespace() {
+            break;
+        }
+        end += ch.len_utf8();
+    }
+    if end <= start {
+        return None;
+    }
+
+    let candidate = text.get(start..end)?;
+    let trimmed = trim_autolink_trailing_punctuation(candidate);
+    if trimmed.is_empty() {
+        return None;
+    }
+    let href = sanitize_link_target(trimmed)?;
+    let link_end = start + trimmed.len();
+    Some((link_end, href))
+}
+
+fn trim_autolink_trailing_punctuation(candidate: &str) -> &str {
+    candidate.trim_end_matches(|ch: char| {
+        matches!(ch, ')' | ']' | '}' | '.' | ',' | '!' | '?' | ';' | ':')
+    })
+}
+
+fn starts_with_ascii_case_insensitive(text: &str, start: usize, needle: &str) -> bool {
+    let end = start.saturating_add(needle.len());
+    text.get(start..end)
+        .is_some_and(|segment| segment.eq_ignore_ascii_case(needle))
 }
 
 fn sanitize_code_language(kind: CodeBlockKind<'_>) -> Option<String> {
@@ -1018,6 +1125,38 @@ mod tests {
             token,
             MarkdownToken::LinkStart { href } if href.starts_with("HTTPS://example.com/path")
         )));
+    }
+
+    #[test]
+    fn markdown_autolinks_plain_http_and_https_urls() {
+        let tokens = tokenize_markdown("Visit https://example.com/docs and http://localhost:3000.");
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::LinkStart { href } if href == "https://example.com/docs"
+        )));
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::LinkStart { href } if href == "http://localhost:3000"
+        )));
+    }
+
+    #[test]
+    fn markdown_autolinks_plain_mailto_urls() {
+        let tokens = tokenize_markdown("Contact mailto:admin@example.com.");
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::LinkStart { href } if href == "mailto:admin@example.com"
+        )));
+    }
+
+    #[test]
+    fn markdown_does_not_autolink_plain_urls_inside_explicit_markdown_links() {
+        let tokens = tokenize_markdown("[https://example.com](https://filament.test)");
+        let link_starts = tokens
+            .iter()
+            .filter(|token| matches!(token, MarkdownToken::LinkStart { .. }))
+            .count();
+        assert_eq!(link_starts, 1);
     }
 
     #[test]
