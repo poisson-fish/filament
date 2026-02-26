@@ -10,6 +10,10 @@ import {
   decodeVoiceGatewayEvent,
   isVoiceGatewayEventType,
 } from "./gateway-voice-events";
+import {
+  dispatchDecodedGatewayEvent,
+  type GatewayDispatchTable,
+} from "./gateway-dispatch-table";
 
 export interface VoiceGatewayDispatchHandlers {
   onVoiceParticipantSync?: (payload: VoiceParticipantSyncPayload) => void;
@@ -19,6 +23,41 @@ export interface VoiceGatewayDispatchHandlers {
   onVoiceStreamPublish?: (payload: VoiceStreamPublishPayload) => void;
   onVoiceStreamUnpublish?: (payload: VoiceStreamUnpublishPayload) => void;
 }
+
+export const VOICE_GATEWAY_DISPATCH_EVENT_TYPES: readonly string[] = [
+  "voice_participant_sync",
+  "voice_participant_join",
+  "voice_participant_leave",
+  "voice_participant_update",
+  "voice_stream_publish",
+  "voice_stream_unpublish",
+];
+
+type VoiceGatewayEvent = NonNullable<ReturnType<typeof decodeVoiceGatewayEvent>>;
+
+const VOICE_DISPATCH_TABLE: GatewayDispatchTable<
+  VoiceGatewayEvent,
+  VoiceGatewayDispatchHandlers
+> = {
+  voice_participant_sync: (eventPayload, eventHandlers) => {
+    eventHandlers.onVoiceParticipantSync?.(eventPayload);
+  },
+  voice_participant_join: (eventPayload, eventHandlers) => {
+    eventHandlers.onVoiceParticipantJoin?.(eventPayload);
+  },
+  voice_participant_leave: (eventPayload, eventHandlers) => {
+    eventHandlers.onVoiceParticipantLeave?.(eventPayload);
+  },
+  voice_participant_update: (eventPayload, eventHandlers) => {
+    eventHandlers.onVoiceParticipantUpdate?.(eventPayload);
+  },
+  voice_stream_publish: (eventPayload, eventHandlers) => {
+    eventHandlers.onVoiceStreamPublish?.(eventPayload);
+  },
+  voice_stream_unpublish: (eventPayload, eventHandlers) => {
+    eventHandlers.onVoiceStreamUnpublish?.(eventPayload);
+  },
+};
 
 export function dispatchVoiceGatewayEvent(
   type: string,
@@ -34,27 +73,6 @@ export function dispatchVoiceGatewayEvent(
     return true;
   }
 
-  if (voiceEvent.type === "voice_participant_sync") {
-    handlers.onVoiceParticipantSync?.(voiceEvent.payload);
-    return true;
-  }
-  if (voiceEvent.type === "voice_participant_join") {
-    handlers.onVoiceParticipantJoin?.(voiceEvent.payload);
-    return true;
-  }
-  if (voiceEvent.type === "voice_participant_leave") {
-    handlers.onVoiceParticipantLeave?.(voiceEvent.payload);
-    return true;
-  }
-  if (voiceEvent.type === "voice_participant_update") {
-    handlers.onVoiceParticipantUpdate?.(voiceEvent.payload);
-    return true;
-  }
-  if (voiceEvent.type === "voice_stream_publish") {
-    handlers.onVoiceStreamPublish?.(voiceEvent.payload);
-    return true;
-  }
-
-  handlers.onVoiceStreamUnpublish?.(voiceEvent.payload);
+  dispatchDecodedGatewayEvent(voiceEvent, handlers, VOICE_DISPATCH_TABLE);
   return true;
 }

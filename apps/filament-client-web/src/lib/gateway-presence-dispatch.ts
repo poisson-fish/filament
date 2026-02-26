@@ -5,23 +5,47 @@ import type {
 import {
   decodePresenceGatewayEvent,
 } from "./gateway-presence-events";
+import {
+  dispatchDecodedGatewayEvent,
+  type GatewayDispatchTable,
+} from "./gateway-dispatch-table";
 
 export interface PresenceGatewayDispatchHandlers {
   onPresenceSync?: (payload: PresenceSyncPayload) => void;
   onPresenceUpdate?: (payload: PresenceUpdatePayload) => void;
 }
 
-const PRESENCE_GATEWAY_EVENT_TYPES = new Set<string>([
+export const PRESENCE_GATEWAY_DISPATCH_EVENT_TYPES: readonly string[] = [
   "presence_sync",
   "presence_update",
-]);
+];
+
+const PRESENCE_GATEWAY_EVENT_TYPE_SET = new Set<string>(
+  PRESENCE_GATEWAY_DISPATCH_EVENT_TYPES,
+);
+
+type PresenceGatewayEvent = NonNullable<
+  ReturnType<typeof decodePresenceGatewayEvent>
+>;
+
+const PRESENCE_DISPATCH_TABLE: GatewayDispatchTable<
+  PresenceGatewayEvent,
+  PresenceGatewayDispatchHandlers
+> = {
+  presence_sync: (eventPayload, eventHandlers) => {
+    eventHandlers.onPresenceSync?.(eventPayload);
+  },
+  presence_update: (eventPayload, eventHandlers) => {
+    eventHandlers.onPresenceUpdate?.(eventPayload);
+  },
+};
 
 export function dispatchPresenceGatewayEvent(
   type: string,
   payload: unknown,
   handlers: PresenceGatewayDispatchHandlers,
 ): boolean {
-  if (!PRESENCE_GATEWAY_EVENT_TYPES.has(type)) {
+  if (!PRESENCE_GATEWAY_EVENT_TYPE_SET.has(type)) {
     return false;
   }
 
@@ -30,11 +54,10 @@ export function dispatchPresenceGatewayEvent(
     return true;
   }
 
-  if (presenceEvent.type === "presence_sync") {
-    handlers.onPresenceSync?.(presenceEvent.payload);
-    return true;
-  }
-
-  handlers.onPresenceUpdate?.(presenceEvent.payload);
+  dispatchDecodedGatewayEvent(
+    presenceEvent,
+    handlers,
+    PRESENCE_DISPATCH_TABLE,
+  );
   return true;
 }

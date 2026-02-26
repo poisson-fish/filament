@@ -7,6 +7,10 @@ import type {
 import {
   decodeFriendGatewayEvent,
 } from "./gateway-friend-events";
+import {
+  dispatchDecodedGatewayEvent,
+  type GatewayDispatchTable,
+} from "./gateway-dispatch-table";
 
 export interface FriendGatewayDispatchHandlers {
   onFriendRequestCreate?: (payload: FriendRequestCreatePayload) => void;
@@ -15,19 +19,43 @@ export interface FriendGatewayDispatchHandlers {
   onFriendRemove?: (payload: FriendRemovePayload) => void;
 }
 
-const FRIEND_GATEWAY_EVENT_TYPES = new Set<string>([
+export const FRIEND_GATEWAY_DISPATCH_EVENT_TYPES: readonly string[] = [
   "friend_request_create",
   "friend_request_update",
   "friend_request_delete",
   "friend_remove",
-]);
+];
+
+const FRIEND_GATEWAY_EVENT_TYPE_SET = new Set<string>(
+  FRIEND_GATEWAY_DISPATCH_EVENT_TYPES,
+);
+
+type FriendGatewayEvent = NonNullable<ReturnType<typeof decodeFriendGatewayEvent>>;
+
+const FRIEND_DISPATCH_TABLE: GatewayDispatchTable<
+  FriendGatewayEvent,
+  FriendGatewayDispatchHandlers
+> = {
+  friend_request_create: (eventPayload, eventHandlers) => {
+    eventHandlers.onFriendRequestCreate?.(eventPayload);
+  },
+  friend_request_update: (eventPayload, eventHandlers) => {
+    eventHandlers.onFriendRequestUpdate?.(eventPayload);
+  },
+  friend_request_delete: (eventPayload, eventHandlers) => {
+    eventHandlers.onFriendRequestDelete?.(eventPayload);
+  },
+  friend_remove: (eventPayload, eventHandlers) => {
+    eventHandlers.onFriendRemove?.(eventPayload);
+  },
+};
 
 export function dispatchFriendGatewayEvent(
   type: string,
   payload: unknown,
   handlers: FriendGatewayDispatchHandlers,
 ): boolean {
-  if (!FRIEND_GATEWAY_EVENT_TYPES.has(type)) {
+  if (!FRIEND_GATEWAY_EVENT_TYPE_SET.has(type)) {
     return false;
   }
 
@@ -36,19 +64,6 @@ export function dispatchFriendGatewayEvent(
     return true;
   }
 
-  if (friendEvent.type === "friend_request_create") {
-    handlers.onFriendRequestCreate?.(friendEvent.payload);
-    return true;
-  }
-  if (friendEvent.type === "friend_request_update") {
-    handlers.onFriendRequestUpdate?.(friendEvent.payload);
-    return true;
-  }
-  if (friendEvent.type === "friend_request_delete") {
-    handlers.onFriendRequestDelete?.(friendEvent.payload);
-    return true;
-  }
-
-  handlers.onFriendRemove?.(friendEvent.payload);
+  dispatchDecodedGatewayEvent(friendEvent, handlers, FRIEND_DISPATCH_TABLE);
   return true;
 }

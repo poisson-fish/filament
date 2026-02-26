@@ -357,13 +357,13 @@ Reduce fragmentation and simplify navigation while preserving testable seams.
 Keep fail-closed parsing while reducing repetitive dispatch boilerplate.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Replace long `if` chains in dispatchers with table-driven handler maps.
-- [ ] Keep domain decoders explicit and strict.
-- [ ] Centralize event-type registry used by dispatcher + tests.
-- [ ] Preserve unknown-event ignore behavior.
+- [x] Replace long `if` chains in dispatchers with table-driven handler maps.
+- [x] Keep domain decoders explicit and strict.
+- [x] Centralize event-type registry used by dispatcher + tests.
+- [x] Preserve unknown-event ignore behavior.
 
 ### Tentative File Touch List
 - `apps/filament-client-web/src/lib/gateway.ts`
@@ -373,8 +373,14 @@ Keep fail-closed parsing while reducing repetitive dispatch boilerplate.
 - `apps/filament-client-web/tests/gateway-*.test.ts`
 
 ### Tests
-- [ ] Existing gateway parser/dispatch tests remain green.
-- [ ] Add tests for registry completeness and duplicate-type detection.
+- [x] Existing gateway parser/dispatch tests remain green.
+- [x] Add tests for registry completeness and duplicate-type detection.
+
+### Progress Notes
+- 2026-02-26 (Slice 1): Replaced branch-heavy domain dispatcher handler chains (`message`, `workspace`, `friend`, `profile`, `voice`, `presence`) with typed table-driven dispatch maps via a shared helper (`gateway-dispatch-table.ts`), while keeping each domain decoder unchanged and fail-closed.
+- 2026-02-26 (Slice 2): Centralized domain event-type registration in `gateway-domain-dispatch.ts` as explicit per-domain registrations (`dispatch + eventTypes`) and switched domain dispatch routing to a prebuilt event-type registry map, preserving unknown-event ignore behavior (`false` return for unregistered event names).
+- 2026-02-26 (Slice 3): Added registry integrity coverage in `gateway-domain-dispatch.test.ts` for duplicate-type detection and registry completeness (`GATEWAY_DOMAIN_EVENT_TYPES` all route through dispatcher); also updated top-level gateway envelope dispatch in `gateway.ts` to use a shared dispatcher list instead of chained event checks.
+- 2026-02-26 (Validation): Ran focused gateway dispatch/parser tests and TypeScript typecheck successfully. Full web test suite currently has pre-existing unrelated failures in non-gateway UI tests (`app-shell-overlay-controller`, `app-shell-settings-entry`, `app-shell-voice-controls`) that were not modified in this slice.
 
 ### Exit Criteria
 - Client dispatch is data-driven and easier to extend.

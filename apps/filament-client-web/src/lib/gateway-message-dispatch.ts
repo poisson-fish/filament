@@ -6,6 +6,10 @@ import type {
 import {
   decodeMessageGatewayEvent,
 } from "./gateway-message-events";
+import {
+  dispatchDecodedGatewayEvent,
+  type GatewayDispatchTable,
+} from "./gateway-dispatch-table";
 import type {
   MessageRecord,
 } from "../domain/chat";
@@ -17,19 +21,45 @@ export interface MessageGatewayDispatchHandlers {
   onMessageReaction?: (payload: MessageReactionPayload) => void;
 }
 
-const MESSAGE_GATEWAY_EVENT_TYPES = new Set<string>([
+export const MESSAGE_GATEWAY_DISPATCH_EVENT_TYPES: readonly string[] = [
   "message_create",
   "message_update",
   "message_delete",
   "message_reaction",
-]);
+];
+
+const MESSAGE_GATEWAY_EVENT_TYPE_SET = new Set<string>(
+  MESSAGE_GATEWAY_DISPATCH_EVENT_TYPES,
+);
+
+type MessageGatewayEvent = NonNullable<
+  ReturnType<typeof decodeMessageGatewayEvent>
+>;
+
+const MESSAGE_DISPATCH_TABLE: GatewayDispatchTable<
+  MessageGatewayEvent,
+  MessageGatewayDispatchHandlers
+> = {
+  message_create: (eventPayload, eventHandlers) => {
+    eventHandlers.onMessageCreate?.(eventPayload);
+  },
+  message_update: (eventPayload, eventHandlers) => {
+    eventHandlers.onMessageUpdate?.(eventPayload);
+  },
+  message_delete: (eventPayload, eventHandlers) => {
+    eventHandlers.onMessageDelete?.(eventPayload);
+  },
+  message_reaction: (eventPayload, eventHandlers) => {
+    eventHandlers.onMessageReaction?.(eventPayload);
+  },
+};
 
 export function dispatchMessageGatewayEvent(
   type: string,
   payload: unknown,
   handlers: MessageGatewayDispatchHandlers,
 ): boolean {
-  if (!MESSAGE_GATEWAY_EVENT_TYPES.has(type)) {
+  if (!MESSAGE_GATEWAY_EVENT_TYPE_SET.has(type)) {
     return false;
   }
 
@@ -38,19 +68,6 @@ export function dispatchMessageGatewayEvent(
     return true;
   }
 
-  if (messageEvent.type === "message_create") {
-    handlers.onMessageCreate?.(messageEvent.payload);
-    return true;
-  }
-  if (messageEvent.type === "message_update") {
-    handlers.onMessageUpdate?.(messageEvent.payload);
-    return true;
-  }
-  if (messageEvent.type === "message_delete") {
-    handlers.onMessageDelete?.(messageEvent.payload);
-    return true;
-  }
-
-  handlers.onMessageReaction?.(messageEvent.payload);
+  dispatchDecodedGatewayEvent(messageEvent, handlers, MESSAGE_DISPATCH_TABLE);
   return true;
 }

@@ -19,6 +19,18 @@ import {
 
 export * from "./gateway-contracts";
 
+type GatewayEnvelopeDispatcher = (
+  type: string,
+  payload: unknown,
+  handlers: GatewayHandlers,
+) => boolean;
+
+const GATEWAY_ENVELOPE_DISPATCHERS: readonly GatewayEnvelopeDispatcher[] = [
+  dispatchReadyGatewayEvent,
+  dispatchSubscribedGatewayEvent,
+  dispatchGatewayDomainEvent,
+];
+
 interface GatewayClient {
   updateSubscription: (guildId: GuildId, channelId: ChannelId) => void;
   setSubscribedChannels: (guildId: GuildId, channelIds: ReadonlyArray<ChannelId>) => void;
@@ -147,16 +159,10 @@ export function connectGateway(
       return;
     }
 
-    if (dispatchReadyGatewayEvent(envelope.t, envelope.d, handlers)) {
-      return;
-    }
-
-    if (dispatchSubscribedGatewayEvent(envelope.t, envelope.d, handlers)) {
-      return;
-    }
-
-    if (dispatchGatewayDomainEvent(envelope.t, envelope.d, handlers)) {
-      return;
+    for (const dispatchGatewayEvent of GATEWAY_ENVELOPE_DISPATCHERS) {
+      if (dispatchGatewayEvent(envelope.t, envelope.d, handlers)) {
+        return;
+      }
     }
   };
 

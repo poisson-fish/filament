@@ -1,5 +1,7 @@
 import {
+  duplicateGatewayDomainEventTypes,
   dispatchGatewayDomainEvent,
+  GATEWAY_DOMAIN_EVENT_TYPES,
 } from "../src/lib/gateway-domain-dispatch";
 
 const DEFAULT_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -65,5 +67,16 @@ describe("dispatchGatewayDomainEvent", () => {
 
     expect(handled).toBe(false);
     expect(onProfileUpdate).not.toHaveBeenCalled();
+  });
+
+  it("has no duplicate event types in the centralized domain registry", () => {
+    expect(duplicateGatewayDomainEventTypes()).toEqual([]);
+  });
+
+  it("routes every registered domain event type through the domain dispatcher", () => {
+    for (const eventType of GATEWAY_DOMAIN_EVENT_TYPES) {
+      const handled = dispatchGatewayDomainEvent(eventType, {}, {});
+      expect(handled).toBe(true);
+    }
   });
 });
