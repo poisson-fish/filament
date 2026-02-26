@@ -24,8 +24,10 @@ use super::{
     fanout_channel::dispatch_channel_payload,
     fanout_guild::dispatch_guild_payload,
     fanout_user::{connection_ids_for_user, dispatch_user_payload},
-    presence_subscribe::{apply_presence_subscribe, build_presence_subscribe_events},
-    presence_sync_dispatch::{dispatch_presence_sync_event, presence_sync_reject_reason},
+    presence_subscribe::{
+        apply_presence_subscribe, build_presence_subscribe_events, dispatch_presence_sync_event,
+        presence_sync_reject_reason,
+    },
     subscription_insert::insert_connection_subscription,
     voice_cleanup_dispatch::{
         broadcast_disconnected_user_voice_removals, broadcast_expired_voice_removals,
