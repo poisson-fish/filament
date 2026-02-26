@@ -20,7 +20,6 @@ mod search_collect_db;
 mod search_collect_runtime;
 mod search_enqueue;
 mod search_index_lookup;
-mod search_query_input;
 mod search_query_run;
 mod search_reconciliation_plan;
 mod search_runtime;

@@ -1,7 +1,6 @@
 use crate::server::{core::AppState, errors::AuthFailure};
 
-use super::search_query_input::normalize_search_query;
-use super::{run_search_blocking_with_timeout, run_search_query_against_index};
+use super::{run_search_blocking_with_timeout, run_search_query_against_index, search_runtime};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SearchQueryRunInput {
@@ -20,7 +19,7 @@ fn build_search_query_run_input(
     SearchQueryRunInput {
         guild_id: guild_id.to_owned(),
         channel_id: channel_id.map(ToOwned::to_owned),
-        query: normalize_search_query(raw_query),
+        query: search_runtime::normalize_search_query(raw_query),
         limit,
     }
 }

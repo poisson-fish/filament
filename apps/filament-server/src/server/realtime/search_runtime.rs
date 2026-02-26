@@ -22,7 +22,7 @@ use super::{
         collect_all_indexed_messages_runtime, collect_indexed_messages_for_guild_runtime,
     },
     search_enqueue::enqueue_search_command,
-    search_query_input::validate_search_query_request,
+    search_validation::validate_search_query_limits,
 };
 
 const SEARCH_WORKER_BATCH_LIMIT: usize = 128;
@@ -130,7 +130,17 @@ fn validate_search_query_with_limits(
     max_chars: usize,
     max_limit: usize,
 ) -> Result<(), AuthFailure> {
-    validate_search_query_request(query, default_limit, max_chars, max_limit)
+    let raw = normalize_search_query(&query.q);
+    let limit = effective_search_limit(query.limit, default_limit);
+    validate_search_query_limits(&raw, limit, max_chars, max_limit)
+}
+
+pub(super) fn normalize_search_query(raw_query: &str) -> String {
+    raw_query.trim().to_owned()
+}
+
+fn effective_search_limit(requested_limit: Option<usize>, default_limit: usize) -> usize {
+    requested_limit.unwrap_or(default_limit)
 }
 
 pub(crate) async fn ensure_search_bootstrapped(state: &AppState) -> Result<(), AuthFailure> {
@@ -182,8 +192,8 @@ mod tests {
     use tantivy::schema::Type;
 
     use super::{
-        build_search_rebuild_operation, build_search_schema, indexed_message_from_response,
-        validate_search_query_with_limits,
+        build_search_rebuild_operation, build_search_schema, effective_search_limit,
+        indexed_message_from_response, normalize_search_query, validate_search_query_with_limits,
     };
     use crate::server::{
         core::{IndexedMessage, SearchOperation},
@@ -226,6 +236,26 @@ mod tests {
         let result = validate_search_query_with_limits(&query, 20, 256, 50);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn normalize_search_query_trims_surrounding_whitespace() {
+        assert_eq!(normalize_search_query("  hello world  \n"), "hello world");
+    }
+
+    #[test]
+    fn normalize_search_query_preserves_internal_whitespace() {
+        assert_eq!(normalize_search_query("  hello   world  "), "hello   world");
+    }
+
+    #[test]
+    fn effective_search_limit_uses_default_when_missing() {
+        assert_eq!(effective_search_limit(None, 25), 25);
+    }
+
+    #[test]
+    fn effective_search_limit_uses_requested_when_present() {
+        assert_eq!(effective_search_limit(Some(10), 25), 10);
     }
 
     #[test]
