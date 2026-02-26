@@ -4,7 +4,13 @@ use serde::Deserialize;
 use serde_json::Value;
 use ulid::Ulid;
 
-use crate::server::{auth::validate_message_content, domain::parse_attachment_ids};
+use crate::server::{
+    auth::{validate_message_content, ClientIp},
+    core::{AppState, AuthContext},
+    domain::{enforce_guild_ip_ban_for_request, parse_attachment_ids},
+};
+
+use super::create_message_internal_from_ingress_validated;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -244,6 +250,42 @@ pub(crate) fn parse_gateway_ingress_command(
     GatewayIngressCommand::try_from(envelope)
 }
 
+pub(crate) async fn execute_message_create_command(
+    state: &AppState,
+    auth: &AuthContext,
+    client_ip: ClientIp,
+    request: GatewayMessageCreateCommand,
+) -> Result<(), &'static str> {
+    if enforce_guild_ip_ban_for_request(
+        state,
+        request.guild_id.as_str(),
+        auth.user_id,
+        client_ip,
+        "gateway.message_create",
+    )
+    .await
+    .is_err()
+    {
+        return Err("ip_banned");
+    }
+
+    if create_message_internal_from_ingress_validated(
+        state,
+        auth,
+        request.guild_id.as_str(),
+        request.channel_id.as_str(),
+        request.content,
+        request.attachment_ids,
+    )
+    .await
+    .is_err()
+    {
+        return Err("message_rejected");
+    }
+
+    Ok(())
+}
+
 pub(crate) enum GatewayIngressMessageDecode {
     Payload(Vec<u8>),
     Continue,
@@ -358,6 +400,39 @@ mod tests {
                 assert_eq!(
                     request.attachment_ids.into_vec(),
                     vec![String::from("01JYQ4V3VW1TC0MCC4GY7Q4RPR")]
+                );
+            }
+            GatewayIngressCommand::Subscribe(_) => {
+                panic!("expected message_create command");
+            }
+        }
+    }
+
+    #[test]
+    fn parses_message_create_command_deduping_attachment_ids() {
+        let command = parse_gateway_ingress_command(envelope(
+            "message_create",
+            json!({
+                "guild_id": "01JYQ4V2YQ8B4FW9P51TE5Z1JK",
+                "channel_id": "01JYQ4V3E2BTRWCHKRHV9K8HXT",
+                "content": "hello",
+                "attachment_ids": [
+                    "01JYQ4V3VW1TC0MCC4GY7Q4RPR",
+                    "01JYQ4V4EA6J2QY3K8Y6DX93Q2",
+                    "01JYQ4V3VW1TC0MCC4GY7Q4RPR"
+                ]
+            }),
+        ))
+        .expect("message_create payload with duplicate attachment ids should parse");
+
+        match command {
+            GatewayIngressCommand::MessageCreate(request) => {
+                assert_eq!(
+                    request.attachment_ids.into_vec(),
+                    vec![
+                        String::from("01JYQ4V3VW1TC0MCC4GY7Q4RPR"),
+                        String::from("01JYQ4V4EA6J2QY3K8Y6DX93Q2"),
+                    ]
                 );
             }
             GatewayIngressCommand::Subscribe(_) => {
