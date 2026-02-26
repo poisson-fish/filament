@@ -18,14 +18,18 @@ use super::{
     search_apply::apply_search_operation as apply_search_operation_impl,
     search_apply_batch::apply_search_batch_with_ack,
     search_batch_drain::drain_search_batch,
-    search_collect_runtime::{
-        collect_all_indexed_messages_runtime, collect_indexed_messages_for_guild_runtime,
+    search_collect_all::collect_all_indexed_messages_in_memory,
+    search_collect_db::{
+        collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows,
+        enforce_guild_collect_doc_cap, guild_collect_fetch_limit,
     },
+    search_collect_guild::collect_indexed_messages_for_guild_in_memory,
     search_enqueue::enqueue_search_command,
     search_validation::validate_search_query_limits,
 };
 
 const SEARCH_WORKER_BATCH_LIMIT: usize = 128;
+type IndexedMessageRow = (String, String, String, String, String, i64);
 
 pub(crate) fn build_search_schema() -> (Schema, SearchFields) {
     let mut schema_builder = Schema::builder();
@@ -124,6 +128,18 @@ fn build_search_rebuild_operation(docs: Vec<IndexedMessage>) -> SearchOperation 
     SearchOperation::Rebuild { docs }
 }
 
+fn map_collect_all_rows(rows: Vec<IndexedMessageRow>) -> Vec<IndexedMessage> {
+    collect_all_indexed_messages_rows(rows)
+}
+
+fn map_collect_guild_rows(
+    rows: Vec<IndexedMessageRow>,
+    max_docs: usize,
+) -> Result<Vec<IndexedMessage>, AuthFailure> {
+    enforce_guild_collect_doc_cap(rows.len(), max_docs)?;
+    Ok(collect_indexed_messages_for_guild_rows(rows))
+}
+
 fn validate_search_query_with_limits(
     query: &SearchQuery,
     default_limit: usize,
@@ -167,7 +183,19 @@ pub(crate) async fn enqueue_search_operation(
 pub(crate) async fn collect_all_indexed_messages(
     state: &AppState,
 ) -> Result<Vec<IndexedMessage>, AuthFailure> {
-    collect_all_indexed_messages_runtime(state).await
+    if let Some(pool) = &state.db_pool {
+        let rows = sqlx::query_as::<_, IndexedMessageRow>(
+            "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
+             FROM messages",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        return Ok(map_collect_all_rows(rows));
+    }
+
+    let guilds = state.membership_store.guilds().read().await;
+    Ok(collect_all_indexed_messages_in_memory(&guilds))
 }
 
 pub(crate) async fn collect_indexed_messages_for_guild(
@@ -175,7 +203,25 @@ pub(crate) async fn collect_indexed_messages_for_guild(
     guild_id: &str,
     max_docs: usize,
 ) -> Result<Vec<IndexedMessage>, AuthFailure> {
-    collect_indexed_messages_for_guild_runtime(state, guild_id, max_docs).await
+    if let Some(pool) = &state.db_pool {
+        let limit = guild_collect_fetch_limit(max_docs)?;
+        let rows = sqlx::query_as::<_, IndexedMessageRow>(
+            "SELECT message_id, guild_id, channel_id, author_id, content, created_at_unix
+             FROM messages
+             WHERE guild_id = $1
+             ORDER BY created_at_unix DESC
+             LIMIT $2",
+        )
+        .bind(guild_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        return map_collect_guild_rows(rows, max_docs);
+    }
+
+    let guilds = state.membership_store.guilds().read().await;
+    collect_indexed_messages_for_guild_in_memory(&guilds, guild_id, max_docs)
 }
 
 pub(crate) async fn hydrate_messages_by_id(
@@ -193,7 +239,8 @@ mod tests {
 
     use super::{
         build_search_rebuild_operation, build_search_schema, effective_search_limit,
-        indexed_message_from_response, normalize_search_query, validate_search_query_with_limits,
+        indexed_message_from_response, map_collect_all_rows, map_collect_guild_rows,
+        normalize_search_query, validate_search_query_with_limits,
     };
     use crate::server::{
         core::{IndexedMessage, SearchOperation},
@@ -330,5 +377,58 @@ mod tests {
         let entry = schema.get_field_entry(fields.created_at_unix);
 
         assert_eq!(entry.field_type().value_type(), Type::I64);
+    }
+
+    #[test]
+    fn map_collect_all_rows_maps_messages_in_order() {
+        let docs = map_collect_all_rows(vec![
+            (
+                String::from("m1"),
+                String::from("g1"),
+                String::from("c1"),
+                String::from("u1"),
+                String::from("first"),
+                10,
+            ),
+            (
+                String::from("m2"),
+                String::from("g1"),
+                String::from("c2"),
+                String::from("u2"),
+                String::from("second"),
+                11,
+            ),
+        ]);
+
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].message_id, "m1");
+        assert_eq!(docs[1].message_id, "m2");
+    }
+
+    #[test]
+    fn map_collect_guild_rows_fails_closed_when_rows_exceed_cap() {
+        let result = map_collect_guild_rows(
+            vec![
+                (
+                    String::from("m1"),
+                    String::from("g1"),
+                    String::from("c1"),
+                    String::from("u1"),
+                    String::from("first"),
+                    10,
+                ),
+                (
+                    String::from("m2"),
+                    String::from("g1"),
+                    String::from("c1"),
+                    String::from("u1"),
+                    String::from("second"),
+                    11,
+                ),
+            ],
+            1,
+        );
+
+        assert!(matches!(result, Err(AuthFailure::InvalidRequest)));
     }
 }
