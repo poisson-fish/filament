@@ -1,7 +1,7 @@
 use std::{
     net::IpAddr,
     sync::atomic::Ordering,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::anyhow;
@@ -181,15 +181,28 @@ pub(crate) async fn authenticate_with_token(
     state: &AppState,
     access_token: &str,
 ) -> Result<AuthContext, AuthFailure> {
+    let timing_enabled = std::env::var_os("FILAMENT_DEBUG_REQUEST_TIMINGS").is_some();
+    let total_start = Instant::now();
     let claims = verify_access_token(state, access_token).map_err(|_| AuthFailure::Unauthorized)?;
+    let verify_ms = total_start.elapsed().as_millis();
     let user_id = claims
         .get_claim("sub")
         .and_then(serde_json::Value::as_str)
         .ok_or(AuthFailure::Unauthorized)?;
+    let lookup_start = Instant::now();
     let username = find_username_by_subject(state, user_id)
         .await
         .ok_or(AuthFailure::Unauthorized)?;
+    let lookup_ms = lookup_start.elapsed().as_millis();
     let user_id = UserId::try_from(user_id.to_owned()).map_err(|_| AuthFailure::Unauthorized)?;
+    if timing_enabled {
+        tracing::info!(
+            event = "debug.auth.authenticate_with_token.timing",
+            verify_ms,
+            username_lookup_ms = lookup_ms,
+            total_ms = total_start.elapsed().as_millis()
+        );
+    }
     Ok(AuthContext { user_id, username })
 }
 

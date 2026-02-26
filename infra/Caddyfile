@@ -23,12 +23,18 @@
   @api_path path /api /api/*
   handle @api_path {
     uri strip_prefix /api
-    reverse_proxy filament-server:3000
+    reverse_proxy filament-server:3000 {
+      header_up X-Forwarded-For {header.CF-Connecting-IP}
+      header_up X-Real-IP {header.CF-Connecting-IP}
+    }
   }
 
   @gateway_path path /gateway/ws /gateway/ws*
   handle @gateway_path {
-    reverse_proxy filament-server:3000
+    reverse_proxy filament-server:3000 {
+      header_up X-Forwarded-For {header.CF-Connecting-IP}
+      header_up X-Real-IP {header.CF-Connecting-IP}
+    }
   }
 }
 
@@ -71,5 +77,8 @@ https://{$CADDY_API_HTTPS_HOSTS} {
 
 # Keep the old port for direct access if needed (optional, can be removed)
 :{$CADDY_LEGACY_SERVER_PORT} {
-  reverse_proxy filament-server:3000
+  reverse_proxy filament-server:3000 {
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Real-IP {remote_host}
+  }
 }

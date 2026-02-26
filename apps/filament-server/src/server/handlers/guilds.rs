@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
+    time::Instant,
 };
 
 use axum::{
@@ -3165,15 +3166,22 @@ pub(crate) async fn join_public_guild(
     connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(path): Path<GuildPath>,
 ) -> Result<Json<DirectoryJoinResponse>, AuthFailure> {
+    let timing_enabled = std::env::var_os("FILAMENT_DEBUG_REQUEST_TIMINGS").is_some();
+    let total_start = Instant::now();
     let client_ip = extract_client_ip(
         &state,
         &headers,
         connect_info.as_ref().map(|value| value.0 .0.ip()),
     );
+    let auth_start = Instant::now();
     let auth = authenticate(&state, &headers).await?;
+    let auth_ms = auth_start.elapsed().as_millis();
+    let limiter_start = Instant::now();
     enforce_directory_join_rate_limit(&state, client_ip, auth.user_id).await?;
+    let limiter_ms = limiter_start.elapsed().as_millis();
     maybe_record_join_ip_observation(&state, auth.user_id, client_ip).await?;
 
+    let resolve_start = Instant::now();
     let outcome = if let Some(pool) = &state.db_pool {
         resolve_directory_join_outcome_db(&state, pool, &path.guild_id, auth.user_id, client_ip)
             .await?
@@ -3181,12 +3189,17 @@ pub(crate) async fn join_public_guild(
         resolve_directory_join_outcome_in_memory(&state, &path.guild_id, auth.user_id, client_ip)
             .await?
     };
+    let resolve_ms = resolve_start.elapsed().as_millis();
 
+    let audit_start = Instant::now();
     write_directory_join_audit(&state, &path.guild_id, auth.user_id, outcome, client_ip).await?;
+    let audit_ms = audit_start.elapsed().as_millis();
     if let Some(failure) = join_failure_from_outcome(outcome) {
         return Err(failure);
     }
+    let mut broadcast_ms: u128 = 0;
     if outcome == DirectoryJoinOutcome::Accepted {
+        let broadcast_start = Instant::now();
         let joined_at_unix = now_unix();
         match gateway_events::try_workspace_member_add(
             &path.guild_id,
@@ -3213,6 +3226,18 @@ pub(crate) async fn join_public_guild(
                 );
             }
         }
+        broadcast_ms = broadcast_start.elapsed().as_millis();
+    }
+    if timing_enabled {
+        tracing::info!(
+            event = "debug.guild.join_public_guild.timing",
+            auth_ms,
+            limiter_ms,
+            resolve_ms,
+            audit_ms,
+            broadcast_ms,
+            total_ms = total_start.elapsed().as_millis()
+        );
     }
     Ok(Json(DirectoryJoinResponse {
         guild_id: path.guild_id,
