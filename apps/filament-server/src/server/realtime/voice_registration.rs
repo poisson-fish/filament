@@ -157,7 +157,7 @@ pub(crate) fn plan_voice_registration_events(
         let event = gateway_events::try_voice_participant_join(
             guild_id,
             channel_id,
-            super::voice_presence::voice_snapshot_from_record(&participant),
+            super::voice_sync_dispatch::voice_snapshot_from_record(&participant),
         )
         .map_err(|source| VoiceRegistrationEventBuildError {
             event_type: gateway_events::VOICE_PARTICIPANT_JOIN_EVENT,
@@ -456,6 +456,12 @@ mod tests {
             .filter(|(_, event)| event.event_type == VOICE_PARTICIPANT_JOIN_EVENT)
             .count();
         assert_eq!(join_count, 1);
+        let join_event = planned
+            .iter()
+            .find(|(_, event)| event.event_type == VOICE_PARTICIPANT_JOIN_EVENT)
+            .expect("join event should exist");
+        assert!(join_event.1.payload.contains("\"identity\":\"joined\""));
+        assert!(join_event.1.payload.contains("\"channel_id\":\"c2\""));
         let update_count = planned
             .iter()
             .filter(|(_, event)| event.event_type == VOICE_PARTICIPANT_UPDATE_EVENT)
