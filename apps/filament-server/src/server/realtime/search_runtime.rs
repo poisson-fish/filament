@@ -18,7 +18,6 @@ use super::{
     search_apply::apply_search_operation as apply_search_operation_impl,
     search_apply_batch::apply_search_batch_with_ack,
     search_batch_drain::drain_search_batch,
-    search_bootstrap::build_search_rebuild_operation,
     search_collect_runtime::{
         collect_all_indexed_messages_runtime, collect_indexed_messages_for_guild_runtime,
     },
@@ -93,6 +92,10 @@ pub(crate) fn validate_search_query(
     )
 }
 
+fn build_search_rebuild_operation(docs: Vec<IndexedMessage>) -> SearchOperation {
+    SearchOperation::Rebuild { docs }
+}
+
 fn validate_search_query_with_limits(
     query: &SearchQuery,
     default_limit: usize,
@@ -148,8 +151,23 @@ pub(crate) async fn hydrate_messages_by_id(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_search_query_with_limits;
-    use crate::server::{errors::AuthFailure, types::SearchQuery};
+    use super::{build_search_rebuild_operation, validate_search_query_with_limits};
+    use crate::server::{
+        core::{IndexedMessage, SearchOperation},
+        errors::AuthFailure,
+        types::SearchQuery,
+    };
+
+    fn sample_doc(id: &str) -> IndexedMessage {
+        IndexedMessage {
+            message_id: id.to_owned(),
+            guild_id: String::from("g1"),
+            channel_id: String::from("c1"),
+            author_id: String::from("u1"),
+            created_at_unix: 1,
+            content: String::from("hello"),
+        }
+    }
 
     #[test]
     fn validate_search_query_with_limits_rejects_blank_query() {
@@ -175,5 +193,29 @@ mod tests {
         let result = validate_search_query_with_limits(&query, 20, 256, 50);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn build_search_rebuild_operation_wraps_docs() {
+        let op = build_search_rebuild_operation(vec![sample_doc("m1"), sample_doc("m2")]);
+
+        match op {
+            SearchOperation::Rebuild { docs } => {
+                assert_eq!(docs.len(), 2);
+                assert_eq!(docs[0].message_id, "m1");
+                assert_eq!(docs[1].message_id, "m2");
+            }
+            _ => panic!("expected rebuild operation"),
+        }
+    }
+
+    #[test]
+    fn build_search_rebuild_operation_supports_empty_docs() {
+        let op = build_search_rebuild_operation(Vec::new());
+
+        match op {
+            SearchOperation::Rebuild { docs } => assert!(docs.is_empty()),
+            _ => panic!("expected rebuild operation"),
+        }
     }
 }

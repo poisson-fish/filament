@@ -18,7 +18,6 @@ mod message_store_in_memory;
 mod ready_enqueue;
 mod search_apply_batch;
 mod search_batch_drain;
-mod search_bootstrap;
 mod search_collect_db;
 mod search_collect_runtime;
 mod search_enqueue;
