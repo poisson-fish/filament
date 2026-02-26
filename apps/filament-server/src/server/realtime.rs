@@ -71,7 +71,6 @@ mod ingress_message;
 mod ingress_rate_limit;
 mod message_attachment_bind;
 mod message_prepare;
-mod presence_disconnect;
 mod presence_subscribe;
 mod search_apply;
 mod search_blocking;

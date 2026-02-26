@@ -15,14 +15,15 @@ use crate::server::{
 
 use super::{
     connection_control::signal_slow_connections_close,
-    connection_disconnect_followups::plan_disconnect_followups,
+    connection_disconnect_followups::{
+        compute_disconnect_presence_outcome, plan_disconnect_followups,
+    },
     connection_registry::remove_connection_state,
     connection_subscriptions::remove_connection_from_subscription_indexes,
     emit_metrics::emit_gateway_delivery_metrics,
     fanout_channel::dispatch_channel_payload,
     fanout_guild::dispatch_guild_payload,
     fanout_user::{connection_ids_for_user, dispatch_user_payload},
-    presence_disconnect::compute_disconnect_presence_outcome,
     presence_subscribe::{apply_presence_subscribe, build_presence_subscribe_events},
     presence_sync_dispatch::{dispatch_presence_sync_event, presence_sync_reject_reason},
     subscription_insert::insert_connection_subscription,
