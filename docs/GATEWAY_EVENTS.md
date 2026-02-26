@@ -446,6 +446,20 @@ All events use the versioned envelope:
   - dropped events (`reason="full_queue"` or `reason="closed"`)
   - parse-rejected ingress events (`scope="ingress"`)
   - unknown ingress event types from stale/misbehaving clients
+- Staging telemetry verification gate for dropped/rejected counters:
+  - generate ingress rejects and unknown events:
+    - send malformed gateway envelope (`not-json`)
+    - send unknown gateway event type (`t="unknown_ingress_event"`)
+    - send invalid `subscribe` payload (`guild_id` not ULID)
+    - send invalid `message_create` payload (`guild_id` not ULID)
+  - generate outbound drop:
+    - run server with small `max_gateway_event_bytes` and create a message payload that exceeds fanout envelope size
+  - verify `/metrics` counter deltas are positive for:
+    - `filament_gateway_events_unknown_received_total{scope="ingress",event_type="unknown_ingress_event"}`
+    - `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_envelope"}`
+    - `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_subscribe_payload"}`
+    - `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_message_create_payload"}`
+    - `filament_gateway_events_dropped_total{scope="channel",event_type="message_create",reason="oversized_outbound"}`
 - Roll out web/desktop clients gradually and confirm critical realtime paths:
   - message create/update/delete
   - workspace rename/visibility update

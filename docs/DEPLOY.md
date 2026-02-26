@@ -209,3 +209,33 @@ Alerting minimums:
 - auth failure spike
 - rate-limit spike
 - websocket disconnect spike
+
+### Gateway staging telemetry verification
+
+Before closing a gateway refactor rollout, verify dropped/rejected counters in staging using metric deltas:
+
+1. Capture baseline:
+
+```bash
+curl -fsS http://<filament-host>/metrics > /tmp/filament-metrics-before.txt
+```
+
+2. Generate controlled traffic in staging:
+- malformed ingress envelope (`not-json`)
+- unknown ingress event (`unknown_ingress_event`)
+- invalid `subscribe` payload (`guild_id` not ULID)
+- invalid `message_create` payload (`guild_id` not ULID)
+- oversized outbound channel event (small `max_gateway_event_bytes` + large message payload)
+
+3. Capture post-traffic metrics:
+
+```bash
+curl -fsS http://<filament-host>/metrics > /tmp/filament-metrics-after.txt
+```
+
+4. Verify these counters increased from before -> after:
+- `filament_gateway_events_unknown_received_total{scope="ingress",event_type="unknown_ingress_event"}`
+- `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_envelope"}`
+- `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_subscribe_payload"}`
+- `filament_gateway_events_parse_rejected_total{scope="ingress",reason="invalid_message_create_payload"}`
+- `filament_gateway_events_dropped_total{scope="channel",event_type="message_create",reason="oversized_outbound"}`

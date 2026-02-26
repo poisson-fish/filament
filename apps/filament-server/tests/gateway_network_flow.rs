@@ -318,6 +318,47 @@ async fn metrics_text(app: &axum::Router) -> String {
     String::from_utf8(body.to_vec()).expect("metrics should be utf-8")
 }
 
+fn counter_value(metrics: &str, metric_with_labels: &str) -> u64 {
+    metrics
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .find_map(|line| {
+            let (name_and_labels, value) = line.split_once(' ')?;
+            if name_and_labels != metric_with_labels {
+                return None;
+            }
+            value.trim().parse::<u64>().ok()
+        })
+        .unwrap_or(0)
+}
+
+fn ingress_unknown_counter(metrics: &str, event_type: &str) -> u64 {
+    counter_value(
+        metrics,
+        &format!(
+            "filament_gateway_events_unknown_received_total{{scope=\"ingress\",event_type=\"{event_type}\"}}",
+        ),
+    )
+}
+
+fn ingress_parse_rejected_counter(metrics: &str, reason: &str) -> u64 {
+    counter_value(
+        metrics,
+        &format!(
+            "filament_gateway_events_parse_rejected_total{{scope=\"ingress\",reason=\"{reason}\"}}"
+        ),
+    )
+}
+
+fn dropped_channel_counter(metrics: &str, event_type: &str, reason: &str) -> u64 {
+    counter_value(
+        metrics,
+        &format!(
+            "filament_gateway_events_dropped_total{{scope=\"channel\",event_type=\"{event_type}\",reason=\"{reason}\"}}",
+        ),
+    )
+}
+
 fn contains_ip_field(value: &Value) -> bool {
     match value {
         Value::Object(map) => map.iter().any(|(key, value)| {
@@ -426,6 +467,15 @@ async fn websocket_handshake_and_message_flow_work_over_network() {
 #[tokio::test]
 async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() {
     let app = test_app();
+    let metrics_before = metrics_text(&app).await;
+    let unknown_before = ingress_unknown_counter(&metrics_before, "unknown_ingress_event");
+    let invalid_envelope_before =
+        ingress_parse_rejected_counter(&metrics_before, "invalid_envelope");
+    let invalid_subscribe_before =
+        ingress_parse_rejected_counter(&metrics_before, "invalid_subscribe_payload");
+    let invalid_message_create_before =
+        ingress_parse_rejected_counter(&metrics_before, "invalid_message_create_payload");
+
     let auth = register_and_login(&app, "198.51.100.31").await;
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -562,6 +612,24 @@ async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() 
     assert!(metrics.contains(
         "filament_gateway_events_parse_rejected_total{scope=\"ingress\",reason=\"invalid_message_create_payload\"}",
     ));
+    assert!(
+        ingress_unknown_counter(&metrics, "unknown_ingress_event") > unknown_before,
+        "unknown ingress event counter should increment",
+    );
+    assert!(
+        ingress_parse_rejected_counter(&metrics, "invalid_envelope") > invalid_envelope_before,
+        "invalid_envelope parse-rejected counter should increment",
+    );
+    assert!(
+        ingress_parse_rejected_counter(&metrics, "invalid_subscribe_payload")
+            > invalid_subscribe_before,
+        "invalid_subscribe_payload parse-rejected counter should increment",
+    );
+    assert!(
+        ingress_parse_rejected_counter(&metrics, "invalid_message_create_payload")
+            > invalid_message_create_before,
+        "invalid_message_create_payload parse-rejected counter should increment",
+    );
 }
 
 #[tokio::test]
@@ -746,6 +814,9 @@ async fn websocket_subscription_receives_reaction_updates_from_rest() {
 #[tokio::test]
 async fn oversized_outbound_channel_event_is_dropped_and_counted() {
     let app = test_app_with_max_gateway_event_bytes(200);
+    let metrics_before = metrics_text(&app).await;
+    let dropped_before =
+        dropped_channel_counter(&metrics_before, "message_create", "oversized_outbound");
 
     let auth = register_and_login(&app, "203.0.113.91").await;
     let channel = create_channel_context(&app, &auth, "203.0.113.91").await;
@@ -811,6 +882,10 @@ async fn oversized_outbound_channel_event_is_dropped_and_counted() {
     assert!(metrics.contains(
         "filament_gateway_events_dropped_total{scope=\"channel\",event_type=\"message_create\",reason=\"oversized_outbound\"}",
     ));
+    assert!(
+        dropped_channel_counter(&metrics, "message_create", "oversized_outbound") > dropped_before,
+        "oversized outbound dropped counter should increment",
+    );
 
     socket
         .close(None)
