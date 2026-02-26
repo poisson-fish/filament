@@ -55,12 +55,16 @@ export type MarkdownToken =
   | { type: "link_end" }
   | { type: "text"; text: string }
   | { type: "code"; code: string }
+  | { type: "fenced_code"; language: string | null; code: string }
   | { type: "soft_break" }
   | { type: "hard_break" };
 
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const MAX_MARKDOWN_TOKENS = 4096;
 const MAX_MARKDOWN_INLINE_CHARS = 4096;
+const MAX_MARKDOWN_CODE_BLOCK_CHARS = 16384;
+const MAX_MARKDOWN_CODE_BLOCKS = 64;
+const MAX_MARKDOWN_CODE_LANGUAGE_CHARS = 32;
 const MAX_PROFILE_ABOUT_CHARS = 2048;
 const MAX_LIVEKIT_TEXT_CHARS = 512;
 const MAX_LIVEKIT_TOKEN_CHARS = 8192;
@@ -627,6 +631,27 @@ function markdownTokenFromResponse(dto: unknown): MarkdownToken {
       code: requireString(data.code, "code", MAX_MARKDOWN_INLINE_CHARS),
     };
   }
+  if (type === "fenced_code") {
+    const languageRaw = data.language;
+    let language: string | null = null;
+    if (typeof languageRaw === "string") {
+      if (
+        languageRaw.length < 1 ||
+        languageRaw.length > MAX_MARKDOWN_CODE_LANGUAGE_CHARS ||
+        !/^[A-Za-z0-9_.+-]+$/.test(languageRaw)
+      ) {
+        throw new DomainValidationError("Unsupported fenced_code language.");
+      }
+      language = languageRaw.toLowerCase();
+    } else if (languageRaw !== null && typeof languageRaw !== "undefined") {
+      throw new DomainValidationError("Unsupported fenced_code language.");
+    }
+    return {
+      type,
+      language,
+      code: requireString(data.code, "code", MAX_MARKDOWN_CODE_BLOCK_CHARS),
+    };
+  }
   if (
     type === "paragraph_start" ||
     type === "paragraph_end" ||
@@ -650,7 +675,12 @@ export function markdownTokensFromResponse(dto: unknown): MarkdownToken[] {
   if (!Array.isArray(dto) || dto.length > MAX_MARKDOWN_TOKENS) {
     throw new DomainValidationError("markdown_tokens must be a bounded array.");
   }
-  return dto.map((entry) => markdownTokenFromResponse(entry));
+  const tokens = dto.map((entry) => markdownTokenFromResponse(entry));
+  const fencedCodeCount = tokens.filter((token) => token.type === "fenced_code").length;
+  if (fencedCodeCount > MAX_MARKDOWN_CODE_BLOCKS) {
+    throw new DomainValidationError("markdown_tokens exceeded fenced code block limit.");
+  }
+  return tokens;
 }
 
 export function guildFromResponse(dto: unknown): GuildRecord {

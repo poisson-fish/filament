@@ -74,10 +74,10 @@ Ship secure markdown rendering in chat message text and user profile surfaces, w
 Lock markdown/profile-banner behavior before implementation.
 
 ### Completion Status
-`NOT STARTED`
+`IN PROGRESS`
 
 ### Tasks
-- [ ] Finalize markdown token contract expansion for fenced code blocks:
+- [x] Finalize markdown token contract expansion for fenced code blocks:
   - add fenced code token variants with explicit language field
   - cap language label length and character set
   - cap code-block token payload size/count to prevent abuse
@@ -107,6 +107,15 @@ Lock markdown/profile-banner behavior before implementation.
   - document fenced code token schema and language constraints
 - `docs/GATEWAY_EVENTS.md`
   - verify any profile-related payload contract updates remain additive
+
+### Progress Notes
+- 2026-02-26: Added `fenced_code { language, code }` markdown token contract in core + web domain parsing.
+- 2026-02-26: Enforced fenced-code bounds:
+  - language label max length `32`, charset `[A-Za-z0-9_.+-]`, normalized lowercase
+  - max fenced code tokens per payload `64`
+  - max fenced code payload per token `16384` chars
+- 2026-02-26: Updated `docs/API.md` profile contract to `about_markdown` with `2048` max and documented fenced-code token limits.
+- 2026-02-26: Remaining Phase 0 items still open: about UX counter, banner media/API contract lock, and highlight dependency decision.
 
 ### Exit Criteria
 - Endpoint/payload/limit decisions are documented and accepted before coding.

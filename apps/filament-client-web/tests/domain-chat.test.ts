@@ -151,10 +151,37 @@ describe("chat domain invariants", () => {
       { type: "link_start", href: "https://example.com" },
       { type: "text", text: "link" },
       { type: "link_end" },
+      { type: "fenced_code", language: "RuSt", code: "fn main() {}\n" },
       { type: "paragraph_end" },
     ]);
-    expect(tokens.length).toBe(6);
+    expect(tokens.length).toBe(7);
+    expect(tokens[5]).toEqual({
+      type: "fenced_code",
+      language: "rust",
+      code: "fn main() {}\n",
+    });
     expect(() => markdownTokensFromResponse([{ type: "unknown" }])).toThrow();
+    expect(() =>
+      markdownTokensFromResponse([
+        { type: "fenced_code", language: "rust<script>", code: "fn" },
+      ]),
+    ).toThrow();
+    expect(() =>
+      markdownTokensFromResponse([
+        { type: "fenced_code", language: null, code: "plain text" },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("rejects markdown token streams that exceed fenced code block limits", () => {
+    const tokens = Array.from({ length: 65 }, () => ({
+      type: "fenced_code",
+      language: "txt",
+      code: "x",
+    }));
+    expect(() => markdownTokensFromResponse(tokens)).toThrow(
+      "markdown_tokens exceeded fenced code block limit.",
+    );
   });
 
   it("validates voice token and role/permission enums", () => {

@@ -452,6 +452,11 @@ export function tokenizeToDisplayText(tokens: MarkdownToken[]): string {
       output += `\`${token.code}\``;
       continue;
     }
+    if (token.type === "fenced_code") {
+      const languageLabel = token.language ? token.language : "";
+      output += `\n\`\`\`${languageLabel}\n${token.code}\n\`\`\`\n`;
+      continue;
+    }
     if (token.type === "soft_break" || token.type === "hard_break") {
       output += "\n";
       continue;

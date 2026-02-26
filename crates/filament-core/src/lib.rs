@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -37,17 +37,35 @@ pub enum MarkdownToken {
     EmphasisEnd,
     StrongStart,
     StrongEnd,
-    ListStart { ordered: bool },
+    ListStart {
+        ordered: bool,
+    },
     ListEnd,
     ListItemStart,
     ListItemEnd,
-    LinkStart { href: String },
+    LinkStart {
+        href: String,
+    },
     LinkEnd,
-    Text { text: String },
-    Code { code: String },
+    Text {
+        text: String,
+    },
+    Code {
+        code: String,
+    },
+    FencedCode {
+        language: Option<String>,
+        code: String,
+    },
     SoftBreak,
     HardBreak,
 }
+
+const MAX_MARKDOWN_TOKENS: usize = 4_096;
+const MAX_MARKDOWN_INLINE_CHARS: usize = 4_096;
+const MAX_MARKDOWN_CODE_BLOCKS: usize = 64;
+const MAX_MARKDOWN_CODE_BLOCK_CHARS: usize = 16_384;
+const MAX_MARKDOWN_CODE_LANGUAGE_CHARS: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UserId(Ulid);
@@ -472,57 +490,187 @@ pub fn tokenize_markdown(markdown: &str) -> Vec<MarkdownToken> {
     let mut tokens = Vec::new();
     let parser = Parser::new_ext(markdown, Options::empty());
     let mut link_stack: Vec<bool> = Vec::new();
+    let mut active_fenced_code: Option<(Option<String>, String)> = None;
+    let mut fenced_code_count = 0usize;
 
     for event in parser {
+        if tokens.len() >= MAX_MARKDOWN_TOKENS {
+            break;
+        }
         match event {
-            Event::Start(tag) => match tag {
-                Tag::Paragraph => tokens.push(MarkdownToken::ParagraphStart),
-                Tag::Emphasis => tokens.push(MarkdownToken::EmphasisStart),
-                Tag::Strong => tokens.push(MarkdownToken::StrongStart),
-                Tag::List(start) => tokens.push(MarkdownToken::ListStart {
-                    ordered: start.is_some(),
-                }),
-                Tag::Item => tokens.push(MarkdownToken::ListItemStart),
-                Tag::Link { dest_url, .. } => {
-                    if let Some(href) = sanitize_link_target(dest_url.as_ref()) {
-                        tokens.push(MarkdownToken::LinkStart { href });
-                        link_stack.push(true);
-                    } else {
-                        link_stack.push(false);
-                    }
-                }
-                _ => {}
-            },
-            Event::End(tag) => match tag {
-                TagEnd::Paragraph => tokens.push(MarkdownToken::ParagraphEnd),
-                TagEnd::Emphasis => tokens.push(MarkdownToken::EmphasisEnd),
-                TagEnd::Strong => tokens.push(MarkdownToken::StrongEnd),
-                TagEnd::List(_) => tokens.push(MarkdownToken::ListEnd),
-                TagEnd::Item => tokens.push(MarkdownToken::ListItemEnd),
-                TagEnd::Link => {
-                    if link_stack.pop().unwrap_or(false) {
-                        tokens.push(MarkdownToken::LinkEnd);
-                    }
-                }
-                _ => {}
-            },
+            Event::Start(tag) => handle_markdown_start(
+                tag,
+                &mut tokens,
+                &mut link_stack,
+                &mut active_fenced_code,
+                fenced_code_count,
+            ),
+            Event::End(tag) => handle_markdown_end(
+                tag,
+                &mut tokens,
+                &mut link_stack,
+                &mut active_fenced_code,
+                &mut fenced_code_count,
+            ),
             Event::Text(text) => {
-                if !text.is_empty() {
-                    tokens.push(MarkdownToken::Text {
-                        text: text.into_string(),
-                    });
-                }
+                handle_markdown_text(text.as_ref(), &mut tokens, &mut active_fenced_code);
             }
-            Event::Code(code) => tokens.push(MarkdownToken::Code {
-                code: code.into_string(),
-            }),
-            Event::SoftBreak => tokens.push(MarkdownToken::SoftBreak),
-            Event::HardBreak => tokens.push(MarkdownToken::HardBreak),
+            Event::Code(code) => push_markdown_token(
+                &mut tokens,
+                MarkdownToken::Code {
+                    code: truncate_to_char_boundary(code.as_ref(), MAX_MARKDOWN_INLINE_CHARS)
+                        .to_owned(),
+                },
+            ),
+            Event::SoftBreak => handle_markdown_break(&mut tokens, &mut active_fenced_code, false),
+            Event::HardBreak => handle_markdown_break(&mut tokens, &mut active_fenced_code, true),
             _ => {}
         }
     }
 
     tokens
+}
+
+fn handle_markdown_start(
+    tag: Tag<'_>,
+    tokens: &mut Vec<MarkdownToken>,
+    link_stack: &mut Vec<bool>,
+    active_fenced_code: &mut Option<(Option<String>, String)>,
+    fenced_code_count: usize,
+) {
+    match tag {
+        Tag::Paragraph => push_markdown_token(tokens, MarkdownToken::ParagraphStart),
+        Tag::Emphasis => push_markdown_token(tokens, MarkdownToken::EmphasisStart),
+        Tag::Strong => push_markdown_token(tokens, MarkdownToken::StrongStart),
+        Tag::List(start) => push_markdown_token(
+            tokens,
+            MarkdownToken::ListStart {
+                ordered: start.is_some(),
+            },
+        ),
+        Tag::Item => push_markdown_token(tokens, MarkdownToken::ListItemStart),
+        Tag::Link { dest_url, .. } => {
+            if let Some(href) = sanitize_link_target(dest_url.as_ref()) {
+                push_markdown_token(tokens, MarkdownToken::LinkStart { href });
+                link_stack.push(true);
+            } else {
+                link_stack.push(false);
+            }
+        }
+        Tag::CodeBlock(kind) => {
+            if fenced_code_count >= MAX_MARKDOWN_CODE_BLOCKS {
+                *active_fenced_code = None;
+            } else {
+                *active_fenced_code = Some((sanitize_code_language(kind), String::new()));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_markdown_end(
+    tag: TagEnd,
+    tokens: &mut Vec<MarkdownToken>,
+    link_stack: &mut Vec<bool>,
+    active_fenced_code: &mut Option<(Option<String>, String)>,
+    fenced_code_count: &mut usize,
+) {
+    match tag {
+        TagEnd::Paragraph => push_markdown_token(tokens, MarkdownToken::ParagraphEnd),
+        TagEnd::Emphasis => push_markdown_token(tokens, MarkdownToken::EmphasisEnd),
+        TagEnd::Strong => push_markdown_token(tokens, MarkdownToken::StrongEnd),
+        TagEnd::List(_) => push_markdown_token(tokens, MarkdownToken::ListEnd),
+        TagEnd::Item => push_markdown_token(tokens, MarkdownToken::ListItemEnd),
+        TagEnd::Link => {
+            if link_stack.pop().unwrap_or(false) {
+                push_markdown_token(tokens, MarkdownToken::LinkEnd);
+            }
+        }
+        TagEnd::CodeBlock => {
+            if let Some((language, code)) = active_fenced_code.take() {
+                *fenced_code_count += 1;
+                push_markdown_token(tokens, MarkdownToken::FencedCode { language, code });
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_markdown_text(
+    text: &str,
+    tokens: &mut Vec<MarkdownToken>,
+    active_fenced_code: &mut Option<(Option<String>, String)>,
+) {
+    if let Some((_language, code)) = active_fenced_code.as_mut() {
+        append_code_block_chunk(code, text);
+    } else if !text.is_empty() {
+        push_markdown_token(
+            tokens,
+            MarkdownToken::Text {
+                text: truncate_to_char_boundary(text, MAX_MARKDOWN_INLINE_CHARS).to_owned(),
+            },
+        );
+    }
+}
+
+fn handle_markdown_break(
+    tokens: &mut Vec<MarkdownToken>,
+    active_fenced_code: &mut Option<(Option<String>, String)>,
+    hard: bool,
+) {
+    if let Some((_language, code)) = active_fenced_code.as_mut() {
+        append_code_block_chunk(code, "\n");
+    } else if hard {
+        push_markdown_token(tokens, MarkdownToken::HardBreak);
+    } else {
+        push_markdown_token(tokens, MarkdownToken::SoftBreak);
+    }
+}
+
+fn append_code_block_chunk(buffer: &mut String, chunk: &str) {
+    if buffer.len() >= MAX_MARKDOWN_CODE_BLOCK_CHARS {
+        return;
+    }
+    let remaining = MAX_MARKDOWN_CODE_BLOCK_CHARS - buffer.len();
+    if chunk.len() <= remaining {
+        buffer.push_str(chunk);
+    } else if let Some(valid_prefix) = chunk.get(..remaining) {
+        buffer.push_str(valid_prefix);
+    }
+}
+
+fn push_markdown_token(tokens: &mut Vec<MarkdownToken>, token: MarkdownToken) {
+    if tokens.len() < MAX_MARKDOWN_TOKENS {
+        tokens.push(token);
+    }
+}
+
+fn sanitize_code_language(kind: CodeBlockKind<'_>) -> Option<String> {
+    let CodeBlockKind::Fenced(language) = kind else {
+        return None;
+    };
+    let trimmed = language.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_MARKDOWN_CODE_LANGUAGE_CHARS {
+        return None;
+    }
+    if !trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '+' | '-' | '.'))
+    {
+        return None;
+    }
+    Some(trimmed.to_ascii_lowercase())
+}
+
+fn truncate_to_char_boundary(value: &str, max_len: usize) -> &str {
+    if value.len() <= max_len {
+        return value;
+    }
+    let mut boundary = max_len;
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    &value[..boundary]
 }
 
 fn sanitize_link_target(raw: &str) -> Option<String> {
@@ -838,5 +986,52 @@ mod tests {
         assert!(tokens.contains(&MarkdownToken::Code {
             code: String::from("x"),
         }));
+    }
+
+    #[test]
+    fn markdown_emits_bounded_fenced_code_tokens() {
+        let tokens = tokenize_markdown("```RuSt\nfn main() {}\n```\n");
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::FencedCode { language: Some(language), code }
+            if language == "rust" && code == "fn main() {}\n"
+        )));
+    }
+
+    #[test]
+    fn markdown_drops_invalid_fenced_code_language_labels() {
+        let tokens = tokenize_markdown("```rust<script>\nfn main() {}\n```");
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::FencedCode {
+                language: None,
+                code,
+            } if code == "fn main() {}\n"
+        )));
+    }
+
+    #[test]
+    fn markdown_caps_fenced_code_payload_and_count() {
+        let oversized = format!("```txt\n{}\n```\n", "x".repeat(20_000));
+        let tokens = tokenize_markdown(&oversized);
+        let first = tokens.iter().find_map(|token| {
+            if let MarkdownToken::FencedCode { code, .. } = token {
+                Some(code)
+            } else {
+                None
+            }
+        });
+        assert_eq!(first.map(String::len), Some(16_384));
+
+        let mut many_blocks = String::new();
+        for _ in 0..80 {
+            many_blocks.push_str("```txt\nx\n```\n");
+        }
+        let many_tokens = tokenize_markdown(&many_blocks);
+        let block_count = many_tokens
+            .iter()
+            .filter(|token| matches!(token, MarkdownToken::FencedCode { .. }))
+            .count();
+        assert_eq!(block_count, 64);
     }
 }

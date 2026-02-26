@@ -158,9 +158,9 @@ This section locks response semantics and limits for upcoming directory-join/aud
 ### Profile
 - `PATCH /users/me/profile`
   - Auth required
-  - Request: `{ "about"?: "..." }`
-  - `about` max length `512` chars
-  - Response `200`: `{ "user_id": "...", "username": "...", "about": "...", "avatar_url": "..." | null, "avatar_version": <number> }`
+  - Request: `{ "username"?: "...", "about_markdown"?: "..." }`
+  - `about_markdown` max length `2048` chars
+  - Response `200`: `{ "user_id": "...", "username": "...", "about_markdown": "...", "about_markdown_tokens": [...], "avatar_version": <number> }`
 - `GET /users/{user_id}/profile`
   - Auth required
   - Response `200`: same shape as profile update/read model
@@ -310,6 +310,10 @@ This section locks response semantics and limits for upcoming directory-join/aud
 - `link_start { href }`, `link_end` (only `http`, `https`, `mailto` links survive sanitization)
 - `text { text }`
 - `code { code }`
+- `fenced_code { language, code }`
+  - `language`: optional; when present, lowercased and restricted to `[A-Za-z0-9_.+-]{1,32}`
+  - max `64` fenced code tokens per markdown payload
+  - max `16384` chars per fenced code `code` field
 - `soft_break`, `hard_break`
 
 `attachments` contains zero or more attachment records linked to this message.

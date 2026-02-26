@@ -111,6 +111,14 @@ function renderTokens(tokens: MarkdownToken[]): Array<JSX.Element | string> {
       append(<code>{token.code}</code>);
       continue;
     }
+    if (token.type === "fenced_code") {
+      append(
+        <pre>
+          <code data-language={token.language ?? undefined}>{token.code}</code>
+        </pre>,
+      );
+      continue;
+    }
     if (token.type === "soft_break" || token.type === "hard_break") {
       append(<br />);
     }

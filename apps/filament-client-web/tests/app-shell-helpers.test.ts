@@ -157,11 +157,14 @@ describe("app shell helpers", () => {
       { type: "link_start", href: "https://filament.local" },
       { type: "text", text: "docs" },
       { type: "link_end" },
+      { type: "fenced_code", language: "rust", code: "fn main() {}" },
     ]);
 
     expect(output).toContain("hello");
     expect(output).toContain("item");
     expect(output).toContain("(https://filament.local)");
+    expect(output).toContain("```rust");
+    expect(output).toContain("fn main() {}");
   });
 
   it("parses permission CSV with dedupe and validation", () => {
