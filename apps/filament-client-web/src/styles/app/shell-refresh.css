@@ -324,3 +324,42 @@
   font-size: 0.82rem;
   line-height: 1.45;
 }
+
+.safe-markdown .hljs-keyword,
+.safe-markdown .hljs-selector-tag,
+.safe-markdown .hljs-literal,
+.safe-markdown .hljs-section,
+.safe-markdown .hljs-link {
+  color: #ff8a80;
+}
+
+.safe-markdown .hljs-title,
+.safe-markdown .hljs-title.class_,
+.safe-markdown .hljs-title.function_,
+.safe-markdown .hljs-type,
+.safe-markdown .hljs-attribute {
+  color: #82aaff;
+}
+
+.safe-markdown .hljs-string,
+.safe-markdown .hljs-regexp,
+.safe-markdown .hljs-symbol,
+.safe-markdown .hljs-template-tag,
+.safe-markdown .hljs-template-variable {
+  color: #c3e88d;
+}
+
+.safe-markdown .hljs-number,
+.safe-markdown .hljs-params,
+.safe-markdown .hljs-meta,
+.safe-markdown .hljs-operator,
+.safe-markdown .hljs-built_in {
+  color: #f7c56f;
+}
+
+.safe-markdown .hljs-comment,
+.safe-markdown .hljs-quote,
+.safe-markdown .hljs-doctag {
+  color: var(--ink-2);
+  font-style: italic;
+}

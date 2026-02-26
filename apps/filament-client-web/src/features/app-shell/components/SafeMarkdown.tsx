@@ -244,9 +244,9 @@ function renderTokens(
 
 function ShowLanguageLabel(props: { language: string | null }): JSX.Element {
   if (!props.language) {
-    return <p class="safe-markdown-code-label">```</p>;
+    return <p class="safe-markdown-code-label">code</p>;
   }
-  return <p class="safe-markdown-code-label">{`\`\`\`${props.language}`}</p>;
+  return <p class="safe-markdown-code-label">{props.language}</p>;
 }
 
 function renderHighlightedCode(code: string, language: string): Array<JSX.Element | string> {

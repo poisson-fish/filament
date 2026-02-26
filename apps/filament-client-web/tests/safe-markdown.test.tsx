@@ -119,9 +119,14 @@ describe("safe markdown", () => {
     const labels = [...document.querySelectorAll(".safe-markdown-code-label")].map((node) =>
       node.textContent?.trim(),
     );
-    expect(labels).toContain("```rust");
-    expect(labels).toContain("```");
+    expect(labels).toContain("rust");
+    expect(labels).toContain("code");
     expect(screen.getByText("fn")).toBeInTheDocument();
     expect(screen.getByText("alert(1)")).toBeInTheDocument();
+  });
+
+  it("renders syntax token spans for fenced code languages", () => {
+    renderMarkdown([{ type: "fenced_code", language: "rust", code: "fn main() {}\n" }]);
+    expect(document.querySelector(".safe-markdown-code-block .hljs-keyword")).not.toBeNull();
   });
 });
