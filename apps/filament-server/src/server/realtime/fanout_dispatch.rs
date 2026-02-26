@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
+use filament_core::UserId;
 use tokio::sync::mpsc;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::server::core::{GuildConnectionIndex, Subscriptions};
+use crate::server::core::{GuildConnectionIndex, Subscriptions, UserConnectionIndex};
 use crate::server::metrics::{
     record_gateway_event_dropped, record_gateway_event_oversized_outbound,
 };
@@ -163,16 +164,86 @@ pub(crate) fn dispatch_guild_payload(
     delivered
 }
 
+pub(crate) fn connection_ids_for_user(
+    user_connections: &UserConnectionIndex,
+    user_id: UserId,
+) -> Vec<Uuid> {
+    user_connections
+        .get(&user_id)
+        .into_iter()
+        .flat_map(|connection_ids| connection_ids.iter().copied())
+        .collect()
+}
+
+pub(crate) fn dispatch_user_payload(
+    senders: &mut HashMap<Uuid, mpsc::Sender<String>>,
+    connection_ids: &[Uuid],
+    payload: &str,
+    max_payload_bytes: usize,
+    event_type: &'static str,
+    slow_connections: &mut Vec<Uuid>,
+) -> usize {
+    if payload.len() > max_payload_bytes {
+        record_gateway_event_oversized_outbound("user", event_type);
+        warn!(
+            event = "gateway.user_fanout.oversized_outbound",
+            event_type,
+            payload_bytes = payload.len(),
+            max_payload_bytes,
+            "dropped outbound payload for user fanout because it exceeds configured max size"
+        );
+        return 0;
+    }
+
+    let mut delivered = 0usize;
+
+    for connection_id in connection_ids {
+        let Some(sender) = senders.get(connection_id) else {
+            continue;
+        };
+        match sender.try_send(payload.to_owned()) {
+            Ok(()) => delivered += 1,
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                record_gateway_event_dropped("user", event_type, "closed");
+                warn!(
+                    event = "gateway.user_fanout.closed",
+                    event_type,
+                    connection_id = %connection_id,
+                    "dropped outbound payload for closed websocket queue in user fanout"
+                );
+                senders.remove(connection_id);
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                record_gateway_event_dropped("user", event_type, "full_queue");
+                warn!(
+                    event = "gateway.user_fanout.full_queue",
+                    event_type,
+                    connection_id = %connection_id,
+                    "dropped outbound payload for full websocket queue in user fanout"
+                );
+                slow_connections.push(*connection_id);
+                senders.remove(connection_id);
+            }
+        }
+    }
+
+    delivered
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
 
+    use filament_core::UserId;
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
     use crate::server::metrics::{metrics_state, GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND};
 
-    use super::{dispatch_channel_payload, dispatch_gateway_payload, dispatch_guild_payload};
+    use super::{
+        connection_ids_for_user, dispatch_channel_payload, dispatch_gateway_payload,
+        dispatch_guild_payload, dispatch_user_payload,
+    };
 
     #[tokio::test]
     async fn delivers_to_open_listeners_and_keeps_them_registered() {
@@ -616,5 +687,107 @@ mod tests {
             .get("g-other")
             .expect("non-target guild index should remain untouched")
             .contains(&other_id));
+    }
+
+    #[test]
+    fn user_fanout_returns_only_connections_for_target_user() {
+        let target_user = UserId::new();
+        let other_user = UserId::new();
+        let target_connection_a = Uuid::new_v4();
+        let target_connection_b = Uuid::new_v4();
+        let other_connection = Uuid::new_v4();
+        let user_connections = HashMap::from([
+            (
+                target_user,
+                HashSet::from([target_connection_a, target_connection_b]),
+            ),
+            (other_user, HashSet::from([other_connection])),
+        ]);
+
+        let connection_ids = connection_ids_for_user(&user_connections, target_user);
+
+        assert_eq!(connection_ids.len(), 2);
+        assert!(connection_ids.contains(&target_connection_a));
+        assert!(connection_ids.contains(&target_connection_b));
+        assert!(!connection_ids.contains(&other_connection));
+    }
+
+    #[tokio::test]
+    async fn user_fanout_removes_closed_and_full_connections() {
+        let keep_id = Uuid::new_v4();
+        let full_id = Uuid::new_v4();
+        let closed_id = Uuid::new_v4();
+
+        let (keep_sender, _keep_receiver) = mpsc::channel::<String>(2);
+        let (full_sender, mut full_receiver) = mpsc::channel::<String>(1);
+        full_sender
+            .try_send(String::from("occupied"))
+            .expect("queue should fill");
+        let (closed_sender, closed_receiver) = mpsc::channel::<String>(1);
+        drop(closed_receiver);
+
+        let mut senders = HashMap::from([
+            (keep_id, keep_sender),
+            (full_id, full_sender),
+            (closed_id, closed_sender),
+        ]);
+        let mut slow_connections = Vec::new();
+
+        let delivered = dispatch_user_payload(
+            &mut senders,
+            &[keep_id, full_id, closed_id],
+            "payload",
+            "payload".len(),
+            "presence_update",
+            &mut slow_connections,
+        );
+
+        assert_eq!(delivered, 1);
+        assert_eq!(slow_connections, vec![full_id]);
+        assert!(senders.contains_key(&keep_id));
+        assert!(!senders.contains_key(&full_id));
+        assert!(!senders.contains_key(&closed_id));
+        assert_eq!(full_receiver.recv().await.as_deref(), Some("occupied"));
+    }
+
+    #[tokio::test]
+    async fn user_fanout_rejects_oversized_payload_before_enqueue() {
+        let connection_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel::<String>(1);
+        let mut senders = HashMap::from([(connection_id, sender)]);
+        let mut slow_connections = Vec::new();
+        let payload = "payload";
+        let event_type = "friend_request_update_oversized_reason_test";
+        let key = (
+            String::from("user"),
+            String::from(event_type),
+            String::from("oversized_outbound"),
+        );
+        let before = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .ok()
+            .and_then(|dropped| dropped.get(&key).copied())
+            .unwrap_or(0);
+
+        let delivered = dispatch_user_payload(
+            &mut senders,
+            &[connection_id],
+            payload,
+            payload.len() - 1,
+            event_type,
+            &mut slow_connections,
+        );
+
+        assert_eq!(delivered, 0);
+        assert!(slow_connections.is_empty());
+        assert!(senders.contains_key(&connection_id));
+        assert!(receiver.try_recv().is_err());
+
+        let dropped = metrics_state()
+            .gateway_events_dropped
+            .lock()
+            .expect("gateway dropped metrics mutex should not be poisoned");
+        assert_eq!(dropped.get(&key).copied(), Some(before + 1));
     }
 }

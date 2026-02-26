@@ -53,7 +53,6 @@ use ulid::Ulid;
 use uuid::Uuid;
 
 mod fanout_dispatch;
-mod fanout_user;
 mod hydration_order;
 mod ingress_command;
 mod message_attachment_bind;
