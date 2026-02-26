@@ -131,12 +131,22 @@ export function createProfileController(
       return;
     }
 
-    options.setSavingProfile(true);
     options.setProfileSettingsStatus("");
     options.setProfileSettingsError("");
+    const nextUsernameInput = options.profileDraftUsername().trim();
+    const nextAboutInput = options.profileDraftAbout();
+    let nextUsername: ReturnType<typeof usernameFromInput>;
+    let nextAbout: ReturnType<typeof profileAboutFromInput>;
     try {
-      const nextUsername = usernameFromInput(options.profileDraftUsername().trim());
-      const nextAbout = profileAboutFromInput(options.profileDraftAbout());
+      nextUsername = usernameFromInput(nextUsernameInput);
+      nextAbout = profileAboutFromInput(nextAboutInput);
+    } catch (error) {
+      options.setProfileSettingsError(mapError(error, "Unable to save profile settings."));
+      return;
+    }
+
+    options.setSavingProfile(true);
+    try {
       const updated = await deps.updateMyProfile(session, {
         username: nextUsername,
         aboutMarkdown: nextAbout,

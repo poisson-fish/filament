@@ -65,7 +65,7 @@ const MAX_MARKDOWN_INLINE_CHARS = 4096;
 const MAX_MARKDOWN_CODE_BLOCK_CHARS = 16384;
 const MAX_MARKDOWN_CODE_BLOCKS = 64;
 const MAX_MARKDOWN_CODE_LANGUAGE_CHARS = 32;
-const MAX_PROFILE_ABOUT_CHARS = 2048;
+export const PROFILE_ABOUT_MAX_CHARS = 2048;
 const MAX_LIVEKIT_TEXT_CHARS = 512;
 const MAX_LIVEKIT_TOKEN_CHARS = 8192;
 const MAX_AUDIT_CURSOR_CHARS = 128;
@@ -535,8 +535,8 @@ export function mediaPublishSourceFromInput(input: string): MediaPublishSource {
 }
 
 export function profileAboutFromInput(input: string): string {
-  if (input.length > MAX_PROFILE_ABOUT_CHARS) {
-    throw new DomainValidationError("About must be 0-2048 characters.");
+  if (input.length > PROFILE_ABOUT_MAX_CHARS) {
+    throw new DomainValidationError(`About must be 0-${PROFILE_ABOUT_MAX_CHARS} characters.`);
   }
   if (input.includes("\0")) {
     throw new DomainValidationError("About contains invalid characters.");
@@ -1191,7 +1191,9 @@ export function profileFromResponse(dto: unknown): ProfileRecord {
   return {
     userId: userIdFromInput(requireString(data.user_id, "user_id")),
     username: usernameFromInput(requireString(data.username, "username", 64)),
-    aboutMarkdown: profileAboutFromInput(requireString(data.about_markdown, "about_markdown", MAX_PROFILE_ABOUT_CHARS)),
+    aboutMarkdown: profileAboutFromInput(
+      requireString(data.about_markdown, "about_markdown", PROFILE_ABOUT_MAX_CHARS),
+    ),
     aboutMarkdownTokens: markdownTokensFromResponse(data.about_markdown_tokens),
     avatarVersion: requireNonNegativeInteger(data.avatar_version, "avatar_version"),
   };

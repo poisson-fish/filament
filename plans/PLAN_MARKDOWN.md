@@ -81,7 +81,7 @@ Lock markdown/profile-banner behavior before implementation.
   - add fenced code token variants with explicit language field
   - cap language label length and character set
   - cap code-block token payload size/count to prevent abuse
-- [ ] Lock profile about cap at `2048` chars across server/client validation + UX counter.
+- [x] Lock profile about cap at `2048` chars across server/client validation + UX counter.
 - [ ] Lock banner media policy:
   - cap: `6 MiB`
   - MIME allowlist: `image/jpeg`, `image/png`, `image/webp`, `image/avif`, `image/gif`
@@ -115,7 +115,9 @@ Lock markdown/profile-banner behavior before implementation.
   - max fenced code tokens per payload `64`
   - max fenced code payload per token `16384` chars
 - 2026-02-26: Updated `docs/API.md` profile contract to `about_markdown` with `2048` max and documented fenced-code token limits.
-- 2026-02-26: Remaining Phase 0 items still open: about UX counter, banner media/API contract lock, and highlight dependency decision.
+- 2026-02-26: Locked profile about cap at `2048` across web domain parsing + save-path validation + settings UX counter.
+- 2026-02-26: Added web tests for profile about cap enforcement, zero-remaining counter behavior, and local rejection before API call.
+- 2026-02-26: Remaining Phase 0 items still open: banner media/API contract lock, and highlight dependency decision.
 
 ### Exit Criteria
 - Endpoint/payload/limit decisions are documented and accepted before coding.

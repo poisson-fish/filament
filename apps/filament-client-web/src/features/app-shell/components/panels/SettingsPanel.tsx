@@ -4,7 +4,7 @@ import type {
   AudioDeviceOption,
   VoiceDevicePreferences,
 } from "../../../../lib/voice-device-settings";
-import type { ProfileRecord } from "../../../../domain/chat";
+import { PROFILE_ABOUT_MAX_CHARS, type ProfileRecord } from "../../../../domain/chat";
 import { SafeMarkdown } from "../SafeMarkdown";
 
 export interface SettingsPanelProps {
@@ -52,6 +52,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
     "bg-bg-1 border border-line-soft rounded-[0.62rem] text-ink-0 px-[0.62rem] py-[0.55rem] focus:outline-none focus:border-brand-strong placeholder-ink-2";
   const formButtonClass =
     "bg-bg-3 border border-line-soft rounded-[0.62rem] text-ink-1 px-[0.72rem] py-[0.46rem] font-medium hover:bg-bg-4 active:bg-bg-2 disabled:opacity-50 disabled:pointer-events-none transition-colors";
+  const profileAboutRemainingChars = () => PROFILE_ABOUT_MAX_CHARS - props.profileDraftAbout.length;
 
   return (
     <section
@@ -236,11 +237,22 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   class={`${formInputClass} resize-y min-h-[6rem]`}
                   aria-label="Profile about markdown"
                   value={props.profileDraftAbout}
-                  maxlength="2048"
+                  maxlength={PROFILE_ABOUT_MAX_CHARS}
                   onInput={(event) => props.onProfileAboutInput(event.currentTarget.value)}
                   rows="6"
                 />
               </label>
+              <p
+                class="m-0 text-[0.76rem] text-ink-2"
+                classList={{
+                  "text-danger": profileAboutRemainingChars() <= 128,
+                }}
+                aria-live="polite"
+                role="status"
+              >
+                {profileAboutRemainingChars()} characters remaining ({props.profileDraftAbout.length}/
+                {PROFILE_ABOUT_MAX_CHARS})
+              </p>
               <div class="flex gap-2">
                 <button
                   type="submit"

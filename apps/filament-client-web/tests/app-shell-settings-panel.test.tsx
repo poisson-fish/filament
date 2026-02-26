@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
-import { userIdFromInput, type ProfileRecord } from "../src/domain/chat";
+import { PROFILE_ABOUT_MAX_CHARS, userIdFromInput, type ProfileRecord } from "../src/domain/chat";
 import { SettingsPanel, type SettingsPanelProps } from "../src/features/app-shell/components/panels/SettingsPanel";
 import { mediaDeviceIdFromInput } from "../src/lib/voice-device-settings";
 
@@ -162,5 +162,20 @@ describe("app shell settings panel", () => {
     expect(document.querySelector(".settings-profile-preview")).toBeNull();
     expect(document.querySelector(".settings-profile-markdown")).toBeNull();
     expect(document.querySelector(".mono")).toBeNull();
+  });
+
+  it("shows profile about remaining-character feedback at the 2048 cap", () => {
+    render(() => (
+      <SettingsPanel
+        {...settingsPanelPropsFixture({
+          activeSettingsCategory: "profile",
+          profileDraftAbout: "A".repeat(PROFILE_ABOUT_MAX_CHARS),
+        })}
+      />
+    ));
+
+    const counter = screen.getByRole("status");
+    expect(counter).toHaveTextContent(`0 characters remaining (${PROFILE_ABOUT_MAX_CHARS}/${PROFILE_ABOUT_MAX_CHARS})`);
+    expect(counter).toHaveClass("text-danger");
   });
 });

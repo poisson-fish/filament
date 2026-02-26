@@ -24,6 +24,8 @@ import {
   messageFromResponse,
   permissionFromInput,
   profileFromResponse,
+  profileAboutFromInput,
+  PROFILE_ABOUT_MAX_CHARS,
   publicGuildDirectoryFromResponse,
   reactionEmojiFromInput,
   reactionFromResponse,
@@ -51,6 +53,15 @@ describe("chat domain invariants", () => {
   it("rejects oversized message content", () => {
     expect(messageContentFromInput("")).toBe("");
     expect(() => messageContentFromInput("A".repeat(2001))).toThrow();
+  });
+
+  it("enforces profile about length cap at 2048 characters", () => {
+    expect(profileAboutFromInput("A".repeat(PROFILE_ABOUT_MAX_CHARS))).toHaveLength(
+      PROFILE_ABOUT_MAX_CHARS,
+    );
+    expect(() => profileAboutFromInput("A".repeat(PROFILE_ABOUT_MAX_CHARS + 1))).toThrow(
+      `About must be 0-${PROFILE_ABOUT_MAX_CHARS} characters.`,
+    );
   });
 
   it("maps message payloads into validated records", () => {

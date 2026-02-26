@@ -1,7 +1,7 @@
 import { createRoot, createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { authSessionFromResponse } from "../src/domain/auth";
-import { profileFromResponse, userIdFromInput } from "../src/domain/chat";
+import { PROFILE_ABOUT_MAX_CHARS, profileFromResponse, userIdFromInput } from "../src/domain/chat";
 import { createProfileController } from "../src/features/app-shell/controllers/profile-controller";
 
 const SESSION = authSessionFromResponse({
@@ -315,5 +315,87 @@ describe("app shell profile controller", () => {
 
     await controller.uploadProfileAvatar();
     expect(avatarVersionByUserId()[USER_ID]).toBe(6);
+  });
+
+  it("rejects oversized profile about markdown before calling the API", async () => {
+    const [session] = createSignal(SESSION);
+    const [selectedProfileUserId, setSelectedProfileUserId] = createSignal<ReturnType<
+      typeof userIdFromInput
+    > | null>(null);
+    const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<Record<string, number>>(
+      {},
+    );
+    const [profileDraftUsername, setProfileDraftUsername] = createSignal("alice");
+    const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
+    const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(
+      null,
+    );
+    const [isSavingProfile, setSavingProfile] = createSignal(false);
+    const [isUploadingProfileAvatar, setUploadingProfileAvatar] = createSignal(false);
+    const [profileSettingsStatus, setProfileSettingsStatus] = createSignal("");
+    const [profileSettingsError, setProfileSettingsError] = createSignal("");
+    const [selectedProfileError, setSelectedProfileError] = createSignal("");
+
+    const updateMyProfileMock = vi.fn(async () =>
+      profileFixture({
+        userId: USER_ID,
+        username: "alice",
+        aboutMarkdown: "",
+        avatarVersion: 1,
+      }),
+    );
+
+    const controller = createRoot(() =>
+      createProfileController(
+        {
+          session,
+          selectedProfileUserId,
+          avatarVersionByUserId,
+          profileDraftUsername,
+          profileDraftAbout,
+          selectedProfileAvatarFile,
+          isSavingProfile,
+          isUploadingProfileAvatar,
+          setProfileDraftUsername,
+          setProfileDraftAbout,
+          setSelectedProfileAvatarFile,
+          setProfileSettingsStatus,
+          setProfileSettingsError,
+          setSavingProfile,
+          setUploadingProfileAvatar,
+          setAvatarVersionByUserId,
+          setSelectedProfileUserId,
+          setSelectedProfileError,
+        },
+        {
+          fetchMe: async () =>
+            profileFixture({
+              userId: USER_ID,
+              username: "alice",
+              aboutMarkdown: "",
+              avatarVersion: 1,
+            }),
+          fetchUserProfile: async () =>
+            profileFixture({
+              userId: USER_ID,
+              username: "alice",
+              aboutMarkdown: "",
+              avatarVersion: 1,
+            }),
+          updateMyProfile: updateMyProfileMock,
+        },
+      ),
+    );
+
+    await flushUntil(() => Boolean(controller.profile()));
+    setProfileDraftAbout("A".repeat(PROFILE_ABOUT_MAX_CHARS + 1));
+    await controller.saveProfileSettings();
+
+    expect(updateMyProfileMock).not.toHaveBeenCalled();
+    expect(isSavingProfile()).toBe(false);
+    expect(profileSettingsStatus()).toBe("");
+    expect(profileSettingsError()).toBe(
+      `About must be 0-${PROFILE_ABOUT_MAX_CHARS} characters.`,
+    );
   });
 });
