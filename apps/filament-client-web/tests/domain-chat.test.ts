@@ -157,6 +157,7 @@ describe("chat domain invariants", () => {
 
   it("validates markdown token stream", () => {
     const tokens = markdownTokensFromResponse([
+      { type: "heading_start", level: 2 },
       { type: "paragraph_start" },
       { type: "text", text: "safe" },
       { type: "link_start", href: "https://example.com" },
@@ -164,9 +165,11 @@ describe("chat domain invariants", () => {
       { type: "link_end" },
       { type: "fenced_code", language: "RuSt", code: "fn main() {}\n" },
       { type: "paragraph_end" },
+      { type: "heading_end" },
     ]);
-    expect(tokens.length).toBe(7);
-    expect(tokens[5]).toEqual({
+    expect(tokens.length).toBe(9);
+    expect(tokens[0]).toEqual({ type: "heading_start", level: 2 });
+    expect(tokens[6]).toEqual({
       type: "fenced_code",
       language: "rust",
       code: "fn main() {}\n",
@@ -182,6 +185,9 @@ describe("chat domain invariants", () => {
         { type: "fenced_code", language: null, code: "plain text" },
       ]),
     ).not.toThrow();
+    expect(() =>
+      markdownTokensFromResponse([{ type: "heading_start", level: 0 }]),
+    ).toThrow("Unsupported heading level.");
   });
 
   it("rejects markdown token streams that exceed fenced code block limits", () => {

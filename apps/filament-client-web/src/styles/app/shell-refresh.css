@@ -269,6 +269,36 @@
   margin-top: 0.4rem;
 }
 
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3,
+.message-markdown h4,
+.message-markdown h5,
+.message-markdown h6 {
+  margin: 0.44rem 0 0;
+  color: var(--ink-0);
+  font-weight: 760;
+  line-height: 1.28;
+}
+
+.message-markdown h1 {
+  font-size: 1.1rem;
+}
+
+.message-markdown h2 {
+  font-size: 1.02rem;
+}
+
+.message-markdown h3 {
+  font-size: 0.97rem;
+}
+
+.message-markdown h4,
+.message-markdown h5,
+.message-markdown h6 {
+  font-size: 0.93rem;
+}
+
 .message-markdown ul,
 .message-markdown ol {
   margin: 0.42rem 0 0.42rem 1.25rem;

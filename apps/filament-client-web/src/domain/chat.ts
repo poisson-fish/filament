@@ -43,6 +43,8 @@ export type MediaPublishSource = "microphone" | "camera" | "screen_share";
 export type MarkdownToken =
   | { type: "paragraph_start" }
   | { type: "paragraph_end" }
+  | { type: "heading_start"; level: number }
+  | { type: "heading_end" }
   | { type: "emphasis_start" }
   | { type: "emphasis_end" }
   | { type: "strong_start" }
@@ -613,6 +615,21 @@ function markdownTokenFromResponse(dto: unknown): MarkdownToken {
       ordered: requireBoolean(data.ordered, "ordered"),
     };
   }
+  if (type === "heading_start") {
+    const levelRaw = data.level;
+    if (
+      typeof levelRaw !== "number" ||
+      !Number.isInteger(levelRaw) ||
+      levelRaw < 1 ||
+      levelRaw > 6
+    ) {
+      throw new DomainValidationError("Unsupported heading level.");
+    }
+    return {
+      type,
+      level: levelRaw,
+    };
+  }
   if (type === "link_start") {
     return {
       type,
@@ -655,6 +672,7 @@ function markdownTokenFromResponse(dto: unknown): MarkdownToken {
   if (
     type === "paragraph_start" ||
     type === "paragraph_end" ||
+    type === "heading_end" ||
     type === "emphasis_start" ||
     type === "emphasis_end" ||
     type === "strong_start" ||

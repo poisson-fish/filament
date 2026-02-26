@@ -624,8 +624,9 @@ mod tests {
     use super::{
         emit_gateway_delivery_metrics, guild_id_from_subscription_key,
         insert_connection_subscription, presence_event_scope,
-        remove_connection_from_subscription_indexes, remove_connection_state, should_skip_user_broadcast,
-        signal_slow_connections_close, with_realtime_dispatch_timeout, REALTIME_DISPATCH_TIMEOUT,
+        remove_connection_from_subscription_indexes, remove_connection_state,
+        should_skip_user_broadcast, signal_slow_connections_close, with_realtime_dispatch_timeout,
+        REALTIME_DISPATCH_TIMEOUT,
     };
     use crate::server::{
         core::{
@@ -648,7 +649,10 @@ mod tests {
     #[tokio::test]
     async fn realtime_dispatch_timeout_returns_none_for_slow_operation() {
         let result = with_realtime_dispatch_timeout("channel", "message.create", async {
-            tokio::time::sleep(Duration::from_millis(REALTIME_DISPATCH_TIMEOUT.as_millis() as u64 + 25)).await;
+            tokio::time::sleep(Duration::from_millis(
+                REALTIME_DISPATCH_TIMEOUT.as_millis() as u64 + 25,
+            ))
+            .await;
             1_usize
         })
         .await;

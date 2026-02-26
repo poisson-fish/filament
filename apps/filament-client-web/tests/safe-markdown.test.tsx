@@ -129,4 +129,18 @@ describe("safe markdown", () => {
     renderMarkdown([{ type: "fenced_code", language: "rust", code: "fn main() {}\n" }]);
     expect(document.querySelector(".safe-markdown-code-block .hljs-keyword")).not.toBeNull();
   });
+
+  it("renders heading tokens as semantic heading elements", () => {
+    renderMarkdown([
+      { type: "heading_start", level: 1 },
+      { type: "text", text: "Incident report" },
+      { type: "heading_end" },
+      { type: "heading_start", level: 3 },
+      { type: "text", text: "Timeline" },
+      { type: "heading_end" },
+    ]);
+
+    expect(screen.getByRole("heading", { level: 1, name: "Incident report" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "Timeline" })).toBeInTheDocument();
+  });
 });

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -33,6 +33,10 @@ pub enum DomainError {
 pub enum MarkdownToken {
     ParagraphStart,
     ParagraphEnd,
+    HeadingStart {
+        level: u8,
+    },
+    HeadingEnd,
     EmphasisStart,
     EmphasisEnd,
     StrongStart,
@@ -540,6 +544,12 @@ fn handle_markdown_start(
 ) {
     match tag {
         Tag::Paragraph => push_markdown_token(tokens, MarkdownToken::ParagraphStart),
+        Tag::Heading { level, .. } => push_markdown_token(
+            tokens,
+            MarkdownToken::HeadingStart {
+                level: heading_level_to_u8(level),
+            },
+        ),
         Tag::Emphasis => push_markdown_token(tokens, MarkdownToken::EmphasisStart),
         Tag::Strong => push_markdown_token(tokens, MarkdownToken::StrongStart),
         Tag::List(start) => push_markdown_token(
@@ -577,6 +587,7 @@ fn handle_markdown_end(
 ) {
     match tag {
         TagEnd::Paragraph => push_markdown_token(tokens, MarkdownToken::ParagraphEnd),
+        TagEnd::Heading(_) => push_markdown_token(tokens, MarkdownToken::HeadingEnd),
         TagEnd::Emphasis => push_markdown_token(tokens, MarkdownToken::EmphasisEnd),
         TagEnd::Strong => push_markdown_token(tokens, MarkdownToken::StrongEnd),
         TagEnd::List(_) => push_markdown_token(tokens, MarkdownToken::ListEnd),
@@ -660,6 +671,17 @@ fn sanitize_code_language(kind: CodeBlockKind<'_>) -> Option<String> {
         return None;
     }
     Some(trimmed.to_ascii_lowercase())
+}
+
+const fn heading_level_to_u8(level: HeadingLevel) -> u8 {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
 }
 
 fn truncate_to_char_boundary(value: &str, max_len: usize) -> &str {
@@ -1008,6 +1030,26 @@ mod tests {
         assert!(tokens.contains(&MarkdownToken::Code {
             code: String::from("x"),
         }));
+    }
+
+    #[test]
+    fn markdown_emits_heading_tokens_with_levels() {
+        let tokens = tokenize_markdown("# title\n## subtitle");
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::HeadingStart { level } if *level == 1
+        )));
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::HeadingStart { level } if *level == 2
+        )));
+        assert!(
+            tokens
+                .iter()
+                .filter(|token| matches!(token, MarkdownToken::HeadingEnd))
+                .count()
+                >= 2
+        );
     }
 
     #[test]

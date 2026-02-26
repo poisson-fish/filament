@@ -216,7 +216,7 @@ describe("app shell message row", () => {
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
     expect(screen.getByText("inline()").tagName).toBe("CODE");
-    expect(screen.getByText("```rust")).toBeInTheDocument();
+    expect(screen.getByText("rust")).toHaveClass("safe-markdown-code-label");
     expect(screen.getByText("fn")).toBeInTheDocument();
   });
 

@@ -7,7 +7,17 @@ import {
 } from "./markdown-highlight";
 import { renderEmojiMixedText } from "./messages/emoji-utils";
 
-type ContainerKind = "root" | "p" | "em" | "strong" | "a" | "li" | "ul" | "ol";
+type HeadingContainerKind = "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+type ContainerKind =
+  | "root"
+  | "p"
+  | HeadingContainerKind
+  | "em"
+  | "strong"
+  | "a"
+  | "li"
+  | "ul"
+  | "ol";
 
 interface ContainerNode {
   kind: ContainerKind;
@@ -157,6 +167,14 @@ function renderTokens(
     }
     if (token.type === "paragraph_end") {
       closeOne("p");
+      continue;
+    }
+    if (token.type === "heading_start") {
+      push(headingKindFromLevel(token.level));
+      continue;
+    }
+    if (token.type === "heading_end") {
+      closeHeadingContainer(closeOne);
       continue;
     }
     if (token.type === "list_start") {
@@ -319,6 +337,24 @@ function containerToElement(
   if (node.kind === "p") {
     return <p>{node.children}</p>;
   }
+  if (node.kind === "h1") {
+    return <h1>{node.children}</h1>;
+  }
+  if (node.kind === "h2") {
+    return <h2>{node.children}</h2>;
+  }
+  if (node.kind === "h3") {
+    return <h3>{node.children}</h3>;
+  }
+  if (node.kind === "h4") {
+    return <h4>{node.children}</h4>;
+  }
+  if (node.kind === "h5") {
+    return <h5>{node.children}</h5>;
+  }
+  if (node.kind === "h6") {
+    return <h6>{node.children}</h6>;
+  }
   if (node.kind === "em") {
     return <em>{node.children}</em>;
   }
@@ -367,6 +403,34 @@ function sanitizeLink(raw: string): string | null {
     return null;
   }
   return null;
+}
+
+function headingKindFromLevel(level: number): HeadingContainerKind {
+  if (level === 1) {
+    return "h1";
+  }
+  if (level === 2) {
+    return "h2";
+  }
+  if (level === 3) {
+    return "h3";
+  }
+  if (level === 4) {
+    return "h4";
+  }
+  if (level === 5) {
+    return "h5";
+  }
+  return "h6";
+}
+
+function closeHeadingContainer(closeOne: (kind: ContainerKind) => void): void {
+  closeOne("h6");
+  closeOne("h5");
+  closeOne("h4");
+  closeOne("h3");
+  closeOne("h2");
+  closeOne("h1");
 }
 
 function openExternalLink(url: string): void {
