@@ -66,8 +66,6 @@ pub(crate) use message_channel::{
     try_message_update, CHANNEL_CREATE_EVENT, MESSAGE_CREATE_EVENT, MESSAGE_DELETE_EVENT,
     MESSAGE_REACTION_EVENT, MESSAGE_UPDATE_EVENT,
 };
-#[cfg(test)]
-pub(crate) use presence_voice::presence_sync;
 pub(crate) use presence_voice::{
     try_presence_sync, try_presence_update, try_voice_participant_join,
     try_voice_participant_leave, try_voice_participant_sync, try_voice_participant_update,

@@ -257,6 +257,11 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Auth required; requires `manage_roles`
   - Request: `{ "role_ids": ["<role_id>", ...] }`
   - Response `200`: `{ "accepted": true }`
+- `POST /guilds/{guild_id}/roles/default`
+  - Auth required; requires `manage_roles`
+  - Request: `{ "role_id": "<role_id>" | null }`
+  - `role_id: null` clears the default join role assignment
+  - Response `200`: `{ "accepted": true }`
 - `PATCH /guilds/{guild_id}/roles/{role_id}`
   - Auth required; requires `manage_roles`
   - Request: `{ "name"?: "...", "permissions"?: [Permission...] }`

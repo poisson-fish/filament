@@ -141,13 +141,6 @@ impl From<VoiceParticipantSnapshot> for VoiceParticipantPayload {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn presence_sync(guild_id: &str, user_ids: HashSet<String>) -> GatewayEvent {
-    try_presence_sync(guild_id, user_ids).unwrap_or_else(|error| {
-        panic!("failed to build outbound gateway event {PRESENCE_SYNC_EVENT}: {error}")
-    })
-}
-
 pub(crate) fn try_presence_sync(
     guild_id: &str,
     user_ids: HashSet<String>,

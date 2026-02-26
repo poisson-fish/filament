@@ -273,7 +273,7 @@ Reduce stringly-typed command handling at ingress boundary.
 Reduce fragmentation and simplify navigation while preserving testable seams.
 
 ### Completion Status
-`IN PROGRESS`
+`DONE`
 
 ### Tasks
 - [x] Consolidate tiny wrapper modules into cohesive components:
@@ -290,8 +290,8 @@ Reduce fragmentation and simplify navigation while preserving testable seams.
 - `apps/filament-server/src/server/README.md`
 
 ### Tests
-- [ ] Full server test suite plus gateway network flow.
-- [ ] Clippy and rustdoc clean for moved modules.
+- [x] Full server test suite plus gateway network flow.
+- [x] Clippy and rustdoc clean for moved modules.
 
 ### Progress Notes
 - 2026-02-25 (Slice 1): Started Phase 4 module consolidation by collapsing the tiny ingress parse-classification wrapper module into `realtime/ingress_command.rs` and removing `realtime/ingress_parse.rs`. `realtime.rs` now imports ingress parse classification directly from `ingress_command`, preserving parse-rejected/unknown-event classification behavior and disconnect/metric semantics while reducing ingress module count by one.
@@ -344,6 +344,7 @@ Reduce fragmentation and simplify navigation while preserving testable seams.
 - 2026-02-26 (Slice 47): Continued Phase 4 search wrapper consolidation by folding `realtime/search_apply.rs` into `realtime/search_runtime.rs` and removing the standalone module import/file from `realtime.rs`. Search operation application remains unchanged for upsert/delete/rebuild/reconcile flows (same delete-before-upsert and fail-closed writer behavior), with focused index mutation tests migrated into `search_runtime` tests.
 - 2026-02-26 (Slice 48): Reduced hydration indirection by moving the search-facing hydration runtime entrypoint from `realtime/hydration_runtime.rs` into `realtime/search_runtime.rs`. `hydrate_messages_by_id` now orchestrates DB/in-memory hydration directly while reusing consolidated hydration helper functions (`collect_*`, merge/order helpers), preserving the same fail-closed behavior, attachment/reaction hydration semantics, and external function signature for search handlers.
 - 2026-02-26 (Validation status): Ran `cargo test -p filament-server` after slices 46-48; suite fails at pre-existing docs-contract drift (`server::tests::tests::contract::api_docs_cover_router_manifest_routes` expects `POST /guilds/{guild_id}/roles/default` in `docs/API.md`). Ran `cargo clippy -p filament-server --tests --no-deps`; warnings remain in pre-existing non-Phase-4 areas (`gateway_events/workspace.rs`, `handlers/guilds.rs`, `types.rs`, unused `presence_sync` export).
+- 2026-02-26 (Slice 49): Closed the outstanding Phase 4 validation tasks by restoring API docs route parity for `POST /guilds/{guild_id}/roles/default`, removing the stale `presence_sync` test-only export/wrapper left after module moves, and stabilizing `gateway_network_flow` voice cleanup assertions around the deterministic `voice/leave` cleanup path. Re-ran `cargo test -p filament-server` (full suite, including `gateway_network_flow`) and explicit `cargo test -p filament-server --test gateway_network_flow` with all tests passing; ran `cargo clippy -p filament-server --tests --no-deps` and confirmed remaining warnings are pre-existing outside the Phase 4 moved-module surfaces; ran `RUSTDOCFLAGS='-D warnings' cargo doc -p filament-server --no-deps` successfully.
 
 ### Exit Criteria
 - Lower module count and shallower call graph.

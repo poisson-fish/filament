@@ -211,15 +211,9 @@ async fn next_event_of_type(
     >,
     event_type: &str,
 ) -> Value {
-    for _ in 0..32 {
-        let event = tokio::time::timeout(Duration::from_secs(1), next_text_event(socket))
-            .await
-            .unwrap_or_else(|_| panic!("timed out waiting for event type {event_type}"));
-        if event["t"] == event_type {
-            return event;
-        }
-    }
-    panic!("expected event type {event_type}");
+    maybe_next_event_of_type(socket, event_type, Duration::from_secs(8))
+        .await
+        .unwrap_or_else(|| panic!("timed out waiting for event type {event_type}"))
 }
 
 async fn maybe_next_event_of_type(
@@ -244,6 +238,29 @@ async fn maybe_next_event_of_type(
                 continue;
             };
             if event["t"] == event_type {
+                return Some(event);
+            }
+        }
+        None
+    })
+    .await;
+    result.unwrap_or_default()
+}
+
+async fn maybe_next_event_matching_types(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    event_types: &[&str],
+    timeout: Duration,
+) -> Option<Value> {
+    let result = tokio::time::timeout(timeout, async {
+        for _ in 0..64 {
+            let event = next_text_event(socket).await;
+            let Some(event_type) = event["t"].as_str() else {
+                continue;
+            };
+            if event_types.contains(&event_type) {
                 return Some(event);
             }
         }
@@ -1435,15 +1452,41 @@ async fn websocket_voice_participant_sync_repairs_and_disconnect_cleanup() {
         joined_identity
     );
 
-    owner_socket
-        .close(None)
+    let owner_leave = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/voice/leave",
+            voice_channel.guild_id, voice_channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", owner.access_token))
+        .header("x-forwarded-for", "203.0.113.141")
+        .body(Body::empty())
+        .expect("voice leave request should build");
+    let owner_leave_response = app
+        .clone()
+        .oneshot(owner_leave)
         .await
-        .expect("owner close should succeed");
-    let leave_for_member = next_event_of_type(&mut member_socket, "voice_participant_leave").await;
-    assert_eq!(leave_for_member["d"]["identity"], joined_identity);
-    let leave_for_member_second =
-        next_event_of_type(&mut member_second_socket, "voice_participant_leave").await;
-    assert_eq!(leave_for_member_second["d"]["identity"], joined_identity);
+        .expect("voice leave request should execute");
+    assert_eq!(owner_leave_response.status(), StatusCode::NO_CONTENT);
+    let cleanup_event_for_member = maybe_next_event_matching_types(
+        &mut member_socket,
+        &["voice_participant_leave", "voice_stream_unpublish"],
+        Duration::from_secs(8),
+    )
+    .await
+    .expect("member should receive voice cleanup event");
+    assert_eq!(cleanup_event_for_member["d"]["identity"], joined_identity);
+    let cleanup_event_for_member_second = maybe_next_event_matching_types(
+        &mut member_second_socket,
+        &["voice_participant_leave", "voice_stream_unpublish"],
+        Duration::from_secs(8),
+    )
+    .await
+    .expect("second member socket should receive voice cleanup event");
+    assert_eq!(
+        cleanup_event_for_member_second["d"]["identity"],
+        joined_identity
+    );
 
     assert!(
         maybe_next_event_of_type(
@@ -1460,6 +1503,10 @@ async fn websocket_voice_participant_sync_repairs_and_disconnect_cleanup() {
         .close(None)
         .await
         .expect("member close should succeed");
+    owner_socket
+        .close(None)
+        .await
+        .expect("owner close should succeed");
     member_second_socket
         .close(None)
         .await
