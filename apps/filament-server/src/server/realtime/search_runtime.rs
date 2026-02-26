@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use tantivy::schema::Schema;
+use tantivy::schema::{NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING};
 use tokio::sync::mpsc;
 
 use crate::server::{
@@ -23,13 +23,35 @@ use super::{
     },
     search_enqueue::enqueue_search_command,
     search_query_input::validate_search_query_request,
-    search_schema::build_search_schema as build_search_schema_impl,
 };
 
 const SEARCH_WORKER_BATCH_LIMIT: usize = 128;
 
 pub(crate) fn build_search_schema() -> (Schema, SearchFields) {
-    build_search_schema_impl()
+    let mut schema_builder = Schema::builder();
+    let message_id = schema_builder.add_text_field("message_id", STRING | STORED);
+    let guild_id = schema_builder.add_text_field("guild_id", STRING | STORED);
+    let channel_id = schema_builder.add_text_field("channel_id", STRING | STORED);
+    let author_id = schema_builder.add_text_field("author_id", STRING | STORED);
+    let created_at_unix =
+        schema_builder.add_i64_field("created_at_unix", NumericOptions::default().set_stored());
+    let content_options = TextOptions::default()
+        .set_stored()
+        .set_indexing_options(TextFieldIndexing::default().set_tokenizer("default"));
+    let content = schema_builder.add_text_field("content", content_options);
+    let schema = schema_builder.build();
+
+    (
+        schema,
+        SearchFields {
+            message_id,
+            guild_id,
+            channel_id,
+            author_id,
+            created_at_unix,
+            content,
+        },
+    )
 }
 
 pub(crate) fn init_search_service() -> anyhow::Result<SearchService> {
@@ -157,8 +179,10 @@ pub(crate) async fn hydrate_messages_by_id(
 
 #[cfg(test)]
 mod tests {
+    use tantivy::schema::Type;
+
     use super::{
-        build_search_rebuild_operation, indexed_message_from_response,
+        build_search_rebuild_operation, build_search_schema, indexed_message_from_response,
         validate_search_query_with_limits,
     };
     use crate::server::{
@@ -250,5 +274,31 @@ mod tests {
         assert_eq!(indexed.author_id, "u1");
         assert_eq!(indexed.content, "hello");
         assert_eq!(indexed.created_at_unix, 42);
+    }
+
+    #[test]
+    fn build_search_schema_registers_expected_fields() {
+        let (schema, fields) = build_search_schema();
+
+        let message_field_name = schema.get_field_name(fields.message_id);
+        let guild_field_name = schema.get_field_name(fields.guild_id);
+        let channel_field_name = schema.get_field_name(fields.channel_id);
+        let author_field_name = schema.get_field_name(fields.author_id);
+        let content_field_name = schema.get_field_name(fields.content);
+
+        assert_eq!(message_field_name, "message_id");
+        assert_eq!(guild_field_name, "guild_id");
+        assert_eq!(channel_field_name, "channel_id");
+        assert_eq!(author_field_name, "author_id");
+        assert_eq!(content_field_name, "content");
+    }
+
+    #[test]
+    fn build_search_schema_marks_created_at_as_i64() {
+        let (schema, fields) = build_search_schema();
+
+        let entry = schema.get_field_entry(fields.created_at_unix);
+
+        assert_eq!(entry.field_type().value_type(), Type::I64);
     }
 }

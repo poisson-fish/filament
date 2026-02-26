@@ -70,7 +70,6 @@ mod search_collect_guild;
 mod search_collect_index_ids;
 mod search_query_exec;
 mod search_reconcile;
-mod search_schema;
 mod search_validation;
 mod voice_registration;
 mod voice_registry;

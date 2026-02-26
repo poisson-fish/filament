@@ -58,7 +58,7 @@ mod tests {
     use crate::server::{
         core::{SearchCommand, SearchIndexState, SearchOperation},
         errors::AuthFailure,
-        realtime::search_schema::build_search_schema,
+        realtime::build_search_schema,
     };
 
     fn search_state() -> Arc<SearchIndexState> {
