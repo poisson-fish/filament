@@ -1,7 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::anyhow;
-use tantivy::schema::{NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING};
+use tantivy::{
+    schema::{NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING},
+    TantivyDocument, Term,
+};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::server::{
@@ -10,13 +13,17 @@ use crate::server::{
         SearchOperation, SearchService, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_FUZZY,
         MAX_SEARCH_TERMS, MAX_SEARCH_WILDCARDS, SEARCH_INDEX_QUEUE_CAPACITY,
     },
+    domain::{
+        attachment_map_for_messages_db, attachment_map_for_messages_in_memory,
+        reaction_map_for_messages_db,
+    },
     errors::AuthFailure,
     types::{MessageResponse, SearchQuery},
 };
 
-use super::{
-    hydration_runtime::hydrate_messages_by_id_runtime,
-    search_apply::apply_search_operation as apply_search_operation_impl,
+use super::hydration_runtime::{
+    apply_hydration_attachments, collect_hydrated_in_request_order, collect_hydrated_messages_db,
+    collect_hydrated_messages_in_memory, merge_hydration_maps,
 };
 
 const SEARCH_WORKER_BATCH_LIMIT: usize = 128;
@@ -212,7 +219,46 @@ pub(crate) fn apply_search_operation(
     writer: &mut tantivy::IndexWriter,
     op: SearchOperation,
 ) {
-    apply_search_operation_impl(search, writer, op);
+    match op {
+        SearchOperation::Upsert(doc) => {
+            upsert_doc(search, writer, doc);
+        }
+        SearchOperation::Delete { message_id } => {
+            writer.delete_term(Term::from_field_text(search.fields.message_id, &message_id));
+        }
+        SearchOperation::Rebuild { docs } => {
+            let _ = writer.delete_all_documents();
+            for doc in docs {
+                upsert_doc(search, writer, doc);
+            }
+        }
+        SearchOperation::Reconcile {
+            upserts,
+            delete_message_ids,
+        } => {
+            for message_id in delete_message_ids {
+                writer.delete_term(Term::from_field_text(search.fields.message_id, &message_id));
+            }
+            for doc in upserts {
+                upsert_doc(search, writer, doc);
+            }
+        }
+    }
+}
+
+fn upsert_doc(search: &SearchIndexState, writer: &mut tantivy::IndexWriter, doc: IndexedMessage) {
+    writer.delete_term(Term::from_field_text(
+        search.fields.message_id,
+        &doc.message_id,
+    ));
+    let mut tantivy_doc = TantivyDocument::default();
+    tantivy_doc.add_text(search.fields.message_id, doc.message_id);
+    tantivy_doc.add_text(search.fields.guild_id, doc.guild_id);
+    tantivy_doc.add_text(search.fields.channel_id, doc.channel_id);
+    tantivy_doc.add_text(search.fields.author_id, doc.author_id);
+    tantivy_doc.add_i64(search.fields.created_at_unix, doc.created_at_unix);
+    tantivy_doc.add_text(search.fields.content, doc.content);
+    let _ = writer.add_document(tantivy_doc);
 }
 
 pub(crate) fn indexed_message_from_response(message: &MessageResponse) -> IndexedMessage {
@@ -421,7 +467,30 @@ pub(crate) async fn hydrate_messages_by_id(
     channel_id: Option<&str>,
     message_ids: &[String],
 ) -> Result<Vec<MessageResponse>, AuthFailure> {
-    hydrate_messages_by_id_runtime(state, guild_id, channel_id, message_ids).await
+    if message_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if let Some(pool) = &state.db_pool {
+        let mut by_id =
+            collect_hydrated_messages_db(pool, guild_id, channel_id, message_ids).await?;
+        let message_ids_ordered: Vec<String> = message_ids.to_vec();
+        let attachment_map =
+            attachment_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered)
+                .await?;
+        let reaction_map =
+            reaction_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered).await?;
+        merge_hydration_maps(&mut by_id, &attachment_map, &reaction_map);
+        return Ok(collect_hydrated_in_request_order(by_id, message_ids));
+    }
+
+    let guilds = state.membership_store.guilds().read().await;
+    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
+    let mut by_id = collect_hydrated_messages_in_memory(guild, guild_id, channel_id)?;
+    let attachment_map =
+        attachment_map_for_messages_in_memory(state, guild_id, channel_id, message_ids).await;
+    apply_hydration_attachments(&mut by_id, &attachment_map);
+    Ok(collect_hydrated_in_request_order(by_id, message_ids))
 }
 
 #[cfg(test)]
@@ -430,12 +499,18 @@ mod tests {
 
     use filament_core::{ChannelKind, Role, UserId};
     use std::sync::Arc;
-    use tantivy::schema::Type;
+    use tantivy::{
+        collector::{Count, TopDocs},
+        query::{AllQuery, TermQuery},
+        schema::{IndexRecordOption, Type, Value},
+        TantivyDocument, Term,
+    };
 
     use tokio::sync::{mpsc, oneshot};
 
     use super::{
-        apply_search_batch_with_ack, build_search_rebuild_operation, build_search_schema,
+        apply_search_batch_with_ack, apply_search_operation, build_search_rebuild_operation,
+        build_search_schema,
         collect_all_indexed_messages_in_memory, collect_all_indexed_messages_rows,
         collect_indexed_messages_for_guild_in_memory, collect_indexed_messages_for_guild_rows,
         drain_search_batch, effective_search_limit, enforce_guild_collect_doc_cap,
@@ -1045,5 +1120,139 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(AuthFailure::Internal)));
+    }
+
+    fn contains_message_with_content(
+        search: &crate::server::core::SearchIndexState,
+        message_id: &str,
+        expected_content: &str,
+    ) -> bool {
+        let searcher = search.reader.searcher();
+        let query = TermQuery::new(
+            Term::from_field_text(search.fields.message_id, message_id),
+            IndexRecordOption::Basic,
+        );
+        let Ok(top_docs) = searcher.search(&query, &TopDocs::with_limit(1)) else {
+            return false;
+        };
+        let Some((_score, address)) = top_docs.into_iter().next() else {
+            return false;
+        };
+        let Ok(doc) = searcher.doc::<TantivyDocument>(address) else {
+            return false;
+        };
+        let Some(value) = doc.get_first(search.fields.content) else {
+            return false;
+        };
+        value.as_str() == Some(expected_content)
+    }
+
+    fn total_doc_count(search: &crate::server::core::SearchIndexState) -> usize {
+        let searcher = search.reader.searcher();
+        searcher
+            .search(&AllQuery, &Count)
+            .expect("count should succeed")
+    }
+
+    fn apply_upsert(
+        search: &crate::server::core::SearchIndexState,
+        message_id: &str,
+        guild_id: &str,
+        channel_id: &str,
+        content: &str,
+        created_at_unix: i64,
+    ) {
+        let mut writer = search
+            .index
+            .writer(50_000_000)
+            .expect("writer should initialize");
+        apply_search_operation(
+            search,
+            &mut writer,
+            SearchOperation::Upsert(IndexedMessage {
+                message_id: String::from(message_id),
+                guild_id: String::from(guild_id),
+                channel_id: String::from(channel_id),
+                author_id: String::from("u1"),
+                content: String::from(content),
+                created_at_unix,
+            }),
+        );
+        writer.commit().expect("commit should succeed");
+        search
+            .reader
+            .reload()
+            .expect("reader reload should succeed");
+    }
+
+    #[test]
+    fn apply_search_operation_upsert_replaces_existing_message_by_id() {
+        let search = search_state();
+        apply_upsert(&search, "m1", "g1", "c1", "hello", 1);
+        apply_upsert(&search, "m1", "g1", "c1", "updated", 2);
+
+        assert_eq!(total_doc_count(&search), 1);
+        assert!(contains_message_with_content(&search, "m1", "updated"));
+    }
+
+    #[test]
+    fn apply_search_operation_delete_removes_message_from_index() {
+        let search = search_state();
+        apply_upsert(&search, "m1", "g1", "c1", "hello", 1);
+
+        let mut writer = search
+            .index
+            .writer(50_000_000)
+            .expect("writer should initialize");
+        apply_search_operation(
+            &search,
+            &mut writer,
+            SearchOperation::Delete {
+                message_id: String::from("m1"),
+            },
+        );
+        writer.commit().expect("commit should succeed");
+        search
+            .reader
+            .reload()
+            .expect("reader reload should succeed");
+
+        assert_eq!(total_doc_count(&search), 0);
+        assert!(!contains_message_with_content(&search, "m1", "hello"));
+    }
+
+    #[test]
+    fn apply_search_operation_reconcile_deletes_removed_and_upserts_new_docs() {
+        let search = search_state();
+        apply_upsert(&search, "m1", "g1", "c1", "old", 1);
+
+        let mut writer = search
+            .index
+            .writer(50_000_000)
+            .expect("writer should initialize");
+        apply_search_operation(
+            &search,
+            &mut writer,
+            SearchOperation::Reconcile {
+                upserts: vec![IndexedMessage {
+                    message_id: String::from("m2"),
+                    guild_id: String::from("g1"),
+                    channel_id: String::from("c1"),
+                    author_id: String::from("u2"),
+                    content: String::from("new"),
+                    created_at_unix: 2,
+                }],
+                delete_message_ids: vec![String::from("m1")],
+            },
+        );
+        writer.commit().expect("commit should succeed");
+        search
+            .reader
+            .reload()
+            .expect("reader reload should succeed");
+
+        assert_eq!(total_doc_count(&search), 1);
+        assert!(!contains_message_with_content(&search, "m1", "old"));
+        assert!(contains_message_with_content(&search, "m2", "new"));
     }
 }

@@ -122,9 +122,7 @@ mod tests {
         build_message_response_from_record,
     };
     use crate::server::{
-        core::{
-            AttachmentRecord, ChannelRecord, GuildRecord, GuildVisibility, MessageRecord,
-        },
+        core::{AttachmentRecord, ChannelRecord, GuildRecord, GuildVisibility, MessageRecord},
         errors::AuthFailure,
         types::{AttachmentResponse, ReactionResponse},
     };

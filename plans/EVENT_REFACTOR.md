@@ -281,8 +281,8 @@ Reduce fragmentation and simplify navigation while preserving testable seams.
   - `realtime/fanout/*`
   - `realtime/presence/*`
   - `realtime/voice/*`
-- [ ] Keep pure helper functions and tests, but reduce one-function files.
-- [ ] Preserve public/internal function signatures where practical to minimize churn.
+- [x] Keep pure helper functions and tests, but reduce one-function files.
+- [x] Preserve public/internal function signatures where practical to minimize churn.
 
 ### Tentative File Touch List
 - `apps/filament-server/src/server/realtime.rs`
@@ -340,6 +340,10 @@ Reduce fragmentation and simplify navigation while preserving testable seams.
 - 2026-02-26 (Slice 43): Continued Phase 4 search wrapper consolidation by folding `realtime/search_collect_index_ids.rs` into `realtime/search_reconciliation_plan.rs` and removing the standalone module import/file from `realtime.rs`. Tantivy guild index-id lookup remains fail-closed (internal search errors map to `AuthFailure::Internal`, over-cap counts map to `AuthFailure::InvalidRequest`) with unchanged reconciliation planning behavior, and focused guild index-id lookup tests migrated into `search_reconciliation_plan`.
 - 2026-02-26 (Slice 44): Continued Phase 4 hydration wrapper consolidation by folding `realtime/hydration_db.rs` and `realtime/hydration_in_memory.rs` into `realtime/hydration_runtime.rs`, then removing both standalone module imports/files from `realtime.rs`. Hydration behavior is unchanged: DB/in-memory message collection, request-order assembly, attachment/reaction merge, and fail-closed channel lookup semantics all remain intact; migrated focused DB-row mapping and in-memory hydration tests into the consolidated runtime module.
 - 2026-02-26 (Slice 45): Continued Phase 4 message wrapper consolidation by folding `realtime/message_attachment_bind.rs` and `realtime/message_store_in_memory.rs` into `realtime/message_record.rs`, then removing both standalone module imports/files from `realtime.rs`. Message attachment binding constraints and in-memory append fail-closed semantics remain unchanged (`InvalidRequest` for invalid bindings, `NotFound` for missing guild/channel), with focused binding and append tests migrated into the consolidated message module.
+- 2026-02-26 (Slice 46): Continued Phase 4 message wrapper consolidation by folding `realtime/message_prepare.rs` into `realtime.rs` and removing the standalone module import/file. Message body preparation remains unchanged for both REST and ingress-prevalidated paths (same empty-content guard behavior, message-content validation, and markdown tokenization semantics); migrated focused message-prepare unit coverage into `realtime` tests.
+- 2026-02-26 (Slice 47): Continued Phase 4 search wrapper consolidation by folding `realtime/search_apply.rs` into `realtime/search_runtime.rs` and removing the standalone module import/file from `realtime.rs`. Search operation application remains unchanged for upsert/delete/rebuild/reconcile flows (same delete-before-upsert and fail-closed writer behavior), with focused index mutation tests migrated into `search_runtime` tests.
+- 2026-02-26 (Slice 48): Reduced hydration indirection by moving the search-facing hydration runtime entrypoint from `realtime/hydration_runtime.rs` into `realtime/search_runtime.rs`. `hydrate_messages_by_id` now orchestrates DB/in-memory hydration directly while reusing consolidated hydration helper functions (`collect_*`, merge/order helpers), preserving the same fail-closed behavior, attachment/reaction hydration semantics, and external function signature for search handlers.
+- 2026-02-26 (Validation status): Ran `cargo test -p filament-server` after slices 46-48; suite fails at pre-existing docs-contract drift (`server::tests::tests::contract::api_docs_cover_router_manifest_routes` expects `POST /guilds/{guild_id}/roles/default` in `docs/API.md`). Ran `cargo clippy -p filament-server --tests --no-deps`; warnings remain in pre-existing non-Phase-4 areas (`gateway_events/workspace.rs`, `handlers/guilds.rs`, `types.rs`, unused `presence_sync` export).
 
 ### Exit Criteria
 - Lower module count and shallower call graph.

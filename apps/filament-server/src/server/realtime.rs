@@ -36,9 +36,7 @@ use uuid::Uuid;
 
 mod fanout_dispatch;
 mod ingress_command;
-mod message_prepare;
 mod presence_subscribe;
-mod search_apply;
 mod voice_registration;
 mod voice_registry;
 
@@ -54,7 +52,6 @@ use ingress_command::{
     GatewayAttachmentIds, GatewayIngressCommand, GatewayIngressMessageDecode,
     GatewayMessageContent, IngressCommandParseClassification,
 };
-use message_prepare::{prepare_message_body, prepare_prevalidated_message_body};
 use message_record::{
     append_message_record, bind_message_attachments_in_memory, build_db_created_message_response,
     build_in_memory_message_record, build_message_response_from_record,
@@ -74,7 +71,8 @@ pub(crate) fn build_search_schema() -> (tantivy::schema::Schema, super::core::Se
 
 use super::{
     auth::{
-        authenticate_with_token, bearer_token, channel_key, extract_client_ip, now_unix, ClientIp,
+        authenticate_with_token, bearer_token, channel_key, extract_client_ip, now_unix,
+        validate_message_content, ClientIp,
     },
     core::{AppState, AuthContext, ConnectionControl, ConnectionPresence, SearchOperation},
     domain::{
@@ -97,6 +95,46 @@ enum ReadyEnqueueResult {
     Closed,
     Full,
     Oversized,
+}
+
+struct PreparedMessageBody {
+    content: String,
+    markdown_tokens: Vec<filament_core::MarkdownToken>,
+}
+
+fn prepare_message_body(
+    content: String,
+    has_attachments: bool,
+) -> Result<PreparedMessageBody, AuthFailure> {
+    if content.is_empty() {
+        if !has_attachments {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        return Ok(PreparedMessageBody {
+            content,
+            markdown_tokens: Vec::new(),
+        });
+    }
+
+    validate_message_content(&content)?;
+    Ok(PreparedMessageBody {
+        markdown_tokens: filament_core::tokenize_markdown(&content),
+        content,
+    })
+}
+
+fn prepare_prevalidated_message_body(content: String) -> PreparedMessageBody {
+    if content.is_empty() {
+        return PreparedMessageBody {
+            content,
+            markdown_tokens: Vec::new(),
+        };
+    }
+
+    PreparedMessageBody {
+        markdown_tokens: filament_core::tokenize_markdown(&content),
+        content,
+    }
 }
 
 fn try_enqueue_ready_event(
@@ -650,5 +688,59 @@ mod tests {
         assert_eq!(doc.author_id, "u1");
         assert_eq!(doc.content, "hello");
         assert_eq!(doc.created_at_unix, 42);
+    }
+
+    #[test]
+    fn prepare_message_body_rejects_empty_content_without_attachments() {
+        let result = super::prepare_message_body(String::new(), false);
+        assert!(matches!(
+            result,
+            Err(crate::server::errors::AuthFailure::InvalidRequest)
+        ));
+    }
+
+    #[test]
+    fn prepare_message_body_accepts_empty_content_with_attachments() {
+        let prepared = super::prepare_message_body(String::new(), true)
+            .expect("empty message with attachments should be accepted");
+
+        assert!(prepared.content.is_empty());
+        assert!(prepared.markdown_tokens.is_empty());
+    }
+
+    #[test]
+    fn prepare_message_body_tokenizes_non_empty_content() {
+        let prepared = super::prepare_message_body(String::from("hello **world**"), false)
+            .expect("valid message should be accepted");
+
+        assert_eq!(prepared.content, "hello **world**");
+        assert!(!prepared.markdown_tokens.is_empty());
+    }
+
+    #[test]
+    fn prepare_message_body_rejects_oversized_content() {
+        let oversized = "a".repeat(2001);
+        let result = super::prepare_message_body(oversized, false);
+
+        assert!(matches!(
+            result,
+            Err(crate::server::errors::AuthFailure::InvalidRequest)
+        ));
+    }
+
+    #[test]
+    fn prepare_prevalidated_message_body_preserves_empty_content_without_tokens() {
+        let prepared = super::prepare_prevalidated_message_body(String::new());
+
+        assert!(prepared.content.is_empty());
+        assert!(prepared.markdown_tokens.is_empty());
+    }
+
+    #[test]
+    fn prepare_prevalidated_message_body_tokenizes_non_empty_content() {
+        let prepared = super::prepare_prevalidated_message_body(String::from("hello **world**"));
+
+        assert_eq!(prepared.content, "hello **world**");
+        assert!(!prepared.markdown_tokens.is_empty());
     }
 }

@@ -1,11 +1,8 @@
 use std::collections::HashMap;
 
 use crate::server::{
-    core::{AppState, GuildRecord},
-    domain::{
-        attachment_map_for_messages_db, attachment_map_for_messages_in_memory,
-        reaction_map_for_messages_db, reaction_summaries_from_users,
-    },
+    core::GuildRecord,
+    domain::reaction_summaries_from_users,
     errors::AuthFailure,
     types::{AttachmentResponse, MessageResponse, ReactionResponse},
 };
@@ -68,7 +65,7 @@ fn map_hydrated_rows(rows: Vec<HydratedMessageRow>) -> HashMap<String, MessageRe
     by_id
 }
 
-async fn collect_hydrated_messages_db(
+pub(super) async fn collect_hydrated_messages_db(
     pool: &sqlx::PgPool,
     guild_id: &str,
     channel_id: Option<&str>,
@@ -102,7 +99,7 @@ async fn collect_hydrated_messages_db(
     Ok(map_hydrated_rows(rows))
 }
 
-fn collect_hydrated_messages_in_memory(
+pub(super) fn collect_hydrated_messages_in_memory(
     guild: &GuildRecord,
     guild_id: &str,
     channel_id: Option<&str>,
@@ -152,42 +149,6 @@ fn collect_hydrated_messages_in_memory(
     }
 
     Ok(by_id)
-}
-
-pub(crate) async fn hydrate_messages_by_id_runtime(
-    state: &AppState,
-    guild_id: &str,
-    channel_id: Option<&str>,
-    message_ids: &[String],
-) -> Result<Vec<MessageResponse>, AuthFailure> {
-    if message_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if let Some(pool) = &state.db_pool {
-        let mut by_id =
-            collect_hydrated_messages_db(pool, guild_id, channel_id, message_ids).await?;
-
-        let message_ids_ordered: Vec<String> = message_ids.to_vec();
-        let attachment_map =
-            attachment_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered)
-                .await?;
-        let reaction_map =
-            reaction_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered).await?;
-        merge_hydration_maps(&mut by_id, &attachment_map, &reaction_map);
-
-        return Ok(collect_hydrated_in_request_order(by_id, message_ids));
-    }
-
-    let guilds = state.membership_store.guilds().read().await;
-    let guild = guilds.get(guild_id).ok_or(AuthFailure::NotFound)?;
-    let mut by_id = collect_hydrated_messages_in_memory(guild, guild_id, channel_id)?;
-
-    let attachment_map =
-        attachment_map_for_messages_in_memory(state, guild_id, channel_id, message_ids).await;
-    apply_hydration_attachments(&mut by_id, &attachment_map);
-
-    Ok(collect_hydrated_in_request_order(by_id, message_ids))
 }
 
 #[cfg(test)]
