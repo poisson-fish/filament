@@ -1,3 +1,5 @@
+[![CodeFactor](https://www.codefactor.io/repository/github/poisson-fish/filament/badge)](https://www.codefactor.io/repository/github/poisson-fish/filament)
+
 # Filament
 
 Filament is a security-first, self-hosted Discord-like platform for realtime chat, voice, video, and screen sharing.
