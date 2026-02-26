@@ -332,6 +332,9 @@ pub(crate) struct MessageResponse {
 pub(crate) struct ReactionResponse {
     pub(crate) emoji: String,
     pub(crate) count: usize,
+    pub(crate) reacted_by_me: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) reactor_user_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]

@@ -92,15 +92,53 @@ describe("app shell gateway controller", () => {
     expect(
       applyMessageReactionUpdate(
         {
-          [`${MESSAGE_ID}|${THUMBS_UP}`]: { count: 2, reacted: true },
+          [`${MESSAGE_ID}|${THUMBS_UP}`]: {
+            count: 2,
+            reacted: true,
+            reactorUserIds: [],
+          },
         },
         {
           messageId: MESSAGE_ID,
           emoji: THUMBS_UP,
           count: 0,
         },
+        null,
       ),
     ).toEqual({});
+  });
+
+  it("applies actor-aware reaction updates for cross-session self highlight sync", () => {
+    const viewerUserId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAB");
+    const seeded = applyMessageReactionUpdate(
+      {},
+      {
+        messageId: MESSAGE_ID,
+        emoji: THUMBS_UP,
+        count: 1,
+        operation: "add",
+        actorUserId: viewerUserId,
+      },
+      viewerUserId,
+    );
+    expect(seeded[`${MESSAGE_ID}|${THUMBS_UP}`]).toEqual({
+      count: 1,
+      reacted: true,
+      reactorUserIds: [viewerUserId],
+    });
+
+    const removed = applyMessageReactionUpdate(
+      seeded,
+      {
+        messageId: MESSAGE_ID,
+        emoji: THUMBS_UP,
+        count: 0,
+        operation: "remove",
+        actorUserId: viewerUserId,
+      },
+      viewerUserId,
+    );
+    expect(removed).toEqual({});
   });
 
   it("applies message update payload to known messages only", () => {
@@ -522,6 +560,7 @@ describe("app shell gateway controller", () => {
     expect(reactionState()[`${MESSAGE_ID}|${THUMBS_UP}`]).toEqual({
       count: 1,
       reacted: false,
+      reactorUserIds: [],
     });
 
     handlers.onMessageUpdate({

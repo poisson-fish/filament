@@ -566,7 +566,7 @@ async fn create_message_internal_prepared(
         guild_id,
         channel_id,
         attachments,
-        reaction_summaries_from_users(&record.reactions),
+        reaction_summaries_from_users(&record.reactions, None),
     );
 
     emit_message_create_and_index(state, guild_id, channel_id, &response).await?;

@@ -195,14 +195,48 @@ export function applyMessageReactionUpdate(
     messageId: MessageId;
     emoji: ReactionEmoji;
     count: number;
+    operation?: "add" | "remove";
+    actorUserId?: UserId;
   },
+  viewerUserId: UserId | null,
 ): Record<string, ReactionView> {
   const key = reactionKey(payload.messageId, payload.emoji);
-  const nextReacted =
-    payload.count === 0 ? false : (existing[key]?.reacted ?? false);
+  const prior = existing[key] ?? {
+    count: 0,
+    reacted: false,
+    reactorUserIds: [],
+  };
+  let reactorUserIds = [...prior.reactorUserIds];
+  if (payload.operation && payload.actorUserId) {
+    const nextUsers = new Set(reactorUserIds);
+    if (payload.operation === "add") {
+      nextUsers.add(payload.actorUserId);
+    } else {
+      nextUsers.delete(payload.actorUserId);
+    }
+    reactorUserIds = [...nextUsers].sort();
+  }
+  if (payload.count === 0) {
+    reactorUserIds = [];
+  } else if (reactorUserIds.length > payload.count) {
+    reactorUserIds = reactorUserIds.slice(0, payload.count);
+  }
+  let reacted = prior.reacted;
+  if (payload.count === 0) {
+    reacted = false;
+  } else if (
+    viewerUserId &&
+    payload.operation &&
+    payload.actorUserId === viewerUserId
+  ) {
+    reacted = payload.operation === "add";
+  } else if (viewerUserId && reactorUserIds.includes(viewerUserId)) {
+    reacted = true;
+  }
   return upsertReactionEntry(existing, key, {
     count: payload.count,
-    reacted: nextReacted,
+    reacted,
+    reactorUserIds,
   });
 }
 
@@ -713,7 +747,7 @@ export function createGatewayController(
     ...DEFAULT_GATEWAY_CONTROLLER_DEPENDENCIES,
     ...dependencies,
   };
-  let connectedUserId: string | null = null;
+  let connectedUserId: UserId | null = null;
 
   createEffect(() => {
     const session = options.session();
@@ -727,7 +761,7 @@ export function createGatewayController(
 
     const gateway = deps.connectGateway(session.accessToken, guildId, channelId, {
       onReady: (payload) => {
-        connectedUserId = payload.userId;
+        connectedUserId = parseGatewayUserId(payload.userId);
       },
       onOpenStateChange: (isOpen) => {
         options.setGatewayOnline(isOpen);
@@ -766,7 +800,7 @@ export function createGatewayController(
           return;
         }
         options.setReactionState((existing) =>
-          applyMessageReactionUpdate(existing, payload),
+          applyMessageReactionUpdate(existing, payload, connectedUserId),
         );
       },
       onChannelCreate: (payload) => {

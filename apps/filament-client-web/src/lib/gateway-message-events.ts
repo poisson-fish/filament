@@ -4,6 +4,7 @@ import {
   messageFromResponse,
   messageIdFromInput,
   reactionEmojiFromInput,
+  userIdFromInput,
   channelIdFromInput,
   guildIdFromInput,
   type MarkdownToken,
@@ -12,6 +13,7 @@ import {
   type ReactionEmoji,
   type ChannelId,
   type GuildId,
+  type UserId,
 } from "../domain/chat";
 import type {
   MessageDeletePayload,
@@ -69,6 +71,8 @@ function parseMessageReactionPayload(payload: unknown): MessageReactionPayload |
   let channelId: ChannelId;
   let messageId: MessageId;
   let emoji: ReactionEmoji;
+  let operation: "add" | "remove" | undefined;
+  let actorUserId: UserId | undefined;
   try {
     guildId = guildIdFromInput(value.guild_id);
     channelId = channelIdFromInput(value.channel_id);
@@ -77,14 +81,38 @@ function parseMessageReactionPayload(payload: unknown): MessageReactionPayload |
   } catch {
     return null;
   }
+  if (typeof value.operation !== "undefined") {
+    if (value.operation !== "add" && value.operation !== "remove") {
+      return null;
+    }
+    operation = value.operation;
+  }
+  if (typeof value.actor_user_id !== "undefined") {
+    if (typeof value.actor_user_id !== "string") {
+      return null;
+    }
+    try {
+      actorUserId = userIdFromInput(value.actor_user_id);
+    } catch {
+      return null;
+    }
+  }
+  if ((typeof operation === "undefined") !== (typeof actorUserId === "undefined")) {
+    return null;
+  }
 
-  return {
+  const next: MessageReactionPayload = {
     guildId,
     channelId,
     messageId,
     emoji,
     count: value.count,
   };
+  if (operation && actorUserId) {
+    next.operation = operation;
+    next.actorUserId = actorUserId;
+  }
+  return next;
 }
 
 function parseMessageUpdatePayload(payload: unknown): MessageUpdatePayload | null {

@@ -674,8 +674,10 @@ pub(crate) async fn reaction_map_for_messages_db(
     guild_id: &str,
     channel_id: Option<&str>,
     message_ids: &[String],
+    viewer_user_id: Option<UserId>,
 ) -> Result<HashMap<String, Vec<ReactionResponse>>, AuthFailure> {
-    reactions::reaction_map_for_messages_db(pool, guild_id, channel_id, message_ids).await
+    reactions::reaction_map_for_messages_db(pool, guild_id, channel_id, message_ids, viewer_user_id)
+        .await
 }
 
 pub(crate) async fn write_audit_log(

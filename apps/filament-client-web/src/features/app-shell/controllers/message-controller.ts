@@ -505,7 +505,11 @@ export function createMessageActionsController(
       return;
     }
     setReactionPending(key, true);
-    const state = options.reactionState()[key] ?? { count: 0, reacted: false };
+    const state = options.reactionState()[key] ?? {
+      count: 0,
+      reacted: false,
+      reactorUserIds: [],
+    };
 
     try {
       if (state.reacted) {
@@ -519,7 +523,8 @@ export function createMessageActionsController(
         options.setReactionState((existing) =>
           upsertReactionEntry(existing, key, {
             count: response.count,
-            reacted: false,
+            reacted: response.reactedByMe ?? false,
+            reactorUserIds: response.reactorUserIds ?? state.reactorUserIds,
           }),
         );
       } else {
@@ -533,7 +538,8 @@ export function createMessageActionsController(
         options.setReactionState((existing) =>
           upsertReactionEntry(existing, key, {
             count: response.count,
-            reacted: true,
+            reacted: response.reactedByMe ?? true,
+            reactorUserIds: response.reactorUserIds ?? state.reactorUserIds,
           }),
         );
       }
@@ -572,7 +578,8 @@ export function createMessageActionsController(
       options.setReactionState((existing) =>
         upsertReactionEntry(existing, key, {
           count: response.count,
-          reacted: true,
+          reacted: response.reactedByMe ?? true,
+          reactorUserIds: response.reactorUserIds ?? existing[key]?.reactorUserIds ?? [],
         }),
       );
     } catch (error) {

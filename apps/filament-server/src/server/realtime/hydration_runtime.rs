@@ -121,7 +121,7 @@ pub(super) fn collect_hydrated_messages_in_memory(
                     content: message.content.clone(),
                     markdown_tokens: message.markdown_tokens.clone(),
                     attachments: Vec::new(),
-                    reactions: reaction_summaries_from_users(&message.reactions),
+                    reactions: reaction_summaries_from_users(&message.reactions, None),
                     created_at_unix: message.created_at_unix,
                 },
             );
@@ -141,7 +141,7 @@ pub(super) fn collect_hydrated_messages_in_memory(
                     content: message.content.clone(),
                     markdown_tokens: message.markdown_tokens.clone(),
                     attachments: Vec::new(),
-                    reactions: reaction_summaries_from_users(&message.reactions),
+                    reactions: reaction_summaries_from_users(&message.reactions, None),
                     created_at_unix: message.created_at_unix,
                 },
             );
@@ -311,6 +311,8 @@ mod tests {
             vec![ReactionResponse {
                 emoji: String::from("😀"),
                 count: 3,
+                reacted_by_me: false,
+                reactor_user_ids: Vec::new(),
             }],
         )]);
 

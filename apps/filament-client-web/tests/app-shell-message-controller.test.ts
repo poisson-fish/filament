@@ -260,15 +260,31 @@ describe("app shell message controller", () => {
     const secondMessageId = messageIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FB5");
     const cleared = clearReactionRecordsForMessage(
       {
-        [`${firstMessageId}|👍`]: { count: 1, reacted: true },
-        [`${firstMessageId}|🔥`]: { count: 2, reacted: false },
-        [`${secondMessageId}|👍`]: { count: 3, reacted: true },
+        [`${firstMessageId}|👍`]: {
+          count: 1,
+          reacted: true,
+          reactorUserIds: [],
+        },
+        [`${firstMessageId}|🔥`]: {
+          count: 2,
+          reacted: false,
+          reactorUserIds: [],
+        },
+        [`${secondMessageId}|👍`]: {
+          count: 3,
+          reacted: true,
+          reactorUserIds: [],
+        },
       },
       firstMessageId,
     );
 
     expect(cleared).toEqual({
-      [`${secondMessageId}|👍`]: { count: 3, reacted: true },
+      [`${secondMessageId}|👍`]: {
+        count: 3,
+        reacted: true,
+        reactorUserIds: [],
+      },
     });
   });
 

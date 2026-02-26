@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 
 use crate::server::{
     auth::{authenticate, channel_key, extract_client_ip, now_unix, validate_message_content},
-    core::{AppState, SearchOperation, MAX_HISTORY_LIMIT},
+    core::{AppState, SearchOperation, MAX_HISTORY_LIMIT, MAX_REACTOR_USER_IDS_PER_REACTION},
     db::permission_list_from_set,
     domain::{
         attach_message_media, attach_message_reactions, attachment_map_for_messages_db,
@@ -33,13 +33,21 @@ use crate::server::{
     },
 };
 
-async fn broadcast_message_reaction_event(state: &AppState, path: &ReactionPath, count: usize) {
+async fn broadcast_message_reaction_event(
+    state: &AppState,
+    path: &ReactionPath,
+    count: usize,
+    operation: gateway_events::MessageReactionOperation,
+    actor_user_id: UserId,
+) {
     let Ok(event) = gateway_events::try_message_reaction(
         &path.guild_id,
         &path.channel_id,
         &path.message_id,
         &path.emoji,
         count,
+        operation,
+        actor_user_id,
     ) else {
         record_gateway_event_dropped(
             "channel",
@@ -51,6 +59,7 @@ async fn broadcast_message_reaction_event(state: &AppState, path: &ReactionPath,
             channel_id = path.channel_id,
             message_id = path.message_id,
             emoji = path.emoji,
+            actor_user_id = actor_user_id.to_string(),
             "dropped message_reaction outbound event because serialization failed"
         );
         return;
@@ -61,6 +70,13 @@ async fn broadcast_message_reaction_event(state: &AppState, path: &ReactionPath,
         &event,
     )
     .await;
+}
+
+fn bounded_reactor_user_ids(users: &std::collections::HashSet<UserId>) -> Vec<String> {
+    let mut ids: Vec<String> = users.iter().map(ToString::to_string).collect();
+    ids.sort();
+    ids.truncate(MAX_REACTOR_USER_IDS_PER_REACTION);
+    ids
 }
 
 async fn broadcast_message_update_event(state: &AppState, response: &MessageResponse) {
@@ -275,6 +291,7 @@ pub(crate) async fn get_messages(
             &path.guild_id,
             Some(&path.channel_id),
             &message_ids,
+            Some(auth.user_id),
         )
         .await?;
         attach_message_media(&mut messages, &attachment_map);
@@ -316,7 +333,7 @@ pub(crate) async fn get_messages(
             content: message.content.clone(),
             markdown_tokens: message.markdown_tokens.clone(),
             attachments: Vec::new(),
-            reactions: reaction_summaries_from_users(&message.reactions),
+            reactions: reaction_summaries_from_users(&message.reactions, Some(auth.user_id)),
             created_at_unix: message.created_at_unix,
         });
     }
@@ -414,6 +431,7 @@ pub(crate) async fn edit_message(
             &path.guild_id,
             Some(&path.channel_id),
             std::slice::from_ref(&path.message_id),
+            Some(auth.user_id),
         )
         .await?;
         let response = MessageResponse {
@@ -481,7 +499,7 @@ pub(crate) async fn edit_message(
         content: message.content.clone(),
         markdown_tokens,
         attachments: attachments_for_message_in_memory(&state, &message.attachment_ids).await?,
-        reactions: reaction_summaries_from_users(&message.reactions),
+        reactions: reaction_summaries_from_users(&message.reactions, Some(auth.user_id)),
         created_at_unix: message.created_at_unix,
     };
     enqueue_search_operation(
@@ -714,8 +732,17 @@ pub(crate) async fn add_reaction(
         let response = ReactionResponse {
             emoji: path.emoji.clone(),
             count,
+            reacted_by_me: true,
+            reactor_user_ids: Vec::new(),
         };
-        broadcast_message_reaction_event(&state, &path, response.count).await;
+        broadcast_message_reaction_event(
+            &state,
+            &path,
+            response.count,
+            gateway_events::MessageReactionOperation::Add,
+            auth.user_id,
+        )
+        .await;
         return Ok(Json(response));
     }
 
@@ -737,9 +764,18 @@ pub(crate) async fn add_reaction(
     let response = ReactionResponse {
         emoji: path.emoji.clone(),
         count: users.len(),
+        reacted_by_me: users.contains(&auth.user_id),
+        reactor_user_ids: bounded_reactor_user_ids(users),
     };
     drop(guilds);
-    broadcast_message_reaction_event(&state, &path, response.count).await;
+    broadcast_message_reaction_event(
+        &state,
+        &path,
+        response.count,
+        gateway_events::MessageReactionOperation::Add,
+        auth.user_id,
+    )
+    .await;
     Ok(Json(response))
 }
 
@@ -799,8 +835,17 @@ pub(crate) async fn remove_reaction(
         let response = ReactionResponse {
             emoji: path.emoji.clone(),
             count,
+            reacted_by_me: false,
+            reactor_user_ids: Vec::new(),
         };
-        broadcast_message_reaction_event(&state, &path, response.count).await;
+        broadcast_message_reaction_event(
+            &state,
+            &path,
+            response.count,
+            gateway_events::MessageReactionOperation::Remove,
+            auth.user_id,
+        )
+        .await;
         return Ok(Json(response));
     }
 
@@ -832,8 +877,21 @@ pub(crate) async fn remove_reaction(
     let response = ReactionResponse {
         emoji: path.emoji.clone(),
         count,
+        reacted_by_me: false,
+        reactor_user_ids: message
+            .reactions
+            .get(&path.emoji)
+            .map(bounded_reactor_user_ids)
+            .unwrap_or_default(),
     };
     drop(guilds);
-    broadcast_message_reaction_event(&state, &path, response.count).await;
+    broadcast_message_reaction_event(
+        &state,
+        &path,
+        response.count,
+        gateway_events::MessageReactionOperation::Remove,
+        auth.user_id,
+    )
+    .await;
     Ok(Json(response))
 }

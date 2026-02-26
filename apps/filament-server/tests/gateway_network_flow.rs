@@ -988,6 +988,7 @@ async fn websocket_subscription_receives_reaction_updates_from_rest() {
     let app = test_app();
 
     let auth = register_and_login(&app, "203.0.113.56").await;
+    let user_id = user_id_from_me(&app, &auth, "203.0.113.56").await;
     let channel = create_channel_context(&app, &auth, "203.0.113.56").await;
 
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -1067,6 +1068,8 @@ async fn websocket_subscription_receives_reaction_updates_from_rest() {
     assert_eq!(add_event["d"]["message_id"], message_id);
     assert_eq!(add_event["d"]["emoji"], "👍");
     assert_eq!(add_event["d"]["count"], 1);
+    assert_eq!(add_event["d"]["operation"], "add");
+    assert_eq!(add_event["d"]["actor_user_id"], user_id);
 
     let remove_reaction = Request::builder()
         .method("DELETE")
@@ -1088,11 +1091,161 @@ async fn websocket_subscription_receives_reaction_updates_from_rest() {
     assert_eq!(remove_event["d"]["message_id"], message_id);
     assert_eq!(remove_event["d"]["emoji"], "👍");
     assert_eq!(remove_event["d"]["count"], 0);
+    assert_eq!(remove_event["d"]["operation"], "remove");
+    assert_eq!(remove_event["d"]["actor_user_id"], user_id);
 
     socket
         .close(None)
         .await
         .expect("socket close should succeed");
+    server.abort();
+}
+
+#[tokio::test]
+async fn same_user_two_websocket_sessions_receive_reaction_actor_sync() {
+    let app = test_app();
+
+    let auth = register_and_login(&app, "203.0.113.58").await;
+    let user_id = user_id_from_me(&app, &auth, "203.0.113.58").await;
+    let channel = create_channel_context(&app, &auth, "203.0.113.58").await;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener addr should be readable");
+    let server_app = app.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, server_app)
+            .await
+            .expect("server should run without errors");
+    });
+
+    let ws_url = format!("ws://{addr}/gateway/ws?access_token={}", auth.access_token);
+    let mut ws_request_one = ws_url
+        .clone()
+        .into_client_request()
+        .expect("websocket request should build");
+    ws_request_one.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.58"),
+    );
+    let (mut socket_one, _response_one) = connect_async(ws_request_one)
+        .await
+        .expect("first websocket handshake should succeed");
+
+    let mut ws_request_two = ws_url
+        .into_client_request()
+        .expect("websocket request should build");
+    ws_request_two.headers_mut().insert(
+        "x-forwarded-for",
+        http::HeaderValue::from_static("203.0.113.58"),
+    );
+    let (mut socket_two, _response_two) = connect_async(ws_request_two)
+        .await
+        .expect("second websocket handshake should succeed");
+
+    let ready_one = next_text_event(&mut socket_one).await;
+    let ready_two = next_text_event(&mut socket_two).await;
+    assert_eq!(ready_one["t"], "ready");
+    assert_eq!(ready_two["t"], "ready");
+
+    subscribe_to_channel(&mut socket_one, &channel).await;
+    subscribe_to_channel(&mut socket_two, &channel).await;
+
+    let create_message = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages",
+            channel.guild_id, channel.channel_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.58")
+        .body(Body::from(
+            json!({"content":"session sync target"}).to_string(),
+        ))
+        .expect("create message request should build");
+    let create_message_response = app
+        .clone()
+        .oneshot(create_message)
+        .await
+        .expect("create message request should execute");
+    assert_eq!(create_message_response.status(), StatusCode::OK);
+    let created_json: Value = parse_json_body(create_message_response).await;
+    let message_id = created_json["message_id"]
+        .as_str()
+        .expect("message id should be present")
+        .to_owned();
+
+    let create_event_one = next_event_of_type(&mut socket_one, "message_create").await;
+    let create_event_two = next_event_of_type(&mut socket_two, "message_create").await;
+    assert_eq!(create_event_one["d"]["message_id"], message_id);
+    assert_eq!(create_event_two["d"]["message_id"], message_id);
+
+    let add_reaction = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages/{}/reactions/%F0%9F%91%8D",
+            channel.guild_id, channel.channel_id, message_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", "203.0.113.58")
+        .body(Body::empty())
+        .expect("add reaction request should build");
+    let add_reaction_response = app
+        .clone()
+        .oneshot(add_reaction)
+        .await
+        .expect("add reaction request should execute");
+    assert_eq!(add_reaction_response.status(), StatusCode::OK);
+
+    let add_event_one = next_event_of_type(&mut socket_one, "message_reaction").await;
+    let add_event_two = next_event_of_type(&mut socket_two, "message_reaction").await;
+    for add_event in [&add_event_one, &add_event_two] {
+        assert_eq!(add_event["d"]["message_id"], message_id);
+        assert_eq!(add_event["d"]["emoji"], "👍");
+        assert_eq!(add_event["d"]["count"], 1);
+        assert_eq!(add_event["d"]["operation"], "add");
+        assert_eq!(add_event["d"]["actor_user_id"], user_id);
+    }
+
+    let remove_reaction = Request::builder()
+        .method("DELETE")
+        .uri(format!(
+            "/guilds/{}/channels/{}/messages/{}/reactions/%F0%9F%91%8D",
+            channel.guild_id, channel.channel_id, message_id
+        ))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", "203.0.113.58")
+        .body(Body::empty())
+        .expect("remove reaction request should build");
+    let remove_reaction_response = app
+        .clone()
+        .oneshot(remove_reaction)
+        .await
+        .expect("remove reaction request should execute");
+    assert_eq!(remove_reaction_response.status(), StatusCode::OK);
+
+    let remove_event_one = next_event_of_type(&mut socket_one, "message_reaction").await;
+    let remove_event_two = next_event_of_type(&mut socket_two, "message_reaction").await;
+    for remove_event in [&remove_event_one, &remove_event_two] {
+        assert_eq!(remove_event["d"]["message_id"], message_id);
+        assert_eq!(remove_event["d"]["emoji"], "👍");
+        assert_eq!(remove_event["d"]["count"], 0);
+        assert_eq!(remove_event["d"]["operation"], "remove");
+        assert_eq!(remove_event["d"]["actor_user_id"], user_id);
+    }
+
+    socket_one
+        .close(None)
+        .await
+        .expect("first socket close should succeed");
+    socket_two
+        .close(None)
+        .await
+        .expect("second socket close should succeed");
     server.abort();
 }
 

@@ -96,6 +96,11 @@ All events use the versioned envelope:
   - `message_id`
   - `emoji`
   - `count`
+  - `operation` (`add` | `remove`)
+  - `actor_user_id`
+- Compatibility:
+  - Legacy servers may emit count-only `message_reaction` payloads without `operation` and `actor_user_id`.
+  - Clients should fail closed for malformed mixed payloads (for example: operation without actor).
 
 #### `channel_create`
 - Scope: guild

@@ -85,6 +85,66 @@ describe("decodeMessageGatewayEvent", () => {
     expect(result).toBeNull();
   });
 
+  it("decodes backward-compatible count-only message_reaction payload", () => {
+    const result = decodeMessageGatewayEvent("message_reaction", {
+      guild_id: DEFAULT_GUILD_ID,
+      channel_id: DEFAULT_CHANNEL_ID,
+      message_id: DEFAULT_MESSAGE_ID,
+      emoji: "👍",
+      count: 2,
+    });
+
+    expect(result).toEqual({
+      type: "message_reaction",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        channelId: DEFAULT_CHANNEL_ID,
+        messageId: DEFAULT_MESSAGE_ID,
+        emoji: "👍",
+        count: 2,
+      },
+    });
+  });
+
+  it("decodes new message_reaction payload with operation and actor", () => {
+    const actorUserId = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
+    const result = decodeMessageGatewayEvent("message_reaction", {
+      guild_id: DEFAULT_GUILD_ID,
+      channel_id: DEFAULT_CHANNEL_ID,
+      message_id: DEFAULT_MESSAGE_ID,
+      emoji: "👍",
+      count: 3,
+      operation: "add",
+      actor_user_id: actorUserId,
+    });
+
+    expect(result).toEqual({
+      type: "message_reaction",
+      payload: {
+        guildId: DEFAULT_GUILD_ID,
+        channelId: DEFAULT_CHANNEL_ID,
+        messageId: DEFAULT_MESSAGE_ID,
+        emoji: "👍",
+        count: 3,
+        operation: "add",
+        actorUserId,
+      },
+    });
+  });
+
+  it("fails closed for malformed compatibility hybrid reaction payload", () => {
+    const result = decodeMessageGatewayEvent("message_reaction", {
+      guild_id: DEFAULT_GUILD_ID,
+      channel_id: DEFAULT_CHANNEL_ID,
+      message_id: DEFAULT_MESSAGE_ID,
+      emoji: "👍",
+      count: 1,
+      operation: "add",
+    });
+
+    expect(result).toBeNull();
+  });
+
   it("returns null for unknown event type", () => {
     const result = decodeMessageGatewayEvent("message_unknown", {
       guild_id: DEFAULT_GUILD_ID,

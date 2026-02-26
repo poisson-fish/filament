@@ -39,7 +39,12 @@ function buildMessage(input: {
   messageId: string;
   content: string;
   createdAtUnix: number;
-  reactions?: Array<{ emoji: string; count: number }>;
+  reactions?: Array<{
+    emoji: string;
+    count: number;
+    reacted_by_me?: boolean;
+    reactor_user_ids?: string[];
+  }>;
 }) {
   return messageFromResponse({
     message_id: input.messageId,
@@ -64,9 +69,21 @@ describe("app shell helpers", () => {
     const views = reactionViewsForMessage(
       messageId,
       {
-        [reactionKey(messageId, thumbsUp)]: { count: 1, reacted: true },
-        [reactionKey(messageId, fire)]: { count: 3, reacted: false },
-        [reactionKey(otherMessageId, fire)]: { count: 9, reacted: true },
+        [reactionKey(messageId, thumbsUp)]: {
+          count: 1,
+          reacted: true,
+          reactorUserIds: [],
+        },
+        [reactionKey(messageId, fire)]: {
+          count: 3,
+          reacted: false,
+          reactorUserIds: [],
+        },
+        [reactionKey(otherMessageId, fire)]: {
+          count: 9,
+          reacted: true,
+          reactorUserIds: [],
+        },
       },
       {
         [reactionKey(messageId, fire)]: true,
@@ -158,8 +175,16 @@ describe("app shell helpers", () => {
     const stale = reactionEmojiFromInput("✅");
 
     const existing = {
-      [reactionKey(messageId, thumbsUp)]: { count: 1, reacted: true },
-      [reactionKey(messageIdFromInput(MESSAGE_ID_2), stale)]: { count: 4, reacted: false },
+      [reactionKey(messageId, thumbsUp)]: {
+        count: 1,
+        reacted: true,
+        reactorUserIds: [],
+      },
+      [reactionKey(messageIdFromInput(MESSAGE_ID_2), stale)]: {
+        count: 4,
+        reacted: false,
+        reactorUserIds: [],
+      },
     };
     const messages = [
       buildMessage({
@@ -174,9 +199,79 @@ describe("app shell helpers", () => {
     ];
 
     expect(mergeReactionStateFromMessages(existing, messages)).toEqual({
-      [reactionKey(messageId, thumbsUp)]: { count: 3, reacted: true },
-      [reactionKey(messageId, fire)]: { count: 2, reacted: false },
-      [reactionKey(messageIdFromInput(MESSAGE_ID_2), stale)]: { count: 4, reacted: false },
+      [reactionKey(messageId, thumbsUp)]: {
+        count: 3,
+        reacted: true,
+        reactorUserIds: [],
+      },
+      [reactionKey(messageId, fire)]: {
+        count: 2,
+        reacted: false,
+        reactorUserIds: [],
+      },
+      [reactionKey(messageIdFromInput(MESSAGE_ID_2), stale)]: {
+        count: 4,
+        reacted: false,
+        reactorUserIds: [],
+      },
+    });
+  });
+
+  it("merges and replaces bounded reactor membership from snapshots", () => {
+    const messageId = messageIdFromInput(MESSAGE_ID_1);
+    const thumbsUp = reactionEmojiFromInput("👍");
+    const viewer = USER_ID;
+    const peer = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
+
+    const merged = mergeReactionStateFromMessages(
+      {
+        [reactionKey(messageId, thumbsUp)]: {
+          count: 1,
+          reacted: false,
+          reactorUserIds: [],
+        },
+      },
+      [
+        buildMessage({
+          messageId: MESSAGE_ID_1,
+          content: "membership",
+          createdAtUnix: 25,
+          reactions: [
+            {
+              emoji: thumbsUp,
+              count: 2,
+              reacted_by_me: true,
+              reactor_user_ids: [peer, viewer],
+            },
+          ],
+        }),
+      ],
+    );
+    expect(merged[reactionKey(messageId, thumbsUp)]).toEqual({
+      count: 2,
+      reacted: true,
+      reactorUserIds: [peer, viewer],
+    });
+
+    const replaced = replaceReactionStateFromMessages(merged, [
+      buildMessage({
+        messageId: MESSAGE_ID_1,
+        content: "replacement",
+        createdAtUnix: 30,
+        reactions: [
+          {
+            emoji: thumbsUp,
+            count: 1,
+            reacted_by_me: false,
+            reactor_user_ids: [peer],
+          },
+        ],
+      }),
+    ]);
+    expect(replaced[reactionKey(messageId, thumbsUp)]).toEqual({
+      count: 1,
+      reacted: false,
+      reactorUserIds: [peer],
     });
   });
 
@@ -186,8 +281,16 @@ describe("app shell helpers", () => {
     const stale = reactionEmojiFromInput("✅");
 
     const existing = {
-      [reactionKey(messageId, thumbsUp)]: { count: 1, reacted: true },
-      [reactionKey(messageIdFromInput(MESSAGE_ID_2), stale)]: { count: 4, reacted: false },
+      [reactionKey(messageId, thumbsUp)]: {
+        count: 1,
+        reacted: true,
+        reactorUserIds: [],
+      },
+      [reactionKey(messageIdFromInput(MESSAGE_ID_2), stale)]: {
+        count: 4,
+        reacted: false,
+        reactorUserIds: [],
+      },
     };
     const messages = [
       buildMessage({
@@ -199,7 +302,11 @@ describe("app shell helpers", () => {
     ];
 
     expect(replaceReactionStateFromMessages(existing, messages)).toEqual({
-      [reactionKey(messageId, thumbsUp)]: { count: 5, reacted: true },
+      [reactionKey(messageId, thumbsUp)]: {
+        count: 5,
+        reacted: true,
+        reactorUserIds: [],
+      },
     });
   });
 

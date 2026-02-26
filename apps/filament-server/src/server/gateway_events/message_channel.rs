@@ -9,6 +9,13 @@ pub(crate) const MESSAGE_DELETE_EVENT: &str = "message_delete";
 pub(crate) const MESSAGE_REACTION_EVENT: &str = "message_reaction";
 pub(crate) const CHANNEL_CREATE_EVENT: &str = "channel_create";
 
+#[derive(Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MessageReactionOperation {
+    Add,
+    Remove,
+}
+
 #[derive(Serialize)]
 struct MessageReactionPayload<'a> {
     guild_id: &'a str,
@@ -16,6 +23,8 @@ struct MessageReactionPayload<'a> {
     message_id: &'a str,
     emoji: &'a str,
     count: usize,
+    operation: MessageReactionOperation,
+    actor_user_id: String,
 }
 
 #[derive(Serialize)]
@@ -104,6 +113,8 @@ pub(crate) fn try_message_reaction(
     message_id: &str,
     emoji: &str,
     count: usize,
+    operation: MessageReactionOperation,
+    actor_user_id: filament_core::UserId,
 ) -> anyhow::Result<GatewayEvent> {
     try_build_message_reaction_event(
         MESSAGE_REACTION_EVENT,
@@ -113,6 +124,8 @@ pub(crate) fn try_message_reaction(
             message_id,
             emoji,
             count,
+            operation,
+            actor_user_id: actor_user_id.to_string(),
         },
     )
 }
@@ -124,8 +137,19 @@ pub(crate) fn message_reaction(
     message_id: &str,
     emoji: &str,
     count: usize,
+    operation: MessageReactionOperation,
+    actor_user_id: filament_core::UserId,
 ) -> GatewayEvent {
-    try_message_reaction(guild_id, channel_id, message_id, emoji, count).unwrap_or_else(|error| {
+    try_message_reaction(
+        guild_id,
+        channel_id,
+        message_id,
+        emoji,
+        count,
+        operation,
+        actor_user_id,
+    )
+    .unwrap_or_else(|error| {
         panic!("failed to build outbound gateway event {MESSAGE_REACTION_EVENT}: {error}")
     })
 }
@@ -237,14 +261,24 @@ mod tests {
     #[test]
     fn message_reaction_event_emits_reaction_fields() {
         let payload = parse_payload(
-            &try_message_reaction("guild-1", "channel-1", "msg-1", ":+1:", 4)
-                .expect("message_reaction should serialize"),
+            &try_message_reaction(
+                "guild-1",
+                "channel-1",
+                "msg-1",
+                ":+1:",
+                4,
+                MessageReactionOperation::Add,
+                UserId::new(),
+            )
+            .expect("message_reaction should serialize"),
         );
         assert_eq!(payload["guild_id"], Value::from("guild-1"));
         assert_eq!(payload["channel_id"], Value::from("channel-1"));
         assert_eq!(payload["message_id"], Value::from("msg-1"));
         assert_eq!(payload["emoji"], Value::from(":+1:"));
         assert_eq!(payload["count"], Value::from(4));
+        assert_eq!(payload["operation"], Value::from("add"));
+        assert!(payload["actor_user_id"].is_string());
     }
 
     #[test]
@@ -257,6 +291,8 @@ mod tests {
                 message_id: "msg-1",
                 emoji: ":+1:",
                 count: 1,
+                operation: MessageReactionOperation::Add,
+                actor_user_id: UserId::new().to_string(),
             },
         ) else {
             panic!("invalid event type should fail");

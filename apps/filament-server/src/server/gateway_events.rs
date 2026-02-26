@@ -63,8 +63,8 @@ pub(crate) use message_channel::channel_create;
 pub(crate) use message_channel::message_reaction;
 pub(crate) use message_channel::{
     try_channel_create, try_message_create, try_message_delete, try_message_reaction,
-    try_message_update, CHANNEL_CREATE_EVENT, MESSAGE_CREATE_EVENT, MESSAGE_DELETE_EVENT,
-    MESSAGE_REACTION_EVENT, MESSAGE_UPDATE_EVENT,
+    try_message_update, MessageReactionOperation, CHANNEL_CREATE_EVENT, MESSAGE_CREATE_EVENT,
+    MESSAGE_DELETE_EVENT, MESSAGE_REACTION_EVENT, MESSAGE_UPDATE_EVENT,
 };
 pub(crate) use presence_voice::{
     try_presence_sync, try_presence_update, try_voice_participant_join,
@@ -172,8 +172,21 @@ mod tests {
             Value::from(message.message_id)
         );
 
-        let message_reaction_payload = parse_event(&message_reaction("g", "c", "m", "👍", 2));
+        let message_reaction_payload = parse_event(&message_reaction(
+            "g",
+            "c",
+            "m",
+            "👍",
+            2,
+            MessageReactionOperation::Add,
+            user_id,
+        ));
         assert_eq!(message_reaction_payload["count"], Value::from(2));
+        assert_eq!(message_reaction_payload["operation"], Value::from("add"));
+        assert_eq!(
+            message_reaction_payload["actor_user_id"],
+            Value::from(user_id.to_string())
+        );
 
         let message_update_payload = parse_event(
             &try_message_update(

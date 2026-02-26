@@ -142,10 +142,14 @@ describe("api-messages", () => {
     await expect(api.addMessageReaction(session, guildId, channelId, messageId, emoji)).resolves.toEqual({
       emoji,
       count: 1,
+      reactedByMe: null,
+      reactorUserIds: null,
     });
     await expect(api.removeMessageReaction(session, guildId, channelId, messageId, emoji)).resolves.toEqual({
       emoji,
       count: 0,
+      reactedByMe: null,
+      reactorUserIds: null,
     });
 
     expect(requestJson).toHaveBeenNthCalledWith(1, {

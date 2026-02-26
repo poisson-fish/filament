@@ -426,9 +426,12 @@ async fn assert_reaction_persists_in_message_history(
             .as_array()
             .expect("message reactions should be an array");
         assert!(
-            reactions
-                .iter()
-                .any(|reaction| reaction["emoji"] == "🔥" && reaction["count"] == 1),
+            reactions.iter().any(|reaction| {
+                reaction["emoji"] == "🔥"
+                    && reaction["count"] == 1
+                    && reaction["reacted_by_me"] == true
+                    && reaction["reactor_user_ids"].is_array()
+            }),
             "expected fire reaction with count 1 on persisted message"
         );
     }

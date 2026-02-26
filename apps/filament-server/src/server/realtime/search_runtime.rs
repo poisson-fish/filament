@@ -503,7 +503,8 @@ pub(crate) async fn hydrate_messages_by_id(
             attachment_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered)
                 .await?;
         let reaction_map =
-            reaction_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered).await?;
+            reaction_map_for_messages_db(pool, guild_id, channel_id, &message_ids_ordered, None)
+                .await?;
         merge_hydration_maps(&mut by_id, &attachment_map, &reaction_map);
         return Ok(collect_hydrated_in_request_order(by_id, message_ids));
     }

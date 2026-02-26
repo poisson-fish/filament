@@ -131,10 +131,25 @@ describe("chat domain invariants", () => {
   });
 
   it("validates reactions", () => {
-    const reaction = reactionFromResponse({ emoji: "👍", count: 2 });
+    const reactorUserId = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
+    const reaction = reactionFromResponse({
+      emoji: "👍",
+      count: 2,
+      reacted_by_me: true,
+      reactor_user_ids: [reactorUserId],
+    });
     expect(reaction.count).toBe(2);
+    expect(reaction.reactedByMe).toBe(true);
+    expect(reaction.reactorUserIds).toEqual([reactorUserId]);
     expect(reactionEmojiFromInput("thumbs_up")).toBe("thumbs_up");
     expect(() => reactionEmojiFromInput("bad emoji")).toThrow();
+    expect(() =>
+      reactionFromResponse({
+        emoji: "👍",
+        count: 1,
+        reactor_user_ids: [reactorUserId, reactorUserId],
+      }),
+    ).toThrow();
   });
 
   it("validates attachment filenames and payloads", () => {

@@ -82,6 +82,8 @@ const ROLE_COLOR_HEX_PATTERN = /^#[0-9A-Fa-f]{6}$/;
 const MAX_WORKSPACE_ROLES_PER_GUILD = 64;
 const MAX_WORKSPACE_ROLE_PERMISSIONS = 64;
 const MAX_WORKSPACE_ROLE_ASSIGNMENTS_PER_USER = 64;
+const MAX_REACTIONS_PER_MESSAGE = 64;
+const MAX_REACTOR_USER_IDS_PER_REACTION = 32;
 const IPV6_MAX_VALUE = (1n << 128n) - 1n;
 
 function idFromInput<
@@ -1067,6 +1069,9 @@ export function messageFromResponse(dto: unknown): MessageRecord {
         : (() => {
           throw new DomainValidationError("reactions must be an array.");
         })();
+  if (reactions.length > MAX_REACTIONS_PER_MESSAGE) {
+    throw new DomainValidationError("reactions exceeds per-message cap.");
+  }
   return {
     messageId: messageIdFromInput(requireString(data.message_id, "message_id")),
     guildId: guildIdFromInput(requireString(data.guild_id, "guild_id")),
@@ -1119,13 +1124,48 @@ export function searchResultsFromResponse(dto: unknown): SearchResults {
 export interface ReactionRecord {
   emoji: ReactionEmoji;
   count: number;
+  reactedByMe: boolean | null;
+  reactorUserIds: UserId[] | null;
 }
 
 export function reactionFromResponse(dto: unknown): ReactionRecord {
   const data = requireObject(dto, "reaction");
+  const count = requireNonNegativeInteger(data.count, "count");
+  const reactedByMeRaw = data.reacted_by_me;
+  const reactedByMe =
+    typeof reactedByMeRaw === "undefined"
+      ? null
+      : requireBoolean(reactedByMeRaw, "reacted_by_me");
+  const reactorUserIdsRaw = data.reactor_user_ids;
+  const reactorUserIds =
+    typeof reactorUserIdsRaw === "undefined"
+      ? null
+      : (() => {
+        if (!Array.isArray(reactorUserIdsRaw)) {
+          throw new DomainValidationError("reactor_user_ids must be an array.");
+        }
+        if (reactorUserIdsRaw.length > MAX_REACTOR_USER_IDS_PER_REACTION) {
+          throw new DomainValidationError("reactor_user_ids exceeds per-reaction cap.");
+        }
+        const parsed = reactorUserIdsRaw.map((entry, index) =>
+          userIdFromInput(requireString(entry, `reactor_user_ids[${index}]`, 64)),
+        );
+        if (new Set(parsed).size !== parsed.length) {
+          throw new DomainValidationError("reactor_user_ids contains duplicate entries.");
+        }
+        if (parsed.length > count) {
+          throw new DomainValidationError("reactor_user_ids cannot exceed count.");
+        }
+        return parsed;
+      })();
+  if (reactedByMe === true && count === 0) {
+    throw new DomainValidationError("reacted_by_me cannot be true when count is zero.");
+  }
   return {
     emoji: reactionEmojiFromInput(requireString(data.emoji, "emoji")),
-    count: requireNonNegativeInteger(data.count, "count"),
+    count,
+    reactedByMe,
+    reactorUserIds,
   };
 }
 

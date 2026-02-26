@@ -342,12 +342,18 @@ This section locks response semantics and limits for upcoming directory-join/aud
 - Language labels are allowlisted and bounded; unknown/invalid labels degrade to plain-text fenced code rendering.
 
 `attachments` contains zero or more attachment records linked to this message.
+`reactions` contains bounded reaction snapshots:
+- `emoji`: reaction identifier
+- `count`: non-negative aggregate count
+- `reacted_by_me`: whether the authenticated caller has reacted with this emoji
+- `reactor_user_ids`: bounded user-id sample for future reaction-member UI (max `32` ids per emoji)
+- per-message reaction snapshot entries are capped at `64`
 
 ### Reactions
 - `POST /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}`
 - `DELETE /guilds/{guild_id}/channels/{channel_id}/messages/{message_id}/reactions/{emoji}`
   - Auth required, channel write permission
-  - Response `200`: `{ "emoji": "...", "count": <number> }`
+  - Response `200`: `{ "emoji": "...", "count": <number>, "reacted_by_me": <boolean>, "reactor_user_ids": [<user_id>...] }`
 
 ### Attachments
 - `POST /guilds/{guild_id}/channels/{channel_id}/attachments?filename=<name>`

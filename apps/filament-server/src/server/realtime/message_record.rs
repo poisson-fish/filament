@@ -174,6 +174,8 @@ mod tests {
         let reactions = vec![ReactionResponse {
             emoji: String::from("🔥"),
             count: 2,
+            reacted_by_me: false,
+            reactor_user_ids: Vec::new(),
         }];
 
         let response = build_message_response_from_record(

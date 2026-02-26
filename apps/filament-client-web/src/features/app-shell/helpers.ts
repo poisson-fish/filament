@@ -21,6 +21,7 @@ import { RtcClientError, type RtcSnapshot } from "../../lib/rtc";
 export interface ReactionView {
   count: number;
   reacted: boolean;
+  reactorUserIds: UserId[];
 }
 
 export interface MessageReactionView extends ReactionView {
@@ -70,7 +71,7 @@ export function upsertReactionEntry(
   nextReaction: ReactionView,
 ): Record<string, ReactionView> {
   const next = { ...existing };
-  if (nextReaction.count <= 0 && !nextReaction.reacted) {
+  if (nextReaction.count <= 0) {
     delete next[key];
   } else {
     next[key] = nextReaction;
@@ -105,7 +106,8 @@ export function applyMessageReactionSnapshot(
     const key = reactionKey(messageId, reaction.emoji);
     next = upsertReactionEntry(next, key, {
       count: reaction.count,
-      reacted: prior[key]?.reacted ?? false,
+      reacted: reaction.reactedByMe ?? prior[key]?.reacted ?? false,
+      reactorUserIds: reaction.reactorUserIds ?? prior[key]?.reactorUserIds ?? [],
     });
   }
   return next;
@@ -135,7 +137,9 @@ export function replaceReactionStateFromMessages(
       const key = reactionKey(message.messageId, reaction.emoji);
       next = upsertReactionEntry(next, key, {
         count: reaction.count,
-        reacted: existing[key]?.reacted ?? false,
+        reacted: reaction.reactedByMe ?? existing[key]?.reacted ?? false,
+        reactorUserIds:
+          reaction.reactorUserIds ?? existing[key]?.reactorUserIds ?? [],
       });
     }
   }
@@ -161,6 +165,7 @@ export function reactionViewsForMessage(
       emoji: key.slice(prefix.length) as ReactionEmoji,
       count: state.count,
       reacted: state.reacted,
+      reactorUserIds: state.reactorUserIds,
       pending: Boolean(pendingByKey[key]),
     });
   }

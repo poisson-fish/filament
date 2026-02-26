@@ -903,6 +903,8 @@ describe("gateway payload parsing", () => {
           message_id: messageId,
           emoji: "👍",
           count: 2,
+          operation: "add",
+          actor_user_id: authorId,
         },
       }),
     );
@@ -1137,6 +1139,8 @@ describe("gateway payload parsing", () => {
       messageId,
       emoji: "👍",
       count: 2,
+      operation: "add",
+      actorUserId: authorId,
     });
     expect(onMessageUpdate).toHaveBeenCalledWith({
       guildId: DEFAULT_GUILD_ID,

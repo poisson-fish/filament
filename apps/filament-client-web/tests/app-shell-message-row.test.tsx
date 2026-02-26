@@ -57,7 +57,11 @@ function rowPropsFixture(overrides: Partial<MessageRowProps> = {}): MessageRowPr
     deletingMessageId: null,
     openReactionPickerMessageId: null,
     reactionState: {
-      [`${message.messageId}|${REACTION}`]: { count: 2, reacted: false },
+      [`${message.messageId}|${REACTION}`]: {
+        count: 2,
+        reacted: false,
+        reactorUserIds: [],
+      },
     },
     pendingReactionByKey: {},
     messageMediaByAttachmentId: {},
@@ -151,7 +155,11 @@ describe("app shell message row", () => {
         {...rowPropsFixture({
           message,
           reactionState: {
-            [`${message.messageId}|${REACTION}`]: { count: 3, reacted: true },
+            [`${message.messageId}|${REACTION}`]: {
+              count: 3,
+              reacted: true,
+              reactorUserIds: [],
+            },
           },
           deletingMessageId: message.messageId,
           onOpenAuthorProfile,

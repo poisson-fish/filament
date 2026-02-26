@@ -11,6 +11,7 @@ import {
   type ReactionEmoji,
   type RoleColorHex,
   type RoleName,
+  type UserId,
   type WorkspaceRoleId,
 } from "../domain/chat";
 import {
@@ -275,6 +276,8 @@ export interface MessageReactionPayload {
   messageId: MessageId;
   emoji: ReactionEmoji;
   count: number;
+  operation?: "add" | "remove";
+  actorUserId?: UserId;
 }
 
 export interface MessageUpdatePayload {
