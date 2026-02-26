@@ -60,7 +60,6 @@ mod fanout_guild;
 mod fanout_user;
 mod hydration_order;
 mod ingress_command;
-mod ingress_message;
 mod ingress_rate_limit;
 mod message_attachment_bind;
 mod message_prepare;
@@ -91,10 +90,10 @@ use hydration_in_memory_attachments::apply_hydration_attachments;
 use hydration_merge::merge_hydration_maps;
 pub(crate) use hydration_order::collect_hydrated_in_request_order;
 use ingress_command::{
-    classify_ingress_command_parse_error, parse_gateway_ingress_command, GatewayAttachmentIds,
-    GatewayIngressCommand, GatewayMessageContent, IngressCommandParseClassification,
+    classify_ingress_command_parse_error, decode_gateway_ingress_message,
+    parse_gateway_ingress_command, GatewayAttachmentIds, GatewayIngressCommand,
+    GatewayIngressMessageDecode, GatewayMessageContent, IngressCommandParseClassification,
 };
-use ingress_message::{decode_gateway_ingress_message, GatewayIngressMessageDecode};
 use ingress_message_create::execute_message_create_command;
 use ingress_rate_limit::allow_gateway_ingress;
 use ingress_subscribe::execute_subscribe_command;
