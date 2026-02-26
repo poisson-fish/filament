@@ -12,7 +12,6 @@ mod message_create_response;
 mod message_emit;
 mod message_record;
 mod message_store_in_memory;
-mod ready_enqueue;
 mod search_apply_batch;
 mod search_batch_drain;
 mod search_collect_db;
@@ -91,7 +90,6 @@ use message_emit::emit_message_create_and_index;
 use message_prepare::{prepare_message_body, prepare_prevalidated_message_body};
 use message_record::{build_in_memory_message_record, build_message_response_from_record};
 use message_store_in_memory::append_message_record;
-use ready_enqueue::{ready_drop_metric_reason, ready_error_reason, try_enqueue_ready_event};
 use search_blocking::run_search_blocking_with_timeout;
 use search_collect_index_ids::collect_index_message_ids_for_guild as collect_index_message_ids_for_guild_from_index;
 pub(crate) use search_index_lookup::collect_index_message_ids_for_guild;
@@ -127,6 +125,47 @@ use super::{
     },
     types::{GatewayAuthQuery, MessageResponse},
 };
+
+enum ReadyEnqueueResult {
+    Enqueued,
+    Closed,
+    Full,
+    Oversized,
+}
+
+fn try_enqueue_ready_event(
+    outbound_tx: &mpsc::Sender<String>,
+    payload: String,
+    max_gateway_event_bytes: usize,
+) -> ReadyEnqueueResult {
+    if payload.len() > max_gateway_event_bytes {
+        return ReadyEnqueueResult::Oversized;
+    }
+
+    match outbound_tx.try_send(payload) {
+        Ok(()) => ReadyEnqueueResult::Enqueued,
+        Err(mpsc::error::TrySendError::Closed(_)) => ReadyEnqueueResult::Closed,
+        Err(mpsc::error::TrySendError::Full(_)) => ReadyEnqueueResult::Full,
+    }
+}
+
+fn ready_error_reason(result: &ReadyEnqueueResult) -> Option<&'static str> {
+    match result {
+        ReadyEnqueueResult::Enqueued => None,
+        ReadyEnqueueResult::Full => Some("outbound_queue_full"),
+        ReadyEnqueueResult::Closed => Some("outbound_queue_closed"),
+        ReadyEnqueueResult::Oversized => Some("outbound_payload_too_large"),
+    }
+}
+
+fn ready_drop_metric_reason(result: &ReadyEnqueueResult) -> Option<&'static str> {
+    match result {
+        ReadyEnqueueResult::Enqueued => None,
+        ReadyEnqueueResult::Full => Some("full_queue"),
+        ReadyEnqueueResult::Closed => Some("closed"),
+        ReadyEnqueueResult::Oversized => Some("oversized_outbound"),
+    }
+}
 
 pub(crate) async fn gateway_ws(
     State(state): State<AppState>,
@@ -506,4 +545,89 @@ async fn create_message_internal_prepared(
     emit_message_create_and_index(state, guild_id, channel_id, &response).await?;
 
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+
+    use super::{
+        ready_drop_metric_reason, ready_error_reason, try_enqueue_ready_event, ReadyEnqueueResult,
+    };
+
+    #[test]
+    fn ready_enqueue_returns_enqueued_when_sender_has_capacity() {
+        let (tx, _rx) = mpsc::channel::<String>(1);
+
+        let result = try_enqueue_ready_event(&tx, String::from("payload"), 1024);
+
+        assert!(matches!(result, ReadyEnqueueResult::Enqueued));
+    }
+
+    #[test]
+    fn ready_enqueue_returns_full_when_sender_is_full() {
+        let (tx, _rx) = mpsc::channel::<String>(1);
+        tx.try_send(String::from("first"))
+            .expect("first send should fill queue");
+
+        let result = try_enqueue_ready_event(&tx, String::from("second"), 1024);
+
+        assert!(matches!(result, ReadyEnqueueResult::Full));
+    }
+
+    #[test]
+    fn ready_enqueue_returns_closed_when_sender_is_closed() {
+        let (tx, rx) = mpsc::channel::<String>(1);
+        drop(rx);
+
+        let result = try_enqueue_ready_event(&tx, String::from("payload"), 1024);
+
+        assert!(matches!(result, ReadyEnqueueResult::Closed));
+    }
+
+    #[test]
+    fn ready_enqueue_returns_oversized_when_payload_exceeds_limit() {
+        let (tx, _rx) = mpsc::channel::<String>(1);
+
+        let result = try_enqueue_ready_event(&tx, String::from("payload"), 3);
+
+        assert!(matches!(result, ReadyEnqueueResult::Oversized));
+    }
+
+    #[test]
+    fn ready_error_reason_maps_all_rejections() {
+        assert_eq!(ready_error_reason(&ReadyEnqueueResult::Enqueued), None);
+        assert_eq!(
+            ready_error_reason(&ReadyEnqueueResult::Full),
+            Some("outbound_queue_full")
+        );
+        assert_eq!(
+            ready_error_reason(&ReadyEnqueueResult::Closed),
+            Some("outbound_queue_closed")
+        );
+        assert_eq!(
+            ready_error_reason(&ReadyEnqueueResult::Oversized),
+            Some("outbound_payload_too_large")
+        );
+    }
+
+    #[test]
+    fn ready_drop_metric_reason_maps_all_rejections() {
+        assert_eq!(
+            ready_drop_metric_reason(&ReadyEnqueueResult::Enqueued),
+            None
+        );
+        assert_eq!(
+            ready_drop_metric_reason(&ReadyEnqueueResult::Full),
+            Some("full_queue")
+        );
+        assert_eq!(
+            ready_drop_metric_reason(&ReadyEnqueueResult::Closed),
+            Some("closed")
+        );
+        assert_eq!(
+            ready_drop_metric_reason(&ReadyEnqueueResult::Oversized),
+            Some("oversized_outbound")
+        );
+    }
 }
