@@ -274,7 +274,7 @@ pub(crate) async fn upload_my_avatar(
         return Err(AuthFailure::InvalidRequest);
     };
     let sniffed_mime = sniffed.mime_type();
-    if !is_allowed_avatar_mime(sniffed_mime) {
+    if !is_allowed_profile_media_mime(sniffed_mime) {
         let _ = upload.abort().await;
         return Err(AuthFailure::InvalidRequest);
     }
@@ -481,7 +481,7 @@ fn is_unique_violation(error: &sqlx::Error) -> bool {
     }
 }
 
-fn is_allowed_avatar_mime(mime_type: &str) -> bool {
+fn is_allowed_profile_media_mime(mime_type: &str) -> bool {
     matches!(
         mime_type,
         "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "image/avif"
@@ -512,7 +512,7 @@ fn avatar_from_row(row: &sqlx::postgres::PgRow) -> Result<ProfileAvatarRecord, A
     if mime_type.is_empty() || mime_type.len() > MAX_PROFILE_AVATAR_MIME_CHARS {
         return Err(AuthFailure::Internal);
     }
-    if !is_allowed_avatar_mime(&mime_type) {
+    if !is_allowed_profile_media_mime(&mime_type) {
         return Err(AuthFailure::Internal);
     }
     if sha256_hex.len() != 64 || !sha256_hex.chars().all(|value| value.is_ascii_hexdigit()) {
@@ -694,11 +694,32 @@ async fn profile_observer_user_ids(
 
 #[cfg(test)]
 mod tests {
-    use super::record_profile_emit_serialize_drop;
+    use super::{is_allowed_profile_media_mime, record_profile_emit_serialize_drop};
     use crate::server::{
         gateway_events,
         metrics::{metrics_state, GATEWAY_DROP_REASON_SERIALIZE_ERROR},
     };
+
+    #[test]
+    fn profile_media_mime_allowlist_is_strict() {
+        for allowed in [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/avif",
+        ] {
+            assert!(is_allowed_profile_media_mime(allowed));
+        }
+        for blocked in [
+            "image/svg+xml",
+            "text/html",
+            "application/octet-stream",
+            "image/jpg",
+        ] {
+            assert!(!is_allowed_profile_media_mime(blocked));
+        }
+    }
 
     #[test]
     fn profile_emit_serialize_drop_records_canonical_drop_reason() {

@@ -33,7 +33,7 @@ All events use the versioned envelope:
 - Include `actor_user_id` only for mutation/audit-useful events where the actor identity is already
   visible to recipients under existing permissions.
 - Never include hidden moderator/admin identifiers in broadly fanned-out payloads.
-- User-scoped self events (`profile_update`, `profile_avatar_update`) do not require
+- User-scoped self events (`profile_update`, `profile_avatar_update`, `profile_banner_update`) do not require
   `actor_user_id` because `user_id` is the target identity.
 
 ## Event Catalog
@@ -393,6 +393,16 @@ All events use the versioned envelope:
 - Minimum payload:
   - `user_id`
   - `avatar_version`
+  - `updated_at_unix`
+
+#### `profile_banner_update` (planned)
+- Scope: user (plus permitted observers)
+- Visibility:
+  - user-scoped payload to acting user
+  - observer payload to friendship participants connected on gateway
+- Minimum payload:
+  - `user_id`
+  - `banner_version`
   - `updated_at_unix`
 
 #### `friend_request_create`

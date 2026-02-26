@@ -291,3 +291,53 @@ fn emitted_domain_event_manifest_is_aligned_across_server_docs_and_client() {
         undecodable_by_client.join(", ")
     );
 }
+
+#[test]
+fn markdown_plan_lock_docs_capture_banner_profile_contract() {
+    let api_doc = read_doc("docs/API.md");
+    for expected in [
+        "#### Planned Profile Banner Contract (Locked Pre-Deploy)",
+        "`POST /users/me/profile/banner`",
+        "`GET /users/{user_id}/banner`",
+        "Size cap: `6 MiB` hard limit",
+        "`image/jpeg`",
+        "`image/png`",
+        "`image/webp`",
+        "`image/avif`",
+        "`image/gif`",
+        "`banner_version` will be added to profile responses",
+    ] {
+        assert!(
+            api_doc.contains(expected),
+            "docs/API.md missing markdown/profile banner lock marker: {expected}"
+        );
+    }
+}
+
+#[test]
+fn markdown_plan_lock_docs_capture_highlight_and_banner_event_strategy() {
+    let api_doc = read_doc("docs/API.md");
+    for expected in [
+        "#### Fenced Code Highlighting Contract (Locked Pre-Deploy)",
+        "lowlight",
+        "No highlighter HTML string output may be injected into the DOM.",
+        "unknown/invalid labels degrade to plain-text fenced code rendering.",
+    ] {
+        assert!(
+            api_doc.contains(expected),
+            "docs/API.md missing fenced-code highlight lock marker: {expected}"
+        );
+    }
+
+    let gateway_doc = read_doc("docs/GATEWAY_EVENTS.md");
+    for expected in [
+        "#### `profile_banner_update` (planned)",
+        "`banner_version`",
+        "User-scoped self events (`profile_update`, `profile_avatar_update`, `profile_banner_update`)",
+    ] {
+        assert!(
+            gateway_doc.contains(expected),
+            "docs/GATEWAY_EVENTS.md missing banner gateway lock marker: {expected}"
+        );
+    }
+}

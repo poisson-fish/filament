@@ -80,7 +80,7 @@ Ship secure markdown rendering in chat message text and user profile surfaces, w
 Lock markdown/profile-banner behavior before implementation.
 
 ### Completion Status
-`IN PROGRESS`
+`DONE`
 
 ### Tasks
 - [x] Finalize markdown token contract expansion for fenced code blocks:
@@ -88,15 +88,15 @@ Lock markdown/profile-banner behavior before implementation.
   - cap language label length and character set
   - cap code-block token payload size/count to prevent abuse
 - [x] Lock profile about cap at `2048` chars across server/client validation + UX counter.
-- [ ] Lock banner media policy:
+- [x] Lock banner media policy:
   - cap: `6 MiB`
   - MIME allowlist: `image/jpeg`, `image/png`, `image/webp`, `image/avif`, `image/gif`
-- [ ] Lock profile API/gateway additions:
+- [x] Lock profile API/gateway additions:
   - `banner_version` on profile responses
   - `POST /users/me/profile/banner`
   - `GET /users/{user_id}/banner`
   - new gateway event `profile_banner_update` (or equivalent additive field update contract)
-- [ ] Choose secure code highlight strategy for fenced blocks:
+- [x] Choose secure code highlight strategy for fenced blocks:
   - vetted dependency with permissive license
   - no HTML string rendering
   - bounded language allowlist (unknown languages degrade to plain text)
@@ -124,7 +124,15 @@ Lock markdown/profile-banner behavior before implementation.
 - 2026-02-26: Locked profile about cap at `2048` across web domain parsing + save-path validation + settings UX counter.
 - 2026-02-26: Added web tests for profile about cap enforcement, zero-remaining counter behavior, and local rejection before API call.
 - 2026-02-26: Locked markdown subset for messages/profiles to exclude image/media embedding until the dedicated embeds system lands.
-- 2026-02-26: Remaining Phase 0 items still open: banner media/API contract lock, and highlight dependency decision.
+- 2026-02-26: Locked profile banner media policy at `6 MiB` with strict MIME allowlist (`image/jpeg`, `image/png`, `image/webp`, `image/avif`, `image/gif`) and added focused policy tests.
+- 2026-02-26: Locked planned profile banner API/gateway contract in docs:
+  - planned REST routes `POST /users/me/profile/banner` and `GET /users/{user_id}/banner`
+  - planned profile field `banner_version`
+  - planned gateway event `profile_banner_update`
+- 2026-02-26: Locked fenced-code highlight strategy:
+  - dependency decision: `lowlight` + explicit `highlight.js` language modules
+  - allowlisted language registration and alias normalization
+  - no raw HTML output path (AST/token rendering only), with focused web tests
 
 ### Exit Criteria
 - Endpoint/payload/limit decisions are documented and accepted before coding.

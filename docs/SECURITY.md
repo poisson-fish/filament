@@ -46,6 +46,9 @@
 - Attachment storage root path is configured by environment (`FILAMENT_ATTACHMENT_ROOT`) and must point to a non-user-controlled server path.
 - Attachment delete operations must reclaim quota deterministically.
 - Markdown is transformed into safe UI tokens; no raw HTML rendering.
+- Profile banner upload policy (locked for implementation): `6 MiB` cap and MIME allowlist
+  `image/jpeg`, `image/png`, `image/webp`, `image/avif`, `image/gif`.
+- Fenced-code highlighting must stay token/AST based (no `innerHTML` or highlighter HTML output path).
 
 ## LiveKit Voice Token Issuance
 - `filament-server` is the policy engine for media room join/publish privileges.

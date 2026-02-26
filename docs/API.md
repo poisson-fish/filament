@@ -173,6 +173,23 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - MIME is sniffed from bytes; unsupported or mismatched image type is rejected
   - Response `200`: `{ "avatar_version": <number> }`
 
+#### Planned Profile Banner Contract (Locked Pre-Deploy)
+- `banner_version` will be added to profile responses (`/auth/me`, `/users/me/profile`, `/users/{user_id}/profile`) and increment on successful banner mutation.
+- `POST /users/me/profile/banner`
+  - Auth required
+  - Raw binary body upload (not multipart)
+  - Size cap: `6 MiB` hard limit
+  - MIME allowlist (sniffed via `infer`; declared type must match when present):
+    - `image/jpeg`
+    - `image/png`
+    - `image/webp`
+    - `image/avif`
+    - `image/gif`
+  - Response `200`: profile shape including `banner_version`
+- `GET /users/{user_id}/banner`
+  - Auth required
+  - Response `200`: raw banner bytes with image content type, `nosniff`, and cache headers
+
 ### Friendships
 - `GET /friends`
   - Auth required
@@ -315,6 +332,11 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - max `64` fenced code tokens per markdown payload
   - max `16384` chars per fenced code `code` field
 - `soft_break`, `hard_break`
+
+#### Fenced Code Highlighting Contract (Locked Pre-Deploy)
+- Rendering uses an AST/token highlighter pipeline only (`lowlight` + explicitly registered `highlight.js` grammars).
+- No highlighter HTML string output may be injected into the DOM.
+- Language labels are allowlisted and bounded; unknown/invalid labels degrade to plain-text fenced code rendering.
 
 `attachments` contains zero or more attachment records linked to this message.
 
