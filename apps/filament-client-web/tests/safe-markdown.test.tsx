@@ -53,6 +53,13 @@ describe("safe markdown", () => {
     expect(document.querySelector("script")).toBeNull();
   });
 
+  it("renders emoji content as twemoji sprite spans", () => {
+    renderMarkdown([{ type: "text", text: "hello 😂" }]);
+    const emojiSprite = screen.getByRole("img", { name: "😂" });
+    const style = emojiSprite.getAttribute("style") ?? "";
+    expect(style).toContain("twitter-sheets-256-64.png");
+  });
+
   it("renders fenced code labels and downgrades invalid labels to plain text", () => {
     renderMarkdown([
       { type: "fenced_code", language: "rust", code: "fn main() {}\n" },

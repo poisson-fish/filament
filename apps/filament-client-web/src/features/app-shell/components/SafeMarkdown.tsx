@@ -4,6 +4,7 @@ import {
   createFilamentMarkdownHighlighter,
   resolveHighlightLanguage,
 } from "./markdown-highlight";
+import { renderEmojiMixedText } from "./messages/emoji-utils";
 
 type ContainerKind = "root" | "p" | "em" | "strong" | "a" | "li" | "ul" | "ol";
 
@@ -34,6 +35,11 @@ function renderTokens(tokens: MarkdownToken[]): Array<JSX.Element | string> {
       return;
     }
     target.children.push(value);
+  };
+  const appendText = (text: string) => {
+    for (const chunk of renderEmojiMixedText(text)) {
+      append(chunk);
+    }
   };
 
   const push = (kind: ContainerKind, href?: string) => {
@@ -110,11 +116,11 @@ function renderTokens(tokens: MarkdownToken[]): Array<JSX.Element | string> {
       continue;
     }
     if (token.type === "text") {
-      append(token.text);
+      appendText(token.text);
       continue;
     }
     if (token.type === "code") {
-      append(<code>{token.code}</code>);
+      append(<code>{renderEmojiMixedText(token.code)}</code>);
       continue;
     }
     if (token.type === "fenced_code") {
@@ -169,7 +175,7 @@ function renderHighlightNode(
   }
   const textNode = node as { type?: unknown; value?: unknown };
   if (textNode.type === "text" && typeof textNode.value === "string") {
-    return [textNode.value];
+    return renderEmojiMixedText(textNode.value);
   }
 
   const elementNode = node as {
