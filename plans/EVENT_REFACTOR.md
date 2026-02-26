@@ -393,7 +393,7 @@ Keep fail-closed parsing while reducing repetitive dispatch boilerplate.
 Prevent future drift between server emitters, docs, and web decoders.
 
 ### Completion Status
-`IN PROGRESS`
+`DONE`
 
 ### Tasks
 - [x] Introduce machine-readable event manifest (event type + schema version + scope).
@@ -412,12 +412,13 @@ Prevent future drift between server emitters, docs, and web decoders.
 
 ### Tests
 - [x] Contract parity tests fail if any event appears in only one surface.
-- [ ] Backward-compat tests for additive field changes.
+- [x] Backward-compat tests for additive field changes.
 
 ### Progress Notes
 - 2026-02-26 (Slice 1): Added protocol-owned machine-readable gateway event manifest at `crates/filament-protocol/src/events/gateway_events_manifest.json` and exposed typed manifest APIs in `filament-protocol` (`GatewayEventManifestEntry` with `event_type`, `schema_version`, `scope`, and lifecycle metadata). Manifest validation now fail-closes invalid event identifiers, duplicate event names, schema version `0`, and deprecated entries without explicit `migration` notes.
 - 2026-02-26 (Slice 2): Wired server/docs parity to the protocol manifest by adding `gateway_event_manifest_is_aligned_across_server_and_docs` and aligning existing emitted/docs/client parity checks to manifest-backed event sets. Updated `docs/GATEWAY_EVENTS.md` to identify the manifest as canonical machine-readable source and corrected emitted workspace role/assignment event docs (no longer marked planned) so docs parity is strict for emitted events.
 - 2026-02-26 (Slice 3): Added client parity surface via `apps/filament-client-web/src/lib/gateway-event-manifest.ts` (`CLIENT_SUPPORTED_GATEWAY_EVENT_TYPES`) and `apps/filament-client-web/tests/gateway-contract-manifest.test.ts` to assert exact protocol-manifest parity plus deprecated migration metadata requirements. CI now runs explicit gateway contract parity checks in both Rust (`filament-server` contract test) and web (`gateway-contract-manifest.test.ts`) jobs.
+- 2026-02-26 (Slice 4): Added focused backward-compat coverage for additive payload fields without relaxing fail-closed validation. Protocol tests now assert envelope parsing accepts additive fields inside `d` (`parse_accepts_additive_payload_fields_in_data_object`), and web gateway tests now assert ready/subscribed plus message/workspace decoders continue to accept payloads with extra additive fields while still enforcing required typed fields.
 
 ### Exit Criteria
 - Contract drift becomes CI-blocked by default.

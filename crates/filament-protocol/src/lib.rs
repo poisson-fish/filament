@@ -154,4 +154,15 @@ mod tests {
         assert_eq!(envelope.t.as_str(), "ready");
         assert_eq!(envelope.d["session"], "abc");
     }
+
+    #[test]
+    fn parse_accepts_additive_payload_fields_in_data_object() {
+        let payload = br#"{"v":1,"t":"message_create","d":{"message_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","content":"hello","new_optional_field":{"trace_id":"abc"}}}"#;
+        let envelope = parse_envelope(payload).unwrap();
+
+        assert_eq!(envelope.v, 1);
+        assert_eq!(envelope.t.as_str(), "message_create");
+        assert_eq!(envelope.d["content"], "hello");
+        assert_eq!(envelope.d["new_optional_field"]["trace_id"], "abc");
+    }
 }
