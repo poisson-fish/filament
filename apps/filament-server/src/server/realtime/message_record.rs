@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use filament_core::{MarkdownToken, UserId};
 
 use crate::server::{
-    core::MessageRecord,
+    core::{AttachmentRecord, GuildRecord, MessageRecord},
+    errors::AuthFailure,
     types::{AttachmentResponse, MessageResponse, ReactionResponse},
 };
 
@@ -70,15 +71,63 @@ pub(crate) fn build_message_response_from_record(
     }
 }
 
+pub(crate) fn bind_message_attachments_in_memory(
+    attachments: &mut HashMap<String, AttachmentRecord>,
+    attachment_ids: &[String],
+    message_id: &str,
+    guild_id: &str,
+    channel_id: &str,
+    owner_id: UserId,
+) -> Result<(), AuthFailure> {
+    for attachment_id in attachment_ids {
+        let Some(attachment) = attachments.get_mut(attachment_id) else {
+            return Err(AuthFailure::InvalidRequest);
+        };
+        if attachment.guild_id != guild_id
+            || attachment.channel_id != channel_id
+            || attachment.owner_id != owner_id
+            || attachment.message_id.is_some()
+        {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        attachment.message_id = Some(message_id.to_owned());
+    }
+    Ok(())
+}
+
+pub(crate) fn append_message_record(
+    guilds: &mut HashMap<String, GuildRecord>,
+    guild_id: &str,
+    channel_id: &str,
+    record: MessageRecord,
+) -> Result<(), AuthFailure> {
+    let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
+    let channel = guild
+        .channels
+        .get_mut(channel_id)
+        .ok_or(AuthFailure::NotFound)?;
+    channel.messages.push(record);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use filament_core::{MarkdownToken, UserId};
 
     use super::{
+        append_message_record, bind_message_attachments_in_memory,
         build_db_created_message_response, build_in_memory_message_record,
         build_message_response_from_record,
     };
-    use crate::server::types::{AttachmentResponse, ReactionResponse};
+    use crate::server::{
+        core::{
+            AttachmentRecord, ChannelRecord, GuildRecord, GuildVisibility, MessageRecord,
+        },
+        errors::AuthFailure,
+        types::{AttachmentResponse, ReactionResponse},
+    };
 
     #[test]
     fn builds_message_record_with_empty_reactions() {
@@ -172,5 +221,177 @@ mod tests {
         assert!(response.attachments.is_empty());
         assert!(response.reactions.is_empty());
         assert_eq!(response.created_at_unix, 99);
+    }
+
+    fn attachment(
+        attachment_id: &str,
+        guild_id: &str,
+        channel_id: &str,
+        owner_id: UserId,
+        message_id: Option<&str>,
+    ) -> AttachmentRecord {
+        AttachmentRecord {
+            attachment_id: String::from(attachment_id),
+            guild_id: String::from(guild_id),
+            channel_id: String::from(channel_id),
+            owner_id,
+            filename: String::from("file.png"),
+            mime_type: String::from("image/png"),
+            size_bytes: 12,
+            sha256_hex: String::from("abc"),
+            object_key: String::from("obj-1"),
+            message_id: message_id.map(String::from),
+        }
+    }
+
+    #[test]
+    fn bind_message_attachments_in_memory_binds_when_constraints_match() {
+        let owner_id = UserId::new();
+        let mut attachments = HashMap::from([
+            (
+                String::from("a1"),
+                attachment("a1", "g1", "c1", owner_id, None),
+            ),
+            (
+                String::from("a2"),
+                attachment("a2", "g1", "c1", owner_id, None),
+            ),
+        ]);
+
+        bind_message_attachments_in_memory(
+            &mut attachments,
+            &[String::from("a1"), String::from("a2")],
+            "m1",
+            "g1",
+            "c1",
+            owner_id,
+        )
+        .expect("attachments should bind");
+
+        assert_eq!(attachments["a1"].message_id.as_deref(), Some("m1"));
+        assert_eq!(attachments["a2"].message_id.as_deref(), Some("m1"));
+    }
+
+    #[test]
+    fn bind_message_attachments_in_memory_rejects_invalid_or_missing_attachment() {
+        let owner_id = UserId::new();
+        let mut attachments = HashMap::new();
+
+        let result = bind_message_attachments_in_memory(
+            &mut attachments,
+            &[String::from("missing")],
+            "m1",
+            "g1",
+            "c1",
+            owner_id,
+        );
+        assert!(matches!(result, Err(AuthFailure::InvalidRequest)));
+
+        let different_owner = UserId::new();
+        let mut attachments = HashMap::from([
+            (
+                String::from("owned-by-other"),
+                attachment("owned-by-other", "g1", "c1", different_owner, None),
+            ),
+            (
+                String::from("already-bound"),
+                attachment("already-bound", "g1", "c1", owner_id, Some("m0")),
+            ),
+        ]);
+
+        let owner_result = bind_message_attachments_in_memory(
+            &mut attachments,
+            &[String::from("owned-by-other")],
+            "m1",
+            "g1",
+            "c1",
+            owner_id,
+        );
+        assert!(matches!(owner_result, Err(AuthFailure::InvalidRequest)));
+
+        let bound_result = bind_message_attachments_in_memory(
+            &mut attachments,
+            &[String::from("already-bound")],
+            "m1",
+            "g1",
+            "c1",
+            owner_id,
+        );
+        assert!(matches!(bound_result, Err(AuthFailure::InvalidRequest)));
+    }
+
+    fn sample_record() -> MessageRecord {
+        MessageRecord {
+            id: String::from("m1"),
+            author_id: UserId::new(),
+            content: String::from("hello"),
+            markdown_tokens: Vec::new(),
+            attachment_ids: Vec::new(),
+            created_at_unix: 1,
+            reactions: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn append_message_record_pushes_to_target_channel() {
+        let mut guilds = HashMap::new();
+        let mut guild = GuildRecord {
+            name: String::from("Guild"),
+            visibility: GuildVisibility::Private,
+            created_by_user_id: UserId::new(),
+            default_join_role_id: None,
+            members: HashMap::new(),
+            banned_members: std::collections::HashSet::new(),
+            channels: HashMap::new(),
+        };
+        guild.channels.insert(
+            String::from("c1"),
+            ChannelRecord {
+                name: String::from("general"),
+                kind: filament_core::ChannelKind::Text,
+                messages: Vec::new(),
+                role_overrides: HashMap::new(),
+            },
+        );
+        guilds.insert(String::from("g1"), guild);
+
+        append_message_record(&mut guilds, "g1", "c1", sample_record())
+            .expect("append should succeed");
+
+        let channel = &guilds["g1"].channels["c1"];
+        assert_eq!(channel.messages.len(), 1);
+        assert_eq!(channel.messages[0].id, "m1");
+    }
+
+    #[test]
+    fn append_message_record_rejects_unknown_guild_or_channel() {
+        let mut guilds = HashMap::new();
+        let error = append_message_record(&mut guilds, "missing", "c1", sample_record())
+            .expect_err("missing guild should fail closed");
+        assert!(matches!(error, AuthFailure::NotFound));
+
+        let mut guild = GuildRecord {
+            name: String::from("Guild"),
+            visibility: GuildVisibility::Private,
+            created_by_user_id: UserId::new(),
+            default_join_role_id: None,
+            members: HashMap::new(),
+            banned_members: std::collections::HashSet::new(),
+            channels: HashMap::new(),
+        };
+        guild.channels.insert(
+            String::from("other"),
+            ChannelRecord {
+                name: String::from("other"),
+                kind: filament_core::ChannelKind::Text,
+                messages: Vec::new(),
+                role_overrides: HashMap::new(),
+            },
+        );
+        guilds.insert(String::from("g1"), guild);
+
+        let error = append_message_record(&mut guilds, "g1", "missing", sample_record())
+            .expect_err("missing channel should fail closed");
+        assert!(matches!(error, AuthFailure::NotFound));
     }
 }

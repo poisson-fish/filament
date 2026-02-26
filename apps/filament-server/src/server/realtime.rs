@@ -1,11 +1,8 @@
 mod connection_disconnect_followups;
 mod connection_runtime;
-mod hydration_db;
-mod hydration_in_memory;
 mod hydration_runtime;
 pub mod livekit_sync;
 mod message_record;
-mod message_store_in_memory;
 mod search_query_run;
 mod search_reconciliation_plan;
 mod search_runtime;
@@ -39,7 +36,6 @@ use uuid::Uuid;
 
 mod fanout_dispatch;
 mod ingress_command;
-mod message_attachment_bind;
 mod message_prepare;
 mod presence_subscribe;
 mod search_apply;
@@ -52,21 +48,17 @@ pub(crate) use connection_runtime::{
     remove_connection, remove_voice_participant_for_channel,
     update_voice_participant_audio_state_for_channel,
 };
-use hydration_db::collect_hydrated_messages_db;
-use hydration_in_memory::collect_hydrated_messages_in_memory;
 use ingress_command::{
     allow_gateway_ingress, classify_ingress_command_parse_error, decode_gateway_ingress_message,
     execute_message_create_command, execute_subscribe_command, parse_gateway_ingress_command,
     GatewayAttachmentIds, GatewayIngressCommand, GatewayIngressMessageDecode,
     GatewayMessageContent, IngressCommandParseClassification,
 };
-use message_attachment_bind::bind_message_attachments_in_memory;
 use message_prepare::{prepare_message_body, prepare_prevalidated_message_body};
 use message_record::{
-    build_db_created_message_response, build_in_memory_message_record,
-    build_message_response_from_record,
+    append_message_record, bind_message_attachments_in_memory, build_db_created_message_response,
+    build_in_memory_message_record, build_message_response_from_record,
 };
-use message_store_in_memory::append_message_record;
 pub(crate) use search_query_run::run_search_query;
 pub(crate) use search_reconciliation_plan::plan_search_reconciliation;
 pub(crate) use search_runtime::{
