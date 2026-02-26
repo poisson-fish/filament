@@ -412,7 +412,10 @@ describe("app shell extracted layout components", () => {
     expect(chatBody?.nextElementSibling).toBe(panelComposer);
     expect(panelComposer?.querySelector(".composer-attachments")).not.toBeNull();
     expect(screen.getByText("Reaction Picker")).toBeInTheDocument();
-    expect(screen.getByText("session-ok")).toBeInTheDocument();
+    const sessionStatus = screen.getByText("session-ok");
+    expect(sessionStatus).toBeInTheDocument();
+    expect(sessionStatus.closest(".chat-body")).toBeNull();
+    expect(sessionStatus).toHaveAttribute("role", "status");
   });
 
   it("renders empty-workspace fallback with utility classes and no legacy hook", () => {
