@@ -22,7 +22,7 @@ use super::{
     },
     connection_registry::remove_connection_state,
     connection_subscriptions::remove_connection_from_subscription_indexes,
-    fanout_channel::dispatch_channel_payload,
+    fanout_dispatch::dispatch_channel_payload,
     fanout_guild::dispatch_guild_payload,
     fanout_user::{connection_ids_for_user, dispatch_user_payload},
     presence_subscribe::{

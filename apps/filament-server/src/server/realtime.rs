@@ -55,7 +55,6 @@ use tokio::sync::{mpsc, watch};
 use ulid::Ulid;
 use uuid::Uuid;
 
-mod fanout_channel;
 mod fanout_dispatch;
 mod fanout_guild;
 mod fanout_user;
