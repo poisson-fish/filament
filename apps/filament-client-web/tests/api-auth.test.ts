@@ -343,6 +343,7 @@ describe("api-auth", () => {
         "content-type": "image/png",
       },
       body: file,
+      timeoutMs: 30_000,
     });
   });
 
@@ -437,6 +438,7 @@ describe("api-auth", () => {
         "content-type": "image/png",
       },
       body: file,
+      timeoutMs: 30_000,
     });
   });
 

@@ -28,10 +28,12 @@ interface BodyRequest {
   body: BodyInit;
   accessToken?: AccessToken;
   headers?: Record<string, string>;
+  timeoutMs?: number;
 }
 
 const MAX_PROFILE_AVATAR_BYTES = 2 * 1024 * 1024;
 const MAX_PROFILE_BANNER_BYTES = 6 * 1024 * 1024;
+const PROFILE_MEDIA_UPLOAD_TIMEOUT_MS = 30_000;
 const PROFILE_BANNER_MIME_ALLOWLIST = new Set([
   "image/jpeg",
   "image/png",
@@ -227,6 +229,7 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
         accessToken: session.accessToken,
         headers,
         body: file,
+        timeoutMs: PROFILE_MEDIA_UPLOAD_TIMEOUT_MS,
       });
       return profileFromResponse(dto);
     },
@@ -256,6 +259,7 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
         accessToken: session.accessToken,
         headers,
         body: file,
+        timeoutMs: PROFILE_MEDIA_UPLOAD_TIMEOUT_MS,
       });
       return profileFromResponse(dto);
     },

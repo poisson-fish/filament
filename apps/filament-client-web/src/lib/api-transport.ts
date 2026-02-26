@@ -35,6 +35,7 @@ interface BodyRequest {
   body: BodyInit;
   accessToken?: AccessToken;
   headers?: Record<string, string>;
+  timeoutMs?: number;
 }
 
 function resolvedBaseUrl(): string {
@@ -310,6 +311,7 @@ async function requestJsonWithBody(request: BodyRequest): Promise<unknown> {
     accessToken: request.accessToken,
     headers: request.headers,
     body: request.body,
+    timeoutMs: request.timeoutMs,
   });
   let data: unknown;
   try {
