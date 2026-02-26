@@ -1,20 +1,16 @@
 mod connection_disconnect_followups;
-mod connection_registry;
 mod connection_runtime;
-mod connection_subscriptions;
 mod hydration_db;
 mod hydration_in_memory;
 mod hydration_runtime;
 pub mod livekit_sync;
 mod message_record;
 mod message_store_in_memory;
-mod search_apply_batch;
 mod search_collect_db;
 mod search_enqueue;
 mod search_query_run;
 mod search_reconciliation_plan;
 mod search_runtime;
-mod subscription_insert;
 mod voice_cleanup_dispatch;
 mod voice_sync_dispatch;
 use std::{

@@ -17,7 +17,6 @@ use crate::server::{
 use super::{
     hydration_runtime::hydrate_messages_by_id_runtime,
     search_apply::apply_search_operation as apply_search_operation_impl,
-    search_apply_batch::apply_search_batch_with_ack,
     search_collect_db::{
         collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows,
         enforce_guild_collect_doc_cap, guild_collect_fetch_limit,
@@ -104,6 +103,49 @@ pub(crate) fn apply_search_batch(
     mut batch: Vec<SearchCommand>,
 ) -> anyhow::Result<()> {
     apply_search_batch_with_ack(search, &mut batch, apply_search_operation)
+}
+
+fn apply_search_batch_with_ack<F>(
+    search: &Arc<SearchIndexState>,
+    batch: &mut Vec<SearchCommand>,
+    apply_op: F,
+) -> anyhow::Result<()>
+where
+    F: Fn(&SearchIndexState, &mut tantivy::IndexWriter, SearchOperation),
+{
+    let mut ops = Vec::with_capacity(batch.len());
+    let mut pending_acks = Vec::new();
+    for command in batch.drain(..) {
+        if let Some(ack) = command.ack {
+            pending_acks.push(ack);
+        }
+        ops.push(command.op);
+    }
+
+    let apply_result = (|| -> anyhow::Result<()> {
+        let mut writer = search.index.writer(50_000_000)?;
+        for op in ops {
+            apply_op(search, &mut writer, op);
+        }
+        writer.commit()?;
+        search.reader.reload()?;
+        Ok(())
+    })();
+
+    match apply_result {
+        Ok(()) => {
+            for ack in pending_acks {
+                let _ = ack.send(Ok(()));
+            }
+            Ok(())
+        }
+        Err(error) => {
+            for ack in pending_acks {
+                let _ = ack.send(Err(AuthFailure::Internal));
+            }
+            Err(error)
+        }
+    }
 }
 
 pub(crate) fn apply_search_operation(
@@ -328,11 +370,13 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use filament_core::{ChannelKind, Role, UserId};
+    use std::sync::Arc;
     use tantivy::schema::Type;
-    use tokio::sync::mpsc;
+
+    use tokio::sync::{mpsc, oneshot};
 
     use super::{
-        build_search_rebuild_operation, build_search_schema,
+        apply_search_batch_with_ack, build_search_rebuild_operation, build_search_schema,
         collect_all_indexed_messages_in_memory, collect_indexed_messages_for_guild_in_memory,
         drain_search_batch, effective_search_limit, indexed_message_from_response,
         map_collect_all_rows, map_collect_guild_rows, normalize_search_query,
@@ -346,6 +390,17 @@ mod tests {
         errors::AuthFailure,
         types::{MessageResponse, SearchQuery},
     };
+
+    fn search_state() -> Arc<crate::server::core::SearchIndexState> {
+        let (schema, fields) = build_search_schema();
+        let index = tantivy::Index::create_in_ram(schema);
+        let reader = index.reader().expect("reader should initialize");
+        Arc::new(crate::server::core::SearchIndexState {
+            index,
+            reader,
+            fields,
+        })
+    }
 
     fn sample_doc(id: &str) -> IndexedMessage {
         IndexedMessage {
@@ -731,5 +786,49 @@ mod tests {
         assert_eq!(docs.len(), 2);
         assert!(docs.iter().any(|doc| doc.message_id == "m1"));
         assert!(docs.iter().any(|doc| doc.message_id == "m2"));
+    }
+
+    #[test]
+    fn apply_search_batch_with_ack_sends_success_ack_when_batch_applies() {
+        let search = search_state();
+        let (ack_tx, ack_rx) = oneshot::channel();
+        let mut batch = vec![SearchCommand {
+            op: SearchOperation::Delete {
+                message_id: String::from("m1"),
+            },
+            ack: Some(ack_tx),
+        }];
+
+        let result = apply_search_batch_with_ack(&search, &mut batch, |_search, _writer, _op| {});
+
+        assert!(result.is_ok());
+        assert!(batch.is_empty());
+        assert!(matches!(ack_rx.blocking_recv(), Ok(Ok(()))));
+    }
+
+    #[test]
+    fn apply_search_batch_with_ack_sends_internal_ack_when_batch_apply_fails() {
+        let search = search_state();
+        let writer_guard: tantivy::IndexWriter<tantivy::schema::TantivyDocument> = search
+            .index
+            .writer(50_000_000)
+            .expect("lock writer for failure path");
+        let (ack_tx, ack_rx) = oneshot::channel();
+        let mut batch = vec![SearchCommand {
+            op: SearchOperation::Delete {
+                message_id: String::from("m2"),
+            },
+            ack: Some(ack_tx),
+        }];
+
+        let result = apply_search_batch_with_ack(&search, &mut batch, |_search, _writer, _op| {});
+
+        assert!(result.is_err());
+        assert!(batch.is_empty());
+        assert!(matches!(
+            ack_rx.blocking_recv(),
+            Ok(Err(AuthFailure::Internal))
+        ));
+        drop(writer_guard);
     }
 }

@@ -6,10 +6,13 @@ use uuid::Uuid;
 
 use crate::server::{
     auth::{now_unix, release_media_subscribe_leases_for_user},
-    core::ConnectionControl,
     core::{
         AppState, VoiceStreamKind, MAX_TRACKED_VOICE_CHANNELS,
         MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL,
+    },
+    core::{
+        ConnectionControl, ConnectionPresence, GuildConnectionIndex, Subscriptions,
+        UserConnectionIndex,
     },
     errors::AuthFailure,
     gateway_events::{self, GatewayEvent},
@@ -20,8 +23,6 @@ use super::{
     connection_disconnect_followups::{
         compute_disconnect_presence_outcome, plan_disconnect_followups,
     },
-    connection_registry::remove_connection_state,
-    connection_subscriptions::remove_connection_from_subscription_indexes,
     fanout_dispatch::{
         connection_ids_for_user, dispatch_channel_payload, dispatch_guild_payload,
         dispatch_user_payload,
@@ -30,7 +31,6 @@ use super::{
         apply_presence_subscribe, build_presence_subscribe_events, dispatch_presence_sync_event,
         presence_sync_reject_reason,
     },
-    subscription_insert::insert_connection_subscription,
     voice_cleanup_dispatch::{
         broadcast_disconnected_user_voice_removals, broadcast_expired_voice_removals,
         channel_user_voice_removal_broadcasts,
@@ -51,6 +51,66 @@ fn signal_slow_connections_close(
         if let Some(control) = controls.get(&connection_id) {
             let _ = control.send(ConnectionControl::Close);
         }
+    }
+}
+
+fn remove_connection_state(
+    presence: &mut HashMap<Uuid, ConnectionPresence>,
+    controls: &mut HashMap<Uuid, watch::Sender<ConnectionControl>>,
+    senders: &mut HashMap<Uuid, mpsc::Sender<String>>,
+    connection_id: Uuid,
+) -> Option<ConnectionPresence> {
+    let removed_presence = presence.remove(&connection_id);
+    controls.remove(&connection_id);
+    senders.remove(&connection_id);
+    removed_presence
+}
+
+fn remove_connection_from_subscription_indexes(
+    subscriptions: &mut Subscriptions,
+    guild_connections: &mut GuildConnectionIndex,
+    user_connections: &mut UserConnectionIndex,
+    connection_id: Uuid,
+) {
+    subscriptions.retain(|_, listeners| {
+        listeners.remove(&connection_id);
+        !listeners.is_empty()
+    });
+    guild_connections.retain(|_, connection_ids| {
+        connection_ids.remove(&connection_id);
+        !connection_ids.is_empty()
+    });
+    user_connections.retain(|_, connection_ids| {
+        connection_ids.remove(&connection_id);
+        !connection_ids.is_empty()
+    });
+}
+
+fn guild_id_from_subscription_key(key: &str) -> Option<&str> {
+    let (guild_id, _channel_id) = key.split_once(':')?;
+    if guild_id.is_empty() {
+        return None;
+    }
+    Some(guild_id)
+}
+
+fn insert_connection_subscription(
+    subscriptions: &mut Subscriptions,
+    guild_connections: &mut GuildConnectionIndex,
+    connection_id: Uuid,
+    key: String,
+    outbound_tx: mpsc::Sender<String>,
+) {
+    let guild_id = guild_id_from_subscription_key(&key).map(ToOwned::to_owned);
+    subscriptions
+        .entry(key)
+        .or_default()
+        .insert(connection_id, outbound_tx);
+    if let Some(guild_id) = guild_id {
+        guild_connections
+            .entry(guild_id)
+            .or_default()
+            .insert(connection_id);
     }
 }
 
@@ -364,15 +424,6 @@ async fn remove_disconnected_user_voice_participants(
     broadcast_disconnected_user_voice_removals(state, user_id, disconnected_at_unix).await;
 }
 
-#[cfg(test)]
-fn guild_id_from_subscription_key(key: &str) -> Option<&str> {
-    let (guild_id, _channel_id) = key.split_once(':')?;
-    if guild_id.is_empty() {
-        return None;
-    }
-    Some(guild_id)
-}
-
 pub(crate) async fn handle_presence_subscribe(
     state: &AppState,
     connection_id: Uuid,
@@ -498,16 +549,26 @@ pub(crate) async fn remove_connection(state: &AppState, connection_id: Uuid) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
+    use filament_core::UserId;
+    use tokio::sync::mpsc;
     use tokio::sync::watch;
     use uuid::Uuid;
 
     use super::{
-        emit_gateway_delivery_metrics, guild_id_from_subscription_key, presence_event_scope,
+        emit_gateway_delivery_metrics, guild_id_from_subscription_key,
+        insert_connection_subscription, presence_event_scope,
+        remove_connection_from_subscription_indexes, remove_connection_state,
         should_skip_user_broadcast, signal_slow_connections_close,
     };
-    use crate::server::{core::ConnectionControl, gateway_events};
+    use crate::server::{
+        core::{
+            ConnectionControl, ConnectionPresence, GuildConnectionIndex, Subscriptions,
+            UserConnectionIndex,
+        },
+        gateway_events,
+    };
 
     #[test]
     fn should_skip_user_broadcast_when_no_targets() {
@@ -559,6 +620,186 @@ mod tests {
 
         assert_eq!(*first_rx.borrow(), ConnectionControl::Close);
         assert_eq!(*second_rx.borrow(), ConnectionControl::Open);
+    }
+
+    #[test]
+    fn removes_presence_controls_and_sender_for_connection() {
+        let connection_id = Uuid::new_v4();
+        let user_id = UserId::new();
+        let mut presence = HashMap::new();
+        presence.insert(
+            connection_id,
+            ConnectionPresence {
+                user_id,
+                guild_ids: HashSet::new(),
+            },
+        );
+        let (control_tx, _control_rx) = watch::channel(ConnectionControl::Open);
+        let mut controls = HashMap::new();
+        controls.insert(connection_id, control_tx);
+        let (sender_tx, _sender_rx) = mpsc::channel::<String>(1);
+        let mut senders = HashMap::new();
+        senders.insert(connection_id, sender_tx);
+
+        let removed =
+            remove_connection_state(&mut presence, &mut controls, &mut senders, connection_id);
+
+        assert_eq!(
+            removed.expect("presence should be removed").user_id,
+            user_id
+        );
+        assert!(!presence.contains_key(&connection_id));
+        assert!(!controls.contains_key(&connection_id));
+        assert!(!senders.contains_key(&connection_id));
+    }
+
+    #[test]
+    fn remove_connection_state_returns_none_when_presence_is_missing() {
+        let connection_id = Uuid::new_v4();
+        let (control_tx, _control_rx) = watch::channel(ConnectionControl::Open);
+        let mut controls = HashMap::new();
+        controls.insert(connection_id, control_tx);
+        let (sender_tx, _sender_rx) = mpsc::channel::<String>(1);
+        let mut senders = HashMap::new();
+        senders.insert(connection_id, sender_tx);
+
+        let removed = remove_connection_state(
+            &mut HashMap::new(),
+            &mut controls,
+            &mut senders,
+            connection_id,
+        );
+
+        assert!(removed.is_none());
+        assert!(!controls.contains_key(&connection_id));
+        assert!(!senders.contains_key(&connection_id));
+    }
+
+    #[test]
+    fn remove_connection_indexes_prunes_empty_entries() {
+        let target = Uuid::new_v4();
+        let keep = Uuid::new_v4();
+        let target_user = UserId::new();
+        let mixed_user = UserId::new();
+        let (target_tx, _) = mpsc::channel::<String>(1);
+        let (keep_tx, _) = mpsc::channel::<String>(1);
+
+        let mut subscriptions: Subscriptions = HashMap::from([
+            (String::from("g1:c1"), HashMap::from([(target, target_tx)])),
+            (String::from("g1:c2"), HashMap::from([(keep, keep_tx)])),
+        ]);
+        let mut guild_connections: GuildConnectionIndex = HashMap::from([
+            (String::from("g1"), HashSet::from([target, keep])),
+            (String::from("g2"), HashSet::from([target])),
+        ]);
+        let mut user_connections: UserConnectionIndex = HashMap::from([
+            (target_user, HashSet::from([target])),
+            (mixed_user, HashSet::from([target, keep])),
+        ]);
+
+        remove_connection_from_subscription_indexes(
+            &mut subscriptions,
+            &mut guild_connections,
+            &mut user_connections,
+            target,
+        );
+
+        assert!(!subscriptions.contains_key("g1:c1"));
+        assert!(subscriptions.contains_key("g1:c2"));
+        assert!(!guild_connections.contains_key("g2"));
+        assert!(guild_connections
+            .get("g1")
+            .expect("mixed guild should remain")
+            .contains(&keep));
+        assert!(!user_connections.contains_key(&target_user));
+        assert!(user_connections
+            .get(&mixed_user)
+            .expect("mixed user should remain")
+            .contains(&keep));
+    }
+
+    #[test]
+    fn remove_connection_indexes_retains_entries_with_remaining_connections() {
+        let target = Uuid::new_v4();
+        let keep = Uuid::new_v4();
+        let mixed_user = UserId::new();
+        let (target_tx, _) = mpsc::channel::<String>(1);
+        let (keep_tx, _) = mpsc::channel::<String>(1);
+
+        let mut subscriptions: Subscriptions = HashMap::from([(
+            String::from("g1:c1"),
+            HashMap::from([(target, target_tx), (keep, keep_tx)]),
+        )]);
+        let mut guild_connections: GuildConnectionIndex =
+            HashMap::from([(String::from("g1"), HashSet::from([target, keep]))]);
+        let mut user_connections: UserConnectionIndex =
+            HashMap::from([(mixed_user, HashSet::from([target, keep]))]);
+
+        remove_connection_from_subscription_indexes(
+            &mut subscriptions,
+            &mut guild_connections,
+            &mut user_connections,
+            target,
+        );
+
+        let listeners = subscriptions
+            .get("g1:c1")
+            .expect("entry should be retained for remaining listeners");
+        assert_eq!(listeners.len(), 1);
+        assert!(listeners.contains_key(&keep));
+        assert!(guild_connections
+            .get("g1")
+            .expect("guild should remain")
+            .contains(&keep));
+        assert!(user_connections
+            .get(&mixed_user)
+            .expect("user should remain")
+            .contains(&keep));
+    }
+
+    #[test]
+    fn insert_connection_subscription_indexes_guild_from_valid_key() {
+        let connection_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel::<String>(1);
+        let mut subscriptions = HashMap::new();
+        let mut guild_connections = GuildConnectionIndex::new();
+
+        insert_connection_subscription(
+            &mut subscriptions,
+            &mut guild_connections,
+            connection_id,
+            String::from("guild:channel"),
+            tx,
+        );
+
+        let listeners = subscriptions
+            .get("guild:channel")
+            .expect("listener map should exist");
+        assert_eq!(listeners.len(), 1);
+        assert!(listeners.contains_key(&connection_id));
+        assert!(guild_connections
+            .get("guild")
+            .expect("guild index should exist")
+            .contains(&connection_id));
+    }
+
+    #[test]
+    fn insert_connection_subscription_rejects_invalid_guild_index_key_shape() {
+        let connection_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel::<String>(1);
+        let mut subscriptions = HashMap::new();
+        let mut guild_connections = GuildConnectionIndex::new();
+
+        insert_connection_subscription(
+            &mut subscriptions,
+            &mut guild_connections,
+            connection_id,
+            String::from("invalid-key"),
+            tx,
+        );
+
+        assert!(subscriptions.contains_key("invalid-key"));
+        assert!(guild_connections.is_empty());
     }
 
     #[test]
