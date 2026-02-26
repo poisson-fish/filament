@@ -219,4 +219,23 @@ describe("app shell message row", () => {
     expect(screen.getByText("```rust")).toBeInTheDocument();
     expect(screen.getByText("fn")).toBeInTheDocument();
   });
+
+  it("uses an auto-growing multiline textarea for message edit mode with a height cap", () => {
+    const message = messageFixture();
+    render(() => (
+      <MessageRow
+        {...rowPropsFixture({
+          message,
+          editingMessageId: message.messageId,
+          editingDraft: "line 1\nline 2\nline 3",
+        })}
+      />
+    ));
+
+    const editInput = screen.getByRole("textbox");
+    expect(editInput.tagName).toBe("TEXTAREA");
+    expect(editInput).toHaveAttribute("rows", "1");
+    expect(editInput).toHaveClass("max-h-[35vh]");
+    expect(editInput).toHaveClass("resize-none");
+  });
 });

@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createEffect, createMemo } from "solid-js";
 import type {
   AttachmentId,
   AttachmentRecord,
@@ -83,6 +83,27 @@ export function MessageRow(props: MessageRowProps) {
       ? props.message.markdownTokens
       : [{ type: "text" as const, text: props.message.content }],
   );
+  let editTextareaEl: HTMLTextAreaElement | undefined;
+
+  const resizeEditInput = (): void => {
+    if (!editTextareaEl) {
+      return;
+    }
+    editTextareaEl.style.height = "0px";
+    const maxHeightPx = Math.max(120, Math.floor(window.innerHeight * 0.35));
+    const contentHeight = editTextareaEl.scrollHeight;
+    const nextHeight = Math.min(contentHeight, maxHeightPx);
+    editTextareaEl.style.height = `${nextHeight}px`;
+    editTextareaEl.style.overflowY = contentHeight > maxHeightPx ? "auto" : "hidden";
+  };
+
+  createEffect(() => {
+    void props.editingDraft;
+    if (!isEditing()) {
+      return;
+    }
+    resizeEditInput();
+  });
 
   return (
     <article class="message-row group relative mt-[0.02rem] grid grid-cols-[2.35rem_minmax(0,1fr)] gap-[0.65rem] rounded-[0.45rem] border-0 bg-transparent px-[0.46rem] py-[0.34rem] transition-colors duration-[120ms] ease-out hover:bg-bg-3 focus-within:bg-bg-3 [&:first-of-type]:mt-auto">
@@ -139,10 +160,18 @@ export function MessageRow(props: MessageRowProps) {
               void props.onSaveEditMessage(props.message.messageId);
             }}
           >
-            <input
-              class="w-full min-w-0 rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.4rem] text-ink-0 outline-none transition-colors duration-[140ms] ease-out placeholder:text-ink-2 focus:border-line"
+            <textarea
+              ref={(element) => {
+                editTextareaEl = element;
+                resizeEditInput();
+              }}
+              class="max-h-[35vh] w-full min-w-0 resize-none rounded-[0.56rem] border border-line-soft bg-bg-3 px-[0.68rem] py-[0.4rem] leading-[1.4] text-ink-0 outline-none transition-colors duration-[140ms] ease-out placeholder:text-ink-2 focus:border-line"
               value={props.editingDraft}
-              onInput={(event) => props.onEditingDraftInput(event.currentTarget.value)}
+              onInput={(event) => {
+                props.onEditingDraftInput(event.currentTarget.value);
+                resizeEditInput();
+              }}
+              rows={1}
               maxlength="2000"
             />
             <div class="flex flex-wrap gap-[0.42rem]">
