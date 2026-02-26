@@ -30,7 +30,6 @@ mod search_runtime;
 mod subscribe_ack;
 mod subscription_insert;
 mod voice_cleanup_dispatch;
-mod voice_registration_events;
 mod voice_sync_dispatch;
 use std::{
     collections::{HashSet, VecDeque},

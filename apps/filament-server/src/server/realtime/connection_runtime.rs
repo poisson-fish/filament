@@ -34,8 +34,7 @@ use super::{
         channel_user_voice_removal_broadcasts,
     },
     voice_presence::{collect_voice_snapshots, voice_channel_key},
-    voice_registration::apply_voice_registration_transition,
-    voice_registration_events::plan_voice_registration_events,
+    voice_registration::{apply_voice_registration_transition, plan_voice_registration_events},
     voice_registry::update_channel_user_voice_participant_audio_state,
     voice_sync_dispatch::{
         dispatch_voice_sync_event, try_build_voice_subscribe_sync_event, voice_sync_reject_reason,
