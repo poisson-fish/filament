@@ -6,11 +6,9 @@ mod hydration_db;
 mod hydration_in_memory;
 mod hydration_runtime;
 pub mod livekit_sync;
-mod message_emit;
 mod message_record;
 mod message_store_in_memory;
 mod search_apply_batch;
-mod search_batch_drain;
 mod search_collect_db;
 mod search_enqueue;
 mod search_query_run;
@@ -51,8 +49,6 @@ mod message_attachment_bind;
 mod message_prepare;
 mod presence_subscribe;
 mod search_apply;
-mod search_collect_all;
-mod search_collect_guild;
 mod search_collect_index_ids;
 mod voice_registration;
 mod voice_registry;
@@ -72,7 +68,6 @@ use ingress_command::{
     GatewayMessageContent, IngressCommandParseClassification,
 };
 use message_attachment_bind::bind_message_attachments_in_memory;
-use message_emit::emit_message_create_and_index;
 use message_prepare::{prepare_message_body, prepare_prevalidated_message_body};
 use message_record::{
     build_db_created_message_response, build_in_memory_message_record,
@@ -94,8 +89,10 @@ pub(crate) fn build_search_schema() -> (tantivy::schema::Schema, super::core::Se
 }
 
 use super::{
-    auth::{authenticate_with_token, bearer_token, extract_client_ip, now_unix, ClientIp},
-    core::{AppState, AuthContext, ConnectionControl, ConnectionPresence},
+    auth::{
+        authenticate_with_token, bearer_token, channel_key, extract_client_ip, now_unix, ClientIp,
+    },
+    core::{AppState, AuthContext, ConnectionControl, ConnectionPresence, SearchOperation},
     domain::{
         attachments_for_message_in_memory, bind_message_attachments_db,
         channel_permission_snapshot, fetch_attachments_for_message_db, parse_attachment_ids,
@@ -425,6 +422,29 @@ pub(crate) async fn create_message_internal_from_ingress_validated(
     .await
 }
 
+fn message_upsert_operation(response: &MessageResponse) -> SearchOperation {
+    SearchOperation::Upsert(indexed_message_from_response(response))
+}
+
+async fn emit_message_create_and_index(
+    state: &AppState,
+    guild_id: &str,
+    channel_id: &str,
+    response: &MessageResponse,
+) -> Result<(), AuthFailure> {
+    if let Ok(event) = gateway_events::try_message_create(response) {
+        broadcast_channel_event(state, &channel_key(guild_id, channel_id), &event).await;
+    } else {
+        record_gateway_event_serialize_error("channel", gateway_events::MESSAGE_CREATE_EVENT);
+        tracing::warn!(
+            guild_id,
+            channel_id,
+            "dropped message_create outbound event because serialization failed"
+        );
+    }
+    enqueue_search_operation(state, message_upsert_operation(response), true).await
+}
+
 async fn create_message_internal_prepared(
     state: &AppState,
     auth: &AuthContext,
@@ -534,11 +554,14 @@ async fn create_message_internal_prepared(
 
 #[cfg(test)]
 mod tests {
+    use filament_core::MarkdownToken;
     use tokio::sync::mpsc;
 
     use super::{
-        ready_drop_metric_reason, ready_error_reason, try_enqueue_ready_event, ReadyEnqueueResult,
+        message_upsert_operation, ready_drop_metric_reason, ready_error_reason,
+        try_enqueue_ready_event, ReadyEnqueueResult,
     };
+    use crate::server::{core::SearchOperation, types::MessageResponse};
 
     #[test]
     fn ready_enqueue_returns_enqueued_when_sender_has_capacity() {
@@ -614,5 +637,34 @@ mod tests {
             ready_drop_metric_reason(&ReadyEnqueueResult::Oversized),
             Some("oversized_outbound")
         );
+    }
+
+    #[test]
+    fn message_upsert_operation_maps_response_fields() {
+        let response = MessageResponse {
+            message_id: String::from("m1"),
+            guild_id: String::from("g1"),
+            channel_id: String::from("c1"),
+            author_id: String::from("u1"),
+            content: String::from("hello"),
+            markdown_tokens: vec![MarkdownToken::Text {
+                text: String::from("hello"),
+            }],
+            attachments: Vec::new(),
+            reactions: Vec::new(),
+            created_at_unix: 42,
+        };
+
+        let op = message_upsert_operation(&response);
+        let SearchOperation::Upsert(doc) = op else {
+            panic!("expected upsert operation");
+        };
+
+        assert_eq!(doc.message_id, "m1");
+        assert_eq!(doc.guild_id, "g1");
+        assert_eq!(doc.channel_id, "c1");
+        assert_eq!(doc.author_id, "u1");
+        assert_eq!(doc.content, "hello");
+        assert_eq!(doc.created_at_unix, 42);
     }
 }

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::anyhow;
 use tantivy::schema::{NumericOptions, Schema, TextFieldIndexing, TextOptions, STORED, STRING};
@@ -6,9 +6,9 @@ use tokio::sync::mpsc;
 
 use crate::server::{
     core::{
-        AppState, IndexedMessage, SearchCommand, SearchFields, SearchIndexState, SearchOperation,
-        SearchService, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_FUZZY, MAX_SEARCH_TERMS,
-        MAX_SEARCH_WILDCARDS, SEARCH_INDEX_QUEUE_CAPACITY,
+        AppState, GuildRecord, IndexedMessage, SearchCommand, SearchFields, SearchIndexState,
+        SearchOperation, SearchService, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_FUZZY,
+        MAX_SEARCH_TERMS, MAX_SEARCH_WILDCARDS, SEARCH_INDEX_QUEUE_CAPACITY,
     },
     errors::AuthFailure,
     types::{MessageResponse, SearchQuery},
@@ -18,18 +18,31 @@ use super::{
     hydration_runtime::hydrate_messages_by_id_runtime,
     search_apply::apply_search_operation as apply_search_operation_impl,
     search_apply_batch::apply_search_batch_with_ack,
-    search_batch_drain::drain_search_batch,
-    search_collect_all::collect_all_indexed_messages_in_memory,
     search_collect_db::{
         collect_all_indexed_messages_rows, collect_indexed_messages_for_guild_rows,
         enforce_guild_collect_doc_cap, guild_collect_fetch_limit,
     },
-    search_collect_guild::collect_indexed_messages_for_guild_in_memory,
     search_enqueue::enqueue_search_command,
 };
 
 const SEARCH_WORKER_BATCH_LIMIT: usize = 128;
 type IndexedMessageRow = (String, String, String, String, String, i64);
+
+pub(crate) fn drain_search_batch(
+    first: SearchCommand,
+    rx: &mut mpsc::Receiver<SearchCommand>,
+    max_batch: usize,
+) -> Vec<SearchCommand> {
+    let max_batch = max_batch.max(1);
+    let mut batch = vec![first];
+    while batch.len() < max_batch {
+        let Ok(next) = rx.try_recv() else {
+            break;
+        };
+        batch.push(next);
+    }
+    batch
+}
 
 pub(crate) fn build_search_schema() -> (Schema, SearchFields) {
     let mut schema_builder = Schema::builder();
@@ -160,12 +173,61 @@ fn map_collect_all_rows(rows: Vec<IndexedMessageRow>) -> Vec<IndexedMessage> {
     collect_all_indexed_messages_rows(rows)
 }
 
+fn collect_all_indexed_messages_in_memory(
+    guilds: &HashMap<String, GuildRecord>,
+) -> Vec<IndexedMessage> {
+    let mut docs = Vec::new();
+    for (guild_id, guild) in guilds {
+        for (channel_id, channel) in &guild.channels {
+            for message in &channel.messages {
+                docs.push(IndexedMessage {
+                    message_id: message.id.clone(),
+                    guild_id: guild_id.clone(),
+                    channel_id: channel_id.clone(),
+                    author_id: message.author_id.to_string(),
+                    content: message.content.clone(),
+                    created_at_unix: message.created_at_unix,
+                });
+            }
+        }
+    }
+    docs
+}
+
 fn map_collect_guild_rows(
     rows: Vec<IndexedMessageRow>,
     max_docs: usize,
 ) -> Result<Vec<IndexedMessage>, AuthFailure> {
     enforce_guild_collect_doc_cap(rows.len(), max_docs)?;
     Ok(collect_indexed_messages_for_guild_rows(rows))
+}
+
+fn collect_indexed_messages_for_guild_in_memory(
+    guilds: &HashMap<String, GuildRecord>,
+    guild_id: &str,
+    max_docs: usize,
+) -> Result<Vec<IndexedMessage>, AuthFailure> {
+    let Some(guild) = guilds.get(guild_id) else {
+        return Err(AuthFailure::NotFound);
+    };
+
+    let mut docs = Vec::new();
+    for (channel_id, channel) in &guild.channels {
+        for message in &channel.messages {
+            if docs.len() >= max_docs {
+                return Err(AuthFailure::InvalidRequest);
+            }
+            docs.push(IndexedMessage {
+                message_id: message.id.clone(),
+                guild_id: guild_id.to_owned(),
+                channel_id: channel_id.clone(),
+                author_id: message.author_id.to_string(),
+                content: message.content.clone(),
+                created_at_unix: message.created_at_unix,
+            });
+        }
+    }
+    Ok(docs)
 }
 
 fn validate_search_query_with_limits(
@@ -263,15 +325,24 @@ pub(crate) async fn hydrate_messages_by_id(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use filament_core::{ChannelKind, Role, UserId};
     use tantivy::schema::Type;
+    use tokio::sync::mpsc;
 
     use super::{
-        build_search_rebuild_operation, build_search_schema, effective_search_limit,
-        indexed_message_from_response, map_collect_all_rows, map_collect_guild_rows,
-        normalize_search_query, validate_search_query_limits, validate_search_query_with_limits,
+        build_search_rebuild_operation, build_search_schema,
+        collect_all_indexed_messages_in_memory, collect_indexed_messages_for_guild_in_memory,
+        drain_search_batch, effective_search_limit, indexed_message_from_response,
+        map_collect_all_rows, map_collect_guild_rows, normalize_search_query,
+        validate_search_query_limits, validate_search_query_with_limits,
     };
     use crate::server::{
-        core::{IndexedMessage, SearchOperation},
+        core::{
+            ChannelRecord, GuildRecord, GuildVisibility, IndexedMessage, MessageRecord,
+            SearchCommand, SearchOperation,
+        },
         errors::AuthFailure,
         types::{MessageResponse, SearchQuery},
     };
@@ -285,6 +356,59 @@ mod tests {
             created_at_unix: 1,
             content: String::from("hello"),
         }
+    }
+
+    fn command(message_id: &str) -> SearchCommand {
+        SearchCommand {
+            op: SearchOperation::Delete {
+                message_id: message_id.to_owned(),
+            },
+            ack: None,
+        }
+    }
+
+    fn message_id(command: &SearchCommand) -> Option<&str> {
+        match &command.op {
+            SearchOperation::Delete { message_id } => Some(message_id.as_str()),
+            _ => None,
+        }
+    }
+
+    fn guild_with_messages(guild_id: &str, message_ids: &[&str]) -> HashMap<String, GuildRecord> {
+        let author = UserId::new();
+        let messages = message_ids
+            .iter()
+            .map(|message_id| MessageRecord {
+                id: (*message_id).to_owned(),
+                author_id: author,
+                content: format!("message-{message_id}"),
+                markdown_tokens: Vec::new(),
+                attachment_ids: Vec::new(),
+                created_at_unix: 1,
+                reactions: HashMap::new(),
+            })
+            .collect();
+
+        HashMap::from([(
+            guild_id.to_owned(),
+            GuildRecord {
+                name: String::from("Guild"),
+                visibility: GuildVisibility::Private,
+                created_by_user_id: author,
+                default_join_role_id: None,
+                members: HashMap::from([(author, Role::Owner)]),
+                banned_members: HashSet::new(),
+                channels: HashMap::from([(
+                    String::from("c1"),
+                    ChannelRecord {
+                        name: String::from("general"),
+                        kind: ChannelKind::Text,
+                        messages,
+                        role_overrides: HashMap::new(),
+                    },
+                )]),
+            },
+        )])
     }
 
     #[test]
@@ -478,5 +602,134 @@ mod tests {
         );
 
         assert!(matches!(result, Err(AuthFailure::InvalidRequest)));
+    }
+
+    #[test]
+    fn drain_search_batch_drains_up_to_max_batch_size() {
+        let (tx, mut rx) = mpsc::channel::<SearchCommand>(8);
+        tx.try_send(command("m2"))
+            .expect("second command should queue");
+        tx.try_send(command("m3"))
+            .expect("third command should queue");
+
+        let batch = drain_search_batch(command("m1"), &mut rx, 2);
+
+        assert_eq!(batch.len(), 2);
+        assert_eq!(message_id(&batch[0]), Some("m1"));
+        assert_eq!(message_id(&batch[1]), Some("m2"));
+        assert_eq!(rx.try_recv().ok().as_ref().and_then(message_id), Some("m3"));
+    }
+
+    #[test]
+    fn drain_search_batch_defaults_to_single_item_when_max_batch_is_zero() {
+        let (tx, mut rx) = mpsc::channel::<SearchCommand>(4);
+        tx.try_send(command("m2"))
+            .expect("second command should queue");
+
+        let batch = drain_search_batch(command("m1"), &mut rx, 0);
+
+        assert_eq!(batch.len(), 1);
+        assert_eq!(message_id(&batch[0]), Some("m1"));
+        assert_eq!(rx.try_recv().ok().as_ref().and_then(message_id), Some("m2"));
+    }
+
+    #[test]
+    fn collect_all_indexed_messages_returns_documents_for_all_channels() {
+        let author = UserId::new();
+        let guild_id = String::from("g1");
+        let mut guilds = HashMap::new();
+        guilds.insert(
+            guild_id.clone(),
+            GuildRecord {
+                name: String::from("Guild"),
+                visibility: GuildVisibility::Private,
+                created_by_user_id: author,
+                default_join_role_id: None,
+                members: HashMap::from([(author, Role::Owner)]),
+                banned_members: HashSet::new(),
+                channels: HashMap::from([
+                    (
+                        String::from("c1"),
+                        ChannelRecord {
+                            name: String::from("general"),
+                            kind: ChannelKind::Text,
+                            messages: vec![MessageRecord {
+                                id: String::from("m1"),
+                                author_id: author,
+                                content: String::from("hello"),
+                                markdown_tokens: Vec::new(),
+                                attachment_ids: Vec::new(),
+                                created_at_unix: 10,
+                                reactions: HashMap::new(),
+                            }],
+                            role_overrides: HashMap::new(),
+                        },
+                    ),
+                    (
+                        String::from("c2"),
+                        ChannelRecord {
+                            name: String::from("random"),
+                            kind: ChannelKind::Text,
+                            messages: vec![MessageRecord {
+                                id: String::from("m2"),
+                                author_id: author,
+                                content: String::from("world"),
+                                markdown_tokens: Vec::new(),
+                                attachment_ids: Vec::new(),
+                                created_at_unix: 11,
+                                reactions: HashMap::new(),
+                            }],
+                            role_overrides: HashMap::new(),
+                        },
+                    ),
+                ]),
+            },
+        );
+
+        let docs = collect_all_indexed_messages_in_memory(&guilds);
+
+        assert_eq!(docs.len(), 2);
+        assert!(docs.iter().any(|doc| {
+            doc.message_id == "m1"
+                && doc.guild_id == "g1"
+                && doc.channel_id == "c1"
+                && doc.content == "hello"
+        }));
+        assert!(docs.iter().any(|doc| {
+            doc.message_id == "m2"
+                && doc.guild_id == "g1"
+                && doc.channel_id == "c2"
+                && doc.content == "world"
+        }));
+    }
+
+    #[test]
+    fn collect_indexed_messages_for_guild_returns_not_found_for_missing_guild() {
+        let guilds = guild_with_messages("g1", &["m1"]);
+
+        let result = collect_indexed_messages_for_guild_in_memory(&guilds, "missing", 10);
+
+        assert!(matches!(result, Err(AuthFailure::NotFound)));
+    }
+
+    #[test]
+    fn collect_indexed_messages_for_guild_rejects_when_cap_is_exceeded() {
+        let guilds = guild_with_messages("g1", &["m1", "m2"]);
+
+        let result = collect_indexed_messages_for_guild_in_memory(&guilds, "g1", 1);
+
+        assert!(matches!(result, Err(AuthFailure::InvalidRequest)));
+    }
+
+    #[test]
+    fn collect_indexed_messages_for_guild_returns_all_messages_when_within_cap() {
+        let guilds = guild_with_messages("g1", &["m1", "m2"]);
+
+        let docs = collect_indexed_messages_for_guild_in_memory(&guilds, "g1", 2)
+            .expect("documents should be collected");
+
+        assert_eq!(docs.len(), 2);
+        assert!(docs.iter().any(|doc| doc.message_id == "m1"));
+        assert!(docs.iter().any(|doc| doc.message_id == "m2"));
     }
 }

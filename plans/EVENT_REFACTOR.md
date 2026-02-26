@@ -281,8 +281,8 @@ Reduce fragmentation and simplify navigation while preserving testable seams.
   - `realtime/fanout/*`
   - `realtime/presence/*`
   - `realtime/voice/*`
-- [ ] Keep pure helper functions and tests, but reduce one-function files.
-- [ ] Preserve public/internal function signatures where practical to minimize churn.
+- [x] Keep pure helper functions and tests, but reduce one-function files.
+- [x] Preserve public/internal function signatures where practical to minimize churn.
 
 ### Tentative File Touch List
 - `apps/filament-server/src/server/realtime.rs`
@@ -330,6 +330,8 @@ Reduce fragmentation and simplify navigation while preserving testable seams.
 - 2026-02-26 (Slice 34): Continued Phase 4 hydration wrapper consolidation by folding `realtime/hydration_order.rs` into `realtime/hydration_runtime.rs` and removing the standalone module import/file from `realtime.rs`. Ordered hydration assembly (`collect_hydrated_in_request_order`) now lives in the runtime hydration component with unchanged fail-closed missing-id behavior and request-order semantics; migrated focused ordering tests into `hydration_runtime`.
 - 2026-02-26 (Slice 35): Continued Phase 4 hydration wrapper consolidation by folding `realtime/hydration_merge.rs` into `realtime/hydration_runtime.rs` and removing the standalone module import/file from `realtime.rs`. Attachment/reaction merge helper (`merge_hydration_maps`) now lives with hydration runtime orchestration, preserving unchanged per-message merge semantics and fail-closed defaulting for missing map entries; migrated focused merge tests into the consolidated module.
 - 2026-02-26 (Slice 36): Continued Phase 4 hydration wrapper consolidation by folding `realtime/hydration_in_memory_attachments.rs` into `realtime/hydration_runtime.rs` and removing the standalone module import/file from `realtime.rs`. In-memory attachment hydration helper (`apply_hydration_attachments`) now lives with hydration runtime orchestration, preserving unchanged attachment overwrite/clear semantics for message ids and keeping focused attachment mapping tests in the consolidated module.
+- 2026-02-26 (Slice 37): Continued Phase 4 search wrapper consolidation by folding `realtime/search_batch_drain.rs`, `realtime/search_collect_all.rs`, and `realtime/search_collect_guild.rs` into `realtime/search_runtime.rs` and removing standalone module imports/files from `realtime.rs`. Search worker batch-drain behavior and in-memory collect paths remain unchanged (same fail-closed guild cap enforcement and `NotFound`/`InvalidRequest` semantics), with focused unit tests migrated into `search_runtime` to preserve coverage while reducing one-function search wrapper fragmentation.
+- 2026-02-26 (Slice 38): Continued Phase 4 message wrapper consolidation by folding `realtime/message_emit.rs` into `realtime.rs` and removing the standalone module import/file. Message-create outbound emit + search-index enqueue behavior remains unchanged (same fail-closed serialize-drop metric label `serialize_error`, warning log, and channel fanout/search upsert flow), with the focused `message_upsert_operation` mapping test migrated into `realtime` tests and no external signature changes required.
 
 ### Exit Criteria
 - Lower module count and shallower call graph.
