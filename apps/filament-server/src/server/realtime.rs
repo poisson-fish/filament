@@ -22,7 +22,6 @@ mod search_index_lookup;
 mod search_query_run;
 mod search_reconciliation_plan;
 mod search_runtime;
-mod subscribe_ack;
 mod subscription_insert;
 mod voice_cleanup_dispatch;
 mod voice_sync_dispatch;

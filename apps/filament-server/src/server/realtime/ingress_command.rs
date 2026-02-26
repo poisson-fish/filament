@@ -23,7 +23,6 @@ use crate::server::{
 use super::{
     add_subscription, create_message_internal_from_ingress_validated, handle_presence_subscribe,
     handle_voice_subscribe,
-    subscribe_ack::{try_enqueue_subscribed_event, SubscribeAckEnqueueResult},
 };
 
 #[derive(Debug, Deserialize)]
@@ -264,6 +263,29 @@ pub(crate) fn parse_gateway_ingress_command(
     GatewayIngressCommand::try_from(envelope)
 }
 
+pub(crate) enum SubscribeAckEnqueueResult {
+    Enqueued,
+    Closed,
+    Full,
+    Oversized,
+}
+
+pub(crate) fn try_enqueue_subscribed_event(
+    outbound_tx: &mpsc::Sender<String>,
+    payload: String,
+    max_gateway_event_bytes: usize,
+) -> SubscribeAckEnqueueResult {
+    if payload.len() > max_gateway_event_bytes {
+        return SubscribeAckEnqueueResult::Oversized;
+    }
+
+    match outbound_tx.try_send(payload) {
+        Ok(()) => SubscribeAckEnqueueResult::Enqueued,
+        Err(mpsc::error::TrySendError::Closed(_)) => SubscribeAckEnqueueResult::Closed,
+        Err(mpsc::error::TrySendError::Full(_)) => SubscribeAckEnqueueResult::Full,
+    }
+}
+
 pub(crate) async fn execute_message_create_command(
     state: &AppState,
     auth: &AuthContext,
@@ -477,11 +499,12 @@ mod tests {
         allow_gateway_ingress, classify_ingress_command_parse_error,
         decode_gateway_ingress_message, parse_gateway_ingress_command,
         subscribe_ack_drop_metric_reason, subscribe_ack_error_reason,
-        subscribe_ack_reject_log_reason, GatewayIngressCommand, GatewayIngressCommandParseError,
-        GatewayIngressMessageDecode, IngressCommandParseClassification,
+        subscribe_ack_reject_log_reason, try_enqueue_subscribed_event, GatewayIngressCommand,
+        GatewayIngressCommandParseError, GatewayIngressMessageDecode,
+        IngressCommandParseClassification, SubscribeAckEnqueueResult,
     };
-    use crate::server::realtime::subscribe_ack::SubscribeAckEnqueueResult;
     use axum::extract::ws::Message;
+    use tokio::sync::mpsc;
 
     fn envelope(event_type: &str, payload: serde_json::Value) -> Envelope<serde_json::Value> {
         Envelope {
@@ -1018,5 +1041,43 @@ mod tests {
             subscribe_ack_reject_log_reason(&SubscribeAckEnqueueResult::Oversized),
             Some("oversized_outbound")
         );
+    }
+
+    #[test]
+    fn try_enqueue_subscribed_event_returns_enqueued_when_sender_has_capacity() {
+        let (tx, _rx) = mpsc::channel::<String>(1);
+
+        let result = try_enqueue_subscribed_event(&tx, String::from("payload"), 1024);
+
+        assert!(matches!(result, SubscribeAckEnqueueResult::Enqueued));
+    }
+
+    #[test]
+    fn try_enqueue_subscribed_event_returns_full_when_sender_is_full() {
+        let (tx, rx) = mpsc::channel::<String>(1);
+        tx.try_send(String::from("first"))
+            .expect("first send should fill queue");
+
+        let full_result = try_enqueue_subscribed_event(&tx, String::from("second"), 1024);
+        assert!(matches!(full_result, SubscribeAckEnqueueResult::Full));
+
+        drop(rx);
+    }
+
+    #[test]
+    fn try_enqueue_subscribed_event_returns_closed_when_sender_is_closed() {
+        let (tx, rx) = mpsc::channel::<String>(1);
+        drop(rx);
+        let closed_result = try_enqueue_subscribed_event(&tx, String::from("third"), 1024);
+        assert!(matches!(closed_result, SubscribeAckEnqueueResult::Closed));
+    }
+
+    #[test]
+    fn try_enqueue_subscribed_event_returns_oversized_when_payload_exceeds_limit() {
+        let (tx, _rx) = mpsc::channel::<String>(1);
+
+        let result = try_enqueue_subscribed_event(&tx, String::from("payload"), 3);
+
+        assert!(matches!(result, SubscribeAckEnqueueResult::Oversized));
     }
 }
