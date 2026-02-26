@@ -4,8 +4,6 @@ mod connection_runtime;
 mod connection_subscriptions;
 mod hydration_db;
 mod hydration_in_memory;
-mod hydration_in_memory_attachments;
-mod hydration_merge;
 mod hydration_runtime;
 pub mod livekit_sync;
 mod message_emit;
@@ -48,7 +46,6 @@ use ulid::Ulid;
 use uuid::Uuid;
 
 mod fanout_dispatch;
-mod hydration_order;
 mod ingress_command;
 mod message_attachment_bind;
 mod message_prepare;
@@ -68,9 +65,6 @@ pub(crate) use connection_runtime::{
 };
 use hydration_db::collect_hydrated_messages_db;
 use hydration_in_memory::collect_hydrated_messages_in_memory;
-use hydration_in_memory_attachments::apply_hydration_attachments;
-use hydration_merge::merge_hydration_maps;
-pub(crate) use hydration_order::collect_hydrated_in_request_order;
 use ingress_command::{
     allow_gateway_ingress, classify_ingress_command_parse_error, decode_gateway_ingress_message,
     execute_message_create_command, execute_subscribe_command, parse_gateway_ingress_command,
