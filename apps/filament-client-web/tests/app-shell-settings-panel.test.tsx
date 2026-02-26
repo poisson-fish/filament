@@ -20,6 +20,7 @@ function profileFixture(): ProfileRecord {
       { type: "paragraph_end" },
     ],
     avatarVersion: 1,
+    bannerVersion: 1,
   };
 }
 
@@ -53,9 +54,12 @@ function settingsPanelPropsFixture(
     profileDraftUsername: "owner",
     profileDraftAbout: "hello",
     profileAvatarUrl: null,
+    profileBannerUrl: null,
     selectedAvatarFilename: "",
+    selectedBannerFilename: "",
     isSavingProfile: false,
     isUploadingProfileAvatar: false,
+    isUploadingProfileBanner: false,
     profileStatus: "",
     profileError: "",
     onOpenSettingsCategory: () => undefined,
@@ -65,8 +69,10 @@ function settingsPanelPropsFixture(
     onProfileUsernameInput: () => undefined,
     onProfileAboutInput: () => undefined,
     onSelectProfileAvatarFile: () => undefined,
+    onSelectProfileBannerFile: () => undefined,
     onSaveProfile: () => undefined,
     onUploadProfileAvatar: () => undefined,
+    onUploadProfileBanner: () => undefined,
     ...overrides,
   };
 }
@@ -107,21 +113,27 @@ describe("app shell settings panel", () => {
     const onProfileUsernameInput = vi.fn();
     const onProfileAboutInput = vi.fn();
     const onSelectProfileAvatarFile = vi.fn();
+    const onSelectProfileBannerFile = vi.fn();
     const onSaveProfile = vi.fn();
     const onUploadProfileAvatar = vi.fn();
+    const onUploadProfileBanner = vi.fn();
 
     render(() => (
       <SettingsPanel
         {...settingsPanelPropsFixture({
           activeSettingsCategory: "profile",
           selectedAvatarFilename: "avatar.png",
+          selectedBannerFilename: "banner.png",
           profileAvatarUrl: "https://example.test/avatar.png",
+          profileBannerUrl: "https://example.test/banner.png",
           onOpenSettingsCategory,
           onProfileUsernameInput,
           onProfileAboutInput,
           onSelectProfileAvatarFile,
+          onSelectProfileBannerFile,
           onSaveProfile,
           onUploadProfileAvatar,
+          onUploadProfileBanner,
         })}
       />
     ));
@@ -139,6 +151,15 @@ describe("app shell settings panel", () => {
     });
     expect(onProfileAboutInput).toHaveBeenCalledWith("updated");
 
+    const bannerFileInput = screen.getByLabelText("Profile banner file input") as HTMLInputElement;
+    const bannerFile = new File(["banner-bytes"], "banner.png", { type: "image/png" });
+    Object.defineProperty(bannerFileInput, "files", {
+      configurable: true,
+      value: [bannerFile],
+    });
+    await fireEvent.input(bannerFileInput);
+    expect(onSelectProfileBannerFile).toHaveBeenCalledWith(bannerFile);
+
     const avatarFileInput = screen.getByLabelText("Profile avatar file input") as HTMLInputElement;
     const avatarFile = new File(["avatar-bytes"], "avatar.png", { type: "image/png" });
     Object.defineProperty(avatarFileInput, "files", {
@@ -149,9 +170,15 @@ describe("app shell settings panel", () => {
     expect(onSelectProfileAvatarFile).toHaveBeenCalledWith(avatarFile);
 
     await fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Upload banner" }));
     await fireEvent.click(screen.getByRole("button", { name: "Upload avatar" }));
     expect(onSaveProfile).toHaveBeenCalledOnce();
+    expect(onUploadProfileBanner).toHaveBeenCalledOnce();
     expect(onUploadProfileAvatar).toHaveBeenCalledOnce();
+
+    const bannerImage = screen.getByAltText("owner banner");
+    await fireEvent.error(bannerImage);
+    expect(bannerImage).toHaveStyle({ display: "none" });
 
     const avatarImage = screen.getByAltText("owner avatar");
     await fireEvent.error(avatarImage);

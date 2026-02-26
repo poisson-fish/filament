@@ -19,6 +19,7 @@ function profileFixture(): ProfileRecord {
       { type: "paragraph_end" },
     ],
     avatarVersion: 1,
+    bannerVersion: 1,
   };
 }
 
@@ -31,6 +32,7 @@ function overlayPropsFixture(
     selectedProfileError: "",
     selectedProfile: profileFixture(),
     avatarUrlForUser: () => null,
+    bannerUrlForUser: () => null,
     onClose: () => undefined,
     ...overrides,
   };
@@ -64,9 +66,10 @@ describe("app shell user profile overlay", () => {
     expect(document.querySelector(".profile-view-markdown")).toBeNull();
   });
 
-  it("keeps loading/error visibility, close interactions, and avatar fallback behavior", async () => {
+  it("keeps loading/error visibility, close interactions, and image fallback behavior", async () => {
     const onClose = vi.fn();
     const avatarUrl = "https://example.test/avatar.png";
+    const bannerUrl = "https://example.test/banner.png";
 
     const first = render(() => (
       <UserProfileOverlay
@@ -86,12 +89,16 @@ describe("app shell user profile overlay", () => {
         {...overlayPropsFixture({
           selectedProfileError: "Profile unavailable.",
           avatarUrlForUser: () => avatarUrl,
+          bannerUrlForUser: () => bannerUrl,
           onClose,
         })}
       />
     ));
 
     expect(screen.getByText("Profile unavailable.")).toBeInTheDocument();
+    const bannerImage = screen.getByAltText("owner banner");
+    await fireEvent.error(bannerImage);
+    expect(bannerImage).toHaveStyle({ display: "none" });
     const avatarImage = screen.getByAltText("owner avatar");
     await fireEvent.error(avatarImage);
     expect(avatarImage).toHaveStyle({ display: "none" });

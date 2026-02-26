@@ -17,6 +17,7 @@ function profileFixture(input: {
   username: string;
   aboutMarkdown?: string;
   avatarVersion?: number;
+  bannerVersion?: number;
 }) {
   return profileFromResponse({
     user_id: input.userId,
@@ -24,6 +25,7 @@ function profileFixture(input: {
     about_markdown: input.aboutMarkdown ?? "",
     about_markdown_tokens: [{ type: "text", text: input.aboutMarkdown ?? "" }],
     avatar_version: input.avatarVersion ?? 0,
+    banner_version: input.bannerVersion ?? 0,
   });
 }
 
@@ -51,13 +53,20 @@ describe("app shell profile controller", () => {
     const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<
       Record<string, number>
     >({});
+    const [bannerVersionByUserId, setBannerVersionByUserId] = createSignal<Record<string, number>>(
+      {},
+    );
     const [profileDraftUsername, setProfileDraftUsername] = createSignal("");
     const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
     const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(
       null,
     );
+    const [selectedProfileBannerFile, setSelectedProfileBannerFile] = createSignal<File | null>(
+      null,
+    );
     const [isSavingProfile, setSavingProfile] = createSignal(false);
     const [isUploadingProfileAvatar, setUploadingProfileAvatar] = createSignal(false);
+    const [isUploadingProfileBanner, setUploadingProfileBanner] = createSignal(false);
     const [profileSettingsStatus, setProfileSettingsStatus] = createSignal("");
     const [profileSettingsError, setProfileSettingsError] = createSignal("");
     const [selectedProfileError, setSelectedProfileError] = createSignal("");
@@ -101,19 +110,25 @@ describe("app shell profile controller", () => {
           session,
           selectedProfileUserId,
           avatarVersionByUserId,
+          bannerVersionByUserId,
           profileDraftUsername,
           profileDraftAbout,
           selectedProfileAvatarFile,
+          selectedProfileBannerFile,
           isSavingProfile,
           isUploadingProfileAvatar,
+          isUploadingProfileBanner,
           setProfileDraftUsername,
           setProfileDraftAbout,
           setSelectedProfileAvatarFile,
+          setSelectedProfileBannerFile,
           setProfileSettingsStatus,
           setProfileSettingsError,
           setSavingProfile,
           setUploadingProfileAvatar,
+          setUploadingProfileBanner,
           setAvatarVersionByUserId,
+          setBannerVersionByUserId,
           setSelectedProfileUserId,
           setSelectedProfileError,
         },
@@ -169,6 +184,11 @@ describe("app shell profile controller", () => {
     >({
       [USER_ID]: 3,
     });
+    const [bannerVersionByUserId, setBannerVersionByUserId] = createSignal<Record<string, number>>(
+      {
+        [USER_ID]: 2,
+      },
+    );
     const [profileDraftUsername, setProfileDraftUsername] = createSignal("alice");
     const [profileDraftAbout, setProfileDraftAbout] = createSignal("about");
     const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(
@@ -176,8 +196,14 @@ describe("app shell profile controller", () => {
         type: "image/png",
       }),
     );
+    const [selectedProfileBannerFile, setSelectedProfileBannerFile] = createSignal<File | null>(
+      new File(["banner"], "banner.png", {
+        type: "image/png",
+      }),
+    );
     const [isSavingProfile, setSavingProfile] = createSignal(true);
     const [isUploadingProfileAvatar, setUploadingProfileAvatar] = createSignal(true);
+    const [isUploadingProfileBanner, setUploadingProfileBanner] = createSignal(true);
     const [profileSettingsStatus, setProfileSettingsStatus] = createSignal("status");
     const [profileSettingsError, setProfileSettingsError] = createSignal("error");
     const [selectedProfileError, setSelectedProfileError] = createSignal("error");
@@ -188,19 +214,25 @@ describe("app shell profile controller", () => {
           session,
           selectedProfileUserId,
           avatarVersionByUserId,
+          bannerVersionByUserId,
           profileDraftUsername,
           profileDraftAbout,
           selectedProfileAvatarFile,
+          selectedProfileBannerFile,
           isSavingProfile,
           isUploadingProfileAvatar,
+          isUploadingProfileBanner,
           setProfileDraftUsername,
           setProfileDraftAbout,
           setSelectedProfileAvatarFile,
+          setSelectedProfileBannerFile,
           setProfileSettingsStatus,
           setProfileSettingsError,
           setSavingProfile,
           setUploadingProfileAvatar,
+          setUploadingProfileBanner,
           setAvatarVersionByUserId,
+          setBannerVersionByUserId,
           setSelectedProfileUserId,
           setSelectedProfileError,
         },
@@ -228,9 +260,11 @@ describe("app shell profile controller", () => {
 
     expect(isSavingProfile()).toBe(false);
     expect(isUploadingProfileAvatar()).toBe(false);
+    expect(isUploadingProfileBanner()).toBe(false);
     expect(profileDraftUsername()).toBe("");
     expect(profileDraftAbout()).toBe("");
     expect(selectedProfileAvatarFile()).toBeNull();
+    expect(selectedProfileBannerFile()).toBeNull();
     expect(profileSettingsStatus()).toBe("");
     expect(profileSettingsError()).toBe("");
     expect(selectedProfileUserId()).toBeNull();
@@ -247,13 +281,22 @@ describe("app shell profile controller", () => {
     >({
       [USER_ID]: 5,
     });
+    const [bannerVersionByUserId, setBannerVersionByUserId] = createSignal<Record<string, number>>(
+      {
+        [USER_ID]: 5,
+      },
+    );
     const [profileDraftUsername, setProfileDraftUsername] = createSignal("");
     const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
     const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(
       null,
     );
+    const [selectedProfileBannerFile, setSelectedProfileBannerFile] = createSignal<File | null>(
+      null,
+    );
     const [isSavingProfile, setSavingProfile] = createSignal(false);
     const [isUploadingProfileAvatar, setUploadingProfileAvatar] = createSignal(false);
+    const [isUploadingProfileBanner, setUploadingProfileBanner] = createSignal(false);
     const [, setProfileSettingsStatus] = createSignal("");
     const [, setProfileSettingsError] = createSignal("");
     const [, setSelectedProfileError] = createSignal("");
@@ -264,19 +307,25 @@ describe("app shell profile controller", () => {
           session,
           selectedProfileUserId,
           avatarVersionByUserId,
+          bannerVersionByUserId,
           profileDraftUsername,
           profileDraftAbout,
           selectedProfileAvatarFile,
+          selectedProfileBannerFile,
           isSavingProfile,
           isUploadingProfileAvatar,
+          isUploadingProfileBanner,
           setProfileDraftUsername,
           setProfileDraftAbout,
           setSelectedProfileAvatarFile,
+          setSelectedProfileBannerFile,
           setProfileSettingsStatus,
           setProfileSettingsError,
           setSavingProfile,
           setUploadingProfileAvatar,
+          setUploadingProfileBanner,
           setAvatarVersionByUserId,
+          setBannerVersionByUserId,
           setSelectedProfileUserId,
           setSelectedProfileError,
         },
@@ -317,6 +366,109 @@ describe("app shell profile controller", () => {
     expect(avatarVersionByUserId()[USER_ID]).toBe(6);
   });
 
+  it("runs banner upload transitions and bumps local banner version", async () => {
+    const [session] = createSignal(SESSION);
+    const [selectedProfileUserId, setSelectedProfileUserId] = createSignal<ReturnType<
+      typeof userIdFromInput
+    > | null>(null);
+    const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<Record<string, number>>(
+      {},
+    );
+    const [bannerVersionByUserId, setBannerVersionByUserId] = createSignal<Record<string, number>>(
+      {
+        [USER_ID]: 4,
+      },
+    );
+    const [profileDraftUsername, setProfileDraftUsername] = createSignal("");
+    const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
+    const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(
+      null,
+    );
+    const [selectedProfileBannerFile, setSelectedProfileBannerFile] = createSignal<File | null>(
+      null,
+    );
+    const [isSavingProfile, setSavingProfile] = createSignal(false);
+    const [isUploadingProfileAvatar, setUploadingProfileAvatar] = createSignal(false);
+    const [isUploadingProfileBanner, setUploadingProfileBanner] = createSignal(false);
+    const [profileSettingsStatus, setProfileSettingsStatus] = createSignal("");
+    const [profileSettingsError, setProfileSettingsError] = createSignal("");
+    const [, setSelectedProfileError] = createSignal("");
+
+    const uploadMyProfileBannerMock = vi.fn(async () =>
+      profileFixture({
+        userId: USER_ID,
+        username: "alice",
+        aboutMarkdown: "",
+        avatarVersion: 5,
+        bannerVersion: 4,
+      }),
+    );
+
+    const controller = createRoot(() =>
+      createProfileController(
+        {
+          session,
+          selectedProfileUserId,
+          avatarVersionByUserId,
+          bannerVersionByUserId,
+          profileDraftUsername,
+          profileDraftAbout,
+          selectedProfileAvatarFile,
+          selectedProfileBannerFile,
+          isSavingProfile,
+          isUploadingProfileAvatar,
+          isUploadingProfileBanner,
+          setProfileDraftUsername,
+          setProfileDraftAbout,
+          setSelectedProfileAvatarFile,
+          setSelectedProfileBannerFile,
+          setProfileSettingsStatus,
+          setProfileSettingsError,
+          setSavingProfile,
+          setUploadingProfileAvatar,
+          setUploadingProfileBanner,
+          setAvatarVersionByUserId,
+          setBannerVersionByUserId,
+          setSelectedProfileUserId,
+          setSelectedProfileError,
+        },
+        {
+          fetchMe: async () =>
+            profileFixture({
+              userId: USER_ID,
+              username: "alice",
+              aboutMarkdown: "",
+              avatarVersion: 5,
+              bannerVersion: 4,
+            }),
+          fetchUserProfile: async () =>
+            profileFixture({
+              userId: USER_ID,
+              username: "alice",
+              aboutMarkdown: "",
+              avatarVersion: 5,
+              bannerVersion: 4,
+            }),
+          uploadMyProfileBanner: uploadMyProfileBannerMock,
+        },
+      ),
+    );
+
+    await flushUntil(() => Boolean(controller.profile()));
+    setSelectedProfileBannerFile(
+      new File(["banner"], "banner.png", {
+        type: "image/png",
+      }),
+    );
+
+    await controller.uploadProfileBanner();
+    expect(uploadMyProfileBannerMock).toHaveBeenCalledTimes(1);
+    expect(selectedProfileBannerFile()).toBeNull();
+    expect(profileSettingsStatus()).toBe("Profile banner updated.");
+    expect(profileSettingsError()).toBe("");
+    expect(bannerVersionByUserId()[USER_ID]).toBe(5);
+  });
+
   it("rejects oversized profile about markdown before calling the API", async () => {
     const [session] = createSignal(SESSION);
     const [selectedProfileUserId, setSelectedProfileUserId] = createSignal<ReturnType<
@@ -325,13 +477,20 @@ describe("app shell profile controller", () => {
     const [avatarVersionByUserId, setAvatarVersionByUserId] = createSignal<Record<string, number>>(
       {},
     );
+    const [bannerVersionByUserId, setBannerVersionByUserId] = createSignal<Record<string, number>>(
+      {},
+    );
     const [profileDraftUsername, setProfileDraftUsername] = createSignal("alice");
     const [profileDraftAbout, setProfileDraftAbout] = createSignal("");
     const [selectedProfileAvatarFile, setSelectedProfileAvatarFile] = createSignal<File | null>(
       null,
     );
+    const [selectedProfileBannerFile, setSelectedProfileBannerFile] = createSignal<File | null>(
+      null,
+    );
     const [isSavingProfile, setSavingProfile] = createSignal(false);
     const [isUploadingProfileAvatar, setUploadingProfileAvatar] = createSignal(false);
+    const [isUploadingProfileBanner, setUploadingProfileBanner] = createSignal(false);
     const [profileSettingsStatus, setProfileSettingsStatus] = createSignal("");
     const [profileSettingsError, setProfileSettingsError] = createSignal("");
     const [selectedProfileError, setSelectedProfileError] = createSignal("");
@@ -351,19 +510,25 @@ describe("app shell profile controller", () => {
           session,
           selectedProfileUserId,
           avatarVersionByUserId,
+          bannerVersionByUserId,
           profileDraftUsername,
           profileDraftAbout,
           selectedProfileAvatarFile,
+          selectedProfileBannerFile,
           isSavingProfile,
           isUploadingProfileAvatar,
+          isUploadingProfileBanner,
           setProfileDraftUsername,
           setProfileDraftAbout,
           setSelectedProfileAvatarFile,
+          setSelectedProfileBannerFile,
           setProfileSettingsStatus,
           setProfileSettingsError,
           setSavingProfile,
           setUploadingProfileAvatar,
+          setUploadingProfileBanner,
           setAvatarVersionByUserId,
+          setBannerVersionByUserId,
           setSelectedProfileUserId,
           setSelectedProfileError,
         },

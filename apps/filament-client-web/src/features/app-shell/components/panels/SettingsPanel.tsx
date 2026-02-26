@@ -22,9 +22,12 @@ export interface SettingsPanelProps {
   profileDraftUsername: string;
   profileDraftAbout: string;
   profileAvatarUrl: string | null;
+  profileBannerUrl: string | null;
   selectedAvatarFilename: string;
+  selectedBannerFilename: string;
   isSavingProfile: boolean;
   isUploadingProfileAvatar: boolean;
+  isUploadingProfileBanner: boolean;
   profileStatus: string;
   profileError: string;
   onOpenSettingsCategory: (category: SettingsCategory) => void;
@@ -37,8 +40,10 @@ export interface SettingsPanelProps {
   onProfileUsernameInput: (value: string) => void;
   onProfileAboutInput: (value: string) => void;
   onSelectProfileAvatarFile: (file: File | null) => void;
+  onSelectProfileBannerFile: (file: File | null) => void;
   onSaveProfile: () => Promise<void> | void;
   onUploadProfileAvatar: () => Promise<void> | void;
+  onUploadProfileBanner: () => Promise<void> | void;
 }
 
 export function SettingsPanel(props: SettingsPanelProps) {
@@ -265,6 +270,32 @@ export function SettingsPanel(props: SettingsPanelProps) {
             </form>
             <div class="grid gap-[0.5rem]">
               <label class={formLabelClass}>
+                Banner image
+                <input
+                  class={formInputClass}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+                  aria-label="Profile banner file input"
+                  onInput={(event) =>
+                    props.onSelectProfileBannerFile(event.currentTarget.files?.[0] ?? null)}
+                />
+              </label>
+              <Show when={props.selectedBannerFilename}>
+                <p class="muted">Selected: {props.selectedBannerFilename}</p>
+              </Show>
+              <div class="flex gap-2">
+                <button
+                  type="button"
+                  class={formButtonClass}
+                  onClick={() => void props.onUploadProfileBanner()}
+                  disabled={props.isUploadingProfileBanner || props.selectedBannerFilename.length === 0}
+                >
+                  {props.isUploadingProfileBanner ? "Uploading..." : "Upload banner"}
+                </button>
+              </div>
+            </div>
+            <div class="grid gap-[0.5rem]">
+              <label class={formLabelClass}>
                 Avatar image
                 <input
                   class={formInputClass}
@@ -299,6 +330,19 @@ export function SettingsPanel(props: SettingsPanelProps) {
               {(profile) => (
                 <section class="grid gap-[0.75rem] rounded-[0.8rem] border border-line bg-bg-2 p-[1rem] shadow-sm">
                   <p class={sectionLabelClassName}>PROFILE PREVIEW</p>
+                  <Show when={props.profileBannerUrl}>
+                    <img
+                      class="h-[6rem] w-full rounded-[0.62rem] border border-line-soft object-cover"
+                      src={props.profileBannerUrl!}
+                      alt={`${profile().username} banner`}
+                      loading="lazy"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
+                      onError={(event) => {
+                        event.currentTarget.style.display = "none";
+                      }}
+                    />
+                  </Show>
                   <div class="flex items-center gap-[0.8rem]">
                     <span
                       class="relative inline-flex h-[3.2rem] w-[3.2rem] items-center justify-center overflow-hidden rounded-full border border-line-soft bg-gradient-to-br from-bg-4 to-bg-3 text-[1rem] font-[780] text-ink-0 shadow-sm"

@@ -8,6 +8,7 @@ export interface UserProfileOverlayProps {
   selectedProfileError: string;
   selectedProfile: ProfileRecord | null;
   avatarUrlForUser: (rawUserId: string) => string | null;
+  bannerUrlForUser?: (rawUserId: string) => string | null;
   onClose: () => void;
 }
 
@@ -49,6 +50,19 @@ export function UserProfileOverlay(props: UserProfileOverlayProps) {
             <Show when={props.selectedProfile}>
               {(profile) => (
                 <section class="grid gap-[0.7rem]">
+                  <Show when={props.bannerUrlForUser?.(profile().userId)}>
+                    <img
+                      class="h-[6.6rem] w-full rounded-[0.62rem] border border-line-soft object-cover"
+                      src={props.bannerUrlForUser?.(profile().userId) ?? undefined}
+                      alt={`${profile().username} banner`}
+                      loading="lazy"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
+                      onError={(event) => {
+                        event.currentTarget.style.display = "none";
+                      }}
+                    />
+                  </Show>
                   <div class="flex items-center gap-[0.68rem]">
                     <span
                       class="relative inline-flex h-[3rem] w-[3rem] shrink-0 items-center justify-center overflow-hidden rounded-full border border-line-soft bg-gradient-to-br from-bg-4 to-bg-3 text-[0.98rem] font-[780] text-ink-0"

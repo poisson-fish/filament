@@ -28,6 +28,7 @@ describe("api-auth-client", () => {
       about_markdown: "",
       about_markdown_tokens: [],
       avatar_version: 0,
+      banner_version: 0,
     });
 
     const api: AuthApi = {
@@ -39,6 +40,7 @@ describe("api-auth-client", () => {
       fetchUserProfile: vi.fn(async () => defaultProfile),
       updateMyProfile: vi.fn(async () => defaultProfile),
       uploadMyProfileAvatar: vi.fn(async () => defaultProfile),
+      uploadMyProfileBanner: vi.fn(async () => defaultProfile),
       lookupUsersByIds: vi.fn(async () =>
         userLookupListFromResponse({
           users: [
@@ -52,6 +54,9 @@ describe("api-auth-client", () => {
       ),
       profileAvatarUrl: vi.fn((userId, avatarVersion) =>
         `https://api.filament.local/users/${userId}/avatar?v=${avatarVersion}`,
+      ),
+      profileBannerUrl: vi.fn((userId, bannerVersion) =>
+        `https://api.filament.local/users/${userId}/banner?v=${bannerVersion}`,
       ),
     };
 
@@ -116,5 +121,20 @@ describe("api-auth-client", () => {
 
     expect(result).toBe("https://cdn.filament.local/01ARZ3NDEKTSV4RRFFQ69G5FAV?v=7");
     expect(profileAvatarUrl).toHaveBeenCalledWith(userId, 7);
+  });
+
+  it("delegates profileBannerUrl construction", () => {
+    const profileBannerUrl = vi.fn((userId: string, bannerVersion: number) =>
+      `https://cdn.filament.local/${userId}/banner?v=${bannerVersion}`,
+    );
+    const authClient = createAuthClient({
+      authApi: createAuthApiStub({ profileBannerUrl }),
+    });
+    const userId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+
+    const result = authClient.profileBannerUrl(userId, 7);
+
+    expect(result).toBe("https://cdn.filament.local/01ARZ3NDEKTSV4RRFFQ69G5FAV/banner?v=7");
+    expect(profileBannerUrl).toHaveBeenCalledWith(userId, 7);
   });
 });

@@ -84,7 +84,9 @@ export const fetchMe = authClient.fetchMe;
 export const fetchUserProfile = authClient.fetchUserProfile;
 export const updateMyProfile = authClient.updateMyProfile;
 export const uploadMyProfileAvatar = authClient.uploadMyProfileAvatar;
+export const uploadMyProfileBanner = authClient.uploadMyProfileBanner;
 export const profileAvatarUrl = authClient.profileAvatarUrl;
+export const profileBannerUrl = authClient.profileBannerUrl;
 export const lookupUsersByIds = authClient.lookupUsersByIds;
 
 export const fetchFriends = friendsClient.fetchFriends;

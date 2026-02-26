@@ -111,6 +111,7 @@ describe("app shell identity resolution controller", () => {
         about_markdown: "",
         about_markdown_tokens: [],
         avatar_version: 4,
+        banner_version: 2,
       }),
     );
     const [selectedProfile] = createSignal(null);

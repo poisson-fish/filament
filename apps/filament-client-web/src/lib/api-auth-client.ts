@@ -36,8 +36,10 @@ export interface AuthClient {
     input: { username?: Username; aboutMarkdown?: string },
   ): Promise<ProfileRecord>;
   uploadMyProfileAvatar(session: AuthSession, file: File): Promise<ProfileRecord>;
+  uploadMyProfileBanner(session: AuthSession, file: File): Promise<ProfileRecord>;
   lookupUsersByIds(session: AuthSession, userIds: UserId[]): Promise<UserLookupRecord[]>;
   profileAvatarUrl(userId: UserId, avatarVersion: number): string;
+  profileBannerUrl(userId: UserId, bannerVersion: number): string;
 }
 
 export function createAuthClient(input: AuthClientDependencies): AuthClient {
@@ -74,12 +76,20 @@ export function createAuthClient(input: AuthClientDependencies): AuthClient {
       return input.authApi.uploadMyProfileAvatar(session, file);
     },
 
+    uploadMyProfileBanner(session, file) {
+      return input.authApi.uploadMyProfileBanner(session, file);
+    },
+
     lookupUsersByIds(session, userIds) {
       return input.authApi.lookupUsersByIds(session, userIds);
     },
 
     profileAvatarUrl(userId, avatarVersion) {
       return input.authApi.profileAvatarUrl(userId, avatarVersion);
+    },
+
+    profileBannerUrl(userId, bannerVersion) {
+      return input.authApi.profileBannerUrl(userId, bannerVersion);
     },
   };
 }

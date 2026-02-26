@@ -14,8 +14,10 @@ import {
   fetchMe,
   fetchUserProfile,
   profileAvatarUrl,
+  profileBannerUrl,
   updateMyProfile,
   uploadMyProfileAvatar,
+  uploadMyProfileBanner,
 } from "../../../lib/api";
 import { mapError } from "../helpers";
 
@@ -23,19 +25,25 @@ export interface ProfileControllerOptions {
   session: Accessor<AuthSession | null>;
   selectedProfileUserId: Accessor<UserId | null>;
   avatarVersionByUserId: Accessor<Record<string, number>>;
+  bannerVersionByUserId: Accessor<Record<string, number>>;
   profileDraftUsername: Accessor<string>;
   profileDraftAbout: Accessor<string>;
   selectedProfileAvatarFile: Accessor<File | null>;
+  selectedProfileBannerFile: Accessor<File | null>;
   isSavingProfile: Accessor<boolean>;
   isUploadingProfileAvatar: Accessor<boolean>;
+  isUploadingProfileBanner: Accessor<boolean>;
   setProfileDraftUsername: Setter<string>;
   setProfileDraftAbout: Setter<string>;
   setSelectedProfileAvatarFile: Setter<File | null>;
+  setSelectedProfileBannerFile: Setter<File | null>;
   setProfileSettingsStatus: Setter<string>;
   setProfileSettingsError: Setter<string>;
   setSavingProfile: Setter<boolean>;
   setUploadingProfileAvatar: Setter<boolean>;
+  setUploadingProfileBanner: Setter<boolean>;
   setAvatarVersionByUserId: Setter<Record<string, number>>;
+  setBannerVersionByUserId: Setter<Record<string, number>>;
   setSelectedProfileUserId: Setter<UserId | null>;
   setSelectedProfileError: Setter<string>;
 }
@@ -56,12 +64,30 @@ function mergeAvatarVersion(
   };
 }
 
+function mergeBannerVersion(
+  existing: Record<string, number>,
+  userId: string,
+  bannerVersion: number,
+): Record<string, number> {
+  const current = existing[userId] ?? 0;
+  const nextVersion = Math.max(current, bannerVersion);
+  if (current === nextVersion) {
+    return existing;
+  }
+  return {
+    ...existing,
+    [userId]: nextVersion,
+  };
+}
+
 export interface ProfileControllerDependencies {
   fetchMe: typeof fetchMe;
   fetchUserProfile: typeof fetchUserProfile;
   updateMyProfile: typeof updateMyProfile;
   uploadMyProfileAvatar: typeof uploadMyProfileAvatar;
+  uploadMyProfileBanner: typeof uploadMyProfileBanner;
   profileAvatarUrl: typeof profileAvatarUrl;
+  profileBannerUrl: typeof profileBannerUrl;
 }
 
 const DEFAULT_PROFILE_CONTROLLER_DEPENDENCIES: ProfileControllerDependencies = {
@@ -69,7 +95,9 @@ const DEFAULT_PROFILE_CONTROLLER_DEPENDENCIES: ProfileControllerDependencies = {
   fetchUserProfile,
   updateMyProfile,
   uploadMyProfileAvatar,
+  uploadMyProfileBanner,
   profileAvatarUrl,
+  profileBannerUrl,
 };
 
 export function createProfileController(
@@ -121,6 +149,16 @@ export function createProfileController(
       options.setSelectedProfileUserId(userId);
     } catch {
       options.setSelectedProfileError("User profile is unavailable.");
+    }
+  };
+
+  const bannerUrlForUser = (rawUserId: string): string | null => {
+    try {
+      const userId = userIdFromInput(rawUserId);
+      const bannerVersion = options.bannerVersionByUserId()[userId] ?? 0;
+      return deps.profileBannerUrl(userId, bannerVersion);
+    } catch {
+      return null;
     }
   };
 
@@ -197,14 +235,53 @@ export function createProfileController(
     }
   };
 
+  const uploadProfileBanner = async (): Promise<void> => {
+    const session = options.session();
+    const selectedFile = options.selectedProfileBannerFile();
+    if (!session || !selectedFile || options.isUploadingProfileBanner()) {
+      return;
+    }
+
+    options.setUploadingProfileBanner(true);
+    options.setProfileSettingsStatus("");
+    options.setProfileSettingsError("");
+    try {
+      const updated = await deps.uploadMyProfileBanner(session, selectedFile);
+      const previousVersion = options.bannerVersionByUserId()[updated.userId] ?? 0;
+      mutateProfile(updated);
+      options.setBannerVersionByUserId((existing) => {
+        const current = existing[updated.userId] ?? 0;
+        const serverVersion = Math.max(0, updated.bannerVersion);
+        const baselineVersion = Math.max(previousVersion, serverVersion);
+        const nextVersion =
+          baselineVersion > previousVersion ? baselineVersion : previousVersion + 1;
+        if (current >= nextVersion) {
+          return existing;
+        }
+        return {
+          ...existing,
+          [updated.userId]: nextVersion,
+        };
+      });
+      options.setSelectedProfileBannerFile(null);
+      options.setProfileSettingsStatus("Profile banner updated.");
+    } catch (error) {
+      options.setProfileSettingsError(mapError(error, "Unable to upload profile banner."));
+    } finally {
+      options.setUploadingProfileBanner(false);
+    }
+  };
+
   createEffect(() => {
     const session = options.session();
     if (!session) {
       options.setSavingProfile(false);
       options.setUploadingProfileAvatar(false);
+      options.setUploadingProfileBanner(false);
       options.setProfileDraftUsername("");
       options.setProfileDraftAbout("");
       options.setSelectedProfileAvatarFile(null);
+      options.setSelectedProfileBannerFile(null);
       options.setProfileSettingsStatus("");
       options.setProfileSettingsError("");
       options.setSelectedProfileUserId(null);
@@ -220,6 +297,9 @@ export function createProfileController(
     }
     options.setAvatarVersionByUserId((existing) =>
       mergeAvatarVersion(existing, value.userId, value.avatarVersion),
+    );
+    options.setBannerVersionByUserId((existing) =>
+      mergeBannerVersion(existing, value.userId, value.bannerVersion),
     );
     options.setProfileDraftUsername(value.username);
     options.setProfileDraftAbout(value.aboutMarkdown);
@@ -238,8 +318,10 @@ export function createProfileController(
     profile,
     selectedProfile,
     avatarUrlForUser,
+    bannerUrlForUser,
     openUserProfile,
     saveProfileSettings,
     uploadProfileAvatar,
+    uploadProfileBanner,
   };
 }

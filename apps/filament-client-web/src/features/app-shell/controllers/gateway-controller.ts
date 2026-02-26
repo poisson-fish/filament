@@ -77,6 +77,7 @@ export interface GatewayControllerOptions {
   setReactionState: Setter<Record<string, ReactionView>>;
   setResolvedUsernames: Setter<Record<string, string>>;
   setAvatarVersionByUserId: Setter<Record<string, number>>;
+  setBannerVersionByUserId?: Setter<Record<string, number>>;
   setProfileDraftUsername: Setter<string>;
   setProfileDraftAbout: Setter<string>;
   setFriends: Setter<FriendRecord[]>;
@@ -881,7 +882,11 @@ export function createGatewayController(
           mergeAvatarVersion(existing, payload.userId, payload.avatarVersion),
         );
       },
-      onProfileBannerUpdate: (_payload) => {},
+      onProfileBannerUpdate: (payload) => {
+        options.setBannerVersionByUserId?.((existing) =>
+          mergeAvatarVersion(existing, payload.userId, payload.bannerVersion),
+        );
+      },
       onFriendRequestCreate: (payload) => {
         options.setResolvedUsernames((existing) => {
           let next = mergeResolvedUsername(

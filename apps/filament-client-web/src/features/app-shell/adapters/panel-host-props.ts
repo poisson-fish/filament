@@ -102,9 +102,12 @@ export interface SettingsPanelBuilderOptions {
   profileDraftUsername: string;
   profileDraftAbout: string;
   profileAvatarUrl: string | null;
+  profileBannerUrl?: string | null;
   selectedAvatarFilename: string;
+  selectedBannerFilename?: string;
   isSavingProfile: boolean;
   isUploadingProfileAvatar: boolean;
+  isUploadingProfileBanner?: boolean;
   profileSettingsStatus: string;
   profileSettingsError: string;
   onOpenSettingsCategory: (category: SettingsCategory) => void;
@@ -117,8 +120,10 @@ export interface SettingsPanelBuilderOptions {
   setProfileDraftUsername: (value: string) => void;
   setProfileDraftAbout: (value: string) => void;
   setSelectedProfileAvatarFile: (file: File | null) => void;
+  setSelectedProfileBannerFile?: (file: File | null) => void;
   onSaveProfileSettings: () => Promise<void> | void;
   onUploadProfileAvatar: () => Promise<void> | void;
+  onUploadProfileBanner?: () => Promise<void> | void;
 }
 
 export interface WorkspaceSettingsPanelBuilderOptions {
@@ -369,9 +374,12 @@ export function buildSettingsPanelProps(
     profileDraftUsername: options.profileDraftUsername,
     profileDraftAbout: options.profileDraftAbout,
     profileAvatarUrl: options.profileAvatarUrl,
+    profileBannerUrl: options.profileBannerUrl ?? null,
     selectedAvatarFilename: options.selectedAvatarFilename,
+    selectedBannerFilename: options.selectedBannerFilename ?? "",
     isSavingProfile: options.isSavingProfile,
     isUploadingProfileAvatar: options.isUploadingProfileAvatar,
+    isUploadingProfileBanner: options.isUploadingProfileBanner ?? false,
     profileStatus: options.profileSettingsStatus,
     profileError: options.profileSettingsError,
     onOpenSettingsCategory: options.onOpenSettingsCategory,
@@ -381,8 +389,10 @@ export function buildSettingsPanelProps(
     onProfileUsernameInput: options.setProfileDraftUsername,
     onProfileAboutInput: options.setProfileDraftAbout,
     onSelectProfileAvatarFile: options.setSelectedProfileAvatarFile,
+    onSelectProfileBannerFile: options.setSelectedProfileBannerFile ?? (() => undefined),
     onSaveProfile: options.onSaveProfileSettings,
     onUploadProfileAvatar: options.onUploadProfileAvatar,
+    onUploadProfileBanner: options.onUploadProfileBanner ?? (() => undefined),
   };
 }
 

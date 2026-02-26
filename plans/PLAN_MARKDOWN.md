@@ -263,23 +263,23 @@ Add server-side profile banner storage, retrieval, validation, and event propaga
 Expose banner and improved about-markdown UX in web client profile surfaces.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Extend client domain/API contracts with `bannerVersion`.
-- [ ] Add client API methods:
+- [x] Extend client domain/API contracts with `bannerVersion`.
+- [x] Add client API methods:
   - `uploadMyProfileBanner(...)`
   - `profileBannerUrl(userId, bannerVersion)`
-- [ ] Extend app-shell profile state/controller with banner file selection + upload busy/error/status states.
-- [ ] Update `SettingsPanel` profile section:
+- [x] Extend app-shell profile state/controller with banner file selection + upload busy/error/status states.
+- [x] Update `SettingsPanel` profile section:
   - banner file picker + upload action
   - remaining-character indicator for about markdown cap
-- [ ] Update `UserProfileOverlay` and profile preview to render banner with safe image fallback behavior.
+- [x] Update `UserProfileOverlay` and profile preview to render banner with safe image fallback behavior.
 
 ### Tests
-- [ ] API boundary tests for banner DTO parsing.
-- [ ] Profile controller tests for banner upload transitions and error mapping.
-- [ ] Settings/overlay component tests for:
+- [x] API boundary tests for banner DTO parsing.
+- [x] Profile controller tests for banner upload transitions and error mapping.
+- [x] Settings/overlay component tests for:
   - banner rendering/fallback
   - banner upload controls
   - about limit UX behavior
@@ -304,6 +304,24 @@ Expose banner and improved about-markdown UX in web client profile surfaces.
 
 ### Exit Criteria
 - Users can upload banners and see consistent profile markdown/banner rendering in settings and profile overlay.
+
+### Progress Notes
+- 2026-02-26: Extended web profile domain contract with required `bannerVersion` parsing on profile DTOs and wired `banner_version` through auth/profile API boundaries.
+- 2026-02-26: Added authenticated banner API surface in web client:
+  - `uploadMyProfileBanner(session, file)` with strict local guardrails (`6 MiB` cap and MIME allowlist `image/jpeg|png|webp|avif|gif`)
+  - `profileBannerUrl(userId, bannerVersion)` cache-busting URL builder.
+- 2026-02-26: Extended app-shell profile state/controller/runtime wiring for banner support:
+  - selected banner file state
+  - upload busy state
+  - per-user banner version map and version bump behavior on upload + gateway events.
+- 2026-02-26: Updated profile settings + overlay UI to render banners with safe fallback:
+  - banner upload controls in profile settings
+  - banner rendering in settings preview and user profile overlay with `referrerPolicy="no-referrer"` and error-hide fallback.
+- 2026-02-26: Added focused tests covering:
+  - auth API banner DTO/method boundaries,
+  - profile controller banner upload transitions,
+  - settings/overlay banner controls and fallback rendering,
+  - settings/runtime prop wiring and gateway controller registration compatibility.
 
 ---
 

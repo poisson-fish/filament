@@ -15,8 +15,10 @@ export interface ClientSettingsPanelPropsOptions {
   profileDraftUsername: string;
   profileDraftAbout: string;
   selectedAvatarFilename: string;
+  selectedBannerFilename?: string;
   isSavingProfile: boolean;
   isUploadingProfileAvatar: boolean;
+  isUploadingProfileBanner?: boolean;
   profileSettingsStatus: string;
   profileSettingsError: string;
   onOpenSettingsCategory: SettingsPanelBuilderOptions["onOpenSettingsCategory"];
@@ -26,9 +28,12 @@ export interface ClientSettingsPanelPropsOptions {
   setProfileDraftUsername: SettingsPanelBuilderOptions["setProfileDraftUsername"];
   setProfileDraftAbout: SettingsPanelBuilderOptions["setProfileDraftAbout"];
   setSelectedProfileAvatarFile: SettingsPanelBuilderOptions["setSelectedProfileAvatarFile"];
+  setSelectedProfileBannerFile?: SettingsPanelBuilderOptions["setSelectedProfileBannerFile"];
   onSaveProfileSettings: SettingsPanelBuilderOptions["onSaveProfileSettings"];
   onUploadProfileAvatar: SettingsPanelBuilderOptions["onUploadProfileAvatar"];
+  onUploadProfileBanner?: SettingsPanelBuilderOptions["onUploadProfileBanner"];
   avatarUrlForUser: (rawUserId: string) => string | null;
+  bannerUrlForUser?: (rawUserId: string) => string | null;
 }
 
 export function createClientSettingsPanelProps(
@@ -49,9 +54,14 @@ export function createClientSettingsPanelProps(
     profileAvatarUrl: options.profile
       ? options.avatarUrlForUser(options.profile.userId)
       : null,
+    profileBannerUrl: options.profile
+      ? (options.bannerUrlForUser?.(options.profile.userId) ?? null)
+      : null,
     selectedAvatarFilename: options.selectedAvatarFilename,
+    selectedBannerFilename: options.selectedBannerFilename ?? "",
     isSavingProfile: options.isSavingProfile,
     isUploadingProfileAvatar: options.isUploadingProfileAvatar,
+    isUploadingProfileBanner: options.isUploadingProfileBanner ?? false,
     profileSettingsStatus: options.profileSettingsStatus,
     profileSettingsError: options.profileSettingsError,
     onOpenSettingsCategory: options.onOpenSettingsCategory,
@@ -61,7 +71,9 @@ export function createClientSettingsPanelProps(
     setProfileDraftUsername: options.setProfileDraftUsername,
     setProfileDraftAbout: options.setProfileDraftAbout,
     setSelectedProfileAvatarFile: options.setSelectedProfileAvatarFile,
+    setSelectedProfileBannerFile: options.setSelectedProfileBannerFile ?? (() => undefined),
     onSaveProfileSettings: options.onSaveProfileSettings,
     onUploadProfileAvatar: options.onUploadProfileAvatar,
+    onUploadProfileBanner: options.onUploadProfileBanner ?? (() => undefined),
   };
 }

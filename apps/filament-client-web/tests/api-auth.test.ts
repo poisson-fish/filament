@@ -158,6 +158,7 @@ describe("api-auth", () => {
       about_markdown: "Hello",
       about_markdown_tokens: [],
       avatar_version: 4,
+      banner_version: 2,
     }));
     const api = createAuthApi({
       requestJson,
@@ -178,6 +179,7 @@ describe("api-auth", () => {
       username: "valid_user",
       aboutMarkdown: "Hello",
       avatarVersion: 4,
+      bannerVersion: 2,
     });
     expect(requestJson).toHaveBeenCalledWith({
       method: "GET",
@@ -211,6 +213,7 @@ describe("api-auth", () => {
       about_markdown: "Profile",
       about_markdown_tokens: [],
       avatar_version: 3,
+      banner_version: 1,
     }));
     const api = createAuthApi({
       requestJson,
@@ -245,6 +248,7 @@ describe("api-auth", () => {
       about_markdown: "Updated",
       about_markdown_tokens: [],
       avatar_version: 1,
+      banner_version: 0,
     }));
     const api = createAuthApi({
       requestJson,
@@ -308,6 +312,7 @@ describe("api-auth", () => {
       about_markdown: "Hello",
       about_markdown_tokens: [],
       avatar_version: 5,
+      banner_version: 6,
     }));
 
     const api = createAuthApi({
@@ -328,6 +333,7 @@ describe("api-auth", () => {
     await expect(api.uploadMyProfileAvatar(session, file)).resolves.toMatchObject({
       userId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       avatarVersion: 5,
+      bannerVersion: 6,
     });
     expect(requestJsonWithBody).toHaveBeenCalledWith({
       method: "POST",
@@ -361,6 +367,79 @@ describe("api-auth", () => {
     ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
   });
 
+  it("uploadMyProfileBanner enforces size and MIME bounds", async () => {
+    const requestJsonWithBody = vi.fn(async () => null);
+    const api = createAuthApi({
+      requestJson: vi.fn(async () => null),
+      requestJsonWithBody,
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
+    });
+
+    const session = {
+      accessToken: accessTokenFromInput("A".repeat(64)),
+      refreshToken: refreshTokenFromInput("B".repeat(64)),
+      expiresAtUnix: 2_000_000_000,
+    };
+
+    await expect(
+      api.uploadMyProfileBanner(
+        session,
+        new File([new Uint8Array(0)], "banner.png", { type: "image/png" }),
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+
+    await expect(
+      api.uploadMyProfileBanner(
+        session,
+        new File([new Uint8Array([1, 2, 3])], "banner.svg", { type: "image/svg+xml" }),
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+
+    expect(requestJsonWithBody).not.toHaveBeenCalled();
+  });
+
+  it("uploadMyProfileBanner sends authenticated body request and maps profile DTO", async () => {
+    const requestJsonWithBody = vi.fn(async () => ({
+      user_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      username: "valid_user",
+      about_markdown: "Hello",
+      about_markdown_tokens: [],
+      avatar_version: 5,
+      banner_version: 8,
+    }));
+
+    const api = createAuthApi({
+      requestJson: vi.fn(async () => null),
+      requestJsonWithBody,
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.filament.local",
+    });
+
+    const file = new File([new Uint8Array([1, 2, 3])], "banner.png", { type: "image/png" });
+    const session = {
+      accessToken: accessTokenFromInput("A".repeat(64)),
+      refreshToken: refreshTokenFromInput("B".repeat(64)),
+      expiresAtUnix: 2_000_000_000,
+    };
+
+    await expect(api.uploadMyProfileBanner(session, file)).resolves.toMatchObject({
+      userId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      bannerVersion: 8,
+    });
+    expect(requestJsonWithBody).toHaveBeenCalledWith({
+      method: "POST",
+      path: "/users/me/profile/banner",
+      accessToken: "A".repeat(64),
+      headers: {
+        "content-type": "image/png",
+      },
+      body: file,
+    });
+  });
+
   it("profileAvatarUrl normalizes version and uses configured base URL", () => {
     const api = createAuthApi({
       requestJson: vi.fn(async () => null),
@@ -376,6 +455,24 @@ describe("api-auth", () => {
     );
     expect(api.profileAvatarUrl(userId, 6.9)).toBe(
       "https://api.example.test/users/01ARZ3NDEKTSV4RRFFQ69G5FAV/avatar?v=6",
+    );
+  });
+
+  it("profileBannerUrl normalizes version and uses configured base URL", () => {
+    const api = createAuthApi({
+      requestJson: vi.fn(async () => null),
+      requestJsonWithBody: vi.fn(async () => null),
+      requestNoContent: vi.fn(async () => undefined),
+      createApiError: (status, code, message) => new MockApiError(status, code, message),
+      apiBaseUrl: () => "https://api.example.test",
+    });
+
+    const userId = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    expect(api.profileBannerUrl(userId, -4.8)).toBe(
+      "https://api.example.test/users/01ARZ3NDEKTSV4RRFFQ69G5FAV/banner?v=0",
+    );
+    expect(api.profileBannerUrl(userId, 6.9)).toBe(
+      "https://api.example.test/users/01ARZ3NDEKTSV4RRFFQ69G5FAV/banner?v=6",
     );
   });
 });

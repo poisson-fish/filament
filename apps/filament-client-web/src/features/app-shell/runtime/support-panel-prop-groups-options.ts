@@ -34,8 +34,10 @@ export interface SupportPanelPropGroupsStateOptions {
   profileDraftUsername: () => string;
   profileDraftAbout: () => string;
   selectedAvatarFilename: () => string;
+  selectedBannerFilename?: () => string;
   isSavingProfile: () => boolean;
   isUploadingProfileAvatar: () => boolean;
+  isUploadingProfileBanner?: () => boolean;
   profileSettingsStatus: () => string;
   profileSettingsError: () => string;
   onOpenSettingsCategory:
@@ -52,12 +54,18 @@ export interface SupportPanelPropGroupsStateOptions {
     SupportPanelPropGroupsOptions["settings"]["setProfileDraftAbout"];
   setSelectedProfileAvatarFile:
     SupportPanelPropGroupsOptions["settings"]["setSelectedProfileAvatarFile"];
+  setSelectedProfileBannerFile?:
+    SupportPanelPropGroupsOptions["settings"]["setSelectedProfileBannerFile"];
   onSaveProfileSettings:
     SupportPanelPropGroupsOptions["settings"]["onSaveProfileSettings"];
   onUploadProfileAvatar:
     SupportPanelPropGroupsOptions["settings"]["onUploadProfileAvatar"];
+  onUploadProfileBanner?:
+    SupportPanelPropGroupsOptions["settings"]["onUploadProfileBanner"];
   avatarUrlForUser:
     SupportPanelPropGroupsOptions["settings"]["avatarUrlForUser"];
+  bannerUrlForUser?:
+    SupportPanelPropGroupsOptions["settings"]["bannerUrlForUser"];
   hasActiveWorkspace: () => boolean;
   canManageWorkspaceSettings: () => boolean;
   workspaceSettingsSection:
@@ -170,8 +178,10 @@ export function createSupportPanelPropGroupsOptions(
       profileDraftUsername: options.profileDraftUsername(),
       profileDraftAbout: options.profileDraftAbout(),
       selectedAvatarFilename: options.selectedAvatarFilename(),
+      selectedBannerFilename: options.selectedBannerFilename?.() ?? "",
       isSavingProfile: options.isSavingProfile(),
       isUploadingProfileAvatar: options.isUploadingProfileAvatar(),
+      isUploadingProfileBanner: options.isUploadingProfileBanner?.() ?? false,
       profileSettingsStatus: options.profileSettingsStatus(),
       profileSettingsError: options.profileSettingsError(),
       onOpenSettingsCategory: options.onOpenSettingsCategory,
@@ -181,9 +191,12 @@ export function createSupportPanelPropGroupsOptions(
       setProfileDraftUsername: options.setProfileDraftUsername,
       setProfileDraftAbout: options.setProfileDraftAbout,
       setSelectedProfileAvatarFile: options.setSelectedProfileAvatarFile,
+      setSelectedProfileBannerFile: options.setSelectedProfileBannerFile ?? (() => undefined),
       onSaveProfileSettings: options.onSaveProfileSettings,
       onUploadProfileAvatar: options.onUploadProfileAvatar,
+      onUploadProfileBanner: options.onUploadProfileBanner ?? (() => undefined),
       avatarUrlForUser: options.avatarUrlForUser,
+      bannerUrlForUser: options.bannerUrlForUser ?? (() => null),
     },
     workspaceSettings: {
       hasActiveWorkspace: options.hasActiveWorkspace(),

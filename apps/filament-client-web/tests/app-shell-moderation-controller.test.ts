@@ -39,6 +39,7 @@ describe("app shell moderation controller", () => {
       aboutMarkdown: "",
       aboutMarkdownTokens: [],
       avatarVersion: 0,
+      bannerVersion: 0,
     }));
     const addGuildMemberMock = vi.fn(async () => ({ accepted: true as const }));
     const updateGuildMemberRoleMock = vi.fn(async () => ({ accepted: true as const }));

@@ -459,6 +459,7 @@ describe("app shell extracted layout components", () => {
         { type: "paragraph_end" },
       ],
       avatarVersion: 1,
+      bannerVersion: 0,
     };
 
     const first = render(() => (

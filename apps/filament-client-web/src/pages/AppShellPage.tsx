@@ -51,7 +51,7 @@ export function AppShellPage() {
     voiceSessionDurationLabel,
     canCloseActivePanel,
   } = runtime.selectors;
-  const { profile, selectedProfile, avatarUrlForUser, openUserProfile } =
+  const { profile, selectedProfile, avatarUrlForUser, bannerUrlForUser, openUserProfile } =
     runtime.profileController;
 
   const {
@@ -342,6 +342,7 @@ export function AppShellPage() {
         selectedProfileError={profileState.selectedProfileError()}
         selectedProfile={selectedProfile() ?? null}
         avatarUrlForUser={avatarUrlForUser}
+        bannerUrlForUser={bannerUrlForUser}
         onClose={() => profileState.setSelectedProfileUserId(null)}
       />
     </AppShellLayout>

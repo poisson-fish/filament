@@ -1184,6 +1184,7 @@ export interface ProfileRecord {
   aboutMarkdown: string;
   aboutMarkdownTokens: MarkdownToken[];
   avatarVersion: number;
+  bannerVersion: number;
 }
 
 export function profileFromResponse(dto: unknown): ProfileRecord {
@@ -1196,6 +1197,7 @@ export function profileFromResponse(dto: unknown): ProfileRecord {
     ),
     aboutMarkdownTokens: markdownTokensFromResponse(data.about_markdown_tokens),
     avatarVersion: requireNonNegativeInteger(data.avatar_version, "avatar_version"),
+    bannerVersion: requireNonNegativeInteger(data.banner_version, "banner_version"),
   };
 }
 

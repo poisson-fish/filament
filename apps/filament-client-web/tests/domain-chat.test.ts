@@ -310,9 +310,11 @@ describe("chat domain invariants", () => {
         { type: "paragraph_end" },
       ],
       avatar_version: 7,
+      banner_version: 5,
     });
     expect(profile.username).toBe("alice");
     expect(profile.avatarVersion).toBe(7);
+    expect(profile.bannerVersion).toBe(5);
   });
 
   it("validates directory phase newtypes", () => {

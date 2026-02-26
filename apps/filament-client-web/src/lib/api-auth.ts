@@ -31,6 +31,14 @@ interface BodyRequest {
 }
 
 const MAX_PROFILE_AVATAR_BYTES = 2 * 1024 * 1024;
+const MAX_PROFILE_BANNER_BYTES = 6 * 1024 * 1024;
+const PROFILE_BANNER_MIME_ALLOWLIST = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/avif",
+  "image/gif",
+]);
 
 interface AuthApiDependencies {
   requestJson: (request: JsonRequest) => Promise<unknown>;
@@ -60,8 +68,10 @@ export interface AuthApi {
     input: { username?: Username; aboutMarkdown?: string },
   ): Promise<ProfileRecord>;
   uploadMyProfileAvatar(session: AuthSession, file: File): Promise<ProfileRecord>;
+  uploadMyProfileBanner(session: AuthSession, file: File): Promise<ProfileRecord>;
   lookupUsersByIds(session: AuthSession, userIds: UserId[]): Promise<UserLookupRecord[]>;
   profileAvatarUrl(userId: UserId, avatarVersion: number): string;
+  profileBannerUrl(userId: UserId, bannerVersion: number): string;
 }
 
 export function createAuthApi(input: AuthApiDependencies): AuthApi {
@@ -159,6 +169,7 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
         about_markdown?: unknown;
         about_markdown_tokens?: unknown;
         avatar_version?: unknown;
+        banner_version?: unknown;
       };
       return profileFromResponse({
         user_id: userId,
@@ -168,6 +179,7 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
           ? data.about_markdown_tokens
           : [],
         avatar_version: Number.isInteger(data.avatar_version) ? data.avatar_version : 0,
+        banner_version: Number.isInteger(data.banner_version) ? data.banner_version : 0,
       });
     },
 
@@ -219,6 +231,35 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
       return profileFromResponse(dto);
     },
 
+    async uploadMyProfileBanner(session, file) {
+      if (file.size < 1 || file.size > MAX_PROFILE_BANNER_BYTES) {
+        throw input.createApiError(
+          400,
+          "invalid_request",
+          "Banner size must be within server limits.",
+        );
+      }
+      if (!PROFILE_BANNER_MIME_ALLOWLIST.has(file.type)) {
+        throw input.createApiError(
+          400,
+          "invalid_request",
+          "Banner type must be a supported image format.",
+        );
+      }
+      const headers: Record<string, string> = {};
+      if (file.type && file.type.length <= 128) {
+        headers["content-type"] = file.type;
+      }
+      const dto = await input.requestJsonWithBody({
+        method: "POST",
+        path: "/users/me/profile/banner",
+        accessToken: session.accessToken,
+        headers,
+        body: file,
+      });
+      return profileFromResponse(dto);
+    },
+
     async lookupUsersByIds(session, userIds) {
       if (userIds.length < 1 || userIds.length > 64) {
         throw input.createApiError(400, "invalid_request", "user_ids must contain 1-64 values.");
@@ -234,6 +275,10 @@ export function createAuthApi(input: AuthApiDependencies): AuthApi {
 
     profileAvatarUrl(userId, avatarVersion) {
       return `${input.apiBaseUrl()}/users/${userId}/avatar?v=${Math.max(0, Math.trunc(avatarVersion))}`;
+    },
+
+    profileBannerUrl(userId, bannerVersion) {
+      return `${input.apiBaseUrl()}/users/${userId}/banner?v=${Math.max(0, Math.trunc(bannerVersion))}`;
     },
   };
 }
