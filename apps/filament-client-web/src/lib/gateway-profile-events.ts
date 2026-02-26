@@ -5,6 +5,7 @@ import {
 } from "../domain/chat";
 import type {
   ProfileAvatarUpdatePayload,
+  ProfileBannerUpdatePayload,
   ProfileUpdatePayload,
 } from "./gateway-contracts";
 
@@ -16,6 +17,10 @@ type ProfileGatewayEvent =
   | {
       type: "profile_avatar_update";
       payload: ProfileAvatarUpdatePayload;
+    }
+  | {
+      type: "profile_banner_update";
+      payload: ProfileBannerUpdatePayload;
     };
 
 type ProfileGatewayEventType = ProfileGatewayEvent["type"];
@@ -135,11 +140,45 @@ function parseProfileAvatarUpdatePayload(
   };
 }
 
+function parseProfileBannerUpdatePayload(
+  payload: unknown,
+): ProfileBannerUpdatePayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.user_id !== "string" ||
+    typeof value.banner_version !== "number" ||
+    !Number.isSafeInteger(value.banner_version) ||
+    value.banner_version < 0 ||
+    typeof value.updated_at_unix !== "number" ||
+    !Number.isSafeInteger(value.updated_at_unix) ||
+    value.updated_at_unix < 1
+  ) {
+    return null;
+  }
+
+  let userId: string;
+  try {
+    userId = userIdFromInput(value.user_id);
+  } catch {
+    return null;
+  }
+
+  return {
+    userId,
+    bannerVersion: value.banner_version,
+    updatedAtUnix: value.updated_at_unix,
+  };
+}
+
 const PROFILE_EVENT_DECODERS: {
   [K in ProfileGatewayEventType]: ProfileEventDecoder<Extract<ProfileGatewayEvent, { type: K }>["payload"]>;
 } = {
   profile_update: parseProfileUpdatePayload,
   profile_avatar_update: parseProfileAvatarUpdatePayload,
+  profile_banner_update: parseProfileBannerUpdatePayload,
 };
 
 function isProfileGatewayEventType(value: string): value is ProfileGatewayEventType {
@@ -165,7 +204,18 @@ export function decodeProfileGatewayEvent(
     };
   }
 
-  const parsedPayload = PROFILE_EVENT_DECODERS.profile_avatar_update(payload);
+  if (type === "profile_avatar_update") {
+    const parsedPayload = PROFILE_EVENT_DECODERS.profile_avatar_update(payload);
+    if (!parsedPayload) {
+      return null;
+    }
+    return {
+      type,
+      payload: parsedPayload,
+    };
+  }
+
+  const parsedPayload = PROFILE_EVENT_DECODERS.profile_banner_update(payload);
   if (!parsedPayload) {
     return null;
   }

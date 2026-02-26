@@ -21,6 +21,7 @@ async fn profile_update_changes_username_and_about() {
     let updated = update_payload.expect("profile update payload");
     assert_eq!(updated["username"], "profile_owner_next");
     assert_eq!(updated["about_markdown"], "hello **team**");
+    assert_eq!(updated["banner_version"], 0);
     assert!(updated["about_markdown_tokens"]
         .as_array()
         .is_some_and(|tokens| !tokens.is_empty()));
@@ -38,6 +39,7 @@ async fn profile_update_changes_username_and_about() {
     let me = me_payload.expect("me payload");
     assert_eq!(me["username"], "profile_owner_next");
     assert_eq!(me["about_markdown"], "hello **team**");
+    assert_eq!(me["banner_version"], 0);
     assert!(me["about_markdown_tokens"]
         .as_array()
         .is_some_and(|tokens| !tokens.is_empty()));
@@ -129,4 +131,113 @@ async fn profile_avatar_upload_and_download_round_trip() {
         .unwrap();
     let bad_response = app.oneshot(bad_upload).await.unwrap();
     assert_eq!(bad_response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn profile_banner_upload_and_download_round_trip() {
+    const PNG_1X1: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xB5,
+        0x1C, 0x0C, 0x02, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0xFC,
+        0x5F, 0x0F, 0x00, 0x02, 0x7F, 0x01, 0xF5, 0x87, 0xCB, 0xD9, 0x1F, 0x00, 0x00, 0x00, 0x00,
+        0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    let app = build_router(&AppConfig::default()).unwrap();
+    let auth = register_and_login_as(&app, "banner_owner", "203.0.113.143").await;
+    let user_id = user_id_from_me(&app, &auth, "203.0.113.143").await;
+
+    let upload = Request::builder()
+        .method("POST")
+        .uri("/users/me/profile/banner")
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "image/png")
+        .header("x-forwarded-for", "203.0.113.143")
+        .body(Body::from(PNG_1X1.to_vec()))
+        .unwrap();
+    let upload_response = app.clone().oneshot(upload).await.unwrap();
+    assert_eq!(upload_response.status(), StatusCode::OK);
+    let upload_body = axum::body::to_bytes(upload_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let upload_json: Value = serde_json::from_slice(&upload_body).unwrap();
+    assert!(upload_json["banner_version"]
+        .as_i64()
+        .is_some_and(|value| value > 0));
+
+    let download = Request::builder()
+        .method("GET")
+        .uri(format!("/users/{user_id}/banner"))
+        .header("x-forwarded-for", "203.0.113.143")
+        .body(Body::empty())
+        .unwrap();
+    let download_response = app.clone().oneshot(download).await.unwrap();
+    assert_eq!(download_response.status(), StatusCode::OK);
+    assert_eq!(
+        download_response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("image/png")
+    );
+    let bytes = axum::body::to_bytes(download_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(bytes.as_ref(), PNG_1X1);
+}
+
+#[tokio::test]
+async fn profile_banner_upload_rejects_oversized_payload() {
+    let app = build_router(&AppConfig {
+        max_profile_banner_bytes: 8,
+        ..AppConfig::default()
+    })
+    .unwrap();
+    let auth = register_and_login_as(&app, "banner_limit", "203.0.113.144").await;
+
+    let upload = Request::builder()
+        .method("POST")
+        .uri("/users/me/profile/banner")
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "image/png")
+        .header("x-forwarded-for", "203.0.113.144")
+        .body(Body::from(vec![0_u8; 32]))
+        .unwrap();
+    let response = app.oneshot(upload).await.unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn profile_banner_upload_requires_auth_and_matching_mime() {
+    const PNG_1X1: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xB5,
+        0x1C, 0x0C, 0x02, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0xFC,
+        0x5F, 0x0F, 0x00, 0x02, 0x7F, 0x01, 0xF5, 0x87, 0xCB, 0xD9, 0x1F, 0x00, 0x00, 0x00, 0x00,
+        0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    let app = build_router(&AppConfig::default()).unwrap();
+    let auth = register_and_login_as(&app, "banner_guard", "203.0.113.145").await;
+
+    let unauth_upload = Request::builder()
+        .method("POST")
+        .uri("/users/me/profile/banner")
+        .header("content-type", "image/png")
+        .header("x-forwarded-for", "203.0.113.145")
+        .body(Body::from(PNG_1X1.to_vec()))
+        .unwrap();
+    let unauth_response = app.clone().oneshot(unauth_upload).await.unwrap();
+    assert_eq!(unauth_response.status(), StatusCode::UNAUTHORIZED);
+
+    let mismatch_upload = Request::builder()
+        .method("POST")
+        .uri("/users/me/profile/banner")
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("content-type", "image/jpeg")
+        .header("x-forwarded-for", "203.0.113.145")
+        .body(Body::from(PNG_1X1.to_vec()))
+        .unwrap();
+    let mismatch_response = app.oneshot(mismatch_upload).await.unwrap();
+    assert_eq!(mismatch_response.status(), StatusCode::BAD_REQUEST);
 }

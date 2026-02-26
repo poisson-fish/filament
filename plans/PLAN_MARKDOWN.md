@@ -199,27 +199,27 @@ Render safe markdown tokens in message rows instead of flattening to plain text.
 Add server-side profile banner storage, retrieval, validation, and event propagation.
 
 ### Completion Status
-`NOT STARTED`
+`DONE`
 
 ### Tasks
-- [ ] Add schema migration for banner metadata on `users` table:
+- [x] Add schema migration for banner metadata on `users` table:
   - `banner_object_key`, `banner_mime_type`, `banner_size_bytes`, `banner_sha256_hex`, `banner_version`
-- [ ] Extend server/core models and typed responses (`MeResponse`, `UserProfileResponse`).
-- [ ] Add endpoints:
+- [x] Extend server/core models and typed responses (`MeResponse`, `UserProfileResponse`).
+- [x] Add endpoints:
   - `POST /users/me/profile/banner` (binary upload)
   - `GET /users/{user_id}/banner` (binary download)
-- [ ] Reuse hardened upload pipeline semantics from avatar path (size cap, sniffing, hash, object-store write/abort).
-- [ ] Emit gateway event for banner updates to keep clients cache-coherent.
-- [ ] Add router manifest entries + compatibility-safe event wiring.
+- [x] Reuse hardened upload pipeline semantics from avatar path (size cap, sniffing, hash, object-store write/abort).
+- [x] Emit gateway event for banner updates to keep clients cache-coherent.
+- [x] Add router manifest entries + compatibility-safe event wiring.
 
 ### Tests
-- [ ] Integration tests:
+- [x] Integration tests:
   - banner upload/download round-trip
   - oversized upload rejection
   - MIME mismatch rejection
   - unauthenticated/unauthorized behavior
-- [ ] Unit tests for new migration SQL constants/backfills.
-- [ ] Gateway event payload tests for banner update event.
+- [x] Unit tests for new migration SQL constants/backfills.
+- [x] Gateway event payload tests for banner update event.
 
 ### Tentative File Touch List
 - DB/migrations:
@@ -237,6 +237,24 @@ Add server-side profile banner storage, retrieval, validation, and event propaga
 
 ### Exit Criteria
 - Banner upload/download/versioning works with strict validation and event propagation.
+
+### Progress Notes
+- 2026-02-26: Added migration `v11_profile_banner_schema` with additive users-table columns:
+  - `banner_object_key`, `banner_mime_type`, `banner_size_bytes`, `banner_sha256_hex`, `banner_version`
+  - plus backfill/default/not-null enforcement for `banner_version`.
+- 2026-02-26: Extended backend profile contracts with `banner_version`:
+  - `MeResponse`, `UserProfileResponse`
+  - auth/profile repository + handler query paths (Postgres and in-memory).
+- 2026-02-26: Implemented profile banner REST endpoints with hardened upload semantics:
+  - `POST /users/me/profile/banner`
+  - `GET /users/{user_id}/banner`
+  - enforced size cap (`6 MiB` default), MIME sniffing with declared-type match checks, SHA-256 ETag, `nosniff`, bounded cache headers, and object-store cleanup on failures.
+- 2026-02-26: Added and wired gateway event `profile_banner_update` end-to-end:
+  - server builder/export/emission, protocol manifest update, web client decode/dispatch support.
+- 2026-02-26: Added focused tests:
+  - server integration tests for round-trip/oversize/mime mismatch/unauth upload behavior,
+  - migration SQL invariant tests,
+  - gateway banner event payload tests (server + web decode/dispatch).
 
 ---
 

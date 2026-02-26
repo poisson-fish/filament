@@ -67,6 +67,23 @@ describe("decodeProfileGatewayEvent", () => {
     expect(result).toBeNull();
   });
 
+  it("decodes valid profile_banner_update payload", () => {
+    const result = decodeProfileGatewayEvent("profile_banner_update", {
+      user_id: DEFAULT_USER_ID,
+      banner_version: 7,
+      updated_at_unix: 1710000002,
+    });
+
+    expect(result).toEqual({
+      type: "profile_banner_update",
+      payload: {
+        userId: DEFAULT_USER_ID,
+        bannerVersion: 7,
+        updatedAtUnix: 1710000002,
+      },
+    });
+  });
+
   it("returns null for unknown event type", () => {
     const result = decodeProfileGatewayEvent("profile_unknown", {
       user_id: DEFAULT_USER_ID,

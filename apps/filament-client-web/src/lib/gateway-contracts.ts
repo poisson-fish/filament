@@ -233,6 +233,12 @@ export interface ProfileAvatarUpdatePayload {
   updatedAtUnix: number;
 }
 
+export interface ProfileBannerUpdatePayload {
+  userId: string;
+  bannerVersion: number;
+  updatedAtUnix: number;
+}
+
 export interface FriendRequestCreatePayload {
   requestId: string;
   senderUserId: string;
@@ -318,6 +324,7 @@ export interface GatewayHandlers {
   onWorkspaceIpBanSync?: (payload: WorkspaceIpBanSyncPayload) => void;
   onProfileUpdate?: (payload: ProfileUpdatePayload) => void;
   onProfileAvatarUpdate?: (payload: ProfileAvatarUpdatePayload) => void;
+  onProfileBannerUpdate?: (payload: ProfileBannerUpdatePayload) => void;
   onFriendRequestCreate?: (payload: FriendRequestCreatePayload) => void;
   onFriendRequestUpdate?: (payload: FriendRequestUpdatePayload) => void;
   onFriendRequestDelete?: (payload: FriendRequestDeletePayload) => void;

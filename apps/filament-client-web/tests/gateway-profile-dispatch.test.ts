@@ -7,6 +7,7 @@ const DEFAULT_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 describe("dispatchProfileGatewayEvent", () => {
   it("dispatches decoded profile events to matching handlers", () => {
     const onProfileAvatarUpdate = vi.fn();
+    const onProfileBannerUpdate = vi.fn();
 
     const handled = dispatchProfileGatewayEvent(
       "profile_avatar_update",
@@ -15,15 +16,38 @@ describe("dispatchProfileGatewayEvent", () => {
         avatar_version: 4,
         updated_at_unix: 1710000010,
       },
-      { onProfileAvatarUpdate },
+      { onProfileAvatarUpdate, onProfileBannerUpdate },
     );
 
     expect(handled).toBe(true);
     expect(onProfileAvatarUpdate).toHaveBeenCalledTimes(1);
+    expect(onProfileBannerUpdate).not.toHaveBeenCalled();
     expect(onProfileAvatarUpdate).toHaveBeenCalledWith({
       userId: DEFAULT_USER_ID,
       avatarVersion: 4,
       updatedAtUnix: 1710000010,
+    });
+  });
+
+  it("dispatches banner update events", () => {
+    const onProfileBannerUpdate = vi.fn();
+
+    const handled = dispatchProfileGatewayEvent(
+      "profile_banner_update",
+      {
+        user_id: DEFAULT_USER_ID,
+        banner_version: 6,
+        updated_at_unix: 1710000012,
+      },
+      { onProfileBannerUpdate },
+    );
+
+    expect(handled).toBe(true);
+    expect(onProfileBannerUpdate).toHaveBeenCalledTimes(1);
+    expect(onProfileBannerUpdate).toHaveBeenCalledWith({
+      userId: DEFAULT_USER_ID,
+      bannerVersion: 6,
+      updatedAtUnix: 1710000012,
     });
   });
 

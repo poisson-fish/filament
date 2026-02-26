@@ -75,7 +75,7 @@ pub(crate) trait AuthPersistence {
         &self,
         user_id: UserId,
         username: &Username,
-    ) -> Result<Option<(String, String, i64)>, AuthFailure>;
+    ) -> Result<Option<(String, String, i64, i64)>, AuthFailure>;
 
     async fn lookup_users(&self, user_ids: &[UserId]) -> Result<Vec<UserLookupItem>, AuthFailure>;
 }
@@ -390,9 +390,9 @@ impl AuthPersistence for PostgresAuthRepository<'_> {
         &self,
         user_id: UserId,
         _username: &Username,
-    ) -> Result<Option<(String, String, i64)>, AuthFailure> {
+    ) -> Result<Option<(String, String, i64, i64)>, AuthFailure> {
         let row = sqlx::query(
-            "SELECT username, about_markdown, avatar_version
+            "SELECT username, about_markdown, avatar_version, banner_version
              FROM users
              WHERE user_id = $1",
         )
@@ -410,7 +410,15 @@ impl AuthPersistence for PostgresAuthRepository<'_> {
                 let avatar_version: i64 = r
                     .try_get("avatar_version")
                     .map_err(|_| AuthFailure::Internal)?;
-                Ok(Some((username, about_markdown, avatar_version)))
+                let banner_version: i64 = r
+                    .try_get("banner_version")
+                    .map_err(|_| AuthFailure::Internal)?;
+                Ok(Some((
+                    username,
+                    about_markdown,
+                    avatar_version,
+                    banner_version,
+                )))
             }
             None => Ok(None),
         }
@@ -485,6 +493,8 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
                 about_markdown: String::new(),
                 avatar: None,
                 avatar_version: 0,
+                banner: None,
+                banner_version: 0,
                 password_hash: password_hash.to_owned(),
                 failed_logins: 0,
                 locked_until_unix: None,
@@ -647,13 +657,14 @@ impl AuthPersistence for InMemoryAuthRepository<'_> {
         &self,
         _user_id: UserId,
         username: &Username,
-    ) -> Result<Option<(String, String, i64)>, AuthFailure> {
+    ) -> Result<Option<(String, String, i64, i64)>, AuthFailure> {
         let users = self.state.users.read().await;
         if let Some(user) = users.get(username.as_str()) {
             Ok(Some((
                 user.username.as_str().to_owned(),
                 user.about_markdown.clone(),
                 user.avatar_version,
+                user.banner_version,
             )))
         } else {
             Ok(None)
@@ -803,7 +814,7 @@ impl AuthPersistence for AuthRepository<'_> {
         &self,
         user_id: UserId,
         username: &Username,
-    ) -> Result<Option<(String, String, i64)>, AuthFailure> {
+    ) -> Result<Option<(String, String, i64, i64)>, AuthFailure> {
         match self {
             Self::Postgres(repo) => repo.get_user_profile(user_id, username).await,
             Self::InMemory(repo) => repo.get_user_profile(user_id, username).await,

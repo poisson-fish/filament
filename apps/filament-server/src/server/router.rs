@@ -55,7 +55,10 @@ use super::{
             add_reaction, create_message, delete_message, edit_message, get_channel_permissions,
             get_messages, remove_reaction,
         },
-        profile::{download_user_avatar, get_user_profile, update_my_profile, upload_my_avatar},
+        profile::{
+            download_user_avatar, download_user_banner, get_user_profile, update_my_profile,
+            upload_my_avatar, upload_my_banner,
+        },
         search::{rebuild_search_index, reconcile_search_index, search_messages},
     },
     realtime::gateway_ws,
@@ -76,6 +79,7 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("PATCH", "/users/me/profile"),
     ("GET", "/users/{user_id}/profile"),
     ("GET", "/users/{user_id}/avatar"),
+    ("GET", "/users/{user_id}/banner"),
     ("POST", "/users/lookup"),
     ("GET", "/friends"),
     ("DELETE", "/friends/{friend_user_id}"),
@@ -172,6 +176,7 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
         "/guilds/{guild_id}/channels/{channel_id}/attachments",
     ),
     ("POST", "/users/me/profile/avatar"),
+    ("POST", "/users/me/profile/banner"),
 ];
 
 #[derive(Clone)]
@@ -327,6 +332,9 @@ fn validate_router_config(config: &AppConfig) -> anyhow::Result<()> {
     if config.max_profile_avatar_bytes == 0 {
         return Err(anyhow!("max profile avatar bytes must be at least 1 byte"));
     }
+    if config.max_profile_banner_bytes == 0 {
+        return Err(anyhow!("max profile banner bytes must be at least 1 byte"));
+    }
     if config.livekit_token_ttl.is_zero()
         || config.livekit_token_ttl > Duration::from_secs(MAX_LIVEKIT_TOKEN_TTL_SECS)
     {
@@ -371,6 +379,7 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route("/users/me/profile", patch(update_my_profile))
         .route("/users/{user_id}/profile", get(get_user_profile))
         .route("/users/{user_id}/avatar", get(download_user_avatar))
+        .route("/users/{user_id}/banner", get(download_user_banner))
         .route("/users/lookup", post(lookup_users))
         .route("/friends", get(list_friends))
         .route("/friends/{friend_user_id}", delete(remove_friend))
@@ -491,6 +500,7 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
             post(upload_attachment),
         )
         .route("/users/me/profile/avatar", post(upload_my_avatar))
+        .route("/users/me/profile/banner", post(upload_my_banner))
         .layer(DefaultBodyLimit::disable());
 
     Ok(routes

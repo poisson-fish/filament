@@ -39,6 +39,7 @@ import {
   type MessageReactionPayload,
   type MessageUpdatePayload,
   type ProfileAvatarUpdatePayload,
+  type ProfileBannerUpdatePayload,
   type ProfileUpdatePayload,
   type WorkspaceMemberBanPayload,
   type WorkspaceMemberRemovePayload,
@@ -158,6 +159,7 @@ interface GatewayHandlers {
   onWorkspaceIpBanSync: (payload: WorkspaceIpBanSyncPayload) => void;
   onProfileUpdate: (payload: ProfileUpdatePayload) => void;
   onProfileAvatarUpdate: (payload: ProfileAvatarUpdatePayload) => void;
+  onProfileBannerUpdate: (_payload: ProfileBannerUpdatePayload) => void;
   onFriendRequestCreate: (payload: FriendRequestCreatePayload) => void;
   onFriendRequestUpdate: (payload: FriendRequestUpdatePayload) => void;
   onFriendRequestDelete: (payload: FriendRequestDeletePayload) => void;
@@ -879,6 +881,7 @@ export function createGatewayController(
           mergeAvatarVersion(existing, payload.userId, payload.avatarVersion),
         );
       },
+      onProfileBannerUpdate: (_payload) => {},
       onFriendRequestCreate: (payload) => {
         options.setResolvedUsernames((existing) => {
           let next = mergeResolvedUsername(

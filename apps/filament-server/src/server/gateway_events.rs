@@ -39,6 +39,7 @@ pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
     workspace::WORKSPACE_IP_BAN_SYNC_EVENT,
     profile::PROFILE_UPDATE_EVENT,
     profile::PROFILE_AVATAR_UPDATE_EVENT,
+    profile::PROFILE_BANNER_UPDATE_EVENT,
     friend::FRIEND_REQUEST_CREATE_EVENT,
     friend::FRIEND_REQUEST_UPDATE_EVENT,
     friend::FRIEND_REQUEST_DELETE_EVENT,
@@ -79,8 +80,8 @@ pub(crate) use presence_voice::{
     voice_participant_update, voice_stream_publish, voice_stream_unpublish,
 };
 pub(crate) use profile::{
-    try_profile_avatar_update, try_profile_update, PROFILE_AVATAR_UPDATE_EVENT,
-    PROFILE_UPDATE_EVENT,
+    try_profile_avatar_update, try_profile_banner_update, try_profile_update,
+    PROFILE_AVATAR_UPDATE_EVENT, PROFILE_BANNER_UPDATE_EVENT, PROFILE_UPDATE_EVENT,
 };
 #[cfg(test)]
 pub(crate) use workspace::workspace_role_reorder;
@@ -527,13 +528,19 @@ mod tests {
         );
         assert_eq!(profile_avatar_payload["avatar_version"], Value::from(3));
 
+        let profile_banner_payload = parse_event(
+            &try_profile_banner_update(&user_id.to_string(), 4, 28)
+                .expect("profile_banner_update should serialize"),
+        );
+        assert_eq!(profile_banner_payload["banner_version"], Value::from(4));
+
         let friend_request_create_payload = parse_event(&friend_request_create(
             "req-1",
             &user_id.to_string(),
             "alice",
             &friend_id.to_string(),
             "bob",
-            28,
+            29,
         ));
         assert_eq!(
             friend_request_create_payload["recipient_username"],
@@ -545,8 +552,8 @@ mod tests {
             &user_id.to_string(),
             &friend_id.to_string(),
             "bob",
-            29,
             30,
+            31,
             Some(user_id),
         ));
         assert_eq!(
@@ -555,18 +562,18 @@ mod tests {
         );
 
         let friend_request_delete_payload =
-            parse_event(&friend_request_delete("req-1", 31, Some(user_id)));
+            parse_event(&friend_request_delete("req-1", 32, Some(user_id)));
         assert_eq!(
             friend_request_delete_payload["deleted_at_unix"],
-            Value::from(31)
+            Value::from(32)
         );
 
         let friend_remove_payload = parse_event(&friend_remove(
             &user_id.to_string(),
             &friend_id.to_string(),
-            32,
+            33,
             Some(user_id),
         ));
-        assert_eq!(friend_remove_payload["removed_at_unix"], Value::from(32));
+        assert_eq!(friend_remove_payload["removed_at_unix"], Value::from(33));
     }
 }

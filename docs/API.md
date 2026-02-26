@@ -146,7 +146,8 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Success `204 No Content`
 - `GET /auth/me`
   - Auth required
-  - Response `200`: `{ "user_id": "...", "username": "..." }`
+  - Response `200`:
+    - `{ "user_id": "...", "username": "...", "about_markdown": "...", "about_markdown_tokens": [...], "avatar_version": <number>, "banner_version": <number> }`
 - `POST /users/lookup`
   - Auth required
   - Request: `{ "user_ids": ["..."] }`
@@ -160,7 +161,7 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Auth required
   - Request: `{ "username"?: "...", "about_markdown"?: "..." }`
   - `about_markdown` max length `2048` chars
-  - Response `200`: `{ "user_id": "...", "username": "...", "about_markdown": "...", "about_markdown_tokens": [...], "avatar_version": <number> }`
+  - Response `200`: `{ "user_id": "...", "username": "...", "about_markdown": "...", "about_markdown_tokens": [...], "avatar_version": <number>, "banner_version": <number> }`
 - `GET /users/{user_id}/profile`
   - Auth required
   - Response `200`: same shape as profile update/read model
@@ -171,10 +172,10 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Auth required
   - Raw binary body upload (not multipart)
   - MIME is sniffed from bytes; unsupported or mismatched image type is rejected
-  - Response `200`: `{ "avatar_version": <number> }`
+  - Response `200`: profile shape including `avatar_version` and `banner_version`
 
-#### Planned Profile Banner Contract (Locked Pre-Deploy)
-- `banner_version` will be added to profile responses (`/auth/me`, `/users/me/profile`, `/users/{user_id}/profile`) and increment on successful banner mutation.
+#### Profile Banner
+- `banner_version` is present in profile responses (`/auth/me`, `/users/me/profile`, `/users/{user_id}/profile`) and increments on successful banner upload.
 - `POST /users/me/profile/banner`
   - Auth required
   - Raw binary body upload (not multipart)

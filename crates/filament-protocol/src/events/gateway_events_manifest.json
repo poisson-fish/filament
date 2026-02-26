@@ -12,6 +12,7 @@
     { "event_type": "presence_sync", "schema_version": 1, "scope": "guild", "lifecycle": "active" },
     { "event_type": "presence_update", "schema_version": 1, "scope": "guild", "lifecycle": "active" },
     { "event_type": "profile_avatar_update", "schema_version": 1, "scope": "user", "lifecycle": "active" },
+    { "event_type": "profile_banner_update", "schema_version": 1, "scope": "user", "lifecycle": "active" },
     { "event_type": "profile_update", "schema_version": 1, "scope": "user", "lifecycle": "active" },
     { "event_type": "ready", "schema_version": 1, "scope": "connection", "lifecycle": "active" },
     { "event_type": "subscribed", "schema_version": 1, "scope": "connection", "lifecycle": "active" },

@@ -4,6 +4,7 @@ use super::{envelope::try_build_event, GatewayEvent};
 
 pub(crate) const PROFILE_UPDATE_EVENT: &str = "profile_update";
 pub(crate) const PROFILE_AVATAR_UPDATE_EVENT: &str = "profile_avatar_update";
+pub(crate) const PROFILE_BANNER_UPDATE_EVENT: &str = "profile_banner_update";
 
 #[derive(Serialize)]
 struct ProfileUpdatePayload<'a> {
@@ -26,6 +27,13 @@ struct ProfileUpdateFieldsPayload<'a> {
 struct ProfileAvatarUpdatePayload<'a> {
     user_id: &'a str,
     avatar_version: i64,
+    updated_at_unix: i64,
+}
+
+#[derive(Serialize)]
+struct ProfileBannerUpdatePayload<'a> {
+    user_id: &'a str,
+    banner_version: i64,
     updated_at_unix: i64,
 }
 
@@ -60,6 +68,21 @@ pub(crate) fn try_profile_avatar_update(
         ProfileAvatarUpdatePayload {
             user_id,
             avatar_version,
+            updated_at_unix,
+        },
+    )
+}
+
+pub(crate) fn try_profile_banner_update(
+    user_id: &str,
+    banner_version: i64,
+    updated_at_unix: i64,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(
+        PROFILE_BANNER_UPDATE_EVENT,
+        ProfileBannerUpdatePayload {
+            user_id,
+            banner_version,
             updated_at_unix,
         },
     )
@@ -106,5 +129,15 @@ mod tests {
         );
         assert_eq!(payload["avatar_version"], Value::from(3));
         assert_eq!(payload["updated_at_unix"], Value::from(55));
+    }
+
+    #[test]
+    fn profile_banner_update_event_emits_banner_version() {
+        let payload = parse_payload(
+            &try_profile_banner_update("user-1", 4, 56)
+                .expect("profile_banner_update should serialize"),
+        );
+        assert_eq!(payload["banner_version"], Value::from(4));
+        assert_eq!(payload["updated_at_unix"], Value::from(56));
     }
 }

@@ -296,7 +296,7 @@ fn emitted_domain_event_manifest_is_aligned_across_server_docs_and_client() {
 fn markdown_plan_lock_docs_capture_banner_profile_contract() {
     let api_doc = read_doc("docs/API.md");
     for expected in [
-        "#### Planned Profile Banner Contract (Locked Pre-Deploy)",
+        "#### Profile Banner",
         "`POST /users/me/profile/banner`",
         "`GET /users/{user_id}/banner`",
         "Size cap: `6 MiB` hard limit",
@@ -305,7 +305,7 @@ fn markdown_plan_lock_docs_capture_banner_profile_contract() {
         "`image/webp`",
         "`image/avif`",
         "`image/gif`",
-        "`banner_version` will be added to profile responses",
+        "`banner_version` is present in profile responses",
     ] {
         assert!(
             api_doc.contains(expected),
@@ -331,7 +331,7 @@ fn markdown_plan_lock_docs_capture_highlight_and_banner_event_strategy() {
 
     let gateway_doc = read_doc("docs/GATEWAY_EVENTS.md");
     for expected in [
-        "#### `profile_banner_update` (planned)",
+        "#### `profile_banner_update`",
         "`banner_version`",
         "User-scoped self events (`profile_update`, `profile_avatar_update`, `profile_banner_update`)",
     ] {

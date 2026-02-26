@@ -14,6 +14,8 @@ async fn gateway_broadcasts_message_to_subscribed_connection() {
             about_markdown: String::new(),
             avatar: None,
             avatar_version: 0,
+            banner: None,
+            banner_version: 0,
             password_hash: hash_password("super-secure-password").unwrap(),
             failed_logins: 0,
             locked_until_unix: None,

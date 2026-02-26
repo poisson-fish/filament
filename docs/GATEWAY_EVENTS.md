@@ -395,7 +395,7 @@ All events use the versioned envelope:
   - `avatar_version`
   - `updated_at_unix`
 
-#### `profile_banner_update` (planned)
+#### `profile_banner_update`
 - Scope: user (plus permitted observers)
 - Visibility:
   - user-scoped payload to acting user

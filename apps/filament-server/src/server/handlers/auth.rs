@@ -371,6 +371,7 @@ pub(crate) async fn me(
         about_markdown: profile.1.clone(),
         about_markdown_tokens: tokenize_markdown(&profile.1),
         avatar_version: profile.2,
+        banner_version: profile.3,
     }))
 }
 

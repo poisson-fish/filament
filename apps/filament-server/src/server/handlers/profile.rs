@@ -16,8 +16,9 @@ use filament_core::{tokenize_markdown, ProfileAbout, UserId, Username};
 use crate::server::{
     auth::{authenticate, enforce_auth_route_rate_limit, extract_client_ip, now_unix},
     core::{
-        AppState, ProfileAvatarRecord, MAX_MIME_SNIFF_BYTES, MAX_PROFILE_AVATAR_MIME_CHARS,
-        MAX_PROFILE_AVATAR_OBJECT_KEY_CHARS,
+        AppState, ProfileAvatarRecord, ProfileBannerRecord, MAX_MIME_SNIFF_BYTES,
+        MAX_PROFILE_AVATAR_MIME_CHARS, MAX_PROFILE_AVATAR_OBJECT_KEY_CHARS,
+        MAX_PROFILE_BANNER_MIME_CHARS, MAX_PROFILE_BANNER_OBJECT_KEY_CHARS,
     },
     errors::AuthFailure,
     gateway_events,
@@ -62,7 +63,7 @@ pub(crate) async fn update_my_profile(
                 "UPDATE users
                  SET username = $2, about_markdown = $3
                  WHERE user_id = $1
-                 RETURNING user_id, username, about_markdown, avatar_version",
+                 RETURNING user_id, username, about_markdown, avatar_version, banner_version",
             )
             .bind(auth.user_id.to_string())
             .bind(username.as_str())
@@ -80,7 +81,7 @@ pub(crate) async fn update_my_profile(
                 "UPDATE users
                  SET username = $2
                  WHERE user_id = $1
-                 RETURNING user_id, username, about_markdown, avatar_version",
+                 RETURNING user_id, username, about_markdown, avatar_version, banner_version",
             )
             .bind(auth.user_id.to_string())
             .bind(username.as_str())
@@ -97,7 +98,7 @@ pub(crate) async fn update_my_profile(
                 "UPDATE users
                  SET about_markdown = $2
                  WHERE user_id = $1
-                 RETURNING user_id, username, about_markdown, avatar_version",
+                 RETURNING user_id, username, about_markdown, avatar_version, banner_version",
             )
             .bind(auth.user_id.to_string())
             .bind(about.as_str())
@@ -146,6 +147,7 @@ pub(crate) async fn update_my_profile(
         final_username.clone(),
         &user.about_markdown,
         user.avatar_version,
+        user.banner_version,
     );
     users.insert(final_username.clone(), user);
     drop(users);
@@ -183,7 +185,7 @@ pub(crate) async fn get_user_profile(
 
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query(
-            "SELECT user_id, username, about_markdown, avatar_version
+            "SELECT user_id, username, about_markdown, avatar_version, banner_version
              FROM users
              WHERE user_id = $1",
         )
@@ -306,7 +308,7 @@ pub(crate) async fn upload_my_avatar(
                  avatar_sha256_hex = $5,
                  avatar_version = GREATEST(COALESCE(avatar_version, 0) + 1, $6)
              WHERE user_id = $1
-             RETURNING user_id, username, about_markdown, avatar_version",
+             RETURNING user_id, username, about_markdown, avatar_version, banner_version",
         )
         .bind(auth.user_id.to_string())
         .bind(&object_key)
@@ -347,6 +349,7 @@ pub(crate) async fn upload_my_avatar(
         user.username.as_str().to_owned(),
         &user.about_markdown,
         user.avatar_version,
+        user.banner_version,
     );
     users.insert(current_username, user);
     broadcast_profile_avatar_update(&state, auth.user_id, &response).await?;
@@ -419,6 +422,228 @@ pub(crate) async fn download_user_avatar(
     Ok(response)
 }
 
+#[allow(clippy::too_many_lines)]
+pub(crate) async fn upload_my_banner(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    body: Body,
+) -> Result<Json<UserProfileResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    enforce_auth_route_rate_limit(&state, client_ip, "profile_banner_upload").await?;
+    let auth = authenticate(&state, &headers).await?;
+
+    let declared_content_type = if let Some(content_type) = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(
+            content_type
+                .parse::<mime::Mime>()
+                .map_err(|_| AuthFailure::InvalidRequest)?,
+        )
+    } else {
+        None
+    };
+
+    let object_key = format!("banners/{}", auth.user_id);
+    let object_path = ObjectPath::from(object_key.clone());
+    let mut upload = state
+        .attachment_store
+        .put_multipart(&object_path)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    let mut stream = body.into_data_stream();
+    let mut sniff_buffer = Vec::new();
+    let mut hasher = Sha256::new();
+    let mut total_size: u64 = 0;
+    let max_banner_bytes =
+        u64::try_from(state.runtime.max_profile_banner_bytes).map_err(|_| AuthFailure::Internal)?;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| AuthFailure::InvalidRequest)?;
+        if chunk.is_empty() {
+            continue;
+        }
+        let chunk_len = u64::try_from(chunk.len()).map_err(|_| AuthFailure::InvalidRequest)?;
+        total_size = total_size
+            .checked_add(chunk_len)
+            .ok_or(AuthFailure::PayloadTooLarge)?;
+        if total_size > max_banner_bytes {
+            let _ = upload.abort().await;
+            return Err(AuthFailure::PayloadTooLarge);
+        }
+        if sniff_buffer.len() < MAX_MIME_SNIFF_BYTES {
+            let remaining = MAX_MIME_SNIFF_BYTES - sniff_buffer.len();
+            let copy_len = remaining.min(chunk.len());
+            sniff_buffer.extend_from_slice(&chunk[..copy_len]);
+        }
+        hasher.update(chunk.as_ref());
+        if upload.put_part(chunk.into()).await.is_err() {
+            let _ = upload.abort().await;
+            return Err(AuthFailure::Internal);
+        }
+    }
+
+    if total_size == 0 {
+        let _ = upload.abort().await;
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let Some(sniffed) = infer::get(&sniff_buffer) else {
+        let _ = upload.abort().await;
+        return Err(AuthFailure::InvalidRequest);
+    };
+    let sniffed_mime = sniffed.mime_type();
+    if !is_allowed_profile_media_mime(sniffed_mime) {
+        let _ = upload.abort().await;
+        return Err(AuthFailure::InvalidRequest);
+    }
+    if let Some(declared) = declared_content_type.as_ref() {
+        if declared.essence_str() != sniffed_mime {
+            let _ = upload.abort().await;
+            return Err(AuthFailure::InvalidRequest);
+        }
+    }
+
+    upload.complete().await.map_err(|_| AuthFailure::Internal)?;
+
+    let sha256_hex = {
+        let digest = hasher.finalize();
+        let mut out = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            let _ = std::fmt::Write::write_fmt(&mut out, format_args!("{byte:02x}"));
+        }
+        out
+    };
+
+    if let Some(pool) = &state.db_pool {
+        let version_floor = now_unix();
+        let row = sqlx::query(
+            "UPDATE users
+             SET banner_object_key = $2,
+                 banner_mime_type = $3,
+                 banner_size_bytes = $4,
+                 banner_sha256_hex = $5,
+                 banner_version = GREATEST(COALESCE(banner_version, 0) + 1, $6)
+             WHERE user_id = $1
+             RETURNING user_id, username, about_markdown, avatar_version, banner_version",
+        )
+        .bind(auth.user_id.to_string())
+        .bind(&object_key)
+        .bind(sniffed_mime)
+        .bind(i64::try_from(total_size).map_err(|_| AuthFailure::Internal)?)
+        .bind(&sha256_hex)
+        .bind(version_floor)
+        .fetch_optional(pool)
+        .await;
+        let Ok(row) = row else {
+            let _ = state.attachment_store.delete(&object_path).await;
+            return Err(AuthFailure::Internal);
+        };
+        let Some(row) = row else {
+            let _ = state.attachment_store.delete(&object_path).await;
+            return Err(AuthFailure::Unauthorized);
+        };
+        let response = profile_response_from_row(&row)?;
+        broadcast_profile_banner_update(&state, auth.user_id, &response).await?;
+        return Ok(Json(response));
+    }
+
+    let current_username = auth.username;
+    let mut users = state.users.write().await;
+    let mut user = users
+        .remove(&current_username)
+        .ok_or(AuthFailure::Unauthorized)?;
+    let banner_version = next_profile_version(user.banner_version);
+    user.banner = Some(ProfileBannerRecord {
+        object_key,
+        mime_type: sniffed_mime.to_owned(),
+        size_bytes: total_size,
+        sha256_hex,
+    });
+    user.banner_version = banner_version;
+    let response = user_profile_response(
+        user.id.to_string(),
+        user.username.as_str().to_owned(),
+        &user.about_markdown,
+        user.avatar_version,
+        user.banner_version,
+    );
+    users.insert(current_username, user);
+    broadcast_profile_banner_update(&state, auth.user_id, &response).await?;
+    Ok(Json(response))
+}
+
+pub(crate) async fn download_user_banner(
+    State(state): State<AppState>,
+    Path(path): Path<UserPath>,
+) -> Result<Response, AuthFailure> {
+    let user_id = UserId::try_from(path.user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let banner = if let Some(pool) = &state.db_pool {
+        let row = sqlx::query(
+            "SELECT banner_object_key, banner_mime_type, banner_size_bytes, banner_sha256_hex
+             FROM users
+             WHERE user_id = $1",
+        )
+        .bind(user_id.to_string())
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .ok_or(AuthFailure::NotFound)?;
+        banner_from_row(&row)?
+    } else {
+        let username = state
+            .user_ids
+            .read()
+            .await
+            .get(&user_id.to_string())
+            .cloned()
+            .ok_or(AuthFailure::NotFound)?;
+        let users = state.users.read().await;
+        users
+            .get(&username)
+            .and_then(|user| user.banner.clone())
+            .ok_or(AuthFailure::NotFound)?
+    };
+
+    let object_path = ObjectPath::from(banner.object_key);
+    let get_result = state
+        .attachment_store
+        .get(&object_path)
+        .await
+        .map_err(|_| AuthFailure::NotFound)?;
+    let payload = get_result
+        .bytes()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    let mut response = Response::new(payload.into());
+    let content_type =
+        HeaderValue::from_str(&banner.mime_type).map_err(|_| AuthFailure::Internal)?;
+    response.headers_mut().insert(CONTENT_TYPE, content_type);
+    let content_len =
+        HeaderValue::from_str(&banner.size_bytes.to_string()).map_err(|_| AuthFailure::Internal)?;
+    response.headers_mut().insert(CONTENT_LENGTH, content_len);
+    response.headers_mut().insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("public, max-age=300"),
+    );
+    let etag = HeaderValue::from_str(&format!("\"{}\"", banner.sha256_hex))
+        .map_err(|_| AuthFailure::Internal)?;
+    response
+        .headers_mut()
+        .insert(HeaderName::from_static("etag"), etag);
+    Ok(response)
+}
+
 async fn profile_from_memory(
     state: &AppState,
     user_id: UserId,
@@ -437,6 +662,7 @@ async fn profile_from_memory(
         user.username.as_str().to_owned(),
         &user.about_markdown,
         user.avatar_version,
+        user.banner_version,
     ))
 }
 
@@ -451,11 +677,15 @@ fn profile_response_from_row(
     let avatar_version: i64 = row
         .try_get("avatar_version")
         .map_err(|_| AuthFailure::Internal)?;
+    let banner_version: i64 = row
+        .try_get("banner_version")
+        .map_err(|_| AuthFailure::Internal)?;
     Ok(user_profile_response(
         user_id,
         username,
         &about_markdown,
         avatar_version,
+        banner_version,
     ))
 }
 
@@ -464,6 +694,7 @@ fn user_profile_response(
     username: String,
     about_markdown: &str,
     avatar_version: i64,
+    banner_version: i64,
 ) -> UserProfileResponse {
     UserProfileResponse {
         user_id,
@@ -471,6 +702,7 @@ fn user_profile_response(
         about_markdown: about_markdown.to_owned(),
         about_markdown_tokens: tokenize_markdown(about_markdown),
         avatar_version,
+        banner_version,
     }
 }
 
@@ -519,6 +751,44 @@ fn avatar_from_row(row: &sqlx::postgres::PgRow) -> Result<ProfileAvatarRecord, A
         return Err(AuthFailure::Internal);
     }
     Ok(ProfileAvatarRecord {
+        object_key,
+        mime_type,
+        size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
+        sha256_hex,
+    })
+}
+
+fn banner_from_row(row: &sqlx::postgres::PgRow) -> Result<ProfileBannerRecord, AuthFailure> {
+    let object_key: Option<String> = row
+        .try_get("banner_object_key")
+        .map_err(|_| AuthFailure::Internal)?;
+    let mime_type: Option<String> = row
+        .try_get("banner_mime_type")
+        .map_err(|_| AuthFailure::Internal)?;
+    let size_bytes: Option<i64> = row
+        .try_get("banner_size_bytes")
+        .map_err(|_| AuthFailure::Internal)?;
+    let sha256_hex: Option<String> = row
+        .try_get("banner_sha256_hex")
+        .map_err(|_| AuthFailure::Internal)?;
+    let (Some(object_key), Some(mime_type), Some(size_bytes), Some(sha256_hex)) =
+        (object_key, mime_type, size_bytes, sha256_hex)
+    else {
+        return Err(AuthFailure::NotFound);
+    };
+    if object_key.is_empty() || object_key.len() > MAX_PROFILE_BANNER_OBJECT_KEY_CHARS {
+        return Err(AuthFailure::Internal);
+    }
+    if mime_type.is_empty() || mime_type.len() > MAX_PROFILE_BANNER_MIME_CHARS {
+        return Err(AuthFailure::Internal);
+    }
+    if !is_allowed_profile_media_mime(&mime_type) {
+        return Err(AuthFailure::Internal);
+    }
+    if sha256_hex.len() != 64 || !sha256_hex.chars().all(|value| value.is_ascii_hexdigit()) {
+        return Err(AuthFailure::Internal);
+    }
+    Ok(ProfileBannerRecord {
         object_key,
         mime_type,
         size_bytes: u64::try_from(size_bytes).map_err(|_| AuthFailure::Internal)?,
@@ -581,6 +851,32 @@ async fn broadcast_profile_avatar_update(
             gateway_events::PROFILE_AVATAR_UPDATE_EVENT,
             &response.user_id,
             "gateway.profile_avatar_update.serialize_failed",
+        );
+        return Ok(());
+    };
+    broadcast_user_event(state, actor_user_id, &event).await;
+
+    for observer in profile_observer_user_ids(state, actor_user_id).await? {
+        broadcast_user_event(state, observer, &event).await;
+    }
+    Ok(())
+}
+
+async fn broadcast_profile_banner_update(
+    state: &AppState,
+    actor_user_id: UserId,
+    response: &UserProfileResponse,
+) -> Result<(), AuthFailure> {
+    let updated_at_unix = now_unix();
+    let Ok(event) = gateway_events::try_profile_banner_update(
+        &response.user_id,
+        response.banner_version,
+        updated_at_unix,
+    ) else {
+        record_profile_emit_serialize_drop(
+            gateway_events::PROFILE_BANNER_UPDATE_EVENT,
+            &response.user_id,
+            "gateway.profile_banner_update.serialize_failed",
         );
         return Ok(());
     };

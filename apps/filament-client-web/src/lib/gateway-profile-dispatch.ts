@@ -1,5 +1,6 @@
 import type {
   ProfileAvatarUpdatePayload,
+  ProfileBannerUpdatePayload,
   ProfileUpdatePayload,
 } from "./gateway-contracts";
 import {
@@ -13,11 +14,13 @@ import {
 export interface ProfileGatewayDispatchHandlers {
   onProfileUpdate?: (payload: ProfileUpdatePayload) => void;
   onProfileAvatarUpdate?: (payload: ProfileAvatarUpdatePayload) => void;
+  onProfileBannerUpdate?: (payload: ProfileBannerUpdatePayload) => void;
 }
 
 export const PROFILE_GATEWAY_DISPATCH_EVENT_TYPES: readonly string[] = [
   "profile_update",
   "profile_avatar_update",
+  "profile_banner_update",
 ];
 
 const PROFILE_GATEWAY_EVENT_TYPE_SET = new Set<string>(
@@ -37,6 +40,9 @@ const PROFILE_DISPATCH_TABLE: GatewayDispatchTable<
   },
   profile_avatar_update: (eventPayload, eventHandlers) => {
     eventHandlers.onProfileAvatarUpdate?.(eventPayload);
+  },
+  profile_banner_update: (eventPayload, eventHandlers) => {
+    eventHandlers.onProfileBannerUpdate?.(eventPayload);
   },
 };
 

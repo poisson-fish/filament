@@ -3,6 +3,7 @@ mod migrations;
 use filament_core::{ChannelKind, Permission, PermissionSet, Role};
 
 use self::migrations::v10_role_color_schema::apply_role_color_schema;
+use self::migrations::v11_profile_banner_schema::apply_profile_banner_schema;
 use self::migrations::v1_hierarchical_permissions::backfill_hierarchical_permission_schema;
 pub(crate) use self::migrations::v1_hierarchical_permissions::seed_hierarchical_permissions_for_new_guild;
 use self::migrations::v2_attachment_schema::apply_attachment_schema;
@@ -48,6 +49,7 @@ pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure
             backfill_hierarchical_permission_schema(&mut tx).await?;
             apply_default_join_role_schema(&mut tx).await?;
             apply_role_color_schema(&mut tx).await?;
+            apply_profile_banner_schema(&mut tx).await?;
 
             tx.commit().await?;
 

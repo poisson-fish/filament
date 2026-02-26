@@ -106,6 +106,7 @@ pub(crate) struct MeResponse {
     pub(crate) about_markdown: String,
     pub(crate) about_markdown_tokens: Vec<MarkdownToken>,
     pub(crate) avatar_version: i64,
+    pub(crate) banner_version: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,6 +123,7 @@ pub(crate) struct UserProfileResponse {
     pub(crate) about_markdown: String,
     pub(crate) about_markdown_tokens: Vec<MarkdownToken>,
     pub(crate) avatar_version: i64,
+    pub(crate) banner_version: i64,
 }
 
 #[derive(Debug, Deserialize)]
