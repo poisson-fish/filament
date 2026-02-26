@@ -37,7 +37,10 @@ use crate::server::{
     },
     errors::AuthFailure,
     gateway_events,
-    metrics::record_gateway_event_dropped,
+    metrics::{
+        record_gateway_compatibility_event, record_gateway_event_dropped,
+        GATEWAY_COMPAT_COUNTER_MODE_EXPLICIT_EMIT, GATEWAY_COMPAT_COUNTER_MODE_LEGACY_EMIT,
+    },
     permissions::{
         DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, MAX_GUILD_ROLES, MAX_MEMBER_ROLE_ASSIGNMENTS,
         MAX_ROLE_NAME_CHARS, SYSTEM_ROLE_EVERYONE, SYSTEM_ROLE_WORKSPACE_OWNER,
@@ -3822,6 +3825,7 @@ async fn emit_channel_role_override_events(
     payload: &UpdateChannelRoleOverrideRequest,
     actor_user_id: UserId,
 ) {
+    const CHANNEL_ROLE_OVERRIDE_MIGRATION_PATH: &str = "channel_role_override_migration";
     // Dual emit during migration to keep older clients that only observe the legacy
     // event name functional while introducing explicit role-override contract.
     match gateway_events::try_workspace_channel_override_update(
@@ -3834,6 +3838,11 @@ async fn emit_channel_role_override_events(
         Some(actor_user_id),
     ) {
         Ok(event) => {
+            record_gateway_compatibility_event(
+                "server",
+                CHANNEL_ROLE_OVERRIDE_MIGRATION_PATH,
+                GATEWAY_COMPAT_COUNTER_MODE_LEGACY_EMIT,
+            );
             broadcast_guild_event(state, &path.guild_id, &event).await;
         }
         Err(error) => {
@@ -3880,6 +3889,11 @@ async fn emit_channel_role_override_events(
             return;
         }
     };
+    record_gateway_compatibility_event(
+        "server",
+        CHANNEL_ROLE_OVERRIDE_MIGRATION_PATH,
+        GATEWAY_COMPAT_COUNTER_MODE_EXPLICIT_EMIT,
+    );
     broadcast_guild_event(state, &path.guild_id, &event).await;
 }
 
@@ -3963,6 +3977,8 @@ pub(crate) async fn set_channel_permission_override(
     Path(path): Path<ChannelPermissionOverridePath>,
     Json(payload): Json<UpdateChannelPermissionOverrideRequest>,
 ) -> Result<Json<ModerationResponse>, AuthFailure> {
+    const CHANNEL_PERMISSION_OVERRIDE_MIGRATION_PATH: &str =
+        "channel_permission_override_migration";
     let client_ip = extract_client_ip(
         &state,
         &headers,
@@ -4021,6 +4037,11 @@ pub(crate) async fn set_channel_permission_override(
         Some(auth.user_id),
     ) {
         Ok(event) => {
+            record_gateway_compatibility_event(
+                "server",
+                CHANNEL_PERMISSION_OVERRIDE_MIGRATION_PATH,
+                GATEWAY_COMPAT_COUNTER_MODE_LEGACY_EMIT,
+            );
             broadcast_guild_event(&state, &path.guild_id, &event).await;
         }
         Err(error) => {
@@ -4070,6 +4091,11 @@ pub(crate) async fn set_channel_permission_override(
             return Ok(Json(ModerationResponse { accepted: true }));
         }
     };
+    record_gateway_compatibility_event(
+        "server",
+        CHANNEL_PERMISSION_OVERRIDE_MIGRATION_PATH,
+        GATEWAY_COMPAT_COUNTER_MODE_EXPLICIT_EMIT,
+    );
     broadcast_guild_event(&state, &path.guild_id, &event).await;
 
     crate::server::realtime::livekit_sync::schedule_livekit_permission_reevaluation_for_guild(

@@ -430,17 +430,21 @@ Prevent future drift between server emitters, docs, and web decoders.
 Ship safely with progressive rollout and remove migration compatibility code.
 
 ### Completion Status
-`NOT STARTED`
+`IN PROGRESS`
 
 ### Tasks
-- [ ] Add temporary compatibility counters for dual-decoder/dual-emitter paths.
-- [ ] Define sunset criteria for deprecated payloads/event names.
+- [x] Add temporary compatibility counters for dual-decoder/dual-emitter paths.
+- [x] Define sunset criteria for deprecated payloads/event names.
 - [ ] Remove compatibility code after stability window and update docs.
 - [ ] Capture post-refactor benchmark snapshots for fanout hot paths.
 
 ### Tests
 - [ ] Regression pass of gateway network flow, security limits, and websocket lifecycle.
 - [ ] Verify telemetry counters for dropped/rejected events in staging.
+
+### Progress Notes
+- 2026-02-26 (Slice 1): Added temporary compatibility counters for override migration dual paths. Server now records `filament_gateway_compatibility_events_total{surface,path,mode}` for both legacy and explicit dual-emits on role/permission override routes (`mode in {legacy_emit,explicit_emit}`), with metrics rendering coverage and gateway network assertions proving those labels are exposed after live dual-emit traffic. Web client decode path now records in-memory compatibility counters for override migration dual-decoder behavior (`channel_override_migration` with `mode in {legacy_decode,explicit_decode}`) and includes focused decoder tests proving counters increment only on successful decode.
+- 2026-02-26 (Slice 2): Defined explicit override migration sunset criteria in `docs/GATEWAY_EVENTS.md` tied to compatibility counters across server emit and client decode paths, including release-window stability conditions and same-change cleanup expectations once legacy traffic reaches zero.
 
 ### Exit Criteria
 - Deprecated event compatibility paths removed.

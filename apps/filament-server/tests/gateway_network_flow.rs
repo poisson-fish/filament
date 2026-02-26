@@ -2247,6 +2247,19 @@ async fn websocket_subscription_receives_phase4_permission_and_moderation_events
         permission_override_event["d"]["updated_fields"]["deny"],
         json!(["ban_member"])
     );
+    let metrics = metrics_text(&app).await;
+    assert!(metrics.contains(
+        "filament_gateway_compatibility_events_total{surface=\"server\",path=\"channel_role_override_migration\",mode=\"legacy_emit\"}",
+    ));
+    assert!(metrics.contains(
+        "filament_gateway_compatibility_events_total{surface=\"server\",path=\"channel_role_override_migration\",mode=\"explicit_emit\"}",
+    ));
+    assert!(metrics.contains(
+        "filament_gateway_compatibility_events_total{surface=\"server\",path=\"channel_permission_override_migration\",mode=\"legacy_emit\"}",
+    ));
+    assert!(metrics.contains(
+        "filament_gateway_compatibility_events_total{surface=\"server\",path=\"channel_permission_override_migration\",mode=\"explicit_emit\"}",
+    ));
 
     let delete_role = Request::builder()
         .method("DELETE")

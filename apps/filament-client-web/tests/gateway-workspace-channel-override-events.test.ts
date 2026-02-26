@@ -2,11 +2,22 @@ import {
   decodeWorkspaceChannelOverrideGatewayEvent,
   isWorkspaceChannelOverrideGatewayEventType,
 } from "../src/lib/gateway-workspace-channel-override-events";
+import {
+  gatewayCompatibilityCounterValue,
+  GATEWAY_COMPATIBILITY_MODE_EXPLICIT_DECODE,
+  GATEWAY_COMPATIBILITY_MODE_LEGACY_DECODE,
+  GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
+  resetGatewayCompatibilityCounters,
+} from "../src/lib/gateway-compatibility-counters";
 
 const DEFAULT_GUILD_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const DEFAULT_CHANNEL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 
 describe("decodeWorkspaceChannelOverrideGatewayEvent", () => {
+  beforeEach(() => {
+    resetGatewayCompatibilityCounters();
+  });
+
   it("exposes strict workspace channel override event type guard", () => {
     expect(isWorkspaceChannelOverrideGatewayEventType("workspace_channel_override_update")).toBe(
       true,
@@ -48,6 +59,18 @@ describe("decodeWorkspaceChannelOverrideGatewayEvent", () => {
         updatedAtUnix: 1710000001,
       },
     });
+    expect(
+      gatewayCompatibilityCounterValue(
+        GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
+        GATEWAY_COMPATIBILITY_MODE_LEGACY_DECODE,
+      ),
+    ).toBe(1);
+    expect(
+      gatewayCompatibilityCounterValue(
+        GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
+        GATEWAY_COMPATIBILITY_MODE_EXPLICIT_DECODE,
+      ),
+    ).toBe(0);
   });
 
   it("decodes valid workspace_channel_role_override_update payload", () => {
@@ -78,6 +101,18 @@ describe("decodeWorkspaceChannelOverrideGatewayEvent", () => {
         updatedAtUnix: 1710000001,
       },
     });
+    expect(
+      gatewayCompatibilityCounterValue(
+        GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
+        GATEWAY_COMPATIBILITY_MODE_EXPLICIT_DECODE,
+      ),
+    ).toBe(1);
+    expect(
+      gatewayCompatibilityCounterValue(
+        GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
+        GATEWAY_COMPATIBILITY_MODE_LEGACY_DECODE,
+      ),
+    ).toBe(0);
   });
 
   it("decodes valid workspace_channel_permission_override_update payload", () => {
@@ -110,6 +145,18 @@ describe("decodeWorkspaceChannelOverrideGatewayEvent", () => {
         updatedAtUnix: 1710000001,
       },
     });
+    expect(
+      gatewayCompatibilityCounterValue(
+        GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
+        GATEWAY_COMPATIBILITY_MODE_EXPLICIT_DECODE,
+      ),
+    ).toBe(1);
+    expect(
+      gatewayCompatibilityCounterValue(
+        GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
+        GATEWAY_COMPATIBILITY_MODE_LEGACY_DECODE,
+      ),
+    ).toBe(0);
   });
 
   it("fails closed for invalid permission payload entries", () => {
@@ -128,6 +175,18 @@ describe("decodeWorkspaceChannelOverrideGatewayEvent", () => {
     );
 
     expect(result).toBeNull();
+    expect(
+      gatewayCompatibilityCounterValue(
+        GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
+        GATEWAY_COMPATIBILITY_MODE_LEGACY_DECODE,
+      ),
+    ).toBe(0);
+    expect(
+      gatewayCompatibilityCounterValue(
+        GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
+        GATEWAY_COMPATIBILITY_MODE_EXPLICIT_DECODE,
+      ),
+    ).toBe(0);
   });
 
   it("fails closed for role override payload missing deny permission set", () => {

@@ -455,6 +455,7 @@ All events use the versioned envelope:
 - Verify `/metrics` includes:
   - `filament_gateway_events_emitted_total`
   - `filament_gateway_events_dropped_total`
+  - `filament_gateway_compatibility_events_total`
   - `filament_gateway_events_unknown_received_total`
   - `filament_gateway_events_parse_rejected_total`
   - `filament_voice_sync_repairs_total`
@@ -468,6 +469,19 @@ All events use the versioned envelope:
   - role and override changes
   - profile and friendship updates
   - voice participant sync/join/leave and stream publish/unpublish
+
+## Override Migration Sunset Criteria
+- Keep the legacy `workspace_channel_override_update` emitter active only while compatibility counters show mixed consumers.
+- Track compatibility counters during rollout:
+  - server emit path:
+    - `filament_gateway_compatibility_events_total{surface="server",path="channel_role_override_migration",mode="legacy_emit"}`
+    - `filament_gateway_compatibility_events_total{surface="server",path="channel_permission_override_migration",mode="legacy_emit"}`
+  - client decode path:
+    - `channel_override_migration:legacy_decode`
+- Sunset trigger:
+  - both server legacy-emit counters stay flat for one full release window after explicit emit counters continue to grow, and
+  - staging/canary clients show no `legacy_decode` increments for the same window.
+- After trigger is met, remove legacy emit/decode paths and delete this migration note in the same change.
 
 ## Mixed-Version Fallback Behavior
 - New clients must ignore unknown event types and continue processing subsequent events.
