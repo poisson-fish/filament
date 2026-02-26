@@ -326,6 +326,8 @@ This section locks response semantics and limits for upcoming directory-join/aud
 - `list_start { ordered }`, `list_end`
 - `list_item_start`, `list_item_end`
 - `link_start { href }`, `link_end` (only `http`, `https`, `mailto` links survive sanitization)
+  - scheme checks are case-insensitive and trim surrounding whitespace before validation
+  - disallowed/obfuscated schemes (for example `javascript:` or `data:` with mixed casing) are dropped
 - `text { text }`
 - `code { code }`
 - `fenced_code { language, code }`

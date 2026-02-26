@@ -195,6 +195,34 @@ describe("chat domain invariants", () => {
     );
   });
 
+  it("rejects malformed markdown token payloads and oversized fenced code fields", () => {
+    expect(() => markdownTokensFromResponse("not-an-array")).toThrow(
+      "markdown_tokens must be a bounded array.",
+    );
+    const oversizedTokenArray = Array.from({ length: 4097 }, () => ({
+      type: "text",
+      text: "x",
+    }));
+    expect(() => markdownTokensFromResponse(oversizedTokenArray)).toThrow(
+      "markdown_tokens must be a bounded array.",
+    );
+    expect(() =>
+      markdownTokensFromResponse([
+        { type: "fenced_code", language: 42, code: "fn main() {}\n" },
+      ]),
+    ).toThrow("Unsupported fenced_code language.");
+    expect(() =>
+      markdownTokensFromResponse([
+        { type: "fenced_code", language: "r".repeat(33), code: "fn main() {}\n" },
+      ]),
+    ).toThrow("Unsupported fenced_code language.");
+    expect(() =>
+      markdownTokensFromResponse([
+        { type: "fenced_code", language: "txt", code: "x".repeat(16_385) },
+      ]),
+    ).toThrow("code must be a string.");
+  });
+
   it("validates voice token and role/permission enums", () => {
     const voice = voiceTokenFromResponse({
       token: "T".repeat(96),

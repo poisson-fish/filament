@@ -977,6 +977,28 @@ mod tests {
     }
 
     #[test]
+    fn markdown_rejects_obfuscated_disallowed_link_schemes() {
+        let tokens = tokenize_markdown(
+            "[js](JaVaScRiPt:alert(1)) [data](DATA:text/html;base64,PHNjcmlwdA==) [mail](MAILTO:admin@example.com) [web](HTTPS://example.com/path)",
+        );
+
+        assert!(!tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::LinkStart { href }
+                if href.to_ascii_lowercase().starts_with("javascript:")
+                    || href.to_ascii_lowercase().starts_with("data:")
+        )));
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::LinkStart { href } if href.starts_with("MAILTO:admin@example.com")
+        )));
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::LinkStart { href } if href.starts_with("HTTPS://example.com/path")
+        )));
+    }
+
+    #[test]
     fn markdown_allowlist_keeps_basic_formatting_tokens() {
         let tokens = tokenize_markdown("**hi** _there_ `x`");
         assert!(tokens.contains(&MarkdownToken::StrongStart));
@@ -1001,6 +1023,18 @@ mod tests {
     #[test]
     fn markdown_drops_invalid_fenced_code_language_labels() {
         let tokens = tokenize_markdown("```rust<script>\nfn main() {}\n```");
+        assert!(tokens.iter().any(|token| matches!(
+            token,
+            MarkdownToken::FencedCode {
+                language: None,
+                code,
+            } if code == "fn main() {}\n"
+        )));
+    }
+
+    #[test]
+    fn markdown_drops_oversized_fenced_code_language_labels() {
+        let tokens = tokenize_markdown(&format!("```{}\nfn main() {{}}\n```", "r".repeat(33)));
         assert!(tokens.iter().any(|token| matches!(
             token,
             MarkdownToken::FencedCode {

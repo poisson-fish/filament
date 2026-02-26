@@ -8,7 +8,7 @@ function renderMarkdown(tokens: MarkdownToken[]): void {
 }
 
 describe("safe markdown", () => {
-  it("renders safe links and blocks javascript/data links", () => {
+  it("renders safe links and blocks obfuscated javascript/data links", () => {
     renderMarkdown([
       { type: "link_start", href: "https://filament.test/docs" },
       { type: "text", text: "docs" },
@@ -21,14 +21,30 @@ describe("safe markdown", () => {
       { type: "link_start", href: "data:text/html,<script>alert(1)</script>" },
       { type: "text", text: "data" },
       { type: "link_end" },
+      { type: "text", text: " " },
+      { type: "link_start", href: "JaVaScRiPt:alert(2)" },
+      { type: "text", text: "mixed-case-js" },
+      { type: "link_end" },
+      { type: "text", text: " " },
+      { type: "link_start", href: "DATA:text/html;base64,PHNjcmlwdA==" },
+      { type: "text", text: "mixed-case-data" },
+      { type: "link_end" },
+      { type: "text", text: " " },
+      { type: "link_start", href: "MAILTO:admin@filament.test" },
+      { type: "text", text: "mail" },
+      { type: "link_end" },
     ]);
 
     const safeLink = screen.getByRole("link", { name: "docs" });
     expect(safeLink).toHaveAttribute("href", "https://filament.test/docs");
     expect(safeLink).toHaveAttribute("target", "_blank");
     expect(safeLink).toHaveAttribute("rel", "noopener noreferrer");
+    const mailLink = screen.getByRole("link", { name: "mail" });
+    expect(mailLink).toHaveAttribute("href", "MAILTO:admin@filament.test");
     expect(screen.queryByRole("link", { name: "pwnd" })).toBeNull();
     expect(screen.queryByRole("link", { name: "data" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "mixed-case-js" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "mixed-case-data" })).toBeNull();
   });
 
   it("treats raw html as inert text and never emits script nodes", () => {

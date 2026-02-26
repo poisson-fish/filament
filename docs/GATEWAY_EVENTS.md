@@ -404,6 +404,8 @@ All events use the versioned envelope:
   - `user_id`
   - `banner_version`
   - `updated_at_unix`
+- Client handling:
+  - treat `banner_version` as a cache key bump and rebuild banner URLs from trusted local route builders only
 
 #### `friend_request_create`
 - Scope: user

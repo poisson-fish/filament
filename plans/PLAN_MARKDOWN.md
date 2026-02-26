@@ -330,19 +330,19 @@ Expose banner and improved about-markdown UX in web client profile surfaces.
 Close security/test/docs gaps and lock rollout criteria.
 
 ### Completion Status
-`NOT STARTED`
+`IN PROGRESS`
 
 ### Tasks
-- [ ] Add focused markdown safety regression vectors (server + web):
+- [x] Add focused markdown safety regression vectors (server + web):
   - raw HTML payloads
   - obfuscated/disallowed link schemes
   - malformed token payloads
   - oversized or malformed fenced code tokens/language labels
-- [ ] Add/refresh docs:
+- [x] Add/refresh docs:
   - `docs/API.md` profile and banner contracts
   - `docs/API.md` markdown token contract updates (including fenced code/lang tokens)
   - gateway event docs for profile banner updates
-- [ ] Update active planning logs (`plans/PLAN_UX.md` progress entry after implementation).
+- [x] Update active planning logs (`plans/PLAN_UX.md` progress entry after implementation).
 
 ### Tentative File Touch List
 - Docs:
@@ -363,6 +363,16 @@ Close security/test/docs gaps and lock rollout criteria.
 
 ### Exit Criteria
 - Security posture is unchanged or improved, tests are green, and contracts/docs match implementation.
+
+### Progress Notes
+- 2026-02-26: Added server-core markdown regression vectors for obfuscated disallowed schemes (`javascript:`/`data:` with mixed casing) and oversized fenced-code language labels, with fail-closed downgrade assertions.
+- 2026-02-26: Expanded web markdown safety regressions:
+  - `SafeMarkdown` component tests now cover mixed-case disallowed schemes and preserve safe `mailto:` links.
+  - domain parsing tests now assert rejection of malformed markdown payloads (non-array/oversized arrays) and malformed/oversized fenced-code fields.
+- 2026-02-26: Refreshed docs and planning logs:
+  - `docs/API.md` markdown token sanitization notes (case-insensitive scheme checks and obfuscated scheme drop behavior).
+  - `docs/GATEWAY_EVENTS.md` `profile_banner_update` client cache-bump handling note.
+  - `plans/PLAN_UX.md` progress entry for this hardening slice.
 
 ---
 
