@@ -74,14 +74,14 @@ export type AppShellAuthContext = ReturnType<typeof useAuth>;
 
 export function createAppShellRuntime(auth: AppShellAuthContext) {
   let composerAttachmentInputRef: HTMLInputElement | undefined;
-  let composerInputRef: HTMLInputElement | undefined;
+  let composerInputRef: HTMLTextAreaElement | undefined;
   const setComposerAttachmentInputRef = (
     value: HTMLInputElement | undefined,
   ): void => {
     composerAttachmentInputRef = value;
   };
   const setComposerInputRef = (
-    value: HTMLInputElement | undefined,
+    value: HTMLTextAreaElement | undefined,
   ): void => {
     composerInputRef = value;
   };

@@ -1,3 +1,4 @@
+import { Show, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import type { MarkdownToken } from "../../../domain/chat";
 import {
@@ -19,14 +20,101 @@ export interface SafeMarkdownProps {
   class?: string;
 }
 
-const markdownHighlighter = createFilamentMarkdownHighlighter();
-
-export function SafeMarkdown(props: SafeMarkdownProps) {
-  const nodes = renderTokens(props.tokens);
-  return <div class={`safe-markdown ${props.class ?? ""}`.trim()}>{nodes}</div>;
+interface ExternalLinkConfirmState {
+  url: string;
+  host: string | null;
 }
 
-function renderTokens(tokens: MarkdownToken[]): Array<JSX.Element | string> {
+const markdownHighlighter = createFilamentMarkdownHighlighter();
+const TRUSTED_EXTERNAL_LINK_HOSTS_STORAGE_KEY = "filament.trusted_external_link_hosts";
+
+export function SafeMarkdown(props: SafeMarkdownProps) {
+  const [pendingExternalLink, setPendingExternalLink] =
+    createSignal<ExternalLinkConfirmState | null>(null);
+  const [trustHostForFuture, setTrustHostForFuture] = createSignal(false);
+  const nodes = renderTokens(props.tokens, (event, href) => {
+    event.preventDefault();
+    if (isTrustedExternalLink(href)) {
+      openExternalLink(href);
+      return;
+    }
+    setTrustHostForFuture(false);
+    setPendingExternalLink({
+      url: href,
+      host: externalLinkHost(href),
+    });
+  });
+
+  return (
+    <>
+      <div class={`safe-markdown ${props.class ?? ""}`.trim()}>{nodes}</div>
+      <Show when={pendingExternalLink()}>
+        {(stateAccessor) => {
+          const state = stateAccessor();
+          return (
+            <div class="fixed inset-0 z-40 grid place-items-center bg-black/70 p-[0.9rem]">
+              <section
+                role="dialog"
+                aria-modal="true"
+                aria-label="External link confirmation"
+                class="external-link-confirm-modal w-full max-w-[34rem] rounded-[0.9rem] border border-line bg-bg-1 p-[1rem] shadow-panel"
+              >
+                <div class="grid gap-[0.45rem]">
+                  <h3 class="m-0 text-[1.36rem] font-[760] text-ink-0">Leaving Filament</h3>
+                  <p class="m-0 text-[1.05rem] text-ink-2">
+                    This link is taking you to the following website:
+                  </p>
+                </div>
+                <pre class="m-[1rem_0_0_0] overflow-auto rounded-[0.78rem] border border-line-soft bg-bg-2 p-[0.78rem] text-[1.02rem] text-ink-1 whitespace-pre-wrap break-all">
+                  {state.url}
+                </pre>
+                <Show when={state.host}>
+                  {(hostAccessor) => (
+                    <label class="mt-[0.92rem] flex cursor-pointer items-center gap-[0.62rem] text-[1.02rem] text-ink-1">
+                      <input
+                        type="checkbox"
+                        checked={trustHostForFuture()}
+                        onInput={(event) => setTrustHostForFuture(event.currentTarget.checked)}
+                      />
+                      <span>Trust {hostAccessor()} links from now on</span>
+                    </label>
+                  )}
+                </Show>
+                <div class="mt-[1rem] grid grid-cols-2 gap-[0.65rem] max-[620px]:grid-cols-1">
+                  <button
+                    type="button"
+                    class="rounded-[0.72rem] border border-line-soft bg-bg-3 px-[0.92rem] py-[0.7rem] text-[1.02rem] font-[640] text-ink-0 transition-colors hover:bg-bg-4"
+                    onClick={() => setPendingExternalLink(null)}
+                  >
+                    Go Back
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-[0.72rem] border border-brand bg-brand px-[0.92rem] py-[0.7rem] text-[1.02rem] font-[700] text-white transition-colors hover:bg-brand-strong"
+                    onClick={() => {
+                      if (trustHostForFuture()) {
+                        addTrustedExternalLinkHost(state.url);
+                      }
+                      openExternalLink(state.url);
+                      setPendingExternalLink(null);
+                    }}
+                  >
+                    Visit Site
+                  </button>
+                </div>
+              </section>
+            </div>
+          );
+        }}
+      </Show>
+    </>
+  );
+}
+
+function renderTokens(
+  tokens: MarkdownToken[],
+  onOpenExternalLink: (event: MouseEvent, href: string) => void,
+): Array<JSX.Element | string> {
   const stack: ContainerNode[] = [{ kind: "root", children: [] }];
 
   const append = (value: JSX.Element | string) => {
@@ -56,7 +144,7 @@ function renderTokens(tokens: MarkdownToken[]): Array<JSX.Element | string> {
         if (!node) {
           break;
         }
-        append(containerToElement(node));
+        append(containerToElement(node, onOpenExternalLink));
       }
       return;
     }
@@ -148,7 +236,7 @@ function renderTokens(tokens: MarkdownToken[]): Array<JSX.Element | string> {
     if (!node) {
       break;
     }
-    append(containerToElement(node));
+    append(containerToElement(node, onOpenExternalLink));
   }
 
   return stack[0]?.children ?? [];
@@ -221,7 +309,10 @@ function extractHighlightClassNames(properties: unknown): string[] {
   );
 }
 
-function containerToElement(node: ContainerNode): JSX.Element | string {
+function containerToElement(
+  node: ContainerNode,
+  onOpenExternalLink: (event: MouseEvent, href: string) => void,
+): JSX.Element | string {
   if (node.kind === "root") {
     return <>{node.children}</>;
   }
@@ -247,7 +338,12 @@ function containerToElement(node: ContainerNode): JSX.Element | string {
     return <>{node.children}</>;
   }
   return (
-    <a href={node.href} target="_blank" rel="noopener noreferrer">
+    <a
+      href={node.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(event) => onOpenExternalLink(event, node.href!)}
+    >
       {node.children}
     </a>
   );
@@ -271,4 +367,58 @@ function sanitizeLink(raw: string): string | null {
     return null;
   }
   return null;
+}
+
+function openExternalLink(url: string): void {
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function externalLinkHost(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).host || null;
+  } catch {
+    return null;
+  }
+}
+
+function trustedExternalLinkHosts(): Set<string> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+  const rawHosts = window.localStorage.getItem(TRUSTED_EXTERNAL_LINK_HOSTS_STORAGE_KEY);
+  if (!rawHosts) {
+    return new Set();
+  }
+  try {
+    const parsed = JSON.parse(rawHosts);
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(
+      parsed.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function isTrustedExternalLink(rawUrl: string): boolean {
+  const host = externalLinkHost(rawUrl);
+  if (!host) {
+    return false;
+  }
+  return trustedExternalLinkHosts().has(host);
+}
+
+function addTrustedExternalLinkHost(rawUrl: string): void {
+  const host = externalLinkHost(rawUrl);
+  if (!host || typeof window === "undefined") {
+    return;
+  }
+  const nextHosts = trustedExternalLinkHosts();
+  nextHosts.add(host);
+  window.localStorage.setItem(
+    TRUSTED_EXTERNAL_LINK_HOSTS_STORAGE_KEY,
+    JSON.stringify([...nextHosts]),
+  );
 }

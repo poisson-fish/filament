@@ -1,11 +1,10 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ChannelRecord } from "../../../../domain/chat";
 import { channelRailLabel, formatBytes } from "../../helpers";
 import {
   initEmojiMart,
   replaceEmojiShortcodesWithSelection,
-  renderEmojiMixedText,
 } from "./emoji-utils";
 import { ComposerEmojiPickerPortal } from "./ComposerEmojiPickerPortal";
 
@@ -42,7 +41,7 @@ export interface MessageComposerProps {
   onAttachmentInput: JSX.EventHandler<HTMLInputElement, InputEvent>;
   onRemoveAttachment: (file: File) => void;
   attachmentInputRef: (element: HTMLInputElement) => void;
-  composerInputRef: (element: HTMLInputElement) => void;
+  composerInputRef: (element: HTMLTextAreaElement) => void;
 }
 
 export function MessageComposer(props: MessageComposerProps) {
@@ -58,8 +57,24 @@ export function MessageComposer(props: MessageComposerProps) {
     "inline-flex h-[2.12rem] items-center justify-center rounded-[0.48rem] border-0 bg-transparent px-[0.5rem] text-ink-2 transition-colors duration-[140ms] ease-out enabled:hover:bg-bg-3 enabled:hover:text-ink-0 disabled:cursor-not-allowed disabled:opacity-68";
 
   const [isEmojiPickerOpen, setEmojiPickerOpen] = createSignal(false);
-  let inputEl: HTMLInputElement | undefined;
-  let ghostEl: HTMLDivElement | undefined;
+  let inputEl: HTMLTextAreaElement | undefined;
+
+  const resizeComposerInput = (): void => {
+    if (!inputEl) {
+      return;
+    }
+    inputEl.style.height = "0px";
+    const maxHeightPx = Math.max(120, Math.floor(window.innerHeight * 0.5));
+    const contentHeight = inputEl.scrollHeight;
+    const nextHeight = Math.min(contentHeight, maxHeightPx);
+    inputEl.style.height = `${nextHeight}px`;
+    inputEl.style.overflowY = contentHeight > maxHeightPx ? "auto" : "hidden";
+  };
+
+  createEffect(() => {
+    void props.composerValue;
+    resizeComposerInput();
+  });
 
   const handleEmojiAdd = (emojiNative: string) => {
     setEmojiPickerOpen(false);
@@ -118,27 +133,13 @@ export function MessageComposer(props: MessageComposerProps) {
           class="relative grid w-full min-w-0 items-center"
           style="grid-template-columns: minmax(0,1fr);"
         >
-          <div
-            ref={ghostEl}
-            class="pointer-events-none col-start-1 row-start-1 flex h-full w-full min-w-0 items-center overflow-hidden whitespace-pre border-0 bg-transparent pl-0 pr-[0.64rem] text-[0.94rem] text-ink-0 disabled:opacity-68"
-            aria-hidden="true"
-          >
-            {props.composerValue ? (
-              renderEmojiMixedText(props.composerValue)
-            ) : (
-              <span class="text-ink-2">
-                {props.activeChannel
-                  ? `Message ${channelRailLabel({ kind: props.activeChannel.kind, name: props.activeChannel.name })}`
-                  : "Select channel"}
-              </span>
-            )}
-          </div>
-          <input
+          <textarea
             ref={(el) => {
               inputEl = el;
               props.composerInputRef(el);
+              resizeComposerInput();
             }}
-            class="col-start-1 row-start-1 w-full min-w-0 border-0 bg-transparent pl-0 pr-[0.64rem] text-[0.94rem] text-transparent caret-ink-0 outline-none placeholder:text-transparent disabled:cursor-not-allowed disabled:opacity-68"
+            class="col-start-1 row-start-1 max-h-[50vh] w-full min-w-0 resize-none border-0 bg-transparent py-[0.72rem] pl-0 pr-[0.64rem] text-[0.94rem] leading-[1.4] text-ink-0 caret-ink-0 outline-none placeholder:text-ink-2 disabled:cursor-not-allowed disabled:opacity-68"
             value={props.composerValue}
             onInput={(event) => {
               const rawValue = event.currentTarget.value;
@@ -158,12 +159,16 @@ export function MessageComposer(props: MessageComposerProps) {
                 }
               }
               props.onComposerInput(replacement.text);
+              resizeComposerInput();
             }}
-            onScroll={(event) => {
-              if (ghostEl) {
-                ghostEl.scrollLeft = event.currentTarget.scrollLeft;
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.shiftKey) {
+                return;
               }
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
             }}
+            rows={1}
             maxlength="2000"
             placeholder={
               props.activeChannel

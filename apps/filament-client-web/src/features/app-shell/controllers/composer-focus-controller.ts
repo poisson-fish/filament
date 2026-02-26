@@ -4,7 +4,7 @@ import type { ChannelRecord } from "../../../domain/chat";
 export interface ComposerFocusControllerOptions {
   activeChannel: Accessor<ChannelRecord | null>;
   canAccessActiveChannel: Accessor<boolean>;
-  composerInputElement: Accessor<HTMLInputElement | undefined>;
+  composerInputElement: Accessor<HTMLInputElement | HTMLTextAreaElement | undefined>;
   composerValue: Accessor<string>;
 }
 
@@ -77,7 +77,7 @@ function shouldSubmitFromGlobalEnter(event: KeyboardEvent): boolean {
 }
 
 function insertCharacterAndDispatchInput(
-  input: HTMLInputElement,
+  input: HTMLInputElement | HTMLTextAreaElement,
   character: string,
 ): void {
   const selectionStart = input.selectionStart ?? input.value.length;

@@ -1,5 +1,5 @@
-import { render, screen } from "@solidjs/testing-library";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@solidjs/testing-library";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MarkdownToken } from "../src/domain/chat";
 import { SafeMarkdown } from "../src/features/app-shell/components/SafeMarkdown";
 
@@ -8,6 +8,11 @@ function renderMarkdown(tokens: MarkdownToken[]): void {
 }
 
 describe("safe markdown", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
   it("renders safe links and blocks obfuscated javascript/data links", () => {
     renderMarkdown([
       { type: "link_start", href: "https://filament.test/docs" },
@@ -45,6 +50,51 @@ describe("safe markdown", () => {
     expect(screen.queryByRole("link", { name: "data" })).toBeNull();
     expect(screen.queryByRole("link", { name: "mixed-case-js" })).toBeNull();
     expect(screen.queryByRole("link", { name: "mixed-case-data" })).toBeNull();
+  });
+
+  it("opens a confirmation modal before opening user-submitted links", () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    renderMarkdown([
+      { type: "link_start", href: "https://filament.test/docs" },
+      { type: "text", text: "docs" },
+      { type: "link_end" },
+    ]);
+
+    fireEvent.click(screen.getByRole("link", { name: "docs" }));
+
+    expect(screen.getByRole("dialog", { name: "External link confirmation" })).toBeInTheDocument();
+    expect(screen.getByText("https://filament.test/docs")).toBeInTheDocument();
+    expect(openSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Visit Site" }));
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://filament.test/docs",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(screen.queryByRole("dialog", { name: "External link confirmation" })).toBeNull();
+  });
+
+  it("allows trusting a host to bypass future confirmations", () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    renderMarkdown([
+      { type: "link_start", href: "https://filament.test/docs" },
+      { type: "text", text: "docs" },
+      { type: "link_end" },
+    ]);
+
+    fireEvent.click(screen.getByRole("link", { name: "docs" }));
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Visit Site" }));
+    openSpy.mockClear();
+
+    fireEvent.click(screen.getByRole("link", { name: "docs" }));
+    expect(screen.queryByRole("dialog", { name: "External link confirmation" })).toBeNull();
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://filament.test/docs",
+      "_blank",
+      "noopener,noreferrer",
+    );
   });
 
   it("treats raw html as inert text and never emits script nodes", () => {

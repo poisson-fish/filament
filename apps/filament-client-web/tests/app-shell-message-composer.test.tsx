@@ -105,10 +105,25 @@ describe("app shell message composer", () => {
 
     render(() => <MessageComposer {...composerPropsFixture({ onComposerInput })} />);
 
-    const input = screen.getByPlaceholderText("Message #incident-room") as HTMLInputElement;
+    const input = screen.getByPlaceholderText("Message #incident-room") as HTMLTextAreaElement;
     await fireEvent.input(input, { target: { value: ":joy:" } });
 
     expect(onComposerInput).toHaveBeenCalledWith("😂");
+  });
+
+  it("uses an auto-growing multiline textarea with a viewport cap", () => {
+    render(() =>
+      <MessageComposer
+        {...composerPropsFixture({
+          composerValue: "line 1\nline 2\nline 3",
+        })}
+      />
+    );
+
+    const input = screen.getByPlaceholderText("Message #incident-room");
+    expect(input.tagName).toBe("TEXTAREA");
+    expect(input).toHaveAttribute("rows", "1");
+    expect(input).toHaveClass("max-h-[50vh]");
   });
 
   it("renders attachment pills and routes remove actions", async () => {
