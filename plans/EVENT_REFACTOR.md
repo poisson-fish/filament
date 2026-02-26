@@ -276,7 +276,7 @@ Reduce fragmentation and simplify navigation while preserving testable seams.
 `IN PROGRESS`
 
 ### Tasks
-- [ ] Consolidate tiny wrapper modules into cohesive components:
+- [x] Consolidate tiny wrapper modules into cohesive components:
   - `realtime/ingress/*`
   - `realtime/fanout/*`
   - `realtime/presence/*`
