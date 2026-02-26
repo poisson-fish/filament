@@ -69,7 +69,7 @@ fn parse_documented_gateway_events(gateway_doc: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn parse_client_override_migration_decode_set(client_source: &str) -> BTreeSet<String> {
+fn parse_client_override_decode_set(client_source: &str) -> BTreeSet<String> {
     let mut decoded = BTreeSet::new();
     for line in client_source.lines() {
         if !line.contains("workspace_channel_") || !line.contains("_update") {
@@ -200,31 +200,24 @@ fn gateway_event_manifest_is_aligned_across_server_and_docs() {
 }
 
 #[test]
-fn gateway_docs_capture_override_migration_contract() {
+fn gateway_docs_capture_override_contract() {
     let gateway_doc = read_doc("docs/GATEWAY_EVENTS.md");
     let documented = parse_documented_gateway_events(&gateway_doc);
 
     for required_event in [
-        "workspace_channel_override_update",
         "workspace_channel_role_override_update",
         "workspace_channel_permission_override_update",
     ] {
         assert!(
             documented.contains(required_event),
-            "docs/GATEWAY_EVENTS.md must document override migration event `{required_event}`"
+            "docs/GATEWAY_EVENTS.md must document override event `{required_event}`"
         );
     }
-
-    assert!(
-        gateway_doc.contains("legacy migration event"),
-        "docs/GATEWAY_EVENTS.md must mark the legacy override event as migration-only"
-    );
 }
 
 #[test]
-fn override_migration_event_set_is_aligned_across_server_docs_and_client_decoder() {
+fn override_event_set_is_aligned_across_server_docs_and_client_decoder() {
     let required_override_events = BTreeSet::from([
-        String::from("workspace_channel_override_update"),
         String::from("workspace_channel_role_override_update"),
         String::from("workspace_channel_permission_override_update"),
     ]);
@@ -236,7 +229,7 @@ fn override_migration_event_set_is_aligned_across_server_docs_and_client_decoder
         .collect();
     assert_eq!(
         server_emitted, required_override_events,
-        "server emitted override migration event set drifted"
+        "server emitted override event set drifted"
     );
 
     let documented = parse_documented_gateway_events(&read_doc("docs/GATEWAY_EVENTS.md"));
@@ -246,10 +239,10 @@ fn override_migration_event_set_is_aligned_across_server_docs_and_client_decoder
         .collect();
     assert_eq!(
         documented_required, required_override_events,
-        "docs/GATEWAY_EVENTS.md override migration event set drifted"
+        "docs/GATEWAY_EVENTS.md override event set drifted"
     );
 
-    let client_decode_set = parse_client_override_migration_decode_set(&read_doc(
+    let client_decode_set = parse_client_override_decode_set(&read_doc(
         "apps/filament-client-web/src/lib/gateway-workspace-channel-override-events.ts",
     ));
     assert_eq!(

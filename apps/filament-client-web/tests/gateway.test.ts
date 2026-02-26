@@ -460,7 +460,7 @@ describe("gateway payload parsing", () => {
       },
       {
         v: 1,
-        t: "workspace_channel_override_update",
+        t: "workspace_channel_role_override_update",
         d: {
           guild_id: DEFAULT_GUILD_ID,
           channel_id: DEFAULT_CHANNEL_ID,
@@ -1062,7 +1062,7 @@ describe("gateway payload parsing", () => {
     socket.emitMessage(
       JSON.stringify({
         v: 1,
-        t: "workspace_channel_override_update",
+        t: "workspace_channel_role_override_update",
         d: {
           guild_id: DEFAULT_GUILD_ID,
           channel_id: DEFAULT_CHANNEL_ID,

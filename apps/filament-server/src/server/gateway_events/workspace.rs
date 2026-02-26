@@ -17,8 +17,6 @@ pub(crate) const WORKSPACE_ROLE_DELETE_EVENT: &str = "workspace_role_delete";
 pub(crate) const WORKSPACE_ROLE_REORDER_EVENT: &str = "workspace_role_reorder";
 pub(crate) const WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT: &str = "workspace_role_assignment_add";
 pub(crate) const WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT: &str = "workspace_role_assignment_remove";
-pub(crate) const WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT: &str =
-    "workspace_channel_override_update";
 pub(crate) const WORKSPACE_CHANNEL_ROLE_OVERRIDE_UPDATE_EVENT: &str =
     "workspace_channel_role_override_update";
 pub(crate) const WORKSPACE_CHANNEL_PERMISSION_OVERRIDE_UPDATE_EVENT: &str =
@@ -478,28 +476,6 @@ pub(crate) fn try_workspace_role_assignment_remove(
     )
 }
 
-pub(crate) fn try_workspace_channel_override_update(
-    guild_id: &str,
-    channel_id: &str,
-    role: filament_core::Role,
-    allow: Vec<filament_core::Permission>,
-    deny: Vec<filament_core::Permission>,
-    updated_at_unix: i64,
-    actor_user_id: Option<UserId>,
-) -> anyhow::Result<GatewayEvent> {
-    try_build_event(
-        WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT,
-        WorkspaceChannelOverrideUpdatePayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            role,
-            updated_fields: WorkspaceChannelOverrideFieldsPayload { allow, deny },
-            updated_at_unix,
-            actor_user_id: actor_user_id.map(|id| id.to_string()),
-        },
-    )
-}
-
 pub(crate) fn try_workspace_channel_permission_override_update(
     guild_id: &str,
     channel_id: &str,
@@ -537,29 +513,6 @@ pub(crate) fn try_workspace_channel_role_override_update(
             guild_id: guild_id.to_owned(),
             channel_id: channel_id.to_owned(),
             role,
-            updated_fields,
-            updated_at_unix,
-            actor_user_id: actor_user_id.map(|id| id.to_string()),
-        },
-    )
-}
-
-pub(crate) fn try_workspace_channel_permission_override_update_legacy(
-    guild_id: &str,
-    channel_id: &str,
-    target_kind: crate::server::types::PermissionOverrideTargetKind,
-    target_id: &str,
-    updated_fields: WorkspaceChannelOverrideFieldsPayload,
-    updated_at_unix: i64,
-    actor_user_id: Option<UserId>,
-) -> anyhow::Result<GatewayEvent> {
-    try_build_event(
-        WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT,
-        WorkspaceChannelPermissionOverrideUpdatePayload {
-            guild_id: guild_id.to_owned(),
-            channel_id: channel_id.to_owned(),
-            target_kind,
-            target_id: target_id.to_owned(),
             updated_fields,
             updated_at_unix,
             actor_user_id: actor_user_id.map(|id| id.to_string()),
@@ -713,25 +666,6 @@ mod tests {
                 .expect("workspace_role_assignment_remove should serialize"),
         );
         assert_eq!(payload["removed_at_unix"], Value::from(22));
-    }
-
-    #[test]
-    fn workspace_channel_override_event_emits_allow_and_deny_arrays() {
-        let payload = parse_payload(
-            &try_workspace_channel_override_update(
-                "guild-1",
-                "channel-1",
-                Role::Moderator,
-                vec![Permission::CreateMessage],
-                vec![Permission::BanMember],
-                50,
-                None,
-            )
-            .expect("workspace_channel_override_update should serialize"),
-        );
-        assert_eq!(payload["role"], Value::from("moderator"));
-        assert!(payload["updated_fields"]["allow"].is_array());
-        assert!(payload["updated_fields"]["deny"].is_array());
     }
 
     #[test]

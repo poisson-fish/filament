@@ -53,11 +53,11 @@ describe("dispatchWorkspaceGatewayEvent", () => {
     expect(onWorkspaceMemberAdd).not.toHaveBeenCalled();
   });
 
-  it("dispatches role override updates to legacy override handler", () => {
+  it("dispatches explicit role override updates to override handler", () => {
     const onWorkspaceChannelOverrideUpdate = vi.fn();
 
     const handled = dispatchWorkspaceGatewayEvent(
-      "workspace_channel_override_update",
+      "workspace_channel_role_override_update",
       {
         guild_id: DEFAULT_GUILD_ID,
         channel_id: DEFAULT_CHANNEL_ID,
@@ -83,48 +83,6 @@ describe("dispatchWorkspaceGatewayEvent", () => {
       },
       updatedAtUnix: 1710000001,
     });
-  });
-
-  it("normalizes legacy permission payload shape to permission override handler", () => {
-    const onWorkspaceChannelOverrideUpdate = vi.fn();
-    const onWorkspaceChannelPermissionOverrideUpdate = vi.fn();
-    const onWorkspaceIpBanSync = vi.fn();
-
-    const handled = dispatchWorkspaceGatewayEvent(
-      "workspace_channel_override_update",
-      {
-        guild_id: DEFAULT_GUILD_ID,
-        channel_id: DEFAULT_CHANNEL_ID,
-        target_kind: "member",
-        target_id: DEFAULT_USER_ID,
-        updated_fields: {
-          allow: ["create_message"],
-          deny: ["ban_member"],
-        },
-        updated_at_unix: 1710000001,
-      },
-      {
-        onWorkspaceChannelOverrideUpdate,
-        onWorkspaceChannelPermissionOverrideUpdate,
-        onWorkspaceIpBanSync,
-      },
-    );
-
-    expect(handled).toBe(true);
-    expect(onWorkspaceChannelOverrideUpdate).not.toHaveBeenCalled();
-    expect(onWorkspaceChannelPermissionOverrideUpdate).toHaveBeenCalledTimes(1);
-    expect(onWorkspaceChannelPermissionOverrideUpdate).toHaveBeenCalledWith({
-      guildId: DEFAULT_GUILD_ID,
-      channelId: DEFAULT_CHANNEL_ID,
-      targetKind: "member",
-      targetId: DEFAULT_USER_ID,
-      updatedFields: {
-        allow: ["create_message"],
-        deny: ["ban_member"],
-      },
-      updatedAtUnix: 1710000001,
-    });
-    expect(onWorkspaceIpBanSync).not.toHaveBeenCalled();
   });
 
   it("dispatches explicit permission override event type to permission override handler", () => {

@@ -34,7 +34,6 @@ pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
     workspace::WORKSPACE_ROLE_REORDER_EVENT,
     workspace::WORKSPACE_ROLE_ASSIGNMENT_ADD_EVENT,
     workspace::WORKSPACE_ROLE_ASSIGNMENT_REMOVE_EVENT,
-    workspace::WORKSPACE_CHANNEL_OVERRIDE_UPDATE_EVENT,
     workspace::WORKSPACE_CHANNEL_ROLE_OVERRIDE_UPDATE_EVENT,
     workspace::WORKSPACE_CHANNEL_PERMISSION_OVERRIDE_UPDATE_EVENT,
     workspace::WORKSPACE_IP_BAN_SYNC_EVENT,
@@ -88,11 +87,9 @@ pub(crate) use workspace::workspace_role_reorder;
 #[cfg(test)]
 pub(crate) use workspace::workspace_role_update;
 pub(crate) use workspace::{
-    try_workspace_channel_override_update, try_workspace_channel_permission_override_update,
-    try_workspace_channel_permission_override_update_legacy,
-    try_workspace_channel_role_override_update, try_workspace_ip_ban_sync,
-    try_workspace_member_add, try_workspace_member_ban, try_workspace_member_remove,
-    try_workspace_member_update, try_workspace_role_assignment_add,
+    try_workspace_channel_permission_override_update, try_workspace_channel_role_override_update,
+    try_workspace_ip_ban_sync, try_workspace_member_add, try_workspace_member_ban,
+    try_workspace_member_remove, try_workspace_member_update, try_workspace_role_assignment_add,
     try_workspace_role_assignment_remove, try_workspace_role_create, try_workspace_role_delete,
     try_workspace_role_reorder, try_workspace_role_update, try_workspace_update,
     WorkspaceChannelOverrideFieldsPayload, WORKSPACE_IP_BAN_SYNC_EVENT, WORKSPACE_MEMBER_ADD_EVENT,
@@ -450,22 +447,6 @@ mod tests {
             Value::from(22)
         );
 
-        let workspace_override_payload = parse_event(
-            &try_workspace_channel_override_update(
-                "g",
-                "c",
-                Role::Moderator,
-                vec![Permission::CreateMessage],
-                vec![Permission::BanMember],
-                23,
-                Some(user_id),
-            )
-            .expect("workspace_channel_override_update should serialize"),
-        );
-        assert_eq!(workspace_override_payload["role"], Value::from("moderator"));
-        assert!(workspace_override_payload["updated_fields"]["allow"].is_array());
-        assert!(workspace_override_payload["updated_fields"]["deny"].is_array());
-
         let workspace_role_override_payload = parse_event(
             &try_workspace_channel_role_override_update(
                 "g",
@@ -475,7 +456,7 @@ mod tests {
                     vec![Permission::CreateMessage],
                     vec![Permission::BanMember],
                 ),
-                24,
+                23,
                 Some(user_id),
             )
             .expect("workspace_channel_role_override_update should serialize"),
@@ -497,7 +478,7 @@ mod tests {
                     vec![Permission::CreateMessage],
                     vec![Permission::BanMember],
                 ),
-                25,
+                24,
                 Some(user_id),
             )
             .expect("workspace_channel_permission_override_update should serialize"),

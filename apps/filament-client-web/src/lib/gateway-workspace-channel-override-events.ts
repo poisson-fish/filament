@@ -13,21 +13,14 @@ import type {
   WorkspaceChannelOverrideUpdatePayload,
   WorkspaceChannelPermissionOverrideUpdatePayload,
 } from "./gateway-contracts";
-import {
-  GATEWAY_COMPATIBILITY_MODE_EXPLICIT_DECODE,
-  GATEWAY_COMPATIBILITY_MODE_LEGACY_DECODE,
-  GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
-  recordGatewayCompatibilityCounter,
-} from "./gateway-compatibility-counters";
 
 type WorkspaceChannelOverrideGatewayEventType =
-  | "workspace_channel_override_update"
   | "workspace_channel_role_override_update"
   | "workspace_channel_permission_override_update";
 
 export type WorkspaceChannelOverrideGatewayEvent =
   | {
-    type: "workspace_channel_override_update";
+    type: "workspace_channel_role_override_update";
     payload: WorkspaceChannelOverrideUpdatePayload;
   }
   | {
@@ -188,8 +181,7 @@ export function isWorkspaceChannelOverrideGatewayEventType(
   value: string,
 ): value is WorkspaceChannelOverrideGatewayEventType {
   return (
-    value === "workspace_channel_override_update"
-    || value === "workspace_channel_role_override_update"
+    value === "workspace_channel_role_override_update"
     || value === "workspace_channel_permission_override_update"
   );
 }
@@ -202,34 +194,25 @@ export function decodeWorkspaceChannelOverrideGatewayEvent(
     return null;
   }
 
-  const parsedRolePayload = parseWorkspaceChannelOverrideUpdatePayload(payload);
-  if (parsedRolePayload) {
-    recordGatewayCompatibilityCounter(
-      GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
-      type === "workspace_channel_override_update"
-        ? GATEWAY_COMPATIBILITY_MODE_LEGACY_DECODE
-        : GATEWAY_COMPATIBILITY_MODE_EXPLICIT_DECODE,
-    );
+  if (type === "workspace_channel_role_override_update") {
+    const parsedRolePayload = parseWorkspaceChannelOverrideUpdatePayload(payload);
+    if (!parsedRolePayload) {
+      return null;
+    }
     return {
-      type: "workspace_channel_override_update",
+      type: "workspace_channel_role_override_update",
       payload: parsedRolePayload,
     };
   }
 
   const parsedPermissionPayload =
     parseWorkspaceChannelPermissionOverrideUpdatePayload(payload);
-  if (parsedPermissionPayload) {
-    recordGatewayCompatibilityCounter(
-      GATEWAY_COMPATIBILITY_PATH_CHANNEL_OVERRIDE_MIGRATION,
-      type === "workspace_channel_override_update"
-        ? GATEWAY_COMPATIBILITY_MODE_LEGACY_DECODE
-        : GATEWAY_COMPATIBILITY_MODE_EXPLICIT_DECODE,
-    );
-    return {
-      type: "workspace_channel_permission_override_update",
-      payload: parsedPermissionPayload,
-    };
+  if (!parsedPermissionPayload) {
+    return null;
   }
 
-  return null;
+  return {
+    type: "workspace_channel_permission_override_update",
+    payload: parsedPermissionPayload,
+  };
 }

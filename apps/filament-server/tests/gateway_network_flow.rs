@@ -2163,35 +2163,18 @@ async fn websocket_subscription_receives_phase4_permission_and_moderation_events
         .await
         .expect("override update request should execute");
     assert_eq!(override_update_response.status(), StatusCode::OK);
-    let override_event =
-        next_event_of_type(&mut owner_socket, "workspace_channel_override_update").await;
-    assert_eq!(override_event["d"]["channel_id"], channel.channel_id);
-    assert_eq!(
-        override_event["d"]["updated_fields"]["allow"],
-        json!(["create_message"])
-    );
-    assert_eq!(
-        override_event["d"]["updated_fields"]["deny"],
-        json!(["ban_member"])
-    );
-    let explicit_role_override_event =
+    let role_override_event =
         next_event_of_type(&mut owner_socket, "workspace_channel_role_override_update").await;
+    assert_eq!(role_override_event["d"]["channel_id"], channel.channel_id);
     assert_eq!(
-        explicit_role_override_event["d"]["channel_id"],
-        channel.channel_id
-    );
-    assert_eq!(
-        explicit_role_override_event["d"]["role"],
-        Value::from("moderator")
-    );
-    assert_eq!(
-        explicit_role_override_event["d"]["updated_fields"]["allow"],
+        role_override_event["d"]["updated_fields"]["allow"],
         json!(["create_message"])
     );
     assert_eq!(
-        explicit_role_override_event["d"]["updated_fields"]["deny"],
+        role_override_event["d"]["updated_fields"]["deny"],
         json!(["ban_member"])
     );
+    assert_eq!(role_override_event["d"]["role"], Value::from("moderator"));
 
     let permission_override_update = Request::builder()
         .method("POST")
@@ -2213,22 +2196,6 @@ async fn websocket_subscription_receives_phase4_permission_and_moderation_events
         .expect("permission override update request should execute");
     assert_eq!(permission_override_update_response.status(), StatusCode::OK);
 
-    let legacy_permission_override_event =
-        next_event_of_type(&mut owner_socket, "workspace_channel_override_update").await;
-    assert_eq!(
-        legacy_permission_override_event["d"]["target_kind"],
-        Value::from("role")
-    );
-    assert_eq!(legacy_permission_override_event["d"]["target_id"], role_id);
-    assert_eq!(
-        legacy_permission_override_event["d"]["updated_fields"]["allow"],
-        json!(["manage_roles"])
-    );
-    assert_eq!(
-        legacy_permission_override_event["d"]["updated_fields"]["deny"],
-        json!(["ban_member"])
-    );
-
     let permission_override_event = next_event_of_type(
         &mut owner_socket,
         "workspace_channel_permission_override_update",
@@ -2247,19 +2214,6 @@ async fn websocket_subscription_receives_phase4_permission_and_moderation_events
         permission_override_event["d"]["updated_fields"]["deny"],
         json!(["ban_member"])
     );
-    let metrics = metrics_text(&app).await;
-    assert!(metrics.contains(
-        "filament_gateway_compatibility_events_total{surface=\"server\",path=\"channel_role_override_migration\",mode=\"legacy_emit\"}",
-    ));
-    assert!(metrics.contains(
-        "filament_gateway_compatibility_events_total{surface=\"server\",path=\"channel_role_override_migration\",mode=\"explicit_emit\"}",
-    ));
-    assert!(metrics.contains(
-        "filament_gateway_compatibility_events_total{surface=\"server\",path=\"channel_permission_override_migration\",mode=\"legacy_emit\"}",
-    ));
-    assert!(metrics.contains(
-        "filament_gateway_compatibility_events_total{surface=\"server\",path=\"channel_permission_override_migration\",mode=\"explicit_emit\"}",
-    ));
 
     let delete_role = Request::builder()
         .method("DELETE")

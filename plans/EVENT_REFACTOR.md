@@ -435,7 +435,7 @@ Ship safely with progressive rollout and remove migration compatibility code.
 ### Tasks
 - [x] Add temporary compatibility counters for dual-decoder/dual-emitter paths.
 - [x] Define sunset criteria for deprecated payloads/event names.
-- [ ] Remove compatibility code after stability window and update docs.
+- [x] Remove compatibility code after stability window and update docs.
 - [ ] Capture post-refactor benchmark snapshots for fanout hot paths.
 
 ### Tests
@@ -445,6 +445,8 @@ Ship safely with progressive rollout and remove migration compatibility code.
 ### Progress Notes
 - 2026-02-26 (Slice 1): Added temporary compatibility counters for override migration dual paths. Server now records `filament_gateway_compatibility_events_total{surface,path,mode}` for both legacy and explicit dual-emits on role/permission override routes (`mode in {legacy_emit,explicit_emit}`), with metrics rendering coverage and gateway network assertions proving those labels are exposed after live dual-emit traffic. Web client decode path now records in-memory compatibility counters for override migration dual-decoder behavior (`channel_override_migration` with `mode in {legacy_decode,explicit_decode}`) and includes focused decoder tests proving counters increment only on successful decode.
 - 2026-02-26 (Slice 2): Defined explicit override migration sunset criteria in `docs/GATEWAY_EVENTS.md` tied to compatibility counters across server emit and client decode paths, including release-window stability conditions and same-change cleanup expectations once legacy traffic reaches zero.
+- 2026-02-26 (Slice 3): Removed override migration compatibility emit/decode paths and counters across protocol/server/client: dropped legacy event `workspace_channel_override_update` from the protocol manifest and server emitted set, deleted dual-emit runtime branches and compatibility metric plumbing (`filament_gateway_compatibility_events_total`), and tightened client override decoding to explicit event types only (`workspace_channel_role_override_update`, `workspace_channel_permission_override_update`) with fail-closed shape checks.
+- 2026-02-26 (Slice 4): Updated docs and contract coverage to the post-migration contract by removing legacy override migration sections/counter references from `docs/GATEWAY_EVENTS.md`, updating server contract tests to enforce the two-event override set, and refreshing server/web gateway tests so role/permission override flows validate explicit event delivery without legacy fallback expectations.
 
 ### Exit Criteria
 - Deprecated event compatibility paths removed.

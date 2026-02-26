@@ -21,7 +21,6 @@
     { "event_type": "voice_participant_update", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
     { "event_type": "voice_stream_publish", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
     { "event_type": "voice_stream_unpublish", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
-    { "event_type": "workspace_channel_override_update", "schema_version": 1, "scope": "guild", "lifecycle": "deprecated", "migration": "Use workspace_channel_role_override_update for role payloads and workspace_channel_permission_override_update for principal target payloads." },
     { "event_type": "workspace_channel_permission_override_update", "schema_version": 1, "scope": "guild", "lifecycle": "active" },
     { "event_type": "workspace_channel_role_override_update", "schema_version": 1, "scope": "guild", "lifecycle": "active" },
     { "event_type": "workspace_ip_ban_sync", "schema_version": 1, "scope": "guild", "lifecycle": "active" },

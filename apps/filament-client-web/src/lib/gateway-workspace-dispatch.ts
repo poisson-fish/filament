@@ -61,7 +61,6 @@ export const WORKSPACE_GATEWAY_DISPATCH_EVENT_TYPES: readonly string[] = [
   "workspace_role_reorder",
   "workspace_role_assignment_add",
   "workspace_role_assignment_remove",
-  "workspace_channel_override_update",
   "workspace_channel_role_override_update",
   "workspace_channel_permission_override_update",
   "workspace_ip_ban_sync",
@@ -111,7 +110,7 @@ const WORKSPACE_DISPATCH_TABLE: GatewayDispatchTable<
   workspace_role_assignment_remove: (eventPayload, eventHandlers) => {
     eventHandlers.onWorkspaceRoleAssignmentRemove?.(eventPayload);
   },
-  workspace_channel_override_update: (eventPayload, eventHandlers) => {
+  workspace_channel_role_override_update: (eventPayload, eventHandlers) => {
     eventHandlers.onWorkspaceChannelOverrideUpdate?.(eventPayload);
   },
   workspace_channel_permission_override_update: (eventPayload, eventHandlers) => {
