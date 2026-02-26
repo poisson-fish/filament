@@ -7,7 +7,6 @@ mod hydration_in_memory;
 mod hydration_in_memory_attachments;
 mod hydration_merge;
 mod hydration_runtime;
-mod ingress_subscribe;
 pub mod livekit_sync;
 mod message_create_response;
 mod message_emit;
@@ -85,11 +84,10 @@ use hydration_merge::merge_hydration_maps;
 pub(crate) use hydration_order::collect_hydrated_in_request_order;
 use ingress_command::{
     allow_gateway_ingress, classify_ingress_command_parse_error, decode_gateway_ingress_message,
-    execute_message_create_command, parse_gateway_ingress_command, GatewayAttachmentIds,
-    GatewayIngressCommand, GatewayIngressMessageDecode, GatewayMessageContent,
-    IngressCommandParseClassification,
+    execute_message_create_command, execute_subscribe_command, parse_gateway_ingress_command,
+    GatewayAttachmentIds, GatewayIngressCommand, GatewayIngressMessageDecode,
+    GatewayMessageContent, IngressCommandParseClassification,
 };
-use ingress_subscribe::execute_subscribe_command;
 use message_attachment_bind::bind_message_attachments_in_memory;
 use message_create_response::build_db_created_message_response;
 use message_emit::emit_message_create_and_index;
