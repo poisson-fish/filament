@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 
 #[tokio::test]
 async fn gateway_broadcasts_message_to_subscribed_connection() {
@@ -330,4 +331,145 @@ async fn slow_consumer_signal_is_sent_for_user_fanout_when_outbound_queue_is_ful
     broadcast_user_event(&state, user_id, &event).await;
 
     assert_eq!(*control_rx.borrow(), ConnectionControl::Close);
+}
+
+fn bench_snapshot_line(
+    path: &str,
+    listeners: usize,
+    iterations: usize,
+    elapsed: std::time::Duration,
+) {
+    let listener_count = u128::try_from(listeners).expect("listener count should fit u128");
+    let iteration_count = u128::try_from(iterations).expect("iteration count should fit u128");
+    let total_dispatches = listener_count * iteration_count;
+    let total_nanos = elapsed.as_nanos();
+    let ns_whole = total_nanos / total_dispatches;
+    let ns_tenths = ((total_nanos % total_dispatches) * 10) / total_dispatches;
+    let total_ms_whole = elapsed.as_millis();
+    let total_ms_thousandths = elapsed.as_micros() % 1000;
+    println!(
+        "fanout_snapshot path={path} listeners={listeners} iterations={iterations} total_ms={total_ms_whole}.{total_ms_thousandths:03} ns_per_dispatch={ns_whole}.{ns_tenths}",
+    );
+}
+
+#[tokio::test]
+#[ignore = "benchmark snapshot"]
+async fn fanout_benchmark_snapshot_channel_hot_path() {
+    let listener_count = 512usize;
+    let iterations = 128usize;
+    let queue_capacity = iterations + 4;
+    let state = AppState::new(&AppConfig {
+        gateway_outbound_queue: queue_capacity,
+        ..AppConfig::default()
+    })
+    .expect("state should build");
+
+    let mut receivers = Vec::with_capacity(listener_count);
+    for _ in 0..listener_count {
+        let connection_id = Uuid::new_v4();
+        let (tx, rx) = mpsc::channel::<String>(queue_capacity);
+        add_subscription(&state, connection_id, channel_key("g-bench", "c-bench"), tx).await;
+        receivers.push(rx);
+    }
+
+    let event = gateway_events::try_subscribed("g-bench", "c-bench")
+        .expect("subscribed event should serialize");
+
+    let started = Instant::now();
+    for _ in 0..iterations {
+        broadcast_channel_event(&state, &channel_key("g-bench", "c-bench"), &event).await;
+    }
+    let elapsed = started.elapsed();
+
+    bench_snapshot_line("channel", listener_count, iterations, elapsed);
+    assert_eq!(receivers.len(), listener_count);
+}
+
+#[tokio::test]
+#[ignore = "benchmark snapshot"]
+async fn fanout_benchmark_snapshot_guild_hot_path() {
+    let listener_count = 512usize;
+    let iterations = 128usize;
+    let queue_capacity = iterations + 4;
+    let state = AppState::new(&AppConfig {
+        gateway_outbound_queue: queue_capacity,
+        ..AppConfig::default()
+    })
+    .expect("state should build");
+
+    let mut receivers = Vec::with_capacity(listener_count);
+    for index in 0..listener_count {
+        let connection_id = Uuid::new_v4();
+        let (tx, rx) = mpsc::channel::<String>(queue_capacity);
+        add_subscription(
+            &state,
+            connection_id,
+            channel_key("g-bench", &format!("c-bench-{index}")),
+            tx.clone(),
+        )
+        .await;
+        state
+            .realtime_registry
+            .connection_senders()
+            .write()
+            .await
+            .insert(connection_id, tx);
+        receivers.push(rx);
+    }
+
+    let event = gateway_events::try_presence_update("g-bench", UserId::new(), "online")
+        .expect("presence_update should serialize");
+
+    let started = Instant::now();
+    for _ in 0..iterations {
+        broadcast_guild_event(&state, "g-bench", &event).await;
+    }
+    let elapsed = started.elapsed();
+
+    bench_snapshot_line("guild", listener_count, iterations, elapsed);
+    assert_eq!(receivers.len(), listener_count);
+}
+
+#[tokio::test]
+#[ignore = "benchmark snapshot"]
+async fn fanout_benchmark_snapshot_user_hot_path() {
+    let listener_count = 512usize;
+    let iterations = 128usize;
+    let queue_capacity = iterations + 4;
+    let state = AppState::new(&AppConfig {
+        gateway_outbound_queue: queue_capacity,
+        ..AppConfig::default()
+    })
+    .expect("state should build");
+
+    let user_id = UserId::new();
+    let mut connection_ids = std::collections::HashSet::with_capacity(listener_count);
+    let mut receivers = Vec::with_capacity(listener_count);
+    {
+        let mut senders = state.realtime_registry.connection_senders().write().await;
+        for _ in 0..listener_count {
+            let connection_id = Uuid::new_v4();
+            let (tx, rx) = mpsc::channel::<String>(queue_capacity);
+            senders.insert(connection_id, tx);
+            connection_ids.insert(connection_id);
+            receivers.push(rx);
+        }
+    }
+    state
+        .realtime_registry
+        .user_connections()
+        .write()
+        .await
+        .insert(user_id, connection_ids);
+
+    let event = gateway_events::try_ready(user_id).expect("ready event should serialize");
+
+    let started = Instant::now();
+    for _ in 0..iterations {
+        broadcast_user_event(&state, user_id, &event).await;
+    }
+    let elapsed = started.elapsed();
+
+    bench_snapshot_line("user", listener_count, iterations, elapsed);
+    assert_eq!(receivers.len(), listener_count);
 }

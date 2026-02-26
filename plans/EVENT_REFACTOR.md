@@ -436,10 +436,10 @@ Ship safely with progressive rollout and remove migration compatibility code.
 - [x] Add temporary compatibility counters for dual-decoder/dual-emitter paths.
 - [x] Define sunset criteria for deprecated payloads/event names.
 - [x] Remove compatibility code after stability window and update docs.
-- [ ] Capture post-refactor benchmark snapshots for fanout hot paths.
+- [x] Capture post-refactor benchmark snapshots for fanout hot paths.
 
 ### Tests
-- [ ] Regression pass of gateway network flow, security limits, and websocket lifecycle.
+- [x] Regression pass of gateway network flow, security limits, and websocket lifecycle.
 - [ ] Verify telemetry counters for dropped/rejected events in staging.
 
 ### Progress Notes
@@ -447,6 +447,8 @@ Ship safely with progressive rollout and remove migration compatibility code.
 - 2026-02-26 (Slice 2): Defined explicit override migration sunset criteria in `docs/GATEWAY_EVENTS.md` tied to compatibility counters across server emit and client decode paths, including release-window stability conditions and same-change cleanup expectations once legacy traffic reaches zero.
 - 2026-02-26 (Slice 3): Removed override migration compatibility emit/decode paths and counters across protocol/server/client: dropped legacy event `workspace_channel_override_update` from the protocol manifest and server emitted set, deleted dual-emit runtime branches and compatibility metric plumbing (`filament_gateway_compatibility_events_total`), and tightened client override decoding to explicit event types only (`workspace_channel_role_override_update`, `workspace_channel_permission_override_update`) with fail-closed shape checks.
 - 2026-02-26 (Slice 4): Updated docs and contract coverage to the post-migration contract by removing legacy override migration sections/counter references from `docs/GATEWAY_EVENTS.md`, updating server contract tests to enforce the two-event override set, and refreshing server/web gateway tests so role/permission override flows validate explicit event delivery without legacy fallback expectations.
+- 2026-02-26 (Slice 5): Captured post-refactor fanout hot-path benchmark snapshots by adding ignored internal gateway benchmark tests (`fanout_benchmark_snapshot_{channel,guild,user}_hot_path`) that exercise channel, guild, and user dispatch paths with fixed listener/iteration counts and print deterministic snapshot lines. Snapshot run (`cargo test -p filament-server fanout_benchmark_snapshot -- --ignored --nocapture`) produced: `channel total_ms=165.419 ns_per_dispatch=2524.1`, `user total_ms=190.965 ns_per_dispatch=2913.9`, and `guild total_ms=230.202 ns_per_dispatch=3512.6` at `listeners=512`, `iterations=128`.
+- 2026-02-26 (Slice 6): Completed Phase 7 regression validation run for gateway/security lifecycle coverage by executing `cargo test -p filament-server --test gateway_network_flow` (13/13 passing, including handshake/message flow, ingress rejection metrics, disconnect lifecycle, and voice cleanup) and `cargo test -p filament-server --test security_limits` (3/3 passing: body cap, request timeout, per-IP rate limit). Also ran `cargo clippy -p filament-server --tests --no-deps`; command passed with pre-existing warnings outside this slice.
 
 ### Exit Criteria
 - Deprecated event compatibility paths removed.
