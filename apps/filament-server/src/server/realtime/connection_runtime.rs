@@ -29,8 +29,8 @@ use super::{
     subscription_insert::insert_connection_subscription,
     voice_cleanup_dispatch::{
         broadcast_disconnected_user_voice_removals, broadcast_expired_voice_removals,
+        channel_user_voice_removal_broadcasts,
     },
-    voice_cleanup_registry::channel_user_voice_removal_broadcasts,
     voice_presence::{collect_voice_snapshots, voice_channel_key},
     voice_registration::apply_voice_registration_transition,
     voice_registration_events::plan_voice_registration_events,
@@ -184,7 +184,7 @@ pub(crate) async fn remove_voice_participant_for_channel(
     channel_id: &str,
     removed_at_unix: i64,
 ) {
-    let planned = match {
+    let planned_result = {
         let mut voice = state.realtime_registry.voice_participants().write().await;
         channel_user_voice_removal_broadcasts(
             &mut voice,
@@ -193,7 +193,8 @@ pub(crate) async fn remove_voice_participant_for_channel(
             user_id,
             removed_at_unix,
         )
-    } {
+    };
+    let planned = match planned_result {
         Ok(planned) => planned,
         Err(error) => {
             tracing::warn!(
