@@ -418,6 +418,41 @@ describe("app shell extracted layout components", () => {
     expect(sessionStatus).toHaveAttribute("role", "status");
   });
 
+  it("auto-dismisses floating chat alerts after 10 seconds", () => {
+    vi.useFakeTimers();
+    try {
+      render(() => (
+        <ChatColumn
+          chatHeader={<header class="chat-header">Chat Header</header>}
+          workspaceBootstrapDone={true}
+          workspaceCount={1}
+          isLoadingMessages={false}
+          messageError=""
+          sessionStatus="session-ok"
+          sessionError=""
+          voiceStatus=""
+          voiceError=""
+          canShowVoiceHeaderControls={false}
+          isVoiceSessionActive={false}
+          activeChannel={channelFixture("text")}
+          canAccessActiveChannel={true}
+          messageList={<section class="message-list">Message List</section>}
+          messageComposer={<form class="composer">Composer</form>}
+          reactionPicker={<div>Reaction Picker</div>}
+          messageStatus=""
+        />
+      ));
+
+      expect(screen.getByText("session-ok")).toBeInTheDocument();
+
+      vi.advanceTimersByTime(10_000);
+
+      expect(screen.queryByText("session-ok")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders empty-workspace fallback with utility classes and no legacy hook", () => {
     render(() => (
       <ChatColumn

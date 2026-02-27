@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ChannelRecord } from "../../../../domain/chat";
 
@@ -30,7 +30,16 @@ interface FloatingAlert {
   tone: FloatingAlertTone;
 }
 
+const FLOATING_ALERT_TTL_MS = 10_000;
+
+function floatingAlertKey(alert: FloatingAlert): string {
+  return `${alert.id}:${alert.message}`;
+}
+
 export function ChatColumn(props: ChatColumnProps) {
+  const [dismissedAlertKeys, setDismissedAlertKeys] = createSignal<Record<string, true>>({});
+  const dismissalTimeoutByKey = new Map<string, ReturnType<typeof window.setTimeout>>();
+
   const floatingAlerts = createMemo<FloatingAlert[]>(() => {
     const alerts: FloatingAlert[] = [];
     if (!props.workspaceBootstrapDone) {
@@ -100,6 +109,59 @@ export function ChatColumn(props: ChatColumnProps) {
     return alerts;
   });
 
+  const visibleFloatingAlerts = createMemo<FloatingAlert[]>(() => {
+    const dismissed = dismissedAlertKeys();
+    return floatingAlerts().filter((alert) => !dismissed[floatingAlertKey(alert)]);
+  });
+
+  createEffect(() => {
+    const alerts = floatingAlerts();
+    const activeKeys = new Set(alerts.map(floatingAlertKey));
+    const dismissed = dismissedAlertKeys();
+
+    for (const [key, timeoutHandle] of dismissalTimeoutByKey.entries()) {
+      if (!activeKeys.has(key)) {
+        window.clearTimeout(timeoutHandle);
+        dismissalTimeoutByKey.delete(key);
+      }
+    }
+
+    for (const alert of alerts) {
+      const key = floatingAlertKey(alert);
+      if (dismissed[key] || dismissalTimeoutByKey.has(key)) {
+        continue;
+      }
+      const timeoutHandle = window.setTimeout(() => {
+        dismissalTimeoutByKey.delete(key);
+        setDismissedAlertKeys((existing) => ({
+          ...existing,
+          [key]: true,
+        }));
+      }, FLOATING_ALERT_TTL_MS);
+      dismissalTimeoutByKey.set(key, timeoutHandle);
+    }
+
+    setDismissedAlertKeys((existing) => {
+      let changed = false;
+      const next: Record<string, true> = {};
+      for (const key in existing) {
+        if (activeKeys.has(key)) {
+          next[key] = true;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : existing;
+    });
+  });
+
+  onCleanup(() => {
+    for (const timeoutHandle of dismissalTimeoutByKey.values()) {
+      window.clearTimeout(timeoutHandle);
+    }
+    dismissalTimeoutByKey.clear();
+  });
+
   return (
     <main class="chat-panel">
       {props.chatHeader}
@@ -108,9 +170,9 @@ export function ChatColumn(props: ChatColumnProps) {
         when={props.workspaceBootstrapDone && props.workspaceCount === 0}
         fallback={(
           <>
-            <Show when={floatingAlerts().length > 0}>
+            <Show when={visibleFloatingAlerts().length > 0}>
               <div class="pointer-events-none fixed right-[0.9rem] top-[4.4rem] z-[70] grid max-w-[28rem] gap-[0.5rem] max-sm:left-[0.9rem] max-sm:right-[0.9rem]">
-                <For each={floatingAlerts()}>
+                <For each={visibleFloatingAlerts()}>
                   {(alert) => (
                     <p
                       class="m-0 rounded-[0.72rem] border px-[0.78rem] py-[0.64rem] text-[0.83rem] leading-snug shadow-panel backdrop-blur-[4px]"
