@@ -14,7 +14,7 @@ let twemojiByNative: Record<string, TwemojiSpriteCell> | null = null;
 let twemojiSheetColumns: number | null = null;
 let twemojiSheetRows: number | null = null;
 
-const DEFAULT_INLINE_TWEMOJI_PX = 18;
+const DEFAULT_INLINE_TWEMOJI_PX = 20;
 
 export function initEmojiMart() {
   if (!initialized) {
@@ -149,7 +149,7 @@ function twemojiStyle(cell: TwemojiSpriteCell, sizePx: number): string {
     `background-size:${100 * columns}% ${100 * rows}%`,
     `background-position:${backgroundPosXPercent}% ${backgroundPosYPercent}%`,
     "display:inline-block",
-    "vertical-align:text-bottom",
+    "vertical-align:middle",
   ].join(";");
 }
 
@@ -302,6 +302,6 @@ export function renderEmojiMixedText(text: string): (string | JSX.Element)[] {
     if (!EMOJI_TOKEN_REGEX.test(part)) {
       return part;
     }
-    return renderTwemojiNative(part, { className: "mb-[-0.2em]", sizePx: DEFAULT_INLINE_TWEMOJI_PX });
+    return renderTwemojiNative(part, { sizePx: DEFAULT_INLINE_TWEMOJI_PX });
   });
 }
