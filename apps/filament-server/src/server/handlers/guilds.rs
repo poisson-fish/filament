@@ -1324,13 +1324,9 @@ pub(crate) async fn list_guild_members(
     let auth = authenticate(&state, &headers).await?;
     let member_query = GuildMemberListQuery::try_from(query)
         .map_err(map_directory_contract_error_to_auth_failure)?;
-    let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
-    if !permissions.contains(Permission::ManageMemberRoles)
-        && !permissions.contains(Permission::ManageWorkspaceRoles)
-        && !permissions.contains(Permission::ManageRoles)
-    {
-        return Err(AuthFailure::Forbidden);
-    }
+    // Any guild member may read the member list. Permission-gated role mutation
+    // remains enforced in assignment/update/delete handlers.
+    guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
 
     let response = if let Some(pool) = &state.db_pool {
         list_guild_members_db(pool, &path.guild_id, &member_query).await?
@@ -1388,12 +1384,10 @@ pub(crate) async fn list_guild_roles(
     Path(path): Path<GuildPath>,
 ) -> Result<Json<GuildRoleListResponse>, AuthFailure> {
     let auth = authenticate(&state, &headers).await?;
-    let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
-    if !permissions.contains(Permission::ManageWorkspaceRoles)
-        && !permissions.contains(Permission::ManageMemberRoles)
-    {
-        return Err(AuthFailure::Forbidden);
-    }
+    // Any guild member may read role definitions for safe client rendering
+    // (e.g. role color display); permission checks for mutations are enforced
+    // by dedicated role-management handlers.
+    guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
 
     let roles = if let Some(pool) = &state.db_pool {
         guild_roles_db(pool, &path.guild_id).await?

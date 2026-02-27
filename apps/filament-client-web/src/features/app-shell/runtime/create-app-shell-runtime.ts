@@ -448,9 +448,6 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const workspaceMembersController = createWorkspaceMembersController({
     session: auth.session,
     activeGuildId: workspaceChannelState.activeGuildId,
-    activeOverlayPanel: overlayState.activeOverlayPanel,
-    activeWorkspaceSettingsSection: overlayState.activeWorkspaceSettingsSection,
-    canManageMemberRoles: selectors.canManageMemberRoles,
     setWorkspaceUserRolesByGuildId: workspaceChannelState.setWorkspaceUserRolesByGuildId,
   });
 

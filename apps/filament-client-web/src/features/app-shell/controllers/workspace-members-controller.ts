@@ -1,10 +1,9 @@
-import { createEffect, createSignal, onCleanup, type Accessor, type Setter } from "solid-js";
+import { createEffect, createSignal, type Accessor, type Setter } from "solid-js";
 import type { AuthSession } from "../../../domain/auth";
 import type { GuildId, UserId, WorkspaceRoleId } from "../../../domain/chat";
 import { ApiError, fetchGuildMembers } from "../../../lib/api";
 import { mapError } from "../helpers";
 import type { WorkspaceUserRolesByGuildId } from "../state/workspace-state";
-import type { OverlayPanel, WorkspaceSettingsSection } from "../types";
 import {
   MAX_WORKSPACE_SETTINGS_MEMBERS,
   WORKSPACE_MEMBER_LIST_PAGE_SIZE,
@@ -13,9 +12,6 @@ import {
 export interface WorkspaceMembersControllerOptions {
   session: Accessor<AuthSession | null>;
   activeGuildId: Accessor<GuildId | null>;
-  activeOverlayPanel: Accessor<OverlayPanel | null>;
-  activeWorkspaceSettingsSection: Accessor<WorkspaceSettingsSection>;
-  canManageMemberRoles: Accessor<boolean>;
   setWorkspaceUserRolesByGuildId: Setter<WorkspaceUserRolesByGuildId>;
 }
 
@@ -53,7 +49,6 @@ export function createWorkspaceMembersController(
   let loadVersion = 0;
   let lastGuildId: GuildId | null = null;
   let lastSessionToken = "";
-  let wasActive = false;
 
   createEffect(() => {
     if (options.session()) {
@@ -139,27 +134,16 @@ export function createWorkspaceMembersController(
   createEffect(() => {
     const session = options.session();
     const guildId = options.activeGuildId();
-    const canManage = options.canManageMemberRoles();
-    const panel = options.activeOverlayPanel();
-    const section = options.activeWorkspaceSettingsSection();
-    const isActive = panel === "workspace-settings" && section === "members";
-
-    if (!session || !guildId || !isActive || !canManage) {
-      wasActive = false;
+    if (!session || !guildId) {
       return;
     }
 
     const sessionToken = session.accessToken;
-    if (!wasActive || lastGuildId !== guildId || lastSessionToken !== sessionToken) {
-      wasActive = true;
+    if (lastGuildId !== guildId || lastSessionToken !== sessionToken) {
       lastGuildId = guildId;
       lastSessionToken = sessionToken;
       void refreshMembers();
     }
-
-    onCleanup(() => {
-      wasActive = false;
-    });
   });
 
   return {

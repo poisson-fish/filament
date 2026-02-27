@@ -169,6 +169,36 @@ async fn role_crud_assignment_and_reorder_respect_phase7_hierarchy_rules() {
         assert_eq!(add_member_response.status(), StatusCode::OK);
     }
 
+    let member_list_roles = Request::builder()
+        .method("GET")
+        .uri(format!("/guilds/{}/roles", channel.guild_id))
+        .header("authorization", format!("Bearer {}", member.access_token))
+        .header("x-forwarded-for", "203.0.113.203")
+        .body(Body::empty())
+        .expect("member list roles request should build");
+    let member_list_roles_response = app.clone().oneshot(member_list_roles).await.unwrap();
+    assert_eq!(member_list_roles_response.status(), StatusCode::OK);
+    let member_roles_json: Value = parse_json_body(member_list_roles_response).await;
+    assert!(member_roles_json["roles"].as_array().is_some());
+
+    let member_list_members = Request::builder()
+        .method("GET")
+        .uri(format!("/guilds/{}/members?limit=10", channel.guild_id))
+        .header("authorization", format!("Bearer {}", member.access_token))
+        .header("x-forwarded-for", "203.0.113.203")
+        .body(Body::empty())
+        .expect("member list members request should build");
+    let member_list_members_response = app.clone().oneshot(member_list_members).await.unwrap();
+    assert_eq!(member_list_members_response.status(), StatusCode::OK);
+    let member_list_members_json: Value = parse_json_body(member_list_members_response).await;
+    let listed_member_ids = member_list_members_json["members"]
+        .as_array()
+        .expect("members should be an array")
+        .iter()
+        .filter_map(|entry| entry["user_id"].as_str())
+        .collect::<Vec<_>>();
+    assert!(listed_member_ids.contains(&member_id.as_str()));
+
     let promote_mod = Request::builder()
         .method("PATCH")
         .uri(format!(
