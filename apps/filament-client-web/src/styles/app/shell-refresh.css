@@ -64,6 +64,30 @@
     display: none;
   }
 
+  .app-shell:not(.channel-rail-collapsed) .channel-rail {
+    display: grid !important;
+    position: absolute;
+    left: 3.0rem;
+    top: 0;
+    bottom: 0;
+    width: 15.5rem;
+    z-index: 40;
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.45);
+    border-right: 1px solid var(--line);
+  }
+
+  .app-shell:not(.member-rail-collapsed) .member-rail {
+    display: grid !important;
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 15rem;
+    z-index: 40;
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
+    border-left: 1px solid var(--line);
+  }
+
   .server-rail {
     border-right: 1px solid var(--line);
   }
@@ -89,6 +113,7 @@
 }
 
 .app-shell {
+  position: relative;
   min-height: 0;
   height: 100%;
   width: 100%;
@@ -245,6 +270,30 @@
   .channel-rail,
   .member-rail {
     display: none;
+  }
+
+  .app-shell:not(.channel-rail-collapsed) .channel-rail {
+    display: grid !important;
+    position: absolute;
+    left: 3.0rem;
+    top: 0;
+    bottom: 0;
+    width: 15.5rem;
+    z-index: 40;
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.45);
+    border-right: 1px solid var(--line);
+  }
+
+  .app-shell:not(.member-rail-collapsed) .member-rail {
+    display: grid !important;
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 15rem;
+    z-index: 40;
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
+    border-left: 1px solid var(--line);
   }
 
 }
