@@ -9,9 +9,13 @@ export interface AppShellLayoutProps extends ParentProps {
   streamColumn?: JSX.Element;
   chatColumn: JSX.Element;
   memberRail: JSX.Element;
+  onCloseChannelRail?: () => void;
+  onCloseMemberRail?: () => void;
 }
 
 export function AppShellLayout(props: AppShellLayoutProps) {
+  const isAnyRailOpenOnMobile = () => !props.isChannelRailCollapsed || !props.isMemberRailCollapsed;
+
   return (
     <div class="app-shell-scaffold">
       <div
@@ -24,9 +28,7 @@ export function AppShellLayout(props: AppShellLayoutProps) {
       >
         {props.serverRail}
 
-        <Show when={!props.isChannelRailCollapsed}>
-          {props.channelRail}
-        </Show>
+        {props.channelRail}
 
         <Show when={!!props.streamColumn}>
           {props.streamColumn}
@@ -34,9 +36,22 @@ export function AppShellLayout(props: AppShellLayoutProps) {
 
         {props.chatColumn}
 
-        <Show when={!props.isMemberRailCollapsed}>
-          {props.memberRail}
-        </Show>
+        {props.memberRail}
+
+        <div
+          class="mobile-scrim"
+          classList={{
+            "active": isAnyRailOpenOnMobile()
+          }}
+          onClick={() => {
+            if (!props.isChannelRailCollapsed && props.onCloseChannelRail) {
+              props.onCloseChannelRail();
+            }
+            if (!props.isMemberRailCollapsed && props.onCloseMemberRail) {
+              props.onCloseMemberRail();
+            }
+          }}
+        />
       </div>
 
       {props.children}

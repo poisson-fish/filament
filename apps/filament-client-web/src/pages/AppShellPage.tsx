@@ -110,6 +110,8 @@ export function AppShellPage() {
     <AppShellLayout
       isChannelRailCollapsed={overlayState.isChannelRailCollapsed()}
       isMemberRailCollapsed={overlayState.isMemberRailCollapsed()}
+      onCloseChannelRail={() => overlayState.setChannelRailCollapsed(true)}
+      onCloseMemberRail={() => overlayState.setMemberRailCollapsed(true)}
       serverRail={
         <ServerRail
           workspaces={workspaceState.workspaceChannel.workspaces()}

@@ -355,6 +355,11 @@ describe("app shell extracted layout components", () => {
     expect(screen.getByText("Member rail")).toBeInTheDocument();
     expect(screen.getByText("Chat column")).toBeInTheDocument();
 
+    const initialContainer = document.querySelector(".app-shell");
+    expect(initialContainer).not.toBeNull();
+    expect(initialContainer).not.toHaveClass("channel-rail-collapsed");
+    expect(initialContainer).not.toHaveClass("member-rail-collapsed");
+
     first.unmount();
 
     render(() => (
@@ -365,9 +370,14 @@ describe("app shell extracted layout components", () => {
       />
     ));
 
-    expect(screen.queryByText("Channel rail")).not.toBeInTheDocument();
-    expect(screen.queryByText("Member rail")).not.toBeInTheDocument();
+    expect(screen.getByText("Channel rail")).toBeInTheDocument();
+    expect(screen.getByText("Member rail")).toBeInTheDocument();
     expect(screen.getByText("Chat column")).toBeInTheDocument();
+
+    const collapsedContainer = document.querySelector(".app-shell");
+    expect(collapsedContainer).not.toBeNull();
+    expect(collapsedContainer).toHaveClass("channel-rail-collapsed");
+    expect(collapsedContainer).toHaveClass("member-rail-collapsed");
   });
 
   it("keeps chat body layout stable with transient notes and a bottom composer sibling", () => {

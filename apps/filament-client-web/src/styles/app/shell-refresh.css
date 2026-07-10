@@ -1,5 +1,19 @@
 /* Legacy carry-over block: kept to preserve cascade while retiring shell-legacy.css. */
 
+.mobile-scrim {
+  display: none;
+}
+
+@media (min-width: 901px) {
+  .app-shell.channel-rail-collapsed .channel-rail {
+    display: none !important;
+  }
+
+  .app-shell.member-rail-collapsed .member-rail {
+    display: none !important;
+  }
+}
+
 .app-shell.channel-rail-collapsed {
   grid-template-columns: 3.0rem minmax(0, 1fr) 15rem;
 }
@@ -59,33 +73,59 @@
     border-radius: 0.72rem;
   }
 
+  .mobile-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 35;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .mobile-scrim.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .channel-rail,
   .member-rail {
-    display: none;
+    display: grid !important;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 40;
+    pointer-events: none;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .channel-rail {
+    left: 3.0rem;
+    width: 15.5rem;
+    border-right: 1px solid var(--line);
+    transform: translateX(calc(-100% - 3.0rem));
+    box-shadow: none;
+  }
+
+  .member-rail {
+    right: 0;
+    width: 15rem;
+    border-left: 1px solid var(--line);
+    transform: translateX(100%);
+    box-shadow: none;
   }
 
   .app-shell:not(.channel-rail-collapsed) .channel-rail {
-    display: grid !important;
-    position: absolute;
-    left: 3.0rem;
-    top: 0;
-    bottom: 0;
-    width: 15.5rem;
-    z-index: 40;
+    transform: translateX(0);
     box-shadow: 4px 0 16px rgba(0, 0, 0, 0.45);
-    border-right: 1px solid var(--line);
+    pointer-events: auto;
   }
 
   .app-shell:not(.member-rail-collapsed) .member-rail {
-    display: grid !important;
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 15rem;
-    z-index: 40;
+    transform: translateX(0);
     box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
-    border-left: 1px solid var(--line);
+    pointer-events: auto;
   }
 
   .server-rail {
@@ -269,31 +309,41 @@
 
   .channel-rail,
   .member-rail {
-    display: none;
+    display: grid !important;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 40;
+    pointer-events: none;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .channel-rail {
+    left: 3.0rem;
+    width: 15.5rem;
+    border-right: 1px solid var(--line);
+    transform: translateX(calc(-100% - 3.0rem));
+    box-shadow: none;
+  }
+
+  .member-rail {
+    right: 0;
+    width: 15rem;
+    border-left: 1px solid var(--line);
+    transform: translateX(100%);
+    box-shadow: none;
   }
 
   .app-shell:not(.channel-rail-collapsed) .channel-rail {
-    display: grid !important;
-    position: absolute;
-    left: 3.0rem;
-    top: 0;
-    bottom: 0;
-    width: 15.5rem;
-    z-index: 40;
+    transform: translateX(0);
     box-shadow: 4px 0 16px rgba(0, 0, 0, 0.45);
-    border-right: 1px solid var(--line);
+    pointer-events: auto;
   }
 
   .app-shell:not(.member-rail-collapsed) .member-rail {
-    display: grid !important;
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 15rem;
-    z-index: 40;
+    transform: translateX(0);
     box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
-    border-left: 1px solid var(--line);
+    pointer-events: auto;
   }
 
 }
