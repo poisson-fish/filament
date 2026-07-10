@@ -1,7 +1,31 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MarkdownToken } from "../src/domain/chat";
 import { SafeMarkdown } from "../src/features/app-shell/components/SafeMarkdown";
+
+function createStorageMock(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    clear() {
+      store.clear();
+    },
+    getItem(key: string) {
+      return store.has(key) ? store.get(key)! : null;
+    },
+    key(index: number) {
+      return [...store.keys()][index] ?? null;
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+    setItem(key: string, value: string) {
+      store.set(key, value);
+    },
+  };
+}
 
 function renderMarkdown(tokens: MarkdownToken[]): void {
   render(() => <SafeMarkdown tokens={tokens} />);
@@ -9,8 +33,18 @@ function renderMarkdown(tokens: MarkdownToken[]): void {
 
 describe("safe markdown", () => {
   beforeEach(() => {
+    const storage = createStorageMock();
+    vi.stubGlobal("localStorage", storage);
+    Object.defineProperty(window, "localStorage", {
+      value: storage,
+      configurable: true,
+    });
     window.localStorage.clear();
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("renders safe links and blocks obfuscated javascript/data links", () => {

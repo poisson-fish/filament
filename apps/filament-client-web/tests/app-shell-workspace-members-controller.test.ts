@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { authSessionFromResponse } from "../src/domain/auth";
 import {
   guildIdFromInput,
+  userIdFromInput,
   workspaceRoleIdFromInput,
 } from "../src/domain/chat";
 import { createWorkspaceMembersController } from "../src/features/app-shell/controllers/workspace-members-controller";
@@ -32,11 +33,11 @@ describe("app shell workspace members controller", () => {
       const fetchGuildMembersMock = vi.fn(async () => ({
         members: [
           {
-            userId: "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+            userId: userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAB"),
             roleIds: [ROLE_ID],
           },
           {
-            userId: "01ARZ3NDEKTSV4RRFFQ69G5FAC",
+            userId: userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAC"),
             roleIds: [],
           },
         ],

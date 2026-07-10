@@ -292,7 +292,19 @@ async fn guild_member_list_includes_offline_members() {
         None,
     )
     .await;
-    assert_eq!(member_status, StatusCode::FORBIDDEN);
+    assert_eq!(member_status, StatusCode::OK);
+
+    let stranger_auth = register_and_login_as(&app, "stranger_member_list", "203.0.113.122").await;
+    let (stranger_status, _) = authed_json_request(
+        &app,
+        "GET",
+        format!("/guilds/{guild_id}/members?limit=10"),
+        &stranger_auth.access_token,
+        "203.0.113.122",
+        None,
+    )
+    .await;
+    assert_eq!(stranger_status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

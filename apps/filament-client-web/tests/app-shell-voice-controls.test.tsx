@@ -927,6 +927,7 @@ describe("app shell voice controls", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Join Voice" }));
     await waitFor(() => expect(rtcMock.join).toHaveBeenCalledTimes(1));
+    expect(await findVoiceControl("Mute Mic")).toBeInTheDocument();
 
     rtcMock.setConnectionStatus("reconnecting");
     expect(

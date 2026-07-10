@@ -38,7 +38,7 @@ function floatingAlertKey(alert: FloatingAlert): string {
 
 export function ChatColumn(props: ChatColumnProps) {
   const [dismissedAlertKeys, setDismissedAlertKeys] = createSignal<Record<string, true>>({});
-  const dismissalTimeoutByKey = new Map<string, ReturnType<typeof window.setTimeout>>();
+  const dismissalTimeoutByKey = new Map<string, any>();
 
   const floatingAlerts = createMemo<FloatingAlert[]>(() => {
     const alerts: FloatingAlert[] = [];
