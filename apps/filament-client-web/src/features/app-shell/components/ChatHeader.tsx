@@ -6,6 +6,10 @@ const TOGGLE_CHANNELS_ICON_URL = new URL(
   "../../../../resource/coolicons.v4.1/cooliocns SVG/System/Bar_Left.svg",
   import.meta.url,
 ).href;
+const HAMBURGER_MENU_ICON_URL = new URL(
+  "../../../../resource/coolicons.v4.1/cooliocns SVG/Menu/Menu_Alt_01.svg",
+  import.meta.url,
+).href;
 const WORKSPACE_TOOLS_ICON_URL = new URL(
   "../../../../resource/coolicons.v4.1/cooliocns SVG/System/Window_Sidebar.svg",
   import.meta.url,
@@ -67,51 +71,68 @@ export function ChatHeader(props: ChatHeaderProps) {
     "inline-flex h-[2.1rem] w-[2.1rem] items-center justify-center rounded-[0.62rem] border border-line-soft bg-bg-3 text-ink-1 transition-all duration-[140ms] ease-out hover:bg-bg-4 hover:text-ink-0 focus-visible:bg-bg-4 focus-visible:text-ink-0 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
-    <header class="chat-header flex items-center justify-between gap-[0.8rem] border-b border-line px-[1.1rem] py-[0.8rem] bg-bg-1 [@media(max-width:900px)]:flex-col [@media(max-width:900px)]:items-start [@media(max-width:900px)]:gap-[0.6rem]">
-      <div class="min-w-0 flex flex-col gap-[0.16rem]">
-        <div class="flex items-center gap-[0.52rem]">
+    <header class="chat-header flex items-center justify-between gap-[0.8rem] border-b border-line px-[1.1rem] py-[0.8rem] [@media(max-width:900px)]:px-[0.8rem] [@media(max-width:900px)]:py-[0.6rem] bg-bg-1">
+      <div class="min-w-0 flex items-center gap-[0.6rem]">
+        {/* Mobile-only Hamburger Menu Button */}
+        <button
+          type="button"
+          class={`${headerIconButtonClass} [@media(min-width:901px)]:hidden shrink-0`}
+          aria-label={props.isChannelRailCollapsed ? "Open channel list" : "Close channel list"}
+          title={props.isChannelRailCollapsed ? "Open channel list" : "Close channel list"}
+          onClick={props.onToggleChannelRail}
+        >
           <span
-            class="icon-mask h-[1.08rem] w-[1.08rem] shrink-0 text-ink-2"
-            style={`--icon-url: url("${activeChannelIconUrl()}")`}
+            class="icon-mask h-[1.1rem] w-[1.1rem]"
+            style={`--icon-url: url("${HAMBURGER_MENU_ICON_URL}")`}
             aria-hidden="true"
           />
-          <h3 class="m-0 text-[1.06rem] font-[760] leading-[1.2] tracking-[0.01em] text-ink-0">
-            {activeChannelLabel()}
-          </h3>
-          <span
-            classList={{
-              [statusBadgeClass]: true,
-              "border-transparent bg-ok text-bg-0 shadow-sm": props.gatewayOnline,
-              "border-transparent bg-danger text-danger-ink shadow-sm": !props.gatewayOnline,
-            }}
-            title={props.gatewayOnline ? "Gateway connected" : "Gateway disconnected"}
-          >
-            {props.gatewayOnline ? "Live" : "Offline"}
-          </span>
-        </div>
-        <Show when={props.canShowVoiceHeaderControls || props.isVoiceSessionActive}>
-          <p class="m-0 flex items-center gap-[0.38rem] text-[0.74rem] text-ink-2">
+        </button>
+
+        <div class="min-w-0 flex flex-col gap-[0.16rem]">
+          <div class="flex items-center gap-[0.52rem]">
+            <span
+              class="icon-mask h-[1.08rem] w-[1.08rem] shrink-0 text-ink-2"
+              style={`--icon-url: url("${activeChannelIconUrl()}")`}
+              aria-hidden="true"
+            />
+            <h3 class="m-0 text-[1.06rem] font-[760] leading-[1.2] tracking-[0.01em] text-ink-0 truncate">
+              {activeChannelLabel()}
+            </h3>
             <span
               classList={{
-                "h-[0.52rem] w-[0.52rem] rounded-full": true,
-                "bg-ink-2": props.voiceConnectionState === "disconnected",
-                "bg-brand animate-pulse":
-                  props.voiceConnectionState === "connecting" ||
-                  props.voiceConnectionState === "reconnecting",
-                "bg-ok": props.voiceConnectionState === "connected",
-                "bg-danger": props.voiceConnectionState === "error",
+                [statusBadgeClass]: true,
+                "border-transparent bg-ok text-bg-0 shadow-sm": props.gatewayOnline,
+                "border-transparent bg-danger text-danger-ink shadow-sm": !props.gatewayOnline,
               }}
-            />
-            Voice {props.voiceConnectionState}
-          </p>
-        </Show>
+              title={props.gatewayOnline ? "Gateway connected" : "Gateway disconnected"}
+            >
+              {props.gatewayOnline ? "Live" : "Offline"}
+            </span>
+          </div>
+          <Show when={props.canShowVoiceHeaderControls || props.isVoiceSessionActive}>
+            <p class="m-0 flex items-center gap-[0.38rem] text-[0.74rem] text-ink-2">
+              <span
+                classList={{
+                  "h-[0.52rem] w-[0.52rem] rounded-full": true,
+                  "bg-ink-2": props.voiceConnectionState === "disconnected",
+                  "bg-brand animate-pulse":
+                    props.voiceConnectionState === "connecting" ||
+                    props.voiceConnectionState === "reconnecting",
+                  "bg-ok": props.voiceConnectionState === "connected",
+                  "bg-danger": props.voiceConnectionState === "error",
+                }}
+              />
+              Voice {props.voiceConnectionState}
+            </p>
+          </Show>
+        </div>
       </div>
 
-      <div class="flex flex-wrap items-center justify-start gap-[0.36rem]">
-        <div class="mr-[0.1rem] flex items-center gap-[0.2rem] border-r border-line/45 pr-[0.36rem]">
+      <div class="flex items-center justify-end gap-[0.36rem] shrink-0">
+        <div class="mr-[0.1rem] flex items-center gap-[0.2rem] [@media(min-width:901px)]:border-r [@media(min-width:901px)]:border-line/45 [@media(min-width:901px)]:pr-[0.36rem]">
           <button
               type="button"
-              class={headerIconButtonClass}
+              class={`${headerIconButtonClass} [@media(max-width:900px)]:hidden`}
               aria-label={props.isChannelRailCollapsed ? "Show channels" : "Hide channels"}
               title={props.isChannelRailCollapsed ? "Show channels" : "Hide channels"}
               onClick={props.onToggleChannelRail}
@@ -165,7 +186,7 @@ export function ChatHeader(props: ChatHeaderProps) {
         </button>
         <button
           type="button"
-          class={headerIconButtonClass}
+          class={`${headerIconButtonClass} [@media(max-width:540px)]:hidden`}
           aria-label="Refresh"
           title="Refresh messages"
           onClick={props.onRefreshMessages}
@@ -178,7 +199,7 @@ export function ChatHeader(props: ChatHeaderProps) {
         </button>
         <button
           type="button"
-          class={headerIconButtonClass}
+          class={`${headerIconButtonClass} [@media(max-width:720px)]:hidden`}
           aria-label={props.isRefreshingSession ? "Refreshing..." : "Refresh session"}
           title={props.isRefreshingSession ? "Refreshing session..." : "Refresh session"}
           onClick={props.onRefreshSession}
@@ -190,11 +211,11 @@ export function ChatHeader(props: ChatHeaderProps) {
             aria-hidden="true"
           />
         </button>
-        <div class="mx-[0.14rem] h-[1.4rem] w-px bg-line/45" />
+        <div class="mx-[0.14rem] h-[1.4rem] w-px bg-line/45 [@media(max-width:450px)]:hidden" />
 
         <button
           type="button"
-          class={`${headerIconButtonClass} border-danger-panel-strong bg-danger-panel text-danger-ink hover:bg-danger`}
+          class={`${headerIconButtonClass} border-danger-panel-strong bg-danger-panel text-danger-ink hover:bg-danger [@media(max-width:450px)]:hidden`}
           aria-label="Logout"
           title="Logout"
           onClick={props.onLogout}
