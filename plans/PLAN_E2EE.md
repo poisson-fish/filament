@@ -1,387 +1,340 @@
-# PLAN_E2EE.md
+# PLAN_E2EE.md (v2 — MLS baseline)
 
 ## Objective
-Design a security-first end-to-end encryption (E2EE) roadmap for Filament direct messaging and calls that is compatible with:
+Design a security-first end-to-end encryption (E2EE) roadmap for Filament DMs, group DMs, guild encrypted channels, and calls, built on a single MLS (RFC 9420) stack via OpenMLS, and designed against a hostile server operator with full archive capability. Compatible with:
 - non-federated, single-server deployments
-- hostile-server assumptions
+- hostile-server assumptions (server = adversary #1, including its ciphertext archive)
 - existing gateway/REST architecture
 - phased rollout without breaking current clients
 
 ## Scope and Principles
 - In scope:
-  - 1:1 DM E2EE (text + attachments metadata envelope)
-  - Group DM E2EE (text)
-  - Optional encrypted messages/files for guild channels (phased, policy-gated)
-  - Voice/video E2EE design path (post-text baseline)
+- 1:1 DM E2EE (implemented as 2-member MLS groups)
+- Group DM E2EE (text + attachments)
+- Guild encrypted channels (channel-type, policy-gated; not per-message)
+- Voice/video E2EE via SFrame keyed from MLS exporter secrets
+- Multi-device, device-to-device history sync, local search, mailbox retention model
 - Out of scope for initial launch:
-  - federation key exchange
-  - custom cryptographic primitives
+- federation key exchange
+- custom cryptographic primitives or protocol variants
+- web-client E2EE participation (see Identity and Device Model)
+- any server-readable "encrypted" delivery mode (key escrow) — removed by design
 
 Design principles:
-- Use vetted protocols/libraries only; no bespoke crypto.
-- Forward secrecy and post-compromise recovery where feasible.
-- Metadata minimization, not metadata elimination.
-- Fail closed on malformed crypto envelopes and key state.
-- Default plaintext compatibility: encryption is opt-in and explicit.
-- Audience control with safety defaults: clients provide smart audience autosuggestions from authoritative membership, while allowing explicit manual recipient key selection before encryption.
+- One vetted protocol stack (MLS via OpenMLS) for all E2EE domains. No bespoke ratchets, key schedules, or parallel crypto stacks. One audit surface.
+- Forward secrecy (FS) and post-compromise security (PCS) are defaults, not aspirations. Design for "a key will leak eventually": a one-time compromise must be neither retroactively catastrophic nor silently persistent.
+- The server is a routing and ordering service. Server-provided fields are hints; every security-relevant fact (membership, device lists, encryption state) is verified cryptographically client-side.
+- Local-first history: the client's encrypted store is canonical. The server is a delivery mailbox for E2EE payloads, not an archive.
+- Fail closed on malformed crypto envelopes, stale epochs, unverifiable state, and capability gaps.
+- Encryption is a property of a conversation/channel (invariant), never a per-message toggle.
+- No key escrow. Content is either E2EE or honestly plaintext. There is no middle mode.
+- Metadata minimization, not metadata elimination (see Non-goals).
+- Default plaintext compatibility: encryption is opt-in and explicit; upgrades never silently downgrade.
 
 ## Baseline Reality (Today)
 - Current DMs/guild chat are server-readable.
-- Search indexing (Tantivy), moderation workflows, and rich server-side query assume plaintext availability.
+- Search indexing (Tantivy), moderation workflows, and rich server-side query assume plaintext availability. For E2EE conversations these move client-side or are explicitly unavailable (see Moderation and Search sections).
 - Gateway and REST contracts are typed/versioned and already enforce payload limits.
 
 ## Threat Model
 ### Adversaries
-- Malicious or curious server operator.
+- Malicious or curious server operator, including: reading the database, retaining a permanent ciphertext archive, mutating directory/membership data, withholding or reordering delivery, and (for web) serving malicious client code.
 - Network attacker observing/altering traffic (outside TLS boundary assumptions).
-- Compromised client device.
-- Malicious user in a DM/group DM.
+- Compromised or stolen client device (one-time and ongoing).
+- Malicious user or device inside a conversation.
 
 ### Security goals
-- Server cannot decrypt message content for E2EE conversations.
-- Compromise of long-term identity keys does not expose all past messages (forward secrecy).
-- Membership changes in group DMs invalidate old sender keys quickly.
-- Clients detect key changes and provide trust signals.
+- Server cannot decrypt content for E2EE conversations.
+- Forward secrecy: compromise of any key material at time T does not reveal messages sent before T. The operator's ciphertext archive is worthless without per-message keys that no longer exist.
+- Post-compromise security: a one-time key/state theft stops working after the victim's next MLS update/commit round trip.
+- Membership integrity: the server cannot add, remove, or substitute members or devices. All membership changes are member-signed MLS proposals/commits; injected "ghost" users/devices fail signature verification at every client.
+- Encryption-state integrity: encrypted badges derive only from successful local cryptographic verification, never from server-supplied fields.
+- Delivery integrity: withheld/dropped messages are detectable via per-sender MLS generation counters ("messages may be missing" indicator).
+- Retention minimization: server retains E2EE ciphertext only transiently (mailbox model), shrinking the harvest-now-decrypt-later surface.
 
 ### Non-goals
-- Hiding who talks to whom, when, and message size/frequency from server.
+- Hiding who talks to whom, when, and approximate message frequency from the server (it routes and orders; it necessarily knows group membership for delivery).
 - Protecting data on a compromised endpoint after decryption.
+- Traffic-analysis resistance beyond size-bucket padding.
+- Post-quantum authentication in v1 (PQ confidentiality is roadmapped; PQ signatures are deferred industry-wide because auth attacks cannot be harvested).
 
-## Core Design Choice
-Adopt a Signal-family architecture:
-- 1:1: X3DH-like authenticated key agreement + Double Ratchet session per device pair.
-- Group DM: MLS-style group key schedule or Sender Keys with robust rekey semantics.
-- Voice/video: SFrame over media tracks, keyed via the same E2EE group session domain.
+### Acknowledged residual risks (documented in trust disclosures)
+- First-contact key claims are TOFU until users verify safety numbers or key transparency ships (Phase 8).
+- The server can withhold or reorder ciphertext (detectable, not preventable).
+- Packaged-client build integrity is a trust dependency; mitigated by signed, reproducible builds (see Supply Chain).
 
-Implementation note:
-- Pick mature Rust-compatible libraries/protocol bindings with active maintenance and permissive licensing.
-- Do not write custom ratchets/key schedules.
+## Core Protocol Decision (locked for planning; ratify in ADR)
+Adopt MLS (RFC 9420) via OpenMLS for every E2EE domain:
+- 1:1 DM: a 2-member MLS group.
+- Group DM: an MLS group.
+- Guild encrypted channel: a large MLS group whose membership tracks channel authorization.
+- Voice/video: SFrame media encryption keyed from the MLS `exporter_secret` of the corresponding group epoch.
+
+Rationale (record in ADR):
+- Member-signed commits + transcript hash give cryptographic membership agreement: the anti-ghost-user property by construction, which sender-key designs must hand-build.
+- O(log N) rekeying makes guild-scale encrypted channels feasible; epochs give crisp add/remove semantics (removal = cryptographic eviction).
+- Exporter secrets key SFrame directly (precedent: Discord's DAVE protocol uses MLS for E2EE calls).
+- Single-server deployment trivially provides the total ordering of commits that MLS's Delivery Service requires — our architecture's structural advantage.
+- One stack for 1:1/group/guild/calls = one dependency, one supply-chain review, one audit surface.
+- Rejected alternatives (record with rationale): libsignal (AGPL-3.0, fails license gate; infra-coupled), vodozemac/Olm+Megolm (weaker group PCS/removal discipline, no membership authentication, no exporter analog, no PQ path), static per-device asymmetric (no FS/PCS against an archive-holding adversary).
+- Accepted tradeoff: MLS application messages are leaf-signed, hence non-repudiable within the group (unlike Signal's deniable authentication). Record acceptance in ADR.
+
+Cryptographic parameters:
+- Baseline ciphersuite: `MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519` (0x0003). X25519 + ChaCha20-Poly1305 + Ed25519, HKDF-SHA-256 — matches our curve/AEAD family preferences with vetted-library behavior only.
+- Ciphersuite agility is mandatory in all wire formats and stored state. Adopt a hybrid post-quantum suite (X25519+ML-KEM via HPKE, e.g. X-Wing-style) as soon as standardized and vetted — target harvest-resistance for key establishment ("Level 2") as a fast follow, periodic PQ rekeying ("Level 3") later.
+- Framing: all application messages AND commits/proposals are sent as MLS `PrivateMessage`. The server handles opaque blobs plus a minimal routing envelope; it never parses MLS interiors beyond size/shape bounds.
+- Randomness: platform CSPRNG only. Key material zeroized on drop (e.g. `zeroize`), held in platform secure storage where available.
 
 ## Identity and Device Model
-- Each user has:
-  - identity keypair (long-lived, per account)
-  - signed prekeys + one-time prekeys (rotating)
-  - per-device key material (desktop/web/mobile sessions treated as distinct devices)
+- Per-user root identity key (Ed25519):
+- generated on the user's first device; never leaves devices except via encrypted pairing transfer or opt-in encrypted backup
+- signs device certificates; is the anchor for safety numbers
+- Per-device key material:
+- MLS signature keypair + HPKE init keys per device
+- each device holds a device certificate: (user_id, device_id, device signature pubkey) signed by the user root key
+- MLS leaf credentials embed the device certificate; peers verify the chain to the pinned root key
 - Server role:
-  - key directory and prekey relay only
-  - cannot derive plaintext keys if protocol is implemented correctly
+- directory + KeyPackage relay + Delivery Service (commit ordering) only
+- cannot mint devices: it never holds the root key, so injected devices fail certificate verification at every peer — device injection is cryptographically blocked, not merely policy-blocked
+- Device lifecycle:
+- device additions are signed by an existing device (QR pairing flow) and surfaced in-conversation to peers ("X added a new device")
+- device removal is first-class: triggers MLS Remove of that device's leaves from all groups (cryptographic eviction) plus KeyPackage tombstoning
+- KeyPackages (MLS's prekey analog):
+- per-device pool of single-use KeyPackages + one signed last-resort KeyPackage with defined reuse semantics
+- client replenishment on low-water mark; server-side pool size caps, claim rate limits, and claim audit logging
 - Client must:
-  - pin peer identity keys per conversation
-  - display key change warnings
-  - support explicit trust verification UX (safety number/device fingerprint)
-  - resolve recipient device key bundles from authoritative membership + key directory before encrypting
+- pin peer root keys per user; display key-change warnings (passive indicator; blocking interstitial for previously-verified contacts)
+- support safety-number/QR verification of root key fingerprints
+- verify device certificates and membership commits locally; never trust server-asserted device lists or membership
+- Web clients:
+- excluded from E2EE in v1: the server ships the JavaScript on every load, so a hostile operator can serve key-exfiltrating code — incompatible with adversary #1
+- E2EE requires packaged desktop/mobile builds (signed, reproducible; see Supply Chain)
+- revisit only as an explicitly disclosed degraded trust tier (Open Decisions)
 
 ## Key Management UX (Profile / Client Settings)
-- Add a dedicated `Encryption Keys` section in profile/client settings.
-- Required fields/actions:
-  - current device public key (visible, copyable)
-  - current device private key (obscured by default)
-  - explicit `Copy Private Key` action gated by a warning modal
-  - `Refresh Device Keys` action (client-side key rotation/reset)
-- `Refresh Device Keys` behavior (destructive by design):
-  - generates new device key material locally
-  - publishes new public key bundle
-  - invalidates local ability to decrypt previously accessible E2EE messages/files for that device unless separately backed up/restored
-  - forces conversation rekey flows as needed
-- UX must require explicit typed confirmation for key refresh (for example `REFRESH KEYS`) and show irreversible-impact warnings.
+- `Encryption` settings panel:
+- user safety number / root key fingerprint (shareable, QR)
+- device list: name, added date, verification state, `Remove device` action
+- `Rotate identity` action (destructive, typed confirmation e.g. `ROTATE IDENTITY`)
+- backup enrollment status and controls
+- No private-key display or copy action exists anywhere in the product. Key material leaves a device only via (a) QR-mediated encrypted device pairing or (b) opt-in passphrase-encrypted backup. Keys are non-exportable and live in platform keystores (Keychain / Android Keystore / TPM+DPAPI) where available.
+- `Rotate identity` semantics (documented honestly in UX):
+- generates a new root key, recertifies devices, rejoins groups; peers receive blocking key-change warnings
+- does NOT delete local history and CANNOT protect already-sent ciphertext (forward secrecy already handles the past; nothing can retroactively re-protect it)
+- value: identity continuity reset after suspected compromise
+- Lost/stolen device flow: `Remove device` from any remaining device evicts it from all groups at the next commit; if no device remains, account recovery = new identity (or backup restore) with peer re-verification.
 
-## Audience Resolution Model
-- Client builds an initial suggested encryption audience from trusted conversation/channel participant membership:
-  - DM 1:1: self + peer devices
-  - Group DM: all active participant devices
-  - Guild encrypted message/file (if policy allows): members currently authorized for the target channel context
-  - Voice/video encrypted session: currently joined participant devices for the media room epoch
-- User may manually adjust audience (include/exclude recipients/devices) before send when policy allows.
-- Role-based expansion is allowed as a convenience selector, but must resolve to explicit recipient/device sets prior to encryption.
-- For guild encrypted messages, client may include the server encryption key as an additional recipient when policy/permissions allow (server-included encrypted mode).
-- Clients must not accept sender-provided recipient lists as authority.
-- Membership/key snapshot used for encryption must include a version/epoch marker.
-- If membership or key state is stale/ambiguous, client must refresh and fail closed rather than send under uncertain audience.
+## History, Storage, and Retention
+Forward secrecy makes server-stored ciphertext one-shot: message keys are deleted after use, so clients can never re-decrypt old server blobs. Consequences, designed in rather than discovered later:
+- Local encrypted message store per device (SQLCipher-or-equivalent; store key in platform keystore) is the canonical history.
+- Server storage for E2EE payloads is a mailbox: retain ciphertext until all member devices acknowledge delivery or a TTL expires (configurable, e.g. 30 days), then hard-delete. No long-term ciphertext archive by default — this directly shrinks the operator's harvest surface and is a headline security property.
+- New-device history: device-to-device encrypted history sync from an existing device (or backup restore). QR pairing alone grants future messages only.
+- Backup (opt-in): passphrase-encrypted blob (Argon2id at aggressive parameters) covering identity keys + history snapshot; clearly documented non-recoverability if declined.
+- Disappearing messages: per-conversation timer, negotiated inside ciphertext, enforced client-side, mirrored by server mailbox TTL.
+- Local search: client-side full-text index built from the local plaintext store (SQLite FTS5 on mobile; Tantivy in the desktop client), encrypted at rest. This replaces server-side Tantivy for E2EE conversations.
 
 ## Conversation Types and Crypto Modes
-- `dm_mode = plaintext | e2ee_v1`
-- `guild_channel_crypto_policy = plaintext_only | mixed_optional_e2ee` (server-configurable)
-- `message_crypto_mode = plaintext | e2ee_v1` (per-message for mixed contexts)
-- `guild_encrypted_delivery_mode = client_only | client_plus_server`
-- Friends-only DM remains allowed policy for v1.
-- E2EE migration policy:
-  - new DMs default to `plaintext` unless users explicitly enable E2EE
-  - existing conversations can upgrade, never silently downgrade
-  - downgrade requires explicit user action + warning
-  - encrypted messages/files must carry explicit client-visible encrypted markers
-  - guild encrypted messages must carry explicit delivery-mode metadata (`client_only` vs `client_plus_server`)
+- `conversation_crypto = plaintext | mls_v1` — a property of the conversation/channel, immutable except via explicit upgrade.
+- 1:1 DM and group DM: user-explicit enable at creation or upgrade. Upgrade creates the MLS group and marks the conversation; no silent downgrade ever; "downgrade" = explicitly creating a new plaintext conversation.
+- Guild channels: `channel_type = plaintext | encrypted`, set at channel creation, permission-gated. The entire channel is one mode. No per-message crypto toggles, no mixed channels, no composer mode selector. (Per-message mixing invites users to lose track of which mode they are typing in; channel-invariant modes match the Signal-style mental model.)
+- The server-included recipient / `client_plus_server` searchable-encryption mode is REMOVED. Rationale: under our threat model it is key escrow — zero confidentiality against adversary #1 while rendering a lock icon users will misread as privacy. Channels that require server-side moderation/search remain honestly plaintext.
+- Capability gating: an E2EE conversation requires every participant to have at least one MLS-capable device; otherwise block with a typed capability error. Fail closed; no plaintext fallback.
+- Friends-only DM policy remains allowed and orthogonal.
 
-## Guild Searchable Encryption Mode (Server-Included Recipient)
-- Goal: allow encrypted send UX while preserving server-side search/moderation when desired.
-- Mechanism:
-  - sender client encrypts to intended client audience and also to a server-held public key recipient
-  - server can decrypt only messages marked `client_plus_server`
-  - `client_only` messages remain opaque to server content inspection
-- UX requirement:
-  - composer exposes delivery mode selector in guild encrypted-send flow
-  - mode must be explicit and visible before send
-  - message rows show whether server inclusion was used
-
-## Encryption Send Permissions (Channel Policy)
-Add channel-level permissions (or equivalent role permissions) for encrypted messaging:
-- `send_encrypted_message`:
-  - allows sending encrypted messages in the channel
-- `send_encrypted_message_without_server`:
-  - allows encrypted send with `client_only` delivery mode (no server recipient)
-- Enforcement model:
-  - if user has `send_encrypted_message` but not `send_encrypted_message_without_server`, encrypted sends must use `client_plus_server`
-  - channels may enforce server inclusion for all encrypted messages via permission configuration
-  - clients must fail closed if attempted mode violates effective permissions
-  - server must independently enforce the same policy and reject invalid encrypted sends even if client attempts to bypass UI checks
-  - required rejection case: `encrypted_delivery_mode=client_only` without `send_encrypted_message_without_server` permission
-  - rejection response should be deterministic and typed (for example `403` with explicit error code such as `encrypted_server_inclusion_required`)
+## Audience Model
+- Audience = MLS group membership. Nothing else. No per-message recipient editing, no per-send role-expansion selectors, no manual device picking. (Per-message audience editing is incompatible with MLS group semantics and created undecryptable-ghost and epoch-race states; a secret subset is simply a different conversation.)
+- Membership changes occur only via member-signed MLS proposals/commits. The server relays and orders them; it cannot author them.
+- Guild encrypted channels: authorization-to-membership reconciliation
+- joining a channel = an Add proposal committed by an authorized member/admin device per channel permissions
+- leave/kick/role-loss = a Remove commit; permission changes reconcile to commits promptly (bounded reconciliation window, monitored)
+- the server enforces WHO MAY PROPOSE (policy); clients enforce WHAT IS CRYPTOGRAPHICALLY VALID (signatures, epoch state) — both must pass
+- Stale/ambiguous state: if group state is behind or conflicted, client refreshes, rebases, and fails closed rather than sending under uncertainty.
 
 ## Data Model (Server-Side)
-For E2EE conversations, server stores:
-- ciphertext payload blob
-- envelope metadata:
-  - conversation_id
-  - sender_user_id, sender_device_id
-  - message_id, created_at_unix
-  - crypto_suite/version
-  - key_epoch / ratchet header fields (bounded)
-  - optional attachment descriptor ciphertext references
+For `mls_v1` conversations, server stores:
+- opaque MLS ciphertext blob (`PrivateMessage`)
+- minimal routing envelope:
+- conversation_id / group_id
+- message_id, created_at_unix
+- epoch tag (for Delivery Service ordering) and suite id
+- bounded sizes; contents padded client-side to size buckets (e.g. 512 B / 1 KiB / 4 KiB / 16 KiB) to blunt size fingerprinting
+- per-device delivery acknowledgments (drives mailbox GC)
+- KeyPackage pools and device certificates (public material only)
+- optionally, the group's current encrypted GroupInfo/ratchet-tree blob published by members to support joins and external-commit recovery (treated as sensitive-not-secret: it encodes membership structure, which the server already learns from routing)
 
-Server must not store plaintext content for `e2ee_v1` conversations.
-For mixed plaintext/E2EE contexts, each message/file record must include explicit crypto mode fields so clients can render trustworthy badges and enforce fail-closed parsing.
-For guild encrypted messages, persist explicit delivery-mode metadata and server-inclusion marker for policy/audit correctness.
-
-## Cryptography Options (Initial Selection)
-Locked baseline for `e2ee_v1` planning:
-- Identity signature keys: `Ed25519`
-- ECDH agreement keys: `X25519`
-- KDF: `HKDF-SHA-256`
-- Symmetric message/file envelope AEAD: `XChaCha20-Poly1305`
-- Randomness: CSPRNG from platform cryptographic providers only
-
-Notes:
-- No custom primitives or protocol variants beyond vetted library behavior.
-- Final crate/library selection still requires ADR and supply-chain review.
+Server must not store plaintext content, content-derived metadata, or unwrapped key material for `mls_v1` conversations. There are no mixed-mode records: a conversation's records are uniformly plaintext or uniformly MLS blobs, and clients fail closed on any record whose local verification contradicts the conversation's pinned mode.
 
 ## API/Protocol Additions (Design)
-### Key directory/prekey endpoints
-- `GET /e2ee/keys/me`
-- `PUT /e2ee/keys/me/identity`
-- `POST /e2ee/keys/me/prekeys/upload`
-- `POST /e2ee/keys/claim` (claim recipient prekey bundle)
-- `GET /e2ee/keys/{user_id}` (public identity + signed prekey material)
+### Identity, device, and KeyPackage endpoints
+- `PUT /e2ee/devices/{device_id}` — publish device certificate (root-key-signed)
+- `GET /e2ee/users/{user_id}/devices` — certified device list (clients verify signatures; list is a hint, certificates are the truth)
+- `POST /e2ee/keypackages` — upload KeyPackage pool for a device
+- `POST /e2ee/keypackages/claim` — claim a KeyPackage for a target user/device (rate-limited, audited)
+- `GET /e2ee/groups/{group_id}/info` — encrypted GroupInfo for joins/recovery, where group policy allows
 
-### Conversation capability endpoints
-- `POST /dm/conversations/{id}/crypto/enable`
-- `GET /dm/conversations/{id}/crypto/state`
-- `POST /dm/conversations/{id}/crypto/rekey`
+### Group and message transport
+- `POST /e2ee/groups/{group_id}/commits` — Delivery Service ingestion point; enforces total order per group
+- single-writer-per-epoch: the first order-valid commit for epoch N is accepted; competing commits receive a deterministic typed rejection (`409 epoch_conflict`) and clients rebase pending proposals
+- `POST /e2ee/groups/{group_id}/messages` — application `PrivateMessage` transport
+- Gateway events (new), all inside the `{ v, t, d }` envelope with strict bounds:
+- `mls_message`, `mls_commit`, `mls_welcome`, `mls_proposal`
+- `device_list_update`, `keypackage_low`
+- Wire fields on message records: `crypto` (plaintext|mls_v1), `suite`, `epoch`, `sender_device_id` — routing hints only. Clients derive all trust state (badges, sender identity, membership) from local MLS verification against pinned group state; a server field can never upgrade a message's displayed trust.
+- Server-side validation is shape-only for MLS payloads: size bounds, field presence, epoch monotonicity per group. The server never parses MLS interiors.
 
-### Message transport
-- REST/gateway send routes carry encrypted envelope for E2EE conversations.
-- Gateway event examples (new):
-  - `dm_e2ee_message_create`
-  - `dm_e2ee_rekey`
-  - `dm_e2ee_key_update`
+## Attachments (E2EE conversations)
+- Random per-file content key; AEAD encryption aligned with the group suite; no convergent encryption or cross-user deduplication (equality oracle).
+- File key + metadata (filename, MIME, size, content hash, thumbnail key) travel inside the MLS application message; the server-side blob and its descriptor are opaque.
+- Client-generated encrypted thumbnails; no server-side thumbnailing, transcoding, or unfurling for E2EE content.
+- Blob storage follows the mailbox model: padded to size buckets, deleted after all-device fetch or conversation TTL.
 
-All events remain inside `{ v, t, d }` envelope with strict bounds.
+## Message-Adjacent Features (E2EE contexts)
+Everything message-adjacent rides inside the ciphertext or is disabled:
+- Reactions, edits, delete-for-everyone, replies/quote previews, pins: MLS application messages; the server never learns their semantics.
+- Link previews: client-generated only, per-conversation opt-in, off by default (server unfurling would exfiltrate URLs and content).
+- Read receipts and typing indicators: off by default in E2EE conversations (metadata cost); if shipped, carried inside ciphertext.
+- Push notifications: data-only pushes (wake signal + conversation hint at most); notification text is decrypted on-device (iOS notification service extension / Android equivalent). The push pipeline must never carry plaintext.
+- Delivery-gap detection: per-sender MLS generation counters drive a "messages may be missing" indicator when gaps persist past a threshold — the honest answer to a server that withholds ciphertext.
 
-### Message/file encrypted markers
-- Add explicit wire fields for message/file encryption state:
-  - `crypto_mode`
-  - `crypto_suite`
-  - `key_epoch`
-  - optional `sender_device_id`
-  - `encrypted_delivery_mode` (`client_only` | `client_plus_server`)
-  - `server_recipient_included` (boolean, must match mode semantics)
-- Clients must never infer encryption state from heuristics; only trusted typed fields.
-
-### Recipient key fanout
-- Sender client encrypts a content key to each recipient device public key (or protocol-equivalent group mechanism) derived from audience resolution.
-- Encrypted envelope must include bounded recipient metadata references needed for decryption routing, without exposing plaintext content.
-- Server forwards encrypted payloads and cannot alter audience semantics without detectable verification failure at recipients.
-- For manual audience mode, client must display unresolved/missing recipient keys before send and block send unless user resolves or explicitly removes those recipients.
-
-## Multi-Device Key Portability
-- Add secure cross-device bootstrap flow for user key material:
-  - QR-mediated pairing between trusted logged-in devices
-  - short-lived out-of-band verification code
-  - encrypted key package transfer (never plaintext keys in transit/storage)
-- Recovery options remain policy-driven:
-  - no-backup strict mode, or
-  - passphrase-encrypted backup blob
-- Device add/remove events must trigger key state updates and relevant rekey prompts.
+## Moderation, Abuse, and Reporting
+With E2EE enabled, server-side content scanning and full-text search are unavailable by design. Abuse tooling shifts to:
+- metadata and rate controls; block/mute; friends-only gating
+- user reporting with explicit reporter-side plaintext disclosure: a report packages the reporter's decrypted copies plus envelope references; UX makes the disclosure explicit
+- optional roadmap item (Open Decisions): message franking / committing AEAD so reports are cryptographically verifiable as unmodified
+Policy stance:
+- Default guild behavior remains plaintext for moderation/search viability.
+- Encrypted channels are opt-in, permission-gated, and documented as not server-moderatable. No escrow middle mode exists to blur this line.
 
 ## Voice/Video E2EE Direction
-Phase after text E2EE stabilization:
-- Use SFrame for media frame encryption.
-- Key material derived from conversation/group epoch keys.
-- Rekey on participant join/leave and periodic rotation.
-- SFU (LiveKit) forwards encrypted media; cannot decrypt media payload.
-
-Open question:
-- whether chosen web/desktop stack and LiveKit path support required insertable-stream primitives uniformly across targets.
-
-## Product/Moderation/Search Tradeoffs
-With E2EE enabled:
-- Server-side full-text search on message bodies is unavailable.
-- Server-side content moderation/scanning is unavailable for ciphertext.
-- Abuse tooling shifts toward:
-  - metadata/rate controls
-  - client-side user reporting with explicit plaintext disclosure by reporter
-  - block/mute and friendship controls
-
-Policy recommendation:
-- Keep default guild behavior plaintext for moderation/search viability.
-- Introduce guild E2EE as opt-in per message/file only after DM/group E2EE is stable and moderation policy is explicitly documented.
-- For guild encrypted mode, allow policy-enforced `client_plus_server` as searchable encrypted delivery where moderation/search requirements are mandatory.
-
-## UX Requirements
-- Explicit conversation badge: `End-to-end encrypted`.
-- Explicit per-message/per-file badge when encrypted in mixed contexts.
-- First-use trust screen explaining guarantees and limits.
-- Key-change warnings:
-  - passive indicator + blocking interstitial for high-risk changes
-- Device management UI:
-  - view/remove own devices
-  - show peer devices in conversation security panel
-  - expose local device key panel in profile/client settings with copy actions
-  - private-key copy requires modal warning + explicit user confirmation
-  - key refresh action requires destructive-action confirmation
-- Backup/recovery UX:
-  - encrypted key backup option (passphrase protected) or clearly documented non-recoverability
-
-## Migration and Compatibility
-- Mixed-version support:
-  - old clients continue plaintext only
-  - e2ee messages/files sent only when all required audience participants/devices are e2ee-capable, or blocked with capability error
-- No silent plaintext fallback once convo is marked `e2ee_v1`.
-- Contract tests ensure unknown/new crypto events are ignored safely by non-upgraded clients.
+- SFrame over insertable streams; SFU (LiveKit) forwards opaque encrypted frames and cannot decrypt media.
+- Keys derived from the corresponding MLS group's `exporter_secret`; media epoch == MLS epoch.
+- Rekey on participant join/leave (membership commit) and periodic update commits.
+- Precedent: Discord's DAVE protocol ships MLS-keyed E2EE calls in this exact product category.
+- Open question: uniform insertable-stream support across desktop/mobile targets and embedded webviews (verify Safari/webview coverage specifically).
 
 ## Security Controls and Limits
-- Strict max sizes on key bundles and encrypted envelopes.
-- Per-user/per-route limits for key uploads/claims/rekeys to prevent abuse.
-- Replay protection via message counters/nonces per ratchet protocol.
-- Audit logs for key directory mutations (no secret material in logs).
-- Zero sensitive key material in telemetry/tracing output.
+- Strict max sizes on KeyPackages, commits, Welcomes, proposals, and message envelopes.
+- Per-user/per-device/per-route rate limits on KeyPackage uploads/claims, commits, and rekeys; commit-storm backpressure.
+- Replay and reorder protection via MLS epoch + per-sender generation counters; server enforces epoch monotonicity, clients enforce everything else.
+- Audit logs for directory mutations (device certs, KeyPackage pools) — public material only, never secret material.
+- Zero key material in logs, telemetry, tracing, or crash dumps; memory zeroization on drop; secrets in platform keystores.
+- Fail closed on: malformed envelopes, unverifiable commits, stale epochs, capability gaps, and any server-field/local-verification mismatch.
 
-## Dependency and Supply-Chain Gate
-Before implementation:
-- Select candidate crypto libraries.
-- Validate:
-  - maintenance activity
-  - license compatibility (MIT/Apache/BSD/ISC)
-  - external audit status (if available)
-- Add ADR documenting final selection and rejected alternatives.
+## Supply Chain and Build Integrity
+- Dependency gate before implementation: `cargo audit` + `cargo vet` (or equivalent), pinned and hash-locked dependencies, license compatibility (MIT/Apache/BSD/ISC — OpenMLS is MIT), external audit status review.
+- ADR documents final selection and rejected alternatives with rationale (libsignal: AGPL-3.0 + infra coupling; vodozemac: group semantics, no membership authentication, no exporter, no PQ path; static per-device keys: no FS/PCS against an archive-holding adversary).
+- Client build integrity is part of the E2EE trust story: signed releases, reproducible builds as a goal, update-channel integrity (signed manifests, downgrade protection), binary transparency for client releases on the roadmap.
+
+## Key Transparency (roadmap, Phase 8)
+- Append-only, auditable log of the key directory (root keys, device certificates) with inclusion and consistency proofs; client-side auditing; out-of-band checkpoint distribution.
+- Converts "the server can lie silently" (serving different key sets to different users, suppressing rotations) into "the server can lie once and get caught." Precedent: WhatsApp Key Transparency, Apple Contact Key Verification.
+- Until KT ships, first contact is TOFU + pinning + safety-number verification, and the trust disclosures say so plainly.
 
 ## Rollout Phases
 ### Phase 0: Design Lock
-- Finalize protocol choice (Signal-family specifics).
-- Finalize device model and trust UX.
-- Finalize downgrade and recovery policy.
-
+- ADR: OpenMLS, ciphersuite 0x0003 + agility, deniability acceptance, web-client exclusion, mailbox retention model, backup policy, rejected alternatives.
+- Threat model and protocol docs merged; wire contracts for all endpoints/events drafted.
 Exit criteria:
-- ADR approved.
-- Threat model and protocol doc updates merged.
+- ADR approved; `docs/THREAT_MODEL.md` E2EE section merged.
 
-### Phase 1: Key Infrastructure
-- Implement key directory + prekey endpoints.
-- Add client key store abstraction and secure local storage integration.
-- Add secure device-to-device key bootstrap flow (QR + verified transfer path).
-- Implement profile/client-settings key panel (public/private key visibility/copy flows).
-- Implement destructive client-side key refresh flow with forced confirmation UX.
-- Add key lifecycle tests and abuse/rate limits.
-
+### Phase 1: Identity, Devices, KeyPackages
+- Root identity key generation; device certificates; platform keystore integration.
+- QR device pairing with encrypted key transfer; device add/remove flows with in-conversation surfacing.
+- KeyPackage pool upload/claim/replenish + last-resort semantics; rate limits and claim auditing.
+- Encryption settings panel (safety number, device list, rotate identity, backup enrollment). No key-export surface.
+- Local encrypted store foundation (SQLCipher-or-equivalent).
 Exit criteria:
-- Deterministic integration tests for key publish/claim/rotation.
+- Deterministic integration tests for device publish, KeyPackage claim, rotation, and pairing.
+- Negative test: server-forged device certificate is rejected by clients (ghost-device injection fails).
 
-### Phase 2: 1:1 DM E2EE (Text)
-- Add encrypted message envelope transport for DMs.
-- Implement per-device session setup and ratchet message flow.
-- Add key-change detection UX.
-
+### Phase 2: 1:1 DM E2EE (2-member MLS groups)
+- Conversation create/upgrade flow; `PrivateMessage` transport; commit pipeline with epoch-conflict rebase.
+- Key-change warnings; gap indicators; mailbox acks and GC.
 Exit criteria:
-- Two-device and multi-device 1:1 tests pass.
-- Server cannot decrypt fixture ciphertext in tests.
+- Two-device and multi-device 1:1 churn tests pass, including out-of-order and offline catch-up.
+- Persistence audit: server records for E2EE fixtures contain opaque envelopes only (protocol-level "server cannot decrypt" assurance comes from design review; the test evidences the storage contract).
 
-### Phase 3: Group DM E2EE (Text)
-- Add group key management (MLS or sender-key approach).
-- Implement join/leave rekey semantics.
-
+### Phase 3: Group DM E2EE
+- Membership proposals/commits; join via Welcome; removal eviction; external-commit recovery from desync.
 Exit criteria:
-- Membership churn tests verify removed members cannot decrypt new messages.
+- Membership churn tests: removed members fail on all post-removal epochs; concurrent commit races resolve deterministically; desync self-heals via external commit.
 
-### Phase 4: Mixed-Mode Encryption Markers + File Encryption
-- Add per-message/per-file encrypted markers and capability checks in DM/group DM.
-- Add encrypted attachment envelope handling and download/decrypt flow.
-- Add manual recipient/device picker UX with autosuggested audience and role-expansion controls.
-
+### Phase 4: Attachments, History, Search
+- Encrypted attachment envelopes and download/decrypt flow; encrypted thumbnails.
+- Device-to-device history sync; opt-in passphrase backup (Argon2id); disappearing messages; local search index.
 Exit criteria:
-- Mixed plaintext/E2EE threads render correct badges with no ambiguous state.
-- Encrypted files remain opaque to server content inspection.
+- New-device onboarding restores history without any server-side plaintext; encrypted files remain opaque to server inspection; mailbox GC verified.
 
 ### Phase 5: Voice/Video E2EE
-- Add SFrame-based media encryption path.
-- Rekey on participant changes and interval rotation.
-
+- SFrame keyed from exporter secrets; rekey on membership commits and interval updates; LiveKit opaque-forwarding path.
 Exit criteria:
-- SFU relays encrypted media; decryption only at endpoints.
+- SFU relays encrypted media only; decryption exclusively at endpoints; join/leave rekey verified.
 
-### Phase 6: Guild Optional E2EE Messages/Files
-- Add server policy-gated guild channel mixed-mode E2EE support.
-- Add selectable guild encrypted delivery mode (`client_only` vs `client_plus_server`) with explicit metadata.
-- Add server-recipient key distribution/rotation path for `client_plus_server`.
-- Add channel permission enforcement for:
-  - `send_encrypted_message`
-  - `send_encrypted_message_without_server`
-- Require explicit channel/user capability checks and clear UX warnings.
-- Document moderation/search limitations per encrypted post/file.
-
+### Phase 6: Guild Encrypted Channels
+- `channel_type = encrypted` with permissioned Add/Remove commit flows reconciling channel authorization to group membership.
+- Large-group performance work (tree operations at 10^3–10^4 leaves); capability gating; moderation-limits documentation.
 Exit criteria:
-- Guild encrypted posts/files are explicit, opt-in, and fail closed on unsupported clients.
-- Permission-gated forced server-inclusion behavior is enforced and tested.
-- Server-side rejection path for unauthorized `client_only` encrypted sends is covered by REST and gateway integration tests.
+- Role-loss eviction tests pass within the reconciliation window; performance budget met at target channel size; encrypted channels fail closed on unsupported clients.
 
 ### Phase 7: Hardening and GA
-- Pen-test/fuzz pass on envelope parsing and key state handling.
-- Load-test key operations and rekey storms.
-- Final UX/docs/trust disclosures.
-
+- Fuzzing on MLS ingestion (envelope parsing, commit/state handling); commit-storm and KeyPackage-exhaustion load tests.
+- Pen test including adversarial review of the QR pairing protocol; final UX/docs/trust disclosures.
 Exit criteria:
-- Security review signoff and operational runbooks complete.
+- External security review signoff; operational runbooks complete.
+
+### Phase 8: Key Transparency and PQ
+- KT log + client auditing; hybrid X25519+ML-KEM ciphersuite adoption once standardized and vetted.
+Exit criteria:
+- Equivocation detection demonstrated in tests; suite migration exercised on fixture groups.
 
 ## Test Strategy
 Server:
-- Unit: DTO/newtype validation for crypto endpoints.
-- Integration: key upload/claim/rotation/rekey rate limits.
-- Negative tests: malformed envelopes, replay attempts, stale epochs.
+- Unit: DTO/newtype validation for all `e2ee` endpoints; shape-only MLS payload bounds.
+- Integration: KeyPackage upload/claim/replenish under rate limits; commit ordering and `epoch_conflict` determinism; mailbox ack/GC; retention TTLs.
+- Negative: malformed envelopes, replayed generations, stale epochs, oversized payloads, unauthorized proposal attempts.
 
 Client:
-- Unit: key state machine transitions.
-- Integration: multi-device handshake/ratchet flows.
-- UX tests: key-change warnings and downgrade prevention.
+- Unit: group state machine transitions; device certificate verification; badge derivation from local verification only.
+- Integration: multi-device pairing and history sync; join/leave/remove flows; external-commit recovery; RFC 9420 test vectors.
+- Adversarial: server-forged device lists and membership commits are rejected; server flipping `crypto` hints triggers fail-closed, never fallback; downgrade attempts surface warnings.
+- UX: key-change interstitials, capability errors, disappearing-message enforcement.
 
 Cross-system:
-- End-to-end encrypted fixture tests proving server stores/forwards ciphertext only.
-- Compatibility tests for mixed client versions.
+- End-to-end fixtures proving the server stores/forwards opaque blobs only, GroupInfo included.
+- Mixed client-version compatibility: old clients remain plaintext-only and safely ignore `mls_*` events (contract tests).
+- Padding-bucket verification and metadata-minimization checks on the wire.
 
 ## Open Decisions
-1. Group crypto protocol:
-- Option A: MLS-style (strong group semantics, more complexity).
-- Option B: sender-key model (simpler, may need stronger operational rekey discipline).
-2. Key backup strategy:
-- Option A: no backup (strong simplicity, recovery pain).
-- Option B: encrypted backup with user passphrase.
-3. Voice/video E2EE start timing:
-- Option A: after group text E2EE is stable (recommended).
-- Option B: parallel with group text work (higher risk).
-4. Guild E2EE policy model:
-- Option A: per-message/per-file opt-in in policy-enabled channels (recommended).
-- Option B: channel-wide mandatory E2EE mode.
-5. Server-included encryption key management:
-- Option A: one server keypair per workspace (recommended initial simplicity).
-- Option B: per-channel server keypairs (stronger isolation, higher operational complexity).
+1. Backup default:
+- Option A: opt-in passphrase backup (recommended — hard no-backup kills consumer adoption; Signal itself relented).
+- Option B: strict no-backup mode as an additional per-user choice.
+2. Deniability stance:
+- Option A: accept MLS in-group non-repudiation (recommended; record in ADR).
+- Option B: pursue deniable-authentication variants (rejected complexity for v1).
+3. Message franking / verifiable abuse reports: v1.5 candidate — decide after Phase 3 telemetry on report volume.
+4. Guild encrypted channel size ceiling: initial hard cap (e.g. 1–5k leaves) vs. uncapped with perf gates.
+5. Web client future: permanent exclusion vs. an explicitly disclosed degraded tier (signed-build attestation research required).
+6. Baseline suite: 0x0003 (X25519/ChaCha20-Poly1305, recommended for library maturity and performance) vs. 0x0006 (X448, larger margin, weaker ecosystem support).
+7. Read receipts / typing indicators in E2EE conversations: ship-at-all decision.
+8. KT construction: CT-style static log vs. VRF-based (CONIKS-style) directory; timing relative to GA.
 
 ## Immediate Next Slice
-- Create an ADR for protocol/library selection and trust UX policy.
-- Draft `docs/THREAT_MODEL.md` E2EE section updates.
-- Define wire contracts for key endpoints and `dm_e2ee_*` events before coding.
+- Write the ADR: OpenMLS + suite 0x0003 + agility plan, rejected alternatives with rationale, deniability acceptance, web exclusion, mailbox retention model, backup policy.
+- Draft `docs/THREAT_MODEL.md` E2EE section updates from this document's threat model.
+- Define wire contracts for device/KeyPackage/group endpoints and `mls_*` gateway events before coding.
+- Engineering spike: OpenMLS 2-member group round trip (create, add, message, remove, external-commit recovery) in a Rust CLI harness against a fixture Delivery Service.
+
+## Appendix: Revision Notes (v2)
+Removed, with rationale — for the security-stance review session:
+- Copyable private key panel: no serious E2EE product exposes raw private keys; it creates a phishing target, forces keys to be extractable (precluding platform keystores), and misrepresents ratchet key semantics. Migration/recovery needs are covered by QR pairing and passphrase backup.
+- `client_plus_server` / server-included recipient mode and its permission pair: key escrow under our threat model; zero confidentiality against adversary #1 while rendering a misleading lock icon. Channels needing moderation/search stay honestly plaintext.
+- Per-message crypto toggles and mixed channels: replaced by channel/conversation-invariant modes to eliminate composer-mode confusion and ambiguous badge states.
+- Per-message manual audience editing and role-expansion send selectors: incompatible with MLS group semantics; a secret subset is a new conversation.
+- X3DH-shaped prekey endpoints and the XChaCha20-Poly1305 primitive lock: superseded by MLS KeyPackages and ciphersuite 0x0003 with suite agility.
+Changed:
+- Signal-family dual-track (Double Ratchet + separate group scheme) → single OpenMLS stack for 1:1, groups, guild channels, and calls.
+- "Refresh Device Keys" → "Rotate identity" with honest semantics (identity reset + peer warnings; not history protection or destruction).
+- Server-readable-forever ciphertext archive → mailbox retention model with local-first encrypted history and device-to-device sync.
+- Server-asserted encryption markers → badges derived exclusively from local cryptographic verification.
+Added:
+- Root-key-certified device model (ghost-device defense), delivery-gap indicators, size-bucket padding, data-only push, client-side link previews, local search index, disappearing messages, reproducible/signed builds, key transparency and hybrid-PQ roadmap phases.
