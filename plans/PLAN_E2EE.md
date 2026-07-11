@@ -47,7 +47,7 @@ Design principles:
 - Server cannot decrypt content for E2EE conversations.
 - Forward secrecy: compromise of any key material at time T does not reveal messages sent before T. The operator's ciphertext archive is worthless without per-message keys that no longer exist.
 - Post-compromise security: a one-time key/state theft stops working after the victim's next MLS update/commit round trip.
-- Membership integrity: the server cannot add, remove, or substitute members or devices. All membership changes are member-signed MLS proposals/commits; injected "ghost" users/devices fail signature verification at every client.
+- Membership integrity: the server cannot add or substitute members or devices, and can never expand a group's read audience. Membership changes are member-signed MLS proposals/commits; injected "ghost" users/devices fail signature verification at every client. Server-initiated removals exist only as signed, client-validated external proposals (Remove-only; see Moderation) — they can shrink read access, never grow it.
 - Encryption-state integrity: encrypted badges derive only from successful local cryptographic verification, never from server-supplied fields.
 - Delivery integrity: withheld/dropped messages are detectable via per-sender MLS generation counters ("messages may be missing" indicator).
 - Retention minimization: server retains E2EE ciphertext only transiently (mailbox model), shrinking the harvest-now-decrypt-later surface.
@@ -143,7 +143,7 @@ Forward secrecy makes server-stored ciphertext one-shot: message keys are delete
 
 ## Audience Model
 - Audience = MLS group membership. Nothing else. No per-message recipient editing, no per-send role-expansion selectors, no manual device picking. (Per-message audience editing is incompatible with MLS group semantics and created undecryptable-ghost and epoch-race states; a secret subset is simply a different conversation.)
-- Membership changes occur only via member-signed MLS proposals/commits. The server relays and orders them; it cannot author them.
+- Membership changes occur via member-signed MLS proposals/commits. One constrained exception: the server is registered as an MLS external sender permitted to propose removals only (ban/kick/role-loss enforcement — see Moderation); commits remain member-signed, and clients hard-reject any externally-proposed Add. The server relays and orders; it can never expand a group's read audience.
 - Guild encrypted channels: authorization-to-membership reconciliation
 - joining a channel = an Add proposal committed by an authorized member/admin device per channel permissions
 - leave/kick/role-loss = a Remove commit; permission changes reconcile to commits promptly (bounded reconciliation window, monitored)
@@ -197,13 +197,31 @@ Everything message-adjacent rides inside the ciphertext or is disabled:
 - Delivery-gap detection: per-sender MLS generation counters drive a "messages may be missing" indicator when gaps persist past a threshold — the honest answer to a server that withholds ciphertext.
 
 ## Moderation, Abuse, and Reporting
-With E2EE enabled, server-side content scanning and full-text search are unavailable by design. Abuse tooling shifts to:
-- metadata and rate controls; block/mute; friends-only gating
-- user reporting with explicit reporter-side plaintext disclosure: a report packages the reporter's decrypted copies plus envelope references; UX makes the disclosure explicit
-- optional roadmap item (Open Decisions): message franking / committing AEAD so reports are cryptographically verifiable as unmodified
+E2EE removes exactly one moderation tool: covert server-side content inspection. Every other layer survives, and membership enforcement gets stronger than plaintext. Moderation tooling assumes the operator is honestly enforcing workspace policy (it is the owner's own tool); the cryptography exists so that even a dishonest operator can never expand read access — a dishonest operator refusing to enforce policy is a denial-of-service problem, not a confidentiality one.
+
+### Layer 1 — structural moderation (server-controlled, unchanged)
+- Workspace policy decides whether encrypted channels exist at all: `encrypted_channel_policy = disabled | require_moderator_membership | unrestricted` (per workspace, optionally per category).
+- Channel create/join permissions, invite controls, slowmode/rate limits, channel freeze/delete, workspace-level bans and account actions: all enforced server-side, no plaintext required.
+
+### Layer 2 — membership moderation (policy + cryptography; stronger than plaintext)
+- Kick/ban/role-loss = Remove commit = cryptographic eviction: post-removal epochs are mathematically unreadable to the removed member. Even a colluding server has nothing to hand them; plaintext channels only ever offer the server's ongoing promise to keep saying no.
+- Enforcement is two-layer: policy acts at t=0 (server stops routing to/from the banned member); crypto lands at the next commit (epoch eviction).
+- Server-initiated removals: the server is an MLS external sender authorized to submit Remove proposals only; online member clients validate and auto-commit policy-consistent removals, so eviction does not wait for a moderator to be present. Safe by asymmetry: removals can only shrink read access; abuse of them is griefing the server could already do by dropping delivery. Clients hard-reject externally-proposed Adds — adds are where ghost members live.
+- Removal latency is bounded client-side: if a required Remove commit is not ordered within a bounded window, clients block sends in that group and surface a warning (fail closed against a stalling Delivery Service).
+
+### Layer 3 — content moderation (member-based, visible)
+- Moderators who are members see plaintext like any member and can warn, delete, and kick. `require_moderator_membership` makes this a channel invariant: the mod-team role is present in every encrypted channel, visible in the member list, disclosed in the channel header.
+- This is the honest successor to the removed escrow mode: same human-moderation capability, but the reader is a visible, accountable member device — not a silent key beside the message database. The E2EE claim stays literally true (only members can read); the membership is the disclosure.
+- Moderator deletion = mailbox purge of undelivered copies + signed moderation tombstone (honest clients delete locally). Copies already on malicious clients are unreachable — the same physics as screenshots, plaintext or encrypted.
+- Automated moderation in encrypted channels, where a workspace wants it, is a visible bot member — never a hidden recipient. Tradeoff stated plainly: a scanning bot re-centralizes plaintext at its host, and if that host is the message server itself, this rebuilds escrow with visibility. Allow/disallow is an Open Decision.
+
+### Layer 4 — report-based moderation
+- User reporting with explicit reporter-side plaintext disclosure: a report packages the reporter's decrypted copies plus envelope references; UX makes the disclosure explicit.
+- Roadmap (Open Decisions): message franking / committing AEAD so reported content is cryptographically verifiable as genuine.
+
 Policy stance:
-- Default guild behavior remains plaintext for moderation/search viability.
-- Encrypted channels are opt-in, permission-gated, and documented as not server-moderatable. No escrow middle mode exists to blur this line.
+- Default guild behavior remains plaintext for full moderation/search viability; compliance- or archive-bound workspaces simply do not enable encrypted channel types.
+- Genuinely unavailable in encrypted channels, by design: silent content scanning and retroactive server-side content search where no moderator is a member. Any mechanism granting the server read access "for moderation" grants a hostile operator the same access — keys encode capabilities, not intentions.
 
 ## Voice/Video E2EE Direction
 - SFrame over insertable streams; SFU (LiveKit) forwards opaque encrypted frames and cannot decrypt media.
@@ -317,6 +335,7 @@ Cross-system:
 6. Baseline suite: 0x0003 (X25519/ChaCha20-Poly1305, recommended for library maturity and performance) vs. 0x0006 (X448, larger margin, weaker ecosystem support).
 7. Read receipts / typing indicators in E2EE conversations: ship-at-all decision.
 8. KT construction: CT-style static log vs. VRF-based (CONIKS-style) directory; timing relative to GA.
+9. Automated moderation bots as visible members of encrypted channels: allow (workspace opt-in, disclosed in member list and channel header) vs. disallow (human moderators only). If allowed, define bot-hosting custody requirements (plaintext access must not co-reside with the message server).
 
 ## Immediate Next Slice
 - Write the ADR: OpenMLS + suite 0x0003 + agility plan, rejected alternatives with rationale, deniability acceptance, web exclusion, mailbox retention model, backup policy.
