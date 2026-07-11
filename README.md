@@ -93,7 +93,9 @@ Today, conversations are protected in transit (TLS) and readable by the server a
 - Mailbox retention: the server holds E2EE ciphertext only until delivery (or TTL); local encrypted stores are canonical history, with device-to-device sync and opt-in passphrase-encrypted backup
 - Trust from verification: encryption indicators derive from local cryptographic checks, never from server-supplied fields
 
-Tradeoffs, stated plainly: E2EE participation requires signed packaged desktop/mobile builds (web clients are excluded in v1), and server-side content search and silent content scanning are unavailable in encrypted contexts by design — replaced by client-side local search and member-visible moderation. Workspaces that need server-side archives or moderation simply keep channels plaintext.
+The unified SolidJS frontend continues. The desktop client ships the same UI codebase inside a signed Tauri package with locally bundled assets, and MLS key operations run in a shared Rust core behind a narrow IPC boundary — key material never enters the webview. What v1 excludes is browser-delivered code, not JavaScript: a web page re-fetches its application code from the server on every load, which is incompatible with a threat model where the operator is the primary adversary. Web users see encrypted conversations as locked, fail-closed states ("open in the desktop app"), never a plaintext fallback.
+
+Tradeoffs, stated plainly: E2EE participation requires signed packaged desktop/mobile builds, and server-side content search and silent content scanning are unavailable in encrypted contexts by design — replaced by client-side local search and member-visible moderation. Workspaces that need server-side archives or moderation simply keep channels plaintext.
 
 Security contracts for E2EE are folded into [`docs/SECURITY.md`](docs/SECURITY.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 

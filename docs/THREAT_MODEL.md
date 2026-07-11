@@ -50,6 +50,10 @@ E2EE abuse cases (`PLAN_E2EE.md`):
 - Malicious or coerced device-pairing attempts.
 - SFU-side media decryption attempts and media key leakage.
 - Theft of local encrypted stores from compromised endpoints.
+- Targeted per-user malicious web builds (single-load key exfiltration by the operator).
+- Remote code loading in packaged clients (shell pointed at server-hosted UI).
+- Release-pipeline compromise and update-channel downgrade attacks.
+- Webview/renderer compromise (XSS) aimed at key material.
 
 ## Directory Join + Guild IP Moderation Threats (Phase 0 contract)
 - Join spam/DoS:
@@ -85,8 +89,14 @@ E2EE abuse cases (`PLAN_E2EE.md`):
   - one-time key/state theft or ongoing device compromise.
   - mitigation contract: post-compromise security via MLS update commits bounds one-time theft; first-class device removal performs cryptographic eviction from all groups; `Rotate identity` provides continuity reset; platform keystores and encrypted local stores raise theft cost. Content already decrypted on a compromised endpoint is out of scope.
 - Web-served malicious client code:
-  - operator serves key-exfiltrating JavaScript on page load.
-  - mitigation contract: web clients are excluded from E2EE in v1; E2EE participation requires signed packaged desktop/mobile builds; reproducible builds and update-channel integrity are part of the trust story.
+  - operator serves key-exfiltrating JavaScript — including a targeted build to a single user on a single page load, reverted without trace. This is a code-delivery attack, not a protocol weakness; it applies to any E2EE protocol executed in browser-delivered code.
+  - mitigation contract: web clients are excluded from E2EE in v1; E2EE code executes only in signed packaged builds with locally bundled assets; packaged clients are prohibited from remote-loading application code from the server; web rendering of E2EE conversations is a fail-closed capability state with no plaintext fallback.
+- Release-pipeline and update-channel compromise:
+  - adversary compromises build infrastructure or signing keys to ship a malicious signed build, or downgrades clients to a vulnerable version.
+  - mitigation contract: signing converts silent per-user substitution into an all-users, auditable artifact; signed update manifests with downgrade protection; reproducible builds enable third-party source-to-binary verification; binary transparency is roadmapped. Residual: build machines and signing-key custody remain disclosed trust dependencies.
+- Webview compromise in packaged clients:
+  - attacker achieves script execution in the client webview (renderer bug, content-safety bypass) and attempts key theft.
+  - mitigation contract: MLS state and key operations are confined to the native Rust core behind a narrow, typed IPC surface (ciphertext in, plaintext out); key material never enters the JS heap; safe-token markdown rendering limits the injection surface. Residual: a compromised webview can read plaintext currently rendered on screen.
 - First-contact impersonation:
   - operator substitutes key material on first contact (TOFU window).
   - mitigation contract: root-key pinning, key-change warnings (blocking for previously verified contacts), safety-number/QR verification; key transparency (Phase 8) converts silent equivocation into detectable, one-time lying.
@@ -124,7 +134,8 @@ E2EE abuse cases (`PLAN_E2EE.md`):
 ## Residual Risks (Disclosed)
 - First-contact key claims are TOFU until users verify safety numbers or key transparency ships (Phase 8).
 - The server can withhold or reorder ciphertext — detectable, not preventable.
-- Packaged-client build integrity is a trust dependency; mitigated by signed releases, update-channel integrity, and reproducible builds.
+- Packaged-client build integrity is a trust dependency: build machines and signing keys can be compromised. Mitigated by signed releases, downgrade-protected updates, reproducible builds, and (roadmap) binary transparency; signing alone proves origin, not honesty.
+- A compromised webview/renderer can read plaintext currently displayed, even though key material is isolated in the native core.
 
 ## Out of Scope (Current)
 - Federation trust relationships.

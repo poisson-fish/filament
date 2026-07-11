@@ -113,7 +113,15 @@ Status: design-locked contract from `PLAN_E2EE.md` (v2), pre-implementation. Ite
 - Fail closed on: malformed envelopes, unverifiable commits, stale epochs, capability gaps, and any server-field/local-verification mismatch.
 - Delivery-gap detection via per-sender MLS generation counters is mandatory ("messages may be missing" indicator).
 - Push notifications are data-only; notification text is decrypted on-device; the push pipeline never carries plaintext.
-- Web clients are excluded from E2EE in v1; participation requires signed, packaged desktop/mobile builds.
+- Web clients are excluded from E2EE in v1; participation requires signed, packaged desktop/mobile builds. The exclusion is a code-delivery property, not a protocol or JS limitation: browser-delivered application code is re-fetched from the operator on every load.
+- Web-client rendering of E2EE conversations is a fail-closed capability state only: conversation existence may render (the server already knows membership for routing), content renders as "end-to-end encrypted — open in a packaged client." No plaintext fallback and no server-side decryption path may exist.
+- Capability gating is bidirectional: a conversation cannot be created as or upgraded to `mls_v1` unless every participant has at least one MLS-capable device; a web-only participant blocks the upgrade with a typed capability error rather than silently degrading it.
+
+### Packaged Client Architecture
+- E2EE-capable clients must bundle UI assets inside the signed package and serve them from the local application protocol. Remote-loading application code from the server (e.g. a desktop shell pointed at the hosted web UI) is prohibited — it reintroduces the web trust model.
+- MLS state and all key operations run in the native host process (shared Rust core) behind a narrow, typed IPC surface: commands and ciphertext in, plaintext and verified state out. Key material never enters the webview/JS heap.
+- Mobile clients follow the same pattern via FFI bindings to the shared Rust core, with platform keystores for custody.
+- Keys are device-bound, never account-bound: valid account credentials in a non-E2EE-capable client (e.g. a browser session) confer no decryption capability; only paired, certified devices decrypt.
 
 ### Moderation Contract (E2EE)
 - The server is registered as an MLS external sender authorized to propose `Remove` only; clients hard-reject externally proposed `Add`s. The server can shrink a group's read audience, never grow it.
@@ -125,6 +133,7 @@ Status: design-locked contract from `PLAN_E2EE.md` (v2), pre-implementation. Ite
 - All LiveKit token issuance, publish-source, and subscribe policies above remain in force; SFrame layers content confidentiality on top.
 - The SFU forwards opaque encrypted frames and cannot decrypt media.
 - Media keys derive from the MLS group `exporter_secret`; media epoch equals MLS epoch; rekey on membership commits and periodic update commits.
+- Insertable-streams support must be verified per webview target (WebView2, WKWebView, WebKitGTK) before media E2EE ships on that platform; where a webview lacks support, the required fallback is a native WebRTC media path in the host layer — never unencrypted media.
 
 ### Directory Audit (E2EE)
 - Directory mutations (device certificate publication, KeyPackage pool changes, claims) are audit-logged.
@@ -132,4 +141,6 @@ Status: design-locked contract from `PLAN_E2EE.md` (v2), pre-implementation. Ite
 
 ### Supply Chain (E2EE Additions)
 - Dependency gate before implementation: `cargo audit` plus `cargo vet` (or equivalent), pinned and hash-locked dependencies, license compatibility gate (OpenMLS is MIT), and external audit status review.
-- E2EE-capable clients require signed releases and update-channel integrity (signed manifests, downgrade protection); reproducible builds and binary transparency for client releases are tracked roadmap goals.
+- E2EE-capable clients require signed releases and update-channel integrity (signed manifests, downgrade protection).
+- Code signing is necessary but not sufficient: it proves origin, not honesty. It converts per-user, per-load targeted code substitution into a release-pipeline compromise that ships an auditable artifact to all users. Build machines and signing-key custody remain disclosed trust dependencies.
+- Reproducible builds let third parties verify that signed binaries match public source; binary transparency for client releases is the roadmap endpoint.

@@ -1,4 +1,4 @@
-# PLAN_E2EE.md (v2 — MLS baseline)
+# PLAN_E2EE.md (v2.1 — MLS baseline)
 
 ## Objective
 Design a security-first end-to-end encryption (E2EE) roadmap for Filament DMs, group DMs, guild encrypted channels, and calls, built on a single MLS (RFC 9420) stack via OpenMLS, and designed against a hostile server operator with full archive capability. Compatible with:
@@ -9,16 +9,16 @@ Design a security-first end-to-end encryption (E2EE) roadmap for Filament DMs, g
 
 ## Scope and Principles
 - In scope:
-- 1:1 DM E2EE (implemented as 2-member MLS groups)
-- Group DM E2EE (text + attachments)
-- Guild encrypted channels (channel-type, policy-gated; not per-message)
-- Voice/video E2EE via SFrame keyed from MLS exporter secrets
-- Multi-device, device-to-device history sync, local search, mailbox retention model
+  - 1:1 DM E2EE (implemented as 2-member MLS groups)
+  - Group DM E2EE (text + attachments)
+  - Guild encrypted channels (channel-type, policy-gated; not per-message)
+  - Voice/video E2EE via SFrame keyed from MLS exporter secrets
+  - Multi-device, device-to-device history sync, local search, mailbox retention model
 - Out of scope for initial launch:
-- federation key exchange
-- custom cryptographic primitives or protocol variants
-- web-client E2EE participation (see Identity and Device Model)
-- any server-readable "encrypted" delivery mode (key escrow) — removed by design
+  - federation key exchange
+  - custom cryptographic primitives or protocol variants
+  - web-client E2EE participation (see Identity and Device Model, and Client Architecture)
+  - any server-readable "encrypted" delivery mode (key escrow) — removed by design
 
 Design principles:
 - One vetted protocol stack (MLS via OpenMLS) for all E2EE domains. No bespoke ratchets, key schedules, or parallel crypto stacks. One audit surface.
@@ -61,7 +61,8 @@ Design principles:
 ### Acknowledged residual risks (documented in trust disclosures)
 - First-contact key claims are TOFU until users verify safety numbers or key transparency ships (Phase 8).
 - The server can withhold or reorder ciphertext (detectable, not preventable).
-- Packaged-client build integrity is a trust dependency; mitigated by signed, reproducible builds (see Supply Chain).
+- Packaged-client build integrity is a trust dependency; build machines and signing-key custody can be compromised. Mitigated by signed, reproducible builds and downgrade-protected updates (see Supply Chain); signing proves origin, not honesty.
+- A compromised webview/renderer inside a packaged client can read plaintext currently displayed, even though key material is isolated in the native core (see Client Architecture).
 
 ## Core Protocol Decision (locked for planning; ratify in ADR)
 Adopt MLS (RFC 9420) via OpenMLS for every E2EE domain:
@@ -87,41 +88,57 @@ Cryptographic parameters:
 
 ## Identity and Device Model
 - Per-user root identity key (Ed25519):
-- generated on the user's first device; never leaves devices except via encrypted pairing transfer or opt-in encrypted backup
-- signs device certificates; is the anchor for safety numbers
+  - generated on the user's first device; never leaves devices except via encrypted pairing transfer or opt-in encrypted backup
+  - signs device certificates; is the anchor for safety numbers
 - Per-device key material:
-- MLS signature keypair + HPKE init keys per device
-- each device holds a device certificate: (user_id, device_id, device signature pubkey) signed by the user root key
-- MLS leaf credentials embed the device certificate; peers verify the chain to the pinned root key
+  - MLS signature keypair + HPKE init keys per device
+  - each device holds a device certificate: (user_id, device_id, device signature pubkey) signed by the user root key
+  - MLS leaf credentials embed the device certificate; peers verify the chain to the pinned root key
 - Server role:
-- directory + KeyPackage relay + Delivery Service (commit ordering) only
-- cannot mint devices: it never holds the root key, so injected devices fail certificate verification at every peer — device injection is cryptographically blocked, not merely policy-blocked
+  - directory + KeyPackage relay + Delivery Service (commit ordering) only
+  - cannot mint devices: it never holds the root key, so injected devices fail certificate verification at every peer — device injection is cryptographically blocked, not merely policy-blocked
 - Device lifecycle:
-- device additions are signed by an existing device (QR pairing flow) and surfaced in-conversation to peers ("X added a new device")
-- device removal is first-class: triggers MLS Remove of that device's leaves from all groups (cryptographic eviction) plus KeyPackage tombstoning
+  - device additions are signed by an existing device (QR pairing flow) and surfaced in-conversation to peers ("X added a new device")
+  - device removal is first-class: triggers MLS Remove of that device's leaves from all groups (cryptographic eviction) plus KeyPackage tombstoning
 - KeyPackages (MLS's prekey analog):
-- per-device pool of single-use KeyPackages + one signed last-resort KeyPackage with defined reuse semantics
-- client replenishment on low-water mark; server-side pool size caps, claim rate limits, and claim audit logging
+  - per-device pool of single-use KeyPackages + one signed last-resort KeyPackage with defined reuse semantics
+  - client replenishment on low-water mark; server-side pool size caps, claim rate limits, and claim audit logging
 - Client must:
-- pin peer root keys per user; display key-change warnings (passive indicator; blocking interstitial for previously-verified contacts)
-- support safety-number/QR verification of root key fingerprints
-- verify device certificates and membership commits locally; never trust server-asserted device lists or membership
+  - pin peer root keys per user; display key-change warnings (passive indicator; blocking interstitial for previously-verified contacts)
+  - support safety-number/QR verification of root key fingerprints
+  - verify device certificates and membership commits locally; never trust server-asserted device lists or membership
 - Web clients:
-- excluded from E2EE in v1: the server ships the JavaScript on every load, so a hostile operator can serve key-exfiltrating code — incompatible with adversary #1
-- E2EE requires packaged desktop/mobile builds (signed, reproducible; see Supply Chain)
-- revisit only as an explicitly disclosed degraded trust tier (Open Decisions)
+  - excluded from E2EE in v1. The exclusion is a code-delivery property, not a protocol or JS/DOM limitation: OpenMLS runs in WASM, and MLS ships in comparable runtimes elsewhere (Discord DAVE). But a web page re-fetches its application code from the operator on every load, so a hostile operator can serve a targeted, key-exfiltrating build to a single user on a single load and revert without trace — incompatible with adversary #1. This hole applies to any E2EE protocol executed in browser-delivered code.
+  - E2EE participation requires packaged desktop/mobile builds (signed, reproducible; see Client Architecture and Supply Chain)
+  - web UX for E2EE conversations is a fail-closed capability state: conversation existence may render (the server necessarily knows membership for routing), content renders as "end-to-end encrypted — open in a packaged client". No plaintext fallback exists, and no server-side decryption path exists to fall back to.
+  - a logged-in web session of the same user has no decryption capability: keys are device-bound, never account-bound
+  - revisit only as an explicitly disclosed degraded trust tier (Open Decisions)
+
+## Client Architecture (Packaged Clients)
+The unified SolidJS frontend is retained across web, desktop, and (later) mobile. E2EE changes where code and keys live, not the UI stack.
+
+- Desktop (Tauri + SolidJS):
+  - UI assets are bundled inside the signed package and served from the local application protocol. Remote-loading the hosted web UI into the shell is prohibited: a webview pointed at server-delivered code is a browser with extra steps and inherits the web trust model wholesale.
+  - Crypto core placement: OpenMLS and all key/state operations run in the Rust host process — not as WASM inside the webview. The webview communicates with the core over a narrow, typed IPC surface: commands and ciphertext in, plaintext and verified state out.
+  - Key material never enters the JS heap. This shrinks the blast radius of any webview compromise (XSS, renderer bug, content-safety bypass) from "steal keys" to "read plaintext currently on screen."
+- Mobile (aligns with main-plan Phase 9):
+  - same shared Rust core over FFI (Swift/Kotlin bindings); platform keystores for custody; the same narrow-boundary discipline between UI and core.
+- Device-bound keys:
+  - decryption capability follows paired, certified devices — never account credentials. Account login in a non-capable client (e.g. the web app) confers nothing.
+- Update integrity:
+  - signed update manifests with downgrade protection; reproducible builds and binary transparency per Supply Chain. Code signing converts the web-model attack (silent, targeted, per-load substitution) into a release-pipeline compromise that ships an auditable artifact to every user — a necessary floor, not the full answer.
 
 ## Key Management UX (Profile / Client Settings)
 - `Encryption` settings panel:
-- user safety number / root key fingerprint (shareable, QR)
-- device list: name, added date, verification state, `Remove device` action
-- `Rotate identity` action (destructive, typed confirmation e.g. `ROTATE IDENTITY`)
-- backup enrollment status and controls
+  - user safety number / root key fingerprint (shareable, QR)
+  - device list: name, added date, verification state, `Remove device` action
+  - `Rotate identity` action (destructive, typed confirmation e.g. `ROTATE IDENTITY`)
+  - backup enrollment status and controls
 - No private-key display or copy action exists anywhere in the product. Key material leaves a device only via (a) QR-mediated encrypted device pairing or (b) opt-in passphrase-encrypted backup. Keys are non-exportable and live in platform keystores (Keychain / Android Keystore / TPM+DPAPI) where available.
 - `Rotate identity` semantics (documented honestly in UX):
-- generates a new root key, recertifies devices, rejoins groups; peers receive blocking key-change warnings
-- does NOT delete local history and CANNOT protect already-sent ciphertext (forward secrecy already handles the past; nothing can retroactively re-protect it)
-- value: identity continuity reset after suspected compromise
+  - generates a new root key, recertifies devices, rejoins groups; peers receive blocking key-change warnings
+  - does NOT delete local history and CANNOT protect already-sent ciphertext (forward secrecy already handles the past; nothing can retroactively re-protect it)
+  - value: identity continuity reset after suspected compromise
 - Lost/stolen device flow: `Remove device` from any remaining device evicts it from all groups at the next commit; if no device remains, account recovery = new identity (or backup restore) with peer re-verification.
 
 ## History, Storage, and Retention
@@ -138,26 +155,26 @@ Forward secrecy makes server-stored ciphertext one-shot: message keys are delete
 - 1:1 DM and group DM: user-explicit enable at creation or upgrade. Upgrade creates the MLS group and marks the conversation; no silent downgrade ever; "downgrade" = explicitly creating a new plaintext conversation.
 - Guild channels: `channel_type = plaintext | encrypted`, set at channel creation, permission-gated. The entire channel is one mode. No per-message crypto toggles, no mixed channels, no composer mode selector. (Per-message mixing invites users to lose track of which mode they are typing in; channel-invariant modes match the Signal-style mental model.)
 - The server-included recipient / `client_plus_server` searchable-encryption mode is REMOVED. Rationale: under our threat model it is key escrow — zero confidentiality against adversary #1 while rendering a lock icon users will misread as privacy. Channels that require server-side moderation/search remain honestly plaintext.
-- Capability gating: an E2EE conversation requires every participant to have at least one MLS-capable device; otherwise block with a typed capability error. Fail closed; no plaintext fallback.
+- Capability gating: an E2EE conversation requires every participant to have at least one MLS-capable device; otherwise block with a typed capability error. Fail closed; no plaintext fallback. Gating cuts both ways: a participant whose only client is the web app is not MLS-capable, so their presence blocks creation/upgrade with the typed error rather than silently degrading the conversation.
 - Friends-only DM policy remains allowed and orthogonal.
 
 ## Audience Model
 - Audience = MLS group membership. Nothing else. No per-message recipient editing, no per-send role-expansion selectors, no manual device picking. (Per-message audience editing is incompatible with MLS group semantics and created undecryptable-ghost and epoch-race states; a secret subset is simply a different conversation.)
 - Membership changes occur via member-signed MLS proposals/commits. One constrained exception: the server is registered as an MLS external sender permitted to propose removals only (ban/kick/role-loss enforcement — see Moderation); commits remain member-signed, and clients hard-reject any externally-proposed Add. The server relays and orders; it can never expand a group's read audience.
 - Guild encrypted channels: authorization-to-membership reconciliation
-- joining a channel = an Add proposal committed by an authorized member/admin device per channel permissions
-- leave/kick/role-loss = a Remove commit; permission changes reconcile to commits promptly (bounded reconciliation window, monitored)
-- the server enforces WHO MAY PROPOSE (policy); clients enforce WHAT IS CRYPTOGRAPHICALLY VALID (signatures, epoch state) — both must pass
+  - joining a channel = an Add proposal committed by an authorized member/admin device per channel permissions
+  - leave/kick/role-loss = a Remove commit; permission changes reconcile to commits promptly (bounded reconciliation window, monitored)
+  - the server enforces WHO MAY PROPOSE (policy); clients enforce WHAT IS CRYPTOGRAPHICALLY VALID (signatures, epoch state) — both must pass
 - Stale/ambiguous state: if group state is behind or conflicted, client refreshes, rebases, and fails closed rather than sending under uncertainty.
 
 ## Data Model (Server-Side)
 For `mls_v1` conversations, server stores:
 - opaque MLS ciphertext blob (`PrivateMessage`)
 - minimal routing envelope:
-- conversation_id / group_id
-- message_id, created_at_unix
-- epoch tag (for Delivery Service ordering) and suite id
-- bounded sizes; contents padded client-side to size buckets (e.g. 512 B / 1 KiB / 4 KiB / 16 KiB) to blunt size fingerprinting
+  - conversation_id / group_id
+  - message_id, created_at_unix
+  - epoch tag (for Delivery Service ordering) and suite id
+  - bounded sizes; contents padded client-side to size buckets (e.g. 512 B / 1 KiB / 4 KiB / 16 KiB) to blunt size fingerprinting
 - per-device delivery acknowledgments (drives mailbox GC)
 - KeyPackage pools and device certificates (public material only)
 - optionally, the group's current encrypted GroupInfo/ratchet-tree blob published by members to support joins and external-commit recovery (treated as sensitive-not-secret: it encodes membership structure, which the server already learns from routing)
@@ -174,11 +191,11 @@ Server must not store plaintext content, content-derived metadata, or unwrapped 
 
 ### Group and message transport
 - `POST /e2ee/groups/{group_id}/commits` — Delivery Service ingestion point; enforces total order per group
-- single-writer-per-epoch: the first order-valid commit for epoch N is accepted; competing commits receive a deterministic typed rejection (`409 epoch_conflict`) and clients rebase pending proposals
+  - single-writer-per-epoch: the first order-valid commit for epoch N is accepted; competing commits receive a deterministic typed rejection (`409 epoch_conflict`) and clients rebase pending proposals
 - `POST /e2ee/groups/{group_id}/messages` — application `PrivateMessage` transport
 - Gateway events (new), all inside the `{ v, t, d }` envelope with strict bounds:
-- `mls_message`, `mls_commit`, `mls_welcome`, `mls_proposal`
-- `device_list_update`, `keypackage_low`
+  - `mls_message`, `mls_commit`, `mls_welcome`, `mls_proposal`
+  - `device_list_update`, `keypackage_low`
 - Wire fields on message records: `crypto` (plaintext|mls_v1), `suite`, `epoch`, `sender_device_id` — routing hints only. Clients derive all trust state (badges, sender identity, membership) from local MLS verification against pinned group state; a server field can never upgrade a message's displayed trust.
 - Server-side validation is shape-only for MLS payloads: size bounds, field presence, epoch monotonicity per group. The server never parses MLS interiors.
 
@@ -228,7 +245,7 @@ Policy stance:
 - Keys derived from the corresponding MLS group's `exporter_secret`; media epoch == MLS epoch.
 - Rekey on participant join/leave (membership commit) and periodic update commits.
 - Precedent: Discord's DAVE protocol ships MLS-keyed E2EE calls in this exact product category.
-- Open question: uniform insertable-stream support across desktop/mobile targets and embedded webviews (verify Safari/webview coverage specifically).
+- Webview verification matrix (Phase 5 gate): insertable-streams / `RTCRtpScriptTransform` support must be verified per target — WebView2 (Chromium; expected supported), WKWebView (macOS/iOS), WebKitGTK (Linux) — before media E2EE ships on that platform. Where a webview lacks support, the required fallback is a native WebRTC media path in the host layer; shipping unencrypted media is never the fallback.
 
 ## Security Controls and Limits
 - Strict max sizes on KeyPackages, commits, Welcomes, proposals, and message envelopes.
@@ -242,6 +259,7 @@ Policy stance:
 - Dependency gate before implementation: `cargo audit` + `cargo vet` (or equivalent), pinned and hash-locked dependencies, license compatibility (MIT/Apache/BSD/ISC — OpenMLS is MIT), external audit status review.
 - ADR documents final selection and rejected alternatives with rationale (libsignal: AGPL-3.0 + infra coupling; vodozemac: group semantics, no membership authentication, no exporter, no PQ path; static per-device keys: no FS/PCS against an archive-holding adversary).
 - Client build integrity is part of the E2EE trust story: signed releases, reproducible builds as a goal, update-channel integrity (signed manifests, downgrade protection), binary transparency for client releases on the roadmap.
+- Code signing is necessary but not sufficient: it proves origin, not honesty. It converts per-user, per-load targeted substitution into an all-users release-pipeline compromise producing an auditable artifact; build machines and signing-key custody remain disclosed trust dependencies. Reproducible builds exist so third parties can verify signed binaries match public source; binary transparency is the endpoint.
 
 ## Key Transparency (roadmap, Phase 8)
 - Append-only, auditable log of the key directory (root keys, device certificates) with inclusion and consistency proofs; client-side auditing; out-of-band checkpoint distribution.
@@ -250,7 +268,7 @@ Policy stance:
 
 ## Rollout Phases
 ### Phase 0: Design Lock
-- ADR: OpenMLS, ciphersuite 0x0003 + agility, deniability acceptance, web-client exclusion, mailbox retention model, backup policy, rejected alternatives.
+- ADR: OpenMLS, ciphersuite 0x0003 + agility, deniability acceptance, web-client exclusion (code-delivery rationale), packaged-client architecture (bundled assets, Rust-core crypto behind IPC, device-bound keys), mailbox retention model, backup policy, rejected alternatives.
 - Threat model and protocol docs merged; wire contracts for all endpoints/events drafted.
 Exit criteria:
 - ADR approved; `docs/THREAT_MODEL.md` E2EE section merged.
@@ -264,6 +282,7 @@ Exit criteria:
 Exit criteria:
 - Deterministic integration tests for device publish, KeyPackage claim, rotation, and pairing.
 - Negative test: server-forged device certificate is rejected by clients (ghost-device injection fails).
+- Key-isolation audit: MLS key material is confined to the Rust core; the webview context has no key access path (IPC surface review plus negative test).
 
 ### Phase 2: 1:1 DM E2EE (2-member MLS groups)
 - Conversation create/upgrade flow; `PrivateMessage` transport; commit pipeline with epoch-conflict rebase.
@@ -287,6 +306,7 @@ Exit criteria:
 - SFrame keyed from exporter secrets; rekey on membership commits and interval updates; LiveKit opaque-forwarding path.
 Exit criteria:
 - SFU relays encrypted media only; decryption exclusively at endpoints; join/leave rekey verified.
+- Insertable-streams verification matrix complete (WebView2 / WKWebView / WebKitGTK); native media path exercised on any platform lacking webview support.
 
 ### Phase 6: Guild Encrypted Channels
 - `channel_type = encrypted` with permissioned Add/Remove commit flows reconciling channel authorization to group membership.
@@ -314,6 +334,7 @@ Server:
 Client:
 - Unit: group state machine transitions; device certificate verification; badge derivation from local verification only.
 - Integration: multi-device pairing and history sync; join/leave/remove flows; external-commit recovery; RFC 9420 test vectors.
+- Isolation: IPC key-isolation tests — the webview context cannot reach key material or invoke raw key operations; crypto is reachable only via the typed IPC surface.
 - Adversarial: server-forged device lists and membership commits are rejected; server flipping `crypto` hints triggers fail-closed, never fallback; downgrade attempts surface warnings.
 - UX: key-change interstitials, capability errors, disappearing-message enforcement.
 
@@ -324,24 +345,36 @@ Cross-system:
 
 ## Open Decisions
 1. Backup default:
-- Option A: opt-in passphrase backup (recommended — hard no-backup kills consumer adoption; Signal itself relented).
-- Option B: strict no-backup mode as an additional per-user choice.
+   - Option A: opt-in passphrase backup (recommended — hard no-backup kills consumer adoption; Signal itself relented).
+   - Option B: strict no-backup mode as an additional per-user choice.
 2. Deniability stance:
-- Option A: accept MLS in-group non-repudiation (recommended; record in ADR).
-- Option B: pursue deniable-authentication variants (rejected complexity for v1).
+   - Option A: accept MLS in-group non-repudiation (recommended; record in ADR).
+   - Option B: pursue deniable-authentication variants (rejected complexity for v1).
 3. Message franking / verifiable abuse reports: v1.5 candidate — decide after Phase 3 telemetry on report volume.
 4. Guild encrypted channel size ceiling: initial hard cap (e.g. 1–5k leaves) vs. uncapped with perf gates.
-5. Web client future: permanent exclusion vs. an explicitly disclosed degraded tier (signed-build attestation research required).
+5. Web client future: permanent exclusion vs. an explicitly disclosed degraded tier. Realistic revisit paths: a Code-Verify-style build-integrity extension, or Isolated Web Apps / signed web bundles if they standardize beyond Chromium — both effectively reinvent packaged distribution, and browser key storage remains weaker than OS keystores. Any web tier would ship as disclosed-degraded; parity is off the table.
 6. Baseline suite: 0x0003 (X25519/ChaCha20-Poly1305, recommended for library maturity and performance) vs. 0x0006 (X448, larger margin, weaker ecosystem support).
 7. Read receipts / typing indicators in E2EE conversations: ship-at-all decision.
 8. KT construction: CT-style static log vs. VRF-based (CONIKS-style) directory; timing relative to GA.
 9. Automated moderation bots as visible members of encrypted channels: allow (workspace opt-in, disclosed in member list and channel header) vs. disallow (human moderators only). If allowed, define bot-hosting custody requirements (plaintext access must not co-reside with the message server).
 
 ## Immediate Next Slice
-- Write the ADR: OpenMLS + suite 0x0003 + agility plan, rejected alternatives with rationale, deniability acceptance, web exclusion, mailbox retention model, backup policy.
+- Write the ADR: OpenMLS + suite 0x0003 + agility plan, rejected alternatives with rationale, deniability acceptance, web exclusion (code-delivery rationale), packaged-client architecture (bundled assets, Rust-core crypto behind typed IPC, device-bound keys), mailbox retention model, backup policy.
 - Draft `docs/THREAT_MODEL.md` E2EE section updates from this document's threat model.
 - Define wire contracts for device/KeyPackage/group endpoints and `mls_*` gateway events before coding.
 - Engineering spike: OpenMLS 2-member group round trip (create, add, message, remove, external-commit recovery) in a Rust CLI harness against a fixture Delivery Service.
+- Engineering spike: verify insertable-streams / `RTCRtpScriptTransform` availability in WKWebView and WebKitGTK (early; informs the Phase 5 media path and whether a native WebRTC fallback is needed per platform).
+
+## Appendix: Revision Notes (v2.1)
+Clarified and added, from client-architecture review:
+- Web exclusion rationale made explicit: a code-delivery property (the operator ships the application code on every load and can serve a targeted, single-load key-exfiltrating build), not a protocol or JS/DOM limitation. Applies to any E2EE protocol executed in browser-delivered code.
+- New Client Architecture section: the unified SolidJS UI is retained; packaged clients must bundle assets and serve them from the local application protocol (no remote-loaded UI in shells); OpenMLS runs in the Rust host process behind a narrow, typed IPC surface so key material never enters the JS heap; mobile reuses the shared Rust core over FFI; keys are device-bound, never account-bound.
+- Web UX contract for E2EE conversations: fail-closed capability state ("open in a packaged client"); no plaintext fallback path exists, and no server-side decryption path exists to fall back to.
+- Capability gating clarified as bidirectional: web-only participants block `mls_v1` creation/upgrade with a typed error rather than degrading the conversation.
+- Signing framed as necessary-but-not-sufficient (proves origin, not honesty); reproducible builds and binary transparency positioned as the third-party verification path; release-pipeline compromise and webview plaintext exposure recorded as disclosed residual risks.
+- Voice/video open question converted into a Phase 5 verification matrix (WebView2 / WKWebView / WebKitGTK) with a native-WebRTC fallback requirement; added an early spike to the next slice.
+- Phase 1 exit criteria gained a key-isolation audit; test strategy gained IPC key-isolation tests.
+- Open Decision 5 refined with concrete revisit paths (Code-Verify-style integrity extension; Isolated Web Apps / signed web bundles) and a disclosed-degraded ceiling.
 
 ## Appendix: Revision Notes (v2)
 Removed, with rationale — for the security-stance review session:
