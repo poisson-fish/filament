@@ -11,6 +11,7 @@ It is built around a hardened Rust backend (`filament-server`), PostgreSQL as so
 - Security-first architecture with strict request/message limits and rate limiting
 - Realtime text over WebSocket gateway plus REST API for CRUD/search/admin flows
 - Voice/video/screen share via server-issued, scoped LiveKit tokens
+- End-to-end encryption roadmap built on MLS (RFC 9420) via OpenMLS for DMs, group DMs, guild encrypted channels, and calls ([`PLAN_E2EE.md`](PLAN_E2EE.md))
 - Self-hostable with Docker Compose baseline
 - Web and desktop clients (mobile planned)
 
@@ -20,6 +21,7 @@ Implementation is actively tracked in `PLAN.md`.
 
 - Completed through Phase 8 (server, auth, gateway, attachments, search, roles/moderation, LiveKit integration, desktop hardening, deployment/ops baseline)
 - Phase 9 (mobile) is planned
+- End-to-end encryption is in design lock (Phase 0 of [`PLAN_E2EE.md`](PLAN_E2EE.md)); implementation is staged from identity/devices through DM and group E2EE, encrypted attachments/history, E2EE calls, guild encrypted channels, hardening, and key transparency
 
 ## Architecture
 
@@ -48,6 +50,7 @@ flowchart LR
 Design principles:
 
 - Untrusted-input model at every network boundary (client and server)
+- Hostile-operator model for E2EE conversations (roadmap): the server stores and orders opaque ciphertext only, and every security-relevant fact is verified cryptographically client-side
 - Domain invariants and validated DTO-to-domain conversion
 - Bounded queues, payload caps, rate limits, and timeouts by default
 - Search index treated as cache, never as sole source of truth
@@ -77,6 +80,23 @@ Design principles:
   - Short-lived, scoped, permission-limited media tokens
   - Explicit RTC UX states and troubleshooting for reconnect, permission denial, and token/session expiry
 
+## End-to-End Encryption (Roadmap)
+
+Filament is adopting a single MLS (RFC 9420) stack via OpenMLS for end-to-end encrypted DMs, group DMs, opt-in guild encrypted channels, and calls. The design is hardened against a hostile server operator with full database read and archive capability, and is tracked in [`PLAN_E2EE.md`](PLAN_E2EE.md).
+
+Today, conversations are protected in transit (TLS) and readable by the server at rest — which is what enables server-side search and moderation. The E2EE roadmap changes that model for encrypted conversations:
+
+- One protocol stack: 1:1 DMs as 2-member MLS groups, group DMs and guild `encrypted` channels as MLS groups, and calls via SFrame keyed from MLS exporter secrets
+- Forward secrecy and post-compromise security by default — a retained ciphertext archive is worthless, and a one-time key theft stops working after the next update commit
+- Member-signed membership: the server can never add readers or devices; server-initiated moderation is cryptographically limited to removals
+- No key escrow: a conversation is E2EE or honestly plaintext — there is no server-readable "encrypted" middle mode
+- Mailbox retention: the server holds E2EE ciphertext only until delivery (or TTL); local encrypted stores are canonical history, with device-to-device sync and opt-in passphrase-encrypted backup
+- Trust from verification: encryption indicators derive from local cryptographic checks, never from server-supplied fields
+
+Tradeoffs, stated plainly: E2EE participation requires signed packaged desktop/mobile builds (web clients are excluded in v1), and server-side content search and silent content scanning are unavailable in encrypted contexts by design — replaced by client-side local search and member-visible moderation. Workspaces that need server-side archives or moderation simply keep channels plaintext.
+
+Security contracts for E2EE are folded into [`docs/SECURITY.md`](docs/SECURITY.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+
 ## Technology Stack
 
 | Area | Technologies |
@@ -86,6 +106,7 @@ Design principles:
 | Database | PostgreSQL + `sqlx` |
 | Search | Tantivy (derived index) |
 | Media | LiveKit SFU |
+| E2EE (planned) | MLS (RFC 9420) via OpenMLS, SFrame media encryption, SQLCipher-encrypted local history |
 | Clients | SolidJS web, Tauri + SolidJS desktop |
 | Infra | Docker Compose, Caddy |
 | Security/Quality | `cargo audit`, `cargo deny`, clippy, tests, SBOM |
@@ -102,6 +123,7 @@ Design principles:
 ## Documentation
 
 - Plan and roadmap: [`PLAN.md`](PLAN.md)
+- E2EE design and rollout plan: [`PLAN_E2EE.md`](PLAN_E2EE.md)
 - API reference: [`docs/API.md`](docs/API.md)
 - Gateway protocol: [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 - Security model and controls: [`docs/SECURITY.md`](docs/SECURITY.md)
