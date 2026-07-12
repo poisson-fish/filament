@@ -1,0 +1,48 @@
+# cargo-vet configuration for Filament E2EE dependencies.
+#
+# This file configures `cargo vet` (https://mozilla.github.io/cargo-vet/)
+# for the OpenMLS dependency tree and other E2EE-related crates.
+#
+# `cargo vet` provides a structured review process for third-party crates.
+# Each entry records who reviewed the crate, what version was reviewed,
+# and whether the review was a full audit or a fast-track approval.
+#
+# Until the project completes formal reviews of the OpenMLS dependency tree,
+# we use "unaudpected" entries with a documented justification, following
+# the pattern established by the existing cargo-deny RUSTSEC-2024-0384
+# advisory exception.
+#
+# To run: `cargo vet --config cargo-vet.toml`
+# (requires `cargo install cargo-vet`)
+
+[[unaudited.openmls]]
+version = "0.8.1"
+note = "MIT licensed. RFC 9420 MLS implementation. Selected as the E2EE protocol stack per ADR 0001. Pending formal security review — tracked as Phase 7 exit criteria."
+
+[[unaudited.openmls_traits]]
+version = "0.5.0"
+note = "MIT licensed. Trait definitions for OpenMLS provider abstraction. Reviewed as part of OpenMLS integration."
+
+[[unaudited.openmls_rust_crypto]]
+version = "0.5.1"
+note = "MIT licensed. Default crypto provider using RustCrypto crates. No C dependencies. Reviewed as part of OpenMLS integration."
+
+[[unaudited.openmls_basic_credential]]
+version = "0.5.0"
+note = "MIT licensed. BasicCredential + SignatureKeyPair implementation for testing and simple credential types."
+
+[[unaudited.openmls_memory_storage]]
+version = "0.5.0"
+note = "MIT licensed. In-memory storage provider for OpenMLS. Used in spikes and tests only."
+
+[[unaudited.tls_codec]]
+version = "0.4.2"
+note = "MIT/Apache-2.0 dual licensed. TLS serialization/deserialization codec used by OpenMLS for wire format."
+
+[[unaudited.zeroize]]
+version = "1.8.1"
+note = "Apache-2.0/MIT licensed. Memory zeroization for sensitive key material. Industry-standard, widely audited."
+
+[[unaudited.serde_bytes]]
+version = "0.11.17"
+note = "MIT/Apache-2.0 licensed. Serde wrapper for byte arrays, used by OpenMLS for binary field serialization."

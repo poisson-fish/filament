@@ -1,6 +1,8 @@
 # Filament Threat Model
 
-Core platform contract established in Phase 0; E2EE contract established by `PLAN_E2EE.md` (v2) and binding for its implementation phases.
+Core platform contract established in Phase 0; E2EE contract established by `PLAN_E2EE.md` (v2.1) and binding for its implementation phases.
+
+> **E2EE Section Ratification (Phase 0):** The E2EE threats, security goals, mitigations, residual risks, and non-goals below have been verified against `PLAN_E2EE.md` v2.1 and ratified as the binding threat model for all E2EE implementation phases. See [ADR 0001](adr/0001-e2ee-mls-openmls.md) for the protocol-stack decision that underpins these mitigations.
 
 ## Trust Boundaries
 - Internet clients to Filament server.

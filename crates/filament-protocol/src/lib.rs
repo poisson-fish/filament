@@ -1,13 +1,15 @@
 #![forbid(unsafe_code)]
 
+mod e2ee;
 mod events;
 
-use serde::{Deserialize, Serialize};
-
+pub use e2ee::*;
 pub use events::{
     gateway_event_manifest, parse_gateway_event_manifest, GatewayEventLifecycle,
     GatewayEventManifest, GatewayEventManifestEntry, GatewayEventManifestError, GatewayEventScope,
 };
+
+use serde::{Deserialize, Serialize};
 
 /// Current gateway envelope version.
 pub const PROTOCOL_VERSION: u16 = 1;

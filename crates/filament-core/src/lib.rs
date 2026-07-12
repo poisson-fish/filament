@@ -1,5 +1,12 @@
 #![forbid(unsafe_code)]
 
+pub mod e2ee;
+
+pub use e2ee::{
+    CiphersuiteId, ConversationCrypto, DeviceCertificate, DeviceId, EpochTag, GroupId,
+    MAX_DEVICE_SIGNATURE_PUBKEY_BYTES, MAX_ROOT_KEY_SIGNATURE_BYTES,
+};
+
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
@@ -26,6 +33,16 @@ pub enum DomainError {
     InvalidLiveKitIdentity,
     #[error("profile about is invalid")]
     InvalidProfileAbout,
+    #[error("device id is invalid")]
+    InvalidDeviceId,
+    #[error("group id is invalid")]
+    InvalidGroupId,
+    #[error("ciphersuite id is invalid")]
+    InvalidCiphersuiteId,
+    #[error("conversation crypto mode is invalid")]
+    InvalidConversationCrypto,
+    #[error("device certificate is invalid")]
+    InvalidDeviceCertificate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
