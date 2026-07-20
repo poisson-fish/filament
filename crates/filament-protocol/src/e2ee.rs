@@ -16,14 +16,14 @@
 // lint avoids noise without hiding real issues.
 #![allow(clippy::doc_markdown)]
 
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 
 // ---------------------------------------------------------------------------
 // Size bounds
 // ---------------------------------------------------------------------------
 
-/// Maximum size for a serialized KeyPackage blob (64 KiB).
-pub const MAX_KEYPACKAGE_BYTES: usize = 65_536;
+/// Maximum size for a serialized KeyPackage blob (4 KiB).
+pub const MAX_KEYPACKAGE_BYTES: usize = 4_096;
 
 /// Maximum size for a serialized MLS message blob (64 KiB).
 pub const MAX_MLS_MESSAGE_BYTES: usize = 65_536;
@@ -46,6 +46,70 @@ pub const MAX_KEYPACKAGE_POOL_SIZE: usize = 100;
 /// Maximum number of devices returned in a device list response.
 pub const MAX_DEVICE_LIST_SIZE: usize = 100;
 
+/// Ed25519 public-key size.
+pub const ED25519_PUBLIC_KEY_BYTES: usize = 32;
+
+/// Ed25519 signature size.
+pub const ED25519_SIGNATURE_BYTES: usize = 64;
+
+fn deserialize_exact_bytes<'de, D, const N: usize>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<u8>::deserialize(deserializer)?;
+    if value.len() != N {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"an exact-length byte array",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_ed25519_public_key<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_exact_bytes::<D, ED25519_PUBLIC_KEY_BYTES>(deserializer)
+}
+
+fn deserialize_ed25519_signature<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_exact_bytes::<D, ED25519_SIGNATURE_BYTES>(deserializer)
+}
+
+fn deserialize_key_package_blob<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<u8>::deserialize(deserializer)?;
+    if value.is_empty() || value.len() > MAX_KEYPACKAGE_BYTES {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"a non-empty KeyPackage no larger than 4096 bytes",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_key_package_entries<'de, D>(
+    deserializer: D,
+) -> Result<Vec<KeyPackageEntry>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<KeyPackageEntry>::deserialize(deserializer)?;
+    if value.is_empty() || value.len() > MAX_KEYPACKAGE_POOL_SIZE {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"between 1 and 100 KeyPackages",
+        ));
+    }
+    Ok(value)
+}
+
 // ---------------------------------------------------------------------------
 // Device Certificate endpoints
 // ---------------------------------------------------------------------------
@@ -58,12 +122,15 @@ pub const MAX_DEVICE_LIST_SIZE: usize = 100;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublishDeviceCertificateRequest {
-    /// The user this device belongs to (ULID string).
-    pub user_id: String,
     /// The device's MLS signature public key (raw bytes).
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
     pub device_signature_pubkey: Vec<u8>,
     /// The root identity key's signature over the certificate.
+    #[serde(deserialize_with = "deserialize_ed25519_signature")]
     pub root_key_signature: Vec<u8>,
+    /// The user's Ed25519 root identity public key.
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub root_key_pub: Vec<u8>,
 }
 
 /// Response body for `PUT /e2ee/devices/{device_id}` — device publish result.
@@ -96,9 +163,14 @@ pub struct DeviceInfo {
     /// The device ID (ULID string).
     pub device_id: String,
     /// The device's MLS signature public key (raw bytes).
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
     pub device_signature_pubkey: Vec<u8>,
     /// The root identity key's signature over the certificate.
+    #[serde(deserialize_with = "deserialize_ed25519_signature")]
     pub root_key_signature: Vec<u8>,
+    /// The user's Ed25519 root identity public key.
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub root_key_pub: Vec<u8>,
     /// Unix timestamp (seconds) when the device was registered.
     pub created_at_unix: i64,
     /// Whether the device has been tombstoned (removed).
@@ -121,6 +193,7 @@ pub struct UploadKeyPackagesRequest {
     /// The device uploading the packages (ULID string).
     pub device_id: String,
     /// The KeyPackage blobs (opaque, serialized MLS KeyPackages).
+    #[serde(deserialize_with = "deserialize_key_package_entries")]
     pub key_packages: Vec<KeyPackageEntry>,
 }
 
@@ -129,6 +202,7 @@ pub struct UploadKeyPackagesRequest {
 #[serde(deny_unknown_fields)]
 pub struct KeyPackageEntry {
     /// The serialized KeyPackage blob (opaque to the server).
+    #[serde(deserialize_with = "deserialize_key_package_blob")]
     pub key_package_blob: Vec<u8>,
     /// Whether this is a last-resort KeyPackage (reuse semantics).
     pub is_last_resort: bool,
@@ -164,6 +238,7 @@ pub struct ClaimKeyPackageResponse {
     /// The device ID whose KeyPackage was claimed (ULID string).
     pub device_id: String,
     /// The claimed KeyPackage blob (opaque to the server).
+    #[serde(deserialize_with = "deserialize_key_package_blob")]
     pub key_package_blob: Vec<u8>,
     /// Whether this was a last-resort KeyPackage.
     pub is_last_resort: bool,
@@ -379,17 +454,22 @@ mod tests {
 
     #[test]
     fn publish_device_certificate_request_deny_unknown_fields() {
-        let json = r#"{"user_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","device_signature_pubkey":[171],"root_key_signature":[205],"extra":1}"#;
-        let result: Result<PublishDeviceCertificateRequest, _> = serde_json::from_str(json);
+        let json = format!(
+            r#"{{"device_signature_pubkey":{},"root_key_signature":{},"root_key_pub":{},"extra":1}}"#,
+            serde_json::to_string(&vec![0xAB; ED25519_PUBLIC_KEY_BYTES]).unwrap(),
+            serde_json::to_string(&vec![0xCD; ED25519_SIGNATURE_BYTES]).unwrap(),
+            serde_json::to_string(&vec![0xEF; ED25519_PUBLIC_KEY_BYTES]).unwrap(),
+        );
+        let result: Result<PublishDeviceCertificateRequest, _> = serde_json::from_str(&json);
         assert!(result.is_err());
     }
 
     #[test]
     fn publish_device_certificate_request_round_trip() {
         let req = PublishDeviceCertificateRequest {
-            user_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             device_signature_pubkey: vec![0xAB; 32],
             root_key_signature: vec![0xCD; 64],
+            root_key_pub: vec![0xEF; 32],
         };
         let json = serde_json::to_string(&req).unwrap();
         let parsed: PublishDeviceCertificateRequest = serde_json::from_str(&json).unwrap();
@@ -409,6 +489,7 @@ mod tests {
             device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             device_signature_pubkey: vec![0xAB; 32],
             root_key_signature: vec![0xCD; 64],
+            root_key_pub: vec![0xEF; 32],
             created_at_unix: 1_700_000_000,
             tombstoned_at_unix: None,
         };
@@ -445,6 +526,33 @@ mod tests {
         let json = r#"{"device_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key_packages":[],"extra":1}"#;
         let result: Result<UploadKeyPackagesRequest, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn device_certificate_request_rejects_wrong_crypto_lengths_during_parse() {
+        let json = format!(
+            r#"{{"device_signature_pubkey":[1],"root_key_signature":{},"root_key_pub":{}}}"#,
+            serde_json::to_string(&vec![0xCD; ED25519_SIGNATURE_BYTES]).unwrap(),
+            serde_json::to_string(&vec![0xEF; ED25519_PUBLIC_KEY_BYTES]).unwrap(),
+        );
+        let result: Result<PublishDeviceCertificateRequest, _> = serde_json::from_str(&json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn key_package_upload_rejects_empty_and_oversized_values_during_parse() {
+        let empty = r#"{"device_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key_packages":[]}"#;
+        assert!(serde_json::from_str::<UploadKeyPackagesRequest>(empty).is_err());
+
+        let oversized = UploadKeyPackagesRequest {
+            device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            key_packages: vec![KeyPackageEntry {
+                key_package_blob: vec![0xAA; MAX_KEYPACKAGE_BYTES + 1],
+                is_last_resort: false,
+            }],
+        };
+        let json = serde_json::to_string(&oversized).unwrap();
+        assert!(serde_json::from_str::<UploadKeyPackagesRequest>(&json).is_err());
     }
 
     #[test]

@@ -19,15 +19,15 @@
 #![forbid(unsafe_code)]
 
 use openmls::prelude::*;
-use openmls_basic_credential::BasicCredential;
+use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
+use tls_codec::Deserialize as TlsDeserialize;
 
 /// Ciphersuite: MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519 (0x0003).
-const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_ED25519;
+const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519;
 
 /// A test participant with their own crypto provider, credential, and signer.
 struct Participant {
-    name: &'static str,
     provider: OpenMlsRustCrypto,
     credential_with_key: CredentialWithKey,
     signer: SignatureKeyPair,
@@ -38,8 +38,8 @@ impl Participant {
     fn new(name: &'static str) -> Self {
         let provider = OpenMlsRustCrypto::default();
         let credential = BasicCredential::new(name.as_bytes().to_vec());
-        let signature_keys =
-            SignatureKeyPair::new(CIPHERSUITE.signature_algorithm()).expect("failed to generate signature keypair");
+        let signature_keys = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm())
+            .expect("failed to generate signature keypair");
         signature_keys
             .store(provider.storage())
             .expect("failed to store signature keys");
@@ -50,7 +50,6 @@ impl Participant {
         };
 
         Self {
-            name,
             provider,
             credential_with_key,
             signer: signature_keys,
@@ -93,10 +92,6 @@ fn run_spike() {
     println!("[spike] Participants created: alice, bob");
 
     // --- 1. Alice creates the group ---
-    let group_config = MlsGroupJoinConfig::builder()
-        .use_ratchet_tree_extension(true)
-        .build();
-
     let mut alice_group = MlsGroup::builder()
         .padding_size(100)
         .ciphersuite(CIPHERSUITE)
@@ -121,7 +116,7 @@ fn run_spike() {
         .add_members(
             &alice.provider,
             &alice.signer,
-            &[bob_key_package.key_package()],
+            &[bob_key_package.key_package().clone()],
         )
         .expect("alice: failed to add bob");
 
@@ -135,7 +130,14 @@ fn run_spike() {
     );
 
     // --- Bob joins from Welcome ---
-    let welcome = welcome.into_welcome().expect("failed to extract welcome");
+    let welcome_bytes = welcome.to_bytes().expect("failed to serialize Welcome");
+    let welcome = match MlsMessageIn::tls_deserialize_exact(&welcome_bytes)
+        .expect("failed to deserialize Welcome")
+        .extract()
+    {
+        MlsMessageBodyIn::Welcome(welcome) => welcome,
+        _ => panic!("expected a Welcome message"),
+    };
     let staged_join = StagedWelcome::new_from_welcome(
         &bob.provider,
         &mls_group_config(),
@@ -164,8 +166,8 @@ fn run_spike() {
         .expect("alice: failed to serialize message");
 
     // Bob processes and decrypts
-    let mls_message_in =
-        MlsMessageIn::tls_deserialize_exact(&alice_msg_bytes[..]).expect("bob: failed to deserialize message");
+    let mls_message_in = MlsMessageIn::tls_deserialize_exact(&alice_msg_bytes[..])
+        .expect("bob: failed to deserialize message");
     let protocol_message: ProtocolMessage = mls_message_in
         .try_into_protocol_message()
         .expect("bob: failed to convert to protocol message");
@@ -175,19 +177,21 @@ fn run_spike() {
         .expect("bob: failed to process message");
 
     let decrypted = match processed.into_content() {
-        ProcessedMessageContent::ApplicationMessage(app_msg) => {
-            app_msg.into_bytes()
-        }
+        ProcessedMessageContent::ApplicationMessage(app_msg) => app_msg.into_bytes(),
         _ => panic!("bob: expected application message, got something else"),
     };
 
     assert_eq!(decrypted.as_slice(), plaintext);
-    println!("[spike] Alice sent message, Bob decrypted: {:?}", String::from_utf8_lossy(&decrypted));
+    println!(
+        "[spike] Alice sent message, Bob decrypted: {:?}",
+        String::from_utf8_lossy(&decrypted)
+    );
 
     // --- 4. Bob self-updates (rekeys) ---
-    let (update_msg, _welcome_option) = bob_group
-        .self_update(&bob.provider, &bob.signer)
-        .expect("bob: failed to self-update");
+    let (update_msg, _welcome_option, _group_info) = bob_group
+        .self_update(&bob.provider, &bob.signer, LeafNodeParameters::default())
+        .expect("bob: failed to self-update")
+        .into_contents();
 
     bob_group
         .merge_pending_commit(&bob.provider)
@@ -232,14 +236,11 @@ fn run_spike() {
         .members()
         .find(|m| {
             // Match by checking the credential — Bob's credential contains "bob"
-            m.credential
-                .serialize()
-                .map(|bytes| bytes.windows(3).any(|w| w == b"bob"))
-                .unwrap_or(false)
+            m.credential.serialized_content() == b"bob"
         })
         .expect("alice: bob not found in group members");
 
-    let (remove_msg, _welcome_option) = alice_group
+    let (remove_msg, _welcome_option, _group_info) = alice_group
         .remove_members(&alice.provider, &alice.signer, &[bob_leaf.index])
         .expect("alice: failed to remove bob");
 
@@ -280,15 +281,22 @@ fn run_spike() {
     // --- 6. Bob rejoins via external commit (recovery from desync) ---
     // Alice exports GroupInfo for Bob's recovery
     let group_info = alice_group
-        .export_group_info(&alice.provider, &alice.signer, true)
+        .export_group_info(alice.provider.crypto(), &alice.signer, true)
         .expect("alice: failed to export group info");
 
-    let verifiable_group_info = group_info
-        .into_verifiable_group_info()
-        .expect("failed to convert group info to verifiable");
+    let group_info_bytes = group_info
+        .to_bytes()
+        .expect("failed to serialize GroupInfo");
+    let verifiable_group_info = match MlsMessageIn::tls_deserialize_exact(&group_info_bytes)
+        .expect("failed to deserialize GroupInfo")
+        .extract()
+    {
+        MlsMessageBodyIn::GroupInfo(group_info) => group_info,
+        _ => panic!("expected a GroupInfo message"),
+    };
 
     // Bob builds a new group via external commit
-    let (mut bob_new_group, _bundle) = MlsGroup::external_commit_builder()
+    let (mut bob_new_group, bundle) = MlsGroup::external_commit_builder()
         .with_config(mls_group_config())
         .build_group(
             &bob.provider,
@@ -296,6 +304,8 @@ fn run_spike() {
             bob.credential_with_key.clone(),
         )
         .expect("bob: failed to build external commit group")
+        .load_psks(bob.provider.storage())
+        .expect("bob: failed to load PSKs")
         .build(
             bob.provider.rand(),
             bob.provider.crypto(),
@@ -305,6 +315,24 @@ fn run_spike() {
         .expect("bob: failed to build external commit")
         .finalize(&bob.provider)
         .expect("bob: failed to finalize external commit");
+
+    let (external_commit, _welcome, _group_info) = bundle.into_contents();
+    let external_commit_bytes = external_commit
+        .to_bytes()
+        .expect("failed to serialize external commit");
+    let external_commit = MlsMessageIn::tls_deserialize_exact(&external_commit_bytes)
+        .expect("failed to deserialize external commit")
+        .try_into_protocol_message()
+        .expect("external commit must be a protocol message");
+    let processed_external_commit = alice_group
+        .process_message(&alice.provider, external_commit)
+        .expect("alice: failed to process Bob's external commit");
+    match processed_external_commit.into_content() {
+        ProcessedMessageContent::StagedCommitMessage(staged_commit) => alice_group
+            .merge_staged_commit(&alice.provider, *staged_commit)
+            .expect("alice: failed to merge Bob's external commit"),
+        _ => panic!("alice: expected staged external commit"),
+    }
 
     bob_new_group
         .merge_pending_commit(&bob.provider)
@@ -325,8 +353,8 @@ fn run_spike() {
         .to_bytes()
         .expect("alice: failed to serialize second message");
 
-    let mls_message_in2 =
-        MlsMessageIn::tls_deserialize_exact(&alice_msg2_bytes[..]).expect("bob: failed to deserialize second message");
+    let mls_message_in2 = MlsMessageIn::tls_deserialize_exact(&alice_msg2_bytes[..])
+        .expect("bob: failed to deserialize second message");
     let protocol_message2: ProtocolMessage = mls_message_in2
         .try_into_protocol_message()
         .expect("bob: failed to convert second message to protocol message");
