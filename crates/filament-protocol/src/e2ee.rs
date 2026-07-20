@@ -222,6 +222,21 @@ pub struct PublishDeviceCertificateResponse {
     pub published: bool,
 }
 
+/// Response body for `DELETE /e2ee/devices/{device_id}`.
+///
+/// Removal is irreversible for a device ID. Any unclaimed KeyPackages for the
+/// device are destroyed in the same transaction as the certificate tombstone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveDeviceResponse {
+    /// The tombstoned device ID.
+    pub device_id: String,
+    /// Unix timestamp (seconds) when the device was tombstoned.
+    pub tombstoned_at_unix: i64,
+    /// Number of unclaimed KeyPackages destroyed during removal.
+    pub deleted_keypackage_count: u32,
+}
+
 /// Response body for `GET /e2ee/users/{user_id}/devices` — certified device list.
 ///
 /// The list is a hint; clients verify certificate signatures against pinned
@@ -566,6 +581,21 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         let parsed: PublishDeviceCertificateRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, req);
+    }
+
+    #[test]
+    fn remove_device_response_round_trip_and_deny_unknown_fields() {
+        let response = RemoveDeviceResponse {
+            device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            tombstoned_at_unix: 1_700_000_000,
+            deleted_keypackage_count: 3,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: RemoveDeviceResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, response);
+
+        let invalid = json.trim_end_matches('}').to_string() + ",\"extra\":true}";
+        assert!(serde_json::from_str::<RemoveDeviceResponse>(&invalid).is_err());
     }
 
     #[test]

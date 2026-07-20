@@ -475,12 +475,12 @@ They are reserved wire contracts only: the current server does not emit them.
 - Payload: `group_id`, `conversation_id`, `epoch`, `proposer_device_id`,
   `created_at_unix`
 
-#### `device_list_update` (planned)
+#### `device_list_update`
 - Scope: user
 - Payload: `user_id`, `device_count`, `created_at_unix`
 - Notifies connected devices that the device list for a user has changed.
 
-#### `keypackage_low` (planned)
+#### `keypackage_low`
 - Scope: user
 - Payload: `device_id`, `remaining_count`, `water_mark`, `created_at_unix`
 - Notifies a device that its KeyPackage pool is running low.

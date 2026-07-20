@@ -27,15 +27,20 @@ Completed and committed:
 - Root-key pinning, server-side certificate verification, exact crypto-field
   and opaque-blob bounds, per-IP/user/device rate limits, pool caps,
   transactionally consistent public audit logging, and single-use claims.
+- Irreversible device tombstoning with transactional unclaimed-KeyPackage
+  deletion, resurrection rejection, active `device_list_update` and
+  `keypackage_low` gateway events, and strict shared-client event decoding.
 - Adversarial/integration coverage for forged certificates, root replacement,
-  target user/device binding, concurrent claims, fallback exhaustion, request
-  body limits, and configuration limits. The Postgres test runs when
+  target user/device binding, concurrent claims, fallback exhaustion, device
+  removal, live gateway notification delivery, request body limits, and
+  configuration limits. The Postgres test runs when
   `FILAMENT_TEST_DATABASE_URL` is configured.
 
 Still required before Phase 1 can be called complete:
 
-- QR pairing and encrypted root-key transfer, device removal/tombstoning, and
-  device-list/KeyPackage-low gateway emission.
+- QR pairing and encrypted root-key transfer. Conversation-scoped peer
+  surfacing of device-list changes follows the Phase 2 conversation mapping;
+  Phase 1 now emits owner-scoped directory notifications.
 - A production platform-keystore/encrypted-store implementation. The current
   crate provides the narrow `LocalKeyStore` boundary and test implementation;
   it does not claim SQLCipher or OS-keystore completion.

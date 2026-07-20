@@ -14,8 +14,8 @@ use filament_core::{DeviceId, UserId};
 use filament_e2ee::verify_device_certificate;
 use filament_protocol::{
     ClaimKeyPackageRequest, ClaimKeyPackageResponse, DeviceInfo, DeviceListResponse,
-    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse, UploadKeyPackagesRequest,
-    UploadKeyPackagesResponse,
+    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse, RemoveDeviceResponse,
+    UploadKeyPackagesRequest, UploadKeyPackagesResponse,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -28,7 +28,113 @@ use crate::server::{
     },
     core::AppState,
     errors::AuthFailure,
+    gateway_events,
+    metrics::record_gateway_event_serialize_error,
+    realtime::broadcast_user_event,
 };
+
+const KEYPACKAGE_LOW_WATER_MARK: u32 = 10;
+
+fn keypackage_low_water_mark(max_pool_size: usize) -> Result<u32, AuthFailure> {
+    let max_pool_size = u32::try_from(max_pool_size).map_err(|_| AuthFailure::Internal)?;
+    Ok(KEYPACKAGE_LOW_WATER_MARK.min(max_pool_size))
+}
+
+async fn active_device_count(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+) -> Result<u32, AuthFailure> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM e2ee_device_certificates
+         WHERE user_id = $1 AND tombstoned_at_unix IS NULL",
+    )
+    .bind(user_id.to_string())
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    u32::try_from(count).map_err(|_| AuthFailure::Internal)
+}
+
+async fn unclaimed_keypackage_count(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    device_id: &str,
+) -> Result<u32, AuthFailure> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM e2ee_keypackages
+         WHERE device_id = $1 AND claimed_at_unix IS NULL",
+    )
+    .bind(device_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    u32::try_from(count).map_err(|_| AuthFailure::Internal)
+}
+
+async fn record_device_publish_audit(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+    device_id: DeviceId,
+    created_at_unix: i64,
+) -> Result<(), AuthFailure> {
+    sqlx::query(
+        "INSERT INTO e2ee_audit_log (action, user_id, device_id, created_at_unix)
+         VALUES ('device_publish', $1, $2, $3)",
+    )
+    .bind(user_id.to_string())
+    .bind(device_id.to_string())
+    .bind(created_at_unix)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    Ok(())
+}
+
+async fn emit_device_list_update(
+    state: &AppState,
+    user_id: UserId,
+    device_count: u32,
+    created_at_unix: i64,
+) {
+    match gateway_events::try_device_list_update(user_id, device_count, created_at_unix) {
+        Ok(event) => broadcast_user_event(state, user_id, &event).await,
+        Err(error) => {
+            record_gateway_event_serialize_error("user", gateway_events::DEVICE_LIST_UPDATE_EVENT);
+            tracing::error!(
+                event = "gateway.device_list_update.serialize_failed",
+                event_type = gateway_events::DEVICE_LIST_UPDATE_EVENT,
+                error = %error,
+                "dropped device-list update because serialization failed"
+            );
+        }
+    }
+}
+
+async fn emit_keypackage_low(
+    state: &AppState,
+    user_id: UserId,
+    device_id: DeviceId,
+    remaining_count: u32,
+    water_mark: u32,
+    created_at_unix: i64,
+) {
+    match gateway_events::try_keypackage_low(
+        device_id,
+        remaining_count,
+        water_mark,
+        created_at_unix,
+    ) {
+        Ok(event) => broadcast_user_event(state, user_id, &event).await,
+        Err(error) => {
+            record_gateway_event_serialize_error("user", gateway_events::KEYPACKAGE_LOW_EVENT);
+            tracing::error!(
+                event = "gateway.keypackage_low.serialize_failed",
+                event_type = gateway_events::KEYPACKAGE_LOW_EVENT,
+                error = %error,
+                "dropped KeyPackage low-water alert because serialization failed"
+            );
+        }
+    }
+}
 
 /// Publish a root-key-certified device for the authenticated user.
 pub(crate) async fn publish_device_certificate(
@@ -103,9 +209,9 @@ pub(crate) async fn publish_device_certificate(
             device_sig_pubkey = EXCLUDED.device_sig_pubkey,
             root_key_sig = EXCLUDED.root_key_sig,
             root_key_pub = EXCLUDED.root_key_pub,
-            created_at_unix = EXCLUDED.created_at_unix,
-            tombstoned_at_unix = NULL
-         WHERE e2ee_device_certificates.user_id = EXCLUDED.user_id",
+            created_at_unix = EXCLUDED.created_at_unix
+         WHERE e2ee_device_certificates.user_id = EXCLUDED.user_id
+           AND e2ee_device_certificates.tombstoned_at_unix IS NULL",
     )
     .bind(device_id.to_string())
     .bind(auth.user_id.to_string())
@@ -119,9 +225,37 @@ pub(crate) async fn publish_device_certificate(
     if inserted.rows_affected() != 1 {
         return Err(AuthFailure::Forbidden);
     }
-    sqlx::query(
-        "INSERT INTO e2ee_audit_log (action, user_id, device_id, created_at_unix)
-         VALUES ('device_publish', $1, $2, $3)",
+    record_device_publish_audit(&mut transaction, auth.user_id, device_id, now).await?;
+    let active_device_count = active_device_count(&mut transaction, auth.user_id).await?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    emit_device_list_update(&state, auth.user_id, active_device_count, now).await;
+
+    Ok(Json(PublishDeviceCertificateResponse {
+        device_id: device_id.to_string(),
+        published: true,
+    }))
+}
+
+/// Irreversibly tombstone an owned device and destroy its unclaimed `KeyPackages`.
+pub(crate) async fn remove_device(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<String>,
+) -> Result<Json<RemoveDeviceResponse>, AuthFailure> {
+    let auth = authenticate(&state, &headers).await?;
+    let device_id = DeviceId::try_from(device_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+
+    let removed = sqlx::query(
+        "UPDATE e2ee_device_certificates
+         SET tombstoned_at_unix = $3
+         WHERE user_id = $1 AND device_id = $2 AND tombstoned_at_unix IS NULL",
     )
     .bind(auth.user_id.to_string())
     .bind(device_id.to_string())
@@ -129,14 +263,44 @@ pub(crate) async fn publish_device_certificate(
     .execute(&mut *transaction)
     .await
     .map_err(|_| AuthFailure::Internal)?;
+    if removed.rows_affected() != 1 {
+        return Err(AuthFailure::NotFound);
+    }
+
+    let deleted = sqlx::query(
+        "DELETE FROM e2ee_keypackages
+         WHERE device_id = $1 AND claimed_at_unix IS NULL",
+    )
+    .bind(device_id.to_string())
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let deleted_keypackage_count =
+        u32::try_from(deleted.rows_affected()).map_err(|_| AuthFailure::Internal)?;
+    sqlx::query(
+        "INSERT INTO e2ee_audit_log
+            (action, user_id, device_id, metadata_json, created_at_unix)
+         VALUES ('device_remove', $1, $2, $3::jsonb, $4)",
+    )
+    .bind(auth.user_id.to_string())
+    .bind(device_id.to_string())
+    .bind(json!({ "deleted_keypackage_count": deleted_keypackage_count }).to_string())
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let active_device_count = active_device_count(&mut transaction, auth.user_id).await?;
     transaction
         .commit()
         .await
         .map_err(|_| AuthFailure::Internal)?;
 
-    Ok(Json(PublishDeviceCertificateResponse {
+    emit_device_list_update(&state, auth.user_id, active_device_count, now).await;
+
+    Ok(Json(RemoveDeviceResponse {
         device_id: device_id.to_string(),
-        published: true,
+        tombstoned_at_unix: now,
+        deleted_keypackage_count,
     }))
 }
 
@@ -340,6 +504,7 @@ pub(crate) async fn claim_keypackage(
     let is_last_resort = row
         .try_get("is_last_resort")
         .map_err(|_| AuthFailure::Internal)?;
+    let remaining_count = unclaimed_keypackage_count(&mut transaction, &device_id).await?;
     sqlx::query(
         "INSERT INTO e2ee_audit_log
             (action, user_id, device_id, metadata_json, created_at_unix)
@@ -362,6 +527,20 @@ pub(crate) async fn claim_keypackage(
         .commit()
         .await
         .map_err(|_| AuthFailure::Internal)?;
+    let claimed_device_id =
+        DeviceId::try_from(device_id.clone()).map_err(|_| AuthFailure::Internal)?;
+    let water_mark = keypackage_low_water_mark(state.runtime.e2ee_max_keypackage_pool_size)?;
+    if remaining_count < water_mark {
+        emit_keypackage_low(
+            &state,
+            target_user_id,
+            claimed_device_id,
+            remaining_count,
+            water_mark,
+            now,
+        )
+        .await;
+    }
     Ok(Json(ClaimKeyPackageResponse {
         device_id,
         key_package_blob,
@@ -388,5 +567,11 @@ mod tests {
             sha256_hex(b"test"),
             "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
         );
+    }
+
+    #[test]
+    fn low_water_mark_never_exceeds_configured_pool_cap() {
+        assert_eq!(keypackage_low_water_mark(100).unwrap(), 10);
+        assert_eq!(keypackage_low_water_mark(4).unwrap(), 4);
     }
 }

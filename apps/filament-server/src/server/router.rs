@@ -35,7 +35,8 @@ use super::{
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
         e2ee::{
-            claim_keypackage, list_user_devices, publish_device_certificate, upload_keypackages,
+            claim_keypackage, list_user_devices, publish_device_certificate, remove_device,
+            upload_keypackages,
         },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
@@ -181,6 +182,7 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("POST", "/users/me/profile/avatar"),
     ("POST", "/users/me/profile/banner"),
     ("PUT", "/e2ee/devices/{device_id}"),
+    ("DELETE", "/e2ee/devices/{device_id}"),
     ("GET", "/e2ee/users/{user_id}/devices"),
     ("POST", "/e2ee/keypackages"),
     ("POST", "/e2ee/keypackages/claim"),
@@ -520,7 +522,10 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route("/gateway/ws", get(gateway_ws));
 
     let routes = routes
-        .route("/e2ee/devices/{device_id}", put(publish_device_certificate))
+        .route(
+            "/e2ee/devices/{device_id}",
+            put(publish_device_certificate).delete(remove_device),
+        )
         .route("/e2ee/users/{user_id}/devices", get(list_user_devices))
         .route("/e2ee/keypackages", post(upload_keypackages))
         .route("/e2ee/keypackages/claim", post(claim_keypackage));

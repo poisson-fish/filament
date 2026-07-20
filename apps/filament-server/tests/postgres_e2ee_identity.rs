@@ -7,12 +7,16 @@ use filament_e2ee::{
 };
 use filament_protocol::{
     ClaimKeyPackageRequest, ClaimKeyPackageResponse, DeviceListResponse, KeyPackageEntry,
-    PublishDeviceCertificateRequest, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
+    PublishDeviceCertificateRequest, RemoveDeviceResponse, UploadKeyPackagesRequest,
+    UploadKeyPackagesResponse,
 };
 use filament_server::{build_router_with_db_bootstrap, AppConfig};
+use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
+use tokio::net::TcpListener;
+use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 use tower::ServiceExt;
 use ulid::Ulid;
 
@@ -45,6 +49,37 @@ async fn parse_json<T: DeserializeOwned>(response: Response) -> T {
         .await
         .expect("response body should be readable");
     serde_json::from_slice(&body).expect("response body should be valid JSON")
+}
+
+async fn next_gateway_event(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    event_type: &str,
+) -> serde_json::Value {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let message = socket
+                .next()
+                .await
+                .expect("gateway should remain connected")
+                .expect("gateway event should decode");
+            if message.is_ping() || message.is_pong() {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(
+                message
+                    .to_text()
+                    .expect("gateway event should be a text frame"),
+            )
+            .expect("gateway event should be valid JSON");
+            if value["t"] == event_type {
+                return value;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for gateway event {event_type}"))
 }
 
 async fn send_json<T: serde::Serialize>(
@@ -182,12 +217,45 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
     let app = test_app(database_url).await;
     let ip = "203.0.113.91";
     let (auth, user_id) = register_and_login(&app, ip).await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("gateway listener should bind");
+    let gateway_address = listener
+        .local_addr()
+        .expect("gateway listener address should be available");
+    let gateway_app = app.clone();
+    let gateway_server = tokio::spawn(async move {
+        axum::serve(listener, gateway_app)
+            .await
+            .expect("gateway server should run");
+    });
+    let gateway_url = format!(
+        "ws://{gateway_address}/gateway/ws?access_token={}",
+        auth.access_token
+    );
+    let mut gateway_request = gateway_url
+        .into_client_request()
+        .expect("gateway request should build");
+    gateway_request.headers_mut().insert(
+        "x-forwarded-for",
+        ip.parse()
+            .expect("fixture IP should parse as a header value"),
+    );
+    let (mut gateway, _) = connect_async(gateway_request)
+        .await
+        .expect("gateway should connect");
+    let ready = next_gateway_event(&mut gateway, "ready").await;
+    assert_eq!(ready["d"]["user_id"], user_id.to_string());
+
     let root = RootIdentityKey::generate();
     let device_id = DeviceId::new();
     let device = MlsDevice::generate(user_id, device_id, &root).expect("device should generate");
 
     let published = publish_device(&app, &auth, ip, device_id, &publish_payload(&device)).await;
     assert_eq!(published.status(), StatusCode::OK);
+    let device_added = next_gateway_event(&mut gateway, "device_list_update").await;
+    assert_eq!(device_added["d"]["user_id"], user_id.to_string());
+    assert_eq!(device_added["d"]["device_count"], 1);
 
     let list = Request::builder()
         .method("GET")
@@ -257,6 +325,10 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
     assert!(!second.is_last_resort);
     assert!(expected_blobs.contains(&first.key_package_blob));
     assert!(expected_blobs.contains(&second.key_package_blob));
+    let low_pool = next_gateway_event(&mut gateway, "keypackage_low").await;
+    assert_eq!(low_pool["d"]["device_id"], device_id.to_string());
+    assert!(low_pool["d"]["remaining_count"].as_u64().is_some());
+    assert_eq!(low_pool["d"]["water_mark"], 10);
 
     let fallback = app
         .clone()
@@ -307,4 +379,79 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
     )
     .await;
     assert_eq!(changed_root.status(), StatusCode::FORBIDDEN);
+
+    let replacement_package =
+        generate_key_package_batch(&device, 1).expect("replacement package should generate");
+    let replacement_upload = UploadKeyPackagesRequest {
+        device_id: device_id.to_string(),
+        key_packages: replacement_package
+            .into_iter()
+            .map(|package| KeyPackageEntry {
+                key_package_blob: package.blob,
+                is_last_resort: false,
+            })
+            .collect(),
+    };
+    let replacement_upload = send_json(
+        &app,
+        "POST",
+        "/e2ee/keypackages",
+        Some(&auth.access_token),
+        ip,
+        &replacement_upload,
+    )
+    .await;
+    assert_eq!(replacement_upload.status(), StatusCode::OK);
+
+    let remove = Request::builder()
+        .method("DELETE")
+        .uri(format!("/e2ee/devices/{device_id}"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", ip)
+        .body(Body::empty())
+        .expect("remove request should build");
+    let removed = app
+        .clone()
+        .oneshot(remove)
+        .await
+        .expect("remove should execute");
+    assert_eq!(removed.status(), StatusCode::OK);
+    let removed: RemoveDeviceResponse = parse_json(removed).await;
+    assert_eq!(removed.device_id, device_id.to_string());
+    assert_eq!(removed.deleted_keypackage_count, 1);
+    let device_removed = next_gateway_event(&mut gateway, "device_list_update").await;
+    assert_eq!(device_removed["d"]["user_id"], user_id.to_string());
+    assert_eq!(device_removed["d"]["device_count"], 0);
+
+    let list_after_remove = Request::builder()
+        .method("GET")
+        .uri(format!("/e2ee/users/{user_id}/devices"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", ip)
+        .body(Body::empty())
+        .expect("list request should build");
+    let listed_after_remove = app
+        .clone()
+        .oneshot(list_after_remove)
+        .await
+        .expect("list should execute");
+    assert_eq!(listed_after_remove.status(), StatusCode::OK);
+    let listed_after_remove: DeviceListResponse = parse_json(listed_after_remove).await;
+    assert!(listed_after_remove.devices.is_empty());
+
+    let resurrect = publish_device(&app, &auth, ip, device_id, &publish_payload(&device)).await;
+    assert_eq!(resurrect.status(), StatusCode::FORBIDDEN);
+
+    let claim_removed = app
+        .clone()
+        .oneshot(claim_request(&auth.access_token, ip, user_id, device_id))
+        .await
+        .expect("claim against removed device should execute");
+    assert_eq!(claim_removed.status(), StatusCode::NOT_FOUND);
+
+    gateway
+        .close(None)
+        .await
+        .expect("gateway should close cleanly");
+    gateway_server.abort();
 }

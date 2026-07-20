@@ -546,6 +546,15 @@ Lists certified devices for a user.
 - Response: `{ "user_id": "...", "devices": [{ "device_id": "...", "device_signature_pubkey": [32 bytes], "root_key_signature": [64 bytes], "root_key_pub": [32 bytes], "created_at_unix": 0 }] }`
 - Only active devices are returned; results are capped at 100.
 
+### `DELETE /e2ee/devices/{device_id}`
+Irreversibly removes a device owned by the authenticated user.
+- Response: `{ "device_id": "...", "tombstoned_at_unix": 0, "deleted_keypackage_count": 0 }`
+- The certificate tombstone, deletion of all unclaimed KeyPackages, and public
+  audit record are committed in one transaction. A tombstoned device ID cannot
+  be republished; a newly paired device must use a fresh ID.
+- Claimed packages cannot be recalled. Conversation-level cryptographic
+  eviction begins with MLS group support in Phase 2.
+
 ### `POST /e2ee/keypackages`
 Uploads a batch of KeyPackages for a device.
 - Request body: `{ "device_id": "...", "key_packages": [{ "key_package_blob": [bytes], "is_last_resort": false }] }`
@@ -564,6 +573,8 @@ Claims a KeyPackage for a target user/device.
 - Ordinary packages are preferred. Every package is single-use, including the
   ordered fallback. Reuse remains disabled until an MLS last-resort extension
   is implemented and separately reviewed.
+- A `keypackage_low` user-scoped gateway event is emitted after a successful
+  claim leaves the target device below the replenishment water mark.
 
 ## Notes
 - Search index is derived/cache; source of truth is persisted message storage.
