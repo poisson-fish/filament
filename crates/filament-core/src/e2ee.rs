@@ -318,10 +318,10 @@ impl TryFrom<String> for ConversationCrypto {
 // ---------------------------------------------------------------------------
 
 /// Maximum size in bytes for a serialized device signature public key.
-pub const MAX_DEVICE_SIGNATURE_PUBKEY_BYTES: usize = 256;
+pub const MAX_DEVICE_SIGNATURE_PUBKEY_BYTES: usize = 32;
 
 /// Maximum size in bytes for a root-key signature over the certificate.
-pub const MAX_ROOT_KEY_SIGNATURE_BYTES: usize = 256;
+pub const MAX_ROOT_KEY_SIGNATURE_BYTES: usize = 64;
 
 /// A device certificate, signed by the user's root identity key.
 ///
@@ -330,8 +330,8 @@ pub const MAX_ROOT_KEY_SIGNATURE_BYTES: usize = 256;
 /// certificates — injected devices fail verification at every peer.
 ///
 /// # Invariants
-/// - `device_signature_pubkey` is non-empty and ≤ `MAX_DEVICE_SIGNATURE_PUBKEY_BYTES`.
-/// - `root_key_signature` is non-empty and ≤ `MAX_ROOT_KEY_SIGNATURE_BYTES`.
+/// - `device_signature_pubkey` is exactly 32 bytes (Ed25519).
+/// - `root_key_signature` is exactly 64 bytes (Ed25519).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceCertificate {
@@ -361,15 +361,12 @@ impl DeviceCertificate {
         Ulid::from_string(&device_id).map_err(|_| DomainError::InvalidDeviceId)?;
 
         // Validate pubkey is non-empty and within bounds.
-        if device_signature_pubkey.is_empty()
-            || device_signature_pubkey.len() > MAX_DEVICE_SIGNATURE_PUBKEY_BYTES
-        {
+        if device_signature_pubkey.len() != MAX_DEVICE_SIGNATURE_PUBKEY_BYTES {
             return Err(DomainError::InvalidDeviceCertificate);
         }
 
         // Validate signature is non-empty and within bounds.
-        if root_key_signature.is_empty() || root_key_signature.len() > MAX_ROOT_KEY_SIGNATURE_BYTES
-        {
+        if root_key_signature.len() != MAX_ROOT_KEY_SIGNATURE_BYTES {
             return Err(DomainError::InvalidDeviceCertificate);
         }
 

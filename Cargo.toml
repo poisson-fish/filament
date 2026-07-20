@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/filament-core",
+  "crates/filament-e2ee",
   "crates/filament-protocol",
   "apps/filament-server",
   "apps/filament-client-desktop/src-tauri",
