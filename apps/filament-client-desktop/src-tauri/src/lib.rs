@@ -1,10 +1,17 @@
 #![forbid(unsafe_code)]
 
-use std::fmt;
+use std::{fmt, fs, path::Path};
 
+use filament_e2ee::{
+    KeyStoreError, LocalKeyStore, LocalStoreId, SqlCipherKeyStore, StoreKeyProvider,
+    STORE_ENCRYPTION_KEY_BYTES,
+};
+use keyring::Entry;
+use rand::{rngs::OsRng, RngCore as _};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
+use zeroize::Zeroizing;
 
 pub const DESKTOP_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;";
 pub const WEB_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local wss://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;";
@@ -23,6 +30,10 @@ pub enum SecurityError {
     ForbiddenNavigationScheme,
     #[error("navigation host is not allowed")]
     ForbiddenNavigationHost,
+    #[error("encrypted local store is unavailable")]
+    E2eeStoreUnavailable,
+    #[error("encrypted local store root is invalid")]
+    InvalidE2eeStoreRoot,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,17 +123,188 @@ pub enum DesktopCommand {
     StoreSession,
     ClearSession,
     ReadSessionMetadata,
+    InitializeE2eeStore,
+    ReadE2eeStoreStatus,
 }
 
 impl DesktopCommand {
     #[must_use]
-    pub const fn all() -> [Self; 3] {
+    pub const fn all() -> [Self; 5] {
         [
             Self::StoreSession,
             Self::ClearSession,
             Self::ReadSessionMetadata,
+            Self::InitializeE2eeStore,
+            Self::ReadE2eeStoreStatus,
         ]
     }
+}
+
+/// Non-sensitive IPC response for the native encrypted-store boundary.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeStoreStatus {
+    /// Whether the native host successfully opened the store.
+    pub ready: bool,
+    /// Fixed backend identifier; never contains a filesystem path.
+    pub backend: &'static str,
+    /// Fixed key-custody identifier; never contains key bytes or an account ID.
+    pub key_custody: &'static str,
+}
+
+/// Native-only desktop encrypted store.
+///
+/// The host derives [`LocalStoreId`] from its authenticated native session.
+/// The webview never supplies user/device IDs, filesystem paths, or key bytes.
+pub struct DesktopE2eeStore {
+    store: SqlCipherKeyStore,
+}
+
+impl core::fmt::Debug for DesktopE2eeStore {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("DesktopE2eeStore(<native encrypted state>)")
+    }
+}
+
+impl DesktopE2eeStore {
+    /// Open the authenticated device's `SQLCipher` store using the OS keyring.
+    ///
+    /// `app_data_root` must come from the Tauri host, not IPC. The directory
+    /// must already exist and resolve to a regular directory. The database
+    /// filename is derived only from validated domain IDs.
+    ///
+    /// # Errors
+    /// Returns an opaque error when the root, OS keyring, or `SQLCipher` store is
+    /// unavailable. No path or key material is included in the error.
+    pub fn open(app_data_root: &Path, store_id: LocalStoreId) -> Result<Self, SecurityError> {
+        Self::open_with_provider(app_data_root, store_id, &OsStoreKeyProvider)
+    }
+
+    fn open_with_provider(
+        app_data_root: &Path,
+        store_id: LocalStoreId,
+        provider: &dyn StoreKeyProvider,
+    ) -> Result<Self, SecurityError> {
+        let store_directory = prepare_store_directory(app_data_root)?;
+        let filename = format!("{}-{}.db", store_id.user_id(), store_id.device_id());
+        let database_path = store_directory.join(filename);
+        let store = SqlCipherKeyStore::open(&database_path, &store_id, provider)
+            .map_err(|_| SecurityError::E2eeStoreUnavailable)?;
+        Ok(Self { store })
+    }
+
+    /// Non-sensitive state that may cross the narrow IPC boundary.
+    #[must_use]
+    pub const fn status(&self) -> E2eeStoreStatus {
+        E2eeStoreStatus {
+            ready: true,
+            backend: "sqlcipher",
+            key_custody: "platform_keystore",
+        }
+    }
+
+    /// Native E2EE core access. This object is never serializable and must not
+    /// be returned from a Tauri command.
+    #[must_use]
+    pub const fn native_store(&self) -> &dyn LocalKeyStore {
+        &self.store
+    }
+}
+
+/// OS Keychain / Credential Manager / Secret Service provider.
+pub struct OsStoreKeyProvider;
+
+impl core::fmt::Debug for OsStoreKeyProvider {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("OsStoreKeyProvider(<credential metadata redacted>)")
+    }
+}
+
+impl StoreKeyProvider for OsStoreKeyProvider {
+    fn load_or_create_key(
+        &self,
+        store_id: &LocalStoreId,
+    ) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
+        const SERVICE: &str = "com.filament.desktop.e2ee-store";
+
+        let account = store_id.credential_account();
+        let entry = Entry::new(SERVICE, &account).map_err(|_| KeyStoreError::KeyUnavailable)?;
+        let secret = Zeroizing::new(match entry.get_secret() {
+            Ok(secret) => secret,
+            Err(keyring::Error::NoEntry) => {
+                let mut generated = Zeroizing::new(vec![0_u8; STORE_ENCRYPTION_KEY_BYTES]);
+                OsRng
+                    .try_fill_bytes(&mut generated)
+                    .map_err(|_| KeyStoreError::KeyUnavailable)?;
+                entry
+                    .set_secret(&generated)
+                    .map_err(|_| KeyStoreError::KeyUnavailable)?;
+                entry
+                    .get_secret()
+                    .map_err(|_| KeyStoreError::KeyUnavailable)?
+            }
+            Err(_) => return Err(KeyStoreError::KeyUnavailable),
+        });
+        if secret.len() != STORE_ENCRYPTION_KEY_BYTES {
+            return Err(KeyStoreError::InvalidValue);
+        }
+        Ok(secret)
+    }
+}
+
+fn prepare_store_directory(app_data_root: &Path) -> Result<std::path::PathBuf, SecurityError> {
+    if !app_data_root.is_absolute() {
+        return Err(SecurityError::InvalidE2eeStoreRoot);
+    }
+    let root = app_data_root
+        .canonicalize()
+        .map_err(|_| SecurityError::InvalidE2eeStoreRoot)?;
+    if !root.is_dir() {
+        return Err(SecurityError::InvalidE2eeStoreRoot);
+    }
+    let store_directory = root.join("e2ee");
+    match fs::symlink_metadata(&store_directory) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(SecurityError::InvalidE2eeStoreRoot);
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            create_private_store_directory(&store_directory)?;
+        }
+        Err(_) => return Err(SecurityError::InvalidE2eeStoreRoot),
+    }
+    enforce_store_directory_permissions(&store_directory)?;
+    Ok(store_directory)
+}
+
+#[cfg(unix)]
+fn create_private_store_directory(path: &Path) -> Result<(), SecurityError> {
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700);
+    builder
+        .create(path)
+        .map_err(|_| SecurityError::InvalidE2eeStoreRoot)
+}
+
+#[cfg(not(unix))]
+fn create_private_store_directory(path: &Path) -> Result<(), SecurityError> {
+    fs::create_dir(path).map_err(|_| SecurityError::InvalidE2eeStoreRoot)
+}
+
+#[cfg(unix)]
+fn enforce_store_directory_permissions(path: &Path) -> Result<(), SecurityError> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|_| SecurityError::InvalidE2eeStoreRoot)
+}
+
+#[cfg(not(unix))]
+fn enforce_store_directory_permissions(_path: &Path) -> Result<(), SecurityError> {
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,6 +414,8 @@ impl fmt::Display for DesktopCommand {
             Self::StoreSession => "store_session",
             Self::ClearSession => "clear_session",
             Self::ReadSessionMetadata => "read_session_metadata",
+            Self::InitializeE2eeStore => "initialize_e2ee_store",
+            Self::ReadE2eeStoreStatus => "read_e2ee_store_status",
         };
         f.write_str(value)
     }
@@ -239,7 +423,26 @@ impl fmt::Display for DesktopCommand {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use filament_core::{DeviceId, UserId};
+    use tempfile::tempdir;
+
     use super::*;
+
+    struct FixedStoreKeyProvider {
+        calls: AtomicUsize,
+    }
+
+    impl StoreKeyProvider for FixedStoreKeyProvider {
+        fn load_or_create_key(
+            &self,
+            _store_id: &LocalStoreId,
+        ) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(Zeroizing::new(vec![0x42; STORE_ENCRYPTION_KEY_BYTES]))
+        }
+    }
 
     #[test]
     fn store_session_validation_rejects_expired_tokens() {
@@ -283,10 +486,12 @@ mod tests {
     #[test]
     fn desktop_commands_are_strictly_bounded() {
         let commands = DesktopCommand::all();
-        assert_eq!(commands.len(), 3);
+        assert_eq!(commands.len(), 5);
         assert_eq!(commands[0].to_string(), "store_session");
         assert_eq!(commands[1].to_string(), "clear_session");
         assert_eq!(commands[2].to_string(), "read_session_metadata");
+        assert_eq!(commands[3].to_string(), "initialize_e2ee_store");
+        assert_eq!(commands[4].to_string(), "read_e2ee_store_status");
     }
 
     #[test]
@@ -334,5 +539,65 @@ mod tests {
     fn csp_constants_disallow_unsafe_tokens() {
         assert!(!csp_has_forbidden_tokens(DESKTOP_CSP));
         assert!(!csp_has_forbidden_tokens(WEB_CSP));
+    }
+
+    #[test]
+    fn encrypted_store_is_native_only_and_ipc_status_has_no_sensitive_fields() {
+        let app_data = tempdir().unwrap();
+        let store_id = LocalStoreId::new(UserId::new(), DeviceId::new());
+        let provider = FixedStoreKeyProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let desktop =
+            DesktopE2eeStore::open_with_provider(app_data.path(), store_id, &provider).unwrap();
+        let serialized = serde_json::to_string(&desktop.status()).unwrap();
+
+        assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            serialized,
+            r#"{"ready":true,"backend":"sqlcipher","key_custody":"platform_keystore"}"#
+        );
+        for forbidden in ["secret", "private", "path", "user_id", "device_id"] {
+            assert!(!serialized.contains(forbidden));
+        }
+        assert_eq!(
+            format!("{desktop:?}"),
+            "DesktopE2eeStore(<native encrypted state>)"
+        );
+    }
+
+    #[test]
+    fn encrypted_store_rejects_relative_and_symlink_roots() {
+        let store_id = LocalStoreId::new(UserId::new(), DeviceId::new());
+        let provider = FixedStoreKeyProvider {
+            calls: AtomicUsize::new(0),
+        };
+        assert_eq!(
+            DesktopE2eeStore::open_with_provider(Path::new("relative"), store_id, &provider)
+                .unwrap_err(),
+            SecurityError::InvalidE2eeStoreRoot
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let parent = tempdir().unwrap();
+            let target = tempdir().unwrap();
+            symlink(target.path(), parent.path().join("e2ee")).unwrap();
+            assert_eq!(
+                DesktopE2eeStore::open_with_provider(parent.path(), store_id, &provider)
+                    .unwrap_err(),
+                SecurityError::InvalidE2eeStoreRoot
+            );
+        }
+    }
+
+    #[test]
+    fn keyring_provider_debug_redacts_credential_metadata() {
+        assert_eq!(
+            format!("{OsStoreKeyProvider:?}"),
+            "OsStoreKeyProvider(<credential metadata redacted>)"
+        );
     }
 }

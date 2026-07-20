@@ -1,9 +1,8 @@
 //! Local encrypted store abstraction for MLS key material and state.
 //!
 //! This is the foundation for the client-side encrypted message store.
-//! Full history sync and SQLCipher integration come in Phase 4.
-//! For now, this provides a trait-based abstraction and an in-memory
-//! implementation suitable for testing.
+//! The `sqlcipher-store` feature provides the production encrypted backend;
+//! full message-history schemas and synchronization remain Phase 4 work.
 //!
 //! # Security Properties
 //!
@@ -15,13 +14,106 @@
 
 use std::collections::HashMap;
 
+use filament_core::{DeviceId, UserId};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::KeyStoreError;
 use crate::identity::RootIdentityKey;
 
-/// A key for the local store. Keys are strings to keep the interface simple.
-pub type StoreKey = String;
+/// Maximum UTF-8 byte length of a local store key.
+pub const MAX_STORE_KEY_BYTES: usize = 160;
+/// Maximum bytes stored in one encrypted value.
+pub const MAX_STORE_VALUE_BYTES: usize = 4 * 1024 * 1024;
+/// Maximum records in one device-local store.
+pub const MAX_STORE_ENTRIES: usize = 4_096;
+/// SQLCipher database key length.
+pub const STORE_ENCRYPTION_KEY_BYTES: usize = 32;
+
+/// Device-scoped identifier for an encrypted local store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LocalStoreId {
+    user_id: UserId,
+    device_id: DeviceId,
+}
+
+impl LocalStoreId {
+    /// Construct a store identifier from validated domain IDs.
+    #[must_use]
+    pub const fn new(user_id: UserId, device_id: DeviceId) -> Self {
+        Self { user_id, device_id }
+    }
+
+    /// Owning user.
+    #[must_use]
+    pub const fn user_id(&self) -> UserId {
+        self.user_id
+    }
+
+    /// Device whose local state is stored.
+    #[must_use]
+    pub const fn device_id(&self) -> DeviceId {
+        self.device_id
+    }
+
+    /// Fixed-format account name for native credential stores.
+    #[must_use]
+    pub fn credential_account(&self) -> String {
+        format!("filament-e2ee-{}-{}", self.user_id, self.device_id)
+    }
+}
+
+/// Validated key for a record inside the encrypted local store.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct StoreKey(String);
+
+impl StoreKey {
+    /// Validate a bounded, path-independent store key.
+    ///
+    /// # Errors
+    /// Rejects empty, oversized, or non-ASCII identifiers and characters
+    /// outside `[A-Za-z0-9:_.-]`.
+    pub fn new(value: impl Into<String>) -> Result<Self, KeyStoreError> {
+        let value = value.into();
+        if value.is_empty()
+            || value.len() > MAX_STORE_KEY_BYTES
+            || !value.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'.' | b'-')
+            })
+        {
+            return Err(KeyStoreError::InvalidIdentifier);
+        }
+        Ok(Self(value))
+    }
+
+    /// Canonical record key for the device's root identity.
+    #[must_use]
+    pub fn root_identity() -> Self {
+        Self(String::from("identity:root"))
+    }
+
+    /// Borrow the validated database key.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Native provider for the device-local SQLCipher key.
+///
+/// Implementations must use a platform credential store and return exactly
+/// [`STORE_ENCRYPTION_KEY_BYTES`] bytes. This trait is native-only and must not
+/// be implemented through webview IPC.
+pub trait StoreKeyProvider: Send + Sync {
+    /// Load the existing key or provision one for a new store.
+    ///
+    /// # Errors
+    /// Returns [`KeyStoreError::KeyUnavailable`] when secure storage cannot be
+    /// accessed and [`KeyStoreError::InvalidValue`] for a wrong-length key.
+    fn load_or_create_key(
+        &self,
+        store_id: &LocalStoreId,
+    ) -> Result<Zeroizing<Vec<u8>>, KeyStoreError>;
+}
 
 /// Persist a root identity secret through the native keystore abstraction.
 ///
@@ -76,7 +168,7 @@ pub trait LocalKeyStore: Send + Sync {
     ///
     /// # Errors
     /// Returns [`KeyStoreError::NotFound`] if the key doesn't exist.
-    fn load(&self, key: &StoreKey) -> Result<Vec<u8>, KeyStoreError>;
+    fn load(&self, key: &StoreKey) -> Result<Zeroizing<Vec<u8>>, KeyStoreError>;
 
     /// Remove a secret value by key, zeroizing it.
     ///
@@ -85,10 +177,16 @@ pub trait LocalKeyStore: Send + Sync {
     fn remove(&self, key: &StoreKey) -> Result<(), KeyStoreError>;
 
     /// Check if a key exists in the store.
-    fn exists(&self, key: &StoreKey) -> bool;
+    ///
+    /// # Errors
+    /// Returns a backend error rather than treating storage failure as absence.
+    fn exists(&self, key: &StoreKey) -> Result<bool, KeyStoreError>;
 
     /// List all keys in the store.
-    fn list_keys(&self) -> Vec<StoreKey>;
+    ///
+    /// # Errors
+    /// Returns a backend error if the store cannot be read.
+    fn list_keys(&self) -> Result<Vec<StoreKey>, KeyStoreError>;
 }
 
 /// In-memory key store for testing and development.
@@ -119,39 +217,42 @@ impl Default for InMemoryKeyStore {
 
 impl LocalKeyStore for InMemoryKeyStore {
     fn store(&self, key: StoreKey, value: Vec<u8>) -> Result<(), KeyStoreError> {
+        let value = Zeroizing::new(value);
+        if value.is_empty() || value.len() > MAX_STORE_VALUE_BYTES {
+            return Err(KeyStoreError::LimitExceeded);
+        }
         let mut data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
-        data.insert(key, Zeroizing::new(value));
+        if !data.contains_key(&key) && data.len() >= MAX_STORE_ENTRIES {
+            return Err(KeyStoreError::LimitExceeded);
+        }
+        data.insert(key, value);
         Ok(())
     }
 
-    fn load(&self, key: &StoreKey) -> Result<Vec<u8>, KeyStoreError> {
+    fn load(&self, key: &StoreKey) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
         let data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
         data.get(key)
-            .map(|value| value.to_vec())
-            .ok_or_else(|| KeyStoreError::NotFound(key.clone()))
+            .map(|value| Zeroizing::new(value.to_vec()))
+            .ok_or(KeyStoreError::NotFound)
     }
 
     fn remove(&self, key: &StoreKey) -> Result<(), KeyStoreError> {
         let mut data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
-        let value = data
-            .remove(key)
-            .ok_or_else(|| KeyStoreError::NotFound(key.clone()))?;
+        let value = data.remove(key).ok_or(KeyStoreError::NotFound)?;
         drop(value);
         Ok(())
     }
 
-    fn exists(&self, key: &StoreKey) -> bool {
-        let Ok(data) = self.data.lock() else {
-            return false;
-        };
-        data.contains_key(key)
+    fn exists(&self, key: &StoreKey) -> Result<bool, KeyStoreError> {
+        let data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
+        Ok(data.contains_key(key))
     }
 
-    fn list_keys(&self) -> Vec<StoreKey> {
-        let Ok(data) = self.data.lock() else {
-            return Vec::new();
-        };
-        data.keys().cloned().collect()
+    fn list_keys(&self) -> Result<Vec<StoreKey>, KeyStoreError> {
+        let data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
+        let mut keys: Vec<_> = data.keys().cloned().collect();
+        keys.sort();
+        Ok(keys)
     }
 }
 
@@ -177,66 +278,101 @@ mod tests {
     #[test]
     fn store_and_load_round_trip() {
         let store = InMemoryKeyStore::new();
-        let key = "device:01ARZ3NDEKTSV4RRFFQ69G5FAV:root_key".to_string();
+        let key = StoreKey::new("device:01ARZ3NDEKTSV4RRFFQ69G5FAV:root_key").unwrap();
         let value = vec![0xAB; 32];
 
         store.store(key.clone(), value.clone()).unwrap();
-        assert!(store.exists(&key));
+        assert!(store.exists(&key).unwrap());
 
         let loaded = store.load(&key).unwrap();
-        assert_eq!(loaded, value);
+        assert_eq!(loaded.as_slice(), value);
     }
 
     #[test]
     fn load_nonexistent_returns_not_found() {
         let store = InMemoryKeyStore::new();
-        let key = "nonexistent".to_string();
+        let key = StoreKey::new("nonexistent").unwrap();
         let result = store.load(&key);
-        assert_eq!(result, Err(KeyStoreError::NotFound(key)));
+        assert_eq!(result, Err(KeyStoreError::NotFound));
     }
 
     #[test]
     fn remove_zeroizes_value() {
         let store = InMemoryKeyStore::new();
-        let key = "secret".to_string();
+        let key = StoreKey::new("secret").unwrap();
         let value = vec![0xCD; 64];
 
         store.store(key.clone(), value).unwrap();
         store.remove(&key).unwrap();
-        assert!(!store.exists(&key));
+        assert!(!store.exists(&key).unwrap());
     }
 
     #[test]
     fn list_keys_returns_all_keys() {
         let store = InMemoryKeyStore::new();
-        store.store("key1".to_string(), vec![1]).unwrap();
-        store.store("key2".to_string(), vec![2]).unwrap();
-        store.store("key3".to_string(), vec![3]).unwrap();
+        store
+            .store(StoreKey::new("key1").unwrap(), vec![1])
+            .unwrap();
+        store
+            .store(StoreKey::new("key2").unwrap(), vec![2])
+            .unwrap();
+        store
+            .store(StoreKey::new("key3").unwrap(), vec![3])
+            .unwrap();
 
-        let mut keys = store.list_keys();
-        keys.sort();
+        let keys: Vec<_> = store
+            .list_keys()
+            .unwrap()
+            .into_iter()
+            .map(|key| key.as_str().to_owned())
+            .collect();
         assert_eq!(keys, vec!["key1", "key2", "key3"]);
     }
 
     #[test]
     fn overwrite_existing_key() {
         let store = InMemoryKeyStore::new();
-        let key = "key".to_string();
+        let key = StoreKey::new("key").unwrap();
 
         store.store(key.clone(), vec![1, 2, 3]).unwrap();
         store.store(key.clone(), vec![4, 5, 6]).unwrap();
 
         let loaded = store.load(&key).unwrap();
-        assert_eq!(loaded, vec![4, 5, 6]);
+        assert_eq!(loaded.as_slice(), [4, 5, 6]);
     }
 
     #[test]
     fn root_identity_persistence_round_trip() {
         let store = InMemoryKeyStore::new();
-        let key = String::from("root-identity");
+        let key = StoreKey::root_identity();
         let identity = RootIdentityKey::generate();
         persist_root_identity(&store, key.clone(), &identity).unwrap();
         let restored = load_root_identity(&store, &key).unwrap();
         assert_eq!(identity.public_key_bytes(), restored.public_key_bytes());
+    }
+
+    #[test]
+    fn store_key_and_value_limits_fail_closed() {
+        assert_eq!(
+            StoreKey::new("bad/key"),
+            Err(KeyStoreError::InvalidIdentifier)
+        );
+        assert_eq!(
+            StoreKey::new("x".repeat(MAX_STORE_KEY_BYTES + 1)),
+            Err(KeyStoreError::InvalidIdentifier)
+        );
+
+        let store = InMemoryKeyStore::new();
+        assert_eq!(
+            store.store(StoreKey::new("empty").unwrap(), Vec::new()),
+            Err(KeyStoreError::LimitExceeded)
+        );
+        assert_eq!(
+            store.store(
+                StoreKey::new("oversized").unwrap(),
+                vec![0; MAX_STORE_VALUE_BYTES + 1]
+            ),
+            Err(KeyStoreError::LimitExceeded)
+        );
     }
 }

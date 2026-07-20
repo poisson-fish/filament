@@ -45,14 +45,26 @@ pub enum KeyPackageError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum KeyStoreError {
     /// Item not found in the store.
-    #[error("keystore item not found: {0}")]
-    NotFound(String),
+    #[error("keystore item not found")]
+    NotFound,
+    /// A store key or store identifier violated its domain invariants.
+    #[error("keystore identifier is invalid")]
+    InvalidIdentifier,
     /// Store backend error.
     #[error("keystore backend error")]
     BackendError,
+    /// The OS credential store could not supply the database key.
+    #[error("platform keystore is unavailable")]
+    KeyUnavailable,
+    /// The database path is not an absolute, regular, non-symlink file.
+    #[error("encrypted store path is invalid")]
+    InvalidPath,
     /// Stored bytes do not match the expected type or length.
     #[error("keystore value is invalid")]
     InvalidValue,
+    /// A hard entry, value-size, or database-size limit was exceeded.
+    #[error("keystore limit exceeded")]
+    LimitExceeded,
 }
 
 /// Errors from short-lived QR device pairing.

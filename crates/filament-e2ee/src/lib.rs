@@ -29,6 +29,8 @@ pub mod identity;
 pub mod keypackage;
 pub mod keystore;
 pub mod pairing;
+#[cfg(feature = "sqlcipher-store")]
+pub mod sqlcipher_store;
 
 // Re-export the most commonly used types.
 pub use error::{E2eeError, IdentityError, KeyPackageError, KeyStoreError, PairingError};
@@ -39,10 +41,14 @@ pub use keypackage::{
     DEFAULT_MAX_POOL_SIZE,
 };
 pub use keystore::{
-    load_root_identity, persist_root_identity, InMemoryKeyStore, LocalKeyStore, StoreKey,
+    load_root_identity, persist_root_identity, InMemoryKeyStore, LocalKeyStore, LocalStoreId,
+    StoreKey, StoreKeyProvider, MAX_STORE_ENTRIES, MAX_STORE_KEY_BYTES, MAX_STORE_VALUE_BYTES,
+    STORE_ENCRYPTION_KEY_BYTES,
 };
 pub use pairing::{
     create_pairing_transfer, PairedRootIdentity, PairingReceiver, PairingTransfer,
     ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS, MAX_PAIRING_OFFER_BYTES,
     MAX_PAIRING_TRANSFER_BYTES, MAX_PAIRING_TTL_SECS,
 };
+#[cfg(feature = "sqlcipher-store")]
+pub use sqlcipher_store::{SqlCipherKeyStore, MAX_ENCRYPTED_STORE_BYTES};

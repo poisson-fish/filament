@@ -20,6 +20,8 @@ The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9
 | `openmls_rust_crypto` | 0.5.1 | MIT | Default crypto provider (RustCrypto crates, no C deps) |
 | `openmls_basic_credential` | 0.5.0 | MIT | BasicCredential + SignatureKeyPair for credential types |
 | `openmls_traits` | 0.5.0 | MIT | Direct access to the approved provider traits used by device pairing |
+| `rusqlite` | 0.39.0 | MIT | Rust SQLCipher bindings for the device-local encrypted store |
+| `keyring` | 4.1.5 | MIT/Apache-2.0 | Cross-platform Keychain, Credential Manager, and Secret Service access |
 
 ### Key Transitive Dependencies
 
@@ -35,6 +37,9 @@ The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9
 | `log` | MIT/Apache-2.0 | Logging facade | Allowed license |
 | `getrandom` | MIT/Apache-2.0 | CSPRNG interface | Allowed license |
 | RustCrypto crates (`chacha20poly1305`, `x25519-dalek`, `ed25519-dalek`, `sha2`, `hkdf`, `hpke`) | MIT/Apache-2.0 | Underlying cryptographic primitives | Allowed licenses |
+| SQLCipher / `libsqlite3-sys` | BSD-style / MIT | Bundled encrypted SQLite implementation and bindings | Allowed licenses |
+| OpenSSL 3 / `openssl-src` / `openssl-sys` | Apache-2.0 and MIT/Apache-2.0 wrapper crates | Vendored SQLCipher crypto provider for consistent desktop builds | Allowed licenses |
+| `keyring-core` and native store backends | MIT/Apache-2.0 | Platform credential-store adapters | Allowed licenses |
 
 All licenses are within the `cargo-deny.toml` allowlist: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib.
 
@@ -42,7 +47,7 @@ All licenses are within the `cargo-deny.toml` allowlist: MIT, Apache-2.0, BSD-2-
 
 The existing `cargo-deny.toml` license allowlist already covers all OpenMLS dependencies (MIT is allowed). No license exceptions are needed for OpenMLS or its transitive dependencies.
 
-Advisory exceptions: the existing `RUSTSEC-2024-0384` exception (for the `instant` crate transitively via Tantivy) is unrelated to OpenMLS. No new advisory exceptions are required for the OpenMLS dependency tree at the time of this writing.
+Advisory exceptions: the existing `RUSTSEC-2024-0384` exception (for the `instant` crate transitively via Tantivy) is unrelated to OpenMLS. No new advisory exceptions were added for SQLCipher or keyring. The local `cargo audit` and `cargo deny` binaries were unavailable during this increment; CI remains authoritative for those gates.
 
 ## cargo-vet Status
 

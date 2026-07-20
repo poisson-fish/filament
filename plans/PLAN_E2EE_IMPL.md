@@ -35,6 +35,11 @@ Completed and committed:
   X25519/ChaCha20-Poly1305 HPKE root-key transfer through the approved OpenMLS
   provider. The server integration test publishes a newly paired device and
   verifies that it shares the pinned root identity.
+- Feature-gated production SQLCipher local storage with typed record/store
+  identifiers, OS Keychain/Credential Manager/Secret Service key custody,
+  symlink/hard-link/path rejection, private Unix permissions, strict
+  record/entry/database caps, and native-only initialization/readiness IPC
+  contracts. The key-isolation audit is recorded and covered by negative tests.
 - Adversarial/integration coverage for forged certificates, root replacement,
   target user/device binding, concurrent claims, fallback exhaustion, device
   removal, live gateway notification delivery, request body limits, and
@@ -45,11 +50,9 @@ Still required before Phase 1 can be called complete:
 
 - Conversation-scoped peer surfacing of device-list changes follows the Phase
   2 conversation mapping; Phase 1 emits owner-scoped directory notifications.
-- A production platform-keystore/encrypted-store implementation. The current
-  crate provides the narrow `LocalKeyStore` boundary and test implementation;
-  it does not claim SQLCipher or OS-keystore completion.
-- Desktop settings UI, narrow Tauri IPC integration, and the key-isolation
-  audit. Adding privileged Tauri commands remains a maintainer-approval gate.
+- Desktop encryption settings UI. The approved native IPC surface now includes
+  only encrypted-store initialization and non-sensitive readiness status; UI
+  work must not broaden it or add any key-export path.
 - Rotation integration tests, plus an executed Postgres run in an environment
   that supplies the test database.
 - Maintainer ratification of ADR 0001 and conversion of the cargo-vet inventory

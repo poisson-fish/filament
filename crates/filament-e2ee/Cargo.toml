@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = []
+sqlcipher-store = ["dep:rusqlite"]
+
 [lints]
 workspace = true
 
@@ -21,3 +25,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tls_codec = "0.4.2"
+rusqlite = { version = "=0.39.0", optional = true, default-features = false, features = ["bundled-sqlcipher-vendored-openssl", "limits"] }
+
+[dev-dependencies]
+tempfile = "3"

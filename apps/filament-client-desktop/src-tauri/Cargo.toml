@@ -8,7 +8,15 @@ license = "MIT OR Apache-2.0"
 workspace = true
 
 [dependencies]
+filament-e2ee = { path = "../../../crates/filament-e2ee", version = "0.1.0", features = ["sqlcipher-store"] }
+keyring = "4.1.5"
+rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 url = "2"
+zeroize = "1"
+
+[dev-dependencies]
+filament-core = { path = "../../../crates/filament-core", version = "0.1.0" }
+tempfile = "3"

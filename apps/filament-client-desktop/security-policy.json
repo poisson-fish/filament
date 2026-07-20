@@ -11,7 +11,9 @@
     "allowed_commands": [
       "store_session",
       "clear_session",
-      "read_session_metadata"
+      "read_session_metadata",
+      "initialize_e2ee_store",
+      "read_e2ee_store_status"
     ]
   },
   "updates": {

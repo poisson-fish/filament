@@ -1,0 +1,67 @@
+# E2EE Key-Isolation Audit — Phase 1
+
+**Date:** 2026-07-19
+**Scope:** desktop SQLCipher key custody and the Rust/webview boundary
+
+## Result
+
+The Phase 1 key-isolation boundary passes its source and negative-test audit.
+MLS/root/database key material remains in native Rust. The desktop webview can
+request encrypted-store initialization and read a fixed readiness response; it
+has no command that returns or accepts key material, database paths, record
+keys, or raw E2EE state.
+
+This result covers the current command-contract scaffold. When the full Tauri
+runtime registers these commands, registration must be tested against the same
+allowlist before release.
+
+## Native Data Flow
+
+1. The native authenticated session supplies typed `UserId` and `DeviceId`
+   values to `LocalStoreId`; these values are not accepted from store IPC.
+2. `DesktopE2eeStore` derives the database filename beneath the host-provided
+   application-data directory.
+3. `OsStoreKeyProvider` loads or creates a random 32-byte key in the fixed
+   `com.filament.desktop.e2ee-store` service using the OS credential store.
+4. `SqlCipherKeyStore` applies that key before the first database read, verifies
+   that SQLCipher is active, and retains the connection behind the native
+   `LocalKeyStore` interface.
+5. IPC receives only `{ ready, backend, key_custody }`; none of those fields is
+   secret or a storage locator.
+
+## Guardrails Verified
+
+- Crate-level `#![forbid(unsafe_code)]` remains enabled.
+- Root-secret byte access remains crate-private in `filament-e2ee`.
+- The database key is returned only by the native `StoreKeyProvider` trait in a
+  zeroizing buffer and is never serializable.
+- SQLCipher plaintext headers are disabled. Tests verify that neither the
+  SQLite magic header nor a stored 32-byte fixture appears in the database.
+- A wrong database key fails closed; no empty replacement database is created.
+- Relative paths, symlinks, hard-linked files, non-regular files, oversized
+  databases, oversized values, and invalid record identifiers are rejected.
+- Debug and error output omits credential accounts, paths, values, and keys.
+- IPC policy contains no private-key display, copy, export, database read, or
+  generic filesystem command.
+
+## Automated Evidence
+
+- `crates/filament-e2ee/src/sqlcipher_store.rs`: encrypted round-trip/reopen,
+  wrong-key rejection, plaintext scan, path attacks, caps, and debug redaction.
+- `crates/filament-e2ee/src/keystore.rs`: typed key invariants, zeroizing loads,
+  root identity persistence, and value caps.
+- `apps/filament-client-desktop/src-tauri/src/lib.rs`: native-only store setup,
+  status serialization negative test, fixed OS-keyring service, and redacted
+  debug output.
+- `apps/filament-client-desktop/src-tauri/tests/hardening_config.rs`: exact IPC
+  allowlist alignment with `security-policy.json`.
+
+## Remaining Release Checks
+
+- Exercise each real OS credential backend on signed macOS, Windows, and Linux
+  packages; headless CI uses a deterministic provider and does not claim this
+  platform smoke coverage.
+- Re-run the audit whenever a Tauri command, serialization type, key-storage
+  backend, crash reporter, or E2EE logging path changes.
+- Phase 4 must review the 64 MiB/4,096-record foundation limits and add the
+  canonical encrypted history schema without exposing general-purpose IPC.
