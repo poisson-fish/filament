@@ -4,14 +4,14 @@ Filament Third-Party Notices
 This distribution includes the following unmodified components under the
 Mozilla Public License, version 2.0 (MPL-2.0):
 
-  - hpke-rs 0.6.1
-    Source: https://crates.io/api/v1/crates/hpke-rs/0.6.1/download
+  - hpke-rs 0.7.0
+    Source: https://crates.io/api/v1/crates/hpke-rs/0.7.0/download
 
-  - hpke-rs-crypto 0.6.1
-    Source: https://crates.io/api/v1/crates/hpke-rs-crypto/0.6.1/download
+  - hpke-rs-crypto 0.7.0
+    Source: https://crates.io/api/v1/crates/hpke-rs-crypto/0.7.0/download
 
-  - hpke-rs-rust-crypto 0.6.1
-    Source: https://crates.io/api/v1/crates/hpke-rs-rust-crypto/0.6.1/download
+  - hpke-rs-rust-crypto 0.7.0
+    Source: https://crates.io/api/v1/crates/hpke-rs-rust-crypto/0.7.0/download
 
 The source archives above are the exact Source Code Form used to build this
 release. They are available under MPL-2.0. A copy of MPL-2.0 is available at:

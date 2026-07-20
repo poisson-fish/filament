@@ -2,9 +2,10 @@
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 ignore = [
-  # Tantivy currently pulls `instant` transitively via `measure_time`.
-  # No safe upgrade exists in RustSec at this time.
-  "RUSTSEC-2024-0384",
+  # Build-time-only transitive dependency of libcrux/hax. This is an
+  # unmaintained notice, not a vulnerability; no replacement is currently
+  # available in the fixed hpke-rs 0.7 provider chain.
+  "RUSTSEC-2026-0173",
 ]
 yanked = "deny"
 
@@ -24,9 +25,9 @@ confidence-threshold = 0.9
 exceptions = [
   # Approved weak-copyleft dependencies used by OpenMLS. Distribution must
   # include THIRD_PARTY_NOTICES.txt and make these exact sources available.
-  { allow = ["MPL-2.0"], crate = "hpke-rs:0.6.1" },
-  { allow = ["MPL-2.0"], crate = "hpke-rs-crypto:0.6.1" },
-  { allow = ["MPL-2.0"], crate = "hpke-rs-rust-crypto:0.6.1" },
+  { allow = ["MPL-2.0"], crate = "hpke-rs:0.7.0" },
+  { allow = ["MPL-2.0"], crate = "hpke-rs-crypto:0.7.0" },
+  { allow = ["MPL-2.0"], crate = "hpke-rs-rust-crypto:0.7.0" },
 ]
 
 [bans]
@@ -38,4 +39,4 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = ["https://github.com/openmls/openmls"]

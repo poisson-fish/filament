@@ -51,6 +51,11 @@ Completed and committed:
   configuration limits. The Postgres test runs when
   `FILAMENT_TEST_DATABASE_URL` is configured.
 
+The OpenMLS provider-chain vulnerability blocker is resolved by pinning the
+complete OpenMLS crate family to signed upstream fix commit `0e99bc88`. This
+selects `hpke-rs 0.7.0` and patched libcrux releases while the project waits for
+the next crates.io release; no vulnerability advisory is ignored.
+
 Still required before Phase 1 can be called complete:
 
 - Conversation-scoped peer surfacing of device-list changes follows the Phase
@@ -59,11 +64,6 @@ Still required before Phase 1 can be called complete:
   security/IPC layer rather than a runnable Tauri command host. The settings
   view and native rotation state machine are implemented and tested, but final
   runtime command registration awaits that host scaffold.
-- Maintainer resolution of the remaining OpenMLS provider-chain security
-  blocker: `hpke-rs 0.6.1` pins vulnerable libcrux components without a
-  compatible published fix. The approved MPL-2.0 exception is restricted to
-  exact `hpke-rs` versions and enforced with binary-distribution notices; no
-  advisory exception has been added.
 
 Phase 2 and later conversation, mailbox, attachment, media, guild-channel,
 hardening, and key-transparency work has not started.
@@ -238,9 +238,9 @@ Lock all design decisions into ratified documents and wire contracts. Produce th
 - [ ] `docs/THREAT_MODEL.md` E2EE section ratified
 - [ ] Wire contract types compile, parse with strict validation, and have unit tests
 - [ ] Gateway event manifest includes all new `mls_*` and `device_*` event types
-- [ ] OpenMLS spike demonstrates full 2-member lifecycle (create, add, message, remove, external-commit recovery)
+- [x] OpenMLS spike demonstrates full 2-member lifecycle (create, add, message, remove, external-commit recovery)
 - [ ] Insertable-streams spike documents per-webview availability
-- [ ] Supply-chain gate configured for OpenMLS dependencies
+- [x] Supply-chain gate configured for OpenMLS dependencies
 
 ### Stop-and-Ask Triggers
 

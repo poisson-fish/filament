@@ -17,10 +17,10 @@ The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9
 
 | Crate | Version | License | Purpose |
 |---|---|---|---|
-| `openmls` | 0.8.1 | MIT | Main MLS library — group state, KeyPackages, commits, messages |
-| `openmls_rust_crypto` | 0.5.1 | MIT | Default crypto provider (RustCrypto crates, no C deps) |
-| `openmls_basic_credential` | 0.5.0 | MIT | BasicCredential + SignatureKeyPair for credential types |
-| `openmls_traits` | 0.5.0 | MIT | Direct access to the approved provider traits used by device pairing |
+| `openmls` | 0.8.1 + pinned upstream fix | MIT | Main MLS library — group state, KeyPackages, commits, messages |
+| `openmls_rust_crypto` | 0.5.1 + pinned upstream fix | MIT | Default crypto provider (RustCrypto crates, no C deps) |
+| `openmls_basic_credential` | 0.5.0 + pinned upstream fix | MIT | BasicCredential + SignatureKeyPair for credential types |
+| `openmls_traits` | 0.5.0 + pinned upstream fix | MIT | Direct access to the approved provider traits used by device pairing |
 | `rusqlite` | 0.39.0 | MIT | Rust SQLCipher bindings for the device-local encrypted store |
 | `keyring` | 4.1.5 | MIT/Apache-2.0 | Cross-platform Keychain, Credential Manager, and Secret Service access |
 
@@ -45,27 +45,33 @@ The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9
 
 The general `cargo-deny.toml` allowlist remains limited to MIT, Apache-2.0,
 BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, and Zlib. MPL-2.0 is allowed only
-for the three exact `hpke-rs` 0.6.1 packages recorded in the exceptions table.
+for the three exact `hpke-rs` 0.7.0 packages recorded in the exceptions table.
 
-## Current Blocking Findings
+## Current Reviewed Findings
 
-The generated store and a fresh RustSec scan exposed an unresolved upstream
-security issue and a reviewed license obligation in the OpenMLS provider chain:
+The generated store and fresh RustSec scans identified upstream security and
+maintenance findings in the OpenMLS provider chain. The vulnerability path is
+resolved as follows:
 
 - `openmls_rust_crypto 0.5.1` depends on the MPL-2.0 `hpke-rs` family. The
   maintainer approved exact-version exceptions with the binary-distribution
   controls documented below; MPL-2.0 is not generally allowlisted.
-- `hpke-rs 0.6.1` pins vulnerable libcrux components. The current lockfile is
-  affected by RustSec advisories including high-severity findings in
-  `libcrux-sha3` and `libcrux-secrets`; the published OpenMLS provider does not
-  expose a compatible fixed dependency path. No advisory ignore was added.
+- Published `openmls 0.8.1` pins `hpke-rs 0.6.1` and vulnerable libcrux
+  components. Until the next OpenMLS release, the complete OpenMLS crate family
+  is patched to the exact, signed upstream dependency-fix revision
+  `0e99bc8814d136f0bc7bc9ce86dd288eb32273ed`. This selects `hpke-rs 0.7.0`,
+  `libcrux-sha3 0.0.10`, and `libcrux-secrets 0.0.6`; a fresh `cargo audit`
+  reports no vulnerabilities.
+- `proc-macro-error2 2.0.1` remains in the libcrux/hax build-time dependency
+  path and is unmaintained, but has no reported vulnerability and no available
+  replacement in this provider release. `cargo-deny` carries an exact
+  `RUSTSEC-2026-0173` exception; the warning remains visible in `cargo audit`.
 - The previous LiveKit access-token stack enabled the unused `rsa 0.9.10`
   implementation. Upgrading to `livekit-api 0.5.6` selected LiveKit's HMAC-only
   JWT provider and removed that dependency and advisory without an ignore.
 
-Resolving the OpenMLS security finding requires an upstream fixed release or a
-separately reviewed cryptography-provider change. The cargo-audit gate remains
-intentionally red; the scoped cargo-deny license gate passes.
+The Git patch is temporary. It must be removed in favor of crates.io packages
+when OpenMLS publishes a release containing the same dependency fix.
 
 During this review, patchable advisories were removed with bounded
 lockfile updates (`crossbeam-epoch`, `lz4_flex`, `memmap2`, `quinn-proto`,
@@ -76,13 +82,19 @@ and root-certificate data packages that did not satisfy the license policy.
 ## cargo-deny Configuration
 
 The existing `cargo-deny.toml` general allowlist covers OpenMLS itself (MIT).
-Three exact-version exceptions allow MPL-2.0 only for `hpke-rs 0.6.1`,
-`hpke-rs-crypto 0.6.1`, and `hpke-rs-rust-crypto 0.6.1`. Version changes fail
+Three exact-version exceptions allow MPL-2.0 only for `hpke-rs 0.7.0`,
+`hpke-rs-crypto 0.7.0`, and `hpke-rs-rust-crypto 0.7.0`. Version changes fail
 closed until the exception and distribution notice are reviewed together.
 
-Advisory exceptions: the existing `RUSTSEC-2024-0384` exception is unrelated to
-OpenMLS and no longer matches the current lockfile. No new advisory exception
-was added for OpenMLS, SQLCipher, keyring, or any other dependency.
+The only OpenMLS-chain advisory exception is `RUSTSEC-2026-0173`, scoped to an
+unmaintained build-time macro dependency with no published vulnerability or
+available replacement. No vulnerability advisory is ignored. The obsolete
+`RUSTSEC-2024-0384` exception was removed because no current package
+matches it.
+
+The source policy permits only the canonical OpenMLS Git repository. Every
+OpenMLS patch entry includes the same full commit revision, and `Cargo.lock`
+records its resolved commit. Unknown Git sources remain denied.
 
 ## cargo-vet Status
 

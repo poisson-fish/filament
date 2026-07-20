@@ -121,9 +121,9 @@ fn tauri_config_enforces_hardening_controls() {
     let notices = fs::read_to_string(root.join("THIRD_PARTY_NOTICES.txt"))
         .expect("third-party notices should exist");
     for component in [
-        "hpke-rs 0.6.1",
-        "hpke-rs-crypto 0.6.1",
-        "hpke-rs-rust-crypto 0.6.1",
+        "hpke-rs 0.7.0",
+        "hpke-rs-crypto 0.7.0",
+        "hpke-rs-rust-crypto 0.7.0",
     ] {
         assert!(
             notices.contains(component),
