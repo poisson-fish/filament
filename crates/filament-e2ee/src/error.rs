@@ -55,6 +55,32 @@ pub enum KeyStoreError {
     InvalidValue,
 }
 
+/// Errors from short-lived QR device pairing.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum PairingError {
+    /// The QR offer or encrypted transfer did not satisfy its wire invariants.
+    #[error("invalid pairing payload")]
+    InvalidPayload,
+    /// The pairing offer is expired or outside the permitted lifetime.
+    #[error("pairing offer expired")]
+    Expired,
+    /// The scanned device belongs to a different user.
+    #[error("pairing user mismatch")]
+    UserMismatch,
+    /// A device attempted to pair with itself.
+    #[error("pairing device mismatch")]
+    DeviceMismatch,
+    /// The returning transfer was not authenticated by the QR secret and sender device.
+    #[error("pairing authentication failed")]
+    AuthenticationFailed,
+    /// A vetted provider operation failed without exposing key material.
+    #[error("pairing crypto operation failed")]
+    CryptoError,
+    /// Strict pairing payload serialization or parsing failed.
+    #[error("pairing serialization failed")]
+    SerializationFailed,
+}
+
 /// Unified error type for the e2ee crate.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum E2eeError {
@@ -67,6 +93,9 @@ pub enum E2eeError {
     /// Local key store error.
     #[error(transparent)]
     KeyStore(#[from] KeyStoreError),
+    /// Device pairing error.
+    #[error(transparent)]
+    Pairing(#[from] PairingError),
     /// OpenMLS internal error (opaque — no key material leaked).
     #[error("openmls error")]
     OpenMlsError,

@@ -30,6 +30,11 @@ Completed and committed:
 - Irreversible device tombstoning with transactional unclaimed-KeyPackage
   deletion, resurrection rejection, active `device_list_update` and
   `keypackage_low` gateway events, and strict shared-client event decoding.
+- Single-use QR device pairing with five-minute/size caps, strict wire parsing,
+  existing-device Ed25519 authorization, QR-secret authentication, and
+  X25519/ChaCha20-Poly1305 HPKE root-key transfer through the approved OpenMLS
+  provider. The server integration test publishes a newly paired device and
+  verifies that it shares the pinned root identity.
 - Adversarial/integration coverage for forged certificates, root replacement,
   target user/device binding, concurrent claims, fallback exhaustion, device
   removal, live gateway notification delivery, request body limits, and
@@ -38,16 +43,15 @@ Completed and committed:
 
 Still required before Phase 1 can be called complete:
 
-- QR pairing and encrypted root-key transfer. Conversation-scoped peer
-  surfacing of device-list changes follows the Phase 2 conversation mapping;
-  Phase 1 now emits owner-scoped directory notifications.
+- Conversation-scoped peer surfacing of device-list changes follows the Phase
+  2 conversation mapping; Phase 1 emits owner-scoped directory notifications.
 - A production platform-keystore/encrypted-store implementation. The current
   crate provides the narrow `LocalKeyStore` boundary and test implementation;
   it does not claim SQLCipher or OS-keystore completion.
 - Desktop settings UI, narrow Tauri IPC integration, and the key-isolation
   audit. Adding privileged Tauri commands remains a maintainer-approval gate.
-- Rotation and pairing integration tests, plus an executed Postgres run in an
-  environment that supplies the test database.
+- Rotation integration tests, plus an executed Postgres run in an environment
+  that supplies the test database.
 - Maintainer ratification of ADR 0001 and conversion of the cargo-vet inventory
   into an enforceable cargo-vet store. `cargo audit` and `cargo deny` are the
   active CI supply-chain gates today.

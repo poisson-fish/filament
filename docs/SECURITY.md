@@ -87,6 +87,7 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 ### Identity and Device Keys
 - Per-user Ed25519 root identity key; it leaves a device only via QR-mediated encrypted pairing or opt-in passphrase-encrypted backup (Argon2id at aggressive parameters).
 - Per-device MLS signature keypair + HPKE init keys. Device certificates `(user_id, device_id, device signature pubkey)` are root-key-signed; MLS leaf credentials embed the certificate and peers verify the chain to the pinned root key.
+- QR pairing offers are single-use, expire after at most five minutes, and contain a high-entropy authentication secret plus an ephemeral X25519 receiver key. The existing device signs the pairing context, and the root secret is HPKE-encrypted directly to the new device. Neither the QR offer nor the encrypted transfer is relayed through the Filament server.
 - Keys are non-exportable and live in platform keystores (Keychain / Android Keystore / TPM+DPAPI) where available. No private-key display or copy surface exists anywhere in the product.
 - The server never holds root keys and cannot mint devices; uncertified devices fail verification at every peer.
 - Device removal is first-class: MLS Remove of that device's leaves from all groups (cryptographic eviction) plus KeyPackage tombstoning.

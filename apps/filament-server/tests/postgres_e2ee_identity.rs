@@ -3,7 +3,9 @@ use std::{env, time::Duration};
 use axum::{body::Body, http::Request, http::StatusCode, response::Response};
 use filament_core::{DeviceId, UserId};
 use filament_e2ee::{
-    generate_key_package_batch, generate_last_resort_key_package, MlsDevice, RootIdentityKey,
+    create_pairing_transfer, generate_key_package_batch, generate_last_resort_key_package,
+    MlsDevice, PairingReceiver, PairingTransfer, RootIdentityKey, ScannedPairingOffer,
+    DEFAULT_PAIRING_TTL_SECS,
 };
 use filament_protocol::{
     ClaimKeyPackageRequest, ClaimKeyPackageResponse, DeviceListResponse, KeyPackageEntry,
@@ -257,6 +259,44 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
     assert_eq!(device_added["d"]["user_id"], user_id.to_string());
     assert_eq!(device_added["d"]["device_count"], 1);
 
+    let paired_device_id = DeviceId::new();
+    let pairing_receiver = PairingReceiver::begin(
+        user_id,
+        paired_device_id,
+        1_750_000_000,
+        DEFAULT_PAIRING_TTL_SECS,
+    )
+    .expect("pairing receiver should generate");
+    let qr_payload = pairing_receiver
+        .qr_payload()
+        .expect("QR payload should encode");
+    let scanned_offer = ScannedPairingOffer::from_qr_payload(&qr_payload, 1_750_000_000)
+        .expect("QR payload should scan");
+    let transfer = create_pairing_transfer(&device, &root, &scanned_offer, 1_750_000_000)
+        .expect("existing device should authorize pairing");
+    let transfer = PairingTransfer::from_payload(
+        &transfer
+            .to_payload()
+            .expect("pairing transfer should encode"),
+    )
+    .expect("pairing transfer should decode");
+    let paired_root = pairing_receiver
+        .complete(&transfer, 1_750_000_000)
+        .expect("new device should restore root identity");
+    let paired_device = MlsDevice::generate(user_id, paired_device_id, paired_root.root_identity())
+        .expect("paired device should generate");
+    let paired_published = publish_device(
+        &app,
+        &auth,
+        ip,
+        paired_device_id,
+        &publish_payload(&paired_device),
+    )
+    .await;
+    assert_eq!(paired_published.status(), StatusCode::OK);
+    let paired_device_added = next_gateway_event(&mut gateway, "device_list_update").await;
+    assert_eq!(paired_device_added["d"]["device_count"], 2);
+
     let list = Request::builder()
         .method("GET")
         .uri(format!("/e2ee/users/{user_id}/devices"))
@@ -272,9 +312,19 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
     assert_eq!(list.status(), StatusCode::OK);
     let listed: DeviceListResponse = parse_json(list).await;
     assert_eq!(listed.user_id, user_id.to_string());
-    assert_eq!(listed.devices.len(), 1);
-    assert_eq!(listed.devices[0].device_id, device_id.to_string());
-    assert_eq!(listed.devices[0].root_key_pub, root.public_key_bytes());
+    assert_eq!(listed.devices.len(), 2);
+    let first_device = listed
+        .devices
+        .iter()
+        .find(|listed_device| listed_device.device_id == device_id.to_string())
+        .expect("first device should be listed");
+    assert_eq!(first_device.root_key_pub, root.public_key_bytes());
+    let paired_device = listed
+        .devices
+        .iter()
+        .find(|listed_device| listed_device.device_id == paired_device_id.to_string())
+        .expect("paired device should be listed");
+    assert_eq!(paired_device.root_key_pub, root.public_key_bytes());
 
     let mut generated = generate_key_package_batch(&device, 2).expect("packages should generate");
     generated
@@ -421,7 +471,7 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
     assert_eq!(removed.deleted_keypackage_count, 1);
     let device_removed = next_gateway_event(&mut gateway, "device_list_update").await;
     assert_eq!(device_removed["d"]["user_id"], user_id.to_string());
-    assert_eq!(device_removed["d"]["device_count"], 0);
+    assert_eq!(device_removed["d"]["device_count"], 1);
 
     let list_after_remove = Request::builder()
         .method("GET")
@@ -437,7 +487,11 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
         .expect("list should execute");
     assert_eq!(listed_after_remove.status(), StatusCode::OK);
     let listed_after_remove: DeviceListResponse = parse_json(listed_after_remove).await;
-    assert!(listed_after_remove.devices.is_empty());
+    assert_eq!(listed_after_remove.devices.len(), 1);
+    assert_eq!(
+        listed_after_remove.devices[0].device_id,
+        paired_device_id.to_string()
+    );
 
     let resurrect = publish_device(&app, &auth, ip, device_id, &publish_payload(&device)).await;
     assert_eq!(resurrect.status(), StatusCode::FORBIDDEN);

@@ -19,12 +19,12 @@ The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9
 | `openmls` | 0.8.1 | MIT | Main MLS library — group state, KeyPackages, commits, messages |
 | `openmls_rust_crypto` | 0.5.1 | MIT | Default crypto provider (RustCrypto crates, no C deps) |
 | `openmls_basic_credential` | 0.5.0 | MIT | BasicCredential + SignatureKeyPair for credential types |
+| `openmls_traits` | 0.5.0 | MIT | Direct access to the approved provider traits used by device pairing |
 
 ### Key Transitive Dependencies
 
 | Crate | License | Purpose | Policy status |
 |---|---|---|---|
-| `openmls_traits` | MIT | Provider/storage traits used transitively by OpenMLS | Allowed license |
 | `openmls_memory_storage` | MIT | Storage used by `openmls_rust_crypto` | Allowed license |
 | `tls_codec` | MIT/Apache-2.0 | TLS serialization for MLS wire format | Allowed license |
 | `zeroize` | Apache-2.0/MIT | Memory zeroization for key material | Allowed license |

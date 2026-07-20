@@ -9,6 +9,7 @@
 //!   creation and verification.
 //! - **KeyPackages**: MLS KeyPackage pool management (single-use + last-resort).
 //! - **KeyStore**: Local encrypted store abstraction (trait + in-memory impl).
+//! - **Pairing**: short-lived QR offers and authenticated HPKE root-key transfer.
 //!
 //! # Security Properties
 //!
@@ -27,9 +28,10 @@ pub mod error;
 pub mod identity;
 pub mod keypackage;
 pub mod keystore;
+pub mod pairing;
 
 // Re-export the most commonly used types.
-pub use error::{E2eeError, IdentityError, KeyPackageError, KeyStoreError};
+pub use error::{E2eeError, IdentityError, KeyPackageError, KeyStoreError, PairingError};
 pub use identity::{safety_number, verify_device_certificate, RootIdentityKey};
 pub use keypackage::{
     generate_key_package_batch, generate_last_resort_key_package, key_package_hash,
@@ -38,4 +40,9 @@ pub use keypackage::{
 };
 pub use keystore::{
     load_root_identity, persist_root_identity, InMemoryKeyStore, LocalKeyStore, StoreKey,
+};
+pub use pairing::{
+    create_pairing_transfer, PairedRootIdentity, PairingReceiver, PairingTransfer,
+    ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS, MAX_PAIRING_OFFER_BYTES,
+    MAX_PAIRING_TRANSFER_BYTES, MAX_PAIRING_TTL_SECS,
 };

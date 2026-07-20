@@ -15,6 +15,7 @@
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
+use openmls_traits::signatures::Signer;
 use tls_codec::Serialize;
 use zeroize::Zeroize;
 
@@ -108,6 +109,15 @@ impl MlsDevice {
 
     pub(crate) fn credential_with_key(&self) -> CredentialWithKey {
         self.credential_with_key.clone()
+    }
+
+    pub(crate) fn sign_pairing_authorization(
+        &self,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, KeyPackageError> {
+        self.signer
+            .sign(payload)
+            .map_err(|_| KeyPackageError::CreationFailed)
     }
 }
 

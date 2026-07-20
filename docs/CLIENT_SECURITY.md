@@ -21,6 +21,24 @@ Configuration sources:
 - `apps/filament-client-desktop/security-policy.json`
 - `apps/filament-client-desktop/src-tauri/src/lib.rs`
 
+## E2EE Device Pairing Boundary
+
+- Pairing is implemented in the native Rust E2EE core. Root identity material
+  must never cross into JavaScript or a broad IPC surface.
+- A new device displays a single-use QR offer containing an ephemeral X25519
+  receiver key and a high-entropy pairing secret. The offer expires after at
+  most five minutes and is capped at 2 KiB.
+- The QR payload is sensitive physical-channel data. It must not be logged,
+  included in telemetry or crash reports, or relayed through the Filament
+  server.
+- An existing certified device signs the pairing context with its MLS Ed25519
+  device key. The root secret is encrypted with the approved OpenMLS provider's
+  X25519/HKDF-SHA-256/ChaCha20-Poly1305 HPKE suite, and the response is
+  authenticated under the QR secret to prevent sender substitution.
+- Returning transfer payloads are capped at 4 KiB, parsed with unknown-field
+  rejection, and accepted only once by the in-memory receiver state. Pairing
+  restores identity only; history synchronization is a separate protocol.
+
 ## Token Storage Strategy by OS
 
 Client auth tokens are stored only in OS-provided secure stores.
