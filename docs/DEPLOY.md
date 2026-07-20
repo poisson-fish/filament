@@ -51,6 +51,12 @@ Set these variables for `filament-server` (via `infra/.env`):
 - `FILAMENT_LIVEKIT_URL`: required signaling URL exposed to clients (`ws://` or `wss://`), and it must be reachable from end-user browsers
 - `FILAMENT_BIND_ADDR`: bind socket for server process (default `0.0.0.0:3000`)
 - `FILAMENT_MAX_CREATED_GUILDS_PER_USER`: max guilds an authenticated user may create (default `5`, must be >= `1`)
+- `FILAMENT_E2EE_DEVICE_PUBLISH_PER_MINUTE`: device-certificate publication
+  cap per user and client IP (default `10`, must be >= `1`)
+- `FILAMENT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE`: KeyPackage claim cap per
+  requester user, target device, and client IP (default `30`, must be >= `1`)
+- `FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE`: maximum unclaimed KeyPackages per
+  device (default `100`, valid range `1..=100`)
 - `FILAMENT_HCAPTCHA_SITE_KEY`: optional hCaptcha site key (must be set with secret)
 - `FILAMENT_HCAPTCHA_SECRET`: optional hCaptcha server secret (must be set with site key)
 - `FILAMENT_HCAPTCHA_VERIFY_URL`: optional captcha verify endpoint (default `https://api.hcaptcha.com/siteverify`; localhost `http://` allowed for tests)
