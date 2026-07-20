@@ -546,6 +546,24 @@ Lists certified devices for a user.
 - Response: `{ "user_id": "...", "devices": [{ "device_id": "...", "device_signature_pubkey": [32 bytes], "root_key_signature": [64 bytes], "root_key_pub": [32 bytes], "created_at_unix": 0 }] }`
 - Only active devices are returned; results are capped at 100.
 
+### `GET /e2ee/users/{user_id}/identity`
+Returns the current public root identity and its append-only continuity chain.
+- Response fields include `protocol_version`, `current_root_key_pub`,
+  `rotation_sequence`, and up to 100 ordered dual-signed rotation entries.
+- Clients verify every transition from their locally pinned root. Missing,
+  duplicated, reordered, disconnected, or invalidly signed entries fail closed.
+
+### `POST /e2ee/identity/rotate`
+Destructively rotates the authenticated user's root identity using protocol v1.
+- The transition is bound to the user and next sequence and must be signed by
+  both the previously pinned root and the replacement root.
+- The replacement root also certifies fresh signing material for one retained
+  active device. Every other device is irreversibly tombstoned and all
+  unclaimed KeyPackages for the user are destroyed in the same transaction.
+- A stale sequence, replay, malformed proof, unowned device, or unsupported
+  protocol version is rejected. The bounded public proof and mutation counts
+  are audit logged; no private key material reaches the server.
+
 ### `DELETE /e2ee/devices/{device_id}`
 Irreversibly removes a device owned by the authenticated user.
 - Response: `{ "device_id": "...", "tombstoned_at_unix": 0, "deleted_keypackage_count": 0 }`

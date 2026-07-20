@@ -1,6 +1,6 @@
 # ADR 0001: E2EE Protocol Stack — MLS via OpenMLS
 
-- **Status:** Proposed (pending maintainer ratification)
+- **Status:** Accepted
 - **Date:** 2026-07-12
 - **Deciders:** Filament maintainers
 - **Supersedes:** None
@@ -297,4 +297,6 @@ See `spikes/e2ee-mls-roundtrip/` for a full lifecycle demonstration.
 
 ## Ratification
 
-This ADR is **Proposed** pending maintainer ratification. Upon ratification, it becomes binding for all subsequent E2EE implementation phases. Changes to the decisions recorded here require a superseding ADR.
+This ADR was ratified by the maintainer on 2026-07-19 and is binding for all
+subsequent E2EE implementation phases. Changes to the decisions recorded here
+require a superseding ADR.

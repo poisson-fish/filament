@@ -3,8 +3,12 @@
 use std::{fmt, fs, path::Path};
 
 use filament_e2ee::{
-    KeyStoreError, LocalKeyStore, LocalStoreId, SqlCipherKeyStore, StoreKeyProvider,
-    STORE_ENCRYPTION_KEY_BYTES,
+    create_root_identity_rotation_proof, persist_root_identity, safety_number, KeyStoreError,
+    LocalKeyStore, LocalStoreId, MlsDevice, RootIdentityKey, SqlCipherKeyStore, StoreKey,
+    StoreKeyProvider, STORE_ENCRYPTION_KEY_BYTES,
+};
+use filament_protocol::{
+    RotateRootIdentityRequest, RotateRootIdentityResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use keyring::Entry;
 use rand::{rngs::OsRng, RngCore as _};
@@ -34,6 +38,12 @@ pub enum SecurityError {
     E2eeStoreUnavailable,
     #[error("encrypted local store root is invalid")]
     InvalidE2eeStoreRoot,
+    #[error("identity rotation confirmation is invalid")]
+    InvalidIdentityRotationConfirmation,
+    #[error("identity rotation response is invalid")]
+    InvalidIdentityRotationResponse,
+    #[error("identity rotation preparation failed")]
+    IdentityRotationUnavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,17 +135,21 @@ pub enum DesktopCommand {
     ReadSessionMetadata,
     InitializeE2eeStore,
     ReadE2eeStoreStatus,
+    ReadEncryptionSettings,
+    RotateRootIdentity,
 }
 
 impl DesktopCommand {
     #[must_use]
-    pub const fn all() -> [Self; 5] {
+    pub const fn all() -> [Self; 7] {
         [
             Self::StoreSession,
             Self::ClearSession,
             Self::ReadSessionMetadata,
             Self::InitializeE2eeStore,
             Self::ReadE2eeStoreStatus,
+            Self::ReadEncryptionSettings,
+            Self::RotateRootIdentity,
         ]
     }
 }
@@ -150,6 +164,216 @@ pub struct E2eeStoreStatus {
     pub backend: &'static str,
     /// Fixed key-custody identifier; never contains key bytes or an account ID.
     pub key_custody: &'static str,
+}
+
+/// Exact typed confirmation required by the destructive native command.
+pub const ROTATE_IDENTITY_CONFIRMATION: &str = "ROTATE MY IDENTITY";
+
+/// Strict webview request for the destructive native rotation action.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RotateIdentityCommandRequest {
+    pub confirmation: String,
+}
+
+impl RotateIdentityCommandRequest {
+    /// Validate the exact destructive confirmation without accepting aliases.
+    ///
+    /// # Errors
+    /// Returns [`SecurityError::InvalidIdentityRotationConfirmation`] unless
+    /// the bounded input exactly matches [`ROTATE_IDENTITY_CONFIRMATION`].
+    pub fn validate(&self) -> Result<(), SecurityError> {
+        if self.confirmation.len() > ROTATE_IDENTITY_CONFIRMATION.len()
+            || self.confirmation != ROTATE_IDENTITY_CONFIRMATION
+        {
+            return Err(SecurityError::InvalidIdentityRotationConfirmation);
+        }
+        Ok(())
+    }
+}
+
+/// Public device metadata safe to display in the packaged webview.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptionSettingsDevice {
+    device_id: String,
+    added_at_unix: i64,
+    is_current_device: bool,
+    verification: EncryptionDeviceVerification,
+}
+
+/// Closed verification state for the settings presentation model.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EncryptionDeviceVerification {
+    Verified,
+    Unverified,
+}
+
+impl EncryptionSettingsDevice {
+    /// Build bounded public device metadata from a validated domain ID.
+    ///
+    /// # Errors
+    /// Rejects negative or out-of-range timestamps received from an untrusted
+    /// server.
+    pub fn new(
+        device_id: filament_core::DeviceId,
+        added_at_unix: i64,
+        is_current_device: bool,
+        verification: EncryptionDeviceVerification,
+    ) -> Result<Self, SecurityError> {
+        if !(0..=253_402_300_799).contains(&added_at_unix) {
+            return Err(SecurityError::InvalidIdentityRotationResponse);
+        }
+        Ok(Self {
+            device_id: device_id.to_string(),
+            added_at_unix,
+            is_current_device,
+            verification,
+        })
+    }
+}
+
+/// Redacted encryption-settings presentation model.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptionSettingsSnapshot {
+    pub ready: bool,
+    pub safety_number: String,
+    pub rotation_sequence: u64,
+    pub devices: Vec<EncryptionSettingsDevice>,
+    pub backup_enrolled: bool,
+}
+
+impl EncryptionSettingsSnapshot {
+    /// Construct a public-only settings snapshot with bounded device metadata.
+    ///
+    /// # Errors
+    /// Returns [`SecurityError::InvalidIdentityRotationResponse`] when more
+    /// than 100 devices are supplied.
+    pub fn new(
+        root_public_key: &[u8; 32],
+        rotation_sequence: u64,
+        devices: Vec<EncryptionSettingsDevice>,
+        backup_enrolled: bool,
+    ) -> Result<Self, SecurityError> {
+        if devices.len() > 100 {
+            return Err(SecurityError::InvalidIdentityRotationResponse);
+        }
+        Ok(Self {
+            ready: true,
+            safety_number: safety_number(root_public_key),
+            rotation_sequence,
+            devices,
+            backup_enrolled,
+        })
+    }
+}
+
+/// Native-only pending root rotation. Replacement secrets never serialize or
+/// cross into the webview.
+pub struct PreparedRootIdentityRotation {
+    user_id: filament_core::UserId,
+    device_id: filament_core::DeviceId,
+    previous_root_key_pub: [u8; 32],
+    replacement_root: RootIdentityKey,
+    replacement_device: MlsDevice,
+    request: RotateRootIdentityRequest,
+}
+
+impl core::fmt::Debug for PreparedRootIdentityRotation {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("PreparedRootIdentityRotation(<native secret state>)")
+    }
+}
+
+impl PreparedRootIdentityRotation {
+    /// Prepare public wire material while retaining all replacement secrets in Rust.
+    ///
+    /// Authenticated IDs and the previous root must come from native session and
+    /// encrypted-store state, never from IPC fields.
+    ///
+    /// # Errors
+    /// Returns an opaque error if proof or device generation fails.
+    pub fn prepare(
+        confirmation: &RotateIdentityCommandRequest,
+        user_id: filament_core::UserId,
+        device_id: filament_core::DeviceId,
+        expected_rotation_sequence: u64,
+        previous_root: &RootIdentityKey,
+    ) -> Result<Self, SecurityError> {
+        confirmation.validate()?;
+        let replacement_root = RootIdentityKey::generate();
+        let next_sequence = expected_rotation_sequence
+            .checked_add(1)
+            .ok_or(SecurityError::IdentityRotationUnavailable)?;
+        let proof = create_root_identity_rotation_proof(
+            previous_root,
+            &replacement_root,
+            user_id,
+            next_sequence,
+        )
+        .map_err(|_| SecurityError::IdentityRotationUnavailable)?;
+        let replacement_device = MlsDevice::generate(user_id, device_id, &replacement_root)
+            .map_err(|_| SecurityError::IdentityRotationUnavailable)?;
+        let request = RotateRootIdentityRequest {
+            protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+            expected_rotation_sequence,
+            device_id: device_id.to_string(),
+            new_root_key_pub: proof.new_root_key_pub.to_vec(),
+            previous_root_signature: proof.previous_root_signature.to_vec(),
+            new_root_signature: proof.new_root_signature.to_vec(),
+            new_device_signature_pubkey: replacement_device
+                .certificate()
+                .device_signature_pubkey
+                .clone(),
+            new_device_root_signature: replacement_device.certificate().root_key_signature.clone(),
+        };
+        Ok(Self {
+            user_id,
+            device_id,
+            previous_root_key_pub: previous_root.public_key_bytes(),
+            replacement_root,
+            replacement_device,
+            request,
+        })
+    }
+
+    /// Public-only request that the native network boundary may submit.
+    #[must_use]
+    pub const fn wire_request(&self) -> &RotateRootIdentityRequest {
+        &self.request
+    }
+
+    /// Validate the authenticated server result, then atomically replace the
+    /// locally persisted root identity.
+    ///
+    /// # Errors
+    /// Rejects any response that differs from the prepared transition or any
+    /// encrypted-store persistence failure.
+    pub fn commit(
+        self,
+        response: &RotateRootIdentityResponse,
+        store: &dyn LocalKeyStore,
+    ) -> Result<MlsDevice, SecurityError> {
+        let expected_sequence = self
+            .request
+            .expected_rotation_sequence
+            .checked_add(1)
+            .ok_or(SecurityError::InvalidIdentityRotationResponse)?;
+        if response.protocol_version != ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION
+            || response.user_id != self.user_id.to_string()
+            || response.device_id != self.device_id.to_string()
+            || response.rotation_sequence != expected_sequence
+            || response.previous_root_key_pub != self.previous_root_key_pub
+            || response.new_root_key_pub != self.replacement_root.public_key_bytes()
+        {
+            return Err(SecurityError::InvalidIdentityRotationResponse);
+        }
+        persist_root_identity(store, StoreKey::root_identity(), &self.replacement_root)
+            .map_err(|_| SecurityError::E2eeStoreUnavailable)?;
+        Ok(self.replacement_device)
+    }
 }
 
 /// Native-only desktop encrypted store.
@@ -416,6 +640,8 @@ impl fmt::Display for DesktopCommand {
             Self::ReadSessionMetadata => "read_session_metadata",
             Self::InitializeE2eeStore => "initialize_e2ee_store",
             Self::ReadE2eeStoreStatus => "read_e2ee_store_status",
+            Self::ReadEncryptionSettings => "read_encryption_settings",
+            Self::RotateRootIdentity => "rotate_root_identity",
         };
         f.write_str(value)
     }
@@ -486,12 +712,14 @@ mod tests {
     #[test]
     fn desktop_commands_are_strictly_bounded() {
         let commands = DesktopCommand::all();
-        assert_eq!(commands.len(), 5);
+        assert_eq!(commands.len(), 7);
         assert_eq!(commands[0].to_string(), "store_session");
         assert_eq!(commands[1].to_string(), "clear_session");
         assert_eq!(commands[2].to_string(), "read_session_metadata");
         assert_eq!(commands[3].to_string(), "initialize_e2ee_store");
         assert_eq!(commands[4].to_string(), "read_e2ee_store_status");
+        assert_eq!(commands[5].to_string(), "read_encryption_settings");
+        assert_eq!(commands[6].to_string(), "rotate_root_identity");
     }
 
     #[test]
@@ -598,6 +826,93 @@ mod tests {
         assert_eq!(
             format!("{OsStoreKeyProvider:?}"),
             "OsStoreKeyProvider(<credential metadata redacted>)"
+        );
+    }
+
+    #[test]
+    fn encryption_settings_snapshot_contains_public_presentation_data_only() {
+        let root = RootIdentityKey::from_secret_bytes(&[0x61; 32]);
+        let snapshot = EncryptionSettingsSnapshot::new(
+            &root.public_key_bytes(),
+            2,
+            vec![EncryptionSettingsDevice::new(
+                DeviceId::try_from(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV")).unwrap(),
+                1_700_000_000,
+                true,
+                EncryptionDeviceVerification::Verified,
+            )
+            .unwrap()],
+            false,
+        )
+        .unwrap();
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        assert!(serialized.contains(&safety_number(&root.public_key_bytes())));
+        for forbidden in ["root_key", "signature", "secret", "private", "path"] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn destructive_rotation_requires_exact_typed_confirmation() {
+        for invalid in ["", "rotate my identity", "ROTATE MY IDENTITY ", "ROTATE"] {
+            assert_eq!(
+                RotateIdentityCommandRequest {
+                    confirmation: String::from(invalid),
+                }
+                .validate(),
+                Err(SecurityError::InvalidIdentityRotationConfirmation)
+            );
+        }
+        RotateIdentityCommandRequest {
+            confirmation: String::from(ROTATE_IDENTITY_CONFIRMATION),
+        }
+        .validate()
+        .unwrap();
+    }
+
+    #[test]
+    fn prepared_rotation_keeps_secrets_native_and_persists_only_after_exact_response() {
+        use filament_e2ee::{load_root_identity, InMemoryKeyStore};
+
+        let user_id = UserId::new();
+        let device_id = DeviceId::new();
+        let previous = RootIdentityKey::from_secret_bytes(&[0x71; 32]);
+        let confirmation = RotateIdentityCommandRequest {
+            confirmation: String::from(ROTATE_IDENTITY_CONFIRMATION),
+        };
+        let prepared =
+            PreparedRootIdentityRotation::prepare(&confirmation, user_id, device_id, 3, &previous)
+                .unwrap();
+        assert_eq!(
+            format!("{prepared:?}"),
+            "PreparedRootIdentityRotation(<native secret state>)"
+        );
+        let request = prepared.wire_request().clone();
+        let serialized = serde_json::to_string(&request).unwrap();
+        for forbidden in ["secret", "private", "seed", "path"] {
+            assert!(!serialized.contains(forbidden));
+        }
+        let response = RotateRootIdentityResponse {
+            protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+            user_id: user_id.to_string(),
+            device_id: device_id.to_string(),
+            rotation_sequence: 4,
+            previous_root_key_pub: previous.public_key_bytes().to_vec(),
+            new_root_key_pub: request.new_root_key_pub.clone(),
+            revoked_device_count: 0,
+            deleted_keypackage_count: 0,
+            rotated_at_unix: 1_700_000_000,
+        };
+        let store = InMemoryKeyStore::new();
+        let replacement_device = prepared.commit(&response, &store).unwrap();
+        let persisted = load_root_identity(&store, &StoreKey::root_identity()).unwrap();
+        assert_eq!(
+            persisted.public_key_bytes(),
+            request.new_root_key_pub.as_slice()
+        );
+        assert_eq!(
+            replacement_device.root_key_public(),
+            &persisted.public_key_bytes()
         );
     }
 }

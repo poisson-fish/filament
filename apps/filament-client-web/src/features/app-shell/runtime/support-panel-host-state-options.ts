@@ -24,7 +24,7 @@ export interface SupportPanelHostStateOptions {
   profileController: ReturnType<typeof createProfileController>;
   roleManagementActions: ReturnType<typeof createRoleManagementController>;
   sessionDiagnostics: ReturnType<typeof createSessionDiagnosticsActions>;
-  openSettingsCategory: (category: "profile" | "voice") => void;
+  openSettingsCategory: (category: "profile" | "voice" | "encryption") => void;
   setVoiceDevicePreference: (
     kind: "audioinput" | "audiooutput",
     value: string,

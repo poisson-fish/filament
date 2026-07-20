@@ -11,11 +11,15 @@ use axum::{
     Json,
 };
 use filament_core::{DeviceId, UserId};
-use filament_e2ee::verify_device_certificate;
+use filament_e2ee::{
+    verify_device_certificate, verify_root_identity_rotation_proof, RootIdentityRotationProof,
+};
 use filament_protocol::{
     ClaimKeyPackageRequest, ClaimKeyPackageResponse, DeviceInfo, DeviceListResponse,
     PublishDeviceCertificateRequest, PublishDeviceCertificateResponse, RemoveDeviceResponse,
-    UploadKeyPackagesRequest, UploadKeyPackagesResponse,
+    RootIdentityDirectoryResponse, RootIdentityRotationEntry, RotateRootIdentityRequest,
+    RotateRootIdentityResponse, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
+    MAX_ROOT_IDENTITY_ROTATIONS, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -36,6 +40,7 @@ use crate::server::{
 const KEYPACKAGE_LOW_WATER_MARK: u32 = 10;
 
 type CertificateFields = ([u8; 32], [u8; 64], [u8; 32]);
+type RotationFields = ([u8; 32], [u8; 64], [u8; 64], [u8; 32], [u8; 64]);
 
 fn validate_certificate_fields(
     payload: &PublishDeviceCertificateRequest,
@@ -56,6 +61,43 @@ fn validate_certificate_fields(
         .try_into()
         .map_err(|_| AuthFailure::InvalidRequest)?;
     Ok((device_key, root_signature, root_key))
+}
+
+fn validate_rotation_fields(
+    payload: &RotateRootIdentityRequest,
+) -> Result<RotationFields, AuthFailure> {
+    let new_root_key = payload
+        .new_root_key_pub
+        .as_slice()
+        .try_into()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let previous_root_signature = payload
+        .previous_root_signature
+        .as_slice()
+        .try_into()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let new_root_signature = payload
+        .new_root_signature
+        .as_slice()
+        .try_into()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let new_device_key = payload
+        .new_device_signature_pubkey
+        .as_slice()
+        .try_into()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let new_device_root_signature = payload
+        .new_device_root_signature
+        .as_slice()
+        .try_into()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    Ok((
+        new_root_key,
+        previous_root_signature,
+        new_root_signature,
+        new_device_key,
+        new_device_root_signature,
+    ))
 }
 
 fn keypackage_low_water_mark(max_pool_size: usize) -> Result<u32, AuthFailure> {
@@ -447,6 +489,272 @@ pub(crate) async fn list_user_devices(
     Ok(Json(DeviceListResponse {
         user_id: user_id.to_string(),
         devices,
+    }))
+}
+
+/// Return the current public root and its bounded, dual-signed continuity chain.
+pub(crate) async fn get_root_identity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> Result<Json<RootIdentityDirectoryResponse>, AuthFailure> {
+    let _auth = authenticate(&state, &headers).await?;
+    let user_id = UserId::try_from(user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let root = sqlx::query(
+        "SELECT root_key_pub, rotation_sequence FROM e2ee_root_identities WHERE user_id = $1",
+    )
+    .bind(user_id.to_string())
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    .ok_or(AuthFailure::NotFound)?;
+    let rotation_rows = sqlx::query(
+        "SELECT sequence, previous_root_key_pub, new_root_key_pub,
+                previous_root_signature, new_root_signature,
+                rotating_device_id, rotated_at_unix
+         FROM e2ee_root_identity_rotations
+         WHERE user_id = $1 ORDER BY sequence ASC LIMIT 100",
+    )
+    .bind(user_id.to_string())
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let rotations = rotation_rows
+        .into_iter()
+        .map(|row| {
+            let sequence: i64 = row.try_get("sequence").map_err(|_| AuthFailure::Internal)?;
+            Ok(RootIdentityRotationEntry {
+                sequence: u64::try_from(sequence).map_err(|_| AuthFailure::Internal)?,
+                previous_root_key_pub: row
+                    .try_get("previous_root_key_pub")
+                    .map_err(|_| AuthFailure::Internal)?,
+                new_root_key_pub: row
+                    .try_get("new_root_key_pub")
+                    .map_err(|_| AuthFailure::Internal)?,
+                previous_root_signature: row
+                    .try_get("previous_root_signature")
+                    .map_err(|_| AuthFailure::Internal)?,
+                new_root_signature: row
+                    .try_get("new_root_signature")
+                    .map_err(|_| AuthFailure::Internal)?,
+                rotating_device_id: row
+                    .try_get("rotating_device_id")
+                    .map_err(|_| AuthFailure::Internal)?,
+                rotated_at_unix: row
+                    .try_get("rotated_at_unix")
+                    .map_err(|_| AuthFailure::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, AuthFailure>>()?;
+    let rotation_sequence: i64 = root
+        .try_get("rotation_sequence")
+        .map_err(|_| AuthFailure::Internal)?;
+    Ok(Json(RootIdentityDirectoryResponse {
+        protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+        user_id: user_id.to_string(),
+        current_root_key_pub: root
+            .try_get("root_key_pub")
+            .map_err(|_| AuthFailure::Internal)?,
+        rotation_sequence: u64::try_from(rotation_sequence).map_err(|_| AuthFailure::Internal)?,
+        rotations,
+    }))
+}
+
+/// Destructively rotate the authenticated user's pinned root identity.
+// Keep the security-critical lock, proof verification, revocation, keypackage
+// deletion, continuity append, and audit write together for transaction review.
+#[allow(clippy::too_many_lines)]
+pub(crate) async fn rotate_root_identity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Json(payload): Json<RotateRootIdentityRequest>,
+) -> Result<Json<RotateRootIdentityResponse>, AuthFailure> {
+    if payload.protocol_version != ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    enforce_e2ee_device_publish_rate_limit(&state, client_ip, auth.user_id).await?;
+    let device_id =
+        DeviceId::try_from(payload.device_id.clone()).map_err(|_| AuthFailure::InvalidRequest)?;
+    let next_sequence = payload
+        .expected_rotation_sequence
+        .checked_add(1)
+        .filter(|value| {
+            usize::try_from(*value).is_ok_and(|value| value <= MAX_ROOT_IDENTITY_ROTATIONS)
+        })
+        .ok_or(AuthFailure::InvalidRequest)?;
+    let (
+        new_root_key,
+        previous_root_signature,
+        new_root_signature,
+        new_device_key,
+        new_device_root_signature,
+    ) = validate_rotation_fields(&payload)?;
+
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    let current = sqlx::query(
+        "SELECT root_key_pub, rotation_sequence FROM e2ee_root_identities
+         WHERE user_id = $1 FOR UPDATE",
+    )
+    .bind(auth.user_id.to_string())
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    .ok_or(AuthFailure::NotFound)?;
+    let previous_root_key: Vec<u8> = current
+        .try_get("root_key_pub")
+        .map_err(|_| AuthFailure::Internal)?;
+    let current_sequence: i64 = current
+        .try_get("rotation_sequence")
+        .map_err(|_| AuthFailure::Internal)?;
+    if u64::try_from(current_sequence).map_err(|_| AuthFailure::Internal)?
+        != payload.expected_rotation_sequence
+    {
+        return Err(AuthFailure::Forbidden);
+    }
+    let previous_root_key_array: [u8; 32] = previous_root_key
+        .as_slice()
+        .try_into()
+        .map_err(|_| AuthFailure::Internal)?;
+    let proof = RootIdentityRotationProof {
+        sequence: next_sequence,
+        previous_root_key_pub: previous_root_key_array,
+        new_root_key_pub: new_root_key,
+        previous_root_signature,
+        new_root_signature,
+    };
+    verify_root_identity_rotation_proof(auth.user_id, &proof)
+        .map_err(|_| AuthFailure::Forbidden)?;
+    verify_device_certificate(
+        &new_root_key,
+        auth.user_id,
+        device_id,
+        &new_device_key,
+        &new_device_root_signature,
+    )
+    .map_err(|_| AuthFailure::InvalidRequest)?;
+
+    let retained = sqlx::query(
+        "SELECT 1 FROM e2ee_device_certificates
+         WHERE user_id = $1 AND device_id = $2 AND tombstoned_at_unix IS NULL FOR UPDATE",
+    )
+    .bind(auth.user_id.to_string())
+    .bind(device_id.to_string())
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if retained.is_none() {
+        return Err(AuthFailure::NotFound);
+    }
+    let revoked = sqlx::query(
+        "UPDATE e2ee_device_certificates SET tombstoned_at_unix = $3
+         WHERE user_id = $1 AND device_id <> $2 AND tombstoned_at_unix IS NULL",
+    )
+    .bind(auth.user_id.to_string())
+    .bind(device_id.to_string())
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let revoked_device_count =
+        u32::try_from(revoked.rows_affected()).map_err(|_| AuthFailure::Internal)?;
+    sqlx::query(
+        "UPDATE e2ee_device_certificates SET
+            device_sig_pubkey = $3, root_key_sig = $4, root_key_pub = $5, created_at_unix = $6
+         WHERE user_id = $1 AND device_id = $2 AND tombstoned_at_unix IS NULL",
+    )
+    .bind(auth.user_id.to_string())
+    .bind(device_id.to_string())
+    .bind(new_device_key.as_slice())
+    .bind(new_device_root_signature.as_slice())
+    .bind(new_root_key.as_slice())
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let deleted = sqlx::query(
+        "DELETE FROM e2ee_keypackages kp USING e2ee_device_certificates dc
+         WHERE kp.device_id = dc.device_id AND dc.user_id = $1
+           AND kp.claimed_at_unix IS NULL",
+    )
+    .bind(auth.user_id.to_string())
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let deleted_keypackage_count =
+        u32::try_from(deleted.rows_affected()).map_err(|_| AuthFailure::Internal)?;
+    let next_sequence_i64 = i64::try_from(next_sequence).map_err(|_| AuthFailure::Internal)?;
+    sqlx::query(
+        "INSERT INTO e2ee_root_identity_rotations
+            (user_id, sequence, previous_root_key_pub, new_root_key_pub,
+             previous_root_signature, new_root_signature, rotating_device_id, rotated_at_unix)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(auth.user_id.to_string())
+    .bind(next_sequence_i64)
+    .bind(previous_root_key.as_slice())
+    .bind(new_root_key.as_slice())
+    .bind(previous_root_signature.as_slice())
+    .bind(new_root_signature.as_slice())
+    .bind(device_id.to_string())
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    sqlx::query(
+        "UPDATE e2ee_root_identities SET root_key_pub = $2, rotation_sequence = $3
+         WHERE user_id = $1",
+    )
+    .bind(auth.user_id.to_string())
+    .bind(new_root_key.as_slice())
+    .bind(next_sequence_i64)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    sqlx::query(
+        "INSERT INTO e2ee_audit_log
+            (action, user_id, device_id, metadata_json, created_at_unix)
+         VALUES ('identity_rotate', $1, $2, $3::jsonb, $4)",
+    )
+    .bind(auth.user_id.to_string())
+    .bind(device_id.to_string())
+    .bind(
+        json!({
+            "rotation_sequence": next_sequence,
+            "revoked_device_count": revoked_device_count,
+            "deleted_keypackage_count": deleted_keypackage_count,
+        })
+        .to_string(),
+    )
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    emit_device_list_update(&state, auth.user_id, 1, now).await;
+    Ok(Json(RotateRootIdentityResponse {
+        protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+        user_id: auth.user_id.to_string(),
+        device_id: device_id.to_string(),
+        rotation_sequence: next_sequence,
+        previous_root_key_pub: previous_root_key,
+        new_root_key_pub: new_root_key.to_vec(),
+        revoked_device_count,
+        deleted_keypackage_count,
+        rotated_at_unix: now,
     }))
 }
 

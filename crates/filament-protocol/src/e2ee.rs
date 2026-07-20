@@ -46,6 +46,12 @@ pub const MAX_KEYPACKAGE_POOL_SIZE: usize = 100;
 /// Maximum number of devices returned in a device list response.
 pub const MAX_DEVICE_LIST_SIZE: usize = 100;
 
+/// Root-identity rotation wire protocol version.
+pub const ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION: u16 = 1;
+
+/// Maximum destructive root rotations retained for one identity.
+pub const MAX_ROOT_IDENTITY_ROTATIONS: usize = 100;
+
 /// Ed25519 public-key size.
 pub const ED25519_PUBLIC_KEY_BYTES: usize = 32;
 
@@ -131,6 +137,22 @@ where
         return Err(de::Error::invalid_length(
             value.len(),
             &"no more than 100 devices",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_root_rotation_list<'de, D>(
+    deserializer: D,
+) -> Result<Vec<RootIdentityRotationEntry>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<RootIdentityRotationEntry>::deserialize(deserializer)?;
+    if value.len() > MAX_ROOT_IDENTITY_ROTATIONS {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"no more than 100 root identity rotations",
         ));
     }
     Ok(value)
@@ -271,6 +293,85 @@ pub struct DeviceInfo {
     /// Whether the device has been tombstoned (removed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tombstoned_at_unix: Option<i64>,
+}
+
+/// Request body for `POST /e2ee/identity/rotate`.
+///
+/// Both roots sign the same continuity transition. The replacement root also
+/// certifies fresh signing material for the sole device retained by the
+/// destructive rotation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RotateRootIdentityRequest {
+    /// Exact protocol version; currently [`ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION`].
+    pub protocol_version: u16,
+    /// Current sequence observed by the client. The signed transition uses
+    /// `expected_rotation_sequence + 1`.
+    pub expected_rotation_sequence: u64,
+    /// Existing active device retained and re-certified by the rotation.
+    pub device_id: String,
+    /// Replacement root public key.
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub new_root_key_pub: Vec<u8>,
+    /// Previous root's authorization signature over the transition.
+    #[serde(deserialize_with = "deserialize_ed25519_signature")]
+    pub previous_root_signature: Vec<u8>,
+    /// Replacement root's proof-of-possession signature over the transition.
+    #[serde(deserialize_with = "deserialize_ed25519_signature")]
+    pub new_root_signature: Vec<u8>,
+    /// Fresh device MLS signature public key.
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub new_device_signature_pubkey: Vec<u8>,
+    /// Replacement root's certificate signature for the retained device.
+    #[serde(deserialize_with = "deserialize_ed25519_signature")]
+    pub new_device_root_signature: Vec<u8>,
+}
+
+/// Response body for `POST /e2ee/identity/rotate`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RotateRootIdentityResponse {
+    pub protocol_version: u16,
+    pub user_id: String,
+    pub device_id: String,
+    pub rotation_sequence: u64,
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub previous_root_key_pub: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub new_root_key_pub: Vec<u8>,
+    pub revoked_device_count: u32,
+    pub deleted_keypackage_count: u32,
+    pub rotated_at_unix: i64,
+}
+
+/// One public, dual-signed root continuity transition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RootIdentityRotationEntry {
+    pub sequence: u64,
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub previous_root_key_pub: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub new_root_key_pub: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_ed25519_signature")]
+    pub previous_root_signature: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_ed25519_signature")]
+    pub new_root_signature: Vec<u8>,
+    pub rotating_device_id: String,
+    pub rotated_at_unix: i64,
+}
+
+/// Response body for `GET /e2ee/users/{user_id}/identity`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RootIdentityDirectoryResponse {
+    pub protocol_version: u16,
+    pub user_id: String,
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub current_root_key_pub: Vec<u8>,
+    pub rotation_sequence: u64,
+    #[serde(deserialize_with = "deserialize_root_rotation_list")]
+    pub rotations: Vec<RootIdentityRotationEntry>,
 }
 
 // ---------------------------------------------------------------------------
@@ -621,6 +722,49 @@ mod tests {
         assert!(parsed.tombstoned_at_unix.is_none());
     }
 
+    #[test]
+    fn root_rotation_contract_round_trips_and_rejects_unknown_fields() {
+        let request = RotateRootIdentityRequest {
+            protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+            expected_rotation_sequence: 0,
+            device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            new_root_key_pub: vec![0x11; ED25519_PUBLIC_KEY_BYTES],
+            previous_root_signature: vec![0x22; ED25519_SIGNATURE_BYTES],
+            new_root_signature: vec![0x33; ED25519_SIGNATURE_BYTES],
+            new_device_signature_pubkey: vec![0x44; ED25519_PUBLIC_KEY_BYTES],
+            new_device_root_signature: vec![0x55; ED25519_SIGNATURE_BYTES],
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            serde_json::from_str::<RotateRootIdentityRequest>(&json).unwrap(),
+            request
+        );
+        let invalid = json.trim_end_matches('}').to_string() + ",\"extra\":true}";
+        assert!(serde_json::from_str::<RotateRootIdentityRequest>(&invalid).is_err());
+    }
+
+    #[test]
+    fn root_identity_directory_caps_rotation_history() {
+        let entry = RootIdentityRotationEntry {
+            sequence: 1,
+            previous_root_key_pub: vec![0x11; ED25519_PUBLIC_KEY_BYTES],
+            new_root_key_pub: vec![0x22; ED25519_PUBLIC_KEY_BYTES],
+            previous_root_signature: vec![0x33; ED25519_SIGNATURE_BYTES],
+            new_root_signature: vec![0x44; ED25519_SIGNATURE_BYTES],
+            rotating_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            rotated_at_unix: 1_700_000_000,
+        };
+        let oversized = RootIdentityDirectoryResponse {
+            protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+            user_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+            current_root_key_pub: vec![0x22; ED25519_PUBLIC_KEY_BYTES],
+            rotation_sequence: u64::try_from(MAX_ROOT_IDENTITY_ROTATIONS + 1).unwrap(),
+            rotations: vec![entry; MAX_ROOT_IDENTITY_ROTATIONS + 1],
+        };
+        let json = serde_json::to_string(&oversized).unwrap();
+        assert!(serde_json::from_str::<RootIdentityDirectoryResponse>(&json).is_err());
+    }
+
     // -- KeyPackage DTOs --
 
     #[test]
@@ -933,6 +1077,7 @@ mod tests {
         const _: usize = MAX_GROUP_INFO_BYTES;
         const _: usize = MAX_KEYPACKAGE_POOL_SIZE;
         const _: usize = MAX_DEVICE_LIST_SIZE;
+        const _: usize = MAX_ROOT_IDENTITY_ROTATIONS;
         // Compile-time invariant: pool count must be smaller than per-blob cap.
         const _: () = const { assert!(MAX_KEYPACKAGE_POOL_SIZE < MAX_KEYPACKAGE_BYTES) };
     }

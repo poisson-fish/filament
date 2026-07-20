@@ -35,8 +35,8 @@ use super::{
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
         e2ee::{
-            claim_keypackage, list_user_devices, publish_device_certificate, remove_device,
-            upload_keypackages,
+            claim_keypackage, get_root_identity, list_user_devices, publish_device_certificate,
+            remove_device, rotate_root_identity, upload_keypackages,
         },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
@@ -186,6 +186,8 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("GET", "/e2ee/users/{user_id}/devices"),
     ("POST", "/e2ee/keypackages"),
     ("POST", "/e2ee/keypackages/claim"),
+    ("GET", "/e2ee/users/{user_id}/identity"),
+    ("POST", "/e2ee/identity/rotate"),
 ];
 
 #[derive(Clone)]
@@ -527,6 +529,8 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
             put(publish_device_certificate).delete(remove_device),
         )
         .route("/e2ee/users/{user_id}/devices", get(list_user_devices))
+        .route("/e2ee/users/{user_id}/identity", get(get_root_identity))
+        .route("/e2ee/identity/rotate", post(rotate_root_identity))
         .route("/e2ee/keypackages", post(upload_keypackages))
         .route("/e2ee/keypackages/claim", post(claim_keypackage));
 

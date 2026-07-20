@@ -40,6 +40,11 @@ Completed and committed:
   symlink/hard-link/path rejection, private Unix permissions, strict
   record/entry/database caps, and native-only initialization/readiness IPC
   contracts. The key-isolation audit is recorded and covered by negative tests.
+- Root-identity rotation protocol v1 with dual-signed continuity proofs,
+  strictly monotonic replay protection, a bounded public proof chain, atomic
+  device revocation and stale-KeyPackage destruction, and native-only pending
+  replacement secrets. The packaged settings panel exposes only a fingerprint,
+  public device metadata, backup status, and exact typed destructive action.
 - Adversarial/integration coverage for forged certificates, root replacement,
   target user/device binding, concurrent claims, fallback exhaustion, device
   removal, live gateway notification delivery, request body limits, and
@@ -50,17 +55,10 @@ Still required before Phase 1 can be called complete:
 
 - Conversation-scoped peer surfacing of device-list changes follows the Phase
   2 conversation mapping; Phase 1 emits owner-scoped directory notifications.
-- Desktop encryption settings UI. The approved native IPC surface now includes
-  only encrypted-store initialization and non-sensitive readiness status; UI
-  work must not broaden it or add any key-export path.
-- Destructive root-identity rotation remains unimplemented because it needs an
-  explicit recovery/continuity protocol and desktop confirmation flow. Device
-  signing-key rotation is now atomic: stale KeyPackages are invalidated and
-  the rotation is audit logged. Its full Postgres integration flow was
-  executed successfully against Postgres 16 on 2026-07-19.
-- Maintainer ratification of ADR 0001. The generated cargo-vet store now gates
-  dependency intake in CI, but its existing-version exemptions are not formal
-  source audits; Phase 7 still requires the OpenMLS and external reviews.
+- The repository's desktop target currently provides the hardened native
+  security/IPC layer rather than a runnable Tauri command host. The settings
+  view and native rotation state machine are implemented and tested, but final
+  runtime command registration awaits that host scaffold.
 - Maintainer resolution of the remaining OpenMLS provider-chain security
   blocker: `hpke-rs 0.6.1` pins vulnerable libcrux components without a
   compatible published fix. The approved MPL-2.0 exception is restricted to
@@ -236,7 +234,7 @@ Lock all design decisions into ratified documents and wire contracts. Produce th
 
 ### Exit Criteria
 
-- [ ] ADR approved by maintainer
+- [x] ADR approved by maintainer
 - [ ] `docs/THREAT_MODEL.md` E2EE section ratified
 - [ ] Wire contract types compile, parse with strict validation, and have unit tests
 - [ ] Gateway event manifest includes all new `mls_*` and `device_*` event types
@@ -330,11 +328,11 @@ Implement the full identity and device management layer: root identity keys, dev
 
 ### Exit Criteria
 
-- [ ] Deterministic integration tests pass for device publish, KeyPackage claim, rotation, and pairing
-- [ ] Ghost-device injection negative test passes (server-forged certificate rejected)
-- [ ] Key-isolation audit passes (IPC surface review + negative test confirms no key access from webview)
+- [x] Deterministic integration tests pass for device publish, KeyPackage claim, rotation, and pairing
+- [x] Ghost-device injection negative test passes (server-forged certificate rejected)
+- [x] Key-isolation audit passes (IPC surface review + negative test confirms no key access from webview)
 - [ ] All quality gates pass (fmt, clippy, test, audit, deny)
-- [ ] Rate limits and audit logging verified in integration tests
+- [x] Rate limits and audit logging verified in integration tests
 
 ### Stop-and-Ask Triggers
 
@@ -874,7 +872,7 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 
 | Migration | Phase | Tables |
 |-----------|-------|--------|
-| `v12_e2ee_identity` | 1 | `e2ee_device_certificates`, `e2ee_keypackages`, `e2ee_audit_log` |
+| `v12_e2ee_identity` + `v12_e2ee_root_rotation` | 1 | identity roots/rotations, device certificates, KeyPackages, public audit log |
 | `v13_e2ee_messages` | 2 | `e2ee_messages`, `e2ee_message_acks`, `e2ee_groups` |
 | `v14_e2ee_attachments` | 4 | `e2ee_attachment_blobs`, `e2ee_attachment_acks` |
 | `v15_e2ee_guild_channels` | 6 | `e2ee_channel_membership`, `e2ee_channel_reconciliation` |

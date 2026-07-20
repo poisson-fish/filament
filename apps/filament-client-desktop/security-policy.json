@@ -13,7 +13,9 @@
       "clear_session",
       "read_session_metadata",
       "initialize_e2ee_store",
-      "read_e2ee_store_status"
+      "read_e2ee_store_status",
+      "read_encryption_settings",
+      "rotate_root_identity"
     ]
   },
   "updates": {

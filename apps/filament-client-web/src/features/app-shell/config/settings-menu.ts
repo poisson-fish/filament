@@ -19,6 +19,11 @@ export const SETTINGS_CATEGORIES: SettingsCategoryItem[] = [
     label: "Profile",
     summary: "Username, about, and avatar.",
   },
+  {
+    id: "encryption",
+    label: "Encryption",
+    summary: "Safety number, devices, backup, and identity rotation.",
+  },
 ];
 
 export const VOICE_SETTINGS_SUBMENU: VoiceSettingsSubmenuItem[] = [

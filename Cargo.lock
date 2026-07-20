@@ -1098,6 +1098,7 @@ version = "0.1.0"
 dependencies = [
  "filament-core",
  "filament-e2ee",
+ "filament-protocol",
  "keyring",
  "rand 0.8.7",
  "serde",

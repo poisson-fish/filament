@@ -3,14 +3,16 @@ use std::{env, time::Duration};
 use axum::{body::Body, http::Request, http::StatusCode, response::Response};
 use filament_core::{DeviceId, UserId};
 use filament_e2ee::{
-    create_pairing_transfer, generate_key_package_batch, generate_last_resort_key_package,
-    MlsDevice, PairingReceiver, PairingTransfer, RootIdentityKey, ScannedPairingOffer,
-    DEFAULT_PAIRING_TTL_SECS,
+    create_pairing_transfer, create_root_identity_rotation_proof, generate_key_package_batch,
+    generate_last_resort_key_package, verify_root_identity_rotation_proof, MlsDevice,
+    PairingReceiver, PairingTransfer, RootIdentityKey, RootIdentityRotationProof,
+    ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS,
 };
 use filament_protocol::{
     ClaimKeyPackageRequest, ClaimKeyPackageResponse, DeviceListResponse, KeyPackageEntry,
-    PublishDeviceCertificateRequest, RemoveDeviceResponse, UploadKeyPackagesRequest,
-    UploadKeyPackagesResponse,
+    PublishDeviceCertificateRequest, RemoveDeviceResponse, RootIdentityDirectoryResponse,
+    RotateRootIdentityRequest, RotateRootIdentityResponse, UploadKeyPackagesRequest,
+    UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use futures_util::StreamExt;
@@ -680,4 +682,217 @@ async fn postgres_e2ee_publish_and_claim_routes_enforce_specific_rate_limits() {
         .await
         .expect("limited claim should execute");
     assert_eq!(limited_claim.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn postgres_root_identity_rotation_is_dual_signed_atomic_and_replay_safe() {
+    let Some(database_url) = postgres_url() else {
+        eprintln!("skipping postgres-backed E2EE test: FILAMENT_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let audit_pool = sqlx::PgPool::connect(&database_url)
+        .await
+        .expect("audit verification pool should connect");
+    let app = test_app(database_url).await;
+    let ip = "203.0.113.93";
+    let (auth, user_id) = register_and_login(&app, ip).await;
+    let previous_root = RootIdentityKey::from_secret_bytes(&[0x31; 32]);
+    let retained_device_id = DeviceId::new();
+    let revoked_device_id = DeviceId::new();
+    let retained_device = MlsDevice::generate(user_id, retained_device_id, &previous_root)
+        .expect("retained device should generate");
+    let revoked_device = MlsDevice::generate(user_id, revoked_device_id, &previous_root)
+        .expect("revoked device should generate");
+    assert_eq!(
+        publish_device(
+            &app,
+            &auth,
+            ip,
+            retained_device_id,
+            &publish_payload(&retained_device),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        publish_device(
+            &app,
+            &auth,
+            ip,
+            revoked_device_id,
+            &publish_payload(&revoked_device),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    for (device_id, device) in [
+        (retained_device_id, &retained_device),
+        (revoked_device_id, &revoked_device),
+    ] {
+        let package = generate_key_package_batch(device, 1).expect("package should generate");
+        let upload = UploadKeyPackagesRequest {
+            device_id: device_id.to_string(),
+            key_packages: package
+                .into_iter()
+                .map(|package| KeyPackageEntry {
+                    key_package_blob: package.blob,
+                    is_last_resort: false,
+                })
+                .collect(),
+        };
+        assert_eq!(
+            send_json(
+                &app,
+                "POST",
+                "/e2ee/keypackages",
+                Some(&auth.access_token),
+                ip,
+                &upload,
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+    }
+
+    let replacement_root = RootIdentityKey::from_secret_bytes(&[0x52; 32]);
+    let replacement_device = MlsDevice::generate(user_id, retained_device_id, &replacement_root)
+        .expect("replacement device should generate");
+    let proof = create_root_identity_rotation_proof(&previous_root, &replacement_root, user_id, 1)
+        .expect("rotation proof should generate");
+    let rotation_request = RotateRootIdentityRequest {
+        protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+        expected_rotation_sequence: 0,
+        device_id: retained_device_id.to_string(),
+        new_root_key_pub: proof.new_root_key_pub.to_vec(),
+        previous_root_signature: proof.previous_root_signature.to_vec(),
+        new_root_signature: proof.new_root_signature.to_vec(),
+        new_device_signature_pubkey: replacement_device
+            .certificate()
+            .device_signature_pubkey
+            .clone(),
+        new_device_root_signature: replacement_device.certificate().root_key_signature.clone(),
+    };
+    let mut tampered_request = rotation_request.clone();
+    tampered_request.previous_root_signature[0] ^= 1;
+    let tampered = send_json(
+        &app,
+        "POST",
+        "/e2ee/identity/rotate",
+        Some(&auth.access_token),
+        ip,
+        &tampered_request,
+    )
+    .await;
+    assert_eq!(tampered.status(), StatusCode::FORBIDDEN);
+
+    let rotated = send_json(
+        &app,
+        "POST",
+        "/e2ee/identity/rotate",
+        Some(&auth.access_token),
+        ip,
+        &rotation_request,
+    )
+    .await;
+    assert_eq!(rotated.status(), StatusCode::OK);
+    let rotated: RotateRootIdentityResponse = parse_json(rotated).await;
+    assert_eq!(rotated.rotation_sequence, 1);
+    assert_eq!(rotated.revoked_device_count, 1);
+    assert_eq!(rotated.deleted_keypackage_count, 2);
+    assert_eq!(rotated.previous_root_key_pub, proof.previous_root_key_pub);
+    assert_eq!(rotated.new_root_key_pub, proof.new_root_key_pub);
+
+    let replay = send_json(
+        &app,
+        "POST",
+        "/e2ee/identity/rotate",
+        Some(&auth.access_token),
+        ip,
+        &rotation_request,
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::FORBIDDEN);
+
+    let identity = Request::builder()
+        .method("GET")
+        .uri(format!("/e2ee/users/{user_id}/identity"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", ip)
+        .body(Body::empty())
+        .expect("identity request should build");
+    let identity = app
+        .clone()
+        .oneshot(identity)
+        .await
+        .expect("identity request should execute");
+    assert_eq!(identity.status(), StatusCode::OK);
+    let identity: RootIdentityDirectoryResponse = parse_json(identity).await;
+    assert_eq!(identity.current_root_key_pub, proof.new_root_key_pub);
+    assert_eq!(identity.rotation_sequence, 1);
+    assert_eq!(identity.rotations.len(), 1);
+    let listed_proof = RootIdentityRotationProof {
+        sequence: identity.rotations[0].sequence,
+        previous_root_key_pub: identity.rotations[0]
+            .previous_root_key_pub
+            .as_slice()
+            .try_into()
+            .expect("previous root should have exact length"),
+        new_root_key_pub: identity.rotations[0]
+            .new_root_key_pub
+            .as_slice()
+            .try_into()
+            .expect("new root should have exact length"),
+        previous_root_signature: identity.rotations[0]
+            .previous_root_signature
+            .as_slice()
+            .try_into()
+            .expect("previous signature should have exact length"),
+        new_root_signature: identity.rotations[0]
+            .new_root_signature
+            .as_slice()
+            .try_into()
+            .expect("new signature should have exact length"),
+    };
+    verify_root_identity_rotation_proof(user_id, &listed_proof)
+        .expect("listed continuity proof should verify");
+
+    for device_id in [retained_device_id, revoked_device_id] {
+        let claim = app
+            .clone()
+            .oneshot(claim_request(&auth.access_token, ip, user_id, device_id))
+            .await
+            .expect("stale claim should execute");
+        assert_eq!(claim.status(), StatusCode::NOT_FOUND);
+    }
+    let revoked_republish = MlsDevice::generate(user_id, revoked_device_id, &replacement_root)
+        .expect("revoked replacement should generate");
+    assert_eq!(
+        publish_device(
+            &app,
+            &auth,
+            ip,
+            revoked_device_id,
+            &publish_payload(&revoked_republish),
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let audit_metadata: String = sqlx::query_scalar(
+        "SELECT metadata_json::TEXT FROM e2ee_audit_log
+         WHERE action = 'identity_rotate' AND user_id = $1 ORDER BY id DESC LIMIT 1",
+    )
+    .bind(user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("identity rotation should be audit logged");
+    let audit_metadata: serde_json::Value =
+        serde_json::from_str(&audit_metadata).expect("audit metadata should be JSON");
+    assert_eq!(audit_metadata["rotation_sequence"], 1);
+    assert_eq!(audit_metadata["revoked_device_count"], 1);
+    assert_eq!(audit_metadata["deleted_keypackage_count"], 2);
 }

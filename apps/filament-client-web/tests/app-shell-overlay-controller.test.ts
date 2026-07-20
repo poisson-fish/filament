@@ -59,7 +59,9 @@ describe("app shell overlay controller", () => {
     const [panel, setPanel] = createSignal<ReturnType<typeof sanitizeOverlayPanel>>(null);
     const [workspaceError, setWorkspaceError] = createSignal("workspace-error");
     const [channelError, setChannelError] = createSignal("channel-error");
-    const [settingsCategory, setSettingsCategory] = createSignal<"voice" | "profile">("profile");
+    const [settingsCategory, setSettingsCategory] = createSignal<
+      "voice" | "profile" | "encryption"
+    >("profile");
     const [settingsSubmenu, setSettingsSubmenu] = createSignal<"audio-devices">("audio-devices");
 
     openOverlayPanelWithDefaults("workspace-create", {

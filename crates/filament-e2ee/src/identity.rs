@@ -24,6 +24,34 @@ use crate::error::IdentityError;
 /// This domain-separation tag prevents cross-protocol signature confusion.
 const CERT_DOMAIN_TAG: &[u8] = b"filament:e2ee:device_cert:v1";
 
+/// Domain-separation tag for root-identity continuity proofs.
+const ROOT_ROTATION_DOMAIN_TAG: &[u8] = b"filament:e2ee:root_rotation:v1";
+
+/// Public, dual-signed proof that one root identity replaced another.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RootIdentityRotationProof {
+    /// Monotonically increasing per-user rotation sequence.
+    pub sequence: u64,
+    /// Previously pinned Ed25519 root public key.
+    pub previous_root_key_pub: [u8; 32],
+    /// Replacement Ed25519 root public key.
+    pub new_root_key_pub: [u8; 32],
+    /// Signature by the previous root over the complete transition.
+    pub previous_root_signature: [u8; 64],
+    /// Proof of possession by the replacement root over the same transition.
+    pub new_root_signature: [u8; 64],
+}
+
+impl core::fmt::Debug for RootIdentityRotationProof {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("RootIdentityRotationProof")
+            .field("sequence", &self.sequence)
+            .field("public_material", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
 /// An Ed25519 root identity signing key.
 ///
 /// The private key is zeroized on drop (ed25519-dalek's `SigningKey`
@@ -124,6 +152,128 @@ impl std::fmt::Debug for RootIdentityKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("RootIdentityKey(<redacted>)")
     }
+}
+
+/// Create a dual-signed continuity proof for a destructive root rotation.
+///
+/// The previous and replacement roots sign the same domain-separated payload,
+/// proving authorization by the pinned identity and possession of the new key.
+///
+/// # Errors
+/// Returns [`IdentityError::InvalidInput`] for sequence zero or an unchanged
+/// root key.
+pub fn create_root_identity_rotation_proof(
+    previous_root: &RootIdentityKey,
+    new_root: &RootIdentityKey,
+    user_id: UserId,
+    sequence: u64,
+) -> Result<RootIdentityRotationProof, IdentityError> {
+    if sequence == 0 {
+        return Err(IdentityError::InvalidInput(String::from(
+            "root rotation sequence must be nonzero",
+        )));
+    }
+    let previous_root_key_pub = previous_root.public_key_bytes();
+    let new_root_key_pub = new_root.public_key_bytes();
+    if previous_root_key_pub == new_root_key_pub {
+        return Err(IdentityError::InvalidInput(String::from(
+            "root rotation must change the key",
+        )));
+    }
+    let payload =
+        root_rotation_signing_payload(user_id, sequence, &previous_root_key_pub, &new_root_key_pub);
+    Ok(RootIdentityRotationProof {
+        sequence,
+        previous_root_key_pub,
+        new_root_key_pub,
+        previous_root_signature: previous_root.signing_key.sign(&payload).to_bytes(),
+        new_root_signature: new_root.signing_key.sign(&payload).to_bytes(),
+    })
+}
+
+/// Verify both signatures in a root-identity continuity proof.
+///
+/// # Errors
+/// Returns [`IdentityError::InvalidInput`] for structurally invalid proofs or
+/// [`IdentityError::SignatureVerificationFailed`] when either signature fails.
+pub fn verify_root_identity_rotation_proof(
+    user_id: UserId,
+    proof: &RootIdentityRotationProof,
+) -> Result<(), IdentityError> {
+    if proof.sequence == 0 || proof.previous_root_key_pub == proof.new_root_key_pub {
+        return Err(IdentityError::InvalidInput(String::from(
+            "invalid root rotation transition",
+        )));
+    }
+    let previous_verifier = VerifyingKey::from_bytes(&proof.previous_root_key_pub)
+        .map_err(|_| IdentityError::CryptoError)?;
+    let new_verifier = VerifyingKey::from_bytes(&proof.new_root_key_pub)
+        .map_err(|_| IdentityError::CryptoError)?;
+    let payload = root_rotation_signing_payload(
+        user_id,
+        proof.sequence,
+        &proof.previous_root_key_pub,
+        &proof.new_root_key_pub,
+    );
+    previous_verifier
+        .verify(
+            &payload,
+            &Signature::from_bytes(&proof.previous_root_signature),
+        )
+        .map_err(|_| IdentityError::SignatureVerificationFailed)?;
+    new_verifier
+        .verify(&payload, &Signature::from_bytes(&proof.new_root_signature))
+        .map_err(|_| IdentityError::SignatureVerificationFailed)
+}
+
+/// Verify an ordered continuity chain starting from a locally pinned root.
+///
+/// Returns the final verified root. Missing, duplicated, reordered, or
+/// disconnected transitions fail closed.
+///
+/// # Errors
+/// Returns [`IdentityError::InvalidInput`] for sequence or continuity gaps,
+/// or the signature error from [`verify_root_identity_rotation_proof`].
+pub fn verify_root_identity_rotation_chain(
+    user_id: UserId,
+    pinned_sequence: u64,
+    pinned_root_key_pub: [u8; 32],
+    proofs: &[RootIdentityRotationProof],
+) -> Result<[u8; 32], IdentityError> {
+    let mut sequence = pinned_sequence;
+    let mut current_root = pinned_root_key_pub;
+    for proof in proofs {
+        let expected_sequence = sequence.checked_add(1).ok_or_else(|| {
+            IdentityError::InvalidInput(String::from("root rotation sequence overflow"))
+        })?;
+        if proof.sequence != expected_sequence || proof.previous_root_key_pub != current_root {
+            return Err(IdentityError::InvalidInput(String::from(
+                "root rotation continuity gap",
+            )));
+        }
+        verify_root_identity_rotation_proof(user_id, proof)?;
+        sequence = proof.sequence;
+        current_root = proof.new_root_key_pub;
+    }
+    Ok(current_root)
+}
+
+fn root_rotation_signing_payload(
+    user_id: UserId,
+    sequence: u64,
+    previous_root_key_pub: &[u8; 32],
+    new_root_key_pub: &[u8; 32],
+) -> Vec<u8> {
+    let user_id = user_id.to_string();
+    let mut payload = Vec::with_capacity(
+        ROOT_ROTATION_DOMAIN_TAG.len() + user_id.len() + 8 + previous_root_key_pub.len() + 32,
+    );
+    payload.extend_from_slice(ROOT_ROTATION_DOMAIN_TAG);
+    payload.extend_from_slice(user_id.as_bytes());
+    payload.extend_from_slice(&sequence.to_be_bytes());
+    payload.extend_from_slice(previous_root_key_pub);
+    payload.extend_from_slice(new_root_key_pub);
+    payload
 }
 
 /// Build the domain-separated signing payload for a device certificate.
@@ -383,5 +533,74 @@ mod tests {
         // (and certainly not the private key)
         assert!(!debug_str.contains(&pub_hex));
         assert!(debug_str.contains("redacted"));
+    }
+
+    #[test]
+    fn root_rotation_proof_is_deterministic_and_dual_signed() {
+        let (user_id, _) = fixture_ids();
+        let previous = RootIdentityKey::from_secret_bytes(&[0x11; 32]);
+        let replacement = RootIdentityKey::from_secret_bytes(&[0x22; 32]);
+        let first =
+            create_root_identity_rotation_proof(&previous, &replacement, user_id, 1).unwrap();
+        let second =
+            create_root_identity_rotation_proof(&previous, &replacement, user_id, 1).unwrap();
+        assert_eq!(first, second);
+        verify_root_identity_rotation_proof(user_id, &first).unwrap();
+    }
+
+    #[test]
+    fn root_rotation_proof_rejects_tampering_replay_shape_and_wrong_user() {
+        let (user_id, _) = fixture_ids();
+        let other_user = UserId::try_from(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAX")).unwrap();
+        let previous = RootIdentityKey::from_secret_bytes(&[0x33; 32]);
+        let replacement = RootIdentityKey::from_secret_bytes(&[0x44; 32]);
+        let mut proof =
+            create_root_identity_rotation_proof(&previous, &replacement, user_id, 7).unwrap();
+        assert_eq!(
+            verify_root_identity_rotation_proof(other_user, &proof),
+            Err(IdentityError::SignatureVerificationFailed)
+        );
+        proof.new_root_signature[0] ^= 1;
+        assert_eq!(
+            verify_root_identity_rotation_proof(user_id, &proof),
+            Err(IdentityError::SignatureVerificationFailed)
+        );
+        assert!(create_root_identity_rotation_proof(&previous, &replacement, user_id, 0).is_err());
+        assert!(create_root_identity_rotation_proof(&previous, &previous, user_id, 1).is_err());
+    }
+
+    #[test]
+    fn root_rotation_chain_rejects_suppression_and_reordering() {
+        let (user_id, _) = fixture_ids();
+        let first = RootIdentityKey::from_secret_bytes(&[0x51; 32]);
+        let second = RootIdentityKey::from_secret_bytes(&[0x52; 32]);
+        let third = RootIdentityKey::from_secret_bytes(&[0x53; 32]);
+        let first_proof = create_root_identity_rotation_proof(&first, &second, user_id, 1).unwrap();
+        let second_proof =
+            create_root_identity_rotation_proof(&second, &third, user_id, 2).unwrap();
+        assert_eq!(
+            verify_root_identity_rotation_chain(
+                user_id,
+                0,
+                first.public_key_bytes(),
+                &[first_proof.clone(), second_proof.clone()],
+            )
+            .unwrap(),
+            third.public_key_bytes()
+        );
+        assert!(verify_root_identity_rotation_chain(
+            user_id,
+            0,
+            first.public_key_bytes(),
+            &[second_proof]
+        )
+        .is_err());
+        assert!(verify_root_identity_rotation_chain(
+            user_id,
+            0,
+            first.public_key_bytes(),
+            &[first_proof.clone(), first_proof]
+        )
+        .is_err());
     }
 }

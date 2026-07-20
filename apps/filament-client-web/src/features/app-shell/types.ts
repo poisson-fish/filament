@@ -45,7 +45,7 @@ export type WorkspaceSettingsSection =
   | "members"
   | "roles";
 
-export type SettingsCategory = "voice" | "profile";
+export type SettingsCategory = "voice" | "profile" | "encryption";
 
 export type VoiceSettingsSubmenu = "audio-devices";
 

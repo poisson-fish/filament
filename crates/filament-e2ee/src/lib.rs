@@ -34,7 +34,11 @@ pub mod sqlcipher_store;
 
 // Re-export the most commonly used types.
 pub use error::{E2eeError, IdentityError, KeyPackageError, KeyStoreError, PairingError};
-pub use identity::{safety_number, verify_device_certificate, RootIdentityKey};
+pub use identity::{
+    create_root_identity_rotation_proof, safety_number, verify_device_certificate,
+    verify_root_identity_rotation_chain, verify_root_identity_rotation_proof, RootIdentityKey,
+    RootIdentityRotationProof,
+};
 pub use keypackage::{
     generate_key_package_batch, generate_last_resort_key_package, key_package_hash,
     GeneratedKeyPackage, KeyPackagePool, KeyPackagePoolEntry, MlsDevice, DEFAULT_BATCH_SIZE,

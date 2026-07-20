@@ -1,7 +1,11 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
 import { PROFILE_ABOUT_MAX_CHARS, userIdFromInput, type ProfileRecord } from "../src/domain/chat";
-import { SettingsPanel, type SettingsPanelProps } from "../src/features/app-shell/components/panels/SettingsPanel";
+import {
+  ROTATE_IDENTITY_CONFIRMATION,
+  SettingsPanel,
+  type SettingsPanelProps,
+} from "../src/features/app-shell/components/panels/SettingsPanel";
 import { mediaDeviceIdFromInput } from "../src/lib/voice-device-settings";
 
 const PROFILE_USER_ID = userIdFromInput("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
@@ -204,5 +208,68 @@ describe("app shell settings panel", () => {
     const counter = screen.getByRole("status");
     expect(counter).toHaveTextContent(`0 characters remaining (${PROFILE_ABOUT_MAX_CHARS}/${PROFILE_ABOUT_MAX_CHARS})`);
     expect(counter).toHaveClass("text-danger");
+  });
+
+  it("renders redacted encryption state and gates destructive rotation on exact confirmation", async () => {
+    const onRotationConfirmationInput = vi.fn();
+    const onRotateIdentity = vi.fn();
+    const { unmount } = render(() => (
+      <SettingsPanel
+        {...settingsPanelPropsFixture({
+          settingsCategories: [
+            { id: "voice", label: "Voice", summary: "Input and output" },
+            { id: "profile", label: "Profile", summary: "Identity and avatar" },
+            { id: "encryption", label: "Encryption", summary: "Device-bound keys" },
+          ],
+          activeSettingsCategory: "encryption",
+          encryptionSettings: {
+            ready: true,
+            safetyNumber: "0123456789abcdef0123456789abcdef",
+            rotationSequence: 2,
+            devices: [{
+              deviceId: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+              addedAtUnix: 1_700_000_000,
+              isCurrentDevice: true,
+              verification: "verified",
+            }],
+            backupEnrolled: false,
+          },
+          rotationConfirmation: "ROTATE",
+          onRotationConfirmationInput,
+          onRotateIdentity,
+        })}
+      />
+    ));
+
+    expect(screen.getByText("0123456789abcdef0123456789abcdef")).toBeInTheDocument();
+    expect(screen.getByText("01ARZ3NDEKTSV4RRFFQ69G5FAW")).toBeInTheDocument();
+    const rotate = screen.getByRole("button", { name: "Rotate identity and revoke other devices" });
+    expect(rotate).toBeDisabled();
+    await fireEvent.input(screen.getByLabelText("Identity rotation confirmation"), {
+      target: { value: ROTATE_IDENTITY_CONFIRMATION },
+    });
+    expect(onRotationConfirmationInput).toHaveBeenCalledWith(ROTATE_IDENTITY_CONFIRMATION);
+    unmount();
+
+    render(() => (
+      <SettingsPanel
+        {...settingsPanelPropsFixture({
+          activeSettingsCategory: "encryption",
+          encryptionSettings: {
+            ready: true,
+            safetyNumber: "0123456789abcdef0123456789abcdef",
+            rotationSequence: 2,
+            devices: [],
+            backupEnrolled: false,
+          },
+          rotationConfirmation: ROTATE_IDENTITY_CONFIRMATION,
+          onRotateIdentity,
+        })}
+      />
+    ));
+    const enabledRotate = screen.getByRole("button", { name: "Rotate identity and revoke other devices" });
+    expect(enabledRotate).toBeEnabled();
+    await fireEvent.click(enabledRotate);
+    expect(onRotateIdentity).toHaveBeenCalledOnce();
   });
 });
