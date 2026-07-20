@@ -1,5 +1,6 @@
 pub(crate) mod v10_role_color_schema;
 pub(crate) mod v11_profile_banner_schema;
+pub(crate) mod v12_e2ee_identity;
 pub(crate) mod v1_hierarchical_permissions;
 pub(crate) mod v2_attachment_schema;
 pub(crate) mod v3_social_graph_schema;

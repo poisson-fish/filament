@@ -1,4 +1,5 @@
 pub(crate) mod auth;
+pub(crate) mod e2ee;
 pub(crate) mod friends;
 pub(crate) mod guilds;
 pub(crate) mod media;

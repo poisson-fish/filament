@@ -84,14 +84,93 @@ fn deserialize_key_package_blob<'de, D>(deserializer: D) -> Result<Vec<u8>, D::E
 where
     D: Deserializer<'de>,
 {
+    deserialize_bounded_blob::<D, MAX_KEYPACKAGE_BYTES>(deserializer)
+}
+
+fn deserialize_bounded_blob<'de, D, const N: usize>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
     let value = Vec::<u8>::deserialize(deserializer)?;
-    if value.is_empty() || value.len() > MAX_KEYPACKAGE_BYTES {
+    if value.is_empty() || value.len() > N {
         return Err(de::Error::invalid_length(
             value.len(),
-            &"a non-empty KeyPackage no larger than 4096 bytes",
+            &"a non-empty blob within the protocol size limit",
         ));
     }
     Ok(value)
+}
+
+fn deserialize_optional_bounded_blob<'de, D, const N: usize>(
+    deserializer: D,
+) -> Result<Option<Vec<u8>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Vec<u8>>::deserialize(deserializer)?;
+    value
+        .map(|blob| {
+            if blob.is_empty() || blob.len() > N {
+                Err(de::Error::invalid_length(
+                    blob.len(),
+                    &"a non-empty blob within the protocol size limit",
+                ))
+            } else {
+                Ok(blob)
+            }
+        })
+        .transpose()
+}
+
+fn deserialize_device_list<'de, D>(deserializer: D) -> Result<Vec<DeviceInfo>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<DeviceInfo>::deserialize(deserializer)?;
+    if value.len() > MAX_DEVICE_LIST_SIZE {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"no more than 100 devices",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_group_info_blob<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_blob::<D, MAX_GROUP_INFO_BYTES>(deserializer)
+}
+
+fn deserialize_commit_blob<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_blob::<D, MAX_COMMIT_BYTES>(deserializer)
+}
+
+fn deserialize_optional_welcome_blob<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_optional_bounded_blob::<D, MAX_WELCOME_BYTES>(deserializer)
+}
+
+fn deserialize_optional_group_info_blob<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<u8>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_optional_bounded_blob::<D, MAX_GROUP_INFO_BYTES>(deserializer)
+}
+
+fn deserialize_mls_message_blob<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_blob::<D, MAX_MLS_MESSAGE_BYTES>(deserializer)
 }
 
 fn deserialize_key_package_entries<'de, D>(
@@ -153,6 +232,7 @@ pub struct DeviceListResponse {
     /// The user whose devices are listed.
     pub user_id: String,
     /// The certified device list (public material only).
+    #[serde(deserialize_with = "deserialize_device_list")]
     pub devices: Vec<DeviceInfo>,
 }
 
@@ -185,7 +265,7 @@ pub struct DeviceInfo {
 /// Request body for `POST /e2ee/keypackages` — upload KeyPackage pool.
 ///
 /// KeyPackages are MLS's prekey analog. Each device uploads a pool of
-/// single-use KeyPackages plus one last-resort package. The server stores
+/// single-use KeyPackages plus one one-time last-resort fallback. The server stores
 /// them as opaque blobs and never parses interiors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -204,7 +284,8 @@ pub struct KeyPackageEntry {
     /// The serialized KeyPackage blob (opaque to the server).
     #[serde(deserialize_with = "deserialize_key_package_blob")]
     pub key_package_blob: Vec<u8>,
-    /// Whether this is a last-resort KeyPackage (reuse semantics).
+    /// Whether this is the one-time fallback reserved until ordinary packages
+    /// are exhausted.
     pub is_last_resort: bool,
 }
 
@@ -263,6 +344,7 @@ pub struct GroupInfoResponse {
     /// The ciphersuite ID (e.g. 0x0003).
     pub suite_id: u16,
     /// The serialized GroupInfo blob (opaque to the server).
+    #[serde(deserialize_with = "deserialize_group_info_blob")]
     pub group_info_blob: Vec<u8>,
 }
 
@@ -281,12 +363,21 @@ pub struct PostCommitRequest {
     /// The committing device ID (ULID string).
     pub committer_device_id: String,
     /// The serialized commit blob (opaque MLS Commit).
+    #[serde(deserialize_with = "deserialize_commit_blob")]
     pub commit_blob: Vec<u8>,
     /// Optional Welcome message for new members (opaque blob).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_welcome_blob"
+    )]
     pub welcome_blob: Option<Vec<u8>>,
     /// Optional updated GroupInfo blob for joins/recovery.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_group_info_blob"
+    )]
     pub group_info_blob: Option<Vec<u8>>,
 }
 
@@ -314,6 +405,7 @@ pub struct PostMessageRequest {
     /// The sending device ID (ULID string, routing hint only).
     pub sender_device_id: String,
     /// The serialized MLS PrivateMessage blob (opaque to the server).
+    #[serde(deserialize_with = "deserialize_mls_message_blob")]
     pub message_blob: Vec<u8>,
 }
 
@@ -630,6 +722,64 @@ mod tests {
         let json = r#"{"epoch":1,"suite_id":3,"sender_device_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","message_blob":[170],"extra":1}"#;
         let result: Result<PostMessageRequest, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn device_list_and_all_mls_blobs_enforce_parse_limits() {
+        let device = DeviceInfo {
+            device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            device_signature_pubkey: vec![0xAB; ED25519_PUBLIC_KEY_BYTES],
+            root_key_signature: vec![0xCD; ED25519_SIGNATURE_BYTES],
+            root_key_pub: vec![0xEF; ED25519_PUBLIC_KEY_BYTES],
+            created_at_unix: 1_700_000_000,
+            tombstoned_at_unix: None,
+        };
+        let oversized_list = DeviceListResponse {
+            user_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            devices: vec![device; MAX_DEVICE_LIST_SIZE + 1],
+        };
+        let json = serde_json::to_string(&oversized_list).unwrap();
+        assert!(serde_json::from_str::<DeviceListResponse>(&json).is_err());
+
+        let oversized_group_info = GroupInfoResponse {
+            group_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            epoch: 1,
+            suite_id: 3,
+            group_info_blob: vec![0x01; MAX_GROUP_INFO_BYTES + 1],
+        };
+        let json = serde_json::to_string(&oversized_group_info).unwrap();
+        assert!(serde_json::from_str::<GroupInfoResponse>(&json).is_err());
+
+        let oversized_commit = PostCommitRequest {
+            epoch: 2,
+            prior_epoch: 1,
+            committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            commit_blob: vec![0x01; MAX_COMMIT_BYTES + 1],
+            welcome_blob: None,
+            group_info_blob: None,
+        };
+        let json = serde_json::to_string(&oversized_commit).unwrap();
+        assert!(serde_json::from_str::<PostCommitRequest>(&json).is_err());
+
+        let oversized_welcome = PostCommitRequest {
+            epoch: 2,
+            prior_epoch: 1,
+            committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            commit_blob: vec![0x01],
+            welcome_blob: Some(vec![0x02; MAX_WELCOME_BYTES + 1]),
+            group_info_blob: None,
+        };
+        let json = serde_json::to_string(&oversized_welcome).unwrap();
+        assert!(serde_json::from_str::<PostCommitRequest>(&json).is_err());
+
+        let oversized_message = PostMessageRequest {
+            epoch: 1,
+            suite_id: 3,
+            sender_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            message_blob: vec![0x03; MAX_MLS_MESSAGE_BYTES + 1],
+        };
+        let json = serde_json::to_string(&oversized_message).unwrap();
+        assert!(serde_json::from_str::<PostMessageRequest>(&json).is_err());
     }
 
     // -- Gateway event data types --

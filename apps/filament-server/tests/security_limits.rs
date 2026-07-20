@@ -29,6 +29,30 @@ async fn rejects_body_over_limit() {
 }
 
 #[tokio::test]
+async fn e2ee_json_routes_keep_the_global_body_limit() {
+    let config = AppConfig {
+        max_body_bytes: 64,
+        request_timeout: Duration::from_secs(1),
+        rate_limit_requests_per_minute: 60,
+        ..AppConfig::default()
+    };
+    let app = build_router(&config).unwrap();
+    let request = Request::builder()
+        .method("POST")
+        .uri("/e2ee/keypackages")
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.17")
+        .body(Body::from(format!(
+            r#"{{"device_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key_packages":[{{"key_package_blob":[{}],"is_last_resort":false}}]}}"#,
+            "1,".repeat(64)
+        )))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
 async fn times_out_slow_requests() {
     let config = AppConfig {
         max_body_bytes: 1024,

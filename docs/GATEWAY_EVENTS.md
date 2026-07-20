@@ -450,6 +450,41 @@ All events use the versioned envelope:
 - Optional:
   - `actor_user_id`
 
+### E2EE / MLS Events
+
+These events relay MLS protocol messages through the Delivery Service. The server
+stores and forwards opaque blobs — it never parses MLS interiors or holds private keys.
+They are reserved wire contracts only: the current server does not emit them.
+
+#### `mls_message` (planned)
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `message_id`, `epoch`, `suite_id`,
+  `sender_device_id`, `created_at_unix`
+
+#### `mls_commit` (planned)
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `epoch`, `prior_epoch`,
+  `committer_device_id`, `created_at_unix`
+
+#### `mls_welcome` (planned)
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `epoch`, `suite_id`, `created_at_unix`
+
+#### `mls_proposal` (planned)
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `epoch`, `proposer_device_id`,
+  `created_at_unix`
+
+#### `device_list_update` (planned)
+- Scope: user
+- Payload: `user_id`, `device_count`, `created_at_unix`
+- Notifies connected devices that the device list for a user has changed.
+
+#### `keypackage_low` (planned)
+- Scope: user
+- Payload: `device_id`, `remaining_count`, `water_mark`, `created_at_unix`
+- Notifies a device that its KeyPackage pool is running low.
+
 ## Rollout Checklist
 - Deploy server event additions before client features that require them.
 - Keep existing envelope version at `v=1`; add only optional payload fields during minor rollouts.

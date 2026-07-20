@@ -524,6 +524,47 @@ The server tracks disconnect categories including:
 - `client_close`
 - `connection_closed`
 
+## E2EE Endpoints
+
+These endpoints provide the Delivery Service for MLS-based end-to-end encryption.
+The server stores and relays opaque blobs — it never parses MLS interiors or
+holds private keys. See `docs/adr/0001-e2ee-mls-openmls.md` for the protocol decision.
+
+### `PUT /e2ee/devices/{device_id}`
+Publishes a device certificate for the authenticated user.
+- Request body: `{ "device_signature_pubkey": [32 bytes], "root_key_signature": [64 bytes], "root_key_pub": [32 bytes] }`
+- Response: `{ "device_id": "...", "published": true }`
+- The path device ID and authenticated user ID are covered by the root-key
+  signature. The server verifies the signature and pins the first root public
+  key published for an account. Clients must independently verify certificates
+  against their pinned root key; the directory remains an untrusted hint.
+- Rate limit: 10 publishes/minute by both authenticated user and client IP by
+  default (configurable, fail-fast if zero).
+
+### `GET /e2ee/users/{user_id}/devices`
+Lists certified devices for a user.
+- Response: `{ "user_id": "...", "devices": [{ "device_id": "...", "device_signature_pubkey": [32 bytes], "root_key_signature": [64 bytes], "root_key_pub": [32 bytes], "created_at_unix": 0 }] }`
+- Only active devices are returned; results are capped at 100.
+
+### `POST /e2ee/keypackages`
+Uploads a batch of KeyPackages for a device.
+- Request body: `{ "device_id": "...", "key_packages": [{ "key_package_blob": [bytes], "is_last_resort": false }] }`
+- Response: `{ "stored_count": 10 }`
+- Requests contain 1–100 packages; each opaque blob is 1–4096 bytes. The
+  authenticated user must own the active device, the unclaimed pool is capped
+  at 100 by default, duplicates are ignored, and at most one unclaimed fallback
+  may exist.
+
+### `POST /e2ee/keypackages/claim`
+Claims a KeyPackage for a target user/device.
+- Request body: `{ "target_user_id": "...", "target_device_id": "..." | null }`
+- Response: `{ "device_id": "...", "key_package_blob": [bytes], "is_last_resort": false }`
+- Claims are atomic (`FOR UPDATE SKIP LOCKED`), audit-logged, and limited by
+  requester user, target device, and client IP (30/minute by default).
+- Ordinary packages are preferred. Every package is single-use, including the
+  ordered fallback. Reuse remains disabled until an MLS last-resort extension
+  is implemented and separately reviewed.
+
 ## Notes
 - Search index is derived/cache; source of truth is persisted message storage.
 - Voice token route name remains `/voice/token` but supports scoped publish/subscribe grants for voice/video/screen share.

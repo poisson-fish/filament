@@ -945,6 +945,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "filament-core",
+ "filament-e2ee",
  "filament-protocol",
  "futures-util",
  "http 1.4.0",

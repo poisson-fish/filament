@@ -9,7 +9,7 @@ use axum::{
     extract::ConnectInfo,
     extract::DefaultBodyLimit,
     http::{header::AUTHORIZATION, request::Request, HeaderName, StatusCode},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 
@@ -34,6 +34,9 @@ use super::{
     db::ensure_db_schema,
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
+        e2ee::{
+            claim_keypackage, list_user_devices, publish_device_certificate, upload_keypackages,
+        },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
             list_friend_requests, list_friends, remove_friend,
@@ -177,6 +180,10 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ),
     ("POST", "/users/me/profile/avatar"),
     ("POST", "/users/me/profile/banner"),
+    ("PUT", "/e2ee/devices/{device_id}"),
+    ("GET", "/e2ee/users/{user_id}/devices"),
+    ("POST", "/e2ee/keypackages"),
+    ("POST", "/e2ee/keypackages/claim"),
 ];
 
 #[derive(Clone)]
@@ -302,6 +309,24 @@ fn validate_router_config(config: &AppConfig) -> anyhow::Result<()> {
     if config.media_subscribe_token_cap_per_channel == 0 {
         return Err(anyhow!(
             "media subscribe token cap must be at least 1 active token"
+        ));
+    }
+    if config.e2ee_device_publish_per_minute == 0 {
+        return Err(anyhow!(
+            "E2EE device publish rate limit must be at least 1 request per minute"
+        ));
+    }
+    if config.e2ee_keypackage_claim_per_minute == 0 {
+        return Err(anyhow!(
+            "E2EE KeyPackage claim rate limit must be at least 1 request per minute"
+        ));
+    }
+    if config.e2ee_max_keypackage_pool_size == 0
+        || config.e2ee_max_keypackage_pool_size > filament_protocol::MAX_KEYPACKAGE_POOL_SIZE
+    {
+        return Err(anyhow!(
+            "E2EE KeyPackage pool size must be between 1 and {}",
+            filament_protocol::MAX_KEYPACKAGE_POOL_SIZE
         ));
     }
     if config.max_created_guilds_per_user == 0 {
@@ -494,6 +519,12 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route("/guilds/{guild_id}/members/{user_id}/ban", post(ban_member))
         .route("/gateway/ws", get(gateway_ws));
 
+    let routes = routes
+        .route("/e2ee/devices/{device_id}", put(publish_device_certificate))
+        .route("/e2ee/users/{user_id}/devices", get(list_user_devices))
+        .route("/e2ee/keypackages", post(upload_keypackages))
+        .route("/e2ee/keypackages/claim", post(claim_keypackage));
+
     let upload_route = Router::new()
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/attachments",
@@ -522,7 +553,7 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
 
 #[cfg(test)]
 mod tests {
-    use super::build_router_with_db_bootstrap;
+    use super::{build_router_with_db_bootstrap, validate_router_config};
     use crate::server::core::AppConfig;
 
     #[tokio::test]
@@ -537,5 +568,26 @@ mod tests {
             result.is_err(),
             "schema bootstrap failure should fail router startup"
         );
+    }
+
+    #[test]
+    fn e2ee_security_limits_must_be_nonzero_and_protocol_bounded() {
+        let zero_publish = AppConfig {
+            e2ee_device_publish_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_publish).is_err());
+
+        let zero_claim = AppConfig {
+            e2ee_keypackage_claim_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_claim).is_err());
+
+        let oversized_pool = AppConfig {
+            e2ee_max_keypackage_pool_size: filament_protocol::MAX_KEYPACKAGE_POOL_SIZE + 1,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&oversized_pool).is_err());
     }
 }

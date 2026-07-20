@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use filament_protocol::gateway_event_manifest;
+use filament_protocol::{gateway_event_manifest, GatewayEventLifecycle};
 
 use super::*;
 
@@ -176,6 +176,7 @@ fn gateway_event_manifest_is_aligned_across_server_and_docs() {
     let manifest_events: BTreeSet<String> = gateway_event_manifest()
         .events
         .iter()
+        .filter(|entry| entry.lifecycle == GatewayEventLifecycle::Active)
         .map(|entry| entry.event_type.clone())
         .collect();
     assert!(
@@ -256,6 +257,7 @@ fn emitted_domain_event_manifest_is_aligned_across_server_docs_and_client() {
     let manifest_events: BTreeSet<String> = gateway_event_manifest()
         .events
         .iter()
+        .filter(|entry| entry.lifecycle == GatewayEventLifecycle::Active)
         .map(|entry| entry.event_type.clone())
         .collect();
     let emitted_events: BTreeSet<String> = gateway_events::EMITTED_EVENT_TYPES

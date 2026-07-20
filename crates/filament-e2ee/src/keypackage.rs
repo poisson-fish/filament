@@ -1,13 +1,14 @@
 //! KeyPackage pool management for MLS prekey analog.
 //!
 //! Each device maintains a pool of single-use KeyPackages plus one
-//! last-resort KeyPackage (with reuse semantics). The server stores
+//! last-resort fallback. The server stores
 //! KeyPackages as opaque blobs and never parses interiors.
 //!
 //! # Pool Semantics
 //!
 //! - Single-use KeyPackages: claimed once, then removed from the pool.
-//! - Last-resort KeyPackage: can be claimed multiple times (reuse semantics).
+//! - Last-resort KeyPackage: reserved until ordinary packages are exhausted,
+//!   then claimed exactly once.
 //! - Pool size is capped at `MAX_POOL_SIZE` per device.
 //! - The server atomically decrements the pool on claim.
 
@@ -132,7 +133,7 @@ fn device_credential_bytes(certificate: &DeviceCertificate, root_key_pub: &[u8; 
 pub struct GeneratedKeyPackage {
     /// The serialized KeyPackage blob (TLS-encoded, opaque to the server).
     pub blob: Vec<u8>,
-    /// Whether this is a last-resort KeyPackage (reuse semantics).
+    /// Whether this is the one-time last-resort fallback.
     pub is_last_resort: bool,
     key_package: KeyPackage,
 }
@@ -218,8 +219,9 @@ pub fn generate_key_package_batch(
 
 /// Generate a single last-resort KeyPackage for a device.
 ///
-/// Last-resort KeyPackages have reuse semantics: the server may claim them
-/// multiple times when the pool of single-use packages is exhausted.
+/// The last-resort marker controls server ordering only. The generated
+/// package remains single-use because it does not carry the MLS last-resort
+/// extension; reusing its init key would violate the expected prekey model.
 ///
 /// # Errors
 /// Returns [`KeyPackageError::CreationFailed`] or [`KeyPackageError::SerializationFailed`].
@@ -324,8 +326,8 @@ impl KeyPackagePool {
 
     /// Claim a KeyPackage from the pool.
     ///
-    /// Single-use packages are claimed (marked as claimed) and removed.
-    /// Last-resort packages can be claimed multiple times (reuse semantics).
+    /// Ordinary packages are preferred, then the last-resort fallback is
+    /// claimed once. Claimed entries are removed from this in-memory pool.
     ///
     /// # Errors
     /// Returns [`KeyPackageError::PoolExhausted`] if no unclaimed packages remain.
@@ -341,10 +343,15 @@ impl KeyPackagePool {
             return Ok(entry);
         }
 
-        // Fall back to last-resort (reuse semantics — don't remove, just mark claimed).
-        if let Some(entry) = self.entries.iter_mut().find(|e| e.is_last_resort) {
+        // Fall back to the one-time last-resort package.
+        if let Some(idx) = self
+            .entries
+            .iter()
+            .position(|entry| entry.is_last_resort && entry.claimed_at_unix.is_none())
+        {
+            let mut entry = self.entries.remove(idx);
             entry.claimed_at_unix = Some(claimed_at_unix);
-            return Ok(entry.clone());
+            return Ok(entry);
         }
 
         Err(KeyPackageError::PoolExhausted)
@@ -523,9 +530,12 @@ mod tests {
         let claimed2 = pool.claim(1_700_000_002).unwrap();
         assert!(claimed2.is_last_resort);
 
-        // Last-resort can be claimed again (reuse semantics)
-        let claimed3 = pool.claim(1_700_000_003).unwrap();
-        assert!(claimed3.is_last_resort);
+        // The fallback is still single-use until an MLS last-resort extension
+        // is implemented and reviewed.
+        assert_eq!(
+            pool.claim(1_700_000_003).unwrap_err(),
+            KeyPackageError::PoolExhausted
+        );
     }
 
     #[test]

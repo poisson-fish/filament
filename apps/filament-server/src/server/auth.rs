@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     net::IpAddr,
     sync::atomic::Ordering,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -12,7 +13,7 @@ use argon2::{
 };
 use axum::http::{header::AUTHORIZATION, HeaderMap, HeaderValue};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use filament_core::{Permission, PermissionSet, UserId};
+use filament_core::{DeviceId, Permission, PermissionSet, UserId};
 use filament_protocol::{Envelope, EventType, PROTOCOL_VERSION};
 use pasetors::{
     claims::{Claims, ClaimsValidationRules},
@@ -303,6 +304,13 @@ async fn maybe_sweep_rate_limit_state(state: &AppState, now: i64) {
         });
     }
     {
+        let mut hits = state.e2ee_rate_limit_hits.write().await;
+        hits.retain(|_, route_hits| {
+            route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
+            !route_hits.is_empty()
+        });
+    }
+    {
         let mut leases = state.media_subscribe_leases.write().await;
         leases.retain(|_, channel_leases| {
             channel_leases.retain(|timestamp| *timestamp > now);
@@ -436,6 +444,88 @@ pub(crate) async fn enforce_auth_route_rate_limit(
         return Err(AuthFailure::RateLimited);
     }
     route_hits.push(now);
+    Ok(())
+}
+
+fn record_bounded_hit(
+    hits: &mut HashMap<String, Vec<i64>>,
+    key: String,
+    now: i64,
+    max_hits: usize,
+) -> bool {
+    let route_hits = hits.entry(key).or_default();
+    route_hits.retain(|timestamp| now.saturating_sub(*timestamp) < RATE_LIMIT_WINDOW_SECS);
+    if route_hits.len() >= max_hits {
+        return false;
+    }
+    route_hits.push(now);
+    true
+}
+
+pub(crate) async fn enforce_e2ee_device_publish_rate_limit(
+    state: &AppState,
+    client_ip: ClientIp,
+    user_id: UserId,
+) -> Result<(), AuthFailure> {
+    let ip = client_ip.normalized();
+    let now = now_unix();
+    maybe_sweep_rate_limit_state(state, now).await;
+    let max_hits =
+        usize::try_from(state.runtime.e2ee_device_publish_per_minute).unwrap_or(usize::MAX);
+    let mut hits = state.e2ee_rate_limit_hits.write().await;
+    for (dimension, key) in [("ip", ip.clone()), ("user", user_id.to_string())] {
+        if !record_bounded_hit(
+            &mut hits,
+            format!("device_publish:{dimension}:{key}"),
+            now,
+            max_hits,
+        ) {
+            tracing::warn!(
+                event = "e2ee.device_publish.rate_limit",
+                limiter = dimension,
+                user_id = %user_id,
+                client_ip = %ip,
+                client_ip_source = client_ip.source().as_str()
+            );
+            return Err(AuthFailure::RateLimited);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn enforce_e2ee_keypackage_claim_rate_limit(
+    state: &AppState,
+    client_ip: ClientIp,
+    user_id: UserId,
+    target_device_id: Option<DeviceId>,
+) -> Result<(), AuthFailure> {
+    let ip = client_ip.normalized();
+    let now = now_unix();
+    maybe_sweep_rate_limit_state(state, now).await;
+    let max_hits =
+        usize::try_from(state.runtime.e2ee_keypackage_claim_per_minute).unwrap_or(usize::MAX);
+    let mut dimensions = vec![("ip", ip.clone()), ("user", user_id.to_string())];
+    if let Some(device_id) = target_device_id {
+        dimensions.push(("device", device_id.to_string()));
+    }
+    let mut hits = state.e2ee_rate_limit_hits.write().await;
+    for (dimension, key) in dimensions {
+        if !record_bounded_hit(
+            &mut hits,
+            format!("keypackage_claim:{dimension}:{key}"),
+            now,
+            max_hits,
+        ) {
+            tracing::warn!(
+                event = "e2ee.keypackage_claim.rate_limit",
+                limiter = dimension,
+                user_id = %user_id,
+                client_ip = %ip,
+                client_ip_source = client_ip.source().as_str()
+            );
+            return Err(AuthFailure::RateLimited);
+        }
+    }
     Ok(())
 }
 
@@ -683,14 +773,15 @@ fn parse_header_ip(value: Option<&HeaderValue>, max_len: usize) -> Option<IpAddr
 #[cfg(test)]
 mod tests {
     use super::{
-        build_captcha_config, enforce_auth_route_rate_limit, outbound_event, resolve_client_ip,
-        ClientIp, ClientIpSource,
+        build_captcha_config, enforce_auth_route_rate_limit, outbound_event, record_bounded_hit,
+        resolve_client_ip, ClientIp, ClientIpSource,
     };
     use crate::server::core::{AppConfig, AppState};
     use crate::server::directory_contract::IpNetwork;
     use axum::http::HeaderMap;
     use serde::Serialize;
     use serde_json::Value;
+    use std::collections::HashMap;
 
     #[derive(Serialize)]
     struct OutboundEventTestPayload<'a> {
@@ -722,6 +813,25 @@ mod tests {
             error.to_string().contains("invalid outbound event type"),
             "error should explain invalid event type, got: {error}"
         );
+    }
+
+    #[test]
+    fn bounded_rate_hit_prunes_old_entries_and_rejects_at_limit() {
+        let mut hits = HashMap::from([(String::from("dimension:key"), vec![0, 100])]);
+
+        assert!(record_bounded_hit(
+            &mut hits,
+            String::from("dimension:key"),
+            150,
+            2
+        ));
+        assert!(!record_bounded_hit(
+            &mut hits,
+            String::from("dimension:key"),
+            151,
+            2
+        ));
+        assert_eq!(hits["dimension:key"], vec![100, 150]);
     }
 
     #[test]
