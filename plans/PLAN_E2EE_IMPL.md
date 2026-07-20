@@ -7,7 +7,7 @@
 
 ---
 
-## Implementation Status — 2026-07-19
+## Implementation Status — 2026-07-20
 
 The repository is currently at **Phase 1 foundation**, not at usable E2EE
 messaging. Plaintext conversations remain the only production message path.
@@ -65,8 +65,15 @@ Still required before Phase 1 can be called complete:
   view and native rotation state machine are implemented and tested, but final
   runtime command registration awaits that host scaffold.
 
-Phase 2 and later conversation, mailbox, attachment, media, guild-channel,
-hardening, and key-transparency work has not started.
+Phase 2 is now in progress. The client core implements the first bounded
+two-device MLS conversation lifecycle: claimed-KeyPackage validation against a
+pinned peer root, staged Add/Welcome creation, acceptance-gated commit merge,
+strict Welcome membership validation, PrivateMessage encryption/decryption,
+fail-closed routing-hint checks, and bounded per-sender generation reordering.
+Server-side conversation mapping, Delivery Service persistence/endpoints,
+mailbox acknowledgments/GC, multi-device fanout, commit rebase, and external
+commit recovery remain to be implemented. Phase 3 and later attachment, media,
+guild-channel, hardening, and key-transparency work has not started.
 
 ---
 

@@ -31,7 +31,7 @@ pub const DEFAULT_BATCH_SIZE: usize = 10;
 /// Default ciphersuite for KeyPackage generation.
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519;
 
-const DEVICE_CREDENTIAL_DOMAIN: &[u8] = b"filament:mls:device_credential:v1";
+pub(crate) const DEVICE_CREDENTIAL_DOMAIN: &[u8] = b"filament:mls:device_credential:v1";
 
 /// Long-lived MLS state for one certified Filament device.
 ///
@@ -45,6 +45,8 @@ pub struct MlsDevice {
     credential_with_key: CredentialWithKey,
     certificate: DeviceCertificate,
     root_key_pub: [u8; 32],
+    user_id: UserId,
+    device_id: DeviceId,
 }
 
 impl MlsDevice {
@@ -84,6 +86,8 @@ impl MlsDevice {
             credential_with_key,
             certificate,
             root_key_pub,
+            user_id,
+            device_id,
         })
     }
 
@@ -97,6 +101,18 @@ impl MlsDevice {
     #[must_use]
     pub const fn root_key_public(&self) -> &[u8; 32] {
         &self.root_key_pub
+    }
+
+    /// Account identity certified into this device's MLS credential.
+    #[must_use]
+    pub const fn user_id(&self) -> UserId {
+        self.user_id
+    }
+
+    /// Stable device identity certified into this device's MLS credential.
+    #[must_use]
+    pub const fn device_id(&self) -> DeviceId {
+        self.device_id
     }
 
     pub(crate) const fn provider(&self) -> &OpenMlsRustCrypto {

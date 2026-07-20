@@ -93,6 +93,56 @@ pub enum PairingError {
     SerializationFailed,
 }
 
+/// Errors from an MLS conversation lifecycle operation.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ConversationError {
+    /// A claimed `KeyPackage` was malformed, unverifiable, or for another suite.
+    #[error("invalid keypackage")]
+    InvalidKeyPackage,
+    /// An MLS credential did not chain to a locally pinned root identity.
+    #[error("untrusted MLS device credential")]
+    UntrustedCredential,
+    /// The group membership did not match the expected 1:1 participants.
+    #[error("unexpected MLS group membership")]
+    UnexpectedMembership,
+    /// The MLS group identifier did not match the locally pinned conversation.
+    #[error("MLS group identifier mismatch")]
+    GroupMismatch,
+    /// A server routing hint contradicted locally verified MLS state.
+    #[error("untrusted routing metadata mismatch")]
+    MetadataMismatch,
+    /// An encrypted record was presented to a conversation not pinned to MLS v1.
+    #[error("conversation crypto mode mismatch")]
+    CryptoModeMismatch,
+    /// An input exceeded a client-side hard limit.
+    #[error("MLS conversation limit exceeded")]
+    LimitExceeded,
+    /// The application payload was malformed or was not an application message.
+    #[error("invalid MLS application message")]
+    InvalidApplicationMessage,
+    /// The application generation was already delivered.
+    #[error("duplicate application generation")]
+    DuplicateGeneration,
+    /// The application generation is too far ahead to buffer safely.
+    #[error("application generation gap exceeds limit")]
+    GenerationGapExceeded,
+    /// The operation requires a pending local commit, but none exists.
+    #[error("no pending MLS commit")]
+    NoPendingCommit,
+    /// The operation requires an operational group with no pending commit.
+    #[error("MLS commit is pending delivery-service acceptance")]
+    PendingCommit,
+    /// The initial Add commit was not accepted, so the group is not sendable.
+    #[error("MLS conversation is not active")]
+    NotActive,
+    /// A vetted OpenMLS operation failed without exposing key material.
+    #[error("MLS conversation crypto operation failed")]
+    CryptoError,
+    /// Strict TLS or application-envelope serialization failed.
+    #[error("MLS conversation serialization failed")]
+    SerializationFailed,
+}
+
 /// Unified error type for the e2ee crate.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum E2eeError {
@@ -108,6 +158,9 @@ pub enum E2eeError {
     /// Device pairing error.
     #[error(transparent)]
     Pairing(#[from] PairingError),
+    /// MLS conversation lifecycle error.
+    #[error(transparent)]
+    Conversation(#[from] ConversationError),
     /// OpenMLS internal error (opaque — no key material leaked).
     #[error("openmls error")]
     OpenMlsError,
