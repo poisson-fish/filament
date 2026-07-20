@@ -35,6 +35,29 @@ use crate::server::{
 
 const KEYPACKAGE_LOW_WATER_MARK: u32 = 10;
 
+type CertificateFields = ([u8; 32], [u8; 64], [u8; 32]);
+
+fn validate_certificate_fields(
+    payload: &PublishDeviceCertificateRequest,
+) -> Result<CertificateFields, AuthFailure> {
+    let device_key = payload
+        .device_signature_pubkey
+        .as_slice()
+        .try_into()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let root_signature = payload
+        .root_key_signature
+        .as_slice()
+        .try_into()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let root_key = payload
+        .root_key_pub
+        .as_slice()
+        .try_into()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    Ok((device_key, root_signature, root_key))
+}
+
 fn keypackage_low_water_mark(max_pool_size: usize) -> Result<u32, AuthFailure> {
     let max_pool_size = u32::try_from(max_pool_size).map_err(|_| AuthFailure::Internal)?;
     Ok(KEYPACKAGE_LOW_WATER_MARK.min(max_pool_size))
@@ -87,6 +110,82 @@ async fn record_device_publish_audit(
     .await
     .map_err(|_| AuthFailure::Internal)?;
     Ok(())
+}
+
+async fn record_device_rotation_audit(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+    device_id: DeviceId,
+    deleted_keypackage_count: u32,
+    created_at_unix: i64,
+) -> Result<(), AuthFailure> {
+    sqlx::query(
+        "INSERT INTO e2ee_audit_log
+            (action, user_id, device_id, metadata_json, created_at_unix)
+         VALUES ('device_rotate', $1, $2, $3::jsonb, $4)",
+    )
+    .bind(user_id.to_string())
+    .bind(device_id.to_string())
+    .bind(json!({ "deleted_keypackage_count": deleted_keypackage_count }).to_string())
+    .bind(created_at_unix)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    Ok(())
+}
+
+async fn current_device_key_for_update(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+    device_id: DeviceId,
+) -> Result<Option<Vec<u8>>, AuthFailure> {
+    sqlx::query_scalar(
+        "SELECT device_sig_pubkey FROM e2ee_device_certificates
+         WHERE device_id = $1
+           AND user_id = $2
+           AND tombstoned_at_unix IS NULL
+         FOR UPDATE",
+    )
+    .bind(device_id.to_string())
+    .bind(user_id.to_string())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)
+}
+
+async fn invalidate_rotated_device_keypackages(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+    device_id: DeviceId,
+    previous_device_key: Option<&[u8]>,
+    device_key: &[u8; 32],
+    created_at_unix: i64,
+) -> Result<(), AuthFailure> {
+    if previous_device_key.is_none_or(|previous| previous == device_key) {
+        return Ok(());
+    }
+
+    // A KeyPackage credential is bound to the device signing key. Once that
+    // key rotates, every package created under the previous key must become
+    // unclaimable in the same transaction as the certificate swap.
+    let deleted = sqlx::query(
+        "DELETE FROM e2ee_keypackages
+         WHERE device_id = $1 AND claimed_at_unix IS NULL",
+    )
+    .bind(device_id.to_string())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let deleted_keypackage_count =
+        u32::try_from(deleted.rows_affected()).map_err(|_| AuthFailure::Internal)?;
+    record_device_rotation_audit(
+        transaction,
+        user_id,
+        device_id,
+        deleted_keypackage_count,
+        created_at_unix,
+    )
+    .await
 }
 
 async fn emit_device_list_update(
@@ -152,21 +251,7 @@ pub(crate) async fn publish_device_certificate(
     let auth = authenticate(&state, &headers).await?;
     enforce_e2ee_device_publish_rate_limit(&state, client_ip, auth.user_id).await?;
     let device_id = DeviceId::try_from(device_id).map_err(|_| AuthFailure::InvalidRequest)?;
-    let device_key: [u8; 32] = payload
-        .device_signature_pubkey
-        .as_slice()
-        .try_into()
-        .map_err(|_| AuthFailure::InvalidRequest)?;
-    let root_signature: [u8; 64] = payload
-        .root_key_signature
-        .as_slice()
-        .try_into()
-        .map_err(|_| AuthFailure::InvalidRequest)?;
-    let root_key: [u8; 32] = payload
-        .root_key_pub
-        .as_slice()
-        .try_into()
-        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let (device_key, root_signature, root_key) = validate_certificate_fields(&payload)?;
     verify_device_certificate(
         &root_key,
         auth.user_id,
@@ -201,6 +286,9 @@ pub(crate) async fn publish_device_certificate(
         return Err(AuthFailure::Forbidden);
     }
 
+    let previous_device_key =
+        current_device_key_for_update(&mut transaction, auth.user_id, device_id).await?;
+
     let inserted = sqlx::query(
         "INSERT INTO e2ee_device_certificates
             (device_id, user_id, device_sig_pubkey, root_key_sig, root_key_pub, created_at_unix)
@@ -226,6 +314,15 @@ pub(crate) async fn publish_device_certificate(
         return Err(AuthFailure::Forbidden);
     }
     record_device_publish_audit(&mut transaction, auth.user_id, device_id, now).await?;
+    invalidate_rotated_device_keypackages(
+        &mut transaction,
+        auth.user_id,
+        device_id,
+        previous_device_key.as_deref(),
+        &device_key,
+        now,
+    )
+    .await?;
     let active_device_count = active_device_count(&mut transaction, auth.user_id).await?;
     transaction
         .commit()

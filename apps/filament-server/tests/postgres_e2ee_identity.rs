@@ -32,13 +32,21 @@ fn postgres_url() -> Option<String> {
 }
 
 async fn test_app(database_url: String) -> axum::Router {
+    test_app_with_e2ee_limits(database_url, 200, 200).await
+}
+
+async fn test_app_with_e2ee_limits(
+    database_url: String,
+    device_publish_per_minute: u32,
+    keypackage_claim_per_minute: u32,
+) -> axum::Router {
     build_router_with_db_bootstrap(&AppConfig {
         max_body_bytes: 512 * 1024,
         request_timeout: Duration::from_secs(5),
         rate_limit_requests_per_minute: 500,
         auth_route_requests_per_minute: 200,
-        e2ee_device_publish_per_minute: 200,
-        e2ee_keypackage_claim_per_minute: 200,
+        e2ee_device_publish_per_minute: device_publish_per_minute,
+        e2ee_keypackage_claim_per_minute: keypackage_claim_per_minute,
         database_url: Some(database_url),
         ..AppConfig::default()
     })
@@ -216,6 +224,9 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
         eprintln!("skipping postgres-backed E2EE test: FILAMENT_TEST_DATABASE_URL is unset");
         return;
     };
+    let audit_pool = sqlx::PgPool::connect(&database_url)
+        .await
+        .expect("audit verification pool should connect");
     let app = test_app(database_url).await;
     let ip = "203.0.113.91";
     let (auth, user_id) = register_and_login(&app, ip).await;
@@ -453,6 +464,92 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
     .await;
     assert_eq!(replacement_upload.status(), StatusCode::OK);
 
+    let rotated_device =
+        MlsDevice::generate(user_id, device_id, &root).expect("rotated device should generate");
+    assert_ne!(
+        rotated_device.certificate().device_signature_pubkey,
+        device.certificate().device_signature_pubkey
+    );
+    let rotated = publish_device(
+        &app,
+        &auth,
+        ip,
+        device_id,
+        &publish_payload(&rotated_device),
+    )
+    .await;
+    assert_eq!(rotated.status(), StatusCode::OK);
+    let device_rotated = next_gateway_event(&mut gateway, "device_list_update").await;
+    assert_eq!(device_rotated["d"]["user_id"], user_id.to_string());
+    assert_eq!(device_rotated["d"]["device_count"], 2);
+
+    let stale_claim = app
+        .clone()
+        .oneshot(claim_request(&auth.access_token, ip, user_id, device_id))
+        .await
+        .expect("claim after rotation should execute");
+    assert_eq!(stale_claim.status(), StatusCode::NOT_FOUND);
+
+    let list_after_rotation = Request::builder()
+        .method("GET")
+        .uri(format!("/e2ee/users/{user_id}/devices"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", ip)
+        .body(Body::empty())
+        .expect("list request should build");
+    let list_after_rotation = app
+        .clone()
+        .oneshot(list_after_rotation)
+        .await
+        .expect("list after rotation should execute");
+    assert_eq!(list_after_rotation.status(), StatusCode::OK);
+    let list_after_rotation: DeviceListResponse = parse_json(list_after_rotation).await;
+    let rotated_listing = list_after_rotation
+        .devices
+        .iter()
+        .find(|listed_device| listed_device.device_id == device_id.to_string())
+        .expect("rotated device should remain listed");
+    assert_eq!(
+        rotated_listing.device_signature_pubkey,
+        rotated_device.certificate().device_signature_pubkey
+    );
+    let rotation_audit: String = sqlx::query_scalar(
+        "SELECT metadata_json::TEXT FROM e2ee_audit_log
+         WHERE action = 'device_rotate' AND user_id = $1 AND device_id = $2
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(user_id.to_string())
+    .bind(device_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("rotation should be audit logged");
+    let rotation_audit: serde_json::Value =
+        serde_json::from_str(&rotation_audit).expect("rotation audit metadata should be JSON");
+    assert_eq!(rotation_audit["deleted_keypackage_count"], 1);
+
+    let post_rotation_package =
+        generate_key_package_batch(&rotated_device, 1).expect("package should generate");
+    let post_rotation_upload = UploadKeyPackagesRequest {
+        device_id: device_id.to_string(),
+        key_packages: post_rotation_package
+            .into_iter()
+            .map(|package| KeyPackageEntry {
+                key_package_blob: package.blob,
+                is_last_resort: false,
+            })
+            .collect(),
+    };
+    let post_rotation_upload = send_json(
+        &app,
+        "POST",
+        "/e2ee/keypackages",
+        Some(&auth.access_token),
+        ip,
+        &post_rotation_upload,
+    )
+    .await;
+    assert_eq!(post_rotation_upload.status(), StatusCode::OK);
+
     let remove = Request::builder()
         .method("DELETE")
         .uri(format!("/e2ee/devices/{device_id}"))
@@ -503,9 +600,84 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
         .expect("claim against removed device should execute");
     assert_eq!(claim_removed.status(), StatusCode::NOT_FOUND);
 
+    let successful_claim_audits: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM e2ee_audit_log
+         WHERE action = 'keypackage_claim' AND user_id = $1",
+    )
+    .bind(user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("claim audit count should be readable");
+    assert_eq!(successful_claim_audits, 3);
+
     gateway
         .close(None)
         .await
         .expect("gateway should close cleanly");
     gateway_server.abort();
+}
+
+#[tokio::test]
+async fn postgres_e2ee_publish_and_claim_routes_enforce_specific_rate_limits() {
+    let Some(database_url) = postgres_url() else {
+        eprintln!("skipping postgres-backed E2EE test: FILAMENT_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let app = test_app_with_e2ee_limits(database_url, 1, 1).await;
+    let ip = "203.0.113.92";
+    let (auth, user_id) = register_and_login(&app, ip).await;
+    let root = RootIdentityKey::generate();
+    let device_id = DeviceId::new();
+    let device = MlsDevice::generate(user_id, device_id, &root).expect("device should generate");
+
+    let first_publish = publish_device(&app, &auth, ip, device_id, &publish_payload(&device)).await;
+    assert_eq!(first_publish.status(), StatusCode::OK);
+
+    let second_device_id = DeviceId::new();
+    let second_device = MlsDevice::generate(user_id, second_device_id, &root)
+        .expect("second device should generate");
+    let limited_publish = publish_device(
+        &app,
+        &auth,
+        ip,
+        second_device_id,
+        &publish_payload(&second_device),
+    )
+    .await;
+    assert_eq!(limited_publish.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let packages = generate_key_package_batch(&device, 2).expect("packages should generate");
+    let upload = UploadKeyPackagesRequest {
+        device_id: device_id.to_string(),
+        key_packages: packages
+            .into_iter()
+            .map(|package| KeyPackageEntry {
+                key_package_blob: package.blob,
+                is_last_resort: false,
+            })
+            .collect(),
+    };
+    let uploaded = send_json(
+        &app,
+        "POST",
+        "/e2ee/keypackages",
+        Some(&auth.access_token),
+        ip,
+        &upload,
+    )
+    .await;
+    assert_eq!(uploaded.status(), StatusCode::OK);
+
+    let first_claim = app
+        .clone()
+        .oneshot(claim_request(&auth.access_token, ip, user_id, device_id))
+        .await
+        .expect("first claim should execute");
+    assert_eq!(first_claim.status(), StatusCode::OK);
+    let limited_claim = app
+        .clone()
+        .oneshot(claim_request(&auth.access_token, ip, user_id, device_id))
+        .await
+        .expect("limited claim should execute");
+    assert_eq!(limited_claim.status(), StatusCode::TOO_MANY_REQUESTS);
 }

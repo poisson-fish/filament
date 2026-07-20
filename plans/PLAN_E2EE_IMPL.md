@@ -53,8 +53,11 @@ Still required before Phase 1 can be called complete:
 - Desktop encryption settings UI. The approved native IPC surface now includes
   only encrypted-store initialization and non-sensitive readiness status; UI
   work must not broaden it or add any key-export path.
-- Rotation integration tests, plus an executed Postgres run in an environment
-  that supplies the test database.
+- Destructive root-identity rotation remains unimplemented because it needs an
+  explicit recovery/continuity protocol and desktop confirmation flow. Device
+  signing-key rotation is now atomic: stale KeyPackages are invalidated and
+  the rotation is audit logged. Its full Postgres integration flow was
+  executed successfully against Postgres 16 on 2026-07-19.
 - Maintainer ratification of ADR 0001. The generated cargo-vet store now gates
   dependency intake in CI, but its existing-version exemptions are not formal
   source audits; Phase 7 still requires the OpenMLS and external reviews.
