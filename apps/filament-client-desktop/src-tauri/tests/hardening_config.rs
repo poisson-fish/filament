@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use filament_client_desktop_security::{
     csp_has_forbidden_tokens, validate_desktop_navigation, DesktopCommand, DESKTOP_CSP, WEB_CSP,
@@ -53,6 +53,7 @@ struct DesktopSecurity {
 struct DesktopBundle {
     #[serde(rename = "createUpdaterArtifacts")]
     create_updater_artifacts: bool,
+    resources: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +109,33 @@ fn tauri_config_enforces_hardening_controls() {
     assert_eq!(config.app.security.csp, DESKTOP_CSP);
     assert!(!csp_has_forbidden_tokens(&config.app.security.csp));
     assert!(config.bundle.create_updater_artifacts);
+    assert_eq!(
+        config
+            .bundle
+            .resources
+            .get("../../THIRD_PARTY_NOTICES.txt")
+            .map(String::as_str),
+        Some("THIRD_PARTY_NOTICES.txt")
+    );
+
+    let notices = fs::read_to_string(root.join("THIRD_PARTY_NOTICES.txt"))
+        .expect("third-party notices should exist");
+    for component in [
+        "hpke-rs 0.6.1",
+        "hpke-rs-crypto 0.6.1",
+        "hpke-rs-rust-crypto 0.6.1",
+    ] {
+        assert!(
+            notices.contains(component),
+            "third-party notices should identify {component}"
+        );
+    }
+    assert!(notices.contains("https://www.mozilla.org/MPL/2.0/"));
+
+    let server_dockerfile = fs::read_to_string(root.join("apps/filament-server/Dockerfile"))
+        .expect("server Dockerfile should exist");
+    assert!(server_dockerfile
+        .contains("COPY THIRD_PARTY_NOTICES.txt /usr/share/doc/filament/THIRD_PARTY_NOTICES.txt"));
 }
 
 #[test]

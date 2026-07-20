@@ -1,0 +1,26 @@
+Filament Third-Party Notices
+============================
+
+This distribution includes the following unmodified components under the
+Mozilla Public License, version 2.0 (MPL-2.0):
+
+  - hpke-rs 0.6.1
+    Source: https://crates.io/api/v1/crates/hpke-rs/0.6.1/download
+
+  - hpke-rs-crypto 0.6.1
+    Source: https://crates.io/api/v1/crates/hpke-rs-crypto/0.6.1/download
+
+  - hpke-rs-rust-crypto 0.6.1
+    Source: https://crates.io/api/v1/crates/hpke-rs-rust-crypto/0.6.1/download
+
+The source archives above are the exact Source Code Form used to build this
+release. They are available under MPL-2.0. A copy of MPL-2.0 is available at:
+
+  https://www.mozilla.org/MPL/2.0/
+
+Filament does not modify these components. If a future release modifies an
+MPL-covered source file, that release must make the modified Source Code Form
+available under MPL-2.0 and update this notice with its location.
+
+The MPL-2.0 terms apply only to the covered component files. Filament and
+other components retain their respective licenses.

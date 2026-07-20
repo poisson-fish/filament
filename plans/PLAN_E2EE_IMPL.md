@@ -55,9 +55,14 @@ Still required before Phase 1 can be called complete:
   work must not broaden it or add any key-export path.
 - Rotation integration tests, plus an executed Postgres run in an environment
   that supplies the test database.
-- Maintainer ratification of ADR 0001 and conversion of the cargo-vet inventory
-  into an enforceable cargo-vet store. `cargo audit` and `cargo deny` are the
-  active CI supply-chain gates today.
+- Maintainer ratification of ADR 0001. The generated cargo-vet store now gates
+  dependency intake in CI, but its existing-version exemptions are not formal
+  source audits; Phase 7 still requires the OpenMLS and external reviews.
+- Maintainer resolution of the remaining OpenMLS provider-chain security
+  blocker: `hpke-rs 0.6.1` pins vulnerable libcrux components without a
+  compatible published fix. The approved MPL-2.0 exception is restricted to
+  exact `hpke-rs` versions and enforced with binary-distribution notices; no
+  advisory exception has been added.
 
 Phase 2 and later conversation, mailbox, attachment, media, guild-channel,
 hardening, and key-transparency work has not started.
@@ -85,7 +90,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 cargo audit
-cargo deny check --config cargo-deny.toml
+cargo deny --config cargo-deny.toml check
 ```
 
 Phases that add OpenMLS or SQLCipher dependencies may need `cargo vet` configuration (see Phase 0 deliverable).
@@ -950,7 +955,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 cargo audit
-cargo deny check --config cargo-deny.toml
+cargo deny --config cargo-deny.toml check
 
 Commit with: feat(e2ee): phase <N> — <short description>
 ```

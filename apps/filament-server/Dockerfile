@@ -15,6 +15,7 @@ RUN useradd --system --home /nonexistent --shell /usr/sbin/nologin filament
 WORKDIR /app
 
 COPY --from=builder /build/target/release/filament-server /usr/local/bin/filament-server
+COPY THIRD_PARTY_NOTICES.txt /usr/share/doc/filament/THIRD_PARTY_NOTICES.txt
 
 RUN mkdir -p /var/lib/filament/attachments && chown -R filament:filament /var/lib/filament
 

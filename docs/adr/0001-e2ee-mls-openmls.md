@@ -62,10 +62,10 @@ Baseline: **MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519** (0x0003).
 
 ### OpenMLS Dependency
 
-- **Library:** [openmls](https://github.com/openmls/openmls) — MIT licensed, compatible with the project's `cargo-deny` license allowlist (MIT, Apache-2.0, BSD-2/3-Clause, ISC, Unicode-3.0, Zlib).
+- **Library:** [openmls](https://github.com/openmls/openmls) — MIT licensed. Its `hpke-rs` provider dependencies are MPL-2.0 and use exact-version `cargo-deny` exceptions with binary-distribution controls.
 - **Versions:** openmls 0.8.1, openmls_traits 0.5.0, openmls_rust_crypto 0.5.1, openmls_basic_credential 0.5.0, openmls_memory_storage 0.5.0.
 - **Crypto provider:** `openmls_rust_crypto` (default) uses RustCrypto crates — no C dependencies, no `unsafe` in the crypto path.
-- **Supply chain:** passes `cargo audit` and `cargo deny` (MIT license). See supply-chain section below.
+- **Supply chain:** the scoped license gate passes; the advisory gate remains blocked on the published HPKE/libcrux chain. See the supply-chain section below.
 
 ### Application Message Framing
 
@@ -222,14 +222,17 @@ The unified SolidJS frontend is retained across web, desktop, and (later) mobile
 ### Dependency Gate
 
 - `cargo audit` — RustSec advisory database.
-- `cargo deny` — license/bans/sources validation. OpenMLS is MIT — passes the license allowlist.
+- `cargo deny` — license/bans/sources validation, including exact-version MPL-2.0 exceptions for the `hpke-rs` family.
 - `cargo vet` (or equivalent documented review process) — configured for OpenMLS dependencies.
 - Pinned and hash-locked dependencies.
 - External audit status review.
 
 ### OpenMLS License Compatibility
 
-OpenMLS and its key dependencies are MIT licensed, which is on the `cargo-deny.toml` allowlist. Transitive dependencies (RustCrypto crates, `tls_codec`, `zeroize`, `rayon`, `serde`, etc.) are MIT, Apache-2.0, or BSD licensed — all compatible.
+OpenMLS is MIT licensed. Most transitive dependencies are MIT, Apache-2.0, or
+BSD licensed. The `hpke-rs`, `hpke-rs-crypto`, and `hpke-rs-rust-crypto`
+packages are MPL-2.0; they are approved only at reviewed exact versions and
+require the source-availability notice documented in `E2EE_SUPPLY_CHAIN.md`.
 
 ### Client Build Integrity
 

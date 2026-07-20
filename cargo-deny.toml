@@ -21,7 +21,13 @@ allow = [
   "Zlib",
 ]
 confidence-threshold = 0.9
-exceptions = []
+exceptions = [
+  # Approved weak-copyleft dependencies used by OpenMLS. Distribution must
+  # include THIRD_PARTY_NOTICES.txt and make these exact sources available.
+  { allow = ["MPL-2.0"], crate = "hpke-rs:0.6.1" },
+  { allow = ["MPL-2.0"], crate = "hpke-rs-crypto:0.6.1" },
+  { allow = ["MPL-2.0"], crate = "hpke-rs-rust-crypto:0.6.1" },
+]
 
 [bans]
 multiple-versions = "warn"
