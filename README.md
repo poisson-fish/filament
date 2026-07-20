@@ -11,7 +11,7 @@ It is built around a hardened Rust backend (`filament-server`), PostgreSQL as so
 - Security-first architecture with strict request/message limits and rate limiting
 - Realtime text over WebSocket gateway plus REST API for CRUD/search/admin flows
 - Voice/video/screen share via server-issued, scoped LiveKit tokens
-- End-to-end encryption roadmap built on MLS (RFC 9420) via OpenMLS for DMs, group DMs, guild encrypted channels, and calls ([`PLAN_E2EE.md`](PLAN_E2EE.md))
+- End-to-end encryption roadmap built on MLS (RFC 9420) via OpenMLS for DMs, group DMs, guild encrypted channels, and calls ([`PLAN_E2EE.md`](plans/PLAN_E2EE.md))
 - Self-hostable with Docker Compose baseline
 - Web and desktop clients (mobile planned)
 
@@ -21,7 +21,7 @@ Implementation is actively tracked in `PLAN.md`.
 
 - Completed through Phase 8 (server, auth, gateway, attachments, search, roles/moderation, LiveKit integration, desktop hardening, deployment/ops baseline)
 - Phase 9 (mobile) is planned
-- End-to-end encryption is in design lock (Phase 0 of [`PLAN_E2EE.md`](PLAN_E2EE.md)); implementation is staged from identity/devices through DM and group E2EE, encrypted attachments/history, E2EE calls, guild encrypted channels, hardening, and key transparency
+- End-to-end encryption Phase 0 engineering artifacts have landed and the Phase 1 identity/device/KeyPackage foundation is active; ADR ratification, pairing, packaged-client integration, and encrypted conversations remain pending. See the dated status in [`PLAN_E2EE_IMPL.md`](plans/PLAN_E2EE_IMPL.md).
 
 ## Architecture
 
@@ -82,7 +82,7 @@ Design principles:
 
 ## End-to-End Encryption (Roadmap)
 
-Filament is adopting a single MLS (RFC 9420) stack via OpenMLS for end-to-end encrypted DMs, group DMs, opt-in guild encrypted channels, and calls. The design is hardened against a hostile server operator with full database read and archive capability, and is tracked in [`PLAN_E2EE.md`](PLAN_E2EE.md).
+Filament is adopting a single MLS (RFC 9420) stack via OpenMLS for end-to-end encrypted DMs, group DMs, opt-in guild encrypted channels, and calls. The design is hardened against a hostile server operator with full database read and archive capability, and is tracked in [`PLAN_E2EE.md`](plans/PLAN_E2EE.md).
 
 Today, conversations are protected in transit (TLS) and readable by the server at rest — which is what enables server-side search and moderation. The E2EE roadmap changes that model for encrypted conversations:
 
@@ -108,7 +108,7 @@ Security contracts for E2EE are folded into [`docs/SECURITY.md`](docs/SECURITY.m
 | Database | PostgreSQL + `sqlx` |
 | Search | Tantivy (derived index) |
 | Media | LiveKit SFU |
-| E2EE (planned) | MLS (RFC 9420) via OpenMLS, SFrame media encryption, SQLCipher-encrypted local history |
+| E2EE (foundation active) | MLS (RFC 9420) via OpenMLS; SFrame media encryption and encrypted local history remain planned |
 | Clients | SolidJS web, Tauri + SolidJS desktop |
 | Infra | Docker Compose, Caddy |
 | Security/Quality | `cargo audit`, `cargo deny`, clippy, tests, SBOM |
@@ -125,7 +125,7 @@ Security contracts for E2EE are folded into [`docs/SECURITY.md`](docs/SECURITY.m
 ## Documentation
 
 - Plan and roadmap: [`PLAN.md`](PLAN.md)
-- E2EE design and rollout plan: [`PLAN_E2EE.md`](PLAN_E2EE.md)
+- E2EE design and rollout plan: [`PLAN_E2EE.md`](plans/PLAN_E2EE.md) and [`PLAN_E2EE_IMPL.md`](plans/PLAN_E2EE_IMPL.md)
 - API reference: [`docs/API.md`](docs/API.md)
 - Gateway protocol: [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 - Security model and controls: [`docs/SECURITY.md`](docs/SECURITY.md)

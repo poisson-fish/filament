@@ -8,12 +8,13 @@
 # and whether the review was a full audit or a fast-track approval.
 #
 # Until the project completes formal reviews of the OpenMLS dependency tree,
-# we use "unaudpected" entries with a documented justification, following
+# this file is only an inventory of intended "unaudited" entries with a
+# documented justification, following
 # the pattern established by the existing cargo-deny RUSTSEC-2024-0384
 # advisory exception.
 #
-# To run: `cargo vet --config cargo-vet.toml`
-# (requires `cargo install cargo-vet`)
+# This is not yet a generated cargo-vet store or an active CI gate. Do not
+# represent it as a successful cargo-vet audit.
 
 [[unaudited.openmls]]
 version = "0.8.1"

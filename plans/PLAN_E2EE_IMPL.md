@@ -7,6 +7,51 @@
 
 ---
 
+## Implementation Status — 2026-07-19
+
+The repository is currently at **Phase 1 foundation**, not at usable E2EE
+messaging. Plaintext conversations remain the only production message path.
+
+Completed and committed:
+
+- Phase 0 domain types, strict wire DTOs, planned gateway-event contracts,
+  threat-model/ADR material, webview capability notes, and a compiling OpenMLS
+  lifecycle spike (create, add, application message, update, remove, external
+  commit, exporter).
+- `filament-e2ee` with Ed25519 root identities, typed device certificates,
+  client-side ghost-device rejection, persistent-in-lifetime OpenMLS provider
+  state, real KeyPackage generation/Welcome consumption, root-secret keystore
+  abstraction, zeroization boundaries, and unit tests.
+- Postgres v12 public directory schema and authenticated REST handlers for
+  device publication/listing and KeyPackage upload/atomic claim.
+- Root-key pinning, server-side certificate verification, exact crypto-field
+  and opaque-blob bounds, per-IP/user/device rate limits, pool caps,
+  transactionally consistent public audit logging, and single-use claims.
+- Adversarial/integration coverage for forged certificates, root replacement,
+  target user/device binding, concurrent claims, fallback exhaustion, request
+  body limits, and configuration limits. The Postgres test runs when
+  `FILAMENT_TEST_DATABASE_URL` is configured.
+
+Still required before Phase 1 can be called complete:
+
+- QR pairing and encrypted root-key transfer, device removal/tombstoning, and
+  device-list/KeyPackage-low gateway emission.
+- A production platform-keystore/encrypted-store implementation. The current
+  crate provides the narrow `LocalKeyStore` boundary and test implementation;
+  it does not claim SQLCipher or OS-keystore completion.
+- Desktop settings UI, narrow Tauri IPC integration, and the key-isolation
+  audit. Adding privileged Tauri commands remains a maintainer-approval gate.
+- Rotation and pairing integration tests, plus an executed Postgres run in an
+  environment that supplies the test database.
+- Maintainer ratification of ADR 0001 and conversion of the cargo-vet inventory
+  into an enforceable cargo-vet store. `cargo audit` and `cargo deny` are the
+  active CI supply-chain gates today.
+
+Phase 2 and later conversation, mailbox, attachment, media, guild-channel,
+hardening, and key-transparency work has not started.
+
+---
+
 ## Execution Model
 
 **Serial subagent execution.** Each phase is dispatched to a subagent that runs to completion, commits, and the next phase is dispatched only after the commit lands. No parallelism between phases.
@@ -207,7 +252,8 @@ Implement the full identity and device management layer: root identity keys, dev
    - OpenMLS integration (group state management, KeyPackage generation, commit/proposal processing)
    - Root identity key generation (Ed25519)
    - Device certificate creation and verification (root-key-signed)
-   - KeyPackage pool management (single-use + last-resort with reuse semantics)
+   - KeyPackage pool management (single-use + one ordered, single-use fallback;
+     reusable MLS last-resort semantics require a separately reviewed extension)
    - Key material zeroization on drop (`zeroize` crate)
    - Platform CSPRNG only
    - `#![forbid(unsafe_code)]` enforced

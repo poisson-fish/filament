@@ -104,7 +104,11 @@ E2EE abuse cases (`PLAN_E2EE.md`):
   - mitigation contract: root-key pinning, key-change warnings (blocking for previously verified contacts), safety-number/QR verification; key transparency (Phase 8) converts silent equivocation into detectable, one-time lying.
 - KeyPackage and commit resource abuse:
   - attacker floods KeyPackage claims/uploads or spams commits to exhaust pools and thrash epochs.
-  - mitigation contract: bounded pool sizes, last-resort package semantics, per-user/per-device/per-route rate limits, claim audit logging, single-writer-per-epoch ordering with deterministic `409 epoch_conflict`, and commit-storm backpressure.
+  - mitigation contract: bounded pool sizes; one ordered, single-use fallback;
+    per-user/per-device/per-route rate limits; claim audit logging;
+    single-writer-per-epoch ordering with deterministic `409 epoch_conflict`;
+    and commit-storm backpressure. Reusable last-resort behavior remains
+    disabled until an MLS extension implementing it is separately reviewed.
 
 ## E2EE Security Goals
 - Server cannot decrypt content for `mls_v1` conversations.

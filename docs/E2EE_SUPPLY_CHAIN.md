@@ -4,7 +4,9 @@
 
 ## Overview
 
-This document records the supply-chain review process for the E2EE dependency tree (OpenMLS and its transitive dependencies). It accompanies `cargo-deny.toml` (license/advisory/ban gates) and `cargo-vet.toml` (structured crate review).
+This document records the supply-chain review state for the E2EE dependency
+tree (OpenMLS and its transitive dependencies). `cargo audit` and
+`cargo deny check --config cargo-deny.toml` are enforced in CI.
 
 ## OpenMLS Dependency Tree
 
@@ -15,24 +17,24 @@ The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9
 | Crate | Version | License | Purpose |
 |---|---|---|---|
 | `openmls` | 0.8.1 | MIT | Main MLS library — group state, KeyPackages, commits, messages |
-| `openmls_traits` | 0.5.0 | MIT | Trait definitions for provider abstraction |
 | `openmls_rust_crypto` | 0.5.1 | MIT | Default crypto provider (RustCrypto crates, no C deps) |
 | `openmls_basic_credential` | 0.5.0 | MIT | BasicCredential + SignatureKeyPair for credential types |
-| `openmls_memory_storage` | 0.5.0 | MIT | In-memory storage (spikes/tests only) |
 
 ### Key Transitive Dependencies
 
-| Crate | License | Purpose | cargo-deny Status |
+| Crate | License | Purpose | Policy status |
 |---|---|---|---|
-| `tls_codec` | MIT/Apache-2.0 | TLS serialization for MLS wire format | ✅ Passes |
-| `zeroize` | Apache-2.0/MIT | Memory zeroization for key material | ✅ Passes |
-| `serde` | MIT/Apache-2.0 | Serialization framework | ✅ Passes (already in workspace) |
-| `serde_bytes` | MIT/Apache-2.0 | Byte array serde wrapper | ✅ Passes |
-| `rayon` | MIT/Apache-2.0 | Parallelism for tree operations | ✅ Passes |
-| `thiserror` | MIT/Apache-2.0 | Error derive macro | ✅ Passes (already in workspace) |
-| `log` | MIT/Apache-2.0 | Logging facade | ✅ Passes |
-| `getrandom` | MIT/Apache-2.0 | CSPRNG interface | ✅ Passes |
-| RustCrypto crates (`chacha20poly1305`, `x25519-dalek`, `ed25519-dalek`, `sha2`, `hkdf`, `hpke`) | MIT/Apache-2.0 | Underlying cryptographic primitives | ✅ Passes |
+| `openmls_traits` | MIT | Provider/storage traits used transitively by OpenMLS | Allowed license |
+| `openmls_memory_storage` | MIT | Storage used by `openmls_rust_crypto` | Allowed license |
+| `tls_codec` | MIT/Apache-2.0 | TLS serialization for MLS wire format | Allowed license |
+| `zeroize` | Apache-2.0/MIT | Memory zeroization for key material | Allowed license |
+| `serde` | MIT/Apache-2.0 | Serialization framework | Allowed license |
+| `serde_bytes` | MIT/Apache-2.0 | Byte-array serialization used transitively | Allowed license |
+| `rayon` | MIT/Apache-2.0 | Parallelism for tree operations | Allowed license |
+| `thiserror` | MIT/Apache-2.0 | Error derive macro | Allowed license |
+| `log` | MIT/Apache-2.0 | Logging facade | Allowed license |
+| `getrandom` | MIT/Apache-2.0 | CSPRNG interface | Allowed license |
+| RustCrypto crates (`chacha20poly1305`, `x25519-dalek`, `ed25519-dalek`, `sha2`, `hkdf`, `hpke`) | MIT/Apache-2.0 | Underlying cryptographic primitives | Allowed licenses |
 
 All licenses are within the `cargo-deny.toml` allowlist: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib.
 
@@ -42,11 +44,17 @@ The existing `cargo-deny.toml` license allowlist already covers all OpenMLS depe
 
 Advisory exceptions: the existing `RUSTSEC-2024-0384` exception (for the `instant` crate transitively via Tantivy) is unrelated to OpenMLS. No new advisory exceptions are required for the OpenMLS dependency tree at the time of this writing.
 
-## cargo-vet Configuration
+## cargo-vet Status
 
-A `cargo-vet.toml` file has been added to the repository root. It uses "unaudited" entries with documented justifications for each OpenMLS-related crate. This follows the pattern of recording a review process even when formal third-party audits are pending.
+The root `cargo-vet.toml` is an inventory of intended unaudited exceptions, not
+an active cargo-vet store or CI gate. It must not be treated as evidence that
+the dependency tree has been audited. Before cargo-vet can become enforceable,
+the inventory must be converted to cargo-vet's generated store layout and the
+CI workflow must install and run cargo-vet.
 
-**Formal security review of the OpenMLS dependency tree is tracked as a Phase 7 (Hardening and GA) exit criterion.** The unaudited entries in `cargo-vet.toml` will be replaced with proper audit entries once the review is complete.
+**Formal security review of the OpenMLS dependency tree is tracked as a Phase 7
+(Hardening and GA) exit criterion.** Until then, Cargo.lock pinning plus the
+active audit/deny gates are the implemented controls.
 
 ## Build Integrity
 
@@ -67,10 +75,13 @@ cargo deny check --config cargo-deny.toml
 # Advisory gate
 cargo audit
 
-# Structured review gate (requires cargo-vet installed)
-cargo vet --config cargo-vet.toml
+# cargo-vet is not yet an active gate; see "cargo-vet Status" above.
 ```
 
 ## Spike Crate Exclusion
 
-The spike crate at `spikes/e2ee-mls-roundtrip/` is a standalone crate and is **not** part of the workspace. It has its own `Cargo.toml` and is not listed in the workspace `members` array. Workspace-level `cargo deny` and `cargo vet` commands do not cover it. The spike crate's dependencies (openmls, openmls_rust_crypto, etc.) are the same versions that will be used in production (Phase 1) and have been verified against the cargo-deny license allowlist.
+The spike crate at `spikes/e2ee-mls-roundtrip/` is a standalone crate and is
+**not** part of the workspace. It has its own lockfile and is not listed in the
+workspace members. Workspace-level `cargo deny` does not cover it. Its direct
+OpenMLS versions match the production crate; it must be checked separately when
+dependencies change.

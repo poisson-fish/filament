@@ -66,7 +66,11 @@ Scope: this section governs transport/session token keys. E2EE identity and MLS 
 - Concurrent subscribe-capable tokens are bounded per user/channel to reduce stream fanout abuse and client DoS risk.
 
 ## End-to-End Encryption (MLS) Baseline
-Status: design-locked contract from `PLAN_E2EE.md` (v2), pre-implementation. Items below are binding for all E2EE implementation phases. Where numeric limits are not yet fixed, they must be locked in the owning phase before code merges.
+Status: the Phase 0 engineering artifacts and the Phase 1
+identity/device/KeyPackage foundation are implemented as of 2026-07-19; ADR
+ratification remains open. Encrypted conversation transport is not enabled.
+Items below remain binding for later phases; the exact completed/remaining
+split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 
 ### Protocol Stack
 - Single vetted stack: MLS (RFC 9420) via OpenMLS for all E2EE domains — 1:1 DMs (2-member groups), group DMs, guild encrypted channels, and calls. No bespoke ratchets, key schedules, or parallel crypto stacks.
@@ -90,7 +94,10 @@ Status: design-locked contract from `PLAN_E2EE.md` (v2), pre-implementation. Ite
 ### Server-Side Limits (E2EE Endpoints)
 - Strict maximum sizes on KeyPackages, commits, Welcomes, proposals, and message envelopes.
 - Per-user/per-device/per-route rate limits on KeyPackage upload and claim, commit ingestion, and rekey operations; commit-storm backpressure is required.
-- KeyPackage pools are bounded: single-use packages plus one last-resort package with defined reuse semantics; claims are rate-limited and audit-logged.
+- KeyPackage pools are bounded: ordinary packages plus one ordered fallback.
+  All currently generated packages are claimed once; reusable last-resort
+  behavior is prohibited until an MLS extension implementing it is reviewed.
+  Claims are atomic, rate-limited, and audit-logged.
 - Delivery Service ordering is single-writer-per-epoch: the first order-valid commit for an epoch is accepted; competing commits receive a deterministic `409 epoch_conflict` rejection.
 - Server-side validation of MLS payloads is shape-only: size bounds, field presence, and epoch monotonicity per group.
 

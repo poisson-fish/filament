@@ -35,6 +35,11 @@ Design principles:
 - Current DMs/guild chat are server-readable.
 - Search indexing (Tantivy), moderation workflows, and rich server-side query assume plaintext availability. For E2EE conversations these move client-side or are explicitly unavailable (see Moderation and Search sections).
 - Gateway and REST contracts are typed/versioned and already enforce payload limits.
+- As of 2026-07-19, the Phase 0 engineering artifacts and the Phase 1
+  identity/device/KeyPackage foundation are implemented. ADR ratification and
+  the enforceable cargo-vet gate remain open. No encrypted conversation
+  transport or client UI is enabled; see `PLAN_E2EE_IMPL.md` for the exact
+  completed/remaining split.
 
 ## Threat Model
 ### Adversaries
@@ -101,7 +106,9 @@ Cryptographic parameters:
   - device additions are signed by an existing device (QR pairing flow) and surfaced in-conversation to peers ("X added a new device")
   - device removal is first-class: triggers MLS Remove of that device's leaves from all groups (cryptographic eviction) plus KeyPackage tombstoning
 - KeyPackages (MLS's prekey analog):
-  - per-device pool of single-use KeyPackages + one signed last-resort KeyPackage with defined reuse semantics
+  - per-device pool of single-use KeyPackages + one ordered, single-use fallback;
+    reusable MLS last-resort behavior remains disabled until the corresponding
+    extension is implemented and separately reviewed
   - client replenishment on low-water mark; server-side pool size caps, claim rate limits, and claim audit logging
 - Client must:
   - pin peer root keys per user; display key-change warnings (passive indicator; blocking interstitial for previously-verified contacts)
@@ -276,7 +283,9 @@ Exit criteria:
 ### Phase 1: Identity, Devices, KeyPackages
 - Root identity key generation; device certificates; platform keystore integration.
 - QR device pairing with encrypted key transfer; device add/remove flows with in-conversation surfacing.
-- KeyPackage pool upload/claim/replenish + last-resort semantics; rate limits and claim auditing.
+- KeyPackage pool upload/claim/replenish + ordered, one-time fallback semantics;
+  rate limits and claim auditing. Reusable last-resort behavior requires a
+  separately reviewed MLS extension.
 - Encryption settings panel (safety number, device list, rotate identity, backup enrollment). No key-export surface.
 - Local encrypted store foundation (SQLCipher-or-equivalent).
 Exit criteria:
