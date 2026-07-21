@@ -62,7 +62,7 @@ const CREATE_E2EE_MESSAGES_SQL: &str = "CREATE TABLE IF NOT EXISTS e2ee_messages
 const CREATE_E2EE_MESSAGE_ACKS_SQL: &str = "CREATE TABLE IF NOT EXISTS e2ee_message_acks (
     message_id     TEXT NOT NULL REFERENCES e2ee_messages(message_id) ON DELETE CASCADE,
     device_id      TEXT NOT NULL REFERENCES e2ee_device_certificates(device_id),
-    acked_at_unix  BIGINT NOT NULL,
+    acked_at_unix  BIGINT,
     PRIMARY KEY (message_id, device_id)
 )";
 
@@ -130,5 +130,6 @@ mod tests {
         assert!(CREATE_E2EE_MESSAGES_SQL.contains("expires_at_unix > created_at_unix"));
         assert!(!CREATE_E2EE_MESSAGES_SQL.contains("content TEXT"));
         assert!(CREATE_E2EE_MESSAGE_ACKS_SQL.contains("ON DELETE CASCADE"));
+        assert!(CREATE_E2EE_MESSAGE_ACKS_SQL.contains("acked_at_unix  BIGINT,"));
     }
 }

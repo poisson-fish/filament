@@ -112,7 +112,7 @@ fn parse_directory_runtime_limits_from_env(
 
 fn parse_e2ee_runtime_limits_from_env(
     defaults: &AppConfig,
-) -> anyhow::Result<(u32, u32, u32, u32, usize, Duration)> {
+) -> anyhow::Result<(u32, u32, u32, u32, usize, Duration, Duration)> {
     let device_publish_per_minute = parse_u32_env_or_default(
         "FILAMENT_E2EE_DEVICE_PUBLISH_PER_MINUTE",
         defaults.e2ee_device_publish_per_minute,
@@ -137,6 +137,10 @@ fn parse_e2ee_runtime_limits_from_env(
         "FILAMENT_E2EE_MAILBOX_TTL_SECS",
         defaults.e2ee_mailbox_ttl.as_secs(),
     )?;
+    let mailbox_gc_interval_secs = parse_u64_env_or_default(
+        "FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS",
+        defaults.e2ee_mailbox_gc_interval.as_secs(),
+    )?;
     Ok((
         device_publish_per_minute,
         keypackage_claim_per_minute,
@@ -144,6 +148,7 @@ fn parse_e2ee_runtime_limits_from_env(
         message_per_minute,
         max_keypackage_pool_size,
         Duration::from_secs(mailbox_ttl_secs),
+        Duration::from_secs(mailbox_gc_interval_secs),
     ))
 }
 
@@ -239,6 +244,7 @@ async fn main() -> anyhow::Result<()> {
         e2ee_message_per_minute,
         e2ee_max_keypackage_pool_size,
         e2ee_mailbox_ttl,
+        e2ee_mailbox_gc_interval,
     ) = parse_e2ee_runtime_limits_from_env(&defaults)?;
     let server_owner_user_id = parse_server_owner_user_id_from_env(&defaults)?;
     let captcha_hcaptcha_site_key = parse_optional_nonempty_env("FILAMENT_HCAPTCHA_SITE_KEY");
@@ -267,6 +273,7 @@ async fn main() -> anyhow::Result<()> {
         e2ee_message_per_minute,
         e2ee_max_keypackage_pool_size,
         e2ee_mailbox_ttl,
+        e2ee_mailbox_gc_interval,
         trusted_proxy_cidrs,
         server_owner_user_id,
         captcha_hcaptcha_site_key,
@@ -452,6 +459,7 @@ mod tests {
         std::env::set_var("FILAMENT_E2EE_MESSAGE_PER_MINUTE", "91");
         std::env::set_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE", "64");
         std::env::set_var("FILAMENT_E2EE_MAILBOX_TTL_SECS", "86400");
+        std::env::set_var("FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS", "15");
 
         let parsed = parse_e2ee_runtime_limits_from_env(&AppConfig::default())
             .expect("E2EE runtime limits should parse");
@@ -462,7 +470,19 @@ mod tests {
         std::env::remove_var("FILAMENT_E2EE_MESSAGE_PER_MINUTE");
         std::env::remove_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE");
         std::env::remove_var("FILAMENT_E2EE_MAILBOX_TTL_SECS");
-        assert_eq!(parsed, (11, 37, 17, 91, 64, Duration::from_secs(86400)));
+        std::env::remove_var("FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS");
+        assert_eq!(
+            parsed,
+            (
+                11,
+                37,
+                17,
+                91,
+                64,
+                Duration::from_secs(86400),
+                Duration::from_secs(15),
+            )
+        );
     }
 
     #[test]

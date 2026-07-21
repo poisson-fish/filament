@@ -7,7 +7,7 @@
 
 ---
 
-## Implementation Status — 2026-07-20
+## Implementation Status — 2026-07-21
 
 The repository is currently at **Phase 1 foundation**, not at usable E2EE
 messaging. Plaintext conversations remain the only production message path.
@@ -76,12 +76,18 @@ and group mapping, opaque commit/message persistence, deterministic
 single-writer epoch ordering, GroupInfo retrieval, exact ciphertext padding
 buckets, configurable expiry deadlines, per-IP/user/device/group transport
 limits, and active `mls_commit`, `mls_welcome`, and `mls_message` gateway
-notifications. The web client strictly decodes those routing notifications but
-retains no decryption capability. Conversation create/upgrade provisioning,
-mailbox reads and acknowledgments/GC, multi-device fanout semantics, client
-commit rebase, and external-commit recovery remain to be implemented. Phase 3
-and later attachment, media, guild-channel, hardening, and key-transparency work
-has not started.
+notifications. The v14 mailbox increment snapshots bounded active-device
+deliveries at send time, exposes authenticated/cursor-bounded mailbox reads,
+accepts batched acknowledgments only from owned active devices, hard-deletes
+ciphertext after every snapshotted device acknowledges, and runs bounded TTL
+garbage collection for opaque messages and commits. Missing participant device
+capability fails closed with a typed error. The web client strictly decodes
+routing notifications but retains no decryption capability. Conversation
+create/upgrade provisioning, commit/Welcome mailbox fanout, the client-side
+mailbox/decryption/ack pipeline, multi-device MLS leaf semantics, client commit
+rebase, and external-commit recovery remain to be implemented. Phase 3 and
+later attachment, media, guild-channel, hardening, and key-transparency work has
+not started.
 
 ---
 

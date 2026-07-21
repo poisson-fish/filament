@@ -46,6 +46,18 @@ pub const MAX_KEYPACKAGE_POOL_SIZE: usize = 100;
 /// Maximum number of devices returned in a device list response.
 pub const MAX_DEVICE_LIST_SIZE: usize = 100;
 
+/// Maximum number of opaque messages returned by one mailbox page.
+pub const MAX_E2EE_MAILBOX_PAGE_SIZE: usize = 50;
+
+/// Maximum aggregate ciphertext bytes returned by one mailbox page.
+///
+/// JSON represents byte vectors as integer arrays, so this keeps the encoded
+/// response bounded near the server's default 1 MiB HTTP body limit.
+pub const MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES: usize = 256 * 1_024;
+
+/// Maximum number of message acknowledgments accepted in one request.
+pub const MAX_E2EE_MESSAGE_ACK_BATCH_SIZE: usize = 100;
+
 /// Root-identity rotation wire protocol version.
 pub const ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION: u16 = 1;
 
@@ -193,6 +205,69 @@ where
     D: Deserializer<'de>,
 {
     deserialize_bounded_blob::<D, MAX_MLS_MESSAGE_BYTES>(deserializer)
+}
+
+fn deserialize_padded_mls_message_blob<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_mls_message_blob(deserializer)?;
+    if !matches!(value.len(), 512 | 1_024 | 4_096 | 16_384) {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"an exact MLS ciphertext padding bucket",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_mls_v1_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value != "mls_v1" {
+        return Err(de::Error::custom("mailbox crypto mode must be mls_v1"));
+    }
+    Ok(value)
+}
+
+fn deserialize_mailbox_messages<'de, D>(
+    deserializer: D,
+) -> Result<Vec<E2eeMailboxMessage>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<E2eeMailboxMessage>::deserialize(deserializer)?;
+    if value.len() > MAX_E2EE_MAILBOX_PAGE_SIZE {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"no more than 50 mailbox messages",
+        ));
+    }
+    let aggregate_bytes = value.iter().try_fold(0_usize, |total, message| {
+        total.checked_add(message.message_blob.len())
+    });
+    if aggregate_bytes.is_none_or(|total| total > MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES) {
+        return Err(de::Error::custom(
+            "mailbox ciphertext aggregate exceeds protocol limit",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_message_ack_ids<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<String>::deserialize(deserializer)?;
+    if value.is_empty() || value.len() > MAX_E2EE_MESSAGE_ACK_BATCH_SIZE {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"between 1 and 100 message IDs",
+        ));
+    }
+    Ok(value)
 }
 
 fn deserialize_key_package_entries<'de, D>(
@@ -533,6 +608,76 @@ pub struct PostMessageResponse {
     pub message_id: String,
     /// Unix timestamp (seconds) when the message was received.
     pub created_at_unix: i64,
+}
+
+/// Query parameters for a device's pending message mailbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeMailboxQuery {
+    /// Active device whose snapshotted deliveries should be returned.
+    pub device_id: String,
+    /// Exclusive message-ID cursor from the preceding page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_message_id: Option<String>,
+    /// Requested record count. The server caps this at 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u16>,
+}
+
+/// One opaque MLS `PrivateMessage` pending delivery to a device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeMailboxMessage {
+    /// Server-assigned message ID (ULID string).
+    pub message_id: String,
+    /// Conversation-level crypto mode. Always `mls_v1` for this endpoint.
+    #[serde(deserialize_with = "deserialize_mls_v1_mode")]
+    pub crypto: String,
+    /// Epoch routing hint; clients verify it against authenticated MLS data.
+    pub epoch: u64,
+    /// Ciphersuite routing hint; clients verify it against local group state.
+    pub suite_id: u16,
+    /// Sender device routing hint; clients verify it after MLS authentication.
+    pub sender_device_id: String,
+    /// Padded serialized MLS `PrivateMessage`, opaque to the server.
+    #[serde(deserialize_with = "deserialize_padded_mls_message_blob")]
+    pub message_blob: Vec<u8>,
+    /// Unix timestamp (seconds) when the server accepted the message.
+    pub created_at_unix: i64,
+    /// Unix timestamp (seconds) after which the server hard-deletes it.
+    pub expires_at_unix: i64,
+}
+
+/// Response for `GET /e2ee/groups/{group_id}/mailbox`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeMailboxResponse {
+    /// Pending device deliveries in ascending message-ID order.
+    #[serde(deserialize_with = "deserialize_mailbox_messages")]
+    pub messages: Vec<E2eeMailboxMessage>,
+    /// Cursor for the next page, or `None` when this page is empty.
+    pub next_after_message_id: Option<String>,
+}
+
+/// Successful-decryption acknowledgments for one active device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AckE2eeMessagesRequest {
+    /// Active device that locally authenticated and decrypted the messages.
+    pub device_id: String,
+    /// Message IDs to acknowledge. Duplicates are rejected by the server.
+    #[serde(deserialize_with = "deserialize_message_ack_ids")]
+    pub message_ids: Vec<String>,
+}
+
+/// Result of a batched per-device mailbox acknowledgment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AckE2eeMessagesResponse {
+    /// Delivery rows newly or previously acknowledged by this device.
+    pub acknowledged_count: u32,
+    /// Messages hard-deleted because every snapshotted device acknowledged.
+    pub deleted_count: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -899,6 +1044,88 @@ mod tests {
     }
 
     #[test]
+    fn mailbox_and_ack_contracts_round_trip_with_strict_fields() {
+        let message = E2eeMailboxMessage {
+            message_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            crypto: String::from("mls_v1"),
+            epoch: 4,
+            suite_id: 3,
+            sender_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAVD"),
+            message_blob: vec![0xA5; 512],
+            created_at_unix: 1_700_000_000,
+            expires_at_unix: 1_700_003_600,
+        };
+        let response = E2eeMailboxResponse {
+            messages: vec![message.clone()],
+            next_after_message_id: Some(message.message_id.clone()),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: E2eeMailboxResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, response);
+
+        let ack = AckE2eeMessagesRequest {
+            device_id: message.sender_device_id,
+            message_ids: vec![message.message_id],
+        };
+        let json = serde_json::to_string(&ack).unwrap();
+        let parsed: AckE2eeMessagesRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, ack);
+
+        let unknown = r#"{"device_id":"d","message_ids":["m"],"extra":1}"#;
+        assert!(serde_json::from_str::<AckE2eeMessagesRequest>(unknown).is_err());
+    }
+
+    #[test]
+    fn mailbox_and_ack_contracts_reject_unbounded_collections() {
+        let oversized_ack = AckE2eeMessagesRequest {
+            device_id: String::from("device"),
+            message_ids: vec![String::from("message"); MAX_E2EE_MESSAGE_ACK_BATCH_SIZE + 1],
+        };
+        let json = serde_json::to_string(&oversized_ack).unwrap();
+        assert!(serde_json::from_str::<AckE2eeMessagesRequest>(&json).is_err());
+
+        let empty_ack = AckE2eeMessagesRequest {
+            device_id: String::from("device"),
+            message_ids: Vec::new(),
+        };
+        let json = serde_json::to_string(&empty_ack).unwrap();
+        assert!(serde_json::from_str::<AckE2eeMessagesRequest>(&json).is_err());
+
+        let large_message = E2eeMailboxMessage {
+            message_id: String::from("message"),
+            crypto: String::from("mls_v1"),
+            epoch: 1,
+            suite_id: 3,
+            sender_device_id: String::from("device"),
+            message_blob: vec![0xA5; 16_384],
+            created_at_unix: 1,
+            expires_at_unix: 2,
+        };
+        let oversized_mailbox = E2eeMailboxResponse {
+            messages: vec![large_message; 17],
+            next_after_message_id: None,
+        };
+        let json = serde_json::to_string(&oversized_mailbox).unwrap();
+        assert!(serde_json::from_str::<E2eeMailboxResponse>(&json).is_err());
+
+        let invalid_routing_mode = E2eeMailboxResponse {
+            messages: vec![E2eeMailboxMessage {
+                message_id: String::from("message"),
+                crypto: String::from("plaintext"),
+                epoch: 1,
+                suite_id: 3,
+                sender_device_id: String::from("device"),
+                message_blob: vec![0xA5; 512],
+                created_at_unix: 1,
+                expires_at_unix: 2,
+            }],
+            next_after_message_id: None,
+        };
+        let json = serde_json::to_string(&invalid_routing_mode).unwrap();
+        assert!(serde_json::from_str::<E2eeMailboxResponse>(&json).is_err());
+    }
+
+    #[test]
     fn device_list_and_all_mls_blobs_enforce_parse_limits() {
         let device = DeviceInfo {
             device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
@@ -1078,6 +1305,9 @@ mod tests {
         const _: usize = MAX_KEYPACKAGE_POOL_SIZE;
         const _: usize = MAX_DEVICE_LIST_SIZE;
         const _: usize = MAX_ROOT_IDENTITY_ROTATIONS;
+        const _: usize = MAX_E2EE_MAILBOX_PAGE_SIZE;
+        const _: usize = MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES;
+        const _: usize = MAX_E2EE_MESSAGE_ACK_BATCH_SIZE;
         // Compile-time invariant: pool count must be smaller than per-blob cap.
         const _: () = const { assert!(MAX_KEYPACKAGE_POOL_SIZE < MAX_KEYPACKAGE_BYTES) };
     }

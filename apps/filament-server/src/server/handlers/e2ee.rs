@@ -3,10 +3,10 @@
 //! The server verifies public device certificates and applies shape/rate
 //! limits, but never receives private key material or parses MLS interiors.
 
-use std::{fmt::Write as _, net::SocketAddr};
+use std::{collections::HashSet, fmt::Write as _, net::SocketAddr};
 
 use axum::{
-    extract::{connect_info::ConnectInfo, Extension, Path, State},
+    extract::{connect_info::ConnectInfo, Extension, Path, Query, State},
     http::HeaderMap,
     Json,
 };
@@ -15,13 +15,15 @@ use filament_e2ee::{
     verify_device_certificate, verify_root_identity_rotation_proof, RootIdentityRotationProof,
 };
 use filament_protocol::{
-    ClaimKeyPackageRequest, ClaimKeyPackageResponse, DeviceInfo, DeviceListResponse,
-    GroupInfoResponse, MlsCommitEvent, MlsMessageEvent, MlsWelcomeEvent, PostCommitRequest,
-    PostCommitResponse, PostMessageRequest, PostMessageResponse, PublishDeviceCertificateRequest,
-    PublishDeviceCertificateResponse, RemoveDeviceResponse, RootIdentityDirectoryResponse,
-    RootIdentityRotationEntry, RotateRootIdentityRequest, RotateRootIdentityResponse,
-    UploadKeyPackagesRequest, UploadKeyPackagesResponse, MAX_ROOT_IDENTITY_ROTATIONS,
-    ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    AckE2eeMessagesRequest, AckE2eeMessagesResponse, ClaimKeyPackageRequest,
+    ClaimKeyPackageResponse, DeviceInfo, DeviceListResponse, E2eeMailboxMessage, E2eeMailboxQuery,
+    E2eeMailboxResponse, GroupInfoResponse, MlsCommitEvent, MlsMessageEvent, MlsWelcomeEvent,
+    PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
+    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse, RemoveDeviceResponse,
+    RootIdentityDirectoryResponse, RootIdentityRotationEntry, RotateRootIdentityRequest,
+    RotateRootIdentityResponse, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
+    MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
+    MAX_ROOT_IDENTITY_ROTATIONS, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -42,6 +44,8 @@ use crate::server::{
 
 const KEYPACKAGE_LOW_WATER_MARK: u32 = 10;
 const E2EE_MESSAGE_PADDING_BUCKETS: [usize; 4] = [512, 1_024, 4_096, 16_384];
+const DEFAULT_E2EE_MAILBOX_PAGE_SIZE: usize = 20;
+const MAX_E2EE_1_TO_1_DELIVERY_DEVICES: i64 = 200;
 
 type CertificateFields = ([u8; 32], [u8; 64], [u8; 32]);
 type RotationFields = ([u8; 32], [u8; 64], [u8; 64], [u8; 32], [u8; 64]);
@@ -361,6 +365,40 @@ async fn get_group_for_member(
     })
 }
 
+async fn get_group_for_member_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    group_id: GroupId,
+    user_id: UserId,
+) -> Result<GroupAccess, AuthFailure> {
+    let row = sqlx::query(
+        "SELECT g.conversation_id, g.current_epoch, g.suite_id, g.group_info_blob
+         FROM e2ee_groups g
+         JOIN e2ee_conversations c ON c.conversation_id = g.conversation_id
+         JOIN e2ee_conversation_members m ON m.conversation_id = c.conversation_id
+         WHERE g.group_id = $1 AND m.user_id = $2 AND c.conversation_crypto = 'mls_v1'",
+    )
+    .bind(group_id.to_string())
+    .bind(user_id.to_string())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    .ok_or(AuthFailure::NotFound)?;
+    let current_epoch: i64 = row
+        .try_get("current_epoch")
+        .map_err(|_| AuthFailure::Internal)?;
+    let suite_id: i32 = row.try_get("suite_id").map_err(|_| AuthFailure::Internal)?;
+    Ok(GroupAccess {
+        conversation_id: row
+            .try_get("conversation_id")
+            .map_err(|_| AuthFailure::Internal)?,
+        current_epoch: u64::try_from(current_epoch).map_err(|_| AuthFailure::Internal)?,
+        suite_id: u16::try_from(suite_id).map_err(|_| AuthFailure::Internal)?,
+        group_info_blob: row
+            .try_get("group_info_blob")
+            .map_err(|_| AuthFailure::Internal)?,
+    })
+}
+
 async fn require_active_owned_device(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: UserId,
@@ -368,7 +406,8 @@ async fn require_active_owned_device(
 ) -> Result<(), AuthFailure> {
     let owned = sqlx::query(
         "SELECT 1 FROM e2ee_device_certificates
-         WHERE user_id = $1 AND device_id = $2 AND tombstoned_at_unix IS NULL",
+         WHERE user_id = $1 AND device_id = $2 AND tombstoned_at_unix IS NULL
+         FOR SHARE",
     )
     .bind(user_id.to_string())
     .bind(device_id.to_string())
@@ -376,6 +415,22 @@ async fn require_active_owned_device(
     .await
     .map_err(|_| AuthFailure::Internal)?;
     owned.map(|_| ()).ok_or(AuthFailure::NotFound)
+}
+
+fn parse_canonical_ulid(value: &str) -> Result<(), AuthFailure> {
+    let parsed = ulid::Ulid::from_string(value).map_err(|_| AuthFailure::InvalidRequest)?;
+    if parsed.to_string() != value {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(())
+}
+
+fn mailbox_page_limit(limit: Option<u16>) -> Result<usize, AuthFailure> {
+    let limit = limit.map_or(DEFAULT_E2EE_MAILBOX_PAGE_SIZE, usize::from);
+    if limit == 0 || limit > MAX_E2EE_MAILBOX_PAGE_SIZE {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(limit)
 }
 
 async fn conversation_member_ids(
@@ -393,6 +448,71 @@ async fn conversation_member_ids(
     rows.into_iter()
         .map(|value| UserId::try_from(value).map_err(|_| AuthFailure::Internal))
         .collect()
+}
+
+async fn snapshot_message_deliveries(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conversation_id: &str,
+    message_id: &str,
+    sender_device_id: DeviceId,
+    created_at_unix: i64,
+) -> Result<(), AuthFailure> {
+    let member_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM e2ee_conversation_members WHERE conversation_id = $1",
+    )
+    .bind(conversation_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let device_rows = sqlx::query(
+        "SELECT d.device_id, d.user_id
+         FROM e2ee_conversation_members m
+         JOIN e2ee_device_certificates d
+           ON d.user_id = m.user_id AND d.tombstoned_at_unix IS NULL
+         WHERE m.conversation_id = $1
+         ORDER BY d.device_id ASC
+         FOR SHARE OF d",
+    )
+    .bind(conversation_id)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let device_count = i64::try_from(device_rows.len()).map_err(|_| AuthFailure::Internal)?;
+    let capable_users: HashSet<String> = device_rows
+        .iter()
+        .map(|row| row.try_get("user_id").map_err(|_| AuthFailure::Internal))
+        .collect::<Result<_, _>>()?;
+    let capable_member_count =
+        i64::try_from(capable_users.len()).map_err(|_| AuthFailure::Internal)?;
+    if member_count != 2
+        || capable_member_count != member_count
+        || device_count < member_count
+        || device_count > MAX_E2EE_1_TO_1_DELIVERY_DEVICES
+    {
+        return Err(AuthFailure::E2eeCapabilityRequired);
+    }
+
+    let inserted = sqlx::query(
+        "INSERT INTO e2ee_message_acks (message_id, device_id, acked_at_unix)
+         SELECT $1, d.device_id,
+                CASE WHEN d.device_id = $2 THEN $3 ELSE NULL END
+         FROM e2ee_conversation_members m
+         JOIN e2ee_device_certificates d
+           ON d.user_id = m.user_id AND d.tombstoned_at_unix IS NULL
+         WHERE m.conversation_id = $4",
+    )
+    .bind(message_id)
+    .bind(sender_device_id.to_string())
+    .bind(created_at_unix)
+    .bind(conversation_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let inserted = i64::try_from(inserted.rows_affected()).map_err(|_| AuthFailure::Internal)?;
+    if inserted != device_count {
+        return Err(AuthFailure::Internal);
+    }
+    Ok(())
 }
 
 async fn broadcast_conversation_event(
@@ -1139,6 +1259,206 @@ pub(crate) async fn get_group_info(
     }))
 }
 
+/// Return a bounded page of opaque messages pending for one active device.
+pub(crate) async fn get_group_mailbox(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(group_id): Path<String>,
+    Query(query): Query<E2eeMailboxQuery>,
+) -> Result<Json<E2eeMailboxResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    let group_id = GroupId::try_from(group_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let device_id = DeviceId::try_from(query.device_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let limit = mailbox_page_limit(query.limit)?;
+    if let Some(cursor) = query.after_message_id.as_deref() {
+        parse_canonical_ulid(cursor)?;
+    }
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        device_id,
+        group_id,
+        E2eeTransportRoute::MailboxRead,
+    )
+    .await?;
+
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, device_id).await?;
+    let _group =
+        get_group_for_member_in_transaction(&mut transaction, group_id, auth.user_id).await?;
+    let sql_limit = i64::try_from(limit).map_err(|_| AuthFailure::Internal)?;
+    let rows = sqlx::query(
+        "SELECT m.message_id, m.crypto_mode, m.epoch, m.suite_id,
+                m.sender_device_id, m.ciphertext_blob, m.created_at_unix,
+                m.expires_at_unix
+         FROM e2ee_message_acks a
+         JOIN e2ee_messages m ON m.message_id = a.message_id
+         WHERE a.device_id = $1
+           AND a.acked_at_unix IS NULL
+           AND m.group_id = $2
+           AND m.expires_at_unix > $3
+           AND ($4::TEXT IS NULL OR m.message_id > $4)
+         ORDER BY m.message_id ASC
+         LIMIT $5",
+    )
+    .bind(device_id.to_string())
+    .bind(group_id.to_string())
+    .bind(now)
+    .bind(query.after_message_id.as_deref())
+    .bind(sql_limit)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+
+    let mut aggregate_bytes = 0_usize;
+    let mut messages = Vec::with_capacity(rows.len());
+    for row in rows {
+        let message_blob: Vec<u8> = row
+            .try_get("ciphertext_blob")
+            .map_err(|_| AuthFailure::Internal)?;
+        let next_aggregate = aggregate_bytes
+            .checked_add(message_blob.len())
+            .ok_or(AuthFailure::Internal)?;
+        if next_aggregate > MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES {
+            break;
+        }
+        let epoch: i64 = row.try_get("epoch").map_err(|_| AuthFailure::Internal)?;
+        let suite_id: i32 = row.try_get("suite_id").map_err(|_| AuthFailure::Internal)?;
+        messages.push(E2eeMailboxMessage {
+            message_id: row
+                .try_get("message_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            crypto: row
+                .try_get("crypto_mode")
+                .map_err(|_| AuthFailure::Internal)?,
+            epoch: u64::try_from(epoch).map_err(|_| AuthFailure::Internal)?,
+            suite_id: u16::try_from(suite_id).map_err(|_| AuthFailure::Internal)?,
+            sender_device_id: row
+                .try_get("sender_device_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            message_blob,
+            created_at_unix: row
+                .try_get("created_at_unix")
+                .map_err(|_| AuthFailure::Internal)?,
+            expires_at_unix: row
+                .try_get("expires_at_unix")
+                .map_err(|_| AuthFailure::Internal)?,
+        });
+        aggregate_bytes = next_aggregate;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    let next_after_message_id = messages.last().map(|message| message.message_id.clone());
+    Ok(Json(E2eeMailboxResponse {
+        messages,
+        next_after_message_id,
+    }))
+}
+
+/// Acknowledge messages only after one active device decrypts them successfully.
+pub(crate) async fn ack_group_messages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(group_id): Path<String>,
+    Json(payload): Json<AckE2eeMessagesRequest>,
+) -> Result<Json<AckE2eeMessagesResponse>, AuthFailure> {
+    if payload.message_ids.is_empty() || payload.message_ids.len() > MAX_E2EE_MESSAGE_ACK_BATCH_SIZE
+    {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let mut unique_ids = HashSet::with_capacity(payload.message_ids.len());
+    for message_id in &payload.message_ids {
+        parse_canonical_ulid(message_id)?;
+        if !unique_ids.insert(message_id.as_str()) {
+            return Err(AuthFailure::InvalidRequest);
+        }
+    }
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    let group_id = GroupId::try_from(group_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let device_id =
+        DeviceId::try_from(payload.device_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        device_id,
+        group_id,
+        E2eeTransportRoute::MailboxAck,
+    )
+    .await?;
+
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, device_id).await?;
+    let _group = lock_group_for_member(&mut transaction, group_id, auth.user_id).await?;
+    let acknowledged_ids: Vec<String> = sqlx::query_scalar(
+        "UPDATE e2ee_message_acks a
+         SET acked_at_unix = COALESCE(a.acked_at_unix, $1)
+         FROM e2ee_messages m
+         WHERE m.message_id = a.message_id
+           AND m.group_id = $2
+           AND m.expires_at_unix > $1
+           AND a.device_id = $3
+           AND a.message_id = ANY($4::TEXT[])
+         RETURNING a.message_id",
+    )
+    .bind(now)
+    .bind(group_id.to_string())
+    .bind(device_id.to_string())
+    .bind(&payload.message_ids)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+
+    let deleted_count = if acknowledged_ids.is_empty() {
+        0
+    } else {
+        sqlx::query(
+            "DELETE FROM e2ee_messages m
+             WHERE m.group_id = $1
+               AND m.message_id = ANY($2::TEXT[])
+               AND NOT EXISTS (
+                   SELECT 1 FROM e2ee_message_acks pending
+                   WHERE pending.message_id = m.message_id
+                     AND pending.acked_at_unix IS NULL
+               )",
+        )
+        .bind(group_id.to_string())
+        .bind(&acknowledged_ids)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .rows_affected()
+    };
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    Ok(Json(AckE2eeMessagesResponse {
+        acknowledged_count: u32::try_from(acknowledged_ids.len())
+            .map_err(|_| AuthFailure::Internal)?,
+        deleted_count: u32::try_from(deleted_count).map_err(|_| AuthFailure::Internal)?,
+    }))
+}
+
 /// Atomically order and persist one opaque MLS commit.
 pub(crate) async fn post_group_commit(
     State(state): State<AppState>,
@@ -1315,6 +1635,14 @@ pub(crate) async fn post_group_message(
     .execute(&mut *transaction)
     .await
     .map_err(|_| AuthFailure::Internal)?;
+    snapshot_message_deliveries(
+        &mut transaction,
+        &group.conversation_id,
+        &message_id,
+        sender_device_id,
+        now,
+    )
+    .await?;
     let member_ids = conversation_member_ids(&mut transaction, &group.conversation_id).await?;
     transaction
         .commit()
@@ -1382,5 +1710,18 @@ mod tests {
         for invalid in [0, 511, 513, 2_048, 16_385, 65_536] {
             assert!(!is_valid_message_padding_bucket(invalid));
         }
+    }
+
+    #[test]
+    fn mailbox_pagination_requires_canonical_bounded_inputs() {
+        assert_eq!(mailbox_page_limit(None).unwrap(), 20);
+        assert_eq!(mailbox_page_limit(Some(50)).unwrap(), 50);
+        assert!(mailbox_page_limit(Some(0)).is_err());
+        assert!(mailbox_page_limit(Some(51)).is_err());
+
+        let canonical = ulid::Ulid::new().to_string();
+        assert!(parse_canonical_ulid(&canonical).is_ok());
+        assert!(parse_canonical_ulid(&canonical.to_lowercase()).is_err());
+        assert!(parse_canonical_ulid("not-a-ulid").is_err());
     }
 }

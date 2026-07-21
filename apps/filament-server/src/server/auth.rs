@@ -532,6 +532,8 @@ pub(crate) async fn enforce_e2ee_keypackage_claim_rate_limit(
 #[derive(Clone, Copy)]
 pub(crate) enum E2eeTransportRoute {
     Commit,
+    MailboxAck,
+    MailboxRead,
     Message,
 }
 
@@ -539,6 +541,8 @@ impl E2eeTransportRoute {
     const fn key(self) -> &'static str {
         match self {
             Self::Commit => "commit",
+            Self::MailboxAck => "mailbox_ack",
+            Self::MailboxRead => "mailbox_read",
             Self::Message => "message",
         }
     }
@@ -546,7 +550,9 @@ impl E2eeTransportRoute {
     fn max_hits(self, state: &AppState) -> usize {
         let configured = match self {
             Self::Commit => state.runtime.e2ee_commit_per_minute,
-            Self::Message => state.runtime.e2ee_message_per_minute,
+            Self::MailboxAck | Self::MailboxRead | Self::Message => {
+                state.runtime.e2ee_message_per_minute
+            }
         };
         usize::try_from(configured).unwrap_or(usize::MAX)
     }

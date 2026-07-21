@@ -9,7 +9,8 @@ use filament_e2ee::{
     ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS,
 };
 use filament_protocol::{
-    ClaimKeyPackageRequest, ClaimKeyPackageResponse, DeviceListResponse, GroupInfoResponse,
+    AckE2eeMessagesRequest, AckE2eeMessagesResponse, ClaimKeyPackageRequest,
+    ClaimKeyPackageResponse, DeviceListResponse, E2eeMailboxResponse, GroupInfoResponse,
     KeyPackageEntry, PostCommitRequest, PostCommitResponse, PostMessageRequest,
     PostMessageResponse, PublishDeviceCertificateRequest, RemoveDeviceResponse,
     RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
@@ -69,6 +70,21 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
             "203.0.113.182",
             bob_device_id,
             &publish_payload(&bob_device),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let bob_second_device_id = DeviceId::new();
+    let bob_second_device = MlsDevice::generate(bob_user_id, bob_second_device_id, &bob_root)
+        .expect("Bob's second device should generate");
+    assert_eq!(
+        publish_device(
+            &app,
+            &bob_auth,
+            "203.0.113.182",
+            bob_second_device_id,
+            &publish_payload(&bob_second_device),
         )
         .await
         .status(),
@@ -238,6 +254,134 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
     assert_eq!(stored_message.1, "mls_v1");
     assert!(stored_message.3 > stored_message.2);
 
+    for device_id in [bob_device_id, bob_second_device_id] {
+        let mailbox = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/e2ee/groups/{group_id}/mailbox?device_id={device_id}&limit=20"
+            ))
+            .header("authorization", format!("Bearer {}", bob_auth.access_token))
+            .header("x-forwarded-for", "203.0.113.182")
+            .body(Body::empty())
+            .expect("mailbox request should build");
+        let mailbox = app
+            .clone()
+            .oneshot(mailbox)
+            .await
+            .expect("mailbox request should execute");
+        assert_eq!(mailbox.status(), StatusCode::OK);
+        let mailbox: E2eeMailboxResponse = parse_json(mailbox).await;
+        assert_eq!(mailbox.messages.len(), 1);
+        assert_eq!(mailbox.messages[0].message_id, message.message_id);
+        assert_eq!(mailbox.messages[0].crypto, "mls_v1");
+        assert_eq!(mailbox.messages[0].message_blob, message_blob);
+    }
+
+    let sender_mailbox = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/mailbox?device_id={alice_device_id}"
+        ))
+        .header(
+            "authorization",
+            format!("Bearer {}", alice_auth.access_token),
+        )
+        .header("x-forwarded-for", "203.0.113.181")
+        .body(Body::empty())
+        .expect("sender mailbox request should build");
+    let sender_mailbox = app
+        .clone()
+        .oneshot(sender_mailbox)
+        .await
+        .expect("sender mailbox request should execute");
+    assert_eq!(sender_mailbox.status(), StatusCode::OK);
+    let sender_mailbox: E2eeMailboxResponse = parse_json(sender_mailbox).await;
+    assert!(sender_mailbox.messages.is_empty());
+
+    let first_ack = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages/ack"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &AckE2eeMessagesRequest {
+            device_id: bob_device_id.to_string(),
+            message_ids: vec![message.message_id.clone()],
+        },
+    )
+    .await;
+    assert_eq!(first_ack.status(), StatusCode::OK);
+    let first_ack: AckE2eeMessagesResponse = parse_json(first_ack).await;
+    assert_eq!(first_ack.acknowledged_count, 1);
+    assert_eq!(first_ack.deleted_count, 0);
+    let retained_after_first_ack: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_messages WHERE message_id = $1")
+            .bind(&message.message_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("message should remain for the second device");
+    assert_eq!(retained_after_first_ack, 1);
+
+    let final_ack = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages/ack"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &AckE2eeMessagesRequest {
+            device_id: bob_second_device_id.to_string(),
+            message_ids: vec![message.message_id.clone()],
+        },
+    )
+    .await;
+    assert_eq!(final_ack.status(), StatusCode::OK);
+    let final_ack: AckE2eeMessagesResponse = parse_json(final_ack).await;
+    assert_eq!(final_ack.acknowledged_count, 1);
+    assert_eq!(final_ack.deleted_count, 1);
+    let deleted_after_all_acks: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_messages WHERE message_id = $1")
+            .bind(&message.message_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("message deletion should be observable");
+    assert_eq!(deleted_after_all_acks, 0);
+
+    let expiring = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &message_request,
+    )
+    .await;
+    assert_eq!(expiring.status(), StatusCode::OK);
+    let expiring: PostMessageResponse = parse_json(expiring).await;
+    sqlx::query(
+        "UPDATE e2ee_messages SET created_at_unix = 1, expires_at_unix = 2
+         WHERE message_id = $1",
+    )
+    .bind(&expiring.message_id)
+    .execute(&audit_pool)
+    .await
+    .expect("expiry fixture should update");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let remaining: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_messages WHERE message_id = $1")
+                    .bind(&expiring.message_id)
+                    .fetch_one(&audit_pool)
+                    .await
+                    .expect("expiry state should be queryable");
+            if remaining == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("background mailbox GC should delete expired ciphertext");
+
     let column_names: Vec<String> = sqlx::query_scalar(
         "SELECT column_name FROM information_schema.columns
          WHERE table_schema = current_schema() AND table_name = 'e2ee_messages'",
@@ -301,6 +445,7 @@ async fn test_app_with_e2ee_limits(
         auth_route_requests_per_minute: 200,
         e2ee_device_publish_per_minute: device_publish_per_minute,
         e2ee_keypackage_claim_per_minute: keypackage_claim_per_minute,
+        e2ee_mailbox_gc_interval: Duration::from_secs(1),
         database_url: Some(database_url),
         ..AppConfig::default()
     })

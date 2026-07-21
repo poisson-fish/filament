@@ -62,8 +62,9 @@ Set these variables for `filament-server` (via `infra/.env`):
 - `FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE`: maximum unclaimed KeyPackages per
   device (default `100`, valid range `1..=100`)
 - `FILAMENT_E2EE_MAILBOX_TTL_SECS`: expiry deadline applied to opaque MLS
-  mailbox records (default `2592000`, valid range `1..=7776000`); the Phase 2
-  GC worker must be enabled before treating this deadline as hard deletion
+  mailbox records (default `2592000`, valid range `1..=7776000`)
+- `FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS`: bounded hard-deletion sweep interval
+  (default `60`, valid range `1..=3600`)
 - `FILAMENT_HCAPTCHA_SITE_KEY`: optional hCaptcha site key (must be set with secret)
 - `FILAMENT_HCAPTCHA_SECRET`: optional hCaptcha server secret (must be set with site key)
 - `FILAMENT_HCAPTCHA_VERIFY_URL`: optional captcha verify endpoint (default `https://api.hcaptcha.com/siteverify`; localhost `http://` allowed for tests)
@@ -76,6 +77,7 @@ Default compose values:
 - `FILAMENT_E2EE_COMMIT_PER_MINUTE=30`
 - `FILAMENT_E2EE_MESSAGE_PER_MINUTE=120`
 - `FILAMENT_E2EE_MAILBOX_TTL_SECS=2592000`
+- `FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS=60`
 
 ### LiveKit signaling URL reachability
 

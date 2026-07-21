@@ -22,6 +22,7 @@ pub(crate) enum AuthFailure {
     RateLimited,
     PayloadTooLarge,
     QuotaExceeded,
+    E2eeCapabilityRequired,
     EpochConflict,
     Internal,
 }
@@ -50,6 +51,7 @@ impl IntoResponse for AuthFailure {
             | Self::NotFound
             | Self::PayloadTooLarge
             | Self::QuotaExceeded
+            | Self::E2eeCapabilityRequired
             | Self::EpochConflict
             | Self::Internal => {}
         }
@@ -132,6 +134,13 @@ impl IntoResponse for AuthFailure {
                 StatusCode::CONFLICT,
                 Json(AuthError {
                     error: "quota_exceeded",
+                }),
+            )
+                .into_response(),
+            Self::E2eeCapabilityRequired => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "e2ee_capability_required",
                 }),
             )
                 .into_response(),

@@ -4,6 +4,7 @@ pub(crate) mod core;
 pub(crate) mod db;
 pub mod directory_contract;
 pub(crate) mod domain;
+pub(crate) mod e2ee_mailbox;
 pub(crate) mod errors;
 pub(crate) mod gateway_events;
 pub(crate) mod handlers;

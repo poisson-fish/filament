@@ -623,8 +623,31 @@ Stores one opaque MLS `PrivateMessage` in the bounded delivery mailbox.
   `16 KiB`; all other sizes fail closed.
 - Rows are always tagged `mls_v1`, contain no plaintext/content-derived fields,
   and receive a configurable mailbox-expiry deadline (30 days by default,
-  90-day hard maximum). Hard deletion at that deadline is part of the pending
-  mailbox GC worker. The default per-IP/user/device/group rate is 120 messages/minute.
+  90-day hard maximum). Active participant devices are snapshotted in the same
+  transaction; the sending device is immediately marked delivered. A missing
+  active device for either participant fails closed with
+  `409 { "error": "e2ee_capability_required" }`. The default
+  per-IP/user/device/group rate is 120 messages/minute.
+
+### `GET /e2ee/groups/{group_id}/mailbox`
+Returns opaque messages pending for one owned active device.
+- Query: `?device_id=<device ULID>&after_message_id=<message ULID>&limit=<1..50>`
+- Response: `{ "messages": [{ "message_id", "crypto": "mls_v1", "epoch", "suite_id", "sender_device_id", "message_blob", "created_at_unix", "expires_at_unix" }], "next_after_message_id": "..." | null }`
+- Only send-time delivery rows for the requested device and group are visible.
+  New devices do not gain access to earlier ciphertext through this endpoint.
+- Pages are capped at 50 records and `256 KiB` aggregate ciphertext bytes.
+  Routing fields remain untrusted hints; clients acknowledge only after MLS
+  authentication, decryption, and local metadata checks succeed.
+
+### `POST /e2ee/groups/{group_id}/messages/ack`
+Acknowledges successfully decrypted messages for one owned active device.
+- Request: `{ "device_id": "...", "message_ids": ["..."] }`
+- Response: `{ "acknowledged_count": 1, "deleted_count": 1 }`
+- Batches contain 1–100 unique canonical message ULIDs. IDs outside the
+  device's snapshotted group mailbox are ignored without exposing other groups.
+- When every snapshotted device has acknowledged a message, its ciphertext and
+  delivery rows are hard-deleted atomically. Independently, a bounded
+  background worker hard-deletes messages and commits at their TTL deadline.
 
 ## Notes
 - Search index is derived/cache; source of truth is persisted message storage.

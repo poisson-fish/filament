@@ -99,7 +99,9 @@ pub const DEFAULT_E2EE_COMMIT_PER_MINUTE: u32 = 30;
 pub const DEFAULT_E2EE_MESSAGE_PER_MINUTE: u32 = 120;
 pub const DEFAULT_E2EE_MAX_KEYPACKAGE_POOL_SIZE: usize = 100;
 pub const DEFAULT_E2EE_MAILBOX_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+pub const DEFAULT_E2EE_MAILBOX_GC_INTERVAL_SECS: u64 = 60;
 pub const MAX_E2EE_MAILBOX_TTL_SECS: u64 = 90 * 24 * 60 * 60;
+pub const MAX_E2EE_MAILBOX_GC_INTERVAL_SECS: u64 = 60 * 60;
 
 pub(crate) static METRICS_STATE: OnceLock<MetricsState> = OnceLock::new();
 
@@ -158,6 +160,7 @@ pub struct AppConfig {
     pub e2ee_message_per_minute: u32,
     pub e2ee_max_keypackage_pool_size: usize,
     pub e2ee_mailbox_ttl: Duration,
+    pub e2ee_mailbox_gc_interval: Duration,
 }
 
 impl Default for AppConfig {
@@ -206,6 +209,7 @@ impl Default for AppConfig {
             e2ee_message_per_minute: DEFAULT_E2EE_MESSAGE_PER_MINUTE,
             e2ee_max_keypackage_pool_size: DEFAULT_E2EE_MAX_KEYPACKAGE_POOL_SIZE,
             e2ee_mailbox_ttl: Duration::from_secs(DEFAULT_E2EE_MAILBOX_TTL_SECS),
+            e2ee_mailbox_gc_interval: Duration::from_secs(DEFAULT_E2EE_MAILBOX_GC_INTERVAL_SECS),
         }
     }
 }
@@ -238,6 +242,7 @@ pub(crate) struct RuntimeSecurityConfig {
     pub(crate) e2ee_message_per_minute: u32,
     pub(crate) e2ee_max_keypackage_pool_size: usize,
     pub(crate) e2ee_mailbox_ttl: Duration,
+    pub(crate) e2ee_mailbox_gc_interval: Duration,
     pub(crate) trusted_proxy_cidrs: Arc<Vec<IpNetwork>>,
     pub(crate) server_owner_user_id: Option<UserId>,
     pub(crate) livekit_token_ttl: Duration,
@@ -461,6 +466,7 @@ impl AppState {
                 e2ee_message_per_minute: config.e2ee_message_per_minute,
                 e2ee_max_keypackage_pool_size: config.e2ee_max_keypackage_pool_size,
                 e2ee_mailbox_ttl: config.e2ee_mailbox_ttl,
+                e2ee_mailbox_gc_interval: config.e2ee_mailbox_gc_interval,
                 trusted_proxy_cidrs: Arc::new(config.trusted_proxy_cidrs.clone()),
                 server_owner_user_id: config.server_owner_user_id,
                 livekit_token_ttl: config.livekit_token_ttl,

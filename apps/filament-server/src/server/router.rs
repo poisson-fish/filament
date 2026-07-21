@@ -30,14 +30,17 @@ use tower_http::{
 
 use super::{
     auth::resolve_client_ip,
-    core::{AppConfig, AppState, MAX_E2EE_MAILBOX_TTL_SECS, MAX_LIVEKIT_TOKEN_TTL_SECS},
+    core::{
+        AppConfig, AppState, MAX_E2EE_MAILBOX_GC_INTERVAL_SECS, MAX_E2EE_MAILBOX_TTL_SECS,
+        MAX_LIVEKIT_TOKEN_TTL_SECS,
+    },
     db::ensure_db_schema,
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
         e2ee::{
-            claim_keypackage, get_group_info, get_root_identity, list_user_devices,
-            post_group_commit, post_group_message, publish_device_certificate, remove_device,
-            rotate_root_identity, upload_keypackages,
+            ack_group_messages, claim_keypackage, get_group_info, get_group_mailbox,
+            get_root_identity, list_user_devices, post_group_commit, post_group_message,
+            publish_device_certificate, remove_device, rotate_root_identity, upload_keypackages,
         },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
@@ -190,8 +193,10 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("GET", "/e2ee/users/{user_id}/identity"),
     ("POST", "/e2ee/identity/rotate"),
     ("GET", "/e2ee/groups/{group_id}/info"),
+    ("GET", "/e2ee/groups/{group_id}/mailbox"),
     ("POST", "/e2ee/groups/{group_id}/commits"),
     ("POST", "/e2ee/groups/{group_id}/messages"),
+    ("POST", "/e2ee/groups/{group_id}/messages/ack"),
 ];
 
 #[derive(Clone)]
@@ -390,12 +395,22 @@ fn validate_e2ee_config(config: &AppConfig) -> anyhow::Result<()> {
             "E2EE mailbox TTL must be between 1 and {MAX_E2EE_MAILBOX_TTL_SECS} seconds"
         ));
     }
+    if config.e2ee_mailbox_gc_interval.is_zero()
+        || config.e2ee_mailbox_gc_interval.as_secs() > MAX_E2EE_MAILBOX_GC_INTERVAL_SECS
+    {
+        return Err(anyhow!(
+            "E2EE mailbox GC interval must be between 1 and {MAX_E2EE_MAILBOX_GC_INTERVAL_SECS} seconds"
+        ));
+    }
     Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
 fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::Result<Router> {
     tokio::spawn(crate::server::realtime::livekit_sync::start_livekit_sync(
+        app_state.clone(),
+    ));
+    tokio::spawn(crate::server::e2ee_mailbox::start_e2ee_mailbox_gc(
         app_state.clone(),
     ));
 
@@ -552,8 +567,13 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route("/e2ee/keypackages", post(upload_keypackages))
         .route("/e2ee/keypackages/claim", post(claim_keypackage))
         .route("/e2ee/groups/{group_id}/info", get(get_group_info))
+        .route("/e2ee/groups/{group_id}/mailbox", get(get_group_mailbox))
         .route("/e2ee/groups/{group_id}/commits", post(post_group_commit))
-        .route("/e2ee/groups/{group_id}/messages", post(post_group_message));
+        .route("/e2ee/groups/{group_id}/messages", post(post_group_message))
+        .route(
+            "/e2ee/groups/{group_id}/messages/ack",
+            post(ack_group_messages),
+        );
 
     let upload_route = Router::new()
         .route(
@@ -639,5 +659,11 @@ mod tests {
             ..AppConfig::default()
         };
         assert!(validate_router_config(&oversized_ttl).is_err());
+
+        let zero_gc_interval = AppConfig {
+            e2ee_mailbox_gc_interval: std::time::Duration::ZERO,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_gc_interval).is_err());
     }
 }
