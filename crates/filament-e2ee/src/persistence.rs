@@ -500,6 +500,112 @@ mod tests {
     }
 
     #[test]
+    fn restart_preserves_multi_device_membership_and_ratchets() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let bob_second = MlsDevice::generate(bob.user_id(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = GroupId::new();
+        let (mut alice_group, initial) =
+            MlsConversation::create_two_member(group_id, &alice, bob_pin, &bob_package).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let mut bob_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob,
+            alice_pin,
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let second_package = generate_key_package_batch(&bob_second, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let add = alice_group
+            .create_add_device(&alice, bob_pin, &second_package)
+            .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_group
+            .process_incoming_commit(
+                &bob,
+                &crate::EncryptedGroupCommit {
+                    group_id,
+                    prior_epoch: add.prior_epoch,
+                    epoch: add.epoch,
+                    committer_device_id: add.committer_device_id,
+                    commit_blob: add.commit_blob.clone(),
+                },
+            )
+            .unwrap();
+        let bob_second_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob_second,
+            alice_pin,
+            add.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob_second, &[&bob_second_group]).unwrap();
+        drop(bob_second_group);
+        drop(bob_second);
+        let mut restored = load_mls_client_state(&store).unwrap();
+        assert_eq!(restored.conversations[0].epoch(), 2);
+
+        let from_alice = alice_group
+            .encrypt_application_message(&alice, b"after multi-device restart")
+            .unwrap();
+        assert_eq!(
+            restored.conversations[0]
+                .decrypt_application_message(&restored.device, &from_alice)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"after multi-device restart"
+        );
+        let from_restored = restored.conversations[0]
+            .encrypt_application_message(&restored.device, b"restored device reply")
+            .unwrap();
+        assert_eq!(
+            alice_group
+                .decrypt_application_message(&alice, &from_restored)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"restored device reply"
+        );
+
+        let removal = alice_group
+            .create_remove_device(&alice, restored.device.device_id())
+            .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        restored.conversations[0]
+            .process_incoming_commit(
+                &restored.device,
+                &crate::EncryptedGroupCommit {
+                    group_id,
+                    prior_epoch: removal.prior_epoch,
+                    epoch: removal.epoch,
+                    committer_device_id: removal.committer_device_id,
+                    commit_blob: removal.commit_blob,
+                },
+            )
+            .unwrap();
+        persist_mls_client_state(&store, &restored.device, &[&restored.conversations[0]]).unwrap();
+        let mut removed = load_mls_client_state(&store).unwrap();
+        assert_eq!(removed.conversations[0].epoch(), 3);
+        assert_eq!(
+            removed.conversations[0]
+                .encrypt_application_message(&removed.device, b"must remain evicted")
+                .unwrap_err(),
+            crate::ConversationError::NotActive
+        );
+    }
+
+    #[test]
     fn restart_preserves_pending_commit_acceptance_boundary() {
         let bob_root = RootIdentityKey::generate();
         let alice_root = RootIdentityKey::generate();

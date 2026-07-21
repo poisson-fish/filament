@@ -65,11 +65,12 @@ Still required before Phase 1 can be called complete:
   view and native rotation state machine are implemented and tested, but final
   runtime command registration awaits that host scaffold.
 
-Phase 2 is now in progress. The client core implements the first bounded
-two-device MLS conversation lifecycle: claimed-KeyPackage validation against a
-pinned peer root, staged Add/Welcome creation, acceptance-gated commit merge,
-strict Welcome membership validation, PrivateMessage encryption/decryption,
-fail-closed routing-hint checks, and bounded per-sender generation reordering.
+Phase 2 is now in progress. The client core implements a bounded two-user MLS
+conversation lifecycle: claimed-KeyPackage validation against pinned roots,
+staged Add/Welcome and safe Remove creation, acceptance-gated commit merge,
+strict multi-device Welcome/membership validation, PrivateMessage
+encryption/decryption, fail-closed routing-hint checks, and bounded per-sender
+generation reordering.
 The server now has the v13 Delivery Service foundation for
 `mls_v1` conversations: downgrade-protected crypto-mode records, conversation membership
 and group mapping, opaque commit/message persistence, deterministic
@@ -105,9 +106,13 @@ single-record checkpoint containing the complete OpenMLS provider, certified
 device signer, pinned roots, group epochs, generation counters, and buffered
 generation gaps. Restart restores revalidate all certificates, identifiers,
 pins, membership, epochs, and record bounds before returning operational state.
-Packaged runtime wiring, durable message-history coordination, multi-device MLS
-leaf semantics, client commit rebase, and external-commit recovery remain to be
-implemented. Phase 3 and
+Multi-device churn now adds one root-certified device per recipient-bound
+Welcome, processes the same commit without Welcome on existing devices,
+enforces 200 total leaves and 100 devices per user, rejects third-user or
+duplicate leaves and final-user-device removal, cryptographically evicts
+removed devices, and survives durable restart. Packaged runtime wiring, durable
+message-history coordination, client commit rebase, and external-commit
+recovery remain to be implemented. Phase 3 and
 later attachment, media, guild-channel, hardening, and key-transparency work has
 not started.
 
@@ -465,7 +470,7 @@ Implement the first end-to-end encrypted conversation type: 1:1 DMs as 2-member 
 
 ### Exit Criteria
 
-- [ ] Two-device and multi-device 1:1 churn tests pass, including out-of-order and offline catch-up
+- [x] Two-device and multi-device 1:1 churn tests pass, including out-of-order and offline catch-up
 - [x] Persistence audit confirms server stores opaque envelopes only
 - [x] Epoch-conflict handling is deterministic and tested
 - [x] Mailbox ack and GC verified (all-device ack triggers delete; TTL triggers delete)

@@ -70,10 +70,11 @@ Status: the Phase 0 engineering artifacts, Phase 1 identity/device/KeyPackage
 foundation, and initial Phase 2 two-user conversation provisioning, opaque
 transport, message mailbox, recipient-bound commit/Welcome mailbox, native
 message- and commit-mailbox authentication/decryption processing, and native
-MLS client checkpoints are implemented as of 2026-07-21; ADR
+MLS client checkpoints with bounded multi-device membership churn are
+implemented as of 2026-07-21; ADR
 ratification is complete, while threat-model ratification remains open.
-Packaged-client runtime wiring and complete multi-device MLS leaf handling
-remain unfinished, so E2EE is not yet generally available.
+Packaged-client runtime wiring remains unfinished, so E2EE is not yet
+generally available.
 Items below remain binding for later phases; the exact completed/remaining
 split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 
@@ -106,6 +107,10 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   plaintext before releasing operational state.
 - The server never holds root keys and cannot mint devices; uncertified devices fail verification at every peer.
 - Device removal is first-class: MLS Remove of that device's leaves from all groups (cryptographic eviction) plus KeyPackage tombstoning.
+- Phase 2 two-user groups add one certified device per commit and bind its
+  Welcome to that exact target device. Groups are capped at 200 leaves and 100
+  devices per user; duplicate devices, third-user leaves, combined membership
+  changes, and removal of either user's final device fail closed.
 
 ### Server-Side Limits (E2EE Endpoints)
 - Strict maximum sizes on KeyPackages, commits, Welcomes, proposals, and message envelopes.
@@ -120,8 +125,9 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   retrieve the Welcome bytes.
 - Clients validate complete commit pages before touching MLS state, accept
   only a consecutive authenticated epoch prefix, and acknowledge it only
-  after the advanced state is durably persisted. Phase 2 rejects all
-  membership-changing commits and all non-Update proposals.
+  after the advanced state is durably persisted. Phase 2 accepts a single
+  root-certified device Add or safe Remove per commit; other proposal types and
+  ambiguous/combined membership changes are rejected.
 - Server-side validation of MLS payloads is shape-only: size bounds, field presence, and epoch monotonicity per group.
 
 ### Retention — Mailbox Model

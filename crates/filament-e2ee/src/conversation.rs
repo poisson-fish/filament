@@ -1,4 +1,4 @@
-//! Two-party MLS conversation lifecycle and fail-closed message processing.
+//! Two-user MLS conversation lifecycle and fail-closed message processing.
 //!
 //! The server-provided group, epoch, suite, and sender fields are routing hints
 //! only. This module checks every hint against the locally pinned conversation
@@ -10,6 +10,7 @@ use filament_core::{
     CiphersuiteId, ConversationCrypto, DeviceCertificate, DeviceId, GroupId as FilamentGroupId,
     UserId,
 };
+use openmls::prelude::group_info::GroupInfo;
 use openmls::prelude::*;
 use tls_codec::Deserialize as TlsDeserialize;
 
@@ -29,6 +30,10 @@ const MESSAGE_TRANSPORT_PADDING_BUCKETS: [usize; 4] = [512, 1_024, 4_096, 16_384
 const MAX_WELCOME_BYTES: usize = 65_536;
 const MAX_COMMIT_BYTES: usize = 65_536;
 const MAX_GROUP_INFO_BYTES: usize = 65_536;
+/// Maximum MLS leaves in one Phase 2 two-user conversation.
+pub const MAX_MLS_GROUP_LEAVES: usize = 200;
+/// Maximum certified device leaves belonging to either user.
+pub const MAX_MLS_DEVICES_PER_USER: usize = 100;
 const OUT_OF_ORDER_TOLERANCE: u32 = 64;
 const MAXIMUM_FORWARD_DISTANCE: u32 = 256;
 
@@ -207,7 +212,7 @@ struct InboundGenerationQueue {
     pending: BTreeMap<u64, DecryptedApplicationMessage>,
 }
 
-/// Client-side state for one two-device, two-user MLS v1 conversation.
+/// Client-side state for one bounded, two-user MLS v1 conversation.
 pub struct MlsConversation {
     group_id: FilamentGroupId,
     group: MlsGroup,
@@ -363,7 +368,7 @@ impl MlsConversation {
         } else if group.ciphersuite() != CIPHERSUITE {
             Err(ConversationError::MetadataMismatch)
         } else {
-            validate_two_member_group(&group, &pinned_roots, device.device_id())
+            validate_two_user_group(&group, &pinned_roots, Some(device.device_id()))
         };
         if let Err(error) = validation {
             group
@@ -396,8 +401,13 @@ impl MlsConversation {
         self.group
             .merge_pending_commit(device.provider())
             .map_err(|_| ConversationError::CryptoError)?;
-        validate_two_member_group(&self.group, &self.pinned_roots, self.own_device_id)?;
-        self.active = true;
+        self.active = self.group.is_active();
+        validate_two_user_group(
+            &self.group,
+            &self.pinned_roots,
+            self.active.then_some(self.own_device_id),
+        )?;
+        self.prune_inbound_for_current_members()?;
         Ok(())
     }
 
@@ -487,16 +497,118 @@ impl MlsConversation {
         })
     }
 
+    /// Stage an Add commit for one additional certified device of either user.
+    ///
+    /// The caller must claim the exact target device's single-use KeyPackage
+    /// and send the returned Welcome only to that device. Adds are serialized
+    /// one device per epoch to match the Delivery Service's recipient binding.
+    ///
+    /// # Errors
+    /// Rejects unpinned roots, duplicate devices, pending commits, inactive
+    /// groups, device/group caps, and malformed or uncertified KeyPackages.
+    pub fn create_add_device(
+        &mut self,
+        device: &MlsDevice,
+        target: PinnedUserIdentity,
+        target_keypackage_blob: &[u8],
+    ) -> Result<PendingGroupCommit, ConversationError> {
+        self.ensure_operational(device)?;
+        if self.pinned_roots.get(&target.user_id) != Some(&target.root_key_pub) {
+            return Err(ConversationError::UntrustedCredential);
+        }
+        let member_counts = verified_member_counts(&self.group, &self.pinned_roots)?;
+        if member_counts.total >= MAX_MLS_GROUP_LEAVES
+            || member_counts
+                .per_user
+                .get(&target.user_id)
+                .copied()
+                .unwrap_or(0)
+                >= MAX_MLS_DEVICES_PER_USER
+        {
+            return Err(ConversationError::LimitExceeded);
+        }
+        let key_package = parse_and_verify_keypackage(device, target_keypackage_blob, target)?;
+        let added = verify_member_credential(
+            key_package.leaf_node().credential(),
+            key_package.leaf_node().signature_key().as_slice(),
+            &self.pinned_roots,
+        )?;
+        if self.has_verified_member_device(added.device_id)? {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        let prior_epoch = self.epoch();
+        let (commit, welcome, group_info) = self
+            .group
+            .add_members(device.provider(), device.signer(), &[key_package])
+            .map_err(|_| ConversationError::CryptoError)?;
+        pending_commit_from_messages(
+            self.group_id,
+            prior_epoch,
+            self.own_device_id,
+            &self.group,
+            &commit,
+            Some(welcome),
+            group_info,
+        )
+    }
+
+    /// Stage a Remove commit for one non-local device.
+    ///
+    /// Removing the final device of either user is rejected because a Phase 2
+    /// conversation must retain at least one leaf for each pinned participant.
+    ///
+    /// # Errors
+    /// Rejects the local device, unknown devices, final-user-device removal,
+    /// pending commits, inactive groups, or OpenMLS failures.
+    pub fn create_remove_device(
+        &mut self,
+        device: &MlsDevice,
+        target_device_id: DeviceId,
+    ) -> Result<PendingGroupCommit, ConversationError> {
+        self.ensure_operational(device)?;
+        if target_device_id == self.own_device_id {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        let members = verified_members(&self.group, &self.pinned_roots)?;
+        let (target_index, target) = members
+            .iter()
+            .find(|(_, member)| member.device_id == target_device_id)
+            .copied()
+            .ok_or(ConversationError::UnexpectedMembership)?;
+        if members
+            .iter()
+            .filter(|(_, member)| member.user_id == target.user_id)
+            .count()
+            <= 1
+        {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        let prior_epoch = self.epoch();
+        let (commit, welcome, group_info) = self
+            .group
+            .remove_members(device.provider(), device.signer(), &[target_index])
+            .map_err(|_| ConversationError::CryptoError)?;
+        pending_commit_from_messages(
+            self.group_id,
+            prior_epoch,
+            self.own_device_id,
+            &self.group,
+            &commit,
+            welcome,
+            group_info,
+        )
+    }
+
     /// Authenticate, inspect, and merge one ordered peer commit.
     ///
-    /// Phase 2 permits only updates that preserve the exact two-device,
-    /// two-user membership. Adds, removes, external senders, and other
-    /// proposal types fail closed before the staged commit is merged.
+    /// Phase 2 permits updates plus a single certified device Add or safe
+    /// Remove. Commits that introduce a third user, exceed device caps, remove
+    /// a user's final leaf, or combine membership changes fail closed.
     ///
     /// # Errors
     /// Returns [`ConversationError`] when routing hints disagree with the
     /// authenticated commit, the epoch is not the next local epoch, the
-    /// committer is not root-certified, or membership would change.
+    /// committer is not root-certified, or membership violates Phase 2 bounds.
     pub fn process_incoming_commit(
         &mut self,
         device: &MlsDevice,
@@ -569,30 +681,18 @@ impl MlsConversation {
         else {
             return Err(ConversationError::InvalidCommit);
         };
-        if staged_commit.epoch().as_u64() != commit.epoch
-            || staged_commit.queued_proposals().count() != staged_commit.update_proposals().count()
-        {
-            return Err(ConversationError::UnexpectedMembership);
-        }
-        if let Some(leaf) = staged_commit.update_path_leaf_node() {
-            verify_member_credential(
-                leaf.credential(),
-                leaf.signature_key().as_slice(),
-                &self.pinned_roots,
-            )?;
-        }
-        for update in staged_commit.update_proposals() {
-            let leaf = update.update_proposal().leaf_node();
-            verify_member_credential(
-                leaf.credential(),
-                leaf.signature_key().as_slice(),
-                &self.pinned_roots,
-            )?;
-        }
+        self.validate_staged_commit(&staged_commit, verified_sender, commit.epoch)?;
+        validate_staged_membership_change(&self.group, &staged_commit, &self.pinned_roots)?;
         self.group
             .merge_staged_commit(device.provider(), *staged_commit)
             .map_err(|_| ConversationError::CryptoError)?;
-        validate_two_member_group(&self.group, &self.pinned_roots, self.own_device_id)
+        self.active = self.group.is_active();
+        validate_two_user_group(
+            &self.group,
+            &self.pinned_roots,
+            self.active.then_some(self.own_device_id),
+        )?;
+        self.prune_inbound_for_current_members()
     }
 
     /// Encrypt one bounded application payload as an MLS PrivateMessage.
@@ -789,9 +889,20 @@ impl MlsConversation {
             return Err(ConversationError::MetadataMismatch);
         }
         if metadata.active {
-            validate_two_member_group(&group, &pinned_roots, metadata.own_device_id)?;
-        } else {
+            validate_two_user_group(&group, &pinned_roots, Some(metadata.own_device_id))?;
+        } else if metadata.epoch == 0 {
             validate_initial_pending_group(&group, &pinned_roots, metadata.own_device_id)?;
+        } else {
+            if group.is_active() {
+                return Err(ConversationError::MetadataMismatch);
+            }
+            validate_two_user_group(&group, &pinned_roots, None)?;
+            if verified_members(&group, &pinned_roots)?
+                .iter()
+                .any(|(_, member)| member.device_id == metadata.own_device_id)
+            {
+                return Err(ConversationError::MetadataMismatch);
+            }
         }
 
         let mut inbound = HashMap::with_capacity(metadata.inbound.len());
@@ -854,6 +965,64 @@ impl MlsConversation {
     fn ensure_device(&self, device: &MlsDevice) -> Result<(), ConversationError> {
         if device.device_id() != self.own_device_id {
             return Err(ConversationError::UnexpectedMembership);
+        }
+        Ok(())
+    }
+
+    fn ensure_operational(&self, device: &MlsDevice) -> Result<(), ConversationError> {
+        self.ensure_device(device)?;
+        if !self.active {
+            return Err(ConversationError::NotActive);
+        }
+        if self.group.pending_commit().is_some() {
+            return Err(ConversationError::PendingCommit);
+        }
+        Ok(())
+    }
+
+    fn prune_inbound_for_current_members(&mut self) -> Result<(), ConversationError> {
+        let members = verified_members(&self.group, &self.pinned_roots)?;
+        let device_ids = members
+            .into_iter()
+            .map(|(_, member)| member.device_id)
+            .collect::<std::collections::HashSet<_>>();
+        self.inbound
+            .retain(|device_id, _| device_ids.contains(device_id));
+        Ok(())
+    }
+
+    fn validate_staged_commit(
+        &self,
+        staged_commit: &StagedCommit,
+        verified_sender: VerifiedMember,
+        expected_epoch: u64,
+    ) -> Result<(), ConversationError> {
+        if staged_commit.epoch().as_u64() != expected_epoch {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        if let Some(leaf) = staged_commit.update_path_leaf_node() {
+            let path_member = verify_member_credential(
+                leaf.credential(),
+                leaf.signature_key().as_slice(),
+                &self.pinned_roots,
+            )?;
+            if path_member != verified_sender {
+                return Err(ConversationError::UnexpectedMembership);
+            }
+        }
+        for update in staged_commit.update_proposals() {
+            let leaf = update.update_proposal().leaf_node();
+            let updated = verify_member_credential(
+                leaf.credential(),
+                leaf.signature_key().as_slice(),
+                &self.pinned_roots,
+            )?;
+            let Sender::Member(updated_index) = update.sender() else {
+                return Err(ConversationError::UnexpectedMembership);
+            };
+            if self.verify_member_at(*updated_index)? != updated {
+                return Err(ConversationError::UnexpectedMembership);
+            }
         }
         Ok(())
     }
@@ -1009,28 +1178,133 @@ fn parse_and_verify_keypackage(
     Ok(key_package)
 }
 
-fn validate_two_member_group(
+struct VerifiedMemberCounts {
+    total: usize,
+    per_user: HashMap<UserId, usize>,
+}
+
+fn verified_members(
     group: &MlsGroup,
     pinned_roots: &HashMap<UserId, [u8; 32]>,
-    own_device_id: DeviceId,
-) -> Result<(), ConversationError> {
-    let mut members = HashMap::with_capacity(2);
+) -> Result<Vec<(LeafNodeIndex, VerifiedMember)>, ConversationError> {
+    let mut members = Vec::new();
+    let mut device_ids = std::collections::HashSet::new();
     for member in group.members() {
         let verified =
             verify_member_credential(&member.credential, &member.signature_key, pinned_roots)?;
+        if !device_ids.insert(verified.device_id) {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        members.push((member.index, verified));
+    }
+    Ok(members)
+}
+
+fn verified_member_counts(
+    group: &MlsGroup,
+    pinned_roots: &HashMap<UserId, [u8; 32]>,
+) -> Result<VerifiedMemberCounts, ConversationError> {
+    let members = verified_members(group, pinned_roots)?;
+    let mut per_user = HashMap::with_capacity(2);
+    for (_, member) in &members {
+        *per_user.entry(member.user_id).or_insert(0) += 1;
+    }
+    Ok(VerifiedMemberCounts {
+        total: members.len(),
+        per_user,
+    })
+}
+
+fn validate_two_user_group(
+    group: &MlsGroup,
+    pinned_roots: &HashMap<UserId, [u8; 32]>,
+    required_device_id: Option<DeviceId>,
+) -> Result<(), ConversationError> {
+    let members = verified_members(group, pinned_roots)?;
+    let counts = verified_member_counts(group, pinned_roots)?;
+    if pinned_roots.len() != 2
+        || counts.total < 2
+        || counts.total > MAX_MLS_GROUP_LEAVES
+        || required_device_id.is_some_and(|required| {
+            !members
+                .iter()
+                .any(|(_, member)| member.device_id == required)
+        })
+        || !pinned_roots.keys().all(|user_id| {
+            counts
+                .per_user
+                .get(user_id)
+                .is_some_and(|count| (1..=MAX_MLS_DEVICES_PER_USER).contains(count))
+        })
+        || counts.per_user.len() != pinned_roots.len()
+    {
+        return Err(ConversationError::UnexpectedMembership);
+    }
+    Ok(())
+}
+
+fn validate_staged_membership_change(
+    group: &MlsGroup,
+    staged_commit: &StagedCommit,
+    pinned_roots: &HashMap<UserId, [u8; 32]>,
+) -> Result<(), ConversationError> {
+    let queued_count = staged_commit.queued_proposals().count();
+    let update_count = staged_commit.update_proposals().count();
+    let add_count = staged_commit.add_proposals().count();
+    let remove_count = staged_commit.remove_proposals().count();
+    let membership_count = add_count
+        .checked_add(remove_count)
+        .ok_or(ConversationError::LimitExceeded)?;
+    if membership_count == 0 {
+        if queued_count != update_count {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        return Ok(());
+    }
+    if membership_count != 1 || queued_count != 1 || update_count != 0 {
+        return Err(ConversationError::UnexpectedMembership);
+    }
+
+    let members = verified_members(group, pinned_roots)?;
+    if add_count == 1 {
+        let counts = verified_member_counts(group, pinned_roots)?;
+        let add = staged_commit
+            .add_proposals()
+            .next()
+            .ok_or(ConversationError::UnexpectedMembership)?;
+        let leaf = add.add_proposal().key_package().leaf_node();
+        let added = verify_member_credential(
+            leaf.credential(),
+            leaf.signature_key().as_slice(),
+            pinned_roots,
+        )?;
         if members
-            .insert(verified.device_id, verified.user_id)
-            .is_some()
+            .iter()
+            .any(|(_, member)| member.device_id == added.device_id)
+            || counts.total >= MAX_MLS_GROUP_LEAVES
+            || counts.per_user.get(&added.user_id).copied().unwrap_or(0) >= MAX_MLS_DEVICES_PER_USER
         {
             return Err(ConversationError::UnexpectedMembership);
         }
+        return Ok(());
     }
-    if members.len() != 2
-        || pinned_roots.len() != 2
-        || !members.contains_key(&own_device_id)
-        || !pinned_roots
-            .keys()
-            .all(|user_id| members.values().any(|member_user| member_user == user_id))
+
+    let removed_index = staged_commit
+        .remove_proposals()
+        .next()
+        .ok_or(ConversationError::UnexpectedMembership)?
+        .remove_proposal()
+        .removed();
+    let removed = members
+        .iter()
+        .find(|(index, _)| *index == removed_index)
+        .map(|(_, member)| *member)
+        .ok_or(ConversationError::UnexpectedMembership)?;
+    if members
+        .iter()
+        .filter(|(_, member)| member.user_id == removed.user_id)
+        .count()
+        <= 1
     {
         return Err(ConversationError::UnexpectedMembership);
     }
@@ -1158,6 +1432,57 @@ fn verify_member_credential(
     )
     .map_err(|_| ConversationError::UntrustedCredential)?;
     Ok(VerifiedMember { user_id, device_id })
+}
+
+fn pending_commit_from_messages(
+    group_id: FilamentGroupId,
+    prior_epoch: u64,
+    committer_device_id: DeviceId,
+    group: &MlsGroup,
+    commit: &MlsMessageOut,
+    welcome: Option<MlsMessageOut>,
+    group_info: Option<GroupInfo>,
+) -> Result<PendingGroupCommit, ConversationError> {
+    let epoch = group
+        .pending_commit()
+        .ok_or(ConversationError::NoPendingCommit)?
+        .epoch()
+        .as_u64();
+    if prior_epoch.checked_add(1) != Some(epoch) {
+        return Err(ConversationError::MetadataMismatch);
+    }
+    let commit_blob = commit
+        .to_bytes()
+        .map_err(|_| ConversationError::SerializationFailed)?;
+    let welcome_blob = welcome
+        .map(|message| {
+            message
+                .to_bytes()
+                .map_err(|_| ConversationError::SerializationFailed)
+        })
+        .transpose()?;
+    let group_info_blob = group_info
+        .map(|info| {
+            MlsMessageOut::from(info)
+                .to_bytes()
+                .map_err(|_| ConversationError::SerializationFailed)
+        })
+        .transpose()?;
+    enforce_serialized_limits(
+        &commit_blob,
+        welcome_blob.as_deref(),
+        group_info_blob.as_deref(),
+    )?;
+    Ok(PendingGroupCommit {
+        group_id,
+        prior_epoch,
+        epoch,
+        suite: CiphersuiteId::baseline(),
+        committer_device_id,
+        commit_blob,
+        welcome_blob,
+        group_info_blob,
+    })
 }
 
 fn enforce_serialized_limits(
@@ -1304,6 +1629,16 @@ mod tests {
         )
     }
 
+    fn encrypted_commit(pending: &PendingGroupCommit) -> EncryptedGroupCommit {
+        EncryptedGroupCommit {
+            group_id: pending.group_id,
+            prior_epoch: pending.prior_epoch,
+            epoch: pending.epoch,
+            committer_device_id: pending.committer_device_id,
+            commit_blob: pending.commit_blob.clone(),
+        }
+    }
+
     #[test]
     fn two_member_create_join_and_private_message_round_trip() {
         let (alice, mut alice_group, bob, mut bob_group) = joined_conversations();
@@ -1327,6 +1662,199 @@ mod tests {
             outcome.ready_messages[0].sender_device_id,
             alice.device_id()
         );
+    }
+
+    #[test]
+    fn multi_device_add_message_remove_churn_is_fail_closed() {
+        // A second device must chain to the same pinned Bob root. Recreate the
+        // fixture explicitly so both Bob devices share that root secret.
+        let alice_root = RootIdentityKey::generate();
+        let shared_bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &shared_bob_root).unwrap();
+        let bob_second =
+            MlsDevice::generate(bob.user_id(), DeviceId::new(), &shared_bob_root).unwrap();
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = FilamentGroupId::new();
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let (mut alice_group, initial) =
+            MlsConversation::create_two_member(group_id, &alice, bob_pin, &bob_package).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let mut bob_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob,
+            alice_pin,
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+
+        let second_package = generate_key_package_batch(&bob_second, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let add = alice_group
+            .create_add_device(&alice, bob_pin, &second_package)
+            .unwrap();
+        assert_eq!(add.epoch, 2);
+        assert!(add.welcome_blob.is_some());
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&add))
+            .unwrap();
+        let mut bob_second_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob_second,
+            alice_pin,
+            add.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+
+        let to_all_devices = alice_group
+            .encrypt_application_message(&alice, b"fanout to both Bob devices")
+            .unwrap();
+        assert_eq!(
+            bob_group
+                .decrypt_application_message(&bob, &to_all_devices)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"fanout to both Bob devices"
+        );
+        assert_eq!(
+            bob_second_group
+                .decrypt_application_message(&bob_second, &to_all_devices)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"fanout to both Bob devices"
+        );
+
+        let remove = alice_group
+            .create_remove_device(&alice, bob.device_id())
+            .unwrap();
+        assert!(remove.welcome_blob.is_none());
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_second_group
+            .process_incoming_commit(&bob_second, &encrypted_commit(&remove))
+            .unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&remove))
+            .unwrap();
+        assert_eq!(
+            bob_group
+                .encrypt_application_message(&bob, b"removed device must fail")
+                .unwrap_err(),
+            ConversationError::NotActive
+        );
+        let after_removal = alice_group
+            .encrypt_application_message(&alice, b"only active Bob device")
+            .unwrap();
+        assert_eq!(
+            bob_second_group
+                .decrypt_application_message(&bob_second, &after_removal)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"only active Bob device"
+        );
+        assert_eq!(
+            bob_group
+                .decrypt_application_message(&bob, &after_removal)
+                .unwrap_err(),
+            ConversationError::NotActive
+        );
+    }
+
+    #[test]
+    fn last_user_device_and_unpinned_add_are_rejected() {
+        let (alice, mut alice_group, bob, _bob_group) = joined_conversations();
+        assert_eq!(
+            alice_group
+                .create_remove_device(&alice, bob.device_id())
+                .unwrap_err(),
+            ConversationError::UnexpectedMembership
+        );
+
+        let duplicate_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        assert_eq!(
+            alice_group
+                .create_add_device(
+                    &alice,
+                    PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public()),
+                    &duplicate_package,
+                )
+                .unwrap_err(),
+            ConversationError::UnexpectedMembership
+        );
+
+        let attacker_root = RootIdentityKey::generate();
+        let attacker = MlsDevice::generate(UserId::new(), DeviceId::new(), &attacker_root).unwrap();
+        let attacker_package = generate_key_package_batch(&attacker, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        assert_eq!(
+            alice_group
+                .create_add_device(
+                    &alice,
+                    PinnedUserIdentity::new(attacker.user_id(), *attacker.root_key_public()),
+                    &attacker_package,
+                )
+                .unwrap_err(),
+            ConversationError::UntrustedCredential
+        );
+    }
+
+    #[test]
+    fn combined_membership_commit_is_rejected_before_merge() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let bob_second = MlsDevice::generate(bob.user_id(), DeviceId::new(), &bob_root).unwrap();
+        let bob_third = MlsDevice::generate(bob.user_id(), DeviceId::new(), &bob_root).unwrap();
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = FilamentGroupId::new();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let (mut alice_group, initial) =
+            MlsConversation::create_two_member(group_id, &alice, bob_pin, &bob_package).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let mut bob_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob,
+            alice_pin,
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let second = generate_key_package_batch(&bob_second, 1)
+            .unwrap()
+            .remove(0);
+        let third = generate_key_package_batch(&bob_third, 1).unwrap().remove(0);
+        let (commit, _, _) = alice_group
+            .group
+            .add_members(
+                alice.provider(),
+                alice.signer(),
+                &[second.key_package().clone(), third.key_package().clone()],
+            )
+            .unwrap();
+        let combined = EncryptedGroupCommit {
+            group_id,
+            prior_epoch: 1,
+            epoch: 2,
+            committer_device_id: alice.device_id(),
+            commit_blob: commit.to_bytes().unwrap(),
+        };
+
+        assert_eq!(
+            bob_group
+                .process_incoming_commit(&bob, &combined)
+                .unwrap_err(),
+            ConversationError::UnexpectedMembership
+        );
+        assert_eq!(bob_group.epoch(), 1);
     }
 
     #[test]

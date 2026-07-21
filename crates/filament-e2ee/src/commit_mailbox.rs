@@ -323,6 +323,87 @@ mod tests {
     }
 
     #[test]
+    fn added_device_joins_while_existing_device_processes_same_commit_without_welcome() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let bob_second = MlsDevice::generate(bob.user_id(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = GroupId::new();
+        let (mut alice_group, initial) =
+            MlsConversation::create_two_member(group_id, &alice, bob_pin, &bob_package).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let bob_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob,
+            alice_pin,
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let second_package = generate_key_package_batch(&bob_second, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let add = alice_group
+            .create_add_device(&alice, bob_pin, &second_package)
+            .unwrap();
+        let target_page = page(vec![mailbox_entry(&add)]);
+        let mut existing_entry = mailbox_entry(&add);
+        existing_entry.welcome_blob = None;
+        let existing_page = page(vec![existing_entry]);
+        alice_group.accept_pending_commit(&alice).unwrap();
+
+        let mut bob_state = Some(bob_group);
+        let existing_batch =
+            process_commit_mailbox(&mut bob_state, &bob, group_id, alice_pin, existing_page)
+                .unwrap();
+        assert_eq!(existing_batch.processed_epochs, vec![2]);
+        assert_eq!(
+            existing_batch.pending_acknowledgment.unwrap().epochs,
+            vec![2]
+        );
+
+        let mut bob_second_state = None;
+        let target_batch = process_commit_mailbox(
+            &mut bob_second_state,
+            &bob_second,
+            group_id,
+            alice_pin,
+            target_page,
+        )
+        .unwrap();
+        assert_eq!(target_batch.processed_epochs, vec![2]);
+        assert_eq!(target_batch.pending_acknowledgment.unwrap().epochs, vec![2]);
+
+        let encrypted = alice_group
+            .encrypt_application_message(&alice, b"offline device joined")
+            .unwrap();
+        assert_eq!(
+            bob_state
+                .as_mut()
+                .unwrap()
+                .decrypt_application_message(&bob, &encrypted)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"offline device joined"
+        );
+        assert_eq!(
+            bob_second_state
+                .as_mut()
+                .unwrap()
+                .decrypt_application_message(&bob_second, &encrypted)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"offline device joined"
+        );
+    }
+
+    #[test]
     fn forged_committer_hint_blocks_epoch_without_ack_or_merge() {
         let JoinedFixture {
             alice,
