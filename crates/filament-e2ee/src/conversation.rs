@@ -12,7 +12,7 @@ use filament_core::{
 };
 use openmls::prelude::group_info::GroupInfo;
 use openmls::prelude::*;
-use tls_codec::Deserialize as TlsDeserialize;
+use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::{
     error::ConversationError,
@@ -115,6 +115,17 @@ impl core::fmt::Debug for PendingGroupCommit {
     }
 }
 
+/// Result of rebasing one locally rejected commit intent.
+#[derive(Debug)]
+pub enum PendingCommitRebase {
+    /// The intent remains valid and was restaged at the new epoch.
+    Rebased(PendingGroupCommit),
+    /// The accepted competing commit already performed the intended Add or Remove.
+    AlreadySatisfied,
+    /// The winning membership change made the intent unsafe or removed this device.
+    Invalidated,
+}
+
 /// Opaque MLS application record plus untrusted server routing hints.
 #[derive(Clone, PartialEq, Eq)]
 pub struct EncryptedApplicationMessage {
@@ -210,6 +221,18 @@ struct VerifiedMember {
 struct InboundGenerationQueue {
     next_generation: u64,
     pending: BTreeMap<u64, DecryptedApplicationMessage>,
+}
+
+enum PendingCommitIntent {
+    SelfUpdate,
+    AddDevice {
+        target: PinnedUserIdentity,
+        target_device_id: DeviceId,
+        keypackage_blob: Vec<u8>,
+    },
+    RemoveDevice {
+        target_device_id: DeviceId,
+    },
 }
 
 /// Client-side state for one bounded, two-user MLS v1 conversation.
@@ -426,6 +449,102 @@ impl MlsConversation {
             .map_err(|_| ConversationError::CryptoError)
     }
 
+    /// Rebase a rejected local commit on the authenticated commit that won the
+    /// Delivery Service's single-writer race.
+    ///
+    /// The winning commit must advance the same prior epoch as the pending
+    /// local commit. This method validates its routing envelope before
+    /// discarding rejected state, merges it through the normal credential and
+    /// membership checks, and then restages the original self-update, Add, or
+    /// Remove intent. [`PendingCommitRebase::AlreadySatisfied`] means the
+    /// winning commit already added or removed the intended device, while
+    /// [`PendingCommitRebase::Invalidated`] means the winner made the intent
+    /// unsafe and no retry should be submitted.
+    ///
+    /// A rebased Add reuses its claimed KeyPackage only because the rejected
+    /// commit and Welcome must never be delivered. The caller must submit only
+    /// the newly returned commit and recipient-bound Welcome.
+    ///
+    /// # Errors
+    /// Returns [`ConversationError`] if there is no supported pending commit,
+    /// the winning commit is not the authenticated competitor for that epoch,
+    /// the accepted commit fails MLS authentication, or restaging fails.
+    pub fn rebase_pending_commit(
+        &mut self,
+        device: &MlsDevice,
+        accepted_commit: &EncryptedGroupCommit,
+    ) -> Result<PendingCommitRebase, ConversationError> {
+        self.ensure_device(device)?;
+        if !self.active {
+            return Err(ConversationError::NotActive);
+        }
+        let pending_epoch = self
+            .group
+            .pending_commit()
+            .ok_or(ConversationError::NoPendingCommit)?
+            .epoch()
+            .as_u64();
+        if accepted_commit.prior_epoch != self.epoch() || accepted_commit.epoch != pending_epoch {
+            return Err(ConversationError::MetadataMismatch);
+        }
+
+        let intent = self.pending_commit_intent()?;
+        let protocol_message = self.validate_incoming_commit(accepted_commit)?;
+        let staged_commit =
+            self.stage_incoming_commit(device, accepted_commit, protocol_message)?;
+        self.group
+            .clear_pending_commit(device.provider().storage())
+            .map_err(|_| ConversationError::CryptoError)?;
+        self.merge_staged_incoming_commit(device, *staged_commit)?;
+        if !self.active {
+            return Ok(PendingCommitRebase::Invalidated);
+        }
+
+        match intent {
+            PendingCommitIntent::SelfUpdate => self
+                .create_self_update(device)
+                .map(PendingCommitRebase::Rebased),
+            PendingCommitIntent::AddDevice {
+                target,
+                target_device_id,
+                keypackage_blob,
+            } => {
+                if self.has_verified_member_device(target_device_id)? {
+                    Ok(PendingCommitRebase::AlreadySatisfied)
+                } else {
+                    let counts = verified_member_counts(&self.group, &self.pinned_roots)?;
+                    if counts.total >= MAX_MLS_GROUP_LEAVES
+                        || counts.per_user.get(&target.user_id).copied().unwrap_or(0)
+                            >= MAX_MLS_DEVICES_PER_USER
+                    {
+                        return Ok(PendingCommitRebase::Invalidated);
+                    }
+                    self.create_add_device(device, target, &keypackage_blob)
+                        .map(PendingCommitRebase::Rebased)
+                }
+            }
+            PendingCommitIntent::RemoveDevice { target_device_id } => {
+                let members = verified_members(&self.group, &self.pinned_roots)?;
+                let Some((_, target)) = members
+                    .iter()
+                    .find(|(_, member)| member.device_id == target_device_id)
+                else {
+                    return Ok(PendingCommitRebase::AlreadySatisfied);
+                };
+                if members
+                    .iter()
+                    .filter(|(_, member)| member.user_id == target.user_id)
+                    .count()
+                    <= 1
+                {
+                    return Ok(PendingCommitRebase::Invalidated);
+                }
+                self.create_remove_device(device, target_device_id)
+                    .map(PendingCommitRebase::Rebased)
+            }
+        }
+    }
+
     /// Stage a post-compromise self-update for Delivery Service ordering.
     ///
     /// The returned commit remains pending and blocks sends until the caller
@@ -621,6 +740,14 @@ impl MlsConversation {
         if self.group.pending_commit().is_some() {
             return Err(ConversationError::PendingCommit);
         }
+        let protocol_message = self.validate_incoming_commit(commit)?;
+        self.merge_incoming_commit(device, commit, protocol_message)
+    }
+
+    fn validate_incoming_commit(
+        &self,
+        commit: &EncryptedGroupCommit,
+    ) -> Result<ProtocolMessage, ConversationError> {
         let expected_epoch = self
             .group
             .epoch()
@@ -666,6 +793,25 @@ impl MlsConversation {
         if public_message.sender() != &Sender::Member(expected_sender_index) {
             return Err(ConversationError::MetadataMismatch);
         }
+        Ok(protocol_message)
+    }
+
+    fn merge_incoming_commit(
+        &mut self,
+        device: &MlsDevice,
+        commit: &EncryptedGroupCommit,
+        protocol_message: ProtocolMessage,
+    ) -> Result<(), ConversationError> {
+        let staged_commit = self.stage_incoming_commit(device, commit, protocol_message)?;
+        self.merge_staged_incoming_commit(device, *staged_commit)
+    }
+
+    fn stage_incoming_commit(
+        &mut self,
+        device: &MlsDevice,
+        commit: &EncryptedGroupCommit,
+        protocol_message: ProtocolMessage,
+    ) -> Result<Box<StagedCommit>, ConversationError> {
         let processed = self
             .group
             .process_message(device.provider(), protocol_message)
@@ -683,8 +829,16 @@ impl MlsConversation {
         };
         self.validate_staged_commit(&staged_commit, verified_sender, commit.epoch)?;
         validate_staged_membership_change(&self.group, &staged_commit, &self.pinned_roots)?;
+        Ok(staged_commit)
+    }
+
+    fn merge_staged_incoming_commit(
+        &mut self,
+        device: &MlsDevice,
+        staged_commit: StagedCommit,
+    ) -> Result<(), ConversationError> {
         self.group
-            .merge_staged_commit(device.provider(), *staged_commit)
+            .merge_staged_commit(device.provider(), staged_commit)
             .map_err(|_| ConversationError::CryptoError)?;
         self.active = self.group.is_active();
         validate_two_user_group(
@@ -978,6 +1132,66 @@ impl MlsConversation {
             return Err(ConversationError::PendingCommit);
         }
         Ok(())
+    }
+
+    fn pending_commit_intent(&self) -> Result<PendingCommitIntent, ConversationError> {
+        let pending = self
+            .group
+            .pending_commit()
+            .ok_or(ConversationError::NoPendingCommit)?;
+        let queued_count = pending.queued_proposals().count();
+        let add_count = pending.add_proposals().count();
+        let remove_count = pending.remove_proposals().count();
+        let update_count = pending.update_proposals().count();
+
+        if queued_count == 0
+            && add_count == 0
+            && remove_count == 0
+            && update_count == 0
+            && pending.update_path_leaf_node().is_some()
+        {
+            return Ok(PendingCommitIntent::SelfUpdate);
+        }
+        if queued_count == 1 && add_count == 1 && remove_count == 0 && update_count == 0 {
+            let add = pending
+                .add_proposals()
+                .next()
+                .ok_or(ConversationError::UnexpectedMembership)?;
+            let key_package = add.add_proposal().key_package();
+            let added = verify_member_credential(
+                key_package.leaf_node().credential(),
+                key_package.leaf_node().signature_key().as_slice(),
+                &self.pinned_roots,
+            )?;
+            let root_key_pub = *self
+                .pinned_roots
+                .get(&added.user_id)
+                .ok_or(ConversationError::UntrustedCredential)?;
+            let keypackage_blob = key_package
+                .tls_serialize_detached()
+                .map_err(|_| ConversationError::SerializationFailed)?;
+            if keypackage_blob.is_empty() || keypackage_blob.len() > MAX_KEYPACKAGE_BYTES {
+                return Err(ConversationError::LimitExceeded);
+            }
+            return Ok(PendingCommitIntent::AddDevice {
+                target: PinnedUserIdentity::new(added.user_id, root_key_pub),
+                target_device_id: added.device_id,
+                keypackage_blob,
+            });
+        }
+        if queued_count == 1 && add_count == 0 && remove_count == 1 && update_count == 0 {
+            let removed_index = pending
+                .remove_proposals()
+                .next()
+                .ok_or(ConversationError::UnexpectedMembership)?
+                .remove_proposal()
+                .removed();
+            let target_device_id = self
+                .verify_member_at(removed_index)
+                .map(|member| member.device_id)?;
+            return Ok(PendingCommitIntent::RemoveDevice { target_device_id });
+        }
+        Err(ConversationError::UnexpectedMembership)
     }
 
     fn prune_inbound_for_current_members(&mut self) -> Result<(), ConversationError> {
@@ -1639,6 +1853,63 @@ mod tests {
         }
     }
 
+    struct ThreeDeviceFixture {
+        alice: MlsDevice,
+        alice_group: MlsConversation,
+        bob: MlsDevice,
+        bob_group: MlsConversation,
+        bob_second: MlsDevice,
+        bob_second_group: MlsConversation,
+    }
+
+    fn three_device_fixture() -> ThreeDeviceFixture {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let bob_second = MlsDevice::generate(bob.user_id(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = FilamentGroupId::new();
+        let (mut alice_group, initial) =
+            MlsConversation::create_two_member(group_id, &alice, bob_pin, &bob_package).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let mut bob_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob,
+            alice_pin,
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let second_package = generate_key_package_batch(&bob_second, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let add = alice_group
+            .create_add_device(&alice, bob_pin, &second_package)
+            .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&add))
+            .unwrap();
+        let bob_second_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob_second,
+            alice_pin,
+            add.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        ThreeDeviceFixture {
+            alice,
+            alice_group,
+            bob,
+            bob_group,
+            bob_second,
+            bob_second_group,
+        }
+    }
+
     #[test]
     fn two_member_create_join_and_private_message_round_trip() {
         let (alice, mut alice_group, bob, mut bob_group) = joined_conversations();
@@ -1661,6 +1932,251 @@ mod tests {
         assert_eq!(
             outcome.ready_messages[0].sender_device_id,
             alice.device_id()
+        );
+    }
+
+    #[test]
+    fn concurrent_self_update_rebases_on_authenticated_winner() {
+        let (alice, mut alice_group, bob, mut bob_group) = joined_conversations();
+        let alice_rejected = alice_group.create_self_update(&alice).unwrap();
+        let bob_winner = bob_group.create_self_update(&bob).unwrap();
+        assert_eq!(alice_rejected.epoch, bob_winner.epoch);
+        bob_group.accept_pending_commit(&bob).unwrap();
+
+        let PendingCommitRebase::Rebased(alice_rebased) = alice_group
+            .rebase_pending_commit(&alice, &encrypted_commit(&bob_winner))
+            .unwrap()
+        else {
+            panic!("self-update intent must be restaged");
+        };
+        assert_eq!(alice_group.epoch(), 2);
+        assert_eq!(alice_rebased.prior_epoch, 2);
+        assert_eq!(alice_rebased.epoch, 3);
+        assert_ne!(alice_rejected.commit_blob, alice_rebased.commit_blob);
+
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&alice_rebased))
+            .unwrap();
+        let encrypted = alice_group
+            .encrypt_application_message(&alice, b"after deterministic rebase")
+            .unwrap();
+        assert_eq!(
+            bob_group
+                .decrypt_application_message(&bob, &encrypted)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"after deterministic rebase"
+        );
+    }
+
+    #[test]
+    fn add_device_intent_rebases_with_a_new_recipient_bound_welcome() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let bob_second = MlsDevice::generate(bob.user_id(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = FilamentGroupId::new();
+        let (mut alice_group, initial) =
+            MlsConversation::create_two_member(group_id, &alice, bob_pin, &bob_package).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let mut bob_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob,
+            alice_pin,
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let second_package = generate_key_package_batch(&bob_second, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let rejected_add = alice_group
+            .create_add_device(&alice, bob_pin, &second_package)
+            .unwrap();
+        let bob_winner = bob_group.create_self_update(&bob).unwrap();
+        assert_eq!(rejected_add.epoch, bob_winner.epoch);
+        bob_group.accept_pending_commit(&bob).unwrap();
+
+        let PendingCommitRebase::Rebased(rebased_add) = alice_group
+            .rebase_pending_commit(&alice, &encrypted_commit(&bob_winner))
+            .unwrap()
+        else {
+            panic!("Add intent must be restaged");
+        };
+        assert_eq!(rebased_add.prior_epoch, 2);
+        assert_eq!(rebased_add.epoch, 3);
+        assert!(rebased_add.welcome_blob.is_some());
+        assert_ne!(rejected_add.commit_blob, rebased_add.commit_blob);
+        assert_ne!(rejected_add.welcome_blob, rebased_add.welcome_blob);
+
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&rebased_add))
+            .unwrap();
+        let mut bob_second_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob_second,
+            alice_pin,
+            rebased_add.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let encrypted = alice_group
+            .encrypt_application_message(&alice, b"joined only from rebased Welcome")
+            .unwrap();
+        assert_eq!(
+            bob_second_group
+                .decrypt_application_message(&bob_second, &encrypted)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"joined only from rebased Welcome"
+        );
+    }
+
+    #[test]
+    fn remove_device_intent_rebases_or_is_safely_satisfied() {
+        let ThreeDeviceFixture {
+            alice,
+            mut alice_group,
+            bob,
+            mut bob_group,
+            bob_second,
+            mut bob_second_group,
+        } = three_device_fixture();
+        let _rejected_remove = alice_group
+            .create_remove_device(&alice, bob.device_id())
+            .unwrap();
+        let bob_update = bob_second_group.create_self_update(&bob_second).unwrap();
+        bob_second_group.accept_pending_commit(&bob_second).unwrap();
+
+        let PendingCommitRebase::Rebased(rebased_remove) = alice_group
+            .rebase_pending_commit(&alice, &encrypted_commit(&bob_update))
+            .unwrap()
+        else {
+            panic!("safe Remove intent must be restaged");
+        };
+        assert_eq!(rebased_remove.prior_epoch, 3);
+        assert_eq!(rebased_remove.epoch, 4);
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_second_group
+            .process_incoming_commit(&bob_second, &encrypted_commit(&rebased_remove))
+            .unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&bob_update))
+            .unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&rebased_remove))
+            .unwrap();
+        assert_eq!(
+            bob_group
+                .encrypt_application_message(&bob, b"evicted")
+                .unwrap_err(),
+            ConversationError::NotActive
+        );
+
+        // Two current devices racing to remove the same leaf do not create a
+        // second removal after the accepted winner has satisfied the intent.
+        let ThreeDeviceFixture {
+            alice,
+            mut alice_group,
+            bob,
+            bob_group: _,
+            bob_second,
+            mut bob_second_group,
+        } = three_device_fixture();
+        let _alice_rejected = alice_group
+            .create_remove_device(&alice, bob.device_id())
+            .unwrap();
+        let bob_winner = bob_second_group
+            .create_remove_device(&bob_second, bob.device_id())
+            .unwrap();
+        bob_second_group.accept_pending_commit(&bob_second).unwrap();
+        assert!(matches!(
+            alice_group
+                .rebase_pending_commit(&alice, &encrypted_commit(&bob_winner))
+                .unwrap(),
+            PendingCommitRebase::AlreadySatisfied
+        ));
+        assert_eq!(alice_group.epoch(), 3);
+    }
+
+    #[test]
+    fn invalid_winner_does_not_discard_pending_commit() {
+        let (alice, mut alice_group, bob, mut bob_group) = joined_conversations();
+        let _pending = alice_group.create_self_update(&alice).unwrap();
+        let invalid = EncryptedGroupCommit {
+            group_id: alice_group.group_id(),
+            prior_epoch: 1,
+            epoch: 2,
+            committer_device_id: DeviceId::new(),
+            commit_blob: vec![0xFF],
+        };
+        assert_eq!(
+            alice_group
+                .rebase_pending_commit(&alice, &invalid)
+                .unwrap_err(),
+            ConversationError::SerializationFailed
+        );
+
+        let winner = bob_group.create_self_update(&bob).unwrap();
+        let mut tampered = encrypted_commit(&winner);
+        *tampered.commit_blob.last_mut().unwrap() ^= 0x01;
+        assert_eq!(
+            alice_group
+                .rebase_pending_commit(&alice, &tampered)
+                .unwrap_err(),
+            ConversationError::CryptoError
+        );
+        assert_eq!(
+            alice_group
+                .encrypt_application_message(&alice, b"still blocked")
+                .unwrap_err(),
+            ConversationError::PendingCommit
+        );
+        alice_group.reject_pending_commit(&alice).unwrap();
+    }
+
+    #[test]
+    fn rebase_invalidates_remove_that_would_delete_a_users_final_device() {
+        let ThreeDeviceFixture {
+            alice,
+            mut alice_group,
+            bob,
+            mut bob_group,
+            bob_second,
+            bob_second_group: _,
+        } = three_device_fixture();
+        let _alice_rejected = alice_group
+            .create_remove_device(&alice, bob.device_id())
+            .unwrap();
+        let bob_winner = bob_group
+            .create_remove_device(&bob, bob_second.device_id())
+            .unwrap();
+        bob_group.accept_pending_commit(&bob).unwrap();
+
+        assert!(matches!(
+            alice_group
+                .rebase_pending_commit(&alice, &encrypted_commit(&bob_winner))
+                .unwrap(),
+            PendingCommitRebase::Invalidated
+        ));
+        assert_eq!(alice_group.epoch(), 3);
+        let encrypted = bob_group
+            .encrypt_application_message(&bob, b"winner remains usable")
+            .unwrap();
+        assert_eq!(
+            alice_group
+                .decrypt_application_message(&alice, &encrypted)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"winner remains usable"
         );
     }
 

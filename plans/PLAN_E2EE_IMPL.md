@@ -98,8 +98,9 @@ failure isolation, generation-gap surfacing, and acknowledgment construction
 only for successfully authenticated records. It also processes commit-mailbox
 pages as a strict epoch chain: recipient-bound Welcomes establish initial
 state, authenticated peer updates advance existing state, membership changes
-fail closed, processing stops at the first rejected epoch, and acknowledgments
-cover only the durable success prefix. Authenticated application padding and
+are limited to one safe device Add or Remove, processing stops at the first
+rejected epoch, and acknowledgments cover only the durable success prefix.
+Authenticated application padding and
 exact transport buckets make generated client ciphertext compatible with the
 Delivery Service. The native client now persists a versioned, bounded,
 single-record checkpoint containing the complete OpenMLS provider, certified
@@ -111,8 +112,12 @@ Welcome, processes the same commit without Welcome on existing devices,
 enforces 200 total leaves and 100 devices per user, rejects third-user or
 duplicate leaves and final-user-device removal, cryptographically evicts
 removed devices, and survives durable restart. Packaged runtime wiring, durable
-message-history coordination, client commit rebase, and external-commit
-recovery remain to be implemented. Phase 3 and
+message-history coordination, and external-commit recovery remain to be
+implemented. The native commit pipeline now rebases rejected self-update, Add,
+and Remove intents on the authenticated single-writer winner, emits a fresh
+recipient-bound Welcome for a rebased Add, treats already-applied changes as
+satisfied, invalidates changes made unsafe by the winner, and preserves pending
+intent across durable restart. Phase 3 and
 later attachment, media, guild-channel, hardening, and key-transparency work has
 not started.
 

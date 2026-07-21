@@ -120,6 +120,11 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   behavior is prohibited until an MLS extension implementing it is reviewed.
   Claims are atomic, rate-limited, and audit-logged.
 - Delivery Service ordering is single-writer-per-epoch: the first order-valid commit for an epoch is accepted; competing commits receive a deterministic `409 epoch_conflict` rejection.
+- After an epoch conflict, the native client authenticates the accepted winner
+  before clearing rejected pending state, merges it through the normal pinned
+  credential and membership checks, then restages a still-safe self-update,
+  Add, or Remove at the new epoch. Already-satisfied or newly unsafe membership
+  intents are not retried, and rejected Add Welcomes are never delivered.
 - Every Welcome is bound to one active target device. Commit delivery is
   snapshotted per active participant device, and only the target device can
   retrieve the Welcome bytes.

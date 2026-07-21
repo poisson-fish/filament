@@ -643,6 +643,12 @@ Atomically orders one opaque MLS commit for an authenticated conversation member
 - Commits must advance exactly one epoch. A row lock makes the first valid
   commit for an epoch the sole winner; competitors receive
   `409 { "error": "epoch_conflict" }` and must rebase client-side.
+- Rebase fetches and authenticates the accepted commit before clearing the
+  rejected local commit. The native core advances through the normal pinned
+  membership checks and restages a still-safe self-update, one-device Add, or
+  Remove at the next epoch. A winning commit that already satisfied or
+  invalidated the intent produces no retry; a rebased Add emits a new Welcome
+  and the rejected Welcome must never be delivered.
 - Commit, Welcome, and GroupInfo blobs are never parsed and are each capped at
   `64 KiB`. The default per-IP/user/device/group rate is 30 commits/minute.
 - `welcome_blob` and `welcome_device_id` must be supplied together. The target

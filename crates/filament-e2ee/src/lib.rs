@@ -42,9 +42,9 @@ pub mod sqlcipher_store;
 pub use commit_mailbox::{process_commit_mailbox, CommitMailboxBatch, RejectedMailboxCommit};
 pub use conversation::{
     DecryptedApplicationMessage, DecryptionOutcome, EncryptedApplicationMessage,
-    EncryptedGroupCommit, MlsConversation, PendingGroupCommit, PinnedUserIdentity,
-    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP, MAX_MLS_DEVICES_PER_USER,
-    MAX_MLS_GROUP_LEAVES,
+    EncryptedGroupCommit, MlsConversation, PendingCommitRebase, PendingGroupCommit,
+    PinnedUserIdentity, MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP,
+    MAX_MLS_DEVICES_PER_USER, MAX_MLS_GROUP_LEAVES,
 };
 pub use error::{
     ConversationError, E2eeError, IdentityError, KeyPackageError, KeyStoreError, PairingError,

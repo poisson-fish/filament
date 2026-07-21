@@ -500,6 +500,63 @@ mod tests {
     }
 
     #[test]
+    fn restart_preserves_pending_intent_for_epoch_conflict_rebase() {
+        let (alice, mut alice_group, bob, mut bob_group) = joined_conversations();
+        let rejected = alice_group.create_self_update(&alice).unwrap();
+        let winner = bob_group.create_self_update(&bob).unwrap();
+        assert_eq!(rejected.epoch, winner.epoch);
+        bob_group.accept_pending_commit(&bob).unwrap();
+        let accepted = crate::EncryptedGroupCommit {
+            group_id: winner.group_id,
+            prior_epoch: winner.prior_epoch,
+            epoch: winner.epoch,
+            committer_device_id: winner.committer_device_id,
+            commit_blob: winner.commit_blob,
+        };
+
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &alice, &[&alice_group]).unwrap();
+        drop(alice_group);
+        drop(alice);
+
+        let mut restored = load_mls_client_state(&store).unwrap();
+        let crate::PendingCommitRebase::Rebased(rebased) = restored.conversations[0]
+            .rebase_pending_commit(&restored.device, &accepted)
+            .unwrap()
+        else {
+            panic!("durably restored intent must be rebased");
+        };
+        assert_eq!(rebased.prior_epoch, 2);
+        assert_eq!(rebased.epoch, 3);
+        restored.conversations[0]
+            .accept_pending_commit(&restored.device)
+            .unwrap();
+        bob_group
+            .process_incoming_commit(
+                &bob,
+                &crate::EncryptedGroupCommit {
+                    group_id: rebased.group_id,
+                    prior_epoch: rebased.prior_epoch,
+                    epoch: rebased.epoch,
+                    committer_device_id: rebased.committer_device_id,
+                    commit_blob: rebased.commit_blob,
+                },
+            )
+            .unwrap();
+        let encrypted = restored.conversations[0]
+            .encrypt_application_message(&restored.device, b"rebased after restart")
+            .unwrap();
+        assert_eq!(
+            bob_group
+                .decrypt_application_message(&bob, &encrypted)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"rebased after restart"
+        );
+    }
+
+    #[test]
     fn restart_preserves_multi_device_membership_and_ratchets() {
         let alice_root = RootIdentityKey::generate();
         let bob_root = RootIdentityKey::generate();
