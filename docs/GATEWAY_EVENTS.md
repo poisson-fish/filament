@@ -454,19 +454,20 @@ All events use the versioned envelope:
 
 These events relay MLS protocol messages through the Delivery Service. The server
 stores and forwards opaque blobs — it never parses MLS interiors or holds private keys.
-They are reserved wire contracts only: the current server does not emit them.
+Commit, Welcome, and message notifications are active for pre-provisioned
+`mls_v1` conversations. Proposal transport remains reserved for Phase 3.
 
-#### `mls_message` (planned)
+#### `mls_message`
 - Scope: channel
 - Payload: `group_id`, `conversation_id`, `message_id`, `epoch`, `suite_id`,
   `sender_device_id`, `created_at_unix`
 
-#### `mls_commit` (planned)
+#### `mls_commit`
 - Scope: channel
 - Payload: `group_id`, `conversation_id`, `epoch`, `prior_epoch`,
   `committer_device_id`, `created_at_unix`
 
-#### `mls_welcome` (planned)
+#### `mls_welcome`
 - Scope: channel
 - Payload: `group_id`, `conversation_id`, `epoch`, `suite_id`, `created_at_unix`
 

@@ -70,10 +70,18 @@ two-device MLS conversation lifecycle: claimed-KeyPackage validation against a
 pinned peer root, staged Add/Welcome creation, acceptance-gated commit merge,
 strict Welcome membership validation, PrivateMessage encryption/decryption,
 fail-closed routing-hint checks, and bounded per-sender generation reordering.
-Server-side conversation mapping, Delivery Service persistence/endpoints,
-mailbox acknowledgments/GC, multi-device fanout, commit rebase, and external
-commit recovery remain to be implemented. Phase 3 and later attachment, media,
-guild-channel, hardening, and key-transparency work has not started.
+The server now has the v13 Delivery Service foundation for pre-provisioned
+`mls_v1` conversations: immutable crypto-mode records, conversation membership
+and group mapping, opaque commit/message persistence, deterministic
+single-writer epoch ordering, GroupInfo retrieval, exact ciphertext padding
+buckets, configurable expiry deadlines, per-IP/user/device/group transport
+limits, and active `mls_commit`, `mls_welcome`, and `mls_message` gateway
+notifications. The web client strictly decodes those routing notifications but
+retains no decryption capability. Conversation create/upgrade provisioning,
+mailbox reads and acknowledgments/GC, multi-device fanout semantics, client
+commit rebase, and external-commit recovery remain to be implemented. Phase 3
+and later attachment, media, guild-channel, hardening, and key-transparency work
+has not started.
 
 ---
 

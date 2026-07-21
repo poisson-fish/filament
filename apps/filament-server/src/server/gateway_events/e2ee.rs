@@ -1,10 +1,15 @@
 use filament_core::{DeviceId, UserId};
-use filament_protocol::{DeviceListUpdateEvent, KeyPackageLowEvent};
+use filament_protocol::{
+    DeviceListUpdateEvent, KeyPackageLowEvent, MlsCommitEvent, MlsMessageEvent, MlsWelcomeEvent,
+};
 
 use super::{envelope::try_build_event, GatewayEvent};
 
 pub(crate) const DEVICE_LIST_UPDATE_EVENT: &str = "device_list_update";
 pub(crate) const KEYPACKAGE_LOW_EVENT: &str = "keypackage_low";
+pub(crate) const MLS_COMMIT_EVENT: &str = "mls_commit";
+pub(crate) const MLS_MESSAGE_EVENT: &str = "mls_message";
+pub(crate) const MLS_WELCOME_EVENT: &str = "mls_welcome";
 
 pub(crate) fn try_device_list_update(
     user_id: UserId,
@@ -36,6 +41,18 @@ pub(crate) fn try_keypackage_low(
             created_at_unix,
         },
     )
+}
+
+pub(crate) fn try_mls_commit(payload: MlsCommitEvent) -> anyhow::Result<GatewayEvent> {
+    try_build_event(MLS_COMMIT_EVENT, payload)
+}
+
+pub(crate) fn try_mls_message(payload: MlsMessageEvent) -> anyhow::Result<GatewayEvent> {
+    try_build_event(MLS_MESSAGE_EVENT, payload)
+}
+
+pub(crate) fn try_mls_welcome(payload: MlsWelcomeEvent) -> anyhow::Result<GatewayEvent> {
+    try_build_event(MLS_WELCOME_EVENT, payload)
 }
 
 #[cfg(test)]
@@ -72,5 +89,47 @@ mod tests {
         assert_eq!(payload["remaining_count"], Value::from(4));
         assert_eq!(payload["water_mark"], Value::from(10));
         assert_eq!(payload["created_at_unix"], Value::from(11));
+    }
+
+    #[test]
+    fn mls_transport_events_use_typed_contracts() {
+        let commit = parse_payload(
+            &try_mls_commit(MlsCommitEvent {
+                group_id: String::from("g"),
+                conversation_id: String::from("c"),
+                epoch: 2,
+                prior_epoch: 1,
+                committer_device_id: String::from("d"),
+                created_at_unix: 10,
+            })
+            .expect("event should serialize"),
+        );
+        assert_eq!(commit["epoch"], Value::from(2));
+
+        let message = parse_payload(
+            &try_mls_message(MlsMessageEvent {
+                group_id: String::from("g"),
+                conversation_id: String::from("c"),
+                message_id: String::from("m"),
+                epoch: 2,
+                suite_id: 3,
+                sender_device_id: String::from("d"),
+                created_at_unix: 11,
+            })
+            .expect("event should serialize"),
+        );
+        assert_eq!(message["suite_id"], Value::from(3));
+
+        let welcome = parse_payload(
+            &try_mls_welcome(MlsWelcomeEvent {
+                group_id: String::from("g"),
+                conversation_id: String::from("c"),
+                epoch: 2,
+                suite_id: 3,
+                created_at_unix: 12,
+            })
+            .expect("event should serialize"),
+        );
+        assert_eq!(welcome["created_at_unix"], Value::from(12));
     }
 }

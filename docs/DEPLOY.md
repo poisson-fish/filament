@@ -55,8 +55,15 @@ Set these variables for `filament-server` (via `infra/.env`):
   cap per user and client IP (default `10`, must be >= `1`)
 - `FILAMENT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE`: KeyPackage claim cap per
   requester user, target device, and client IP (default `30`, must be >= `1`)
+- `FILAMENT_E2EE_COMMIT_PER_MINUTE`: opaque MLS commit cap per client IP,
+  authenticated user, sender device, and group (default `30`, must be >= `1`)
+- `FILAMENT_E2EE_MESSAGE_PER_MINUTE`: opaque MLS message cap per client IP,
+  authenticated user, sender device, and group (default `120`, must be >= `1`)
 - `FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE`: maximum unclaimed KeyPackages per
   device (default `100`, valid range `1..=100`)
+- `FILAMENT_E2EE_MAILBOX_TTL_SECS`: expiry deadline applied to opaque MLS
+  mailbox records (default `2592000`, valid range `1..=7776000`); the Phase 2
+  GC worker must be enabled before treating this deadline as hard deletion
 - `FILAMENT_HCAPTCHA_SITE_KEY`: optional hCaptcha site key (must be set with secret)
 - `FILAMENT_HCAPTCHA_SECRET`: optional hCaptcha server secret (must be set with site key)
 - `FILAMENT_HCAPTCHA_VERIFY_URL`: optional captcha verify endpoint (default `https://api.hcaptcha.com/siteverify`; localhost `http://` allowed for tests)
@@ -66,6 +73,9 @@ Default compose values:
 - `FILAMENT_LIVEKIT_URL=ws://localhost:7880`
 - `FILAMENT_BIND_ADDR=0.0.0.0:3000`
 - `FILAMENT_MAX_CREATED_GUILDS_PER_USER=5`
+- `FILAMENT_E2EE_COMMIT_PER_MINUTE=30`
+- `FILAMENT_E2EE_MESSAGE_PER_MINUTE=120`
+- `FILAMENT_E2EE_MAILBOX_TTL_SECS=2592000`
 
 ### LiveKit signaling URL reachability
 

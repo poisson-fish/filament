@@ -5,6 +5,8 @@ export type ChannelId = string & { readonly __brand: "channel_id" };
 export type MessageId = string & { readonly __brand: "message_id" };
 export type UserId = string & { readonly __brand: "user_id" };
 export type DeviceId = string & { readonly __brand: "device_id" };
+export type GroupId = string & { readonly __brand: "group_id" };
+export type ConversationId = string & { readonly __brand: "conversation_id" };
 export type AttachmentId = string & { readonly __brand: "attachment_id" };
 export type FriendRequestId = string & { readonly __brand: "friend_request_id" };
 export type GuildIpBanId = string & { readonly __brand: "guild_ip_ban_id" };
@@ -94,6 +96,8 @@ function idFromInput<
   | MessageId
   | UserId
   | DeviceId
+  | GroupId
+  | ConversationId
   | AttachmentId
   | FriendRequestId
   | GuildIpBanId
@@ -350,6 +354,14 @@ export function userIdFromInput(input: string): UserId {
 
 export function deviceIdFromInput(input: string): DeviceId {
   return idFromInput<DeviceId>(input, "Device ID");
+}
+
+export function groupIdFromInput(input: string): GroupId {
+  return idFromInput<GroupId>(input, "Group ID");
+}
+
+export function conversationIdFromInput(input: string): ConversationId {
+  return idFromInput<ConversationId>(input, "Conversation ID");
 }
 
 export function attachmentIdFromInput(input: string): AttachmentId {

@@ -2,6 +2,9 @@ import {
   decodeE2eeGatewayEvent,
   type DeviceListUpdatePayload,
   type KeyPackageLowPayload,
+  type MlsCommitPayload,
+  type MlsMessagePayload,
+  type MlsWelcomePayload,
 } from "./gateway-e2ee-events";
 import {
   dispatchDecodedGatewayEvent,
@@ -11,11 +14,17 @@ import {
 export interface E2eeGatewayDispatchHandlers {
   onDeviceListUpdate?: (payload: DeviceListUpdatePayload) => void;
   onKeyPackageLow?: (payload: KeyPackageLowPayload) => void;
+  onMlsMessage?: (payload: MlsMessagePayload) => void;
+  onMlsCommit?: (payload: MlsCommitPayload) => void;
+  onMlsWelcome?: (payload: MlsWelcomePayload) => void;
 }
 
 export const E2EE_GATEWAY_DISPATCH_EVENT_TYPES: readonly string[] = [
   "device_list_update",
   "keypackage_low",
+  "mls_commit",
+  "mls_message",
+  "mls_welcome",
 ];
 
 const E2EE_GATEWAY_EVENT_TYPE_SET = new Set<string>(
@@ -33,6 +42,15 @@ const E2EE_DISPATCH_TABLE: GatewayDispatchTable<
   },
   keypackage_low: (eventPayload, eventHandlers) => {
     eventHandlers.onKeyPackageLow?.(eventPayload);
+  },
+  mls_message: (eventPayload, eventHandlers) => {
+    eventHandlers.onMlsMessage?.(eventPayload);
+  },
+  mls_commit: (eventPayload, eventHandlers) => {
+    eventHandlers.onMlsCommit?.(eventPayload);
+  },
+  mls_welcome: (eventPayload, eventHandlers) => {
+    eventHandlers.onMlsWelcome?.(eventPayload);
   },
 };
 

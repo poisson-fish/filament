@@ -529,6 +529,75 @@ pub(crate) async fn enforce_e2ee_keypackage_claim_rate_limit(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum E2eeTransportRoute {
+    Commit,
+    Message,
+}
+
+impl E2eeTransportRoute {
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Commit => "commit",
+            Self::Message => "message",
+        }
+    }
+
+    fn max_hits(self, state: &AppState) -> usize {
+        let configured = match self {
+            Self::Commit => state.runtime.e2ee_commit_per_minute,
+            Self::Message => state.runtime.e2ee_message_per_minute,
+        };
+        usize::try_from(configured).unwrap_or(usize::MAX)
+    }
+}
+
+/// Enforce E2EE Delivery Service limits independently by IP, authenticated
+/// user, sender device, and group. A rejected dimension does not weaken any
+/// other dimension and all state remains bounded by the periodic sweeper.
+pub(crate) async fn enforce_e2ee_transport_rate_limit(
+    state: &AppState,
+    client_ip: ClientIp,
+    user_id: UserId,
+    device_id: DeviceId,
+    group_id: filament_core::GroupId,
+    route: E2eeTransportRoute,
+) -> Result<(), AuthFailure> {
+    let ip = client_ip.normalized();
+    let now = now_unix();
+    maybe_sweep_rate_limit_state(state, now).await;
+    let route_key = route.key();
+    let max_hits = route.max_hits(state);
+    let dimensions = [
+        ("ip", ip.clone()),
+        ("user", user_id.to_string()),
+        ("device", device_id.to_string()),
+        ("group", group_id.to_string()),
+    ];
+    let mut hits = state.e2ee_rate_limit_hits.write().await;
+    for (dimension, key) in dimensions {
+        if !record_bounded_hit(
+            &mut hits,
+            format!("{route_key}:{dimension}:{key}"),
+            now,
+            max_hits,
+        ) {
+            tracing::warn!(
+                event = "e2ee.transport.rate_limit",
+                route = route_key,
+                limiter = dimension,
+                user_id = %user_id,
+                device_id = %device_id,
+                group_id = %group_id,
+                client_ip = %ip,
+                client_ip_source = client_ip.source().as_str()
+            );
+            return Err(AuthFailure::RateLimited);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn enforce_directory_join_rate_limit(
     state: &AppState,
     client_ip: ClientIp,

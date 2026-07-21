@@ -30,13 +30,14 @@ use tower_http::{
 
 use super::{
     auth::resolve_client_ip,
-    core::{AppConfig, AppState, MAX_LIVEKIT_TOKEN_TTL_SECS},
+    core::{AppConfig, AppState, MAX_E2EE_MAILBOX_TTL_SECS, MAX_LIVEKIT_TOKEN_TTL_SECS},
     db::ensure_db_schema,
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
         e2ee::{
-            claim_keypackage, get_root_identity, list_user_devices, publish_device_certificate,
-            remove_device, rotate_root_identity, upload_keypackages,
+            claim_keypackage, get_group_info, get_root_identity, list_user_devices,
+            post_group_commit, post_group_message, publish_device_certificate, remove_device,
+            rotate_root_identity, upload_keypackages,
         },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
@@ -188,6 +189,9 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("POST", "/e2ee/keypackages/claim"),
     ("GET", "/e2ee/users/{user_id}/identity"),
     ("POST", "/e2ee/identity/rotate"),
+    ("GET", "/e2ee/groups/{group_id}/info"),
+    ("POST", "/e2ee/groups/{group_id}/commits"),
+    ("POST", "/e2ee/groups/{group_id}/messages"),
 ];
 
 #[derive(Clone)]
@@ -276,6 +280,7 @@ pub async fn build_router_with_db_bootstrap(config: &AppConfig) -> anyhow::Resul
 }
 
 fn validate_router_config(config: &AppConfig) -> anyhow::Result<()> {
+    validate_e2ee_config(config)?;
     if config.rate_limit_requests_per_minute == 0 {
         return Err(anyhow!(
             "global rate limit must be at least 1 request per minute"
@@ -313,24 +318,6 @@ fn validate_router_config(config: &AppConfig) -> anyhow::Result<()> {
     if config.media_subscribe_token_cap_per_channel == 0 {
         return Err(anyhow!(
             "media subscribe token cap must be at least 1 active token"
-        ));
-    }
-    if config.e2ee_device_publish_per_minute == 0 {
-        return Err(anyhow!(
-            "E2EE device publish rate limit must be at least 1 request per minute"
-        ));
-    }
-    if config.e2ee_keypackage_claim_per_minute == 0 {
-        return Err(anyhow!(
-            "E2EE KeyPackage claim rate limit must be at least 1 request per minute"
-        ));
-    }
-    if config.e2ee_max_keypackage_pool_size == 0
-        || config.e2ee_max_keypackage_pool_size > filament_protocol::MAX_KEYPACKAGE_POOL_SIZE
-    {
-        return Err(anyhow!(
-            "E2EE KeyPackage pool size must be between 1 and {}",
-            filament_protocol::MAX_KEYPACKAGE_POOL_SIZE
         ));
     }
     if config.max_created_guilds_per_user == 0 {
@@ -372,6 +359,37 @@ fn validate_router_config(config: &AppConfig) -> anyhow::Result<()> {
         ));
     }
 
+    Ok(())
+}
+
+fn validate_e2ee_config(config: &AppConfig) -> anyhow::Result<()> {
+    for (value, name) in [
+        (config.e2ee_device_publish_per_minute, "device publish"),
+        (config.e2ee_keypackage_claim_per_minute, "KeyPackage claim"),
+        (config.e2ee_commit_per_minute, "commit"),
+        (config.e2ee_message_per_minute, "message"),
+    ] {
+        if value == 0 {
+            return Err(anyhow!(
+                "E2EE {name} rate limit must be at least 1 request per minute"
+            ));
+        }
+    }
+    if config.e2ee_max_keypackage_pool_size == 0
+        || config.e2ee_max_keypackage_pool_size > filament_protocol::MAX_KEYPACKAGE_POOL_SIZE
+    {
+        return Err(anyhow!(
+            "E2EE KeyPackage pool size must be between 1 and {}",
+            filament_protocol::MAX_KEYPACKAGE_POOL_SIZE
+        ));
+    }
+    if config.e2ee_mailbox_ttl.is_zero()
+        || config.e2ee_mailbox_ttl.as_secs() > MAX_E2EE_MAILBOX_TTL_SECS
+    {
+        return Err(anyhow!(
+            "E2EE mailbox TTL must be between 1 and {MAX_E2EE_MAILBOX_TTL_SECS} seconds"
+        ));
+    }
     Ok(())
 }
 
@@ -532,7 +550,10 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route("/e2ee/users/{user_id}/identity", get(get_root_identity))
         .route("/e2ee/identity/rotate", post(rotate_root_identity))
         .route("/e2ee/keypackages", post(upload_keypackages))
-        .route("/e2ee/keypackages/claim", post(claim_keypackage));
+        .route("/e2ee/keypackages/claim", post(claim_keypackage))
+        .route("/e2ee/groups/{group_id}/info", get(get_group_info))
+        .route("/e2ee/groups/{group_id}/commits", post(post_group_commit))
+        .route("/e2ee/groups/{group_id}/messages", post(post_group_message));
 
     let upload_route = Router::new()
         .route(
@@ -593,10 +614,30 @@ mod tests {
         };
         assert!(validate_router_config(&zero_claim).is_err());
 
+        let zero_commit = AppConfig {
+            e2ee_commit_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_commit).is_err());
+
+        let zero_message = AppConfig {
+            e2ee_message_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_message).is_err());
+
         let oversized_pool = AppConfig {
             e2ee_max_keypackage_pool_size: filament_protocol::MAX_KEYPACKAGE_POOL_SIZE + 1,
             ..AppConfig::default()
         };
         assert!(validate_router_config(&oversized_pool).is_err());
+
+        let oversized_ttl = AppConfig {
+            e2ee_mailbox_ttl: std::time::Duration::from_secs(
+                crate::server::core::MAX_E2EE_MAILBOX_TTL_SECS + 1,
+            ),
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&oversized_ttl).is_err());
     }
 }

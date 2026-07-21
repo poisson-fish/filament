@@ -3,6 +3,9 @@ import { decodeE2eeGatewayEvent } from "../src/lib/gateway-e2ee-events";
 
 const USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const DEVICE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const GROUP_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+const CONVERSATION_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
+const MESSAGE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
 
 describe("E2EE gateway events", () => {
   it("strictly decodes and dispatches device-list updates", () => {
@@ -60,6 +63,46 @@ describe("E2EE gateway events", () => {
     const onKeyPackageLow = vi.fn();
     expect(dispatchE2eeGatewayEvent("keypackage_low", {}, { onKeyPackageLow })).toBe(true);
     expect(onKeyPackageLow).not.toHaveBeenCalled();
-    expect(dispatchE2eeGatewayEvent("mls_message", {}, { onKeyPackageLow })).toBe(false);
+    expect(dispatchE2eeGatewayEvent("mls_message", {}, { onKeyPackageLow })).toBe(true);
+    expect(dispatchE2eeGatewayEvent("unknown_e2ee_event", {}, { onKeyPackageLow })).toBe(false);
+  });
+
+  it("strictly decodes active MLS routing notifications without ciphertext", () => {
+    const messagePayload = {
+      group_id: GROUP_ID,
+      conversation_id: CONVERSATION_ID,
+      message_id: MESSAGE_ID,
+      epoch: 1,
+      suite_id: 3,
+      sender_device_id: DEVICE_ID,
+      created_at_unix: 1_710_000_002,
+    };
+    const onMlsMessage = vi.fn();
+    expect(dispatchE2eeGatewayEvent("mls_message", messagePayload, { onMlsMessage })).toBe(true);
+    expect(onMlsMessage).toHaveBeenCalledWith({
+      groupId: GROUP_ID,
+      conversationId: CONVERSATION_ID,
+      messageId: MESSAGE_ID,
+      epoch: 1,
+      suiteId: 3,
+      senderDeviceId: DEVICE_ID,
+      createdAtUnix: 1_710_000_002,
+    });
+
+    expect(decodeE2eeGatewayEvent("mls_commit", {
+      group_id: GROUP_ID,
+      conversation_id: CONVERSATION_ID,
+      epoch: 2,
+      prior_epoch: 0,
+      committer_device_id: DEVICE_ID,
+      created_at_unix: 1_710_000_003,
+    })).toBeNull();
+    expect(decodeE2eeGatewayEvent("mls_welcome", {
+      group_id: GROUP_ID,
+      conversation_id: CONVERSATION_ID,
+      epoch: 1,
+      suite_id: 999,
+      created_at_unix: 1_710_000_004,
+    })).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 use std::{env, time::Duration};
 
 use axum::{body::Body, http::Request, http::StatusCode, response::Response};
-use filament_core::{DeviceId, UserId};
+use filament_core::{DeviceId, GroupId, UserId};
 use filament_e2ee::{
     create_pairing_transfer, create_root_identity_rotation_proof, generate_key_package_batch,
     generate_last_resort_key_package, verify_root_identity_rotation_proof, MlsDevice,
@@ -9,10 +9,11 @@ use filament_e2ee::{
     ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS,
 };
 use filament_protocol::{
-    ClaimKeyPackageRequest, ClaimKeyPackageResponse, DeviceListResponse, KeyPackageEntry,
-    PublishDeviceCertificateRequest, RemoveDeviceResponse, RootIdentityDirectoryResponse,
-    RotateRootIdentityRequest, RotateRootIdentityResponse, UploadKeyPackagesRequest,
-    UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    ClaimKeyPackageRequest, ClaimKeyPackageResponse, DeviceListResponse, GroupInfoResponse,
+    KeyPackageEntry, PostCommitRequest, PostCommitResponse, PostMessageRequest,
+    PostMessageResponse, PublishDeviceCertificateRequest, RemoveDeviceResponse,
+    RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
+    UploadKeyPackagesRequest, UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use futures_util::StreamExt;
@@ -27,6 +28,257 @@ use ulid::Ulid;
 #[derive(Debug, Deserialize)]
 struct AuthResponse {
     access_token: String,
+}
+
+#[tokio::test]
+async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_messages() {
+    let Some(database_url) = postgres_url() else {
+        eprintln!("skipping postgres-backed E2EE test: FILAMENT_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let audit_pool = sqlx::PgPool::connect(&database_url)
+        .await
+        .expect("delivery audit pool should connect");
+    let app = test_app(database_url).await;
+    let (alice_auth, alice_user_id) = register_and_login(&app, "203.0.113.181").await;
+    let (bob_auth, bob_user_id) = register_and_login(&app, "203.0.113.182").await;
+    let alice_root = RootIdentityKey::generate();
+    let alice_device_id = DeviceId::new();
+    let alice_device = MlsDevice::generate(alice_user_id, alice_device_id, &alice_root)
+        .expect("Alice device should generate");
+    assert_eq!(
+        publish_device(
+            &app,
+            &alice_auth,
+            "203.0.113.181",
+            alice_device_id,
+            &publish_payload(&alice_device),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let bob_root = RootIdentityKey::generate();
+    let bob_device_id = DeviceId::new();
+    let bob_device = MlsDevice::generate(bob_user_id, bob_device_id, &bob_root)
+        .expect("Bob device should generate");
+    assert_eq!(
+        publish_device(
+            &app,
+            &bob_auth,
+            "203.0.113.182",
+            bob_device_id,
+            &publish_payload(&bob_device),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    let conversation_id = Ulid::new().to_string();
+    let group_id = GroupId::new();
+    let now = 1_750_000_000_i64;
+    let mut seed = audit_pool
+        .begin()
+        .await
+        .expect("seed transaction should begin");
+    sqlx::query(
+        "INSERT INTO e2ee_conversations
+            (conversation_id, conversation_crypto, created_by, created_at_unix)
+         VALUES ($1, 'mls_v1', $2, $3)",
+    )
+    .bind(&conversation_id)
+    .bind(alice_user_id.to_string())
+    .bind(now)
+    .execute(&mut *seed)
+    .await
+    .expect("conversation should seed");
+    for user_id in [alice_user_id, bob_user_id] {
+        sqlx::query(
+            "INSERT INTO e2ee_conversation_members
+                (conversation_id, user_id, joined_at_unix) VALUES ($1, $2, $3)",
+        )
+        .bind(&conversation_id)
+        .bind(user_id.to_string())
+        .bind(now)
+        .execute(&mut *seed)
+        .await
+        .expect("conversation member should seed");
+    }
+    sqlx::query(
+        "INSERT INTO e2ee_groups
+            (group_id, conversation_id, current_epoch, suite_id, created_at_unix)
+         VALUES ($1, $2, 0, 3, $3)",
+    )
+    .bind(group_id.to_string())
+    .bind(&conversation_id)
+    .bind(now)
+    .execute(&mut *seed)
+    .await
+    .expect("group should seed");
+    seed.commit().await.expect("seed transaction should commit");
+
+    let first_commit = PostCommitRequest {
+        epoch: 1,
+        prior_epoch: 0,
+        committer_device_id: alice_device_id.to_string(),
+        commit_blob: vec![0xA1; 256],
+        welcome_blob: Some(vec![0xA2; 192]),
+        group_info_blob: Some(vec![0xA3; 128]),
+    };
+    let competing_commit = PostCommitRequest {
+        commit_blob: vec![0xB1; 256],
+        welcome_blob: Some(vec![0xB2; 192]),
+        group_info_blob: Some(vec![0xB3; 128]),
+        ..first_commit.clone()
+    };
+    let commit_uri = format!("/e2ee/groups/{group_id}/commits");
+    let (first_response, competing_response) = tokio::join!(
+        send_json(
+            &app,
+            "POST",
+            &commit_uri,
+            Some(&alice_auth.access_token),
+            "203.0.113.181",
+            &first_commit,
+        ),
+        send_json(
+            &app,
+            "POST",
+            &commit_uri,
+            Some(&alice_auth.access_token),
+            "203.0.113.181",
+            &competing_commit,
+        )
+    );
+    let statuses = [first_response.status(), competing_response.status()];
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::OK)
+            .count(),
+        1
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::CONFLICT)
+            .count(),
+        1
+    );
+    let (accepted_response, conflict_response) = if first_response.status() == StatusCode::OK {
+        (first_response, competing_response)
+    } else {
+        (competing_response, first_response)
+    };
+    let accepted: PostCommitResponse = parse_json(accepted_response).await;
+    assert!(accepted.accepted);
+    assert_eq!(accepted.epoch, 1);
+    let conflict: serde_json::Value = parse_json(conflict_response).await;
+    assert_eq!(conflict["error"], "epoch_conflict");
+    let stored_commit_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_commits WHERE group_id = $1 AND epoch = 1")
+            .bind(group_id.to_string())
+            .fetch_one(&audit_pool)
+            .await
+            .expect("accepted commit should be stored once");
+    assert_eq!(stored_commit_count, 1);
+    let stored_group_info: Vec<u8> =
+        sqlx::query_scalar("SELECT group_info_blob FROM e2ee_groups WHERE group_id = $1")
+            .bind(group_id.to_string())
+            .fetch_one(&audit_pool)
+            .await
+            .expect("accepted GroupInfo should be stored");
+
+    let info = Request::builder()
+        .method("GET")
+        .uri(format!("/e2ee/groups/{group_id}/info"))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("GroupInfo request should build");
+    let info = app
+        .clone()
+        .oneshot(info)
+        .await
+        .expect("GroupInfo request should execute");
+    assert_eq!(info.status(), StatusCode::OK);
+    let info: GroupInfoResponse = parse_json(info).await;
+    assert_eq!(info.epoch, 1);
+    assert_eq!(info.suite_id, 3);
+    assert_eq!(info.group_info_blob, stored_group_info);
+
+    let message_blob = vec![0xCC; 512];
+    let message_request = PostMessageRequest {
+        epoch: 1,
+        suite_id: 3,
+        sender_device_id: alice_device_id.to_string(),
+        message_blob: message_blob.clone(),
+    };
+    let message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &message_request,
+    )
+    .await;
+    assert_eq!(message.status(), StatusCode::OK);
+    let message: PostMessageResponse = parse_json(message).await;
+    let stored_message: (Vec<u8>, String, i64, i64) = sqlx::query_as(
+        "SELECT ciphertext_blob, crypto_mode, created_at_unix, expires_at_unix
+         FROM e2ee_messages WHERE message_id = $1",
+    )
+    .bind(&message.message_id)
+    .fetch_one(&audit_pool)
+    .await
+    .expect("opaque message should be stored");
+    assert_eq!(stored_message.0, message_blob);
+    assert_eq!(stored_message.1, "mls_v1");
+    assert!(stored_message.3 > stored_message.2);
+
+    let column_names: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = 'e2ee_messages'",
+    )
+    .fetch_all(&audit_pool)
+    .await
+    .expect("message schema should be inspectable");
+    assert!(!column_names.iter().any(|column| {
+        matches!(
+            column.as_str(),
+            "content" | "plaintext" | "key" | "key_material"
+        )
+    }));
+
+    let unpadded = PostMessageRequest {
+        message_blob: vec![0xDD; 513],
+        ..message_request.clone()
+    };
+    assert_eq!(
+        send_json(
+            &app,
+            "POST",
+            &format!("/e2ee/groups/{group_id}/messages"),
+            Some(&alice_auth.access_token),
+            "203.0.113.181",
+            &unpadded,
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let spoofed_sender = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &message_request,
+    )
+    .await;
+    assert_eq!(spoofed_sender.status(), StatusCode::NOT_FOUND);
 }
 
 fn postgres_url() -> Option<String> {

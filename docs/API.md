@@ -594,6 +594,38 @@ Claims a KeyPackage for a target user/device.
 - A `keypackage_low` user-scoped gateway event is emitted after a successful
   claim leaves the target device below the replenishment water mark.
 
+### `GET /e2ee/groups/{group_id}/info`
+Returns the latest opaque `GroupInfo` for an authenticated member of a
+pre-provisioned `mls_v1` conversation.
+- Response: `{ "group_id": "...", "epoch": 1, "suite_id": 3, "group_info_blob": [bytes] }`
+- Missing GroupInfo, non-membership, plaintext conversation mode, and unknown
+  groups return `404` without revealing which authorization check failed.
+- The server treats GroupInfo as opaque and applies the `64 KiB` hard cap.
+
+### `POST /e2ee/groups/{group_id}/commits`
+Atomically orders one opaque MLS commit for an authenticated conversation member.
+- Request: `{ "epoch": 1, "prior_epoch": 0, "committer_device_id": "...", "commit_blob": [bytes], "welcome_blob"?: [bytes], "group_info_blob"?: [bytes] }`
+- Response `200`: `{ "accepted": true, "epoch": 1 }`
+- The committer device must be active and owned by the authenticated user.
+- Commits must advance exactly one epoch. A row lock makes the first valid
+  commit for an epoch the sole winner; competitors receive
+  `409 { "error": "epoch_conflict" }` and must rebase client-side.
+- Commit, Welcome, and GroupInfo blobs are never parsed and are each capped at
+  `64 KiB`. The default per-IP/user/device/group rate is 30 commits/minute.
+
+### `POST /e2ee/groups/{group_id}/messages`
+Stores one opaque MLS `PrivateMessage` in the bounded delivery mailbox.
+- Request: `{ "epoch": 1, "suite_id": 3, "sender_device_id": "...", "message_blob": [bytes] }`
+- Response: `{ "message_id": "...", "created_at_unix": 0 }`
+- The sender device must be active and owned by the authenticated conversation
+  member. Epoch and suite routing hints must equal the provisioned group state.
+- Ciphertext must be client-padded to exactly `512 B`, `1 KiB`, `4 KiB`, or
+  `16 KiB`; all other sizes fail closed.
+- Rows are always tagged `mls_v1`, contain no plaintext/content-derived fields,
+  and receive a configurable mailbox-expiry deadline (30 days by default,
+  90-day hard maximum). Hard deletion at that deadline is part of the pending
+  mailbox GC worker. The default per-IP/user/device/group rate is 120 messages/minute.
+
 ## Notes
 - Search index is derived/cache; source of truth is persisted message storage.
 - Voice token route name remains `/voice/token` but supports scoped publish/subscribe grants for voice/video/screen share.
