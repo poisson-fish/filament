@@ -70,8 +70,8 @@ two-device MLS conversation lifecycle: claimed-KeyPackage validation against a
 pinned peer root, staged Add/Welcome creation, acceptance-gated commit merge,
 strict Welcome membership validation, PrivateMessage encryption/decryption,
 fail-closed routing-hint checks, and bounded per-sender generation reordering.
-The server now has the v13 Delivery Service foundation for pre-provisioned
-`mls_v1` conversations: immutable crypto-mode records, conversation membership
+The server now has the v13 Delivery Service foundation for
+`mls_v1` conversations: downgrade-protected crypto-mode records, conversation membership
 and group mapping, opaque commit/message persistence, deterministic
 single-writer epoch ordering, GroupInfo retrieval, exact ciphertext padding
 buckets, configurable expiry deadlines, per-IP/user/device/group transport
@@ -81,9 +81,13 @@ deliveries at send time, exposes authenticated/cursor-bounded mailbox reads,
 accepts batched acknowledgments only from owned active devices, hard-deletes
 ciphertext after every snapshotted device acknowledges, and runs bounded TTL
 garbage collection for opaque messages and commits. Missing participant device
-capability fails closed with a typed error. The web client strictly decodes
-routing notifications but retains no decryption capability. Conversation
-create/upgrade provisioning, commit/Welcome mailbox fanout, the client-side
+capability fails closed with a typed error. The v15 provisioning increment
+atomically creates or explicitly upgrades two-user conversations with their
+initial commit, Welcome, and GroupInfo; requires active devices for both users;
+supports exact idempotent retries; prevents duplicate encrypted user pairs; and
+enforces the one-way `plaintext` to `mls_v1` transition in Postgres. The web
+client strictly decodes routing notifications but retains no decryption
+capability. Commit/Welcome mailbox fanout, the client-side
 mailbox/decryption/ack pipeline, multi-device MLS leaf semantics, client commit
 rebase, and external-commit recovery remain to be implemented. Phase 3 and
 later attachment, media, guild-channel, hardening, and key-transparency work has

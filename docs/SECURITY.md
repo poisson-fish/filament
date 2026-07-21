@@ -66,9 +66,12 @@ Scope: this section governs transport/session token keys. E2EE identity and MLS 
 - Concurrent subscribe-capable tokens are bounded per user/channel to reduce stream fanout abuse and client DoS risk.
 
 ## End-to-End Encryption (MLS) Baseline
-Status: the Phase 0 engineering artifacts and the Phase 1
-identity/device/KeyPackage foundation are implemented as of 2026-07-19; ADR
-ratification remains open. Encrypted conversation transport is not enabled.
+Status: the Phase 0 engineering artifacts, Phase 1 identity/device/KeyPackage
+foundation, and initial Phase 2 two-user conversation provisioning, opaque
+transport, and per-device mailbox are implemented as of 2026-07-21; ADR
+ratification is complete, while threat-model ratification remains open.
+Packaged-client mailbox processing and complete multi-device MLS leaf handling
+remain unfinished, so E2EE is not yet generally available.
 Items below remain binding for later phases; the exact completed/remaining
 split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 

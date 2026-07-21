@@ -191,6 +191,13 @@ where
     deserialize_optional_bounded_blob::<D, MAX_WELCOME_BYTES>(deserializer)
 }
 
+fn deserialize_bounded_welcome_blob<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_blob::<D, MAX_WELCOME_BYTES>(deserializer)
+}
+
 fn deserialize_optional_group_info_blob<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<u8>>, D::Error>
@@ -520,6 +527,75 @@ pub struct ClaimKeyPackageResponse {
 // Group and message transport endpoints
 // ---------------------------------------------------------------------------
 
+/// Atomic bootstrap for a new two-user MLS v1 conversation.
+///
+/// The initial Add commit, Welcome, and GroupInfo are required so the server
+/// never exposes a half-provisioned group that cannot be joined or recovered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateMlsConversationRequest {
+    /// Client-generated canonical conversation ULID used for idempotency.
+    pub conversation_id: String,
+    /// The other user in this 1:1 conversation.
+    pub peer_user_id: String,
+    /// Client-generated canonical MLS group ULID.
+    pub group_id: String,
+    /// Ciphersuite identifier carried for suite agility.
+    pub suite_id: u16,
+    /// Active device that authored the initial Add commit.
+    pub committer_device_id: String,
+    /// Initial MLS commit advancing epoch 0 to epoch 1.
+    #[serde(deserialize_with = "deserialize_commit_blob")]
+    pub commit_blob: Vec<u8>,
+    /// Initial Welcome for the invited participant.
+    #[serde(deserialize_with = "deserialize_bounded_welcome_blob")]
+    pub welcome_blob: Vec<u8>,
+    /// Initial GroupInfo used for join and recovery.
+    #[serde(deserialize_with = "deserialize_group_info_blob")]
+    pub group_info_blob: Vec<u8>,
+}
+
+/// Atomic bootstrap fields for explicitly upgrading an existing plaintext
+/// two-user conversation to MLS v1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpgradeMlsConversationRequest {
+    /// Client-generated canonical MLS group ULID.
+    pub group_id: String,
+    /// Ciphersuite identifier carried for suite agility.
+    pub suite_id: u16,
+    /// Active device that authored the initial Add commit.
+    pub committer_device_id: String,
+    /// Initial MLS commit advancing epoch 0 to epoch 1.
+    #[serde(deserialize_with = "deserialize_commit_blob")]
+    pub commit_blob: Vec<u8>,
+    /// Initial Welcome for the invited participant.
+    #[serde(deserialize_with = "deserialize_bounded_welcome_blob")]
+    pub welcome_blob: Vec<u8>,
+    /// Initial GroupInfo used for join and recovery.
+    #[serde(deserialize_with = "deserialize_group_info_blob")]
+    pub group_info_blob: Vec<u8>,
+}
+
+/// Result of atomically creating or upgrading a two-user MLS conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MlsConversationProvisionResponse {
+    /// Canonical conversation ULID.
+    pub conversation_id: String,
+    /// Canonical MLS group ULID.
+    pub group_id: String,
+    /// Conversation-level mode. Always `mls_v1`.
+    #[serde(deserialize_with = "deserialize_mls_v1_mode")]
+    pub crypto: String,
+    /// Accepted initial epoch. Always 1 for this protocol version.
+    pub epoch: u64,
+    /// Accepted ciphersuite identifier.
+    pub suite_id: u16,
+    /// Unix timestamp when provisioning committed.
+    pub provisioned_at_unix: i64,
+}
+
 /// Response body for `GET /e2ee/groups/{group_id}/info` — encrypted GroupInfo.
 ///
 /// The GroupInfo blob is published by group members to support joins and
@@ -802,6 +878,34 @@ pub struct KeyPackageLowEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversation_provisioning_contract_is_strict_and_bounded() {
+        let request = CreateMlsConversationRequest {
+            conversation_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            peer_user_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+            group_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+            suite_id: 3,
+            committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
+            commit_blob: vec![1; 64],
+            welcome_blob: vec![2; 64],
+            group_info_blob: vec![3; 64],
+        };
+        let mut value = serde_json::to_value(&request).unwrap();
+        value["extra"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<CreateMlsConversationRequest>(value).is_err());
+
+        let mut oversized = request;
+        oversized.welcome_blob = vec![0; MAX_WELCOME_BYTES + 1];
+        let encoded = serde_json::to_vec(&oversized).unwrap();
+        assert!(serde_json::from_slice::<CreateMlsConversationRequest>(&encoded).is_err());
+    }
+
+    #[test]
+    fn provision_response_rejects_plaintext_mode() {
+        let json = r#"{"conversation_id":"c","group_id":"g","crypto":"plaintext","epoch":1,"suite_id":3,"provisioned_at_unix":1}"#;
+        assert!(serde_json::from_str::<MlsConversationProvisionResponse>(json).is_err());
+    }
 
     // -- Device certificate DTOs --
 

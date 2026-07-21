@@ -44,6 +44,9 @@ Common codes:
 - `rate_limited` -> `429`
 - `payload_too_large` -> `413`
 - `quota_exceeded` -> `409`
+- `e2ee_capability_required` -> `409`
+- `e2ee_conversation_conflict` -> `409`
+- `epoch_conflict` -> `409`
 - `internal_error` -> `500`
 
 Global middleware can also return non-handler errors such as `408 Request Timeout` and baseline `429` rate limit responses.
@@ -594,9 +597,38 @@ Claims a KeyPackage for a target user/device.
 - A `keypackage_low` user-scoped gateway event is emitted after a successful
   claim leaves the target device below the replenishment water mark.
 
+### `POST /e2ee/conversations`
+Atomically provisions a new two-user MLS v1 conversation and its initial Add
+commit.
+- Request: `{ "conversation_id", "peer_user_id", "group_id", "suite_id", "committer_device_id", "commit_blob", "welcome_blob", "group_info_blob" }`
+- Response: `{ "conversation_id", "group_id", "crypto": "mls_v1", "epoch": 1, "suite_id", "provisioned_at_unix" }`
+- Conversation, group, epoch-1 commit, Welcome, and GroupInfo rows commit in one
+  transaction. MLS interiors remain opaque and use the existing `64 KiB` caps.
+- Both distinct users must have at least one active certified MLS device, and
+  the committer device must be active and owned by the caller. Capability gaps
+  return `409 { "error": "e2ee_capability_required" }`; no plaintext fallback
+  is created.
+- Canonical user-pair uniqueness prevents duplicate encrypted DMs. An exact
+  retry is idempotent; conflicting identifiers or bootstrap material return
+  `409 { "error": "e2ee_conversation_conflict" }`.
+- Provisioning uses the commit transport rate limit independently by client IP,
+  caller, committer device, and group.
+
+### `POST /e2ee/conversations/{conversation_id}/upgrade`
+Explicitly upgrades an existing two-user plaintext conversation to MLS v1.
+- Request: `{ "group_id", "suite_id", "committer_device_id", "commit_blob", "welcome_blob", "group_info_blob" }`
+- Response matches `POST /e2ee/conversations`.
+- Only an existing member may upgrade, the membership must contain exactly two
+  capable users, and all bootstrap rows commit atomically.
+- The transition is one-way. A database trigger rejects every later attempt to
+  change `mls_v1` back to plaintext; a downgrade requires a separate plaintext
+  conversation and never changes the encrypted conversation's pinned mode.
+- Exact retries are idempotent. A different group or bootstrap payload fails
+  closed with `e2ee_conversation_conflict`.
+
 ### `GET /e2ee/groups/{group_id}/info`
-Returns the latest opaque `GroupInfo` for an authenticated member of a
-pre-provisioned `mls_v1` conversation.
+Returns the latest opaque `GroupInfo` for an authenticated member of an
+`mls_v1` conversation.
 - Response: `{ "group_id": "...", "epoch": 1, "suite_id": 3, "group_info_blob": [bytes] }`
 - Missing GroupInfo, non-membership, plaintext conversation mode, and unknown
   groups return `404` without revealing which authorization check failed.

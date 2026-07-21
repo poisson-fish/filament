@@ -535,6 +535,7 @@ pub(crate) enum E2eeTransportRoute {
     MailboxAck,
     MailboxRead,
     Message,
+    Provision,
 }
 
 impl E2eeTransportRoute {
@@ -544,12 +545,13 @@ impl E2eeTransportRoute {
             Self::MailboxAck => "mailbox_ack",
             Self::MailboxRead => "mailbox_read",
             Self::Message => "message",
+            Self::Provision => "provision",
         }
     }
 
     fn max_hits(self, state: &AppState) -> usize {
         let configured = match self {
-            Self::Commit => state.runtime.e2ee_commit_per_minute,
+            Self::Commit | Self::Provision => state.runtime.e2ee_commit_per_minute,
             Self::MailboxAck | Self::MailboxRead | Self::Message => {
                 state.runtime.e2ee_message_per_minute
             }

@@ -1,20 +1,21 @@
 use std::{env, time::Duration};
 
 use axum::{body::Body, http::Request, http::StatusCode, response::Response};
-use filament_core::{DeviceId, GroupId, UserId};
+use filament_core::{ConversationId, DeviceId, GroupId, UserId};
 use filament_e2ee::{
     create_pairing_transfer, create_root_identity_rotation_proof, generate_key_package_batch,
-    generate_last_resort_key_package, verify_root_identity_rotation_proof, MlsDevice,
-    PairingReceiver, PairingTransfer, RootIdentityKey, RootIdentityRotationProof,
-    ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS,
+    generate_last_resort_key_package, verify_root_identity_rotation_proof, MlsConversation,
+    MlsDevice, PairingReceiver, PairingTransfer, PinnedUserIdentity, RootIdentityKey,
+    RootIdentityRotationProof, ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS,
 };
 use filament_protocol::{
     AckE2eeMessagesRequest, AckE2eeMessagesResponse, ClaimKeyPackageRequest,
-    ClaimKeyPackageResponse, DeviceListResponse, E2eeMailboxResponse, GroupInfoResponse,
-    KeyPackageEntry, PostCommitRequest, PostCommitResponse, PostMessageRequest,
-    PostMessageResponse, PublishDeviceCertificateRequest, RemoveDeviceResponse,
-    RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
-    UploadKeyPackagesRequest, UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    ClaimKeyPackageResponse, CreateMlsConversationRequest, DeviceListResponse, E2eeMailboxResponse,
+    GroupInfoResponse, KeyPackageEntry, MlsConversationProvisionResponse, PostCommitRequest,
+    PostCommitResponse, PostMessageRequest, PostMessageResponse, PublishDeviceCertificateRequest,
+    RemoveDeviceResponse, RootIdentityDirectoryResponse, RotateRootIdentityRequest,
+    RotateRootIdentityResponse, UpgradeMlsConversationRequest, UploadKeyPackagesRequest,
+    UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use futures_util::StreamExt;
@@ -91,52 +92,259 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
         StatusCode::OK
     );
 
-    let conversation_id = Ulid::new().to_string();
+    let bob_packages = generate_key_package_batch(&bob_device, 1)
+        .expect("Bob's initial KeyPackage should generate");
+    let upload = UploadKeyPackagesRequest {
+        device_id: bob_device_id.to_string(),
+        key_packages: bob_packages
+            .into_iter()
+            .map(|package| KeyPackageEntry {
+                key_package_blob: package.blob,
+                is_last_resort: false,
+            })
+            .collect(),
+    };
+    let upload = send_json(
+        &app,
+        "POST",
+        "/e2ee/keypackages",
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &upload,
+    )
+    .await;
+    assert_eq!(upload.status(), StatusCode::OK);
+    let claim = send_json(
+        &app,
+        "POST",
+        "/e2ee/keypackages/claim",
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &ClaimKeyPackageRequest {
+            target_user_id: bob_user_id.to_string(),
+            target_device_id: Some(bob_device_id.to_string()),
+        },
+    )
+    .await;
+    assert_eq!(claim.status(), StatusCode::OK);
+    let claim: ClaimKeyPackageResponse = parse_json(claim).await;
+
+    let conversation_id = ConversationId::new();
     let group_id = GroupId::new();
-    let now = 1_750_000_000_i64;
+    let (mut alice_conversation, pending) = MlsConversation::create_two_member(
+        group_id,
+        &alice_device,
+        PinnedUserIdentity::new(bob_user_id, bob_root.public_key_bytes()),
+        &claim.key_package_blob,
+    )
+    .expect("Alice should stage the initial Add commit");
+    let create_request = CreateMlsConversationRequest {
+        conversation_id: conversation_id.to_string(),
+        peer_user_id: bob_user_id.to_string(),
+        group_id: group_id.to_string(),
+        suite_id: pending.suite.as_u16(),
+        committer_device_id: pending.committer_device_id.to_string(),
+        commit_blob: pending.commit_blob.clone(),
+        welcome_blob: pending.welcome_blob.clone(),
+        group_info_blob: pending
+            .group_info_blob
+            .clone()
+            .expect("initial GroupInfo should be present"),
+    };
+    let create = send_json(
+        &app,
+        "POST",
+        "/e2ee/conversations",
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &create_request,
+    )
+    .await;
+    assert_eq!(create.status(), StatusCode::OK);
+    let created: MlsConversationProvisionResponse = parse_json(create).await;
+    assert_eq!(created.conversation_id, conversation_id.to_string());
+    assert_eq!(created.group_id, group_id.to_string());
+    assert_eq!(created.crypto, "mls_v1");
+    assert_eq!(created.epoch, 1);
+
+    let retry = send_json(
+        &app,
+        "POST",
+        "/e2ee/conversations",
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &create_request,
+    )
+    .await;
+    assert_eq!(retry.status(), StatusCode::OK);
+    let retry: MlsConversationProvisionResponse = parse_json(retry).await;
+    assert_eq!(retry, created);
+    let conflicting_create = send_json(
+        &app,
+        "POST",
+        "/e2ee/conversations",
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &CreateMlsConversationRequest {
+            conversation_id: ConversationId::new().to_string(),
+            group_id: GroupId::new().to_string(),
+            ..create_request.clone()
+        },
+    )
+    .await;
+    assert_eq!(conflicting_create.status(), StatusCode::CONFLICT);
+    let conflicting_create: serde_json::Value = parse_json(conflicting_create).await;
+    assert_eq!(conflicting_create["error"], "e2ee_conversation_conflict");
+    alice_conversation
+        .accept_pending_commit(&alice_device)
+        .expect("Alice should merge the accepted commit");
+    let _bob_conversation = MlsConversation::join_from_welcome(
+        group_id,
+        &bob_device,
+        PinnedUserIdentity::new(alice_user_id, alice_root.public_key_bytes()),
+        &create_request.welcome_blob,
+    )
+    .expect("Bob should join the provisioned group from its Welcome");
+
+    let (charlie_auth, charlie_user_id) = register_and_login(&app, "203.0.113.183").await;
+    let capability_request = CreateMlsConversationRequest {
+        conversation_id: ConversationId::new().to_string(),
+        peer_user_id: charlie_user_id.to_string(),
+        group_id: GroupId::new().to_string(),
+        ..create_request.clone()
+    };
+    let capability_failure = send_json(
+        &app,
+        "POST",
+        "/e2ee/conversations",
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &capability_request,
+    )
+    .await;
+    assert_eq!(capability_failure.status(), StatusCode::CONFLICT);
+    let capability_failure: serde_json::Value = parse_json(capability_failure).await;
+    assert_eq!(capability_failure["error"], "e2ee_capability_required");
+    let failed_conversation_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_conversations WHERE conversation_id = $1")
+            .bind(&capability_request.conversation_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("failed capability gate should be auditable");
+    assert_eq!(failed_conversation_count, 0);
+
+    let charlie_root = RootIdentityKey::generate();
+    let charlie_device_id = DeviceId::new();
+    let charlie_device = MlsDevice::generate(charlie_user_id, charlie_device_id, &charlie_root)
+        .expect("Charlie's device should generate");
+    assert_eq!(
+        publish_device(
+            &app,
+            &charlie_auth,
+            "203.0.113.183",
+            charlie_device_id,
+            &publish_payload(&charlie_device),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let plaintext_conversation_id = ConversationId::new();
+    let seeded_at = 1_750_000_000_i64;
     let mut seed = audit_pool
         .begin()
         .await
-        .expect("seed transaction should begin");
+        .expect("plaintext seed transaction should begin");
     sqlx::query(
         "INSERT INTO e2ee_conversations
             (conversation_id, conversation_crypto, created_by, created_at_unix)
-         VALUES ($1, 'mls_v1', $2, $3)",
+         VALUES ($1, 'plaintext', $2, $3)",
     )
-    .bind(&conversation_id)
+    .bind(plaintext_conversation_id.to_string())
     .bind(alice_user_id.to_string())
-    .bind(now)
+    .bind(seeded_at)
     .execute(&mut *seed)
     .await
-    .expect("conversation should seed");
-    for user_id in [alice_user_id, bob_user_id] {
+    .expect("plaintext conversation should seed");
+    for user_id in [alice_user_id, charlie_user_id] {
         sqlx::query(
             "INSERT INTO e2ee_conversation_members
                 (conversation_id, user_id, joined_at_unix) VALUES ($1, $2, $3)",
         )
-        .bind(&conversation_id)
+        .bind(plaintext_conversation_id.to_string())
         .bind(user_id.to_string())
-        .bind(now)
+        .bind(seeded_at)
         .execute(&mut *seed)
         .await
-        .expect("conversation member should seed");
+        .expect("plaintext member should seed");
     }
-    sqlx::query(
-        "INSERT INTO e2ee_groups
-            (group_id, conversation_id, current_epoch, suite_id, created_at_unix)
-         VALUES ($1, $2, 0, 3, $3)",
+    seed.commit()
+        .await
+        .expect("plaintext seed transaction should commit");
+    let upgrade_request = UpgradeMlsConversationRequest {
+        group_id: GroupId::new().to_string(),
+        suite_id: 3,
+        committer_device_id: alice_device_id.to_string(),
+        commit_blob: vec![0x31; 128],
+        welcome_blob: vec![0x32; 128],
+        group_info_blob: vec![0x33; 128],
+    };
+    let upgrade_uri = format!("/e2ee/conversations/{plaintext_conversation_id}/upgrade");
+    let unauthorized_upgrade = send_json(
+        &app,
+        "POST",
+        &upgrade_uri,
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &UpgradeMlsConversationRequest {
+            committer_device_id: bob_device_id.to_string(),
+            ..upgrade_request.clone()
+        },
     )
-    .bind(group_id.to_string())
-    .bind(&conversation_id)
-    .bind(now)
-    .execute(&mut *seed)
-    .await
-    .expect("group should seed");
-    seed.commit().await.expect("seed transaction should commit");
+    .await;
+    assert_eq!(unauthorized_upgrade.status(), StatusCode::NOT_FOUND);
+    let upgrade = send_json(
+        &app,
+        "POST",
+        &upgrade_uri,
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &upgrade_request,
+    )
+    .await;
+    assert_eq!(upgrade.status(), StatusCode::OK);
+    let upgraded: MlsConversationProvisionResponse = parse_json(upgrade).await;
+    assert_eq!(
+        upgraded.conversation_id,
+        plaintext_conversation_id.to_string()
+    );
+    assert_eq!(upgraded.crypto, "mls_v1");
+    let upgrade_retry = send_json(
+        &app,
+        "POST",
+        &upgrade_uri,
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &upgrade_request,
+    )
+    .await;
+    assert_eq!(upgrade_retry.status(), StatusCode::OK);
+    assert_eq!(
+        parse_json::<MlsConversationProvisionResponse>(upgrade_retry).await,
+        upgraded
+    );
+    let downgrade = sqlx::query(
+        "UPDATE e2ee_conversations SET conversation_crypto = 'plaintext'
+         WHERE conversation_id = $1",
+    )
+    .bind(plaintext_conversation_id.to_string())
+    .execute(&audit_pool)
+    .await;
+    assert!(downgrade.is_err(), "database must reject MLS downgrades");
 
     let first_commit = PostCommitRequest {
-        epoch: 1,
-        prior_epoch: 0,
+        epoch: 2,
+        prior_epoch: 1,
         committer_device_id: alice_device_id.to_string(),
         commit_blob: vec![0xA1; 256],
         welcome_blob: Some(vec![0xA2; 192]),
@@ -189,11 +397,11 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
     };
     let accepted: PostCommitResponse = parse_json(accepted_response).await;
     assert!(accepted.accepted);
-    assert_eq!(accepted.epoch, 1);
+    assert_eq!(accepted.epoch, 2);
     let conflict: serde_json::Value = parse_json(conflict_response).await;
     assert_eq!(conflict["error"], "epoch_conflict");
     let stored_commit_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_commits WHERE group_id = $1 AND epoch = 1")
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_commits WHERE group_id = $1 AND epoch = 2")
             .bind(group_id.to_string())
             .fetch_one(&audit_pool)
             .await
@@ -220,13 +428,13 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
         .expect("GroupInfo request should execute");
     assert_eq!(info.status(), StatusCode::OK);
     let info: GroupInfoResponse = parse_json(info).await;
-    assert_eq!(info.epoch, 1);
+    assert_eq!(info.epoch, 2);
     assert_eq!(info.suite_id, 3);
     assert_eq!(info.group_info_blob, stored_group_info);
 
     let message_blob = vec![0xCC; 512];
     let message_request = PostMessageRequest {
-        epoch: 1,
+        epoch: 2,
         suite_id: 3,
         sender_device_id: alice_device_id.to_string(),
         message_blob: message_blob.clone(),

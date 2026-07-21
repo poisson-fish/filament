@@ -10,18 +10,19 @@ use axum::{
     http::HeaderMap,
     Json,
 };
-use filament_core::{CiphersuiteId, DeviceId, GroupId, UserId};
+use filament_core::{CiphersuiteId, ConversationCrypto, ConversationId, DeviceId, GroupId, UserId};
 use filament_e2ee::{
     verify_device_certificate, verify_root_identity_rotation_proof, RootIdentityRotationProof,
 };
 use filament_protocol::{
     AckE2eeMessagesRequest, AckE2eeMessagesResponse, ClaimKeyPackageRequest,
-    ClaimKeyPackageResponse, DeviceInfo, DeviceListResponse, E2eeMailboxMessage, E2eeMailboxQuery,
-    E2eeMailboxResponse, GroupInfoResponse, MlsCommitEvent, MlsMessageEvent, MlsWelcomeEvent,
-    PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
-    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse, RemoveDeviceResponse,
-    RootIdentityDirectoryResponse, RootIdentityRotationEntry, RotateRootIdentityRequest,
-    RotateRootIdentityResponse, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
+    ClaimKeyPackageResponse, CreateMlsConversationRequest, DeviceInfo, DeviceListResponse,
+    E2eeMailboxMessage, E2eeMailboxQuery, E2eeMailboxResponse, GroupInfoResponse, MlsCommitEvent,
+    MlsConversationProvisionResponse, MlsMessageEvent, MlsWelcomeEvent, PostCommitRequest,
+    PostCommitResponse, PostMessageRequest, PostMessageResponse, PublishDeviceCertificateRequest,
+    PublishDeviceCertificateResponse, RemoveDeviceResponse, RootIdentityDirectoryResponse,
+    RootIdentityRotationEntry, RotateRootIdentityRequest, RotateRootIdentityResponse,
+    UpgradeMlsConversationRequest, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
     MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
     MAX_ROOT_IDENTITY_ROTATIONS, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
@@ -46,6 +47,7 @@ const KEYPACKAGE_LOW_WATER_MARK: u32 = 10;
 const E2EE_MESSAGE_PADDING_BUCKETS: [usize; 4] = [512, 1_024, 4_096, 16_384];
 const DEFAULT_E2EE_MAILBOX_PAGE_SIZE: usize = 20;
 const MAX_E2EE_1_TO_1_DELIVERY_DEVICES: i64 = 200;
+const INITIAL_MLS_EPOCH: u64 = 1;
 
 type CertificateFields = ([u8; 32], [u8; 64], [u8; 32]);
 type RotationFields = ([u8; 32], [u8; 64], [u8; 64], [u8; 32], [u8; 64]);
@@ -55,6 +57,27 @@ struct GroupAccess {
     current_epoch: u64,
     suite_id: u16,
     group_info_blob: Option<Vec<u8>>,
+}
+
+struct InitialProvision<'a> {
+    conversation_id: ConversationId,
+    group_id: GroupId,
+    suite_id: u16,
+    committer_device_id: DeviceId,
+    commit_blob: &'a [u8],
+    welcome_blob: &'a [u8],
+    group_info_blob: &'a [u8],
+}
+
+struct ExistingProvision {
+    conversation_id: String,
+    group_id: String,
+    suite_id: u16,
+    committer_device_id: String,
+    commit_blob: Vec<u8>,
+    welcome_blob: Option<Vec<u8>>,
+    group_info_blob: Option<Vec<u8>>,
+    provisioned_at_unix: i64,
 }
 
 fn validate_certificate_fields(
@@ -415,6 +438,218 @@ async fn require_active_owned_device(
     .await
     .map_err(|_| AuthFailure::Internal)?;
     owned.map(|_| ()).ok_or(AuthFailure::NotFound)
+}
+
+fn canonical_user_pair(first: UserId, second: UserId) -> (String, String) {
+    let first = first.to_string();
+    let second = second.to_string();
+    if first < second {
+        (first, second)
+    } else {
+        (second, first)
+    }
+}
+
+async fn lock_capable_two_user_membership(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    members: &[UserId; 2],
+) -> Result<(), AuthFailure> {
+    if members[0] == members[1] {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let member_ids = [members[0].to_string(), members[1].to_string()];
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT user_id FROM e2ee_device_certificates
+         WHERE user_id = ANY($1::TEXT[]) AND tombstoned_at_unix IS NULL
+         ORDER BY user_id, device_id
+         FOR SHARE",
+    )
+    .bind(member_ids.as_slice())
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let device_count = i64::try_from(rows.len()).map_err(|_| AuthFailure::Internal)?;
+    let capable_users: HashSet<String> = rows.into_iter().collect();
+    if capable_users.len() != 2 || device_count > MAX_E2EE_1_TO_1_DELIVERY_DEVICES {
+        return Err(AuthFailure::E2eeCapabilityRequired);
+    }
+    Ok(())
+}
+
+fn existing_provision_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<ExistingProvision, AuthFailure> {
+    let suite_id: i32 = row.try_get("suite_id").map_err(|_| AuthFailure::Internal)?;
+    Ok(ExistingProvision {
+        conversation_id: row
+            .try_get("conversation_id")
+            .map_err(|_| AuthFailure::Internal)?,
+        group_id: row.try_get("group_id").map_err(|_| AuthFailure::Internal)?,
+        suite_id: u16::try_from(suite_id).map_err(|_| AuthFailure::Internal)?,
+        committer_device_id: row
+            .try_get("committer_device_id")
+            .map_err(|_| AuthFailure::Internal)?,
+        commit_blob: row
+            .try_get("commit_blob")
+            .map_err(|_| AuthFailure::Internal)?,
+        welcome_blob: row
+            .try_get("welcome_blob")
+            .map_err(|_| AuthFailure::Internal)?,
+        group_info_blob: row
+            .try_get("group_info_blob")
+            .map_err(|_| AuthFailure::Internal)?,
+        provisioned_at_unix: row
+            .try_get("provisioned_at_unix")
+            .map_err(|_| AuthFailure::Internal)?,
+    })
+}
+
+async fn existing_provision_for_pair(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    lower_user_id: &str,
+    upper_user_id: &str,
+) -> Result<Option<ExistingProvision>, AuthFailure> {
+    let row = sqlx::query(
+        "SELECT c.conversation_id, g.group_id, g.suite_id,
+                k.committer_device_id, k.commit_blob, k.welcome_blob,
+                g.group_info_blob, g.created_at_unix AS provisioned_at_unix
+         FROM e2ee_dm_pairs p
+         JOIN e2ee_conversations c ON c.conversation_id = p.conversation_id
+         JOIN e2ee_groups g ON g.conversation_id = c.conversation_id
+         JOIN e2ee_commits k ON k.group_id = g.group_id AND k.epoch = 1
+         WHERE p.user_a_id = $1 AND p.user_b_id = $2
+           AND c.conversation_crypto = 'mls_v1'",
+    )
+    .bind(lower_user_id)
+    .bind(upper_user_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    row.as_ref().map(existing_provision_from_row).transpose()
+}
+
+async fn existing_provision_for_conversation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conversation_id: ConversationId,
+) -> Result<Option<ExistingProvision>, AuthFailure> {
+    let row = sqlx::query(
+        "SELECT c.conversation_id, g.group_id, g.suite_id,
+                k.committer_device_id, k.commit_blob, k.welcome_blob,
+                g.group_info_blob, g.created_at_unix AS provisioned_at_unix
+         FROM e2ee_conversations c
+         JOIN e2ee_groups g ON g.conversation_id = c.conversation_id
+         JOIN e2ee_commits k ON k.group_id = g.group_id AND k.epoch = 1
+         WHERE c.conversation_id = $1 AND c.conversation_crypto = 'mls_v1'",
+    )
+    .bind(conversation_id.to_string())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    row.as_ref().map(existing_provision_from_row).transpose()
+}
+
+fn provision_matches(existing: &ExistingProvision, expected: &InitialProvision<'_>) -> bool {
+    existing.conversation_id == expected.conversation_id.to_string()
+        && existing.group_id == expected.group_id.to_string()
+        && existing.suite_id == expected.suite_id
+        && existing.committer_device_id == expected.committer_device_id.to_string()
+        && existing.commit_blob == expected.commit_blob
+        && existing.welcome_blob.as_deref() == Some(expected.welcome_blob)
+        && existing.group_info_blob.as_deref() == Some(expected.group_info_blob)
+}
+
+fn provision_response(
+    provision: &InitialProvision<'_>,
+    provisioned_at_unix: i64,
+) -> MlsConversationProvisionResponse {
+    MlsConversationProvisionResponse {
+        conversation_id: provision.conversation_id.to_string(),
+        group_id: provision.group_id.to_string(),
+        crypto: String::from("mls_v1"),
+        epoch: INITIAL_MLS_EPOCH,
+        suite_id: provision.suite_id,
+        provisioned_at_unix,
+    }
+}
+
+fn map_provision_write_error(error: &sqlx::Error) -> AuthFailure {
+    if error
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::code)
+        .is_some_and(|code| code.starts_with("23"))
+    {
+        AuthFailure::E2eeConversationConflict
+    } else {
+        AuthFailure::Internal
+    }
+}
+
+async fn insert_initial_group_and_commit(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    provision: &InitialProvision<'_>,
+    now: i64,
+    expires_at: i64,
+) -> Result<(), AuthFailure> {
+    sqlx::query(
+        "INSERT INTO e2ee_groups
+            (group_id, conversation_id, current_epoch, suite_id,
+             group_info_blob, created_at_unix)
+         VALUES ($1, $2, 1, $3, $4, $5)",
+    )
+    .bind(provision.group_id.to_string())
+    .bind(provision.conversation_id.to_string())
+    .bind(i32::from(provision.suite_id))
+    .bind(provision.group_info_blob)
+    .bind(now)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+    sqlx::query(
+        "INSERT INTO e2ee_commits
+            (group_id, epoch, prior_epoch, committer_device_id,
+             commit_blob, welcome_blob, created_at_unix, expires_at_unix)
+         VALUES ($1, 1, 0, $2, $3, $4, $5, $6)",
+    )
+    .bind(provision.group_id.to_string())
+    .bind(provision.committer_device_id.to_string())
+    .bind(provision.commit_blob)
+    .bind(provision.welcome_blob)
+    .bind(now)
+    .bind(expires_at)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+    Ok(())
+}
+
+async fn record_conversation_provision_audit(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    action: &'static str,
+    user_id: UserId,
+    provision: &InitialProvision<'_>,
+    now: i64,
+) -> Result<(), AuthFailure> {
+    sqlx::query(
+        "INSERT INTO e2ee_audit_log
+            (action, user_id, device_id, metadata_json, created_at_unix)
+         VALUES ($1, $2, $3, $4::jsonb, $5)",
+    )
+    .bind(action)
+    .bind(user_id.to_string())
+    .bind(provision.committer_device_id.to_string())
+    .bind(
+        json!({
+            "conversation_id": provision.conversation_id.to_string(),
+            "group_id": provision.group_id.to_string(),
+            "suite_id": provision.suite_id,
+        })
+        .to_string(),
+    )
+    .bind(now)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    Ok(())
 }
 
 fn parse_canonical_ulid(value: &str) -> Result<(), AuthFailure> {
@@ -1238,6 +1473,310 @@ pub(crate) async fn claim_keypackage(
         key_package_blob,
         is_last_resort,
     }))
+}
+
+/// Atomically create a two-user MLS conversation with its initial Add commit.
+#[allow(clippy::too_many_lines)]
+pub(crate) async fn create_mls_conversation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Json(payload): Json<CreateMlsConversationRequest>,
+) -> Result<Json<MlsConversationProvisionResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    parse_canonical_ulid(&payload.conversation_id)?;
+    parse_canonical_ulid(&payload.peer_user_id)?;
+    parse_canonical_ulid(&payload.group_id)?;
+    parse_canonical_ulid(&payload.committer_device_id)?;
+    let conversation_id = ConversationId::try_from(payload.conversation_id.clone())
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let peer_user_id =
+        UserId::try_from(payload.peer_user_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    if peer_user_id == auth.user_id {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let group_id =
+        GroupId::try_from(payload.group_id.clone()).map_err(|_| AuthFailure::InvalidRequest)?;
+    let committer_device_id = DeviceId::try_from(payload.committer_device_id.clone())
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    CiphersuiteId::try_from(payload.suite_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        committer_device_id,
+        group_id,
+        E2eeTransportRoute::Provision,
+    )
+    .await?;
+
+    let provision = InitialProvision {
+        conversation_id,
+        group_id,
+        suite_id: payload.suite_id,
+        committer_device_id,
+        commit_blob: &payload.commit_blob,
+        welcome_blob: &payload.welcome_blob,
+        group_info_blob: &payload.group_info_blob,
+    };
+    let (lower_user_id, upper_user_id) = canonical_user_pair(auth.user_id, peer_user_id);
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let ttl = i64::try_from(state.runtime.e2ee_mailbox_ttl.as_secs())
+        .map_err(|_| AuthFailure::Internal)?;
+    let expires_at = now.checked_add(ttl).ok_or(AuthFailure::Internal)?;
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, committer_device_id).await?;
+    let pair_lock_key = format!("{lower_user_id}:{upper_user_id}");
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(pair_lock_key)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    if let Some(existing) =
+        existing_provision_for_pair(&mut transaction, &lower_user_id, &upper_user_id).await?
+    {
+        if !provision_matches(&existing, &provision) {
+            return Err(AuthFailure::E2eeConversationConflict);
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        return Ok(Json(provision_response(
+            &provision,
+            existing.provisioned_at_unix,
+        )));
+    }
+
+    lock_capable_two_user_membership(&mut transaction, &[auth.user_id, peer_user_id]).await?;
+    sqlx::query(
+        "INSERT INTO e2ee_conversations
+            (conversation_id, conversation_crypto, created_by, created_at_unix)
+         VALUES ($1, 'mls_v1', $2, $3)",
+    )
+    .bind(conversation_id.to_string())
+    .bind(auth.user_id.to_string())
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+    for member_id in [auth.user_id, peer_user_id] {
+        sqlx::query(
+            "INSERT INTO e2ee_conversation_members
+                (conversation_id, user_id, joined_at_unix)
+             VALUES ($1, $2, $3)",
+        )
+        .bind(conversation_id.to_string())
+        .bind(member_id.to_string())
+        .bind(now)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| map_provision_write_error(&error))?;
+    }
+    sqlx::query(
+        "INSERT INTO e2ee_dm_pairs (conversation_id, user_a_id, user_b_id)
+         VALUES ($1, $2, $3)",
+    )
+    .bind(conversation_id.to_string())
+    .bind(&lower_user_id)
+    .bind(&upper_user_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+    insert_initial_group_and_commit(&mut transaction, &provision, now, expires_at).await?;
+    record_conversation_provision_audit(
+        &mut transaction,
+        "conversation_create",
+        auth.user_id,
+        &provision,
+        now,
+    )
+    .await?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    emit_mls_commit_notifications(
+        &state,
+        &[auth.user_id, peer_user_id],
+        MlsCommitEvent {
+            group_id: group_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            epoch: INITIAL_MLS_EPOCH,
+            prior_epoch: 0,
+            committer_device_id: committer_device_id.to_string(),
+            created_at_unix: now,
+        },
+        payload.suite_id,
+        true,
+    )
+    .await;
+    Ok(Json(provision_response(&provision, now)))
+}
+
+/// Explicitly upgrade an existing two-user plaintext conversation to MLS v1.
+#[allow(clippy::too_many_lines)]
+pub(crate) async fn upgrade_mls_conversation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(conversation_id): Path<String>,
+    Json(payload): Json<UpgradeMlsConversationRequest>,
+) -> Result<Json<MlsConversationProvisionResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    parse_canonical_ulid(&conversation_id)?;
+    parse_canonical_ulid(&payload.group_id)?;
+    parse_canonical_ulid(&payload.committer_device_id)?;
+    let conversation_id =
+        ConversationId::try_from(conversation_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let group_id =
+        GroupId::try_from(payload.group_id.clone()).map_err(|_| AuthFailure::InvalidRequest)?;
+    let committer_device_id = DeviceId::try_from(payload.committer_device_id.clone())
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    CiphersuiteId::try_from(payload.suite_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        committer_device_id,
+        group_id,
+        E2eeTransportRoute::Provision,
+    )
+    .await?;
+    let provision = InitialProvision {
+        conversation_id,
+        group_id,
+        suite_id: payload.suite_id,
+        committer_device_id,
+        commit_blob: &payload.commit_blob,
+        welcome_blob: &payload.welcome_blob,
+        group_info_blob: &payload.group_info_blob,
+    };
+
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let ttl = i64::try_from(state.runtime.e2ee_mailbox_ttl.as_secs())
+        .map_err(|_| AuthFailure::Internal)?;
+    let expires_at = now.checked_add(ttl).ok_or(AuthFailure::Internal)?;
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, committer_device_id).await?;
+    let crypto_mode: String = sqlx::query_scalar(
+        "SELECT c.conversation_crypto
+         FROM e2ee_conversations c
+         JOIN e2ee_conversation_members m ON m.conversation_id = c.conversation_id
+         WHERE c.conversation_id = $1 AND m.user_id = $2
+         FOR UPDATE OF c",
+    )
+    .bind(conversation_id.to_string())
+    .bind(auth.user_id.to_string())
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    .ok_or(AuthFailure::NotFound)?;
+
+    let crypto_mode =
+        ConversationCrypto::try_from(crypto_mode).map_err(|_| AuthFailure::Internal)?;
+    if crypto_mode == ConversationCrypto::MlsV1 {
+        let existing = existing_provision_for_conversation(&mut transaction, conversation_id)
+            .await?
+            .ok_or(AuthFailure::E2eeConversationConflict)?;
+        if !provision_matches(&existing, &provision) {
+            return Err(AuthFailure::E2eeConversationConflict);
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        return Ok(Json(provision_response(
+            &provision,
+            existing.provisioned_at_unix,
+        )));
+    }
+    if crypto_mode != ConversationCrypto::Plaintext {
+        return Err(AuthFailure::E2eeConversationConflict);
+    }
+
+    let member_ids =
+        conversation_member_ids(&mut transaction, &conversation_id.to_string()).await?;
+    let members: [UserId; 2] = member_ids
+        .try_into()
+        .map_err(|_| AuthFailure::E2eeConversationConflict)?;
+    lock_capable_two_user_membership(&mut transaction, &members).await?;
+    let (lower_user_id, upper_user_id) = canonical_user_pair(members[0], members[1]);
+    let pair_lock_key = format!("{lower_user_id}:{upper_user_id}");
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(pair_lock_key)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    if existing_provision_for_pair(&mut transaction, &lower_user_id, &upper_user_id)
+        .await?
+        .is_some()
+    {
+        return Err(AuthFailure::E2eeConversationConflict);
+    }
+
+    sqlx::query(
+        "UPDATE e2ee_conversations SET conversation_crypto = 'mls_v1'
+         WHERE conversation_id = $1 AND conversation_crypto = 'plaintext'",
+    )
+    .bind(conversation_id.to_string())
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    sqlx::query(
+        "INSERT INTO e2ee_dm_pairs (conversation_id, user_a_id, user_b_id)
+         VALUES ($1, $2, $3)",
+    )
+    .bind(conversation_id.to_string())
+    .bind(&lower_user_id)
+    .bind(&upper_user_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+    insert_initial_group_and_commit(&mut transaction, &provision, now, expires_at).await?;
+    record_conversation_provision_audit(
+        &mut transaction,
+        "conversation_upgrade",
+        auth.user_id,
+        &provision,
+        now,
+    )
+    .await?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    emit_mls_commit_notifications(
+        &state,
+        &members,
+        MlsCommitEvent {
+            group_id: group_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            epoch: INITIAL_MLS_EPOCH,
+            prior_epoch: 0,
+            committer_device_id: committer_device_id.to_string(),
+            created_at_unix: now,
+        },
+        payload.suite_id,
+        true,
+    )
+    .await;
+    Ok(Json(provision_response(&provision, now)))
 }
 
 /// Return the latest opaque `GroupInfo` for a locally authorized conversation member.
