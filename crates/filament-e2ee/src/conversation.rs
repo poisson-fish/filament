@@ -22,8 +22,10 @@ use crate::{
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519;
 const APPLICATION_ENVELOPE_VERSION: u16 = 1;
 const APPLICATION_HEADER_BYTES: usize = 2 + 8 + 4;
+const APPLICATION_PADDING_BUCKETS: [usize; 4] = [256, 768, 3_584, 15_360];
 const MAX_KEYPACKAGE_BYTES: usize = 4_096;
 const MAX_MLS_MESSAGE_BYTES: usize = 65_536;
+const MESSAGE_TRANSPORT_PADDING_BUCKETS: [usize; 4] = [512, 1_024, 4_096, 16_384];
 const MAX_WELCOME_BYTES: usize = 65_536;
 const MAX_COMMIT_BYTES: usize = 65_536;
 const MAX_GROUP_INFO_BYTES: usize = 65_536;
@@ -31,7 +33,10 @@ const OUT_OF_ORDER_TOLERANCE: u32 = 64;
 const MAXIMUM_FORWARD_DISTANCE: u32 = 256;
 
 /// Maximum plaintext bytes accepted by the MLS application layer.
-pub const MAX_APPLICATION_PLAINTEXT_BYTES: usize = 32_768;
+///
+/// This leaves bounded room for the application envelope and MLS framing in
+/// the largest 16 KiB transport bucket.
+pub const MAX_APPLICATION_PLAINTEXT_BYTES: usize = 12 * 1_024;
 
 /// Maximum number of missing application generations buffered per sender.
 pub const MAX_BUFFERED_GENERATION_GAP: u64 = 64;
@@ -152,6 +157,10 @@ pub struct DecryptedApplicationMessage {
 /// Result of processing one encrypted application message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecryptionOutcome {
+    /// The newly MLS-authenticated plaintext, including an out-of-order
+    /// message that is not yet safe to display. Persist this before acking its
+    /// transport record.
+    pub authenticated_message: DecryptedApplicationMessage,
     /// Newly contiguous messages, always ordered by application generation.
     pub ready_messages: Vec<DecryptedApplicationMessage>,
     /// Whether later messages remain buffered behind a missing generation.
@@ -399,12 +408,10 @@ impl MlsConversation {
             .group
             .create_message(device.provider(), device.signer(), &application_payload)
             .map_err(|_| ConversationError::CryptoError)?;
-        let message_blob = message
+        let serialized_message = message
             .to_bytes()
             .map_err(|_| ConversationError::SerializationFailed)?;
-        if message_blob.is_empty() || message_blob.len() > MAX_MLS_MESSAGE_BYTES {
-            return Err(ConversationError::LimitExceeded);
-        }
+        let message_blob = pad_transport_message(serialized_message)?;
         self.outbound_generation = generation
             .checked_add(1)
             .ok_or(ConversationError::LimitExceeded)?;
@@ -446,11 +453,10 @@ impl MlsConversation {
         {
             return Err(ConversationError::MetadataMismatch);
         }
-        if message.message_blob.is_empty() || message.message_blob.len() > MAX_MLS_MESSAGE_BYTES {
+        if !MESSAGE_TRANSPORT_PADDING_BUCKETS.contains(&message.message_blob.len()) {
             return Err(ConversationError::LimitExceeded);
         }
-        let wire_message = MlsMessageIn::tls_deserialize_exact(&message.message_blob)
-            .map_err(|_| ConversationError::SerializationFailed)?;
+        let wire_message = deserialize_transport_message(&message.message_blob)?;
         let protocol_message = wire_message
             .try_into_protocol_message()
             .map_err(|_| ConversationError::InvalidApplicationMessage)?;
@@ -490,6 +496,13 @@ impl MlsConversation {
     #[must_use]
     pub const fn group_id(&self) -> FilamentGroupId {
         self.group_id
+    }
+
+    /// Whether authenticated messages remain buffered behind a missing
+    /// per-sender application generation.
+    #[must_use]
+    pub fn messages_may_be_missing(&self) -> bool {
+        self.inbound.values().any(|queue| !queue.pending.is_empty())
     }
 
     fn ensure_device(&self, device: &MlsDevice) -> Result<(), ConversationError> {
@@ -534,15 +547,15 @@ impl MlsConversation {
         {
             return Err(ConversationError::GenerationGapExceeded);
         }
-        queue.pending.insert(
+        let authenticated_message = DecryptedApplicationMessage {
+            sender_user_id: sender.user_id,
+            sender_device_id: sender.device_id,
             generation,
-            DecryptedApplicationMessage {
-                sender_user_id: sender.user_id,
-                sender_device_id: sender.device_id,
-                generation,
-                plaintext,
-            },
-        );
+            plaintext,
+        };
+        queue
+            .pending
+            .insert(generation, authenticated_message.clone());
         let mut ready_messages = Vec::new();
         while let Some(ready) = queue.pending.remove(&queue.next_generation) {
             ready_messages.push(ready);
@@ -552,10 +565,33 @@ impl MlsConversation {
                 .ok_or(ConversationError::LimitExceeded)?;
         }
         Ok(DecryptionOutcome {
+            authenticated_message,
             ready_messages,
             messages_may_be_missing: !queue.pending.is_empty(),
         })
     }
+}
+
+fn pad_transport_message(mut serialized_message: Vec<u8>) -> Result<Vec<u8>, ConversationError> {
+    if serialized_message.is_empty() || serialized_message.len() > MAX_MLS_MESSAGE_BYTES {
+        return Err(ConversationError::LimitExceeded);
+    }
+    let bucket = MESSAGE_TRANSPORT_PADDING_BUCKETS
+        .into_iter()
+        .find(|bucket| serialized_message.len() <= *bucket)
+        .ok_or(ConversationError::LimitExceeded)?;
+    serialized_message.resize(bucket, 0);
+    Ok(serialized_message)
+}
+
+fn deserialize_transport_message(bytes: &[u8]) -> Result<MlsMessageIn, ConversationError> {
+    let mut encoded = bytes;
+    let message = MlsMessageIn::tls_deserialize(&mut encoded)
+        .map_err(|_| ConversationError::SerializationFailed)?;
+    if encoded.iter().any(|byte| *byte != 0) {
+        return Err(ConversationError::SerializationFailed);
+    }
+    Ok(message)
 }
 
 fn sender_ratchet_configuration() -> SenderRatchetConfiguration {
@@ -716,16 +752,24 @@ fn encode_application_payload(
 ) -> Result<Vec<u8>, ConversationError> {
     let content_len =
         u32::try_from(plaintext.len()).map_err(|_| ConversationError::LimitExceeded)?;
-    let mut encoded = Vec::with_capacity(APPLICATION_HEADER_BYTES + plaintext.len());
+    let unpadded_len = APPLICATION_HEADER_BYTES
+        .checked_add(plaintext.len())
+        .ok_or(ConversationError::LimitExceeded)?;
+    let padded_len = APPLICATION_PADDING_BUCKETS
+        .into_iter()
+        .find(|bucket| unpadded_len <= *bucket)
+        .ok_or(ConversationError::LimitExceeded)?;
+    let mut encoded = Vec::with_capacity(padded_len);
     encoded.extend_from_slice(&APPLICATION_ENVELOPE_VERSION.to_be_bytes());
     encoded.extend_from_slice(&generation.to_be_bytes());
     encoded.extend_from_slice(&content_len.to_be_bytes());
     encoded.extend_from_slice(plaintext);
+    encoded.resize(padded_len, 0);
     Ok(encoded)
 }
 
 fn decode_application_payload(bytes: &[u8]) -> Result<(u64, Vec<u8>), ConversationError> {
-    if bytes.len() < APPLICATION_HEADER_BYTES {
+    if !APPLICATION_PADDING_BUCKETS.contains(&bytes.len()) {
         return Err(ConversationError::InvalidApplicationMessage);
     }
     let version = u16::from_be_bytes(
@@ -747,13 +791,20 @@ fn decode_application_payload(bytes: &[u8]) -> Result<(u64, Vec<u8>), Conversati
             .map_err(|_| ConversationError::InvalidApplicationMessage)?,
     ))
     .map_err(|_| ConversationError::InvalidApplicationMessage)?;
+    let content_end = APPLICATION_HEADER_BYTES
+        .checked_add(content_len)
+        .ok_or(ConversationError::InvalidApplicationMessage)?;
     if content_len == 0
         || content_len > MAX_APPLICATION_PLAINTEXT_BYTES
-        || bytes.len() != APPLICATION_HEADER_BYTES + content_len
+        || content_end > bytes.len()
+        || bytes[content_end..].iter().any(|byte| *byte != 0)
     {
         return Err(ConversationError::InvalidApplicationMessage);
     }
-    Ok((generation, bytes[APPLICATION_HEADER_BYTES..].to_vec()))
+    Ok((
+        generation,
+        bytes[APPLICATION_HEADER_BYTES..content_end].to_vec(),
+    ))
 }
 
 #[cfg(test)]
@@ -847,6 +898,24 @@ mod tests {
             outcome.ready_messages[0].sender_device_id,
             alice.device_id()
         );
+    }
+
+    #[test]
+    fn application_padding_matches_delivery_service_transport_buckets() {
+        let (alice, mut alice_group, _bob, _bob_group) = joined_conversations();
+        let short = alice_group
+            .encrypt_application_message(&alice, b"a")
+            .unwrap();
+        let same_bucket = alice_group
+            .encrypt_application_message(&alice, &[0x42; 128])
+            .unwrap();
+        let maximum = alice_group
+            .encrypt_application_message(&alice, &[0x43; MAX_APPLICATION_PLAINTEXT_BYTES])
+            .unwrap();
+
+        assert_eq!(short.message_blob.len(), 512);
+        assert_eq!(same_bucket.message_blob.len(), 512);
+        assert_eq!(maximum.message_blob.len(), 16_384);
     }
 
     #[test]

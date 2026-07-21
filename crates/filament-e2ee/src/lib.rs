@@ -10,6 +10,8 @@
 //! - **KeyPackages**: MLS KeyPackage pool management (single-use + last-resort).
 //! - **KeyStore**: Local encrypted store abstraction (trait + in-memory impl).
 //! - **Pairing**: short-lived QR offers and authenticated HPKE root-key transfer.
+//! - **Mailbox**: fail-closed offline ciphertext processing and acknowledgment
+//!   construction after successful MLS authentication.
 //!
 //! # Security Properties
 //!
@@ -29,6 +31,7 @@ pub mod error;
 pub mod identity;
 pub mod keypackage;
 pub mod keystore;
+pub mod mailbox;
 pub mod pairing;
 #[cfg(feature = "sqlcipher-store")]
 pub mod sqlcipher_store;
@@ -57,6 +60,7 @@ pub use keystore::{
     StoreKey, StoreKeyProvider, MAX_STORE_ENTRIES, MAX_STORE_KEY_BYTES, MAX_STORE_VALUE_BYTES,
     STORE_ENCRYPTION_KEY_BYTES,
 };
+pub use mailbox::{process_message_mailbox, MailboxDecryptionBatch, RejectedMailboxMessage};
 pub use pairing::{
     create_pairing_transfer, PairedRootIdentity, PairingReceiver, PairingTransfer,
     ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS, MAX_PAIRING_OFFER_BYTES,

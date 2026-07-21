@@ -126,6 +126,9 @@ pub enum ConversationError {
     /// The application generation is too far ahead to buffer safely.
     #[error("application generation gap exceeds limit")]
     GenerationGapExceeded,
+    /// A mailbox page violated cursor, identifier, uniqueness, or size invariants.
+    #[error("invalid encrypted mailbox page")]
+    InvalidMailboxPage,
     /// The operation requires a pending local commit, but none exists.
     #[error("no pending MLS commit")]
     NoPendingCommit,

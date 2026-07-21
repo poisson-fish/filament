@@ -674,8 +674,10 @@ Stores one opaque MLS `PrivateMessage` in the bounded delivery mailbox.
 - Response: `{ "message_id": "...", "created_at_unix": 0 }`
 - The sender device must be active and owned by the authenticated conversation
   member. Epoch and suite routing hints must equal the provisioned group state.
-- Ciphertext must be client-padded to exactly `512 B`, `1 KiB`, `4 KiB`, or
-  `16 KiB`; all other sizes fail closed.
+- The authenticated application envelope is padded before MLS encryption, then
+  the opaque serialized MLS frame is zero-filled to exactly `512 B`, `1 KiB`,
+  `4 KiB`, or `16 KiB`; all other transport sizes fail closed. Clients reject
+  nonzero transport fill and never release padding bytes as content.
 - Rows are always tagged `mls_v1`, contain no plaintext/content-derived fields,
   and receive a configurable mailbox-expiry deadline (30 days by default,
   90-day hard maximum). Active participant devices are snapshotted in the same
@@ -691,8 +693,11 @@ Returns opaque messages pending for one owned active device.
 - Only send-time delivery rows for the requested device and group are visible.
   New devices do not gain access to earlier ciphertext through this endpoint.
 - Pages are capped at 50 records and `256 KiB` aggregate ciphertext bytes.
-  Routing fields remain untrusted hints; clients acknowledge only after MLS
-  authentication, decryption, and local metadata checks succeed.
+  Routing fields remain untrusted hints. Native clients validate the canonical
+  cursor and IDs before touching MLS state, isolate malformed entries, and
+  acknowledge only records that pass MLS authentication, decryption, and local
+  metadata checks. Authenticated plaintext and updated MLS state must be
+  durably persisted before the returned acknowledgment is sent.
 
 ### `POST /e2ee/groups/{group_id}/messages/ack`
 Acknowledges successfully decrypted messages for one owned active device.

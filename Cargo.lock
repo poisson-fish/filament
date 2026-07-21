@@ -1254,6 +1254,7 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "filament-core",
+ "filament-protocol",
  "openmls",
  "openmls_basic_credential",
  "openmls_rust_crypto",
@@ -1266,6 +1267,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tls_codec",
+ "ulid",
  "zeroize",
 ]
 

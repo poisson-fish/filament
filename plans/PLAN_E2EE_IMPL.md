@@ -90,9 +90,15 @@ client strictly decodes routing notifications but retains no decryption
 capability. The v16 commit-mailbox increment binds every Welcome to its exact
 active target device, snapshots bounded per-device commit deliveries, exposes
 cursor- and byte-bounded offline reads, and hard-deletes commit/Welcome blobs
-after all-device acknowledgment or TTL. The client-side mailbox/decryption/ack
-pipeline, multi-device MLS leaf semantics, client commit rebase, and
-external-commit recovery remain to be implemented. Phase 3 and
+after all-device acknowledgment or TTL. The native client core now processes
+bounded message-mailbox pages with preflight cursor/identifier validation,
+fail-closed routing-hint conversion, MLS authentication/decryption, per-entry
+failure isolation, generation-gap surfacing, and acknowledgment construction
+only for successfully authenticated records. Authenticated application padding
+and exact transport buckets make generated client ciphertext compatible with
+the Delivery Service. Packaged runtime wiring, durable MLS state persistence,
+commit-mailbox processing, multi-device MLS leaf semantics, client commit
+rebase, and external-commit recovery remain to be implemented. Phase 3 and
 later attachment, media, guild-channel, hardening, and key-transparency work has
 not started.
 

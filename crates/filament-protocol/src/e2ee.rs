@@ -716,8 +716,9 @@ pub struct PostCommitResponse {
 
 /// Request body for `POST /e2ee/groups/{group_id}/messages` — PrivateMessage transport.
 ///
-/// The server stores the opaque `PrivateMessage` blob plus a minimal routing
-/// envelope. It never parses MLS interiors. Size-bucket padding is verified.
+/// The server stores the opaque, bucket-padded serialized `PrivateMessage`
+/// frame plus a minimal routing envelope. It never parses MLS interiors.
+/// Size-bucket padding is verified.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostMessageRequest {
@@ -771,7 +772,7 @@ pub struct E2eeMailboxMessage {
     pub suite_id: u16,
     /// Sender device routing hint; clients verify it after MLS authentication.
     pub sender_device_id: String,
-    /// Padded serialized MLS `PrivateMessage`, opaque to the server.
+    /// Bucket-padded serialized MLS `PrivateMessage`, opaque to the server.
     #[serde(deserialize_with = "deserialize_padded_mls_message_blob")]
     pub message_blob: Vec<u8>,
     /// Unix timestamp (seconds) when the server accepted the message.

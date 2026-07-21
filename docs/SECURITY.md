@@ -68,11 +68,13 @@ Scope: this section governs transport/session token keys. E2EE identity and MLS 
 ## End-to-End Encryption (MLS) Baseline
 Status: the Phase 0 engineering artifacts, Phase 1 identity/device/KeyPackage
 foundation, and initial Phase 2 two-user conversation provisioning, opaque
-transport, message mailbox, and recipient-bound commit/Welcome mailbox are
-implemented as of 2026-07-21; ADR
+transport, message mailbox, recipient-bound commit/Welcome mailbox, and native
+message-mailbox authentication/decryption processing are implemented as of
+2026-07-21; ADR
 ratification is complete, while threat-model ratification remains open.
-Packaged-client mailbox processing and complete multi-device MLS leaf handling
-remain unfinished, so E2EE is not yet generally available.
+Packaged-client runtime wiring, commit-mailbox processing, durable MLS group
+state, and complete multi-device MLS leaf handling remain unfinished, so E2EE
+is not yet generally available.
 Items below remain binding for later phases; the exact completed/remaining
 split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 
@@ -113,7 +115,9 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 ### Retention — Mailbox Model
 - E2EE ciphertext is retained only until all member devices acknowledge delivery or a TTL expires (default `30 days`, configurable), then hard-deleted. No long-term server-side ciphertext archive.
 - The client's local encrypted store (SQLCipher-or-equivalent; store key in platform keystore) is canonical history; the server is a delivery mailbox for E2EE payloads.
-- E2EE payloads are padded client-side to size buckets (baseline `512 B / 1 KiB / 4 KiB / 16 KiB`).
+- E2EE application envelopes are authenticated-padded before MLS encryption;
+  opaque transport frames are then zero-filled to size buckets (baseline
+  `512 B / 1 KiB / 4 KiB / 16 KiB`) and clients reject nonzero transport fill.
 - Disappearing-message timers are negotiated inside ciphertext, enforced client-side, and mirrored by server mailbox TTL.
 - The server must not store plaintext content, content-derived metadata, or unwrapped key material for `mls_v1` conversations; there are no mixed-mode records.
 
@@ -128,6 +132,10 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - Clients pin peer root keys, surface key-change warnings (blocking interstitial for previously verified contacts), and support safety-number/QR verification.
 - Fail closed on: malformed envelopes, unverifiable commits, stale epochs, capability gaps, and any server-field/local-verification mismatch.
 - Delivery-gap detection via per-sender MLS generation counters is mandatory ("messages may be missing" indicator).
+- Offline mailbox pages are cursor-, identifier-, count-, and byte-validated
+  before MLS state is touched. Malformed entries receive no acknowledgment;
+  successfully authenticated plaintext (including gap-buffered messages) and
+  the updated MLS state must be durably persisted before acknowledgment.
 - Push notifications are data-only; notification text is decrypted on-device; the push pipeline never carries plaintext.
 - Web clients are excluded from E2EE in v1; participation requires signed, packaged desktop/mobile builds. The exclusion is a code-delivery property, not a protocol or JS limitation: browser-delivered application code is re-fetched from the operator on every load.
 - Web-client rendering of E2EE conversations is a fail-closed capability state only: conversation existence may render (the server already knows membership for routing), content renders as "end-to-end encrypted — open in a packaged client." No plaintext fallback and no server-side decryption path may exist.
