@@ -186,7 +186,7 @@ mod tests {
             group_id,
             &bob,
             PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public()),
-            &pending.welcome_blob,
+            pending.welcome_blob.as_deref().unwrap(),
         )
         .unwrap();
         (alice, alice_conversation, bob, bob_conversation)

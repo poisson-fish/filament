@@ -147,7 +147,10 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
         committer_device_id: pending.committer_device_id.to_string(),
         welcome_device_id: bob_device_id.to_string(),
         commit_blob: pending.commit_blob.clone(),
-        welcome_blob: pending.welcome_blob.clone(),
+        welcome_blob: pending
+            .welcome_blob
+            .clone()
+            .expect("initial Add commit must include a Welcome"),
         group_info_blob: pending
             .group_info_blob
             .clone()

@@ -120,6 +120,9 @@ pub enum ConversationError {
     /// The application payload was malformed or was not an application message.
     #[error("invalid MLS application message")]
     InvalidApplicationMessage,
+    /// A purported MLS commit was malformed or had the wrong content type.
+    #[error("invalid MLS commit")]
+    InvalidCommit,
     /// The application generation was already delivered.
     #[error("duplicate application generation")]
     DuplicateGeneration,

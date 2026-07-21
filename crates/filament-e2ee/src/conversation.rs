@@ -85,8 +85,8 @@ pub struct PendingGroupCommit {
     pub committer_device_id: DeviceId,
     /// TLS-serialized MLS commit, opaque to the server.
     pub commit_blob: Vec<u8>,
-    /// TLS-serialized Welcome for the invited device.
-    pub welcome_blob: Vec<u8>,
+    /// TLS-serialized Welcome when this commit adds a device.
+    pub welcome_blob: Option<Vec<u8>>,
     /// Optional TLS-serialized GroupInfo for recovery.
     pub group_info_blob: Option<Vec<u8>>,
 }
@@ -101,7 +101,7 @@ impl core::fmt::Debug for PendingGroupCommit {
             .field("suite", &self.suite)
             .field("committer_device_id", &self.committer_device_id)
             .field("commit_bytes", &self.commit_blob.len())
-            .field("welcome_bytes", &self.welcome_blob.len())
+            .field("welcome_bytes", &self.welcome_blob.as_ref().map(Vec::len))
             .field(
                 "group_info_bytes",
                 &self.group_info_blob.as_ref().map(Vec::len),
@@ -125,6 +125,34 @@ pub struct EncryptedApplicationMessage {
     pub sender_device_id: DeviceId,
     /// TLS-serialized MLS PrivateMessage.
     pub message_blob: Vec<u8>,
+}
+
+/// Opaque MLS commit plus untrusted Delivery Service routing hints.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EncryptedGroupCommit {
+    /// Locally pinned group identifier.
+    pub group_id: FilamentGroupId,
+    /// Epoch from which the commit advances.
+    pub prior_epoch: u64,
+    /// Epoch reached by the commit.
+    pub epoch: u64,
+    /// Device that the Delivery Service claims authored the commit.
+    pub committer_device_id: DeviceId,
+    /// TLS-serialized MLS commit.
+    pub commit_blob: Vec<u8>,
+}
+
+impl core::fmt::Debug for EncryptedGroupCommit {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("EncryptedGroupCommit")
+            .field("group_id", &self.group_id)
+            .field("prior_epoch", &self.prior_epoch)
+            .field("epoch", &self.epoch)
+            .field("committer_device_id", &self.committer_device_id)
+            .field("commit_bytes", &self.commit_blob.len())
+            .finish()
+    }
 }
 
 impl core::fmt::Debug for EncryptedApplicationMessage {
@@ -228,6 +256,7 @@ impl MlsConversation {
         let mut group = MlsGroup::builder()
             .with_group_id(openmls_group_id)
             .ciphersuite(CIPHERSUITE)
+            .with_wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
             .use_ratchet_tree_extension(true)
             .sender_ratchet_configuration(join_config)
             .build(
@@ -258,7 +287,11 @@ impl MlsConversation {
                     .map_err(|_| ConversationError::SerializationFailed)
             })
             .transpose()?;
-        enforce_serialized_limits(&commit_blob, &welcome_blob, group_info_blob.as_deref())?;
+        enforce_serialized_limits(
+            &commit_blob,
+            Some(&welcome_blob),
+            group_info_blob.as_deref(),
+        )?;
 
         let mut pinned_roots = HashMap::with_capacity(2);
         pinned_roots.insert(device.user_id(), *device.root_key_public());
@@ -279,7 +312,7 @@ impl MlsConversation {
             suite: CiphersuiteId::baseline(),
             committer_device_id: device.device_id(),
             commit_blob,
-            welcome_blob,
+            welcome_blob: Some(welcome_blob),
             group_info_blob,
         };
         Ok((conversation, pending))
@@ -312,6 +345,7 @@ impl MlsConversation {
             return Err(ConversationError::MetadataMismatch);
         }
         let join_config = MlsGroupJoinConfig::builder()
+            .wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
             .use_ratchet_tree_extension(true)
             .sender_ratchet_configuration(sender_ratchet_configuration())
             .build();
@@ -380,6 +414,185 @@ impl MlsConversation {
         self.group
             .clear_pending_commit(device.provider().storage())
             .map_err(|_| ConversationError::CryptoError)
+    }
+
+    /// Stage a post-compromise self-update for Delivery Service ordering.
+    ///
+    /// The returned commit remains pending and blocks sends until the caller
+    /// either accepts it after a successful server response or rejects it
+    /// after an epoch conflict.
+    ///
+    /// # Errors
+    /// Returns [`ConversationError`] if this device does not own the group,
+    /// the group is inactive or already has a pending commit, or OpenMLS
+    /// cannot create bounded commit material.
+    pub fn create_self_update(
+        &mut self,
+        device: &MlsDevice,
+    ) -> Result<PendingGroupCommit, ConversationError> {
+        self.ensure_device(device)?;
+        if !self.active {
+            return Err(ConversationError::NotActive);
+        }
+        if self.group.pending_commit().is_some() {
+            return Err(ConversationError::PendingCommit);
+        }
+        let prior_epoch = self.group.epoch().as_u64();
+        let (commit, welcome, group_info) = self
+            .group
+            .self_update(
+                device.provider(),
+                device.signer(),
+                LeafNodeParameters::default(),
+            )
+            .map_err(|_| ConversationError::CryptoError)?
+            .into_contents();
+        let epoch = self
+            .group
+            .pending_commit()
+            .ok_or(ConversationError::NoPendingCommit)?
+            .epoch()
+            .as_u64();
+        let commit_blob = commit
+            .to_bytes()
+            .map_err(|_| ConversationError::SerializationFailed)?;
+        let welcome_blob = welcome
+            .map(|value| {
+                MlsMessageOut::from_welcome(value, ProtocolVersion::Mls10)
+                    .to_bytes()
+                    .map_err(|_| ConversationError::SerializationFailed)
+            })
+            .transpose()?;
+        let group_info_blob = group_info
+            .map(|info| {
+                MlsMessageOut::from(info)
+                    .to_bytes()
+                    .map_err(|_| ConversationError::SerializationFailed)
+            })
+            .transpose()?;
+        enforce_serialized_limits(
+            &commit_blob,
+            welcome_blob.as_deref(),
+            group_info_blob.as_deref(),
+        )?;
+        Ok(PendingGroupCommit {
+            group_id: self.group_id,
+            prior_epoch,
+            epoch,
+            suite: CiphersuiteId::baseline(),
+            committer_device_id: self.own_device_id,
+            commit_blob,
+            welcome_blob,
+            group_info_blob,
+        })
+    }
+
+    /// Authenticate, inspect, and merge one ordered peer commit.
+    ///
+    /// Phase 2 permits only updates that preserve the exact two-device,
+    /// two-user membership. Adds, removes, external senders, and other
+    /// proposal types fail closed before the staged commit is merged.
+    ///
+    /// # Errors
+    /// Returns [`ConversationError`] when routing hints disagree with the
+    /// authenticated commit, the epoch is not the next local epoch, the
+    /// committer is not root-certified, or membership would change.
+    pub fn process_incoming_commit(
+        &mut self,
+        device: &MlsDevice,
+        commit: &EncryptedGroupCommit,
+    ) -> Result<(), ConversationError> {
+        self.ensure_device(device)?;
+        if !self.active {
+            return Err(ConversationError::NotActive);
+        }
+        if self.group.pending_commit().is_some() {
+            return Err(ConversationError::PendingCommit);
+        }
+        let expected_epoch = self
+            .group
+            .epoch()
+            .as_u64()
+            .checked_add(1)
+            .ok_or(ConversationError::LimitExceeded)?;
+        if commit.group_id != self.group_id
+            || commit.prior_epoch != self.group.epoch().as_u64()
+            || commit.epoch != expected_epoch
+            || commit.commit_blob.is_empty()
+            || commit.commit_blob.len() > MAX_COMMIT_BYTES
+        {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        let message = MlsMessageIn::tls_deserialize_exact(&commit.commit_blob)
+            .map_err(|_| ConversationError::SerializationFailed)?;
+        let protocol_message = message
+            .try_into_protocol_message()
+            .map_err(|_| ConversationError::InvalidCommit)?;
+        if protocol_message.group_id().as_slice() != self.group_id.to_string().as_bytes()
+            || protocol_message.epoch().as_u64() != commit.prior_epoch
+            || protocol_message.content_type() != ContentType::Commit
+        {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        let expected_sender_index = self
+            .group
+            .members()
+            .find_map(|member| {
+                verify_member_credential(
+                    &member.credential,
+                    &member.signature_key,
+                    &self.pinned_roots,
+                )
+                .ok()
+                .filter(|verified| verified.device_id == commit.committer_device_id)
+                .map(|_| member.index)
+            })
+            .ok_or(ConversationError::MetadataMismatch)?;
+        let ProtocolMessage::PublicMessage(public_message) = &protocol_message else {
+            return Err(ConversationError::InvalidCommit);
+        };
+        if public_message.sender() != &Sender::Member(expected_sender_index) {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        let processed = self
+            .group
+            .process_message(device.provider(), protocol_message)
+            .map_err(|_| ConversationError::CryptoError)?;
+        let Sender::Member(sender_index) = processed.sender() else {
+            return Err(ConversationError::UnexpectedMembership);
+        };
+        let verified_sender = self.verify_member_at(*sender_index)?;
+        if verified_sender.device_id != commit.committer_device_id {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        let ProcessedMessageContent::StagedCommitMessage(staged_commit) = processed.into_content()
+        else {
+            return Err(ConversationError::InvalidCommit);
+        };
+        if staged_commit.epoch().as_u64() != commit.epoch
+            || staged_commit.queued_proposals().count() != staged_commit.update_proposals().count()
+        {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        if let Some(leaf) = staged_commit.update_path_leaf_node() {
+            verify_member_credential(
+                leaf.credential(),
+                leaf.signature_key().as_slice(),
+                &self.pinned_roots,
+            )?;
+        }
+        for update in staged_commit.update_proposals() {
+            let leaf = update.update_proposal().leaf_node();
+            verify_member_credential(
+                leaf.credential(),
+                leaf.signature_key().as_slice(),
+                &self.pinned_roots,
+            )?;
+        }
+        self.group
+            .merge_staged_commit(device.provider(), *staged_commit)
+            .map_err(|_| ConversationError::CryptoError)?;
+        validate_two_member_group(&self.group, &self.pinned_roots, self.own_device_id)
     }
 
     /// Encrypt one bounded application payload as an MLS PrivateMessage.
@@ -505,6 +718,23 @@ impl MlsConversation {
         self.inbound.values().any(|queue| !queue.pending.is_empty())
     }
 
+    pub(crate) fn has_verified_member_device(
+        &self,
+        device_id: DeviceId,
+    ) -> Result<bool, ConversationError> {
+        for member in self.group.members() {
+            let verified = verify_member_credential(
+                &member.credential,
+                &member.signature_key,
+                &self.pinned_roots,
+            )?;
+            if verified.device_id == device_id {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn ensure_device(&self, device: &MlsDevice) -> Result<(), ConversationError> {
         if device.device_id() != self.own_device_id {
             return Err(ConversationError::UnexpectedMembership);
@@ -592,6 +822,26 @@ fn deserialize_transport_message(bytes: &[u8]) -> Result<MlsMessageIn, Conversat
         return Err(ConversationError::SerializationFailed);
     }
     Ok(message)
+}
+
+pub(crate) fn validate_commit_envelope(
+    commit: &EncryptedGroupCommit,
+) -> Result<(), ConversationError> {
+    if commit.commit_blob.is_empty() || commit.commit_blob.len() > MAX_COMMIT_BYTES {
+        return Err(ConversationError::LimitExceeded);
+    }
+    let message = MlsMessageIn::tls_deserialize_exact(&commit.commit_blob)
+        .map_err(|_| ConversationError::SerializationFailed)?;
+    let protocol_message = message
+        .try_into_protocol_message()
+        .map_err(|_| ConversationError::InvalidCommit)?;
+    if protocol_message.group_id().as_slice() != commit.group_id.to_string().as_bytes()
+        || protocol_message.epoch().as_u64() != commit.prior_epoch
+        || protocol_message.content_type() != ContentType::Commit
+    {
+        return Err(ConversationError::MetadataMismatch);
+    }
+    Ok(())
 }
 
 fn sender_ratchet_configuration() -> SenderRatchetConfiguration {
@@ -732,13 +982,12 @@ fn verify_member_credential(
 
 fn enforce_serialized_limits(
     commit_blob: &[u8],
-    welcome_blob: &[u8],
+    welcome_blob: Option<&[u8]>,
     group_info_blob: Option<&[u8]>,
 ) -> Result<(), ConversationError> {
     if commit_blob.is_empty()
         || commit_blob.len() > MAX_COMMIT_BYTES
-        || welcome_blob.is_empty()
-        || welcome_blob.len() > MAX_WELCOME_BYTES
+        || welcome_blob.is_some_and(|blob| blob.is_empty() || blob.len() > MAX_WELCOME_BYTES)
         || group_info_blob.is_some_and(|blob| blob.is_empty() || blob.len() > MAX_GROUP_INFO_BYTES)
     {
         return Err(ConversationError::LimitExceeded);
@@ -864,7 +1113,7 @@ mod tests {
             fixture.group_id,
             &fixture.bob,
             alice_pin,
-            &pending.welcome_blob,
+            pending.welcome_blob.as_deref().unwrap(),
         )
         .unwrap();
         (

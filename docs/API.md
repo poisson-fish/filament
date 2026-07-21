@@ -657,6 +657,9 @@ Returns opaque commits pending for one owned active device.
   its exact target device and is omitted from every other device's response.
 - Pages are capped at 50 records and `256 KiB` aggregate commit/Welcome bytes.
   New devices do not gain access to earlier commits through this endpoint.
+- Native clients preflight the whole page, join only through a device-bound
+  Welcome, and otherwise authenticate and merge commits in strict epoch order.
+  Processing stops at the first rejected epoch; no later epoch is acknowledged.
 
 ### `POST /e2ee/groups/{group_id}/commits/ack`
 Acknowledges successfully processed commits for one owned active device.
@@ -664,6 +667,9 @@ Acknowledges successfully processed commits for one owned active device.
 - Response: `{ "acknowledged_count": 2, "deleted_count": 2 }`
 - Batches contain 1–100 unique positive epochs. Entries outside the device's
   snapshotted group mailbox are ignored without exposing other groups.
+- Clients send this request only after the corresponding joined/advanced MLS
+  state is durably persisted. Already-durable replay epochs may be
+  acknowledged without consuming the commit again.
 - Once every snapshotted device acknowledges, the commit, its optional Welcome,
   and all delivery rows are hard-deleted atomically. TTL GC remains an
   independent upper bound.

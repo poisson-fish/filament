@@ -26,6 +26,7 @@
 //! See [`docs/adr/0001-e2ee-mls-openmls.md`] for the protocol decision and
 //! [`plans/PLAN_E2EE.md`] for the full design specification.
 
+pub mod commit_mailbox;
 pub mod conversation;
 pub mod error;
 pub mod identity;
@@ -37,10 +38,11 @@ pub mod pairing;
 pub mod sqlcipher_store;
 
 // Re-export the most commonly used types.
+pub use commit_mailbox::{process_commit_mailbox, CommitMailboxBatch, RejectedMailboxCommit};
 pub use conversation::{
-    DecryptedApplicationMessage, DecryptionOutcome, EncryptedApplicationMessage, MlsConversation,
-    PendingGroupCommit, PinnedUserIdentity, MAX_APPLICATION_PLAINTEXT_BYTES,
-    MAX_BUFFERED_GENERATION_GAP,
+    DecryptedApplicationMessage, DecryptionOutcome, EncryptedApplicationMessage,
+    EncryptedGroupCommit, MlsConversation, PendingGroupCommit, PinnedUserIdentity,
+    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP,
 };
 pub use error::{
     ConversationError, E2eeError, IdentityError, KeyPackageError, KeyStoreError, PairingError,

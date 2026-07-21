@@ -94,11 +94,15 @@ after all-device acknowledgment or TTL. The native client core now processes
 bounded message-mailbox pages with preflight cursor/identifier validation,
 fail-closed routing-hint conversion, MLS authentication/decryption, per-entry
 failure isolation, generation-gap surfacing, and acknowledgment construction
-only for successfully authenticated records. Authenticated application padding
-and exact transport buckets make generated client ciphertext compatible with
-the Delivery Service. Packaged runtime wiring, durable MLS state persistence,
-commit-mailbox processing, multi-device MLS leaf semantics, client commit
-rebase, and external-commit recovery remain to be implemented. Phase 3 and
+only for successfully authenticated records. It also processes commit-mailbox
+pages as a strict epoch chain: recipient-bound Welcomes establish initial
+state, authenticated peer updates advance existing state, membership changes
+fail closed, processing stops at the first rejected epoch, and acknowledgments
+cover only the durable success prefix. Authenticated application padding and
+exact transport buckets make generated client ciphertext compatible with the
+Delivery Service. Packaged runtime wiring, durable MLS state persistence,
+multi-device MLS leaf semantics, client commit rebase, and external-commit
+recovery remain to be implemented. Phase 3 and
 later attachment, media, guild-channel, hardening, and key-transparency work has
 not started.
 

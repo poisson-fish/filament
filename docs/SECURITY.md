@@ -69,10 +69,10 @@ Scope: this section governs transport/session token keys. E2EE identity and MLS 
 Status: the Phase 0 engineering artifacts, Phase 1 identity/device/KeyPackage
 foundation, and initial Phase 2 two-user conversation provisioning, opaque
 transport, message mailbox, recipient-bound commit/Welcome mailbox, and native
-message-mailbox authentication/decryption processing are implemented as of
+message- and commit-mailbox authentication/decryption processing are implemented as of
 2026-07-21; ADR
 ratification is complete, while threat-model ratification remains open.
-Packaged-client runtime wiring, commit-mailbox processing, durable MLS group
+Packaged-client runtime wiring, durable MLS group
 state, and complete multi-device MLS leaf handling remain unfinished, so E2EE
 is not yet generally available.
 Items below remain binding for later phases; the exact completed/remaining
@@ -82,7 +82,11 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - Single vetted stack: MLS (RFC 9420) via OpenMLS for all E2EE domains — 1:1 DMs (2-member groups), group DMs, guild encrypted channels, and calls. No bespoke ratchets, key schedules, or parallel crypto stacks.
 - Baseline ciphersuite: `MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519` (0x0003).
 - Ciphersuite agility is mandatory in all wire formats and stored state; hybrid post-quantum key establishment (X25519+ML-KEM via HPKE) is a planned fast-follow once standardized and vetted.
-- Application messages and commits/proposals are transported as MLS `PrivateMessage`; the server never parses MLS interiors beyond size/shape bounds.
+- Application messages are transported as MLS `PrivateMessage`. Commits use
+  signed MLS `PublicMessage` framing so clients can reject contradictory
+  sender/group/epoch routing hints before consuming handshake state; commit
+  path secrets remain MLS-encrypted, and the server never parses MLS interiors
+  beyond size/shape bounds.
 - Randomness from platform CSPRNG only; key material is zeroized on drop and held in platform secure storage where available.
 
 ### Crypto Modes — No Escrow
@@ -110,6 +114,10 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - Every Welcome is bound to one active target device. Commit delivery is
   snapshotted per active participant device, and only the target device can
   retrieve the Welcome bytes.
+- Clients validate complete commit pages before touching MLS state, accept
+  only a consecutive authenticated epoch prefix, and acknowledge it only
+  after the advanced state is durably persisted. Phase 2 rejects all
+  membership-changing commits and all non-Update proposals.
 - Server-side validation of MLS payloads is shape-only: size bounds, field presence, and epoch monotonicity per group.
 
 ### Retention — Mailbox Model

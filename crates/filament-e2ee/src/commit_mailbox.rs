@@ -1,0 +1,425 @@
+//! Fail-closed client processing for ordered MLS commit mailboxes.
+//!
+//! Commit pages are attacker-controlled and stateful: unlike application
+//! messages, a rejected commit prevents every later epoch from being safely
+//! processed. This module therefore validates the complete page before
+//! touching MLS state and processes only a successful epoch prefix.
+
+use std::collections::HashSet;
+
+use filament_core::{DeviceId, GroupId};
+use filament_protocol::{
+    AckE2eeCommitsRequest, E2eeCommitMailboxEntry, E2eeCommitMailboxResponse, MAX_COMMIT_BYTES,
+    MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_WELCOME_BYTES,
+};
+
+use crate::conversation::validate_commit_envelope;
+use crate::{
+    ConversationError, EncryptedGroupCommit, MlsConversation, MlsDevice, PinnedUserIdentity,
+};
+
+/// One commit that blocked processing of its epoch and every later epoch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedMailboxCommit {
+    /// Zero-based position in the bounded mailbox page.
+    pub entry_index: usize,
+    /// Epoch that could not be authenticated and merged.
+    pub epoch: u64,
+    /// Fail-closed validation or MLS processing error.
+    pub error: ConversationError,
+}
+
+/// State and acknowledgment material after processing a commit page.
+pub struct CommitMailboxBatch {
+    /// Epochs newly established by this call, excluding already-durable replay epochs.
+    pub processed_epochs: Vec<u64>,
+    /// Send only after `conversation` is durably persisted.
+    pub pending_acknowledgment: Option<AckE2eeCommitsRequest>,
+    /// First failed epoch. Later entries are deliberately left unprocessed.
+    pub rejected_commit: Option<RejectedMailboxCommit>,
+}
+
+/// Join from a recipient-bound Welcome or advance an existing conversation.
+///
+/// Acknowledgments cover only epochs represented by the updated conversation
+/// state, and must be sent only after that state is durably persisted.
+///
+/// # Errors
+/// Returns [`ConversationError::InvalidMailboxPage`] when count, aggregate
+/// bytes, cursors, epoch ordering, timestamps, identifiers, or blob bounds are
+/// invalid. No MLS state is touched in that case.
+pub fn process_commit_mailbox(
+    conversation: &mut Option<MlsConversation>,
+    device: &MlsDevice,
+    group_id: GroupId,
+    peer: PinnedUserIdentity,
+    page: E2eeCommitMailboxResponse,
+) -> Result<CommitMailboxBatch, ConversationError> {
+    validate_page(&page)?;
+
+    let mut processed_epochs = Vec::new();
+    let mut acknowledged_epochs = Vec::new();
+    let mut rejected_commit = None;
+
+    for (entry_index, entry) in page.commits.into_iter().enumerate() {
+        let epoch = entry.epoch;
+        let result = process_entry(conversation, device, group_id, peer, entry);
+        match result {
+            Ok(newly_processed) => {
+                if newly_processed {
+                    processed_epochs.push(epoch);
+                }
+                acknowledged_epochs.push(epoch);
+            }
+            Err(error) => {
+                rejected_commit = Some(RejectedMailboxCommit {
+                    entry_index,
+                    epoch,
+                    error,
+                });
+                break;
+            }
+        }
+    }
+
+    let pending_acknowledgment = (!acknowledged_epochs.is_empty()).then(|| AckE2eeCommitsRequest {
+        device_id: device.device_id().to_string(),
+        epochs: acknowledged_epochs,
+    });
+    Ok(CommitMailboxBatch {
+        processed_epochs,
+        pending_acknowledgment,
+        rejected_commit,
+    })
+}
+
+fn process_entry(
+    conversation: &mut Option<MlsConversation>,
+    device: &MlsDevice,
+    group_id: GroupId,
+    peer: PinnedUserIdentity,
+    entry: E2eeCommitMailboxEntry,
+) -> Result<bool, ConversationError> {
+    let committer_device_id = DeviceId::try_from(entry.committer_device_id)
+        .map_err(|_| ConversationError::MetadataMismatch)?;
+    let commit = EncryptedGroupCommit {
+        group_id,
+        prior_epoch: entry.prior_epoch,
+        epoch: entry.epoch,
+        committer_device_id,
+        commit_blob: entry.commit_blob,
+    };
+
+    if let Some(current) = conversation.as_mut() {
+        if entry.epoch <= current.epoch() {
+            return Ok(false);
+        }
+        if entry.welcome_blob.is_some() {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        current.process_incoming_commit(device, &commit)?;
+        return Ok(true);
+    }
+
+    let welcome = entry.welcome_blob.ok_or(ConversationError::InvalidCommit)?;
+    validate_commit_envelope(&commit)?;
+    let joined = MlsConversation::join_from_welcome(group_id, device, peer, &welcome)?;
+    if joined.epoch() != entry.epoch
+        || !joined.has_verified_member_device(committer_device_id)?
+        || committer_device_id == device.device_id()
+    {
+        return Err(ConversationError::MetadataMismatch);
+    }
+    *conversation = Some(joined);
+    Ok(true)
+}
+
+fn validate_page(page: &E2eeCommitMailboxResponse) -> Result<(), ConversationError> {
+    if page.commits.len() > MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE {
+        return Err(ConversationError::InvalidMailboxPage);
+    }
+    let aggregate_bytes = page.commits.iter().try_fold(0_usize, |total, entry| {
+        total
+            .checked_add(entry.commit_blob.len())?
+            .checked_add(entry.welcome_blob.as_ref().map_or(0, Vec::len))
+    });
+    if aggregate_bytes.is_none_or(|total| total > MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES) {
+        return Err(ConversationError::InvalidMailboxPage);
+    }
+
+    let mut epochs = HashSet::with_capacity(page.commits.len());
+    let mut previous_epoch = None;
+    for entry in &page.commits {
+        if entry.epoch == 0
+            || entry.prior_epoch.checked_add(1) != Some(entry.epoch)
+            || !epochs.insert(entry.epoch)
+            || previous_epoch.is_some_and(|previous| entry.prior_epoch != previous)
+            || DeviceId::try_from(entry.committer_device_id.clone()).is_err()
+            || entry.commit_blob.is_empty()
+            || entry.commit_blob.len() > MAX_COMMIT_BYTES
+            || entry
+                .welcome_blob
+                .as_ref()
+                .is_some_and(|blob| blob.is_empty() || blob.len() > MAX_WELCOME_BYTES)
+            || entry.created_at_unix < 0
+            || entry.expires_at_unix <= entry.created_at_unix
+        {
+            return Err(ConversationError::InvalidMailboxPage);
+        }
+        previous_epoch = Some(entry.epoch);
+    }
+
+    match (page.commits.last(), page.next_after_epoch) {
+        (None, None) => Ok(()),
+        (Some(last), Some(cursor)) if cursor == last.epoch => Ok(()),
+        _ => Err(ConversationError::InvalidMailboxPage),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use filament_core::{DeviceId, GroupId, UserId};
+
+    use super::*;
+    use crate::{generate_key_package_batch, RootIdentityKey};
+
+    struct JoinedFixture {
+        alice: MlsDevice,
+        alice_group: MlsConversation,
+        bob: MlsDevice,
+        bob_group: MlsConversation,
+        bob_pin: PinnedUserIdentity,
+        group_id: GroupId,
+    }
+
+    fn joined_fixture() -> JoinedFixture {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let bob_keypackage = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = GroupId::new();
+        let (mut alice_group, pending) =
+            MlsConversation::create_two_member(group_id, &alice, bob_pin, &bob_keypackage).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let bob_group = MlsConversation::join_from_welcome(
+            group_id,
+            &bob,
+            alice_pin,
+            pending.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        JoinedFixture {
+            alice,
+            alice_group,
+            bob,
+            bob_group,
+            bob_pin,
+            group_id,
+        }
+    }
+
+    fn mailbox_entry(pending: &crate::PendingGroupCommit) -> E2eeCommitMailboxEntry {
+        E2eeCommitMailboxEntry {
+            epoch: pending.epoch,
+            prior_epoch: pending.prior_epoch,
+            committer_device_id: pending.committer_device_id.to_string(),
+            commit_blob: pending.commit_blob.clone(),
+            welcome_blob: pending.welcome_blob.clone(),
+            created_at_unix: 10,
+            expires_at_unix: 20,
+        }
+    }
+
+    fn page(entries: Vec<E2eeCommitMailboxEntry>) -> E2eeCommitMailboxResponse {
+        E2eeCommitMailboxResponse {
+            next_after_epoch: entries.last().map(|entry| entry.epoch),
+            commits: entries,
+        }
+    }
+
+    #[test]
+    fn recipient_bound_welcome_joins_and_builds_ack() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let bob_keypackage = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = GroupId::new();
+        let (mut alice_group, pending) =
+            MlsConversation::create_two_member(group_id, &alice, bob_pin, &bob_keypackage).unwrap();
+        let initial_page = page(vec![mailbox_entry(&pending)]);
+        alice_group.accept_pending_commit(&alice).unwrap();
+
+        let mut bob_state = None;
+        let batch = process_commit_mailbox(&mut bob_state, &bob, group_id, alice_pin, initial_page)
+            .unwrap();
+        assert_eq!(batch.processed_epochs, vec![1]);
+        assert!(batch.rejected_commit.is_none());
+        assert_eq!(
+            batch.pending_acknowledgment.unwrap(),
+            AckE2eeCommitsRequest {
+                device_id: bob.device_id().to_string(),
+                epochs: vec![1],
+            }
+        );
+        let bob_group = bob_state.as_mut().unwrap();
+        let encrypted = alice_group
+            .encrypt_application_message(&alice, b"joined from offline mailbox")
+            .unwrap();
+        assert_eq!(
+            bob_group
+                .decrypt_application_message(&bob, &encrypted)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"joined from offline mailbox"
+        );
+    }
+
+    #[test]
+    fn ordered_peer_updates_advance_state_and_ack_success_prefix() {
+        let JoinedFixture {
+            alice,
+            alice_group,
+            bob,
+            mut bob_group,
+            bob_pin,
+            group_id,
+            ..
+        } = joined_fixture();
+        let first = bob_group.create_self_update(&bob).unwrap();
+        assert!(first.welcome_blob.is_none());
+        bob_group.accept_pending_commit(&bob).unwrap();
+        let second = bob_group.create_self_update(&bob).unwrap();
+        bob_group.accept_pending_commit(&bob).unwrap();
+
+        let mut alice_state = Some(alice_group);
+        let batch = process_commit_mailbox(
+            &mut alice_state,
+            &alice,
+            group_id,
+            bob_pin,
+            page(vec![mailbox_entry(&first), mailbox_entry(&second)]),
+        )
+        .unwrap();
+        assert_eq!(batch.processed_epochs, vec![2, 3]);
+        assert_eq!(batch.pending_acknowledgment.unwrap().epochs, vec![2, 3]);
+        assert_eq!(alice_state.as_ref().unwrap().epoch(), 3);
+
+        let encrypted = bob_group
+            .encrypt_application_message(&bob, b"after two commits")
+            .unwrap();
+        let outcome = alice_state
+            .as_mut()
+            .unwrap()
+            .decrypt_application_message(&alice, &encrypted)
+            .unwrap();
+        assert_eq!(outcome.ready_messages[0].plaintext, b"after two commits");
+    }
+
+    #[test]
+    fn forged_committer_hint_blocks_epoch_without_ack_or_merge() {
+        let JoinedFixture {
+            alice,
+            alice_group,
+            bob,
+            mut bob_group,
+            bob_pin,
+            group_id,
+            ..
+        } = joined_fixture();
+        let pending = bob_group.create_self_update(&bob).unwrap();
+        bob_group.accept_pending_commit(&bob).unwrap();
+        let mut forged = mailbox_entry(&pending);
+        forged.committer_device_id = alice.device_id().to_string();
+        let mut alice_state = Some(alice_group);
+
+        let batch = process_commit_mailbox(
+            &mut alice_state,
+            &alice,
+            group_id,
+            bob_pin,
+            page(vec![forged]),
+        )
+        .unwrap();
+        assert!(batch.pending_acknowledgment.is_none());
+        assert!(batch.processed_epochs.is_empty());
+        assert_eq!(alice_state.as_ref().unwrap().epoch(), 1);
+        assert_eq!(
+            batch.rejected_commit.unwrap().error,
+            ConversationError::MetadataMismatch
+        );
+
+        let retry = process_commit_mailbox(
+            &mut alice_state,
+            &alice,
+            group_id,
+            bob_pin,
+            page(vec![mailbox_entry(&pending)]),
+        )
+        .unwrap();
+        assert_eq!(retry.processed_epochs, vec![2]);
+        assert_eq!(alice_state.as_ref().unwrap().epoch(), 2);
+    }
+
+    #[test]
+    fn invalid_page_is_rejected_before_state_changes() {
+        let JoinedFixture {
+            alice,
+            alice_group,
+            bob,
+            mut bob_group,
+            bob_pin,
+            group_id,
+            ..
+        } = joined_fixture();
+        let pending = bob_group.create_self_update(&bob).unwrap();
+        let mut invalid = page(vec![mailbox_entry(&pending)]);
+        invalid.next_after_epoch = Some(99);
+        let mut alice_state = Some(alice_group);
+
+        assert_eq!(
+            process_commit_mailbox(&mut alice_state, &alice, group_id, bob_pin, invalid,).err(),
+            Some(ConversationError::InvalidMailboxPage)
+        );
+        assert_eq!(alice_state.as_ref().unwrap().epoch(), 1);
+        assert!(bob_group.reject_pending_commit(&bob).is_ok());
+    }
+
+    #[test]
+    fn durable_replay_epoch_is_acknowledged_without_reprocessing() {
+        let JoinedFixture {
+            alice,
+            alice_group,
+            bob_pin,
+            group_id,
+            ..
+        } = joined_fixture();
+        let replay = E2eeCommitMailboxEntry {
+            epoch: 1,
+            prior_epoch: 0,
+            committer_device_id: DeviceId::new().to_string(),
+            commit_blob: vec![0xFF],
+            welcome_blob: Some(vec![0xFF]),
+            created_at_unix: 10,
+            expires_at_unix: 20,
+        };
+        let mut alice_state = Some(alice_group);
+        let batch = process_commit_mailbox(
+            &mut alice_state,
+            &alice,
+            group_id,
+            bob_pin,
+            page(vec![replay]),
+        )
+        .unwrap();
+        assert!(batch.processed_epochs.is_empty());
+        assert_eq!(batch.pending_acknowledgment.unwrap().epochs, vec![1]);
+        assert_eq!(alice_state.as_ref().unwrap().epoch(), 1);
+    }
+}
