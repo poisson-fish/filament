@@ -119,14 +119,21 @@ pub fn persist_mls_client_state(
     device: &MlsDevice,
     conversations: &[&MlsConversation],
 ) -> Result<(), KeyStoreError> {
+    let encoded = encode_mls_client_state(device, conversations)?;
+    store.store(StoreKey::mls_client_state(), encoded.to_vec())
+}
+
+pub(crate) fn encode_mls_client_state(
+    device: &MlsDevice,
+    conversations: &[&MlsConversation],
+) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
     if conversations.len() > MAX_MLS_CONVERSATIONS {
         return Err(KeyStoreError::LimitExceeded);
     }
     let mut records = device.provider_records()?;
     let encoded = encode_snapshot(device, conversations, &records);
     zeroize_provider_records(&mut records);
-    let encoded = encoded?;
-    store.store(StoreKey::mls_client_state(), encoded.to_vec())
+    encoded
 }
 
 fn encode_snapshot(

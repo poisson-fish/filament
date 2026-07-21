@@ -20,6 +20,7 @@ use crate::{
 };
 
 const MESSAGE_TRANSPORT_PADDING_BUCKETS: [usize; 4] = [512, 1_024, 4_096, 16_384];
+const MAX_UNIX_TIMESTAMP: i64 = 253_402_300_799;
 
 /// One mailbox entry rejected without exposing attacker-controlled contents.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,13 +31,24 @@ pub struct RejectedMailboxMessage {
     pub error: ConversationError,
 }
 
+/// MLS-authenticated plaintext bound to its validated transport identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedMailboxMessage {
+    /// Canonical server transport ID used for durable history and acknowledgment.
+    pub message_id: String,
+    /// Bounded server receipt time retained only as untrusted display metadata.
+    pub created_at_unix: i64,
+    /// Sender and plaintext authenticated by MLS, independent of server hints.
+    pub message: DecryptedApplicationMessage,
+}
+
 /// Results from processing one bounded offline mailbox page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MailboxDecryptionBatch {
     /// Every newly MLS-authenticated plaintext in mailbox order. This includes
     /// messages held behind a generation gap and is the durable-persistence
     /// input for acknowledgment safety.
-    pub authenticated_messages: Vec<DecryptedApplicationMessage>,
+    pub authenticated_messages: Vec<AuthenticatedMailboxMessage>,
     /// Authenticated plaintext messages released in per-sender generation order.
     pub ready_messages: Vec<DecryptedApplicationMessage>,
     /// Request to send only after `authenticated_messages` and the updated MLS
@@ -75,11 +87,16 @@ pub fn process_message_mailbox(
 
     for (entry_index, entry) in page.messages.into_iter().enumerate() {
         let message_id = entry.message_id.clone();
+        let created_at_unix = entry.created_at_unix;
         match into_encrypted_message(conversation, entry)
             .and_then(|message| conversation.decrypt_application_message(device, &message))
         {
             Ok(outcome) => {
-                authenticated_messages.push(outcome.authenticated_message);
+                authenticated_messages.push(AuthenticatedMailboxMessage {
+                    message_id: message_id.clone(),
+                    created_at_unix,
+                    message: outcome.authenticated_message,
+                });
                 ready_messages.extend(outcome.ready_messages);
                 acknowledged_ids.push(message_id);
             }
@@ -116,6 +133,8 @@ fn validate_page(page: &E2eeMailboxResponse) -> Result<(), ConversationError> {
         if !is_canonical_ulid(&entry.message_id)
             || !message_ids.insert(entry.message_id.as_str())
             || !MESSAGE_TRANSPORT_PADDING_BUCKETS.contains(&entry.message_blob.len())
+            || !(0..=MAX_UNIX_TIMESTAMP).contains(&entry.created_at_unix)
+            || entry.expires_at_unix <= entry.created_at_unix
         {
             return Err(ConversationError::InvalidMailboxPage);
         }

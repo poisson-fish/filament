@@ -111,13 +111,19 @@ Multi-device churn now adds one root-certified device per recipient-bound
 Welcome, processes the same commit without Welcome on existing devices,
 enforces 200 total leaves and 100 devices per user, rejects third-user or
 duplicate leaves and final-user-device removal, cryptographically evicts
-removed devices, and survives durable restart. Packaged runtime wiring, durable
-message-history coordination, and external-commit recovery remain to be
-implemented. The native commit pipeline now rebases rejected self-update, Add,
+removed devices, and survives durable restart. The native commit pipeline now
+rebases rejected self-update, Add,
 and Remove intents on the authenticated single-writer winner, emits a fresh
 recipient-bound Welcome for a rebased Add, treats already-applied changes as
 satisfied, invalidates changes made unsafe by the winner, and preserves pending
-intent across durable restart. Phase 3 and
+intent across durable restart. The native durable-mailbox coordinator now
+atomically persists consumed MLS state, bounded authenticated local-history
+records, and per-group message or commit acknowledgment outboxes. Pending
+acknowledgments survive restart and block additional group processing until a
+successful idempotent server response; uncertain writes shut the runtime down
+until the last complete checkpoint reloads. Downgrade routing hints are exposed
+as typed rejections and never written or acknowledged. Final packaged command
+registration and external-commit recovery remain to be implemented. Phase 3 and
 later attachment, media, guild-channel, hardening, and key-transparency work has
 not started.
 
@@ -480,7 +486,7 @@ Implement the first end-to-end encrypted conversation type: 1:1 DMs as 2-member 
 - [x] Epoch-conflict handling is deterministic and tested
 - [x] Mailbox ack and GC verified (all-device ack triggers delete; TTL triggers delete)
 - [x] Capability gating fails closed with typed error
-- [ ] Downgrade attempts surface warnings / fail closed, never fall back
+- [x] Downgrade attempts surface warnings / fail closed, never fall back
 - [ ] All quality gates pass
 
 ### Stop-and-Ask Triggers

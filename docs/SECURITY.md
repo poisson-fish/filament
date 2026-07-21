@@ -105,6 +105,11 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   buffers as one versioned SQLCipher record. Restore revalidates certificates,
   identifiers, group membership, pins, epochs, record bounds, and buffered
   plaintext before releasing operational state.
+- Native mailbox processing commits the updated MLS checkpoint, each bounded
+  authenticated plaintext history record, and a per-group acknowledgment
+  outbox in one SQLCipher transaction. A failed or uncertain transaction
+  shuts the crypto runtime down until the preceding complete checkpoint is
+  reloaded; it never emits an acknowledgment from volatile state.
 - The server never holds root keys and cannot mint devices; uncertified devices fail verification at every peer.
 - Device removal is first-class: MLS Remove of that device's leaves from all groups (cryptographic eviction) plus KeyPackage tombstoning.
 - Phase 2 two-user groups add one certified device per commit and bind its
@@ -159,8 +164,10 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   before MLS state is touched. Malformed entries receive no acknowledgment;
   successfully authenticated plaintext (including gap-buffered messages) and
   the updated MLS state must be durably persisted before acknowledgment. The
-  native MLS checkpoint is one atomic record; packaged runtime wiring must
-  coordinate that checkpoint with durable message-history writes before ack.
+  native coordinator atomically binds the MLS checkpoint, encrypted local
+  history, and an acknowledgment outbox. Pending message and commit
+  acknowledgments survive restart, block further processing for that group,
+  and are removed only after a successful idempotent server response.
 - Push notifications are data-only; notification text is decrypted on-device; the push pipeline never carries plaintext.
 - Web clients are excluded from E2EE in v1; participation requires signed, packaged desktop/mobile builds. The exclusion is a code-delivery property, not a protocol or JS limitation: browser-delivered application code is re-fetched from the operator on every load.
 - Web-client rendering of E2EE conversations is a fail-closed capability state only: conversation existence may render (the server already knows membership for routing), content renders as "end-to-end encrypted — open in a packaged client." No plaintext fallback and no server-side decryption path may exist.

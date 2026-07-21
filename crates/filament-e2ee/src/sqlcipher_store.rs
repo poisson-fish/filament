@@ -17,8 +17,9 @@ use rusqlite::{limits::Limit, params, Connection, OpenFlags, OptionalExtension a
 use zeroize::Zeroizing;
 
 use crate::{
-    KeyStoreError, LocalKeyStore, LocalStoreId, StoreKey, StoreKeyProvider, MAX_STORE_ENTRIES,
-    MAX_STORE_KEY_BYTES, MAX_STORE_VALUE_BYTES, STORE_ENCRYPTION_KEY_BYTES,
+    keystore::validate_store_batch, KeyStoreError, LocalKeyStore, LocalStoreId, StoreKey,
+    StoreKeyProvider, MAX_STORE_ENTRIES, MAX_STORE_KEY_BYTES, MAX_STORE_VALUE_BYTES,
+    STORE_ENCRYPTION_KEY_BYTES,
 };
 
 /// Maximum encrypted database size for the Phase 1 foundation.
@@ -82,19 +83,28 @@ impl SqlCipherKeyStore {
 
 impl LocalKeyStore for SqlCipherKeyStore {
     fn store(&self, key: StoreKey, value: Vec<u8>) -> Result<(), KeyStoreError> {
-        let value = Zeroizing::new(value);
-        if value.is_empty() || value.len() > MAX_STORE_VALUE_BYTES {
-            return Err(KeyStoreError::LimitExceeded);
-        }
-        let connection = self.connection()?;
-        connection
-            .execute(
-                "INSERT INTO local_secrets (store_key, secret_value)
+        self.store_batch(vec![(key, value)])
+    }
+
+    fn store_batch(&self, entries: Vec<(StoreKey, Vec<u8>)>) -> Result<(), KeyStoreError> {
+        validate_store_batch(&entries)?;
+        let entries = entries
+            .into_iter()
+            .map(|(key, value)| (key, Zeroizing::new(value)))
+            .collect::<Vec<_>>();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(map_backend_error)?;
+        for (key, value) in &entries {
+            transaction
+                .execute(
+                    "INSERT INTO local_secrets (store_key, secret_value)
                  VALUES (?1, ?2)
                  ON CONFLICT(store_key) DO UPDATE SET secret_value = excluded.secret_value",
-                params![key.as_str(), value.as_slice()],
-            )
-            .map_err(|error| map_sqlite_limit_error(&error))?;
+                    params![key.as_str(), value.as_slice()],
+                )
+                .map_err(|error| map_sqlite_limit_error(&error))?;
+        }
+        transaction.commit().map_err(map_backend_error)?;
         Ok(())
     }
 

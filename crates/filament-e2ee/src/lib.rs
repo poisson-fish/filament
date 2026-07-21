@@ -28,6 +28,7 @@
 
 pub mod commit_mailbox;
 pub mod conversation;
+pub mod durable_mailbox;
 pub mod error;
 pub mod identity;
 pub mod keypackage;
@@ -46,6 +47,11 @@ pub use conversation::{
     PinnedUserIdentity, MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP,
     MAX_MLS_DEVICES_PER_USER, MAX_MLS_GROUP_LEAVES,
 };
+pub use durable_mailbox::{
+    confirm_commit_acknowledgment, confirm_message_acknowledgment, load_stored_message,
+    pending_commit_acknowledgment, pending_message_acknowledgment, DurableCommitMailboxBatch,
+    DurableMailboxError, DurableMessageMailboxBatch, DurableMlsClient, StoredMailboxMessage,
+};
 pub use error::{
     ConversationError, E2eeError, IdentityError, KeyPackageError, KeyStoreError, PairingError,
 };
@@ -61,10 +67,13 @@ pub use keypackage::{
 };
 pub use keystore::{
     load_root_identity, persist_root_identity, InMemoryKeyStore, LocalKeyStore, LocalStoreId,
-    StoreKey, StoreKeyProvider, MAX_STORE_ENTRIES, MAX_STORE_KEY_BYTES, MAX_STORE_VALUE_BYTES,
-    STORE_ENCRYPTION_KEY_BYTES,
+    StoreKey, StoreKeyProvider, MAX_STORE_BATCH_ENTRIES, MAX_STORE_ENTRIES, MAX_STORE_KEY_BYTES,
+    MAX_STORE_VALUE_BYTES, STORE_ENCRYPTION_KEY_BYTES,
 };
-pub use mailbox::{process_message_mailbox, MailboxDecryptionBatch, RejectedMailboxMessage};
+pub use mailbox::{
+    process_message_mailbox, AuthenticatedMailboxMessage, MailboxDecryptionBatch,
+    RejectedMailboxMessage,
+};
 pub use pairing::{
     create_pairing_transfer, PairedRootIdentity, PairingReceiver, PairingTransfer,
     ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS, MAX_PAIRING_OFFER_BYTES,

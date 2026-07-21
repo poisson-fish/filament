@@ -12,7 +12,7 @@
 //! - The trait is designed for SQLCipher-backed implementations on
 //!   desktop/mobile, with the store key managed by the platform keystore.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use filament_core::{DeviceId, UserId};
 use zeroize::{Zeroize, Zeroizing};
@@ -26,6 +26,8 @@ pub const MAX_STORE_KEY_BYTES: usize = 160;
 pub const MAX_STORE_VALUE_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum records in one device-local store.
 pub const MAX_STORE_ENTRIES: usize = 4_096;
+/// Maximum records written in one atomic local-store transaction.
+pub const MAX_STORE_BATCH_ENTRIES: usize = 128;
 /// SQLCipher database key length.
 pub const STORE_ENCRYPTION_KEY_BYTES: usize = 32;
 
@@ -170,6 +172,16 @@ pub trait LocalKeyStore: Send + Sync {
     /// Returns [`KeyStoreError::BackendError`] if the store backend fails.
     fn store(&self, key: StoreKey, value: Vec<u8>) -> Result<(), KeyStoreError>;
 
+    /// Atomically store a bounded set of distinct records.
+    ///
+    /// Either every record becomes durable or none does. This is the mailbox
+    /// acknowledgment boundary: MLS state, decrypted history, and the pending
+    /// acknowledgment outbox must never be torn across separate writes.
+    ///
+    /// # Errors
+    /// Returns a limit or backend error without applying a partial batch.
+    fn store_batch(&self, entries: Vec<(StoreKey, Vec<u8>)>) -> Result<(), KeyStoreError>;
+
     /// Retrieve a secret value by key.
     ///
     /// # Errors
@@ -223,15 +235,30 @@ impl Default for InMemoryKeyStore {
 
 impl LocalKeyStore for InMemoryKeyStore {
     fn store(&self, key: StoreKey, value: Vec<u8>) -> Result<(), KeyStoreError> {
-        let value = Zeroizing::new(value);
-        if value.is_empty() || value.len() > MAX_STORE_VALUE_BYTES {
-            return Err(KeyStoreError::LimitExceeded);
-        }
+        self.store_batch(vec![(key, value)])
+    }
+
+    fn store_batch(&self, entries: Vec<(StoreKey, Vec<u8>)>) -> Result<(), KeyStoreError> {
+        validate_store_batch(&entries)?;
+        let entries = entries
+            .into_iter()
+            .map(|(key, value)| (key, Zeroizing::new(value)))
+            .collect::<Vec<_>>();
         let mut data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
-        if !data.contains_key(&key) && data.len() >= MAX_STORE_ENTRIES {
+        let added = entries
+            .iter()
+            .filter(|(key, _)| !data.contains_key(key))
+            .count();
+        if data
+            .len()
+            .checked_add(added)
+            .is_none_or(|count| count > MAX_STORE_ENTRIES)
+        {
             return Err(KeyStoreError::LimitExceeded);
         }
-        data.insert(key, value);
+        for (key, value) in entries {
+            data.insert(key, value);
+        }
         Ok(())
     }
 
@@ -260,6 +287,19 @@ impl LocalKeyStore for InMemoryKeyStore {
         keys.sort();
         Ok(keys)
     }
+}
+
+pub(crate) fn validate_store_batch(entries: &[(StoreKey, Vec<u8>)]) -> Result<(), KeyStoreError> {
+    if entries.is_empty() || entries.len() > MAX_STORE_BATCH_ENTRIES {
+        return Err(KeyStoreError::LimitExceeded);
+    }
+    let mut keys = HashSet::with_capacity(entries.len());
+    for (key, value) in entries {
+        if value.is_empty() || value.len() > MAX_STORE_VALUE_BYTES || !keys.insert(key.as_str()) {
+            return Err(KeyStoreError::LimitExceeded);
+        }
+    }
+    Ok(())
 }
 
 impl Drop for InMemoryKeyStore {
@@ -345,6 +385,22 @@ mod tests {
 
         let loaded = store.load(&key).unwrap();
         assert_eq!(loaded.as_slice(), [4, 5, 6]);
+    }
+
+    #[test]
+    fn invalid_batch_is_rejected_without_partial_overwrite() {
+        let store = InMemoryKeyStore::new();
+        let existing = StoreKey::new("existing").unwrap();
+        store.store(existing.clone(), vec![1]).unwrap();
+
+        assert_eq!(
+            store.store_batch(vec![
+                (existing.clone(), vec![2]),
+                (StoreKey::new("empty").unwrap(), Vec::new()),
+            ]),
+            Err(KeyStoreError::LimitExceeded)
+        );
+        assert_eq!(store.load(&existing).unwrap().as_slice(), [1]);
     }
 
     #[test]

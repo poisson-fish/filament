@@ -709,7 +709,10 @@ Returns opaque messages pending for one owned active device.
   cursor and IDs before touching MLS state, isolate malformed entries, and
   acknowledge only records that pass MLS authentication, decryption, and local
   metadata checks. Authenticated plaintext and updated MLS state must be
-  durably persisted before the returned acknowledgment is sent.
+  durably persisted before the returned acknowledgment is sent. The native
+  client commits history, MLS state, and the pending acknowledgment in one
+  encrypted-store transaction; after a restart it resubmits that durable
+  outbox before reading another page for the group.
 
 ### `POST /e2ee/groups/{group_id}/messages/ack`
 Acknowledges successfully decrypted messages for one owned active device.
