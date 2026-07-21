@@ -68,7 +68,8 @@ Scope: this section governs transport/session token keys. E2EE identity and MLS 
 ## End-to-End Encryption (MLS) Baseline
 Status: the Phase 0 engineering artifacts, Phase 1 identity/device/KeyPackage
 foundation, and initial Phase 2 two-user conversation provisioning, opaque
-transport, and per-device mailbox are implemented as of 2026-07-21; ADR
+transport, message mailbox, and recipient-bound commit/Welcome mailbox are
+implemented as of 2026-07-21; ADR
 ratification is complete, while threat-model ratification remains open.
 Packaged-client mailbox processing and complete multi-device MLS leaf handling
 remain unfinished, so E2EE is not yet generally available.
@@ -104,6 +105,9 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   behavior is prohibited until an MLS extension implementing it is reviewed.
   Claims are atomic, rate-limited, and audit-logged.
 - Delivery Service ordering is single-writer-per-epoch: the first order-valid commit for an epoch is accepted; competing commits receive a deterministic `409 epoch_conflict` rejection.
+- Every Welcome is bound to one active target device. Commit delivery is
+  snapshotted per active participant device, and only the target device can
+  retrieve the Welcome bytes.
 - Server-side validation of MLS payloads is shape-only: size bounds, field presence, and epoch monotonicity per group.
 
 ### Retention — Mailbox Model

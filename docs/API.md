@@ -600,12 +600,13 @@ Claims a KeyPackage for a target user/device.
 ### `POST /e2ee/conversations`
 Atomically provisions a new two-user MLS v1 conversation and its initial Add
 commit.
-- Request: `{ "conversation_id", "peer_user_id", "group_id", "suite_id", "committer_device_id", "commit_blob", "welcome_blob", "group_info_blob" }`
+- Request: `{ "conversation_id", "peer_user_id", "group_id", "suite_id", "committer_device_id", "welcome_device_id", "commit_blob", "welcome_blob", "group_info_blob" }`
 - Response: `{ "conversation_id", "group_id", "crypto": "mls_v1", "epoch": 1, "suite_id", "provisioned_at_unix" }`
 - Conversation, group, epoch-1 commit, Welcome, and GroupInfo rows commit in one
   transaction. MLS interiors remain opaque and use the existing `64 KiB` caps.
 - Both distinct users must have at least one active certified MLS device, and
-  the committer device must be active and owned by the caller. Capability gaps
+  the committer device must be active and owned by the caller. The Welcome
+  device must be an active device owned by the peer. Capability gaps
   return `409 { "error": "e2ee_capability_required" }`; no plaintext fallback
   is created.
 - Canonical user-pair uniqueness prevents duplicate encrypted DMs. An exact
@@ -616,7 +617,7 @@ commit.
 
 ### `POST /e2ee/conversations/{conversation_id}/upgrade`
 Explicitly upgrades an existing two-user plaintext conversation to MLS v1.
-- Request: `{ "group_id", "suite_id", "committer_device_id", "commit_blob", "welcome_blob", "group_info_blob" }`
+- Request: `{ "group_id", "suite_id", "committer_device_id", "welcome_device_id", "commit_blob", "welcome_blob", "group_info_blob" }`
 - Response matches `POST /e2ee/conversations`.
 - Only an existing member may upgrade, the membership must contain exactly two
   capable users, and all bootstrap rows commit atomically.
@@ -636,7 +637,7 @@ Returns the latest opaque `GroupInfo` for an authenticated member of an
 
 ### `POST /e2ee/groups/{group_id}/commits`
 Atomically orders one opaque MLS commit for an authenticated conversation member.
-- Request: `{ "epoch": 1, "prior_epoch": 0, "committer_device_id": "...", "commit_blob": [bytes], "welcome_blob"?: [bytes], "group_info_blob"?: [bytes] }`
+- Request: `{ "epoch": 1, "prior_epoch": 0, "committer_device_id": "...", "commit_blob": [bytes], "welcome_blob"?: [bytes], "welcome_device_id"?: "...", "group_info_blob"?: [bytes] }`
 - Response `200`: `{ "accepted": true, "epoch": 1 }`
 - The committer device must be active and owned by the authenticated user.
 - Commits must advance exactly one epoch. A row lock makes the first valid
@@ -644,6 +645,28 @@ Atomically orders one opaque MLS commit for an authenticated conversation member
   `409 { "error": "epoch_conflict" }` and must rebase client-side.
 - Commit, Welcome, and GroupInfo blobs are never parsed and are each capped at
   `64 KiB`. The default per-IP/user/device/group rate is 30 commits/minute.
+- `welcome_blob` and `welcome_device_id` must be supplied together. The target
+  must be a distinct active device owned by a conversation member.
+
+### `GET /e2ee/groups/{group_id}/commits`
+Returns opaque commits pending for one owned active device.
+- Query: `?device_id=<device ULID>&after_epoch=<epoch>&limit=<1..50>`
+- Response: `{ "commits": [{ "epoch", "prior_epoch", "committer_device_id", "commit_blob", "welcome_blob"?, "created_at_unix", "expires_at_unix" }], "next_after_epoch": 2 | null }`
+- Active participant devices are snapshotted in the commit transaction; the
+  committer is immediately marked delivered. A Welcome is returned only to
+  its exact target device and is omitted from every other device's response.
+- Pages are capped at 50 records and `256 KiB` aggregate commit/Welcome bytes.
+  New devices do not gain access to earlier commits through this endpoint.
+
+### `POST /e2ee/groups/{group_id}/commits/ack`
+Acknowledges successfully processed commits for one owned active device.
+- Request: `{ "device_id": "...", "epochs": [1, 2] }`
+- Response: `{ "acknowledged_count": 2, "deleted_count": 2 }`
+- Batches contain 1–100 unique positive epochs. Entries outside the device's
+  snapshotted group mailbox are ignored without exposing other groups.
+- Once every snapshotted device acknowledges, the commit, its optional Welcome,
+  and all delivery rows are hard-deleted atomically. TTL GC remains an
+  independent upper bound.
 
 ### `POST /e2ee/groups/{group_id}/messages`
 Stores one opaque MLS `PrivateMessage` in the bounded delivery mailbox.

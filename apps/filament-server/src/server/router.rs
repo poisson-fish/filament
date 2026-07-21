@@ -38,10 +38,10 @@ use super::{
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
         e2ee::{
-            ack_group_messages, claim_keypackage, create_mls_conversation, get_group_info,
-            get_group_mailbox, get_root_identity, list_user_devices, post_group_commit,
-            post_group_message, publish_device_certificate, remove_device, rotate_root_identity,
-            upgrade_mls_conversation, upload_keypackages,
+            ack_group_commits, ack_group_messages, claim_keypackage, create_mls_conversation,
+            get_group_commit_mailbox, get_group_info, get_group_mailbox, get_root_identity,
+            list_user_devices, post_group_commit, post_group_message, publish_device_certificate,
+            remove_device, rotate_root_identity, upgrade_mls_conversation, upload_keypackages,
         },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
@@ -198,6 +198,8 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("GET", "/e2ee/groups/{group_id}/info"),
     ("GET", "/e2ee/groups/{group_id}/mailbox"),
     ("POST", "/e2ee/groups/{group_id}/commits"),
+    ("GET", "/e2ee/groups/{group_id}/commits"),
+    ("POST", "/e2ee/groups/{group_id}/commits/ack"),
     ("POST", "/e2ee/groups/{group_id}/messages"),
     ("POST", "/e2ee/groups/{group_id}/messages/ack"),
 ];
@@ -576,7 +578,14 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         )
         .route("/e2ee/groups/{group_id}/info", get(get_group_info))
         .route("/e2ee/groups/{group_id}/mailbox", get(get_group_mailbox))
-        .route("/e2ee/groups/{group_id}/commits", post(post_group_commit))
+        .route(
+            "/e2ee/groups/{group_id}/commits",
+            get(get_group_commit_mailbox).post(post_group_commit),
+        )
+        .route(
+            "/e2ee/groups/{group_id}/commits/ack",
+            post(ack_group_commits),
+        )
         .route("/e2ee/groups/{group_id}/messages", post(post_group_message))
         .route(
             "/e2ee/groups/{group_id}/messages/ack",

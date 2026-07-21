@@ -49,14 +49,23 @@ pub const MAX_DEVICE_LIST_SIZE: usize = 100;
 /// Maximum number of opaque messages returned by one mailbox page.
 pub const MAX_E2EE_MAILBOX_PAGE_SIZE: usize = 50;
 
+/// Maximum number of opaque commits returned by one mailbox page.
+pub const MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE: usize = 50;
+
 /// Maximum aggregate ciphertext bytes returned by one mailbox page.
 ///
 /// JSON represents byte vectors as integer arrays, so this keeps the encoded
 /// response bounded near the server's default 1 MiB HTTP body limit.
 pub const MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES: usize = 256 * 1_024;
 
+/// Maximum aggregate commit and Welcome bytes returned by one mailbox page.
+pub const MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES: usize = 256 * 1_024;
+
 /// Maximum number of message acknowledgments accepted in one request.
 pub const MAX_E2EE_MESSAGE_ACK_BATCH_SIZE: usize = 100;
+
+/// Maximum number of commit epochs acknowledged in one request.
+pub const MAX_E2EE_COMMIT_ACK_BATCH_SIZE: usize = 100;
 
 /// Root-identity rotation wire protocol version.
 pub const ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION: u16 = 1;
@@ -272,6 +281,46 @@ where
         return Err(de::Error::invalid_length(
             value.len(),
             &"between 1 and 100 message IDs",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_commit_mailbox_entries<'de, D>(
+    deserializer: D,
+) -> Result<Vec<E2eeCommitMailboxEntry>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<E2eeCommitMailboxEntry>::deserialize(deserializer)?;
+    if value.len() > MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"no more than 50 commit mailbox entries",
+        ));
+    }
+    let aggregate_bytes = value.iter().try_fold(0_usize, |total, entry| {
+        total
+            .checked_add(entry.commit_blob.len())?
+            .checked_add(entry.welcome_blob.as_ref().map_or(0, Vec::len))
+    });
+    if aggregate_bytes.is_none_or(|total| total > MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES) {
+        return Err(de::Error::custom(
+            "commit mailbox aggregate exceeds protocol limit",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_commit_ack_epochs<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<u64>::deserialize(deserializer)?;
+    if value.is_empty() || value.len() > MAX_E2EE_COMMIT_ACK_BATCH_SIZE || value.contains(&0) {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"between 1 and 100 positive commit epochs",
         ));
     }
     Ok(value)
@@ -544,6 +593,8 @@ pub struct CreateMlsConversationRequest {
     pub suite_id: u16,
     /// Active device that authored the initial Add commit.
     pub committer_device_id: String,
+    /// Active peer device whose claimed KeyPackage encrypts the Welcome.
+    pub welcome_device_id: String,
     /// Initial MLS commit advancing epoch 0 to epoch 1.
     #[serde(deserialize_with = "deserialize_commit_blob")]
     pub commit_blob: Vec<u8>,
@@ -566,6 +617,8 @@ pub struct UpgradeMlsConversationRequest {
     pub suite_id: u16,
     /// Active device that authored the initial Add commit.
     pub committer_device_id: String,
+    /// Active peer device whose claimed KeyPackage encrypts the Welcome.
+    pub welcome_device_id: String,
     /// Initial MLS commit advancing epoch 0 to epoch 1.
     #[serde(deserialize_with = "deserialize_commit_blob")]
     pub commit_blob: Vec<u8>,
@@ -639,6 +692,9 @@ pub struct PostCommitRequest {
         deserialize_with = "deserialize_optional_welcome_blob"
     )]
     pub welcome_blob: Option<Vec<u8>>,
+    /// Exact active device whose KeyPackage the optional Welcome targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub welcome_device_id: Option<String>,
     /// Optional updated GroupInfo blob for joins/recovery.
     #[serde(
         default,
@@ -753,6 +809,78 @@ pub struct AckE2eeMessagesResponse {
     /// Delivery rows newly or previously acknowledged by this device.
     pub acknowledged_count: u32,
     /// Messages hard-deleted because every snapshotted device acknowledged.
+    pub deleted_count: u32,
+}
+
+/// Query parameters for a device's pending commit mailbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeCommitMailboxQuery {
+    /// Active device whose snapshotted commit deliveries should be returned.
+    pub device_id: String,
+    /// Exclusive epoch cursor from the preceding page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_epoch: Option<u64>,
+    /// Requested record count. The server caps this at 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u16>,
+}
+
+/// One opaque MLS commit pending delivery to a device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeCommitMailboxEntry {
+    /// Epoch reached by this commit.
+    pub epoch: u64,
+    /// Epoch from which this commit advances.
+    pub prior_epoch: u64,
+    /// Device that authored the commit.
+    pub committer_device_id: String,
+    /// Serialized MLS commit, opaque to the server.
+    #[serde(deserialize_with = "deserialize_commit_blob")]
+    pub commit_blob: Vec<u8>,
+    /// Serialized Welcome, returned only to its exact target device.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_welcome_blob"
+    )]
+    pub welcome_blob: Option<Vec<u8>>,
+    /// Unix timestamp (seconds) when the server accepted the commit.
+    pub created_at_unix: i64,
+    /// Unix timestamp (seconds) after which the server hard-deletes it.
+    pub expires_at_unix: i64,
+}
+
+/// Response for `GET /e2ee/groups/{group_id}/commits`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeCommitMailboxResponse {
+    /// Pending device deliveries in ascending epoch order.
+    #[serde(deserialize_with = "deserialize_commit_mailbox_entries")]
+    pub commits: Vec<E2eeCommitMailboxEntry>,
+    /// Cursor for the next page, or `None` when this page is empty.
+    pub next_after_epoch: Option<u64>,
+}
+
+/// Successful-processing acknowledgments for commit epochs on one device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AckE2eeCommitsRequest {
+    /// Active device that authenticated and processed the commits.
+    pub device_id: String,
+    /// Positive commit epochs to acknowledge.
+    #[serde(deserialize_with = "deserialize_commit_ack_epochs")]
+    pub epochs: Vec<u64>,
+}
+
+/// Result of a batched per-device commit acknowledgment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AckE2eeCommitsResponse {
+    /// Delivery rows newly or previously acknowledged by this device.
+    pub acknowledged_count: u32,
+    /// Commits hard-deleted because every snapshotted device acknowledged.
     pub deleted_count: u32,
 }
 
@@ -887,6 +1015,7 @@ mod tests {
             group_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
             suite_id: 3,
             committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
+            welcome_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
             commit_blob: vec![1; 64],
             welcome_blob: vec![2; 64],
             group_info_blob: vec![3; 64],
@@ -1113,6 +1242,7 @@ mod tests {
             committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             commit_blob: vec![0x01; 512],
             welcome_blob: Some(vec![0x02; 256]),
+            welcome_device_id: Some(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW")),
             group_info_blob: None,
         };
         let json = serde_json::to_string(&req).unwrap();
@@ -1230,6 +1360,64 @@ mod tests {
     }
 
     #[test]
+    fn commit_mailbox_and_ack_contracts_are_strict_and_bounded() {
+        let entry = E2eeCommitMailboxEntry {
+            epoch: 2,
+            prior_epoch: 1,
+            committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            commit_blob: vec![0xA1; 512],
+            welcome_blob: Some(vec![0xA2; 256]),
+            created_at_unix: 1,
+            expires_at_unix: 2,
+        };
+        let response = E2eeCommitMailboxResponse {
+            commits: vec![entry],
+            next_after_epoch: Some(2),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(
+            serde_json::from_str::<E2eeCommitMailboxResponse>(&json).unwrap(),
+            response
+        );
+
+        let ack = AckE2eeCommitsRequest {
+            device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+            epochs: vec![1, 2],
+        };
+        let json = serde_json::to_string(&ack).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AckE2eeCommitsRequest>(&json).unwrap(),
+            ack
+        );
+
+        let invalid_ack = AckE2eeCommitsRequest {
+            device_id: String::from("device"),
+            epochs: vec![0],
+        };
+        let json = serde_json::to_string(&invalid_ack).unwrap();
+        assert!(serde_json::from_str::<AckE2eeCommitsRequest>(&json).is_err());
+
+        let oversized_entry = E2eeCommitMailboxEntry {
+            epoch: 1,
+            prior_epoch: 0,
+            committer_device_id: String::from("device"),
+            commit_blob: vec![0xA1; MAX_COMMIT_BYTES],
+            welcome_blob: None,
+            created_at_unix: 1,
+            expires_at_unix: 2,
+        };
+        let oversized = E2eeCommitMailboxResponse {
+            commits: vec![oversized_entry; 5],
+            next_after_epoch: None,
+        };
+        let json = serde_json::to_string(&oversized).unwrap();
+        assert!(serde_json::from_str::<E2eeCommitMailboxResponse>(&json).is_err());
+
+        let unknown = r#"{"device_id":"d","epochs":[1],"extra":true}"#;
+        assert!(serde_json::from_str::<AckE2eeCommitsRequest>(unknown).is_err());
+    }
+
+    #[test]
     fn device_list_and_all_mls_blobs_enforce_parse_limits() {
         let device = DeviceInfo {
             device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
@@ -1261,6 +1449,7 @@ mod tests {
             committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             commit_blob: vec![0x01; MAX_COMMIT_BYTES + 1],
             welcome_blob: None,
+            welcome_device_id: None,
             group_info_blob: None,
         };
         let json = serde_json::to_string(&oversized_commit).unwrap();
@@ -1272,6 +1461,7 @@ mod tests {
             committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             commit_blob: vec![0x01],
             welcome_blob: Some(vec![0x02; MAX_WELCOME_BYTES + 1]),
+            welcome_device_id: Some(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW")),
             group_info_blob: None,
         };
         let json = serde_json::to_string(&oversized_welcome).unwrap();

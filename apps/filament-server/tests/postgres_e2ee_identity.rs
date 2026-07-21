@@ -9,13 +9,14 @@ use filament_e2ee::{
     RootIdentityRotationProof, ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS,
 };
 use filament_protocol::{
-    AckE2eeMessagesRequest, AckE2eeMessagesResponse, ClaimKeyPackageRequest,
-    ClaimKeyPackageResponse, CreateMlsConversationRequest, DeviceListResponse, E2eeMailboxResponse,
-    GroupInfoResponse, KeyPackageEntry, MlsConversationProvisionResponse, PostCommitRequest,
-    PostCommitResponse, PostMessageRequest, PostMessageResponse, PublishDeviceCertificateRequest,
-    RemoveDeviceResponse, RootIdentityDirectoryResponse, RotateRootIdentityRequest,
-    RotateRootIdentityResponse, UpgradeMlsConversationRequest, UploadKeyPackagesRequest,
-    UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
+    ClaimKeyPackageRequest, ClaimKeyPackageResponse, CreateMlsConversationRequest,
+    DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse, GroupInfoResponse,
+    KeyPackageEntry, MlsConversationProvisionResponse, PostCommitRequest, PostCommitResponse,
+    PostMessageRequest, PostMessageResponse, PublishDeviceCertificateRequest, RemoveDeviceResponse,
+    RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
+    UpgradeMlsConversationRequest, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
+    ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use futures_util::StreamExt;
@@ -144,6 +145,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
         group_id: group_id.to_string(),
         suite_id: pending.suite.as_u16(),
         committer_device_id: pending.committer_device_id.to_string(),
+        welcome_device_id: bob_device_id.to_string(),
         commit_blob: pending.commit_blob.clone(),
         welcome_blob: pending.welcome_blob.clone(),
         group_info_blob: pending
@@ -179,6 +181,49 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
     assert_eq!(retry.status(), StatusCode::OK);
     let retry: MlsConversationProvisionResponse = parse_json(retry).await;
     assert_eq!(retry, created);
+
+    let bob_initial_commits = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/commits?device_id={bob_device_id}"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("commit mailbox request should build");
+    let bob_initial_commits = app
+        .clone()
+        .oneshot(bob_initial_commits)
+        .await
+        .expect("commit mailbox request should execute");
+    assert_eq!(bob_initial_commits.status(), StatusCode::OK);
+    let bob_initial_commits: E2eeCommitMailboxResponse = parse_json(bob_initial_commits).await;
+    assert_eq!(bob_initial_commits.commits.len(), 1);
+    assert_eq!(bob_initial_commits.commits[0].epoch, 1);
+    assert_eq!(
+        bob_initial_commits.commits[0].welcome_blob.as_deref(),
+        Some(create_request.welcome_blob.as_slice())
+    );
+
+    let bob_second_initial_commits = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/commits?device_id={bob_second_device_id}"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("secondary commit mailbox request should build");
+    let bob_second_initial_commits = app
+        .clone()
+        .oneshot(bob_second_initial_commits)
+        .await
+        .expect("secondary commit mailbox request should execute");
+    assert_eq!(bob_second_initial_commits.status(), StatusCode::OK);
+    let bob_second_initial_commits: E2eeCommitMailboxResponse =
+        parse_json(bob_second_initial_commits).await;
+    assert_eq!(bob_second_initial_commits.commits.len(), 1);
+    assert!(bob_second_initial_commits.commits[0].welcome_blob.is_none());
     let conflicting_create = send_json(
         &app,
         "POST",
@@ -285,6 +330,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
         group_id: GroupId::new().to_string(),
         suite_id: 3,
         committer_device_id: alice_device_id.to_string(),
+        welcome_device_id: charlie_device_id.to_string(),
         commit_blob: vec![0x31; 128],
         welcome_blob: vec![0x32; 128],
         group_info_blob: vec![0x33; 128],
@@ -348,6 +394,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
         committer_device_id: alice_device_id.to_string(),
         commit_blob: vec![0xA1; 256],
         welcome_blob: Some(vec![0xA2; 192]),
+        welcome_device_id: Some(bob_device_id.to_string()),
         group_info_blob: Some(vec![0xA3; 128]),
     };
     let competing_commit = PostCommitRequest {
@@ -431,6 +478,68 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
     assert_eq!(info.epoch, 2);
     assert_eq!(info.suite_id, 3);
     assert_eq!(info.group_info_blob, stored_group_info);
+
+    let bob_commit_page = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/commits?device_id={bob_device_id}&after_epoch=1&limit=1"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("commit cursor request should build");
+    let bob_commit_page = app
+        .clone()
+        .oneshot(bob_commit_page)
+        .await
+        .expect("commit cursor request should execute");
+    assert_eq!(bob_commit_page.status(), StatusCode::OK);
+    let bob_commit_page: E2eeCommitMailboxResponse = parse_json(bob_commit_page).await;
+    assert_eq!(bob_commit_page.commits.len(), 1);
+    assert_eq!(bob_commit_page.commits[0].epoch, 2);
+    assert!(bob_commit_page.commits[0].welcome_blob.is_some());
+    assert_eq!(bob_commit_page.next_after_epoch, Some(2));
+
+    let first_commit_ack = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/commits/ack"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &AckE2eeCommitsRequest {
+            device_id: bob_device_id.to_string(),
+            epochs: vec![1, 2],
+        },
+    )
+    .await;
+    assert_eq!(first_commit_ack.status(), StatusCode::OK);
+    let first_commit_ack: AckE2eeCommitsResponse = parse_json(first_commit_ack).await;
+    assert_eq!(first_commit_ack.acknowledged_count, 2);
+    assert_eq!(first_commit_ack.deleted_count, 0);
+
+    let final_commit_ack = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/commits/ack"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &AckE2eeCommitsRequest {
+            device_id: bob_second_device_id.to_string(),
+            epochs: vec![1, 2],
+        },
+    )
+    .await;
+    assert_eq!(final_commit_ack.status(), StatusCode::OK);
+    let final_commit_ack: AckE2eeCommitsResponse = parse_json(final_commit_ack).await;
+    assert_eq!(final_commit_ack.acknowledged_count, 2);
+    assert_eq!(final_commit_ack.deleted_count, 2);
+    let remaining_commits: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_commits WHERE group_id = $1")
+            .bind(group_id.to_string())
+            .fetch_one(&audit_pool)
+            .await
+            .expect("commit deletion should be observable");
+    assert_eq!(remaining_commits, 0);
 
     let message_blob = vec![0xCC; 512];
     let message_request = PostMessageRequest {

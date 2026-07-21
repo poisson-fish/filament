@@ -87,9 +87,12 @@ initial commit, Welcome, and GroupInfo; requires active devices for both users;
 supports exact idempotent retries; prevents duplicate encrypted user pairs; and
 enforces the one-way `plaintext` to `mls_v1` transition in Postgres. The web
 client strictly decodes routing notifications but retains no decryption
-capability. Commit/Welcome mailbox fanout, the client-side
-mailbox/decryption/ack pipeline, multi-device MLS leaf semantics, client commit
-rebase, and external-commit recovery remain to be implemented. Phase 3 and
+capability. The v16 commit-mailbox increment binds every Welcome to its exact
+active target device, snapshots bounded per-device commit deliveries, exposes
+cursor- and byte-bounded offline reads, and hard-deletes commit/Welcome blobs
+after all-device acknowledgment or TTL. The client-side mailbox/decryption/ack
+pipeline, multi-device MLS leaf semantics, client commit rebase, and
+external-commit recovery remain to be implemented. Phase 3 and
 later attachment, media, guild-channel, hardening, and key-transparency work has
 not started.
 
@@ -448,10 +451,10 @@ Implement the first end-to-end encrypted conversation type: 1:1 DMs as 2-member 
 ### Exit Criteria
 
 - [ ] Two-device and multi-device 1:1 churn tests pass, including out-of-order and offline catch-up
-- [ ] Persistence audit confirms server stores opaque envelopes only
-- [ ] Epoch-conflict handling is deterministic and tested
-- [ ] Mailbox ack and GC verified (all-device ack triggers delete; TTL triggers delete)
-- [ ] Capability gating fails closed with typed error
+- [x] Persistence audit confirms server stores opaque envelopes only
+- [x] Epoch-conflict handling is deterministic and tested
+- [x] Mailbox ack and GC verified (all-device ack triggers delete; TTL triggers delete)
+- [x] Capability gating fails closed with typed error
 - [ ] Downgrade attempts surface warnings / fail closed, never fall back
 - [ ] All quality gates pass
 
@@ -899,9 +902,12 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 |-----------|-------|--------|
 | `v12_e2ee_identity` + `v12_e2ee_root_rotation` | 1 | identity roots/rotations, device certificates, KeyPackages, public audit log |
 | `v13_e2ee_messages` | 2 | `e2ee_messages`, `e2ee_message_acks`, `e2ee_groups` |
-| `v14_e2ee_attachments` | 4 | `e2ee_attachment_blobs`, `e2ee_attachment_acks` |
-| `v15_e2ee_guild_channels` | 6 | `e2ee_channel_membership`, `e2ee_channel_reconciliation` |
-| `v16_e2ee_kt_log` | 8 | `e2ee_kt_entries`, `e2ee_kt_checkpoints` |
+| `v14_e2ee_mailbox` | 2 | pending per-device message deliveries |
+| `v15_e2ee_conversation_provisioning` | 2 | canonical encrypted DM pairs and downgrade prevention |
+| `v16_e2ee_commit_mailbox` | 2 | recipient-bound Welcomes and pending per-device commit deliveries |
+| future attachment migration (number TBD) | 4 | `e2ee_attachment_blobs`, `e2ee_attachment_acks` |
+| future guild-channel migration (number TBD) | 6 | `e2ee_channel_membership`, `e2ee_channel_reconciliation` |
+| future KT migration (number TBD) | 8 | `e2ee_kt_entries`, `e2ee_kt_checkpoints` |
 
 ### Gateway Events (new)
 
@@ -923,7 +929,9 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 | `POST /e2ee/keypackages` | 1 |
 | `POST /e2ee/keypackages/claim` | 1 |
 | `GET /e2ee/groups/{group_id}/info` | 2 |
+| `GET /e2ee/groups/{group_id}/commits` | 2 |
 | `POST /e2ee/groups/{group_id}/commits` | 2 |
+| `POST /e2ee/groups/{group_id}/commits/ack` | 2 |
 | `POST /e2ee/groups/{group_id}/messages` | 2 |
 
 ### Desktop Client (Tauri) Changes
