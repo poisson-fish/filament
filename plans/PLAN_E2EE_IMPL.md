@@ -100,9 +100,14 @@ state, authenticated peer updates advance existing state, membership changes
 fail closed, processing stops at the first rejected epoch, and acknowledgments
 cover only the durable success prefix. Authenticated application padding and
 exact transport buckets make generated client ciphertext compatible with the
-Delivery Service. Packaged runtime wiring, durable MLS state persistence,
-multi-device MLS leaf semantics, client commit rebase, and external-commit
-recovery remain to be implemented. Phase 3 and
+Delivery Service. The native client now persists a versioned, bounded,
+single-record checkpoint containing the complete OpenMLS provider, certified
+device signer, pinned roots, group epochs, generation counters, and buffered
+generation gaps. Restart restores revalidate all certificates, identifiers,
+pins, membership, epochs, and record bounds before returning operational state.
+Packaged runtime wiring, durable message-history coordination, multi-device MLS
+leaf semantics, client commit rebase, and external-commit recovery remain to be
+implemented. Phase 3 and
 later attachment, media, guild-channel, hardening, and key-transparency work has
 not started.
 

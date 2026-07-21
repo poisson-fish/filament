@@ -735,6 +735,122 @@ impl MlsConversation {
         Ok(false)
     }
 
+    pub(crate) fn persistence_metadata(&self) -> ConversationPersistenceMetadata {
+        let mut pinned_roots = self
+            .pinned_roots
+            .iter()
+            .map(|(user_id, root_key_pub)| (*user_id, *root_key_pub))
+            .collect::<Vec<_>>();
+        pinned_roots.sort_by_key(|(user_id, _)| user_id.to_string());
+        let mut inbound = self
+            .inbound
+            .iter()
+            .map(|(device_id, queue)| InboundPersistenceMetadata {
+                device_id: *device_id,
+                next_generation: queue.next_generation,
+                pending: queue.pending.values().cloned().collect(),
+            })
+            .collect::<Vec<_>>();
+        inbound.sort_by_key(|queue| queue.device_id.to_string());
+        ConversationPersistenceMetadata {
+            group_id: self.group_id,
+            epoch: self.epoch(),
+            own_device_id: self.own_device_id,
+            pinned_roots,
+            outbound_generation: self.outbound_generation,
+            inbound,
+            active: self.active,
+        }
+    }
+
+    pub(crate) fn restore(
+        device: &MlsDevice,
+        metadata: ConversationPersistenceMetadata,
+    ) -> Result<Self, ConversationError> {
+        if metadata.own_device_id != device.device_id() || metadata.pinned_roots.len() != 2 {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        let pinned_roots = metadata.pinned_roots.into_iter().collect::<HashMap<_, _>>();
+        if pinned_roots.len() != 2
+            || pinned_roots.get(&device.user_id()) != Some(device.root_key_public())
+        {
+            return Err(ConversationError::UntrustedCredential);
+        }
+        let openmls_group_id =
+            openmls::prelude::GroupId::from_slice(metadata.group_id.to_string().as_bytes());
+        let group = MlsGroup::load(device.provider().storage(), &openmls_group_id)
+            .map_err(|_| ConversationError::CryptoError)?
+            .ok_or(ConversationError::CryptoError)?;
+        if group.epoch().as_u64() != metadata.epoch
+            || group.group_id().as_slice() != metadata.group_id.to_string().as_bytes()
+            || group.ciphersuite() != CIPHERSUITE
+            || (metadata.active && !group.is_active())
+        {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        if metadata.active {
+            validate_two_member_group(&group, &pinned_roots, metadata.own_device_id)?;
+        } else {
+            validate_initial_pending_group(&group, &pinned_roots, metadata.own_device_id)?;
+        }
+
+        let mut inbound = HashMap::with_capacity(metadata.inbound.len());
+        for queue in metadata.inbound {
+            if queue.pending.len()
+                > usize::try_from(MAX_BUFFERED_GENERATION_GAP).unwrap_or(usize::MAX)
+            {
+                return Err(ConversationError::LimitExceeded);
+            }
+            let verified = group
+                .members()
+                .find_map(|member| {
+                    verify_member_credential(
+                        &member.credential,
+                        &member.signature_key,
+                        &pinned_roots,
+                    )
+                    .ok()
+                    .filter(|member| member.device_id == queue.device_id)
+                })
+                .ok_or(ConversationError::UnexpectedMembership)?;
+            let mut pending = BTreeMap::new();
+            for message in queue.pending {
+                if message.sender_device_id != queue.device_id
+                    || message.sender_user_id != verified.user_id
+                    || message.generation < queue.next_generation
+                    || message.generation.saturating_sub(queue.next_generation)
+                        > MAX_BUFFERED_GENERATION_GAP
+                    || message.plaintext.is_empty()
+                    || message.plaintext.len() > MAX_APPLICATION_PLAINTEXT_BYTES
+                    || pending.insert(message.generation, message).is_some()
+                {
+                    return Err(ConversationError::MetadataMismatch);
+                }
+            }
+            if inbound
+                .insert(
+                    queue.device_id,
+                    InboundGenerationQueue {
+                        next_generation: queue.next_generation,
+                        pending,
+                    },
+                )
+                .is_some()
+            {
+                return Err(ConversationError::MetadataMismatch);
+            }
+        }
+        Ok(Self {
+            group_id: metadata.group_id,
+            group,
+            own_device_id: metadata.own_device_id,
+            pinned_roots,
+            outbound_generation: metadata.outbound_generation,
+            inbound,
+            active: metadata.active,
+        })
+    }
+
     fn ensure_device(&self, device: &MlsDevice) -> Result<(), ConversationError> {
         if device.device_id() != self.own_device_id {
             return Err(ConversationError::UnexpectedMembership);
@@ -800,6 +916,22 @@ impl MlsConversation {
             messages_may_be_missing: !queue.pending.is_empty(),
         })
     }
+}
+
+pub(crate) struct ConversationPersistenceMetadata {
+    pub group_id: FilamentGroupId,
+    pub epoch: u64,
+    pub own_device_id: DeviceId,
+    pub pinned_roots: Vec<(UserId, [u8; 32])>,
+    pub outbound_generation: u64,
+    pub inbound: Vec<InboundPersistenceMetadata>,
+    pub active: bool,
+}
+
+pub(crate) struct InboundPersistenceMetadata {
+    pub device_id: DeviceId,
+    pub next_generation: u64,
+    pub pending: Vec<DecryptedApplicationMessage>,
 }
 
 fn pad_transport_message(mut serialized_message: Vec<u8>) -> Result<Vec<u8>, ConversationError> {
@@ -899,6 +1031,54 @@ fn validate_two_member_group(
         || !pinned_roots
             .keys()
             .all(|user_id| members.values().any(|member_user| member_user == user_id))
+    {
+        return Err(ConversationError::UnexpectedMembership);
+    }
+    Ok(())
+}
+
+fn validate_initial_pending_group(
+    group: &MlsGroup,
+    pinned_roots: &HashMap<UserId, [u8; 32]>,
+    own_device_id: DeviceId,
+) -> Result<(), ConversationError> {
+    if group.epoch().as_u64() != 0 || pinned_roots.len() != 2 {
+        return Err(ConversationError::UnexpectedMembership);
+    }
+    let members = group.members().collect::<Vec<_>>();
+    if members.len() != 1 {
+        return Err(ConversationError::UnexpectedMembership);
+    }
+    let own_member = verify_member_credential(
+        &members[0].credential,
+        &members[0].signature_key,
+        pinned_roots,
+    )?;
+    if own_member.device_id != own_device_id {
+        return Err(ConversationError::UnexpectedMembership);
+    }
+    let pending = group
+        .pending_commit()
+        .ok_or(ConversationError::NoPendingCommit)?;
+    if pending.epoch().as_u64() != 1
+        || pending.queued_proposals().count() != 1
+        || pending.add_proposals().count() != 1
+    {
+        return Err(ConversationError::UnexpectedMembership);
+    }
+    let add = pending
+        .add_proposals()
+        .next()
+        .ok_or(ConversationError::UnexpectedMembership)?;
+    let added_leaf = add.add_proposal().key_package().leaf_node();
+    let added = verify_member_credential(
+        added_leaf.credential(),
+        added_leaf.signature_key().as_slice(),
+        pinned_roots,
+    )?;
+    if added.device_id == own_device_id
+        || added.user_id == own_member.user_id
+        || !pinned_roots.contains_key(&added.user_id)
     {
         return Err(ConversationError::UnexpectedMembership);
     }

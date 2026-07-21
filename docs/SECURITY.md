@@ -68,13 +68,12 @@ Scope: this section governs transport/session token keys. E2EE identity and MLS 
 ## End-to-End Encryption (MLS) Baseline
 Status: the Phase 0 engineering artifacts, Phase 1 identity/device/KeyPackage
 foundation, and initial Phase 2 two-user conversation provisioning, opaque
-transport, message mailbox, recipient-bound commit/Welcome mailbox, and native
-message- and commit-mailbox authentication/decryption processing are implemented as of
-2026-07-21; ADR
+transport, message mailbox, recipient-bound commit/Welcome mailbox, native
+message- and commit-mailbox authentication/decryption processing, and native
+MLS client checkpoints are implemented as of 2026-07-21; ADR
 ratification is complete, while threat-model ratification remains open.
-Packaged-client runtime wiring, durable MLS group
-state, and complete multi-device MLS leaf handling remain unfinished, so E2EE
-is not yet generally available.
+Packaged-client runtime wiring and complete multi-device MLS leaf handling
+remain unfinished, so E2EE is not yet generally available.
 Items below remain binding for later phases; the exact completed/remaining
 split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 
@@ -100,6 +99,11 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - QR pairing offers are single-use, expire after at most five minutes, and contain a high-entropy authentication secret plus an ephemeral X25519 receiver key. The existing device signs the pairing context, and the root secret is HPKE-encrypted directly to the new device. Neither the QR offer nor the encrypted transfer is relayed through the Filament server.
 - Keys are non-exportable and live in platform keystores (Keychain / Android Keystore / TPM+DPAPI) where available. No private-key display or copy surface exists anywhere in the product.
 - Desktop device state uses SQLCipher with a random 32-byte database key held by the OS credential store. Store paths and keys are native-only; webview IPC is limited to initialization and a non-sensitive readiness status. Phase 1 limits the store to 64 MiB, 4,096 records, and 4 MiB per record.
+- The native client writes the complete OpenMLS provider, certified device
+  signer, pinned peer roots, group epochs, generation counters, and bounded gap
+  buffers as one versioned SQLCipher record. Restore revalidates certificates,
+  identifiers, group membership, pins, epochs, record bounds, and buffered
+  plaintext before releasing operational state.
 - The server never holds root keys and cannot mint devices; uncertified devices fail verification at every peer.
 - Device removal is first-class: MLS Remove of that device's leaves from all groups (cryptographic eviction) plus KeyPackage tombstoning.
 
@@ -143,7 +147,9 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - Offline mailbox pages are cursor-, identifier-, count-, and byte-validated
   before MLS state is touched. Malformed entries receive no acknowledgment;
   successfully authenticated plaintext (including gap-buffered messages) and
-  the updated MLS state must be durably persisted before acknowledgment.
+  the updated MLS state must be durably persisted before acknowledgment. The
+  native MLS checkpoint is one atomic record; packaged runtime wiring must
+  coordinate that checkpoint with durable message-history writes before ack.
 - Push notifications are data-only; notification text is decrypted on-device; the push pipeline never carries plaintext.
 - Web clients are excluded from E2EE in v1; participation requires signed, packaged desktop/mobile builds. The exclusion is a code-delivery property, not a protocol or JS limitation: browser-delivered application code is re-fetched from the operator on every load.
 - Web-client rendering of E2EE conversations is a fail-closed capability state only: conversation existence may render (the server already knows membership for routing), content renders as "end-to-end encrypted — open in a packaged client." No plaintext fallback and no server-side decryption path may exist.

@@ -19,7 +19,7 @@ use openmls_traits::signatures::Signer;
 use tls_codec::Serialize;
 use zeroize::Zeroize;
 
-use crate::{error::KeyPackageError, identity::RootIdentityKey};
+use crate::{error::KeyPackageError, identity::RootIdentityKey, KeyStoreError};
 use filament_core::{DeviceCertificate, DeviceId, UserId};
 
 /// Default pool size cap per device.
@@ -32,6 +32,7 @@ pub const DEFAULT_BATCH_SIZE: usize = 10;
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519;
 
 pub(crate) const DEVICE_CREDENTIAL_DOMAIN: &[u8] = b"filament:mls:device_credential:v1";
+pub(crate) type ProviderRecord = (Vec<u8>, Vec<u8>);
 
 /// Long-lived MLS state for one certified Filament device.
 ///
@@ -134,6 +135,87 @@ impl MlsDevice {
         self.signer
             .sign(payload)
             .map_err(|_| KeyPackageError::CreationFailed)
+    }
+
+    pub(crate) fn provider_records(&self) -> Result<Vec<ProviderRecord>, KeyStoreError> {
+        let values = self
+            .provider
+            .storage()
+            .values
+            .read()
+            .map_err(|_| KeyStoreError::BackendError)?;
+        let mut records = values
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(records)
+    }
+
+    pub(crate) fn restore(
+        certificate: DeviceCertificate,
+        root_key_pub: [u8; 32],
+        records: &[ProviderRecord],
+    ) -> Result<Self, KeyStoreError> {
+        let user_id = UserId::try_from(certificate.user_id.clone())
+            .map_err(|_| KeyStoreError::InvalidValue)?;
+        let device_id = DeviceId::try_from(certificate.device_id.clone())
+            .map_err(|_| KeyStoreError::InvalidValue)?;
+        let signature_key: &[u8; 32] = certificate
+            .device_signature_pubkey
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyStoreError::InvalidValue)?;
+        let root_signature: &[u8; 64] = certificate
+            .root_key_signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyStoreError::InvalidValue)?;
+        crate::verify_device_certificate(
+            &root_key_pub,
+            user_id,
+            device_id,
+            signature_key,
+            root_signature,
+        )
+        .map_err(|_| KeyStoreError::InvalidValue)?;
+
+        let provider = OpenMlsRustCrypto::default();
+        {
+            let mut values = provider
+                .storage()
+                .values
+                .write()
+                .map_err(|_| KeyStoreError::BackendError)?;
+            for (key, value) in records {
+                if values.insert(key.clone(), value.clone()).is_some() {
+                    return Err(KeyStoreError::InvalidValue);
+                }
+            }
+        }
+        let signer = SignatureKeyPair::read(
+            provider.storage(),
+            &certificate.device_signature_pubkey,
+            CIPHERSUITE.signature_algorithm(),
+        )
+        .ok_or(KeyStoreError::InvalidValue)?;
+        if signer.to_public_vec() != certificate.device_signature_pubkey {
+            return Err(KeyStoreError::InvalidValue);
+        }
+        let credential = BasicCredential::new(device_credential_bytes(&certificate, &root_key_pub));
+        let credential_with_key = CredentialWithKey {
+            credential: credential.into(),
+            signature_key: signer.to_public_vec().into(),
+        };
+        Ok(Self {
+            provider,
+            signer,
+            credential_with_key,
+            certificate,
+            root_key_pub,
+            user_id,
+            device_id,
+        })
     }
 }
 

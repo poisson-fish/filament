@@ -34,6 +34,7 @@ pub mod keypackage;
 pub mod keystore;
 pub mod mailbox;
 pub mod pairing;
+pub mod persistence;
 #[cfg(feature = "sqlcipher-store")]
 pub mod sqlcipher_store;
 
@@ -68,5 +69,6 @@ pub use pairing::{
     ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS, MAX_PAIRING_OFFER_BYTES,
     MAX_PAIRING_TRANSFER_BYTES, MAX_PAIRING_TTL_SECS,
 };
+pub use persistence::{load_mls_client_state, persist_mls_client_state, MlsClientState};
 #[cfg(feature = "sqlcipher-store")]
 pub use sqlcipher_store::{SqlCipherKeyStore, MAX_ENCRYPTED_STORE_BYTES};

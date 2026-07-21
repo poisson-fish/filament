@@ -91,6 +91,12 @@ impl StoreKey {
         Self(String::from("identity:root"))
     }
 
+    /// Canonical record key for the device's complete MLS client checkpoint.
+    #[must_use]
+    pub fn mls_client_state() -> Self {
+        Self(String::from("mls:client_state:v1"))
+    }
+
     /// Borrow the validated database key.
     #[must_use]
     pub fn as_str(&self) -> &str {
