@@ -196,9 +196,17 @@ native libwebrtc AES-GCM frame-cryptor key provider with HKDF, opaque key
 custody, strict same-group sequential epoch rotation, and no IPC surface.
 Native cryptor tests verify endpoint agreement, opaque ciphertext relay, and
 post-rotation exclusion for a peer without the new MLS exporter. No
-frame-encryption construction was invented. RTP sender/receiver attachment,
-real SFU tests, platform verification, and end-to-end media tests remain
-required before media can be enabled.
+frame-encryption construction was invented. Native sender/receiver attachment
+and the LiveKit Rust SDK room connection lifecycle now fail closed around
+mandatory GCM, exact room/participant bindings, loopback-only plaintext
+signaling, disabled automatic subscriptions, bounded event draining, track
+caps, and pre-publication cryptor verification. Guarded remote rendering, real
+SFU tests, platform verification, and end-to-end media tests remain required
+before media can be enabled. The Apache-2.0 LiveKit client SDK is pinned to
+0.7.53, matching the reviewed libwebrtc 0.3.42 bridge. Combined desktop linkage
+is currently blocked because SQLCipher's vendored OpenSSL and libwebrtc's
+bundled BoringSSL export colliding symbols; no unsafe linker workaround or
+storage downgrade was added.
 
 ---
 
@@ -802,7 +810,17 @@ bounded native RTP sender/receiver bindings, enables encryption before a track
 may publish or render, rejects duplicate/invalid bindings, and advances every
 attached cryptor's key index only after the next authenticated MLS epoch key is
 installed. It exposes no provider, cryptor, raw key, or encryption-disable API.
-LiveKit room lifecycle integration remains before calls can be enabled.
+The bridge now connects through the reviewed LiveKit Rust SDK with GCM enabled
+before room creation, validates bounded/redacted connection material and exact
+room/participant bindings, disables automatic subscription, and drains native
+events behind a fail-closed guard. Plaintext publications, failed cryptor
+states, missing bindings, or track-cap violations close the room. Local tracks
+stay disabled until the SDK-owned cryptor is verified at the accepted MLS
+epoch. Guarded remote subscription/render integration remains before calls can
+be enabled. The production desktop feature combination also remains blocked by
+the SQLCipher/OpenSSL and libwebrtc/BoringSSL duplicate-symbol collision; each
+feature passes independently, and the storage or linker security posture has
+not been weakened to combine them.
 
 ### Deliverables
 

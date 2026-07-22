@@ -200,6 +200,27 @@ pub enum AttachmentError {
 /// Errors from MLS-bound media key scheduling.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MediaError {
+    /// A LiveKit signaling URL was malformed or did not use an approved transport.
+    #[error("native media server URL is invalid")]
+    InvalidServerUrl,
+    /// A LiveKit access token was malformed or exceeded its hard size cap.
+    #[error("native media access token is invalid")]
+    InvalidAccessToken,
+    /// LiveKit connected the client to a room other than the authenticated target.
+    #[error("native media room binding is invalid")]
+    RoomBindingMismatch,
+    /// LiveKit connected under an identity other than the authenticated target.
+    #[error("native media participant binding is invalid")]
+    ParticipantBindingMismatch,
+    /// The native LiveKit room could not connect or close safely.
+    #[error("native media room is unavailable")]
+    RoomUnavailable,
+    /// The native room did not retain mandatory frame encryption.
+    #[error("native media encryption is unavailable")]
+    EncryptionUnavailable,
+    /// The native room surfaced a plaintext publication or failed cryptor state.
+    #[error("native media room rejected an unsafe track")]
+    UnsafeTrack,
     /// A native media track identifier violated its domain invariants.
     #[error("native media track identifier is invalid")]
     InvalidTrackId,

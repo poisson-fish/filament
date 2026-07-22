@@ -135,10 +135,23 @@ Configuration sources:
   owns a bounded set of native RTP sender/receiver cryptors, enables each one
   before publish/render is permitted, and advances every binding to the newly
   installed key index after authenticated rotation. It exposes neither the
-  provider/cryptors nor a disable-encryption switch. This bridge is not exposed
-  as an IPC command and does not yet enable calls; LiveKit room lifecycle
-  integration, end-to-end SFU verification, and platform verification remain
-  required.
+  provider/cryptors nor a disable-encryption switch. The native room wrapper
+  accepts only a bounded JWT-shaped access token and a validated `wss` URL
+  (`ws` is loopback-only), then verifies the authenticated room and participant
+  bindings after connection. It enables LiveKit GCM before room creation,
+  disables automatic remote subscriptions, and continuously drains the SDK
+  event stream; plaintext publications, failed cryptor states, missing native
+  bindings, or the 256-track cap close the room. A local track remains disabled
+  until its SDK-owned cryptor is enabled at the accepted MLS epoch. Explicit
+  close and drop both signal native shutdown. This bridge is not exposed as an
+  IPC command and does not yet enable calls; guarded remote subscription/render,
+  end-to-end SFU verification, and platform verification remain required.
+- The full desktop binary is also blocked on native crypto-library linkage:
+  SQLCipher's vendored OpenSSL and LiveKit/libwebrtc's bundled BoringSSL export
+  colliding symbols when `sqlcipher-store` and `livekit-media` are linked
+  together. Both isolated feature paths pass, but no linker workaround or
+  weaker storage backend is approved. Resolve this packaging boundary before
+  enabling the media feature in the desktop target.
 - The key-isolation audit and negative-test inventory are recorded in
   `docs/E2EE_KEY_ISOLATION_AUDIT.md`.
 
