@@ -325,14 +325,10 @@ impl MlsConversation {
         self,
         recovery: &ExternalCommitRecoveryInfo,
         device: &MlsDevice,
-        peer: PinnedUserIdentity,
     ) -> Result<(Self, PendingGroupCommit), ConversationError> {
         self.ensure_device(device)?;
-        if self.audience != ConversationAudience::DirectMessage
-            || self.group_id != recovery.group_id
-            || self.pinned_roots.get(&peer.user_id) != Some(&peer.root_key_pub)
+        if self.group_id != recovery.group_id
             || self.pinned_roots.get(&device.user_id()) != Some(device.root_key_public())
-            || peer.user_id == device.user_id()
             || recovery.suite != CiphersuiteId::baseline()
             || recovery.group_info_blob.is_empty()
             || recovery.group_info_blob.len() > MAX_GROUP_INFO_BYTES
@@ -377,6 +373,7 @@ impl MlsConversation {
             .epoch
             .checked_add(1)
             .ok_or(ConversationError::LimitExceeded)?;
+        let audience = self.audience;
         let pinned_roots = self.pinned_roots;
         if group.group_id().as_slice() != recovery.group_id.to_string().as_bytes()
             || group.epoch().as_u64() != expected_epoch
@@ -384,12 +381,7 @@ impl MlsConversation {
         {
             return Err(ConversationError::MetadataMismatch);
         }
-        validate_group(
-            &group,
-            &pinned_roots,
-            ConversationAudience::DirectMessage,
-            Some(device.device_id()),
-        )?;
+        validate_group(&group, &pinned_roots, audience, Some(device.device_id()))?;
 
         let (commit, welcome, group_info) = bundle.into_contents();
         if welcome.is_some() {
@@ -420,7 +412,7 @@ impl MlsConversation {
             group_id: recovery.group_id,
             group,
             own_device_id: device.device_id(),
-            audience: ConversationAudience::DirectMessage,
+            audience,
             pinned_roots,
             outbound_generation: self.outbound_generation,
             inbound: self.inbound,
@@ -1976,10 +1968,22 @@ fn fully_removed_users(
             .ok_or(ConversationError::UnexpectedMembership)?;
         *removed_counts.entry(removed.user_id).or_insert(0) += 1;
     }
+    let replacement_user = staged_commit
+        .update_path_leaf_node()
+        .map(|leaf| {
+            verify_member_credential(
+                leaf.credential(),
+                leaf.signature_key().as_slice(),
+                pinned_roots,
+            )
+            .map(|member| member.user_id)
+        })
+        .transpose()?;
     Ok(removed_counts
         .into_iter()
         .filter_map(|(user_id, removed)| {
-            (current_counts.get(&user_id) == Some(&removed)).then_some(user_id)
+            (current_counts.get(&user_id) == Some(&removed) && replacement_user != Some(user_id))
+                .then_some(user_id)
         })
         .collect())
 }
@@ -2687,6 +2691,104 @@ mod tests {
                 .plaintext,
             b"group state persisted"
         );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn group_participant_add_rebases_on_authenticated_commit_winner() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let charlie_root = RootIdentityKey::generate();
+        let dave_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let charlie = MlsDevice::generate(UserId::new(), DeviceId::new(), &charlie_root).unwrap();
+        let dave = MlsDevice::generate(UserId::new(), DeviceId::new(), &dave_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let charlie_pin = PinnedUserIdentity::new(charlie.user_id(), *charlie.root_key_public());
+        let dave_pin = PinnedUserIdentity::new(dave.user_id(), *dave.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let charlie_package = generate_key_package_batch(&charlie, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let group_id = FilamentGroupId::new();
+        let (mut alice_group, initial) = MlsConversation::create_group(
+            group_id,
+            &alice,
+            &[(bob_pin, bob_package), (charlie_pin, charlie_package)],
+        )
+        .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let mut bob_group = MlsConversation::join_group_from_welcome(
+            group_id,
+            &bob,
+            &[alice_pin, charlie_pin],
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let mut charlie_group = MlsConversation::join_group_from_welcome(
+            group_id,
+            &charlie,
+            &[alice_pin, bob_pin],
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+
+        let dave_package = generate_key_package_batch(&dave, 1).unwrap().remove(0).blob;
+        let rejected_add = alice_group
+            .create_add_participant(&alice, dave_pin, &dave_package)
+            .unwrap();
+        let accepted_update = bob_group.create_self_update(&bob).unwrap();
+        assert_eq!(rejected_add.epoch, accepted_update.epoch);
+        bob_group.accept_pending_commit(&bob).unwrap();
+        charlie_group
+            .process_incoming_commit(&charlie, &encrypted_commit(&accepted_update))
+            .unwrap();
+
+        let PendingCommitRebase::Rebased(rebased_add) = alice_group
+            .rebase_pending_commit(&alice, &encrypted_commit(&accepted_update))
+            .unwrap()
+        else {
+            panic!("group participant Add must be restaged on the accepted epoch");
+        };
+        assert_eq!(rebased_add.prior_epoch, accepted_update.epoch);
+        assert_eq!(rebased_add.epoch, accepted_update.epoch + 1);
+        assert_ne!(rejected_add.commit_blob, rebased_add.commit_blob);
+        assert_ne!(rejected_add.welcome_blob, rebased_add.welcome_blob);
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_group
+            .process_incoming_participant_add(&bob, &encrypted_commit(&rebased_add), dave_pin)
+            .unwrap();
+        charlie_group
+            .process_incoming_participant_add(&charlie, &encrypted_commit(&rebased_add), dave_pin)
+            .unwrap();
+        let mut dave_group = MlsConversation::join_group_from_welcome(
+            group_id,
+            &dave,
+            &[alice_pin, bob_pin, charlie_pin],
+            rebased_add.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+
+        let encrypted = dave_group
+            .encrypt_application_message(&dave, b"joined from rebased group Welcome")
+            .unwrap();
+        for (device, conversation) in [
+            (&alice, &mut alice_group),
+            (&bob, &mut bob_group),
+            (&charlie, &mut charlie_group),
+        ] {
+            assert_eq!(
+                conversation
+                    .decrypt_application_message(device, &encrypted)
+                    .unwrap()
+                    .ready_messages[0]
+                    .plaintext,
+                b"joined from rebased group Welcome"
+            );
+        }
     }
 
     struct ThreeDeviceFixture {

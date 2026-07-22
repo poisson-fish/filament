@@ -9,8 +9,9 @@
 
 ## Implementation Status — 2026-07-21
 
-The repository is currently at **Phase 1 foundation**, not at usable E2EE
-messaging. Plaintext conversations remain the only production message path.
+The repository is currently implementing **Phase 3 native group-DM support**,
+but E2EE messaging is not yet a production client path. Plaintext
+conversations remain the only production message path.
 
 Completed and committed:
 
@@ -67,7 +68,7 @@ Still required before Phase 1 can be called complete:
   exception was added. A production launcher/backend still must inject
   authenticated session, platform storage, network, and MLS capabilities.
 
-Phase 2 is now in progress. The client core implements a bounded two-user MLS
+Phase 3 is now in progress. The client core implements a bounded two-user MLS
 conversation lifecycle: claimed-KeyPackage validation against pinned roots,
 staged Add/Welcome and safe Remove creation, acceptance-gated commit merge,
 strict multi-device Welcome/membership validation, PrivateMessage
@@ -129,12 +130,15 @@ now validates signed GroupInfo routing fields and pinned membership, constructs
 the external commit against an isolated clone of the complete MLS checkpoint,
 accepts only the constrained root-certified `NewMemberCommit` shape at peers,
 and adopts the replacement only after exact server acceptance and durable
-persistence. The desktop target now exposes the exact audited command manifest
+persistence. Group DMs now use the same acceptance-gated recovery boundary
+with an exact caller-supplied root-pin set, authenticated replacement-leaf
+handling, durable restart coverage, and deterministic participant-Add rebase
+after a competing group commit wins. The desktop target now exposes the exact
+audited command manifest
 through a validated capability-oriented native backend without accepting key
 material, paths, or native identity. Final Tauri adapter and production
-backend/UI integration remain; generalized group-DM recovery and later
-attachment, media, guild-channel, hardening, and key-transparency work has not
-started.
+backend/UI integration remain; attachment, media, guild-channel, hardening,
+and key-transparency work has not started.
 
 ---
 
@@ -524,9 +528,12 @@ direct-message/group-DM audience policy, bounded initial multi-member creation
 and Welcome join, explicitly root-pinned participant Adds, whole-participant
 Remove commits across all of that user's device leaves, versioned persistence,
 and churn coverage proving ordinary unpinned Adds fail closed and evicted
-members cannot use post-removal epochs. Server-side group provisioning,
-membership reconciliation/events, external-sender proposals, and encrypted
-message-adjacent features remain open.
+members cannot use post-removal epochs. Group commit races deterministically
+rebase pending participant Adds on the authenticated winner, and stale group
+members recover through an isolated external commit only when the caller's
+exact participant-root set and signed GroupInfo both validate. Server-side
+group provisioning, membership reconciliation/events, external-sender
+proposals, and encrypted message-adjacent features remain open.
 
 ### Deliverables
 
@@ -569,8 +576,8 @@ message-adjacent features remain open.
 ### Exit Criteria
 
 - [x] Removed members fail to decrypt all post-removal epochs (cryptographic eviction verified)
-- [ ] Concurrent commit races resolve deterministically
-- [ ] Desync self-heals via external commit
+- [x] Concurrent commit races resolve deterministically
+- [x] Desync self-heals via external commit
 - [ ] External-sender Remove proposals are validated and auto-committed by clients
 - [ ] External-sender Add proposals are hard-rejected by clients
 - [ ] Ghost-member injection fails at every client

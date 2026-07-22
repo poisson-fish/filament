@@ -191,6 +191,34 @@ impl DurableMlsClient {
             .map_err(Into::into)
     }
 
+    /// Prepare an isolated external-commit recovery candidate for a group DM.
+    ///
+    /// Existing acknowledgment outboxes must be drained and `participants`
+    /// must exactly match the native checkpoint's pinned roots other than the
+    /// local user. The live state remains unchanged until confirmation.
+    ///
+    /// # Errors
+    /// Returns a durability or fail-closed MLS validation error.
+    pub fn prepare_group_external_commit_recovery(
+        &self,
+        store: &dyn LocalKeyStore,
+        participants: &[PinnedUserIdentity],
+        recovery: &ExternalCommitRecoveryInfo,
+    ) -> Result<PendingExternalCommitRecovery, DurableMailboxError> {
+        if store.exists(&message_ack_key(recovery.group_id)?)?
+            || store.exists(&commit_ack_key(recovery.group_id)?)?
+        {
+            return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+        let state = self
+            .state
+            .as_ref()
+            .ok_or(DurableMailboxError::Unavailable)?;
+        state
+            .prepare_group_external_commit_recovery(participants, recovery)
+            .map_err(Into::into)
+    }
+
     /// Adopt an externally recovered group after exact server acceptance.
     ///
     /// The replacement provider and all conversations are checkpointed as one
@@ -1039,6 +1067,168 @@ mod tests {
         assert_eq!(
             reply_outcome.ready_messages[0].plaintext,
             b"reply after external recovery"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn group_external_commit_recovery_preserves_exact_pinned_audience() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let charlie_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let charlie = MlsDevice::generate(UserId::new(), DeviceId::new(), &charlie_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let charlie_pin = PinnedUserIdentity::new(charlie.user_id(), *charlie.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let charlie_package = generate_key_package_batch(&charlie, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let group_id = GroupId::new();
+        let (mut alice_group, initial) = MlsConversation::create_group(
+            group_id,
+            &alice,
+            &[(bob_pin, bob_package), (charlie_pin, charlie_package)],
+        )
+        .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let bob_group = MlsConversation::join_group_from_welcome(
+            group_id,
+            &bob,
+            &[alice_pin, charlie_pin],
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let mut charlie_group = MlsConversation::join_group_from_welcome(
+            group_id,
+            &charlie,
+            &[alice_pin, bob_pin],
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+
+        // Bob misses this accepted epoch and must recover from its signed
+        // GroupInfo without letting the Delivery Service alter local pins.
+        let update = alice_group.create_self_update(&alice).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        charlie_group
+            .process_incoming_commit(
+                &charlie,
+                &crate::EncryptedGroupCommit {
+                    group_id,
+                    prior_epoch: update.prior_epoch,
+                    epoch: update.epoch,
+                    committer_device_id: update.committer_device_id,
+                    commit_blob: update.commit_blob.clone(),
+                },
+            )
+            .unwrap();
+        let recovery_info = ExternalCommitRecoveryInfo::try_from(GroupInfoResponse {
+            group_id: group_id.to_string(),
+            epoch: update.epoch,
+            suite_id: update.suite.as_u16(),
+            group_info_blob: update.group_info_blob.clone().unwrap(),
+        })
+        .unwrap();
+
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        assert_eq!(
+            runtime
+                .prepare_group_external_commit_recovery(&store, &[alice_pin], &recovery_info)
+                .unwrap_err(),
+            DurableMailboxError::Conversation(ConversationError::MetadataMismatch)
+        );
+        let forged_charlie_pin = PinnedUserIdentity::new(
+            charlie.user_id(),
+            RootIdentityKey::generate().public_key_bytes(),
+        );
+        assert_eq!(
+            runtime
+                .prepare_group_external_commit_recovery(
+                    &store,
+                    &[alice_pin, forged_charlie_pin],
+                    &recovery_info
+                )
+                .unwrap_err(),
+            DurableMailboxError::Conversation(ConversationError::MetadataMismatch)
+        );
+
+        let recovery = runtime
+            .prepare_group_external_commit_recovery(
+                &store,
+                &[alice_pin, charlie_pin],
+                &recovery_info,
+            )
+            .unwrap();
+        let pending = recovery.pending_commit();
+        assert_eq!(pending.prior_epoch, update.epoch);
+        assert_eq!(pending.epoch, update.epoch + 1);
+        let recovery_commit = crate::EncryptedGroupCommit {
+            group_id,
+            prior_epoch: pending.prior_epoch,
+            epoch: pending.epoch,
+            committer_device_id: pending.committer_device_id,
+            commit_blob: pending.commit_blob.clone(),
+        };
+        assert!(alice_group
+            .persistence_metadata()
+            .pinned_roots
+            .contains(&(bob.user_id(), *bob.root_key_public())));
+        assert!(alice_group
+            .persistence_metadata()
+            .pinned_roots
+            .contains(&(charlie.user_id(), *charlie.root_key_public())));
+        alice_group
+            .process_incoming_commit(&alice, &recovery_commit)
+            .unwrap();
+        charlie_group
+            .process_incoming_commit(&charlie, &recovery_commit)
+            .unwrap();
+        runtime
+            .confirm_external_commit_recovery(
+                &store,
+                recovery,
+                &PostCommitResponse {
+                    accepted: true,
+                    epoch: update.epoch + 1,
+                },
+            )
+            .unwrap();
+        drop(runtime);
+
+        let mut restarted = DurableMlsClient::load(&store).unwrap();
+        let state = restarted.state.as_mut().unwrap();
+        let recovered = state
+            .conversations
+            .iter_mut()
+            .find(|conversation| conversation.group_id() == group_id)
+            .unwrap();
+        let encrypted = alice_group
+            .encrypt_application_message(&alice, b"group recovered after desync")
+            .unwrap();
+        assert_eq!(
+            recovered
+                .decrypt_application_message(&state.device, &encrypted)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"group recovered after desync"
+        );
+        let reply = recovered
+            .encrypt_application_message(&state.device, b"group recovery reply")
+            .unwrap();
+        assert_eq!(
+            charlie_group
+                .decrypt_application_message(&charlie, &reply)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"group recovery reply"
         );
     }
 

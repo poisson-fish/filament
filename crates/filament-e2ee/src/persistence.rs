@@ -104,12 +104,77 @@ impl MlsClientState {
             .find(|conversation| conversation.group_id() == recovery.group_id)
             .ok_or(crate::ConversationError::GroupMismatch)?;
         let metadata = current.persistence_metadata();
-        let peer_pin_matches = metadata
-            .pinned_roots
+        let peer_pin_matches = metadata.audience == ConversationAudience::DirectMessage
+            && peer.user_id != self.device.user_id()
+            && metadata.pinned_roots.len() == 2
+            && metadata.pinned_roots.iter().any(|(user_id, root_key)| {
+                *user_id == peer.user_id && *root_key == peer.root_key_pub
+            });
+        if !peer_pin_matches {
+            return Err(crate::ConversationError::MetadataMismatch);
+        }
+        self.prepare_external_commit_recovery_candidate(recovery)
+    }
+
+    /// Build an isolated external-commit recovery for a bounded group DM.
+    ///
+    /// `participants` must be the exact locally pinned set of other root
+    /// identities. Requiring the caller's current trust view prevents a
+    /// server-supplied `GroupInfo` from silently changing the recovery
+    /// audience before MLS authentication and membership validation run.
+    ///
+    /// # Errors
+    /// Rejects incomplete, duplicate, conflicting, or non-group participant
+    /// pins and otherwise applies the same stale-state and MLS checks as
+    /// [`Self::prepare_external_commit_recovery`].
+    pub fn prepare_group_external_commit_recovery(
+        &self,
+        participants: &[PinnedUserIdentity],
+        recovery: &ExternalCommitRecoveryInfo,
+    ) -> Result<PendingExternalCommitRecovery, crate::ConversationError> {
+        let current = self
+            .conversations
             .iter()
-            .any(|(user_id, root_key)| *user_id == peer.user_id && *root_key == peer.root_key_pub);
-        if !peer_pin_matches
-            || (metadata.active && recovery.epoch <= metadata.epoch)
+            .find(|conversation| conversation.group_id() == recovery.group_id)
+            .ok_or(crate::ConversationError::GroupMismatch)?;
+        let metadata = current.persistence_metadata();
+        if metadata.audience != ConversationAudience::GroupDm
+            || participants.len() != metadata.pinned_roots.len().saturating_sub(1)
+        {
+            return Err(crate::ConversationError::MetadataMismatch);
+        }
+
+        let own_user_id = self.device.user_id();
+        let mut expected = std::collections::HashMap::with_capacity(participants.len());
+        for participant in participants {
+            if participant.user_id == own_user_id
+                || expected
+                    .insert(participant.user_id, participant.root_key_pub)
+                    .is_some()
+            {
+                return Err(crate::ConversationError::MetadataMismatch);
+            }
+        }
+        if metadata.pinned_roots.iter().any(|(user_id, root_key)| {
+            *user_id != own_user_id && expected.get(user_id) != Some(root_key)
+        }) {
+            return Err(crate::ConversationError::MetadataMismatch);
+        }
+
+        self.prepare_external_commit_recovery_candidate(recovery)
+    }
+
+    fn prepare_external_commit_recovery_candidate(
+        &self,
+        recovery: &ExternalCommitRecoveryInfo,
+    ) -> Result<PendingExternalCommitRecovery, crate::ConversationError> {
+        let current = self
+            .conversations
+            .iter()
+            .find(|conversation| conversation.group_id() == recovery.group_id)
+            .ok_or(crate::ConversationError::GroupMismatch)?;
+        let metadata = current.persistence_metadata();
+        if (metadata.active && recovery.epoch <= metadata.epoch)
             || (!metadata.active && recovery.epoch < metadata.epoch)
         {
             return Err(crate::ConversationError::MetadataMismatch);
@@ -127,7 +192,7 @@ impl MlsClientState {
             .ok_or(crate::ConversationError::GroupMismatch)?;
         let current = candidate.conversations.remove(position);
         let (conversation, commit) =
-            current.recover_by_external_commit(recovery, &candidate.device, peer)?;
+            current.recover_by_external_commit(recovery, &candidate.device)?;
         candidate.conversations.insert(position, conversation);
         Ok(PendingExternalCommitRecovery {
             state: candidate,

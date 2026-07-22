@@ -120,6 +120,12 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   epoch; removed clients retain only inactive local state and cannot process
   later application epochs. Server-side group membership orchestration is not
   yet implemented.
+- Group-DM epoch conflicts rebase only after authenticating the Delivery
+  Service winner through MLS. Desynchronized devices construct recovery
+  external commits in an isolated checkpoint, require an exact caller-supplied
+  set of pinned participant roots, preserve a returning device's root pin when
+  its old leaf is atomically replaced, and adopt the candidate only after an
+  exact server acceptance response and durable persistence.
 - Native mailbox processing commits the updated MLS checkpoint, each bounded
   authenticated plaintext history record, and a per-group acknowledgment
   outbox in one SQLCipher transaction. A failed or uncertain transaction
@@ -127,7 +133,7 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   reloaded; it never emits an acknowledgment from volatile state.
 - External-commit recovery clones the complete validated MLS checkpoint before
   OpenMLS builds or stores replacement group state. Signed GroupInfo must match
-  the routed group, epoch, suite, ratchet tree, and pinned two-user membership.
+  the routed group, epoch, suite, ratchet tree, and locally pinned membership.
   Peers accept only a root-certified `NewMemberCommit` with the constrained
   external-init/same-device-replacement shape. A server rejection or
   contradictory acceptance response leaves live state unchanged; exact

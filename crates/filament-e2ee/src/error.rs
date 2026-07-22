@@ -102,7 +102,7 @@ pub enum ConversationError {
     /// An MLS credential did not chain to a locally pinned root identity.
     #[error("untrusted MLS device credential")]
     UntrustedCredential,
-    /// The group membership did not match the expected 1:1 participants.
+    /// The group membership did not match the locally pinned audience policy.
     #[error("unexpected MLS group membership")]
     UnexpectedMembership,
     /// The MLS group identifier did not match the locally pinned conversation.
