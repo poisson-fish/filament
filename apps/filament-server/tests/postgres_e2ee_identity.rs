@@ -10,13 +10,14 @@ use filament_e2ee::{
 };
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
-    ClaimKeyPackageRequest, ClaimKeyPackageResponse, CreateMlsConversationRequest,
-    DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse, GroupInfoResponse,
+    AckE2eeProposalsRequest, AckE2eeProposalsResponse, ClaimKeyPackageRequest,
+    ClaimKeyPackageResponse, CreateMlsConversationRequest, DeviceListResponse,
+    E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxResponse, GroupInfoResponse,
     KeyPackageEntry, MlsConversationProvisionResponse, PostCommitRequest, PostCommitResponse,
-    PostMessageRequest, PostMessageResponse, PublishDeviceCertificateRequest, RemoveDeviceResponse,
-    RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
-    UpgradeMlsConversationRequest, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
-    ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    PostMessageRequest, PostMessageResponse, PostProposalRequest, PostProposalResponse,
+    PublishDeviceCertificateRequest, RemoveDeviceResponse, RootIdentityDirectoryResponse,
+    RotateRootIdentityRequest, RotateRootIdentityResponse, UpgradeMlsConversationRequest,
+    UploadKeyPackagesRequest, UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use futures_util::StreamExt;
@@ -35,7 +36,7 @@ struct AuthResponse {
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
-async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_messages() {
+async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     let Some(database_url) = postgres_url() else {
         eprintln!("skipping postgres-backed E2EE test: FILAMENT_TEST_DATABASE_URL is unset");
         return;
@@ -482,6 +483,148 @@ async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_mes
     assert_eq!(info.epoch, 2);
     assert_eq!(info.suite_id, 3);
     assert_eq!(info.group_info_blob, stored_group_info);
+
+    let proposal_blob = vec![0x91; 384];
+    let proposal_request = PostProposalRequest {
+        epoch: 2,
+        proposer_device_id: alice_device_id.to_string(),
+        proposal_blob: proposal_blob.clone(),
+    };
+    let proposal = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/proposals"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &proposal_request,
+    )
+    .await;
+    assert_eq!(proposal.status(), StatusCode::OK);
+    let proposal: PostProposalResponse = parse_json(proposal).await;
+    let stored_proposal: (Vec<u8>, i64, i64) = sqlx::query_as(
+        "SELECT proposal_blob, created_at_unix, expires_at_unix
+         FROM e2ee_proposals WHERE proposal_id = $1",
+    )
+    .bind(&proposal.proposal_id)
+    .fetch_one(&audit_pool)
+    .await
+    .expect("opaque proposal should be stored");
+    assert_eq!(stored_proposal.0, proposal_blob);
+    assert!(stored_proposal.2 > stored_proposal.1);
+
+    for device_id in [bob_device_id, bob_second_device_id] {
+        let mailbox = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/e2ee/groups/{group_id}/proposals?device_id={device_id}&limit=20"
+            ))
+            .header("authorization", format!("Bearer {}", bob_auth.access_token))
+            .header("x-forwarded-for", "203.0.113.182")
+            .body(Body::empty())
+            .expect("proposal mailbox request should build");
+        let mailbox = app
+            .clone()
+            .oneshot(mailbox)
+            .await
+            .expect("proposal mailbox request should execute");
+        assert_eq!(mailbox.status(), StatusCode::OK);
+        let mailbox: E2eeProposalMailboxResponse = parse_json(mailbox).await;
+        assert_eq!(mailbox.proposals.len(), 1);
+        assert_eq!(mailbox.proposals[0].proposal_id, proposal.proposal_id);
+        assert_eq!(mailbox.proposals[0].proposal_blob, proposal_blob);
+        assert_eq!(
+            mailbox.next_after_proposal_id.as_deref(),
+            Some(proposal.proposal_id.as_str())
+        );
+    }
+
+    let proposer_mailbox = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/proposals?device_id={alice_device_id}"
+        ))
+        .header(
+            "authorization",
+            format!("Bearer {}", alice_auth.access_token),
+        )
+        .header("x-forwarded-for", "203.0.113.181")
+        .body(Body::empty())
+        .expect("proposer mailbox request should build");
+    let proposer_mailbox = app
+        .clone()
+        .oneshot(proposer_mailbox)
+        .await
+        .expect("proposer mailbox request should execute");
+    assert_eq!(proposer_mailbox.status(), StatusCode::OK);
+    assert!(parse_json::<E2eeProposalMailboxResponse>(proposer_mailbox)
+        .await
+        .proposals
+        .is_empty());
+
+    let stale_proposal = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/proposals"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostProposalRequest {
+            epoch: 1,
+            ..proposal_request.clone()
+        },
+    )
+    .await;
+    assert_eq!(stale_proposal.status(), StatusCode::CONFLICT);
+    let spoofed_proposer = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/proposals"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &proposal_request,
+    )
+    .await;
+    assert_eq!(spoofed_proposer.status(), StatusCode::NOT_FOUND);
+
+    let first_proposal_ack = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/proposals/ack"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &AckE2eeProposalsRequest {
+            device_id: bob_device_id.to_string(),
+            proposal_ids: vec![proposal.proposal_id.clone()],
+        },
+    )
+    .await;
+    assert_eq!(first_proposal_ack.status(), StatusCode::OK);
+    let first_proposal_ack: AckE2eeProposalsResponse = parse_json(first_proposal_ack).await;
+    assert_eq!(first_proposal_ack.acknowledged_count, 1);
+    assert_eq!(first_proposal_ack.deleted_count, 0);
+
+    let final_proposal_ack = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/proposals/ack"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &AckE2eeProposalsRequest {
+            device_id: bob_second_device_id.to_string(),
+            proposal_ids: vec![proposal.proposal_id.clone()],
+        },
+    )
+    .await;
+    assert_eq!(final_proposal_ack.status(), StatusCode::OK);
+    let final_proposal_ack: AckE2eeProposalsResponse = parse_json(final_proposal_ack).await;
+    assert_eq!(final_proposal_ack.acknowledged_count, 1);
+    assert_eq!(final_proposal_ack.deleted_count, 1);
+    let remaining_proposals: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_proposals WHERE proposal_id = $1")
+            .bind(&proposal.proposal_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("proposal deletion should be observable");
+    assert_eq!(remaining_proposals, 0);
 
     let bob_commit_page = Request::builder()
         .method("GET")

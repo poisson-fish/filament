@@ -3,11 +3,13 @@ import {
   type ConversationId,
   type GroupId,
   type MessageId,
+  type ProposalId,
   type UserId,
   conversationIdFromInput,
   deviceIdFromInput,
   groupIdFromInput,
   messageIdFromInput,
+  proposalIdFromInput,
   userIdFromInput,
 } from "../domain/chat";
 
@@ -54,11 +56,21 @@ export interface MlsWelcomePayload {
   createdAtUnix: number;
 }
 
+export interface MlsProposalPayload {
+  groupId: GroupId;
+  conversationId: ConversationId;
+  proposalId: ProposalId;
+  epoch: number;
+  proposerDeviceId: DeviceId;
+  createdAtUnix: number;
+}
+
 type E2eeGatewayEvent =
   | { type: "device_list_update"; payload: DeviceListUpdatePayload }
   | { type: "keypackage_low"; payload: KeyPackageLowPayload }
   | { type: "mls_message"; payload: MlsMessagePayload }
   | { type: "mls_commit"; payload: MlsCommitPayload }
+  | { type: "mls_proposal"; payload: MlsProposalPayload }
   | { type: "mls_welcome"; payload: MlsWelcomePayload };
 
 type E2eeGatewayEventType = E2eeGatewayEvent["type"];
@@ -258,6 +270,43 @@ function parseMlsWelcome(payload: unknown): MlsWelcomePayload | null {
   }
 }
 
+function parseMlsProposal(payload: unknown): MlsProposalPayload | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    !hasExactKeys(value, [
+      "group_id",
+      "conversation_id",
+      "proposal_id",
+      "epoch",
+      "proposer_device_id",
+      "created_at_unix",
+    ])
+    || typeof value.group_id !== "string"
+    || typeof value.conversation_id !== "string"
+    || typeof value.proposal_id !== "string"
+    || typeof value.proposer_device_id !== "string"
+    || !isEpoch(value.epoch)
+    || !isUnixTimestamp(value.created_at_unix)
+  ) {
+    return null;
+  }
+  try {
+    return {
+      groupId: groupIdFromInput(value.group_id),
+      conversationId: conversationIdFromInput(value.conversation_id),
+      proposalId: proposalIdFromInput(value.proposal_id),
+      epoch: value.epoch,
+      proposerDeviceId: deviceIdFromInput(value.proposer_device_id),
+      createdAtUnix: value.created_at_unix,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const E2EE_EVENT_DECODERS: {
   [K in E2eeGatewayEventType]: E2eeEventDecoder<
     Extract<E2eeGatewayEvent, { type: K }>["payload"]
@@ -267,6 +316,7 @@ const E2EE_EVENT_DECODERS: {
   keypackage_low: parseKeyPackageLow,
   mls_message: parseMlsMessage,
   mls_commit: parseMlsCommit,
+  mls_proposal: parseMlsProposal,
   mls_welcome: parseMlsWelcome,
 };
 
@@ -288,6 +338,10 @@ export function decodeE2eeGatewayEvent(
   }
   if (type === "mls_commit") {
     const parsed = E2EE_EVENT_DECODERS.mls_commit(payload);
+    return parsed ? { type, payload: parsed } : null;
+  }
+  if (type === "mls_proposal") {
+    const parsed = E2EE_EVENT_DECODERS.mls_proposal(payload);
     return parsed ? { type, payload: parsed } : null;
   }
   if (type === "mls_welcome") {

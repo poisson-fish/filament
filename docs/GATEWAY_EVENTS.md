@@ -454,8 +454,8 @@ All events use the versioned envelope:
 
 These events relay MLS protocol messages through the Delivery Service. The server
 stores and forwards opaque blobs — it never parses MLS interiors or holds private keys.
-Commit, Welcome, and message notifications are active for pre-provisioned
-`mls_v1` conversations. Proposal transport remains reserved for Phase 3.
+Commit, Welcome, message, and member-authored proposal notifications are active
+for pre-provisioned `mls_v1` conversations.
 
 #### `mls_message`
 - Scope: channel
@@ -471,10 +471,13 @@ Commit, Welcome, and message notifications are active for pre-provisioned
 - Scope: channel
 - Payload: `group_id`, `conversation_id`, `epoch`, `suite_id`, `created_at_unix`
 
-#### `mls_proposal` (planned)
+#### `mls_proposal`
 - Scope: channel
-- Payload: `group_id`, `conversation_id`, `epoch`, `proposer_device_id`,
-  `created_at_unix`
+- Payload: `group_id`, `conversation_id`, `proposal_id`, `epoch`,
+  `proposer_device_id`, `created_at_unix`
+- This notification contains routing metadata only. Packaged clients fetch the
+  opaque proposal from the per-device mailbox and authenticate its MLS sender
+  before changing local proposal state.
 
 #### `device_list_update`
 - Scope: user

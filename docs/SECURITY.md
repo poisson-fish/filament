@@ -77,7 +77,9 @@ acceptance-gated checkpoint. ADR
 ratification is complete, while threat-model ratification remains open.
 The Phase 3 native core now supports bounded, explicitly root-pinned group-DM
 creation, participant Add, and all-device cryptographic eviction; server-side
-group membership orchestration is still pending.
+group membership orchestration is still pending. The Delivery Service now
+relays member-authored opaque proposals through bounded, per-device transient
+mailboxes; production external-sender signing-key custody remains pending.
 The packaged client now has a validated, capability-oriented native command
 host, but the final Tauri adapter is supply-chain blocked: Tauri 2.11.5 does not
 pass the repository's advisory/license gates. Production launcher/backend and
@@ -161,6 +163,10 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - Every Welcome is bound to one active target device. Commit delivery is
   snapshotted per active participant device, and only the target device can
   retrieve the Welcome bytes.
+- Member-authored proposals are stored as opaque, epoch-bound blobs with a
+  `64 KiB` record cap, `50`-record/`256 KiB` page caps, `100`-ID ack batches,
+  per-device delivery snapshots, and TTL/all-device-ack hard deletion. The
+  server never infers proposal kind; clients authenticate and authorize it.
 - Clients validate complete commit pages before touching MLS state, accept
   only a consecutive authenticated epoch prefix, and acknowledge it only
   after the advanced state is durably persisted. Phase 2 accepts a single
@@ -169,7 +175,9 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - Server-side validation of MLS payloads is shape-only: size bounds, field presence, and epoch monotonicity per group.
 
 ### Retention — Mailbox Model
-- E2EE ciphertext is retained only until all member devices acknowledge delivery or a TTL expires (default `30 days`, configurable), then hard-deleted. No long-term server-side ciphertext archive.
+- E2EE ciphertext and opaque proposals are retained only until all member
+  devices acknowledge delivery or a TTL expires (default `30 days`,
+  configurable), then hard-deleted. No long-term server-side archive exists.
 - The client's local encrypted store (SQLCipher-or-equivalent; store key in platform keystore) is canonical history; the server is a delivery mailbox for E2EE payloads.
 - E2EE application envelopes are authenticated-padded before MLS encryption;
   opaque transport frames are then zero-filled to size buckets (baseline

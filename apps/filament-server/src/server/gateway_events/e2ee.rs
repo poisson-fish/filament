@@ -1,6 +1,7 @@
 use filament_core::{DeviceId, UserId};
 use filament_protocol::{
-    DeviceListUpdateEvent, KeyPackageLowEvent, MlsCommitEvent, MlsMessageEvent, MlsWelcomeEvent,
+    DeviceListUpdateEvent, KeyPackageLowEvent, MlsCommitEvent, MlsMessageEvent, MlsProposalEvent,
+    MlsWelcomeEvent,
 };
 
 use super::{envelope::try_build_event, GatewayEvent};
@@ -9,6 +10,7 @@ pub(crate) const DEVICE_LIST_UPDATE_EVENT: &str = "device_list_update";
 pub(crate) const KEYPACKAGE_LOW_EVENT: &str = "keypackage_low";
 pub(crate) const MLS_COMMIT_EVENT: &str = "mls_commit";
 pub(crate) const MLS_MESSAGE_EVENT: &str = "mls_message";
+pub(crate) const MLS_PROPOSAL_EVENT: &str = "mls_proposal";
 pub(crate) const MLS_WELCOME_EVENT: &str = "mls_welcome";
 
 pub(crate) fn try_device_list_update(
@@ -49,6 +51,10 @@ pub(crate) fn try_mls_commit(payload: MlsCommitEvent) -> anyhow::Result<GatewayE
 
 pub(crate) fn try_mls_message(payload: MlsMessageEvent) -> anyhow::Result<GatewayEvent> {
     try_build_event(MLS_MESSAGE_EVENT, payload)
+}
+
+pub(crate) fn try_mls_proposal(payload: MlsProposalEvent) -> anyhow::Result<GatewayEvent> {
+    try_build_event(MLS_PROPOSAL_EVENT, payload)
 }
 
 pub(crate) fn try_mls_welcome(payload: MlsWelcomeEvent) -> anyhow::Result<GatewayEvent> {
@@ -131,5 +137,18 @@ mod tests {
             .expect("event should serialize"),
         );
         assert_eq!(welcome["created_at_unix"], Value::from(12));
+
+        let proposal = parse_payload(
+            &try_mls_proposal(MlsProposalEvent {
+                group_id: String::from("g"),
+                conversation_id: String::from("c"),
+                proposal_id: String::from("p"),
+                epoch: 2,
+                proposer_device_id: String::from("d"),
+                created_at_unix: 13,
+            })
+            .expect("event should serialize"),
+        );
+        assert_eq!(proposal["proposal_id"], Value::from("p"));
     }
 }

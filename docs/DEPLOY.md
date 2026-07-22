@@ -55,8 +55,9 @@ Set these variables for `filament-server` (via `infra/.env`):
   cap per user and client IP (default `10`, must be >= `1`)
 - `FILAMENT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE`: KeyPackage claim cap per
   requester user, target device, and client IP (default `30`, must be >= `1`)
-- `FILAMENT_E2EE_COMMIT_PER_MINUTE`: opaque MLS commit cap per client IP,
-  authenticated user, sender device, and group (default `30`, must be >= `1`)
+- `FILAMENT_E2EE_COMMIT_PER_MINUTE`: opaque MLS commit, provisioning, and
+  member-authored proposal cap per client IP, authenticated user, sender
+  device, and group (default `30`, must be >= `1`)
 - `FILAMENT_E2EE_MESSAGE_PER_MINUTE`: opaque MLS message cap per client IP,
   authenticated user, sender device, and group (default `120`, must be >= `1`)
 - `FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE`: maximum unclaimed KeyPackages per

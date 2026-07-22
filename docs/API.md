@@ -691,6 +691,35 @@ Acknowledges successfully processed commits for one owned active device.
   and all delivery rows are hard-deleted atomically. TTL GC remains an
   independent upper bound.
 
+### `POST /e2ee/groups/{group_id}/proposals`
+Stores one member-authored opaque MLS proposal at the group's current epoch.
+- Request: `{ "epoch": 1, "proposer_device_id": "...", "proposal_blob": [bytes] }`
+- Response: `{ "proposal_id": "...", "created_at_unix": 0 }`
+- The proposer device must be active, owned by the authenticated conversation
+  member, and rate-limited independently by IP, user, device, and group.
+- The server validates only the current epoch and the `64 KiB` blob bound. It
+  never parses or trusts the proposal kind. Packaged clients authenticate the
+  MLS sender and enforce Add/Remove/Update policy before proposal storage.
+- Active participant devices are snapshotted atomically; the proposing device
+  is immediately marked delivered. A routing-only `mls_proposal` event prompts
+  clients to read their mailbox.
+
+### `GET /e2ee/groups/{group_id}/proposals`
+Returns opaque proposals pending for one owned active device.
+- Query: `?device_id=<device ULID>&after_proposal_id=<proposal ULID>&limit=<1..50>`
+- Response: `{ "proposals": [{ "proposal_id", "epoch", "proposer_device_id", "proposal_blob", "created_at_unix", "expires_at_unix" }], "next_after_proposal_id": "..." | null }`
+- Pages are capped at 50 records and `256 KiB` aggregate proposal bytes. New
+  devices do not gain access to proposals created before their delivery
+  snapshot. All routing fields remain untrusted until MLS authentication.
+
+### `POST /e2ee/groups/{group_id}/proposals/ack`
+Acknowledges authenticated, durably stored proposals for one owned device.
+- Request: `{ "device_id": "...", "proposal_ids": ["..."] }`
+- Response: `{ "acknowledged_count": 1, "deleted_count": 1 }`
+- Batches contain 1–100 unique canonical proposal ULIDs. A proposal and all
+  delivery rows are hard-deleted after every snapshotted device acknowledges,
+  or independently when the configured mailbox TTL expires.
+
 ### `POST /e2ee/groups/{group_id}/messages`
 Stores one opaque MLS `PrivateMessage` in the bounded delivery mailbox.
 - Request: `{ "epoch": 1, "suite_id": 3, "sender_device_id": "...", "message_blob": [bytes] }`
@@ -733,7 +762,8 @@ Acknowledges successfully decrypted messages for one owned active device.
   device's snapshotted group mailbox are ignored without exposing other groups.
 - When every snapshotted device has acknowledged a message, its ciphertext and
   delivery rows are hard-deleted atomically. Independently, a bounded
-  background worker hard-deletes messages and commits at their TTL deadline.
+  background worker hard-deletes messages, commits, and proposals at their TTL
+  deadline.
 
 ## Notes
 - Search index is derived/cache; source of truth is persisted message storage.

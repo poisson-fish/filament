@@ -7,6 +7,7 @@ export type UserId = string & { readonly __brand: "user_id" };
 export type DeviceId = string & { readonly __brand: "device_id" };
 export type GroupId = string & { readonly __brand: "group_id" };
 export type ConversationId = string & { readonly __brand: "conversation_id" };
+export type ProposalId = string & { readonly __brand: "proposal_id" };
 export type AttachmentId = string & { readonly __brand: "attachment_id" };
 export type FriendRequestId = string & { readonly __brand: "friend_request_id" };
 export type GuildIpBanId = string & { readonly __brand: "guild_ip_ban_id" };
@@ -98,6 +99,7 @@ function idFromInput<
   | DeviceId
   | GroupId
   | ConversationId
+  | ProposalId
   | AttachmentId
   | FriendRequestId
   | GuildIpBanId
@@ -346,6 +348,10 @@ export function channelIdFromInput(input: string): ChannelId {
 
 export function messageIdFromInput(input: string): MessageId {
   return idFromInput<MessageId>(input, "Message ID");
+}
+
+export function proposalIdFromInput(input: string): ProposalId {
+  return idFromInput<ProposalId>(input, "Proposal ID");
 }
 
 export function userIdFromInput(input: string): UserId {

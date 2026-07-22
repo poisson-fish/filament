@@ -38,10 +38,11 @@ use super::{
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
         e2ee::{
-            ack_group_commits, ack_group_messages, claim_keypackage, create_mls_conversation,
-            get_group_commit_mailbox, get_group_info, get_group_mailbox, get_root_identity,
-            list_user_devices, post_group_commit, post_group_message, publish_device_certificate,
-            remove_device, rotate_root_identity, upgrade_mls_conversation, upload_keypackages,
+            ack_group_commits, ack_group_messages, ack_group_proposals, claim_keypackage,
+            create_mls_conversation, get_group_commit_mailbox, get_group_info, get_group_mailbox,
+            get_group_proposal_mailbox, get_root_identity, list_user_devices, post_group_commit,
+            post_group_message, post_group_proposal, publish_device_certificate, remove_device,
+            rotate_root_identity, upgrade_mls_conversation, upload_keypackages,
         },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
@@ -202,6 +203,9 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("POST", "/e2ee/groups/{group_id}/commits/ack"),
     ("POST", "/e2ee/groups/{group_id}/messages"),
     ("POST", "/e2ee/groups/{group_id}/messages/ack"),
+    ("GET", "/e2ee/groups/{group_id}/proposals"),
+    ("POST", "/e2ee/groups/{group_id}/proposals"),
+    ("POST", "/e2ee/groups/{group_id}/proposals/ack"),
 ];
 
 #[derive(Clone)]
@@ -590,6 +594,14 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route(
             "/e2ee/groups/{group_id}/messages/ack",
             post(ack_group_messages),
+        )
+        .route(
+            "/e2ee/groups/{group_id}/proposals",
+            get(get_group_proposal_mailbox).post(post_group_proposal),
+        )
+        .route(
+            "/e2ee/groups/{group_id}/proposals/ack",
+            post(ack_group_proposals),
         );
 
     let upload_route = Router::new()

@@ -6,6 +6,7 @@ const DEVICE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const GROUP_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const CONVERSATION_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 const MESSAGE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
+const PROPOSAL_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
 
 describe("E2EE gateway events", () => {
   it("strictly decodes and dispatches device-list updates", () => {
@@ -103,6 +104,31 @@ describe("E2EE gateway events", () => {
       epoch: 1,
       suite_id: 999,
       created_at_unix: 1_710_000_004,
+    })).toBeNull();
+
+    const proposalPayload = {
+      group_id: GROUP_ID,
+      conversation_id: CONVERSATION_ID,
+      proposal_id: PROPOSAL_ID,
+      epoch: 2,
+      proposer_device_id: DEVICE_ID,
+      created_at_unix: 1_710_000_005,
+    };
+    const onMlsProposal = vi.fn();
+    expect(dispatchE2eeGatewayEvent("mls_proposal", proposalPayload, {
+      onMlsProposal,
+    })).toBe(true);
+    expect(onMlsProposal).toHaveBeenCalledWith({
+      groupId: GROUP_ID,
+      conversationId: CONVERSATION_ID,
+      proposalId: PROPOSAL_ID,
+      epoch: 2,
+      proposerDeviceId: DEVICE_ID,
+      createdAtUnix: 1_710_000_005,
+    });
+    expect(decodeE2eeGatewayEvent("mls_proposal", {
+      ...proposalPayload,
+      proposal_blob: [1, 2, 3],
     })).toBeNull();
   });
 });

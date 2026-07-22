@@ -10,24 +10,31 @@ use axum::{
     http::HeaderMap,
     Json,
 };
-use filament_core::{CiphersuiteId, ConversationCrypto, ConversationId, DeviceId, GroupId, UserId};
+use filament_core::{
+    CiphersuiteId, ConversationCrypto, ConversationId, DeviceId, GroupId, ProposalId, UserId,
+};
 use filament_e2ee::{
     verify_device_certificate, verify_root_identity_rotation_proof, RootIdentityRotationProof,
+    MAX_MLS_GROUP_LEAVES, MAX_MLS_GROUP_USERS,
 };
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
-    ClaimKeyPackageRequest, ClaimKeyPackageResponse, CreateMlsConversationRequest, DeviceInfo,
-    DeviceListResponse, E2eeCommitMailboxEntry, E2eeCommitMailboxQuery, E2eeCommitMailboxResponse,
-    E2eeMailboxMessage, E2eeMailboxQuery, E2eeMailboxResponse, GroupInfoResponse, MlsCommitEvent,
-    MlsConversationProvisionResponse, MlsMessageEvent, MlsWelcomeEvent, PostCommitRequest,
-    PostCommitResponse, PostMessageRequest, PostMessageResponse, PublishDeviceCertificateRequest,
+    AckE2eeProposalsRequest, AckE2eeProposalsResponse, ClaimKeyPackageRequest,
+    ClaimKeyPackageResponse, CreateMlsConversationRequest, DeviceInfo, DeviceListResponse,
+    E2eeCommitMailboxEntry, E2eeCommitMailboxQuery, E2eeCommitMailboxResponse, E2eeMailboxMessage,
+    E2eeMailboxQuery, E2eeMailboxResponse, E2eeProposalMailboxEntry, E2eeProposalMailboxQuery,
+    E2eeProposalMailboxResponse, GroupInfoResponse, MlsCommitEvent,
+    MlsConversationProvisionResponse, MlsMessageEvent, MlsProposalEvent, MlsWelcomeEvent,
+    PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
+    PostProposalRequest, PostProposalResponse, PublishDeviceCertificateRequest,
     PublishDeviceCertificateResponse, RemoveDeviceResponse, RootIdentityDirectoryResponse,
     RootIdentityRotationEntry, RotateRootIdentityRequest, RotateRootIdentityResponse,
     UpgradeMlsConversationRequest, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
     MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES,
     MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES,
-    MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
-    ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE,
+    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE,
+    MAX_ROOT_IDENTITY_ROTATIONS, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -732,6 +739,14 @@ fn commit_mailbox_page_limit(limit: Option<u16>) -> Result<usize, AuthFailure> {
     Ok(limit)
 }
 
+fn proposal_mailbox_page_limit(limit: Option<u16>) -> Result<usize, AuthFailure> {
+    let limit = limit.map_or(DEFAULT_E2EE_MAILBOX_PAGE_SIZE, usize::from);
+    if limit == 0 || limit > MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(limit)
+}
+
 async fn conversation_member_ids(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     conversation_id: &str,
@@ -869,6 +884,74 @@ async fn snapshot_commit_deliveries(
     .bind(group_id.to_string())
     .bind(epoch)
     .bind(committer_device_id.to_string())
+    .bind(created_at_unix)
+    .bind(conversation_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let inserted = i64::try_from(inserted.rows_affected()).map_err(|_| AuthFailure::Internal)?;
+    if inserted != device_count {
+        return Err(AuthFailure::Internal);
+    }
+    Ok(())
+}
+
+async fn snapshot_proposal_deliveries(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conversation_id: &str,
+    proposal_id: ProposalId,
+    proposer_device_id: DeviceId,
+    created_at_unix: i64,
+) -> Result<(), AuthFailure> {
+    let member_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM e2ee_conversation_members WHERE conversation_id = $1",
+    )
+    .bind(conversation_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let device_rows = sqlx::query(
+        "SELECT d.device_id, d.user_id
+         FROM e2ee_conversation_members m
+         JOIN e2ee_device_certificates d
+           ON d.user_id = m.user_id AND d.tombstoned_at_unix IS NULL
+         WHERE m.conversation_id = $1
+         ORDER BY d.device_id ASC
+         FOR SHARE OF d",
+    )
+    .bind(conversation_id)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let device_count = i64::try_from(device_rows.len()).map_err(|_| AuthFailure::Internal)?;
+    let capable_users: HashSet<String> = device_rows
+        .iter()
+        .map(|row| row.try_get("user_id").map_err(|_| AuthFailure::Internal))
+        .collect::<Result<_, _>>()?;
+    let capable_member_count =
+        i64::try_from(capable_users.len()).map_err(|_| AuthFailure::Internal)?;
+    let max_member_count = i64::try_from(MAX_MLS_GROUP_USERS).map_err(|_| AuthFailure::Internal)?;
+    let max_device_count =
+        i64::try_from(MAX_MLS_GROUP_LEAVES).map_err(|_| AuthFailure::Internal)?;
+    if !(2..=max_member_count).contains(&member_count)
+        || capable_member_count != member_count
+        || !(member_count..=max_device_count).contains(&device_count)
+    {
+        return Err(AuthFailure::E2eeCapabilityRequired);
+    }
+
+    let inserted = sqlx::query(
+        "INSERT INTO e2ee_proposal_deliveries
+            (proposal_id, device_id, acked_at_unix)
+         SELECT $1, d.device_id,
+                CASE WHEN d.device_id = $2 THEN $3 ELSE NULL END
+         FROM e2ee_conversation_members m
+         JOIN e2ee_device_certificates d
+           ON d.user_id = m.user_id AND d.tombstoned_at_unix IS NULL
+         WHERE m.conversation_id = $4",
+    )
+    .bind(proposal_id.to_string())
+    .bind(proposer_device_id.to_string())
     .bind(created_at_unix)
     .bind(conversation_id)
     .execute(&mut **transaction)
@@ -2367,6 +2450,307 @@ pub(crate) async fn ack_group_commits(
         acknowledged_count: u32::try_from(acknowledged_epochs.len())
             .map_err(|_| AuthFailure::Internal)?,
         deleted_count: u32::try_from(deleted_count).map_err(|_| AuthFailure::Internal)?,
+    }))
+}
+
+/// Return a bounded page of opaque MLS proposals pending for one active device.
+pub(crate) async fn get_group_proposal_mailbox(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(group_id): Path<String>,
+    Query(query): Query<E2eeProposalMailboxQuery>,
+) -> Result<Json<E2eeProposalMailboxResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    let group_id = GroupId::try_from(group_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let device_id = DeviceId::try_from(query.device_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let after_proposal_id = query
+        .after_proposal_id
+        .map(ProposalId::try_from)
+        .transpose()
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let limit = proposal_mailbox_page_limit(query.limit)?;
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        device_id,
+        group_id,
+        E2eeTransportRoute::MailboxRead,
+    )
+    .await?;
+
+    let sql_limit = i64::try_from(limit).map_err(|_| AuthFailure::Internal)?;
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, device_id).await?;
+    let _group =
+        get_group_for_member_in_transaction(&mut transaction, group_id, auth.user_id).await?;
+    let rows = sqlx::query(
+        "SELECT p.proposal_id, p.epoch, p.proposer_device_id, p.proposal_blob,
+                p.created_at_unix, p.expires_at_unix
+         FROM e2ee_proposal_deliveries d
+         JOIN e2ee_proposals p ON p.proposal_id = d.proposal_id
+         WHERE d.device_id = $1
+           AND d.acked_at_unix IS NULL
+           AND p.group_id = $2
+           AND p.expires_at_unix > $3
+           AND p.proposal_id > $4
+         ORDER BY p.proposal_id ASC
+         LIMIT $5",
+    )
+    .bind(device_id.to_string())
+    .bind(group_id.to_string())
+    .bind(now)
+    .bind(after_proposal_id.map_or_else(String::new, |value| value.to_string()))
+    .bind(sql_limit)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+
+    let mut aggregate_bytes = 0_usize;
+    let mut proposals = Vec::with_capacity(rows.len());
+    for row in rows {
+        let proposal_blob: Vec<u8> = row
+            .try_get("proposal_blob")
+            .map_err(|_| AuthFailure::Internal)?;
+        let next_aggregate = aggregate_bytes
+            .checked_add(proposal_blob.len())
+            .ok_or(AuthFailure::Internal)?;
+        if next_aggregate > MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES {
+            break;
+        }
+        let proposal_id: String = row
+            .try_get("proposal_id")
+            .map_err(|_| AuthFailure::Internal)?;
+        ProposalId::try_from(proposal_id.clone()).map_err(|_| AuthFailure::Internal)?;
+        let epoch: i64 = row.try_get("epoch").map_err(|_| AuthFailure::Internal)?;
+        proposals.push(E2eeProposalMailboxEntry {
+            proposal_id,
+            epoch: u64::try_from(epoch).map_err(|_| AuthFailure::Internal)?,
+            proposer_device_id: row
+                .try_get("proposer_device_id")
+                .map_err(|_| AuthFailure::Internal)?,
+            proposal_blob,
+            created_at_unix: row
+                .try_get("created_at_unix")
+                .map_err(|_| AuthFailure::Internal)?,
+            expires_at_unix: row
+                .try_get("expires_at_unix")
+                .map_err(|_| AuthFailure::Internal)?,
+        });
+        aggregate_bytes = next_aggregate;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    let next_after_proposal_id = proposals
+        .last()
+        .map(|proposal| proposal.proposal_id.clone());
+    Ok(Json(E2eeProposalMailboxResponse {
+        proposals,
+        next_after_proposal_id,
+    }))
+}
+
+/// Acknowledge proposals only after one active device authenticates and stores them.
+pub(crate) async fn ack_group_proposals(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(group_id): Path<String>,
+    Json(payload): Json<AckE2eeProposalsRequest>,
+) -> Result<Json<AckE2eeProposalsResponse>, AuthFailure> {
+    if payload.proposal_ids.is_empty()
+        || payload.proposal_ids.len() > MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE
+    {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let mut unique_ids = HashSet::with_capacity(payload.proposal_ids.len());
+    let proposal_ids = payload
+        .proposal_ids
+        .into_iter()
+        .map(|value| {
+            let proposal_id =
+                ProposalId::try_from(value).map_err(|_| AuthFailure::InvalidRequest)?;
+            if !unique_ids.insert(proposal_id) {
+                return Err(AuthFailure::InvalidRequest);
+            }
+            Ok(proposal_id.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    let group_id = GroupId::try_from(group_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let device_id =
+        DeviceId::try_from(payload.device_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        device_id,
+        group_id,
+        E2eeTransportRoute::MailboxAck,
+    )
+    .await?;
+
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, device_id).await?;
+    let _group = lock_group_for_member(&mut transaction, group_id, auth.user_id).await?;
+    let acknowledged_ids: Vec<String> = sqlx::query_scalar(
+        "UPDATE e2ee_proposal_deliveries d
+         SET acked_at_unix = COALESCE(d.acked_at_unix, $1)
+         FROM e2ee_proposals p
+         WHERE p.proposal_id = d.proposal_id
+           AND p.group_id = $2
+           AND p.expires_at_unix > $1
+           AND d.device_id = $3
+           AND d.proposal_id = ANY($4::TEXT[])
+         RETURNING d.proposal_id",
+    )
+    .bind(now)
+    .bind(group_id.to_string())
+    .bind(device_id.to_string())
+    .bind(&proposal_ids)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let deleted_count = if acknowledged_ids.is_empty() {
+        0
+    } else {
+        sqlx::query(
+            "DELETE FROM e2ee_proposals p
+             WHERE p.group_id = $1
+               AND p.proposal_id = ANY($2::TEXT[])
+               AND NOT EXISTS (
+                   SELECT 1 FROM e2ee_proposal_deliveries pending
+                   WHERE pending.proposal_id = p.proposal_id
+                     AND pending.acked_at_unix IS NULL
+               )",
+        )
+        .bind(group_id.to_string())
+        .bind(&acknowledged_ids)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .rows_affected()
+    };
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    Ok(Json(AckE2eeProposalsResponse {
+        acknowledged_count: u32::try_from(acknowledged_ids.len())
+            .map_err(|_| AuthFailure::Internal)?,
+        deleted_count: u32::try_from(deleted_count).map_err(|_| AuthFailure::Internal)?,
+    }))
+}
+
+/// Persist and fan out one member-authored opaque MLS proposal.
+pub(crate) async fn post_group_proposal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(group_id): Path<String>,
+    Json(payload): Json<PostProposalRequest>,
+) -> Result<Json<PostProposalResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    let group_id = GroupId::try_from(group_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let proposer_device_id = DeviceId::try_from(payload.proposer_device_id.clone())
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        proposer_device_id,
+        group_id,
+        E2eeTransportRoute::Proposal,
+    )
+    .await?;
+
+    let epoch = i64::try_from(payload.epoch).map_err(|_| AuthFailure::InvalidRequest)?;
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let ttl = i64::try_from(state.runtime.e2ee_mailbox_ttl.as_secs())
+        .map_err(|_| AuthFailure::Internal)?;
+    let expires_at = now.checked_add(ttl).ok_or(AuthFailure::Internal)?;
+    let proposal_id = ProposalId::new();
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, proposer_device_id).await?;
+    let group = lock_group_for_member(&mut transaction, group_id, auth.user_id).await?;
+    if group.current_epoch != payload.epoch {
+        return Err(AuthFailure::EpochConflict);
+    }
+    sqlx::query(
+        "INSERT INTO e2ee_proposals
+            (proposal_id, group_id, epoch, proposer_device_id, proposal_blob,
+             created_at_unix, expires_at_unix)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(proposal_id.to_string())
+    .bind(group_id.to_string())
+    .bind(epoch)
+    .bind(proposer_device_id.to_string())
+    .bind(&payload.proposal_blob)
+    .bind(now)
+    .bind(expires_at)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    snapshot_proposal_deliveries(
+        &mut transaction,
+        &group.conversation_id,
+        proposal_id,
+        proposer_device_id,
+        now,
+    )
+    .await?;
+    let member_ids = conversation_member_ids(&mut transaction, &group.conversation_id).await?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    match gateway_events::try_mls_proposal(MlsProposalEvent {
+        group_id: group_id.to_string(),
+        conversation_id: group.conversation_id,
+        proposal_id: proposal_id.to_string(),
+        epoch: payload.epoch,
+        proposer_device_id: proposer_device_id.to_string(),
+        created_at_unix: now,
+    }) {
+        Ok(event) => broadcast_conversation_event(&state, &member_ids, &event).await,
+        Err(error) => {
+            record_gateway_event_serialize_error("user", gateway_events::MLS_PROPOSAL_EVENT);
+            tracing::error!(
+                event = "gateway.mls_proposal.serialize_failed",
+                error = %error,
+                "dropped MLS proposal notification because serialization failed"
+            );
+        }
+    }
+
+    Ok(Json(PostProposalResponse {
+        proposal_id: proposal_id.to_string(),
+        created_at_unix: now,
     }))
 }
 

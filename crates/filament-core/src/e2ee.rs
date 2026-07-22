@@ -200,6 +200,68 @@ impl<'de> Deserialize<'de> for GroupId {
 }
 
 // ---------------------------------------------------------------------------
+// ProposalId
+// ---------------------------------------------------------------------------
+
+/// Delivery Service identifier for one opaque MLS proposal.
+///
+/// Proposal IDs provide a stable mailbox cursor and acknowledgment key. They
+/// are transport identifiers only; clients authenticate the proposal's MLS
+/// reference and sender after retrieving the opaque blob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProposalId(Ulid);
+
+impl ProposalId {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Ulid::new())
+    }
+}
+
+impl Default for ProposalId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TryFrom<String> for ProposalId {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let parsed = Ulid::from_string(&value).map_err(|_| DomainError::InvalidProposalId)?;
+        if parsed.to_string() != value {
+            return Err(DomainError::InvalidProposalId);
+        }
+        Ok(Self(parsed))
+    }
+}
+
+impl core::fmt::Display for ProposalId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Serialize for ProposalId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for ProposalId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // CiphersuiteId
 // ---------------------------------------------------------------------------
 
@@ -492,6 +554,19 @@ mod tests {
         let a = GroupId::default();
         let b = GroupId::default();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn proposal_id_requires_canonical_ulid() {
+        let id = ProposalId::new();
+        let wire = id.to_string();
+        assert_eq!(ProposalId::try_from(wire.clone()).unwrap(), id);
+        assert_eq!(serde_json::to_string(&id).unwrap(), format!("\"{wire}\""));
+        assert!(ProposalId::try_from(wire.to_lowercase()).is_err());
+        assert_eq!(
+            ProposalId::try_from(String::from("proposal-1")).unwrap_err(),
+            DomainError::InvalidProposalId
+        );
     }
 
     #[test]

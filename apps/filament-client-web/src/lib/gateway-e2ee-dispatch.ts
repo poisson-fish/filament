@@ -4,6 +4,7 @@ import {
   type KeyPackageLowPayload,
   type MlsCommitPayload,
   type MlsMessagePayload,
+  type MlsProposalPayload,
   type MlsWelcomePayload,
 } from "./gateway-e2ee-events";
 import {
@@ -16,6 +17,7 @@ export interface E2eeGatewayDispatchHandlers {
   onKeyPackageLow?: (payload: KeyPackageLowPayload) => void;
   onMlsMessage?: (payload: MlsMessagePayload) => void;
   onMlsCommit?: (payload: MlsCommitPayload) => void;
+  onMlsProposal?: (payload: MlsProposalPayload) => void;
   onMlsWelcome?: (payload: MlsWelcomePayload) => void;
 }
 
@@ -24,6 +26,7 @@ export const E2EE_GATEWAY_DISPATCH_EVENT_TYPES: readonly string[] = [
   "keypackage_low",
   "mls_commit",
   "mls_message",
+  "mls_proposal",
   "mls_welcome",
 ];
 
@@ -48,6 +51,9 @@ const E2EE_DISPATCH_TABLE: GatewayDispatchTable<
   },
   mls_commit: (eventPayload, eventHandlers) => {
     eventHandlers.onMlsCommit?.(eventPayload);
+  },
+  mls_proposal: (eventPayload, eventHandlers) => {
+    eventHandlers.onMlsProposal?.(eventPayload);
   },
   mls_welcome: (eventPayload, eventHandlers) => {
     eventHandlers.onMlsWelcome?.(eventPayload);

@@ -52,6 +52,9 @@ pub const MAX_E2EE_MAILBOX_PAGE_SIZE: usize = 50;
 /// Maximum number of opaque commits returned by one mailbox page.
 pub const MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE: usize = 50;
 
+/// Maximum number of opaque proposals returned by one mailbox page.
+pub const MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE: usize = 50;
+
 /// Maximum aggregate ciphertext bytes returned by one mailbox page.
 ///
 /// JSON represents byte vectors as integer arrays, so this keeps the encoded
@@ -61,11 +64,17 @@ pub const MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES: usize = 256 * 1_024;
 /// Maximum aggregate commit and Welcome bytes returned by one mailbox page.
 pub const MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES: usize = 256 * 1_024;
 
+/// Maximum aggregate proposal bytes returned by one mailbox page.
+pub const MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES: usize = 256 * 1_024;
+
 /// Maximum number of message acknowledgments accepted in one request.
 pub const MAX_E2EE_MESSAGE_ACK_BATCH_SIZE: usize = 100;
 
 /// Maximum number of commit epochs acknowledged in one request.
 pub const MAX_E2EE_COMMIT_ACK_BATCH_SIZE: usize = 100;
+
+/// Maximum number of proposal IDs acknowledged in one request.
+pub const MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE: usize = 100;
 
 /// Root-identity rotation wire protocol version.
 pub const ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION: u16 = 1;
@@ -191,6 +200,13 @@ where
     D: Deserializer<'de>,
 {
     deserialize_bounded_blob::<D, MAX_COMMIT_BYTES>(deserializer)
+}
+
+fn deserialize_proposal_blob<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_blob::<D, MAX_PROPOSAL_BYTES>(deserializer)
 }
 
 fn deserialize_optional_welcome_blob<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
@@ -321,6 +337,44 @@ where
         return Err(de::Error::invalid_length(
             value.len(),
             &"between 1 and 100 positive commit epochs",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_proposal_mailbox_entries<'de, D>(
+    deserializer: D,
+) -> Result<Vec<E2eeProposalMailboxEntry>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<E2eeProposalMailboxEntry>::deserialize(deserializer)?;
+    if value.len() > MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"no more than 50 proposal mailbox entries",
+        ));
+    }
+    let aggregate_bytes = value.iter().try_fold(0_usize, |total, entry| {
+        total.checked_add(entry.proposal_blob.len())
+    });
+    if aggregate_bytes.is_none_or(|total| total > MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES) {
+        return Err(de::Error::custom(
+            "proposal mailbox aggregate exceeds protocol limit",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_proposal_ack_ids<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<String>::deserialize(deserializer)?;
+    if value.is_empty() || value.len() > MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"between 1 and 100 proposal IDs",
         ));
     }
     Ok(value)
@@ -714,6 +768,98 @@ pub struct PostCommitResponse {
     pub epoch: u64,
 }
 
+/// Request body for `POST /e2ee/groups/{group_id}/proposals`.
+///
+/// The server relays the bounded opaque MLS proposal without interpreting its
+/// proposal kind. Packaged clients authenticate the MLS sender and enforce the
+/// audience policy before storing or committing the proposal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostProposalRequest {
+    /// Epoch in which the proposal was authored.
+    pub epoch: u64,
+    /// Active member device that authored the proposal.
+    pub proposer_device_id: String,
+    /// Serialized MLS proposal, opaque to the server.
+    #[serde(deserialize_with = "deserialize_proposal_blob")]
+    pub proposal_blob: Vec<u8>,
+}
+
+/// Response body for an accepted opaque MLS proposal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostProposalResponse {
+    /// Server-assigned transport identifier.
+    pub proposal_id: String,
+    /// Unix timestamp (seconds) when the proposal was accepted.
+    pub created_at_unix: i64,
+}
+
+/// Query parameters for a device's pending proposal mailbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeProposalMailboxQuery {
+    /// Active device whose snapshotted deliveries should be returned.
+    pub device_id: String,
+    /// Exclusive proposal-ID cursor from the preceding page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_proposal_id: Option<String>,
+    /// Requested record count. The server caps this at 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u16>,
+}
+
+/// One opaque MLS proposal pending delivery to a device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeProposalMailboxEntry {
+    /// Server-assigned transport identifier.
+    pub proposal_id: String,
+    /// Epoch routing hint; clients verify it against authenticated MLS data.
+    pub epoch: u64,
+    /// Proposer routing hint; clients verify it after MLS authentication.
+    pub proposer_device_id: String,
+    /// Serialized MLS proposal, opaque to the server.
+    #[serde(deserialize_with = "deserialize_proposal_blob")]
+    pub proposal_blob: Vec<u8>,
+    /// Unix timestamp (seconds) when the server accepted the proposal.
+    pub created_at_unix: i64,
+    /// Unix timestamp (seconds) after which the server hard-deletes it.
+    pub expires_at_unix: i64,
+}
+
+/// Response for `GET /e2ee/groups/{group_id}/proposals`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct E2eeProposalMailboxResponse {
+    /// Pending device deliveries in ascending proposal-ID order.
+    #[serde(deserialize_with = "deserialize_proposal_mailbox_entries")]
+    pub proposals: Vec<E2eeProposalMailboxEntry>,
+    /// Cursor for the next page, or `None` when this page is empty.
+    pub next_after_proposal_id: Option<String>,
+}
+
+/// Successfully authenticated proposal acknowledgments for one active device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AckE2eeProposalsRequest {
+    /// Active device that authenticated and durably stored the proposals.
+    pub device_id: String,
+    /// Proposal IDs to acknowledge. Duplicates are rejected by the server.
+    #[serde(deserialize_with = "deserialize_proposal_ack_ids")]
+    pub proposal_ids: Vec<String>,
+}
+
+/// Result of a batched per-device proposal acknowledgment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AckE2eeProposalsResponse {
+    /// Delivery rows newly or previously acknowledged by this device.
+    pub acknowledged_count: u32,
+    /// Proposals hard-deleted because every snapshotted device acknowledged.
+    pub deleted_count: u32,
+}
+
 /// Request body for `POST /e2ee/groups/{group_id}/messages` — PrivateMessage transport.
 ///
 /// The server stores the opaque, bucket-padded serialized `PrivateMessage`
@@ -960,6 +1106,8 @@ pub struct MlsProposalEvent {
     pub group_id: String,
     /// The conversation ID (ULID string).
     pub conversation_id: String,
+    /// Server-assigned proposal transport ID.
+    pub proposal_id: String,
     /// The epoch in which the proposal was made.
     pub epoch: u64,
     /// The proposing device ID (ULID string).
@@ -1259,6 +1407,71 @@ mod tests {
     }
 
     #[test]
+    fn proposal_mailbox_and_ack_contracts_are_strict_and_bounded() {
+        let proposal_id = String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        let device_id = String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW");
+        let request = PostProposalRequest {
+            epoch: 2,
+            proposer_device_id: device_id.clone(),
+            proposal_blob: vec![0x41; 512],
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            serde_json::from_str::<PostProposalRequest>(&json).unwrap(),
+            request
+        );
+
+        let entry = E2eeProposalMailboxEntry {
+            proposal_id: proposal_id.clone(),
+            epoch: 2,
+            proposer_device_id: device_id.clone(),
+            proposal_blob: vec![0x42; 512],
+            created_at_unix: 1,
+            expires_at_unix: 2,
+        };
+        let response = E2eeProposalMailboxResponse {
+            proposals: vec![entry],
+            next_after_proposal_id: Some(proposal_id.clone()),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(
+            serde_json::from_str::<E2eeProposalMailboxResponse>(&json).unwrap(),
+            response
+        );
+
+        let ack = AckE2eeProposalsRequest {
+            device_id,
+            proposal_ids: vec![proposal_id],
+        };
+        let json = serde_json::to_string(&ack).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AckE2eeProposalsRequest>(&json).unwrap(),
+            ack
+        );
+        let oversized_ack = AckE2eeProposalsRequest {
+            device_id: String::from("device"),
+            proposal_ids: vec![String::from("proposal"); MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE + 1],
+        };
+        let json = serde_json::to_string(&oversized_ack).unwrap();
+        assert!(serde_json::from_str::<AckE2eeProposalsRequest>(&json).is_err());
+
+        let oversized_entry = E2eeProposalMailboxEntry {
+            proposal_id: String::from("proposal"),
+            epoch: 1,
+            proposer_device_id: String::from("device"),
+            proposal_blob: vec![0x43; MAX_PROPOSAL_BYTES],
+            created_at_unix: 1,
+            expires_at_unix: 2,
+        };
+        let oversized = E2eeProposalMailboxResponse {
+            proposals: vec![oversized_entry; 5],
+            next_after_proposal_id: None,
+        };
+        let json = serde_json::to_string(&oversized).unwrap();
+        assert!(serde_json::from_str::<E2eeProposalMailboxResponse>(&json).is_err());
+    }
+
+    #[test]
     fn post_message_request_round_trip() {
         let req = PostMessageRequest {
             epoch: 1,
@@ -1476,6 +1689,14 @@ mod tests {
         };
         let json = serde_json::to_string(&oversized_message).unwrap();
         assert!(serde_json::from_str::<PostMessageRequest>(&json).is_err());
+
+        let oversized_proposal = PostProposalRequest {
+            epoch: 1,
+            proposer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            proposal_blob: vec![0x04; MAX_PROPOSAL_BYTES + 1],
+        };
+        let json = serde_json::to_string(&oversized_proposal).unwrap();
+        assert!(serde_json::from_str::<PostProposalRequest>(&json).is_err());
     }
 
     // -- Gateway event data types --
@@ -1537,6 +1758,7 @@ mod tests {
         let event = MlsProposalEvent {
             group_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             conversation_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAVD"),
+            proposal_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAVE"),
             epoch: 1,
             proposer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAVF"),
             created_at_unix: 1_700_000_000,

@@ -4,7 +4,7 @@ pub mod e2ee;
 
 pub use e2ee::{
     CiphersuiteId, ConversationCrypto, ConversationId, DeviceCertificate, DeviceId, EpochTag,
-    GroupId, MAX_DEVICE_SIGNATURE_PUBKEY_BYTES, MAX_ROOT_KEY_SIGNATURE_BYTES,
+    GroupId, ProposalId, MAX_DEVICE_SIGNATURE_PUBKEY_BYTES, MAX_ROOT_KEY_SIGNATURE_BYTES,
 };
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -37,6 +37,8 @@ pub enum DomainError {
     InvalidDeviceId,
     #[error("group id is invalid")]
     InvalidGroupId,
+    #[error("proposal id is invalid")]
+    InvalidProposalId,
     #[error("ciphersuite id is invalid")]
     InvalidCiphersuiteId,
     #[error("conversation crypto mode is invalid")]

@@ -7,7 +7,7 @@
 
 ---
 
-## Implementation Status — 2026-07-21
+## Implementation Status — 2026-07-22
 
 The repository is currently implementing **Phase 3 native group-DM support**,
 but E2EE messaging is not yet a production client path. Plaintext
@@ -148,7 +148,9 @@ previews, typing, and read receipts remain absent from protocol v1. The desktop
 target now exposes the exact audited command manifest through a validated
 capability-oriented native backend without accepting key material, paths, or
 native identity. Final Tauri adapter and production backend/UI integration
-remain. The server signing-key lifecycle and proposal transport remain open;
+remain. Member-authored opaque proposal transport now uses bounded,
+epoch-checked, per-device mailboxes with active `mls_proposal` notifications;
+the server external-sender signing-key lifecycle remains open;
 attachment, media, guild-channel, hardening, and key-transparency work has not
 started.
 
@@ -535,7 +537,7 @@ Implement the first end-to-end encrypted conversation type: 1:1 DMs as 2-member 
 
 Extend E2EE from 2-member DMs to N-member group DMs. Add MLS membership proposals/commits, join via Welcome, removal as cryptographic eviction, and external-commit recovery from desync.
 
-**Implemented increment (2026-07-21):** the native MLS core now has a typed
+**Implemented increment (updated 2026-07-22):** the native MLS core now has a typed
 direct-message/group-DM audience policy, bounded initial multi-member creation
 and Welcome join, explicitly root-pinned participant Adds, whole-participant
 Remove commits across all of that user's device leaves, versioned persistence,
@@ -544,8 +546,9 @@ members cannot use post-removal epochs. Group commit races deterministically
 rebase pending participant Adds on the authenticated winner, and stale group
 members recover through an isolated external commit only when the caller's
 exact participant-root set and signed GroupInfo both validate. Server-side
-group provisioning, membership reconciliation/events, external-sender key
-custody/transport, and encrypted message-adjacent features remain open. The
+group provisioning, membership reconciliation/events, and external-sender key
+custody remain open. Member-authored opaque proposals are now relayed through
+bounded per-device mailboxes with TTL/all-device-ack deletion. The
 native core registers a caller-pinned Delivery Service external sender,
 auto-stages valid Remove proposals at non-target members, retains the proposal
 at the target so it can verify the winning commit, and rejects external Add or

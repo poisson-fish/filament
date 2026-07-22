@@ -13,7 +13,7 @@
     { "event_type": "keypackage_low", "schema_version": 1, "scope": "user", "lifecycle": "active" },
     { "event_type": "mls_commit", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
     { "event_type": "mls_message", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
-    { "event_type": "mls_proposal", "schema_version": 1, "scope": "channel", "lifecycle": "planned" },
+    { "event_type": "mls_proposal", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
     { "event_type": "mls_welcome", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
     { "event_type": "presence_sync", "schema_version": 1, "scope": "guild", "lifecycle": "active" },
     { "event_type": "presence_update", "schema_version": 1, "scope": "guild", "lifecycle": "active" },
