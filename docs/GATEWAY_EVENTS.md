@@ -474,10 +474,18 @@ for pre-provisioned `mls_v1` conversations.
 #### `mls_proposal`
 - Scope: channel
 - Payload: `group_id`, `conversation_id`, `proposal_id`, `epoch`,
-  `proposer_device_id`, `created_at_unix`
+  either `proposer_device_id`, or `external_sender_index` plus
+  `reconciliation_deadline_unix`, and `created_at_unix`
 - This notification contains routing metadata only. Packaged clients fetch the
   opaque proposal from the per-device mailbox and authenticate its MLS sender
   before changing local proposal state.
+
+#### `mls_membership_change`
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `epoch`, `committer_device_id`,
+  `membership_change`, `created_at_unix`
+- This is a routing-only UI hint. Clients display membership changes only after
+  the matching MLS commit authenticates and yields the same leaf delta.
 
 #### `device_list_update`
 - Scope: user

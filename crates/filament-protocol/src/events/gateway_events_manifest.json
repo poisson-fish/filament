@@ -12,6 +12,7 @@
     { "event_type": "message_update", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
     { "event_type": "keypackage_low", "schema_version": 1, "scope": "user", "lifecycle": "active" },
     { "event_type": "mls_commit", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
+    { "event_type": "mls_membership_change", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
     { "event_type": "mls_message", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
     { "event_type": "mls_proposal", "schema_version": 1, "scope": "channel", "lifecycle": "active" },
     { "event_type": "mls_welcome", "schema_version": 1, "scope": "channel", "lifecycle": "active" },

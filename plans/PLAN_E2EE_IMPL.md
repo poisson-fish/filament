@@ -152,12 +152,14 @@ remain. Member-authored opaque proposal transport now uses bounded,
 epoch-checked, per-device mailboxes with active `mls_proposal` notifications;
 the server external-sender now has stable operator-provisioned key custody, an
 authenticated public-identity contract, and a Remove-only signing surface;
-policy-triggered proposal generation remains open. Message, commit, and
-proposal mailbox fanout now share the same fail-closed group-DM audience
-bounds: 2–100 capable users, at least one active device per member, and no more
-than 200 total leaves. A Postgres-backed three-user transport regression covers
-both application messages and commits; server-side group provisioning and
-membership reconciliation remain open;
+device tombstones now atomically generate signed Remove proposals with bounded
+reconciliation deadlines. Message, commit, and proposal mailbox fanout now
+uses the persisted MLS leaf map as its sole audience, bounded to 2–100 users
+and 200 leaves. The server atomically provisions 3–100-user groups with a
+shared multi-recipient Welcome, applies exact Add/Remove routing deltas, and
+blocks sends while policy eviction is unresolved. Native clients surface
+membership rows only after authenticating the matching MLS commit, and a
+20-member churn regression covers delivery and eviction. Phase 3 is complete;
 attachment, media, guild-channel, hardening, and key-transparency work has not
 started.
 
@@ -553,15 +555,20 @@ members cannot use post-removal epochs. Group commit races deterministically
 rebase pending participant Adds on the authenticated winner, and stale group
 members recover through an isolated external commit only when the caller's
 exact participant-root set and signed GroupInfo both validate. Server-side
-group provisioning, membership reconciliation/events, and policy-triggered
-external Remove generation remain open. Member-authored opaque proposals are now relayed through
+group provisioning now atomically binds 3–100 users to exact MLS leaf/device
+exact routing, shared Welcome recipients, and the initial commit.
+Member-authored opaque proposals are now relayed through
 bounded per-device mailboxes with TTL/all-device-ack deletion. The
 native core registers a caller-pinned Delivery Service external sender,
 auto-stages valid Remove proposals at non-target members, retains the proposal
 at the target so it can verify the winning commit, and rejects external Add or
 forged proposals at every member. Message, commit, and proposal fanout now use
 one bounded group audience invariant (2–100 capable users and at most 200
-active device leaves), with three-user Postgres transport coverage.
+active device leaves). Device tombstones generate Remove-only external
+proposals and block unrelated sends/commits until the bounded reconciliation
+completes. Membership gateway hints are displayed only after native MLS
+authentication. Coverage includes three-user PostgreSQL transport and
+20-member native churn.
 
 ### Deliverables
 
@@ -610,7 +617,7 @@ active device leaves), with three-user Postgres transport coverage.
 - [x] External-sender Add proposals are hard-rejected by clients
 - [x] Ghost-member injection fails at every client
 - [x] Message-adjacent features (reactions, edits, deletes, replies) work inside encrypted groups
-- [ ] All quality gates pass
+- [x] All quality gates pass
 
 ### Integration Points for Phase 4
 

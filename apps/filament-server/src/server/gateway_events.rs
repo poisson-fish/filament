@@ -14,6 +14,7 @@ pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
     e2ee::DEVICE_LIST_UPDATE_EVENT,
     e2ee::KEYPACKAGE_LOW_EVENT,
     e2ee::MLS_COMMIT_EVENT,
+    e2ee::MLS_MEMBERSHIP_CHANGE_EVENT,
     e2ee::MLS_MESSAGE_EVENT,
     e2ee::MLS_PROPOSAL_EVENT,
     e2ee::MLS_WELCOME_EVENT,
@@ -55,9 +56,10 @@ pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
 
 pub(crate) use connection::{try_ready, try_subscribed, READY_EVENT, SUBSCRIBED_EVENT};
 pub(crate) use e2ee::{
-    try_device_list_update, try_keypackage_low, try_mls_commit, try_mls_message, try_mls_proposal,
-    try_mls_welcome, DEVICE_LIST_UPDATE_EVENT, KEYPACKAGE_LOW_EVENT, MLS_COMMIT_EVENT,
-    MLS_MESSAGE_EVENT, MLS_PROPOSAL_EVENT, MLS_WELCOME_EVENT,
+    try_device_list_update, try_keypackage_low, try_mls_commit, try_mls_membership_change,
+    try_mls_message, try_mls_proposal, try_mls_welcome, DEVICE_LIST_UPDATE_EVENT,
+    KEYPACKAGE_LOW_EVENT, MLS_COMMIT_EVENT, MLS_MEMBERSHIP_CHANGE_EVENT, MLS_MESSAGE_EVENT,
+    MLS_PROPOSAL_EVENT, MLS_WELCOME_EVENT,
 };
 pub(crate) use envelope::GatewayEvent;
 #[cfg(test)]

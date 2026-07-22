@@ -898,6 +898,7 @@ mod tests {
             committer_device_id: pending.committer_device_id.to_string(),
             commit_blob: pending.commit_blob,
             welcome_blob: pending.welcome_blob,
+            membership_change: None,
             created_at_unix: 10,
             expires_at_unix: 20,
         };

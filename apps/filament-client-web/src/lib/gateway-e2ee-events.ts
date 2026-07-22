@@ -61,7 +61,28 @@ export interface MlsProposalPayload {
   conversationId: ConversationId;
   proposalId: ProposalId;
   epoch: number;
-  proposerDeviceId: DeviceId;
+  proposerDeviceId: DeviceId | null;
+  externalSenderIndex: 0 | null;
+  reconciliationDeadlineUnix: number | null;
+  createdAtUnix: number;
+}
+
+export interface MlsLeafRoutingPayload {
+  leafIndex: number;
+  userId: UserId;
+  deviceId: DeviceId;
+}
+
+export type MlsMembershipChangePayload =
+  | { kind: "add"; leaf: MlsLeafRoutingPayload }
+  | { kind: "remove"; leaves: MlsLeafRoutingPayload[] };
+
+export interface MlsMembershipChangeEventPayload {
+  groupId: GroupId;
+  conversationId: ConversationId;
+  epoch: number;
+  committerDeviceId: DeviceId;
+  membershipChange: MlsMembershipChangePayload;
   createdAtUnix: number;
 }
 
@@ -70,6 +91,7 @@ type E2eeGatewayEvent =
   | { type: "keypackage_low"; payload: KeyPackageLowPayload }
   | { type: "mls_message"; payload: MlsMessagePayload }
   | { type: "mls_commit"; payload: MlsCommitPayload }
+  | { type: "mls_membership_change"; payload: MlsMembershipChangeEventPayload }
   | { type: "mls_proposal"; payload: MlsProposalPayload }
   | { type: "mls_welcome"; payload: MlsWelcomePayload };
 
@@ -275,19 +297,21 @@ function parseMlsProposal(payload: unknown): MlsProposalPayload | null {
     return null;
   }
   const value = payload as Record<string, unknown>;
+  const baseKeys = ["group_id", "conversation_id", "proposal_id", "epoch", "created_at_unix"];
+  const isMember = hasExactKeys(value, [...baseKeys, "proposer_device_id"]);
+  const isExternal = hasExactKeys(value, [
+    ...baseKeys,
+    "external_sender_index",
+    "reconciliation_deadline_unix",
+  ]);
   if (
-    !hasExactKeys(value, [
-      "group_id",
-      "conversation_id",
-      "proposal_id",
-      "epoch",
-      "proposer_device_id",
-      "created_at_unix",
-    ])
+    (!isMember && !isExternal)
     || typeof value.group_id !== "string"
     || typeof value.conversation_id !== "string"
     || typeof value.proposal_id !== "string"
-    || typeof value.proposer_device_id !== "string"
+    || (isMember && typeof value.proposer_device_id !== "string")
+    || (isExternal && value.external_sender_index !== 0)
+    || (isExternal && !isUnixTimestamp(value.reconciliation_deadline_unix))
     || !isEpoch(value.epoch)
     || !isUnixTimestamp(value.created_at_unix)
   ) {
@@ -299,7 +323,88 @@ function parseMlsProposal(payload: unknown): MlsProposalPayload | null {
       conversationId: conversationIdFromInput(value.conversation_id),
       proposalId: proposalIdFromInput(value.proposal_id),
       epoch: value.epoch,
-      proposerDeviceId: deviceIdFromInput(value.proposer_device_id),
+      proposerDeviceId: isMember
+        ? deviceIdFromInput(value.proposer_device_id as string)
+        : null,
+      externalSenderIndex: isExternal ? 0 : null,
+      reconciliationDeadlineUnix: isExternal
+        ? value.reconciliation_deadline_unix as number
+        : null,
+      createdAtUnix: value.created_at_unix,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseMlsLeaf(value: unknown): MlsLeafRoutingPayload | null {
+  if (!value || typeof value !== "object") return null;
+  const leaf = value as Record<string, unknown>;
+  if (
+    !hasExactKeys(leaf, ["leaf_index", "user_id", "device_id"])
+    || !isBoundedCount(leaf.leaf_index, 199, true)
+    || typeof leaf.user_id !== "string"
+    || typeof leaf.device_id !== "string"
+  ) return null;
+  try {
+    return {
+      leafIndex: leaf.leaf_index,
+      userId: userIdFromInput(leaf.user_id),
+      deviceId: deviceIdFromInput(leaf.device_id),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseMlsMembershipChange(payload: unknown): MlsMembershipChangeEventPayload | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = payload as Record<string, unknown>;
+  if (
+    !hasExactKeys(value, [
+      "group_id",
+      "conversation_id",
+      "epoch",
+      "committer_device_id",
+      "membership_change",
+      "created_at_unix",
+    ])
+    || typeof value.group_id !== "string"
+    || typeof value.conversation_id !== "string"
+    || typeof value.committer_device_id !== "string"
+    || !isEpoch(value.epoch)
+    || !isUnixTimestamp(value.created_at_unix)
+    || !value.membership_change
+    || typeof value.membership_change !== "object"
+  ) return null;
+  const rawChange = value.membership_change as Record<string, unknown>;
+  let membershipChange: MlsMembershipChangePayload;
+  if (rawChange.kind === "add" && hasExactKeys(rawChange, ["kind", "leaf"])) {
+    const leaf = parseMlsLeaf(rawChange.leaf);
+    if (!leaf) return null;
+    membershipChange = { kind: "add", leaf };
+  } else if (
+    rawChange.kind === "remove"
+    && hasExactKeys(rawChange, ["kind", "leaves"])
+    && Array.isArray(rawChange.leaves)
+    && rawChange.leaves.length >= 1
+    && rawChange.leaves.length <= 100
+  ) {
+    const leaves = rawChange.leaves.map(parseMlsLeaf);
+    if (leaves.some((leaf) => leaf === null)) return null;
+    const parsedLeaves = leaves as MlsLeafRoutingPayload[];
+    if (new Set(parsedLeaves.map((leaf) => leaf.leafIndex)).size !== parsedLeaves.length) return null;
+    membershipChange = { kind: "remove", leaves: parsedLeaves };
+  } else {
+    return null;
+  }
+  try {
+    return {
+      groupId: groupIdFromInput(value.group_id),
+      conversationId: conversationIdFromInput(value.conversation_id),
+      epoch: value.epoch,
+      committerDeviceId: deviceIdFromInput(value.committer_device_id),
+      membershipChange,
       createdAtUnix: value.created_at_unix,
     };
   } catch {
@@ -316,6 +421,7 @@ const E2EE_EVENT_DECODERS: {
   keypackage_low: parseKeyPackageLow,
   mls_message: parseMlsMessage,
   mls_commit: parseMlsCommit,
+  mls_membership_change: parseMlsMembershipChange,
   mls_proposal: parseMlsProposal,
   mls_welcome: parseMlsWelcome,
 };
@@ -338,6 +444,10 @@ export function decodeE2eeGatewayEvent(
   }
   if (type === "mls_commit") {
     const parsed = E2EE_EVENT_DECODERS.mls_commit(payload);
+    return parsed ? { type, payload: parsed } : null;
+  }
+  if (type === "mls_membership_change") {
+    const parsed = E2EE_EVENT_DECODERS.mls_membership_change(payload);
     return parsed ? { type, payload: parsed } : null;
   }
   if (type === "mls_proposal") {

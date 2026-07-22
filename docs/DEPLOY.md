@@ -66,6 +66,9 @@ Set these variables for `filament-server` (via `infra/.env`):
   mailbox records (default `2592000`, valid range `1..=7776000`)
 - `FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS`: bounded hard-deletion sweep interval
   (default `60`, valid range `1..=3600`)
+- `FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS`: maximum time allowed
+  for members to commit a policy-triggered cryptographic eviction (default
+  `300`, valid range `1..=3600`); application sends fail closed while pending
 - `FILAMENT_E2EE_DELIVERY_SERVICE_KEY_FILE`: optional absolute path to the
   stable raw 32-byte Ed25519 seed used only for MLS external Remove proposals.
   On Unix it must be a current-user-owned, single-link regular file with mode
@@ -86,6 +89,7 @@ Default compose values:
 - `FILAMENT_E2EE_MESSAGE_PER_MINUTE=120`
 - `FILAMENT_E2EE_MAILBOX_TTL_SECS=2592000`
 - `FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS=60`
+- `FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS=300`
 
 Provision the Delivery Service seed once with a CSPRNG, mount it read-only as a
 container secret, and back it up under the same controls as other service

@@ -277,6 +277,24 @@ pub enum ExternalProposalAction {
     AwaitingPeerCommit,
 }
 
+/// Membership notification derived only after an MLS commit authenticates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedMembershipChange {
+    pub epoch: u64,
+    pub actor_user_id: UserId,
+    pub actor_device_id: DeviceId,
+    pub target_user_id: UserId,
+    pub target_device_ids: Vec<DeviceId>,
+    pub kind: AuthenticatedMembershipChangeKind,
+}
+
+/// Authenticated membership transition suitable for an in-conversation system row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthenticatedMembershipChangeKind {
+    Added,
+    Removed,
+}
+
 impl core::fmt::Debug for ExternalGroupProposal {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
@@ -849,7 +867,21 @@ impl MlsConversation {
     /// Returns [`ConversationError::NoPendingCommit`] if there is no staged
     /// commit or if merging/credential validation fails.
     pub fn accept_pending_commit(&mut self, device: &MlsDevice) -> Result<(), ConversationError> {
+        self.accept_pending_commit_with_membership(device)
+            .map(|_| ())
+    }
+
+    /// Merge an accepted local commit and return an authenticated membership row, if any.
+    ///
+    /// # Errors
+    /// Returns an error when no commit is pending, the device is not this
+    /// conversation's signer, or post-merge membership validation fails.
+    pub fn accept_pending_commit_with_membership(
+        &mut self,
+        device: &MlsDevice,
+    ) -> Result<Option<AuthenticatedMembershipChange>, ConversationError> {
         self.ensure_device(device)?;
+        let before = membership_snapshot(&self.group, &self.pinned_roots)?;
         let evicted_users = fully_removed_users(
             &self.group,
             self.group
@@ -871,7 +903,14 @@ impl MlsConversation {
             self.delivery_service,
         )?;
         self.prune_inbound_for_current_members()?;
-        Ok(())
+        let after = membership_snapshot(&self.group, &self.pinned_roots)?;
+        Ok(authenticated_membership_change(
+            self.group.epoch().as_u64(),
+            device.user_id(),
+            device.device_id(),
+            &before,
+            &after,
+        ))
     }
 
     /// Discard a locally-authored commit after a deterministic Delivery Service
@@ -1377,6 +1416,20 @@ impl MlsConversation {
         device: &MlsDevice,
         commit: &EncryptedGroupCommit,
     ) -> Result<(), ConversationError> {
+        self.process_incoming_commit_with_membership(device, commit)
+            .map(|_| ())
+    }
+
+    /// Authenticate and merge a peer commit, returning its membership effect only after merge.
+    ///
+    /// # Errors
+    /// Rejects invalid epochs, routing mismatches, untrusted credentials,
+    /// unsafe membership changes, pending local commits, and MLS failures.
+    pub fn process_incoming_commit_with_membership(
+        &mut self,
+        device: &MlsDevice,
+        commit: &EncryptedGroupCommit,
+    ) -> Result<Option<AuthenticatedMembershipChange>, ConversationError> {
         self.ensure_device(device)?;
         if !self.active {
             return Err(ConversationError::NotActive);
@@ -1384,8 +1437,22 @@ impl MlsConversation {
         if self.group.pending_commit().is_some() {
             return Err(ConversationError::PendingCommit);
         }
+        let before = membership_snapshot(&self.group, &self.pinned_roots)?;
         let protocol_message = self.validate_incoming_commit(commit)?;
-        self.merge_incoming_commit(device, commit, protocol_message)
+        let actor = before
+            .iter()
+            .find(|(_, device_id)| *device_id == commit.committer_device_id)
+            .copied()
+            .ok_or(ConversationError::MetadataMismatch)?;
+        self.merge_incoming_commit(device, commit, protocol_message)?;
+        let after = membership_snapshot(&self.group, &self.pinned_roots)?;
+        Ok(authenticated_membership_change(
+            commit.epoch,
+            actor.0,
+            actor.1,
+            &before,
+            &after,
+        ))
     }
 
     /// Authenticate and merge an Add commit for one newly pinned group-DM
@@ -1404,6 +1471,31 @@ impl MlsConversation {
         commit: &EncryptedGroupCommit,
         target: PinnedUserIdentity,
     ) -> Result<(), ConversationError> {
+        self.process_incoming_participant_add_with_membership(device, commit, target)
+            .map(|_| ())
+    }
+
+    /// Authenticate a pinned participant Add and return its authenticated UI notification.
+    ///
+    /// # Errors
+    /// Rejects non-group audiences, conflicting or absent pins, non-Add
+    /// commits, routing mismatches, group limits, and MLS failures.
+    pub fn process_incoming_participant_add_with_membership(
+        &mut self,
+        device: &MlsDevice,
+        commit: &EncryptedGroupCommit,
+        target: PinnedUserIdentity,
+    ) -> Result<AuthenticatedMembershipChange, ConversationError> {
+        self.process_incoming_participant_add_expected(device, commit, target, None)
+    }
+
+    pub(crate) fn process_incoming_participant_add_expected(
+        &mut self,
+        device: &MlsDevice,
+        commit: &EncryptedGroupCommit,
+        target: PinnedUserIdentity,
+        expected_device_id: Option<DeviceId>,
+    ) -> Result<AuthenticatedMembershipChange, ConversationError> {
         self.ensure_operational(device)?;
         if self.audience != ConversationAudience::GroupDm
             || self.pinned_roots.len() >= MAX_MLS_GROUP_USERS
@@ -1412,6 +1504,12 @@ impl MlsConversation {
         {
             return Err(ConversationError::UnexpectedMembership);
         }
+        let before = membership_snapshot(&self.group, &self.pinned_roots)?;
+        let actor = before
+            .iter()
+            .find(|(_, device_id)| *device_id == commit.committer_device_id)
+            .copied()
+            .ok_or(ConversationError::UnexpectedMembership)?;
         self.pinned_roots
             .insert(target.user_id, target.root_key_pub);
         let staged = self
@@ -1437,11 +1535,72 @@ impl MlsConversation {
                 )
                 .ok()
             });
-        if added.is_none_or(|member| member.user_id != target.user_id) {
+        if added.is_none_or(|member| {
+            member.user_id != target.user_id
+                || expected_device_id.is_some_and(|expected| member.device_id != expected)
+        }) {
             self.pinned_roots.remove(&target.user_id);
             return Err(ConversationError::UnexpectedMembership);
         }
-        self.merge_staged_incoming_commit(device, *staged)
+        self.merge_staged_incoming_commit(device, *staged)?;
+        let after = membership_snapshot(&self.group, &self.pinned_roots)?;
+        authenticated_membership_change(commit.epoch, actor.0, actor.1, &before, &after)
+            .filter(|change| change.kind == AuthenticatedMembershipChangeKind::Added)
+            .ok_or(ConversationError::UnexpectedMembership)
+    }
+
+    pub(crate) fn process_incoming_expected_remove(
+        &mut self,
+        device: &MlsDevice,
+        commit: &EncryptedGroupCommit,
+        expected_user_id: UserId,
+        expected_device_ids: &[DeviceId],
+    ) -> Result<AuthenticatedMembershipChange, ConversationError> {
+        self.ensure_device(device)?;
+        if !self.active {
+            return Err(ConversationError::NotActive);
+        }
+        if self.group.pending_commit().is_some() {
+            return Err(ConversationError::PendingCommit);
+        }
+        if expected_device_ids.is_empty() {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        let before = membership_snapshot(&self.group, &self.pinned_roots)?;
+        let actor = before
+            .iter()
+            .find(|(_, device_id)| *device_id == commit.committer_device_id)
+            .copied()
+            .ok_or(ConversationError::MetadataMismatch)?;
+        let protocol_message = self.validate_incoming_commit(commit)?;
+        let staged = self.stage_incoming_commit(device, commit, protocol_message)?;
+        let members = verified_members(&self.group, &self.pinned_roots)?;
+        let removed = staged
+            .remove_proposals()
+            .map(|proposal| {
+                let index = proposal.remove_proposal().removed();
+                members
+                    .iter()
+                    .find(|(member_index, _)| *member_index == index)
+                    .map(|(_, member)| (member.user_id, member.device_id))
+                    .ok_or(ConversationError::UnexpectedMembership)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if removed.len() != expected_device_ids.len()
+            || removed
+                .iter()
+                .any(|(user_id, _)| *user_id != expected_user_id)
+            || removed
+                .iter()
+                .any(|(_, device_id)| !expected_device_ids.contains(device_id))
+        {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        self.merge_staged_incoming_commit(device, *staged)?;
+        let after = membership_snapshot(&self.group, &self.pinned_roots)?;
+        authenticated_membership_change(commit.epoch, actor.0, actor.1, &before, &after)
+            .filter(|change| change.kind == AuthenticatedMembershipChangeKind::Removed)
+            .ok_or(ConversationError::UnexpectedMembership)
     }
 
     fn validate_incoming_commit(
@@ -2350,6 +2509,59 @@ fn validate_group(
     Ok(())
 }
 
+fn membership_snapshot(
+    group: &MlsGroup,
+    pinned_roots: &HashMap<UserId, [u8; 32]>,
+) -> Result<Vec<(UserId, DeviceId)>, ConversationError> {
+    let members = verified_members(group, pinned_roots)?
+        .into_iter()
+        .map(|(_, member)| (member.user_id, member.device_id))
+        .collect::<Vec<_>>();
+    Ok(members)
+}
+
+fn authenticated_membership_change(
+    epoch: u64,
+    actor_user_id: UserId,
+    actor_device_id: DeviceId,
+    before: &[(UserId, DeviceId)],
+    after: &[(UserId, DeviceId)],
+) -> Option<AuthenticatedMembershipChange> {
+    let added = after
+        .iter()
+        .copied()
+        .filter(|member| !before.contains(member))
+        .collect::<Vec<_>>();
+    let removed = before
+        .iter()
+        .copied()
+        .filter(|member| !after.contains(member))
+        .collect::<Vec<_>>();
+    let (kind, changed) = match (added.is_empty(), removed.is_empty()) {
+        (false, true) => (AuthenticatedMembershipChangeKind::Added, added),
+        (true, false) => (AuthenticatedMembershipChangeKind::Removed, removed),
+        _ => return None,
+    };
+    let target_user_id = changed.first()?.0;
+    if changed
+        .iter()
+        .any(|(user_id, _)| *user_id != target_user_id)
+    {
+        return None;
+    }
+    Some(AuthenticatedMembershipChange {
+        epoch,
+        actor_user_id,
+        actor_device_id,
+        target_user_id,
+        target_device_ids: changed
+            .into_iter()
+            .map(|(_, device_id)| device_id)
+            .collect(),
+        kind,
+    })
+}
+
 fn validate_staged_membership_change(
     group: &MlsGroup,
     staged_commit: &StagedCommit,
@@ -3121,7 +3333,16 @@ mod tests {
         let add_dave = alice_group
             .create_add_participant(&alice, dave_pin, &dave_package)
             .unwrap();
-        alice_group.accept_pending_commit(&alice).unwrap();
+        let added_notification = alice_group
+            .accept_pending_commit_with_membership(&alice)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            added_notification.kind,
+            AuthenticatedMembershipChangeKind::Added
+        );
+        assert_eq!(added_notification.actor_user_id, alice.user_id());
+        assert_eq!(added_notification.target_user_id, dave.user_id());
 
         // A server-delivered Add is rejected until Dave's root has been
         // independently pinned by this client.
@@ -3164,9 +3385,16 @@ mod tests {
             .create_remove_participant(&alice, bob.user_id())
             .unwrap();
         alice_group.accept_pending_commit(&alice).unwrap();
-        charlie_group
-            .process_incoming_commit(&charlie, &encrypted_commit(&remove_bob))
+        let removed_notification = charlie_group
+            .process_incoming_commit_with_membership(&charlie, &encrypted_commit(&remove_bob))
+            .unwrap()
             .unwrap();
+        assert_eq!(
+            removed_notification.kind,
+            AuthenticatedMembershipChangeKind::Removed
+        );
+        assert_eq!(removed_notification.target_user_id, bob.user_id());
+        assert_eq!(removed_notification.target_device_ids.len(), 2);
         dave_group
             .process_incoming_commit(&dave, &encrypted_commit(&remove_bob))
             .unwrap();
@@ -3976,6 +4204,79 @@ mod tests {
                 .and_then(|value| decode_application_payload(&value))
                 .unwrap_err(),
             ConversationError::InvalidApplicationMessage
+        );
+    }
+
+    #[test]
+    fn twenty_member_group_survives_delivery_and_membership_churn() {
+        let creator_root = RootIdentityKey::generate();
+        let creator = MlsDevice::generate(UserId::new(), DeviceId::new(), &creator_root).unwrap();
+        let creator_pin = PinnedUserIdentity::new(creator.user_id(), *creator.root_key_public());
+        let mut devices = Vec::new();
+        let mut pins = Vec::new();
+        let mut invitees = Vec::new();
+        for _ in 0..19 {
+            let root = RootIdentityKey::generate();
+            let device = MlsDevice::generate(UserId::new(), DeviceId::new(), &root).unwrap();
+            let pin = PinnedUserIdentity::new(device.user_id(), *device.root_key_public());
+            let package = generate_key_package_batch(&device, 1)
+                .unwrap()
+                .remove(0)
+                .blob;
+            devices.push(device);
+            pins.push(pin);
+            invitees.push((pin, package));
+        }
+        let group_id = FilamentGroupId::new();
+        let (mut creator_group, initial) =
+            MlsConversation::create_group(group_id, &creator, &invitees).unwrap();
+        creator_group.accept_pending_commit(&creator).unwrap();
+        let welcome = initial.welcome_blob.as_deref().unwrap();
+        let mut joined = Vec::new();
+        for (index, device) in devices.iter().enumerate() {
+            let peers = std::iter::once(creator_pin)
+                .chain(
+                    pins.iter()
+                        .enumerate()
+                        .filter_map(|(peer_index, pin)| (peer_index != index).then_some(*pin)),
+                )
+                .collect::<Vec<_>>();
+            joined.push(
+                MlsConversation::join_group_from_welcome(group_id, device, &peers, welcome)
+                    .unwrap(),
+            );
+        }
+        let message = creator_group
+            .encrypt_application_message(&creator, b"twenty-member delivery")
+            .unwrap();
+        for (device, group) in devices.iter().zip(joined.iter_mut()) {
+            assert_eq!(
+                group
+                    .decrypt_application_message(device, &message)
+                    .unwrap()
+                    .ready_messages[0]
+                    .plaintext,
+                b"twenty-member delivery"
+            );
+        }
+
+        let removed_user = devices.last().unwrap().user_id();
+        let removal = creator_group
+            .create_remove_participant(&creator, removed_user)
+            .unwrap();
+        creator_group.accept_pending_commit(&creator).unwrap();
+        for (device, group) in devices.iter().zip(joined.iter_mut()) {
+            group
+                .process_incoming_commit(device, &encrypted_commit(&removal))
+                .unwrap();
+        }
+        assert_eq!(
+            joined
+                .last_mut()
+                .unwrap()
+                .encrypt_application_message(devices.last().unwrap(), b"evicted")
+                .unwrap_err(),
+            ConversationError::NotActive
         );
     }
 }

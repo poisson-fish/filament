@@ -11,13 +11,15 @@ use filament_e2ee::{
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
     AckE2eeProposalsRequest, AckE2eeProposalsResponse, ClaimKeyPackageRequest,
-    ClaimKeyPackageResponse, CreateMlsConversationRequest, DeviceListResponse,
-    E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxResponse, GroupInfoResponse,
-    KeyPackageEntry, MlsConversationProvisionResponse, PostCommitRequest, PostCommitResponse,
-    PostMessageRequest, PostMessageResponse, PostProposalRequest, PostProposalResponse,
-    PublishDeviceCertificateRequest, RemoveDeviceResponse, RootIdentityDirectoryResponse,
-    RotateRootIdentityRequest, RotateRootIdentityResponse, UpgradeMlsConversationRequest,
-    UploadKeyPackagesRequest, UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    ClaimKeyPackageResponse, CreateMlsConversationRequest, CreateMlsGroupConversationRequest,
+    DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse,
+    E2eeProposalMailboxResponse, GroupInfoResponse, KeyPackageEntry,
+    MlsConversationProvisionResponse, MlsGroupInvite, MlsLeafRouting, MlsMembershipChange,
+    PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
+    PostProposalRequest, PostProposalResponse, PublishDeviceCertificateRequest,
+    RemoveDeviceResponse, RootIdentityDirectoryResponse, RotateRootIdentityRequest,
+    RotateRootIdentityResponse, UpgradeMlsConversationRequest, UploadKeyPackagesRequest,
+    UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use futures_util::StreamExt;
@@ -300,6 +302,54 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         StatusCode::OK
     );
 
+    let provisioned_group_request = CreateMlsGroupConversationRequest {
+        conversation_id: ConversationId::new().to_string(),
+        group_id: GroupId::new().to_string(),
+        suite_id: 3,
+        committer_device_id: alice_device_id.to_string(),
+        invitees: vec![
+            MlsGroupInvite {
+                user_id: bob_user_id.to_string(),
+                welcome_device_id: bob_device_id.to_string(),
+                leaf_index: 1,
+            },
+            MlsGroupInvite {
+                user_id: charlie_user_id.to_string(),
+                welcome_device_id: charlie_device_id.to_string(),
+                leaf_index: 2,
+            },
+        ],
+        commit_blob: vec![0x68; 256],
+        welcome_blob: vec![0x69; 192],
+        group_info_blob: vec![0x6A; 128],
+    };
+    let provisioned_group = send_json(
+        &app,
+        "POST",
+        "/e2ee/group-conversations",
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &provisioned_group_request,
+    )
+    .await;
+    assert_eq!(provisioned_group.status(), StatusCode::OK);
+    let provisioned_group: MlsConversationProvisionResponse = parse_json(provisioned_group).await;
+    assert_eq!(provisioned_group.epoch, 1);
+    let provisioned_group_retry = send_json(
+        &app,
+        "POST",
+        "/e2ee/group-conversations",
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &provisioned_group_request,
+    )
+    .await;
+    assert_eq!(provisioned_group_retry.status(), StatusCode::OK);
+    assert_eq!(
+        parse_json::<MlsConversationProvisionResponse>(provisioned_group_retry).await,
+        provisioned_group
+    );
+
     // Seed the server-side routing view for a three-user group. MLS interiors
     // remain opaque here; this exercises only bounded Delivery Service fanout.
     let group_conversation_id = ConversationId::new();
@@ -345,6 +395,24 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .execute(&mut *group_seed)
     .await
     .expect("group delivery MLS group should seed");
+    for (leaf_index, user_id, device_id) in [
+        (0_i32, alice_user_id, alice_device_id),
+        (1_i32, bob_user_id, bob_device_id),
+        (2_i32, charlie_user_id, charlie_device_id),
+    ] {
+        sqlx::query(
+            "INSERT INTO e2ee_group_leaves
+                (group_id, leaf_index, user_id, device_id, added_epoch)
+             VALUES ($1, $2, $3, $4, 1)",
+        )
+        .bind(group_delivery_id.to_string())
+        .bind(leaf_index)
+        .bind(user_id.to_string())
+        .bind(device_id.to_string())
+        .execute(&mut *group_seed)
+        .await
+        .expect("group delivery leaf should seed");
+    }
     group_seed
         .commit()
         .await
@@ -405,6 +473,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
             welcome_blob: None,
             welcome_device_id: None,
             group_info_blob: Some(vec![0x74; 128]),
+            membership_change: None,
         },
     )
     .await;
@@ -533,6 +602,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         welcome_blob: Some(vec![0xA2; 192]),
         welcome_device_id: Some(bob_device_id.to_string()),
         group_info_blob: Some(vec![0xA3; 128]),
+        membership_change: None,
     };
     let competing_commit = PostCommitRequest {
         commit_blob: vec![0xB1; 256],
@@ -1019,6 +1089,120 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     )
     .await;
     assert_eq!(spoofed_sender.status(), StatusCode::NOT_FOUND);
+
+    let remove_charlie = Request::builder()
+        .method("DELETE")
+        .uri(format!("/e2ee/devices/{charlie_device_id}"))
+        .header(
+            "authorization",
+            format!("Bearer {}", charlie_auth.access_token),
+        )
+        .header("x-forwarded-for", "203.0.113.183")
+        .body(Body::empty())
+        .expect("device removal request should build");
+    let remove_charlie = app
+        .clone()
+        .oneshot(remove_charlie)
+        .await
+        .expect("device removal should execute");
+    assert_eq!(remove_charlie.status(), StatusCode::OK);
+    let external_proposals = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{}/proposals?device_id={alice_device_id}",
+            provisioned_group.group_id
+        ))
+        .header(
+            "authorization",
+            format!("Bearer {}", alice_auth.access_token),
+        )
+        .header("x-forwarded-for", "203.0.113.181")
+        .body(Body::empty())
+        .expect("external proposal mailbox request should build");
+    let external_proposals = app
+        .clone()
+        .oneshot(external_proposals)
+        .await
+        .expect("external proposal mailbox should execute");
+    assert_eq!(external_proposals.status(), StatusCode::OK);
+    let external_proposals: E2eeProposalMailboxResponse = parse_json(external_proposals).await;
+    assert_eq!(external_proposals.proposals.len(), 1);
+    assert_eq!(external_proposals.proposals[0].proposer_device_id, None);
+    assert_eq!(
+        external_proposals.proposals[0].external_sender_index,
+        Some(0)
+    );
+    assert!(external_proposals.proposals[0]
+        .reconciliation_deadline_unix
+        .is_some());
+    let blocked_message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/messages", provisioned_group.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostMessageRequest {
+            epoch: 1,
+            suite_id: 3,
+            sender_device_id: alice_device_id.to_string(),
+            message_blob: vec![0xEE; 512],
+        },
+    )
+    .await;
+    assert_eq!(blocked_message.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        parse_json::<serde_json::Value>(blocked_message).await["error"],
+        "e2ee_membership_reconciliation_pending"
+    );
+    let eviction = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/commits", provisioned_group.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostCommitRequest {
+            epoch: 2,
+            prior_epoch: 1,
+            committer_device_id: alice_device_id.to_string(),
+            commit_blob: vec![0xEF; 256],
+            welcome_blob: None,
+            welcome_device_id: None,
+            group_info_blob: Some(vec![0xF0; 128]),
+            membership_change: Some(MlsMembershipChange::Remove {
+                leaves: vec![MlsLeafRouting {
+                    leaf_index: 2,
+                    user_id: charlie_user_id.to_string(),
+                    device_id: charlie_device_id.to_string(),
+                }],
+            }),
+        },
+    )
+    .await;
+    assert_eq!(eviction.status(), StatusCode::OK);
+    let completed_reconciliations: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM e2ee_membership_reconciliations
+         WHERE group_id = $1 AND completed_epoch = 2",
+    )
+    .bind(&provisioned_group.group_id)
+    .fetch_one(&audit_pool)
+    .await
+    .expect("completed reconciliation should be queryable");
+    assert_eq!(completed_reconciliations, 1);
+    let resumed_message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/messages", provisioned_group.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostMessageRequest {
+            epoch: 2,
+            suite_id: 3,
+            sender_device_id: alice_device_id.to_string(),
+            message_blob: vec![0xF1; 512],
+        },
+    )
+    .await;
+    assert_eq!(resumed_message.status(), StatusCode::OK);
 }
 
 fn postgres_url() -> Option<String> {
@@ -1034,7 +1218,20 @@ async fn test_app_with_e2ee_limits(
     device_publish_per_minute: u32,
     keypackage_claim_per_minute: u32,
 ) -> axum::Router {
-    build_router_with_db_bootstrap(&AppConfig {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    let delivery_service_key_path =
+        env::temp_dir().join(format!("filament-e2ee-integration-ds-{}", Ulid::new()));
+    std::fs::write(&delivery_service_key_path, [0x5A_u8; 32])
+        .expect("delivery service test key should write");
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        &delivery_service_key_path,
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .expect("delivery service test key permissions should be private");
+    let config = AppConfig {
         max_body_bytes: 512 * 1024,
         request_timeout: Duration::from_secs(5),
         rate_limit_requests_per_minute: 500,
@@ -1042,11 +1239,16 @@ async fn test_app_with_e2ee_limits(
         e2ee_device_publish_per_minute: device_publish_per_minute,
         e2ee_keypackage_claim_per_minute: keypackage_claim_per_minute,
         e2ee_mailbox_gc_interval: Duration::from_secs(1),
+        e2ee_delivery_service_key_file: Some(delivery_service_key_path.clone()),
         database_url: Some(database_url),
         ..AppConfig::default()
-    })
-    .await
-    .expect("router should build")
+    };
+    let router = build_router_with_db_bootstrap(&config)
+        .await
+        .expect("router should build");
+    std::fs::remove_file(delivery_service_key_path)
+        .expect("delivery service test key should be removed");
+    router
 }
 
 async fn parse_json<T: DeserializeOwned>(response: Response) -> T {

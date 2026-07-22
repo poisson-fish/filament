@@ -25,6 +25,7 @@ pub(crate) enum AuthFailure {
     E2eeCapabilityRequired,
     E2eeConversationConflict,
     EpochConflict,
+    E2eeMembershipReconciliationPending,
     Internal,
 }
 
@@ -55,6 +56,7 @@ impl IntoResponse for AuthFailure {
             | Self::E2eeCapabilityRequired
             | Self::E2eeConversationConflict
             | Self::EpochConflict
+            | Self::E2eeMembershipReconciliationPending
             | Self::Internal => {}
         }
 
@@ -157,6 +159,13 @@ impl IntoResponse for AuthFailure {
                 StatusCode::CONFLICT,
                 Json(AuthError {
                     error: "epoch_conflict",
+                }),
+            )
+                .into_response(),
+            Self::E2eeMembershipReconciliationPending => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "e2ee_membership_reconciliation_pending",
                 }),
             )
                 .into_response(),

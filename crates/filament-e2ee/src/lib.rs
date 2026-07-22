@@ -48,9 +48,12 @@ pub use application::{
     MAX_APPLICATION_EVENT_BYTES, MAX_CHAT_MESSAGE_BYTES, MAX_QUOTE_PREVIEW_BYTES,
     MAX_REACTION_CHARS,
 };
-pub use commit_mailbox::{process_commit_mailbox, CommitMailboxBatch, RejectedMailboxCommit};
+pub use commit_mailbox::{
+    process_commit_mailbox, process_group_commit_mailbox, CommitMailboxBatch, RejectedMailboxCommit,
+};
 pub use conversation::{
-    ConversationAudience, DecryptedApplicationMessage, DecryptionOutcome, DeliveryServiceIdentity,
+    AuthenticatedMembershipChange, AuthenticatedMembershipChangeKind, ConversationAudience,
+    DecryptedApplicationMessage, DecryptionOutcome, DeliveryServiceIdentity,
     EncryptedApplicationMessage, EncryptedGroupCommit, ExternalCommitRecoveryInfo,
     ExternalGroupProposal, ExternalProposalAction, MlsConversation, PendingCommitRebase,
     PendingGroupCommit, PinnedUserIdentity, MAX_APPLICATION_PLAINTEXT_BYTES,

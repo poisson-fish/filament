@@ -642,6 +642,19 @@ Explicitly upgrades an existing two-user plaintext conversation to MLS v1.
 - Exact retries are idempotent. A different group or bootstrap payload fails
   closed with `e2ee_conversation_conflict`.
 
+### `POST /e2ee/group-conversations`
+Atomically provisions a new 3–100-user MLS group DM.
+- Request: `{ "conversation_id", "group_id", "suite_id", "committer_device_id", "invitees": [{ "user_id", "welcome_device_id", "leaf_index" }], "commit_blob", "welcome_blob", "group_info_blob" }`
+- Invitees contain 2–99 distinct users and devices. Leaf indices must be the
+  contiguous range `1..N`; the creator's active committer device is leaf zero.
+- The shared MLS Welcome is stored once but returned only to the exact invitee
+  devices listed in the request. Conversation membership, leaf routing,
+  epoch-1 commit, Welcome recipients, and GroupInfo commit atomically.
+- Exact retries are idempotent. Identifier, leaf-map, or opaque bootstrap
+  conflicts fail with `e2ee_conversation_conflict`.
+- Provisioning requires the operator-configured Delivery Service identity;
+  clients fetch and pin it at external-sender index zero in the MLS Group Context.
+
 ### `GET /e2ee/groups/{group_id}/info`
 Returns the latest opaque `GroupInfo` for an authenticated member of an
 `mls_v1` conversation.
@@ -657,7 +670,7 @@ Returns the latest opaque `GroupInfo` for an authenticated member of an
 
 ### `POST /e2ee/groups/{group_id}/commits`
 Atomically orders one opaque MLS commit for an authenticated conversation member.
-- Request: `{ "epoch": 1, "prior_epoch": 0, "committer_device_id": "...", "commit_blob": [bytes], "welcome_blob"?: [bytes], "welcome_device_id"?: "...", "group_info_blob"?: [bytes] }`
+- Request: `{ "epoch": 1, "prior_epoch": 0, "committer_device_id": "...", "commit_blob": [bytes], "welcome_blob"?: [bytes], "welcome_device_id"?: "...", "group_info_blob"?: [bytes], "membership_change"?: { "kind": "add", "leaf": {...} } | { "kind": "remove", "leaves": [...] } }`
 - Response `200`: `{ "accepted": true, "epoch": 1 }`
 - The committer device must be active and owned by the authenticated user.
 - Commits must advance exactly one epoch. A row lock makes the first valid
@@ -671,8 +684,10 @@ Atomically orders one opaque MLS commit for an authenticated conversation member
   and the rejected Welcome must never be delivered.
 - Commit, Welcome, and GroupInfo blobs are never parsed and are each capped at
   `64 KiB`. The default per-IP/user/device/group rate is 30 commits/minute.
-- `welcome_blob` and `welcome_device_id` must be supplied together. The target
-  must be a distinct active device owned by a conversation member.
+- `welcome_blob` and `welcome_device_id` must be supplied together. An Add must
+  bind them to the exact new active certified leaf. Remove deltas must exactly
+  match current routing leaves, retain at least two users, and cannot carry a
+  Welcome. Clients treat the delta as untrusted until MLS authentication.
 - A recovery external commit is accepted by peers only when OpenMLS
   authenticates a `NewMemberCommit` whose update-path credential chains to one
   of the two pinned roots and matches the routed committer device. Its proposal
@@ -683,7 +698,7 @@ Atomically orders one opaque MLS commit for an authenticated conversation member
 ### `GET /e2ee/groups/{group_id}/commits`
 Returns opaque commits pending for one owned active device.
 - Query: `?device_id=<device ULID>&after_epoch=<epoch>&limit=<1..50>`
-- Response: `{ "commits": [{ "epoch", "prior_epoch", "committer_device_id", "commit_blob", "welcome_blob"?, "created_at_unix", "expires_at_unix" }], "next_after_epoch": 2 | null }`
+- Response: `{ "commits": [{ "epoch", "prior_epoch", "committer_device_id", "commit_blob", "welcome_blob"?, "membership_change"?, "created_at_unix", "expires_at_unix" }], "next_after_epoch": 2 | null }`
 - Active participant devices are snapshotted in the commit transaction; the
   committer is immediately marked delivered. A Welcome is returned only to
   its exact target device and is omitted from every other device's response.
@@ -725,10 +740,17 @@ Stores one member-authored opaque MLS proposal at the group's current epoch.
 ### `GET /e2ee/groups/{group_id}/proposals`
 Returns opaque proposals pending for one owned active device.
 - Query: `?device_id=<device ULID>&after_proposal_id=<proposal ULID>&limit=<1..50>`
-- Response: `{ "proposals": [{ "proposal_id", "epoch", "proposer_device_id", "proposal_blob", "created_at_unix", "expires_at_unix" }], "next_after_proposal_id": "..." | null }`
+- Response: `{ "proposals": [{ "proposal_id", "epoch", "proposer_device_id"?, "external_sender_index"?, "reconciliation_deadline_unix"?, "proposal_blob", "created_at_unix", "expires_at_unix" }], "next_after_proposal_id": "..." | null }`
 - Pages are capped at 50 records and `256 KiB` aggregate proposal bytes. New
   devices do not gain access to proposals created before their delivery
   snapshot. All routing fields remain untrusted until MLS authentication.
+- Tombstoning a routed device atomically queues a Delivery Service-signed
+  external Remove at sender index zero. Until a member commits a matching
+  eviction, application messages and unrelated commits fail with
+  `e2ee_membership_reconciliation_pending`. The deadline is bounded by
+  `FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS` (default five minutes,
+  maximum one hour). Without an external-sender key, tombstoning a routed
+  device fails closed before changing device state.
 
 ### `POST /e2ee/groups/{group_id}/proposals/ack`
 Acknowledges authenticated, durably stored proposals for one owned device.

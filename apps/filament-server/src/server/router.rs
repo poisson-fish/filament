@@ -32,18 +32,18 @@ use super::{
     auth::resolve_client_ip,
     core::{
         AppConfig, AppState, MAX_E2EE_MAILBOX_GC_INTERVAL_SECS, MAX_E2EE_MAILBOX_TTL_SECS,
-        MAX_LIVEKIT_TOKEN_TTL_SECS,
+        MAX_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS, MAX_LIVEKIT_TOKEN_TTL_SECS,
     },
     db::ensure_db_schema,
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
         e2ee::{
             ack_group_commits, ack_group_messages, ack_group_proposals, claim_keypackage,
-            create_mls_conversation, get_delivery_service_identity, get_group_commit_mailbox,
-            get_group_info, get_group_mailbox, get_group_proposal_mailbox, get_root_identity,
-            list_user_devices, post_group_commit, post_group_message, post_group_proposal,
-            publish_device_certificate, remove_device, rotate_root_identity,
-            upgrade_mls_conversation, upload_keypackages,
+            create_mls_conversation, create_mls_group_conversation, get_delivery_service_identity,
+            get_group_commit_mailbox, get_group_info, get_group_mailbox,
+            get_group_proposal_mailbox, get_root_identity, list_user_devices, post_group_commit,
+            post_group_message, post_group_proposal, publish_device_certificate, remove_device,
+            rotate_root_identity, upgrade_mls_conversation, upload_keypackages,
         },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
@@ -413,6 +413,14 @@ fn validate_e2ee_config(config: &AppConfig) -> anyhow::Result<()> {
             "E2EE mailbox GC interval must be between 1 and {MAX_E2EE_MAILBOX_GC_INTERVAL_SECS} seconds"
         ));
     }
+    if config.e2ee_membership_reconciliation_window.is_zero()
+        || config.e2ee_membership_reconciliation_window.as_secs()
+            > MAX_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS
+    {
+        return Err(anyhow!(
+            "E2EE membership reconciliation window must be between 1 and {MAX_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS} seconds"
+        ));
+    }
     Ok(())
 }
 
@@ -583,6 +591,10 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route("/e2ee/keypackages/claim", post(claim_keypackage))
         .route("/e2ee/conversations", post(create_mls_conversation))
         .route(
+            "/e2ee/group-conversations",
+            post(create_mls_group_conversation),
+        )
+        .route(
             "/e2ee/conversations/{conversation_id}/upgrade",
             post(upgrade_mls_conversation),
         )
@@ -700,5 +712,19 @@ mod tests {
             ..AppConfig::default()
         };
         assert!(validate_router_config(&zero_gc_interval).is_err());
+
+        let zero_reconciliation_window = AppConfig {
+            e2ee_membership_reconciliation_window: std::time::Duration::ZERO,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_reconciliation_window).is_err());
+
+        let oversized_reconciliation_window = AppConfig {
+            e2ee_membership_reconciliation_window: std::time::Duration::from_secs(
+                crate::server::core::MAX_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS + 1,
+            ),
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&oversized_reconciliation_window).is_err());
     }
 }

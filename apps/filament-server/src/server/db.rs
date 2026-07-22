@@ -11,6 +11,7 @@ use self::migrations::v14_e2ee_mailbox::apply_e2ee_mailbox_schema;
 use self::migrations::v15_e2ee_conversation_provisioning::apply_e2ee_conversation_provisioning_schema;
 use self::migrations::v16_e2ee_commit_mailbox::apply_e2ee_commit_mailbox_schema;
 use self::migrations::v17_e2ee_proposal_mailbox::apply_e2ee_proposal_mailbox_schema;
+use self::migrations::v18_e2ee_group_membership::apply_e2ee_group_membership_schema;
 use self::migrations::v1_hierarchical_permissions::backfill_hierarchical_permission_schema;
 pub(crate) use self::migrations::v1_hierarchical_permissions::seed_hierarchical_permissions_for_new_guild;
 use self::migrations::v2_attachment_schema::apply_attachment_schema;
@@ -64,6 +65,7 @@ pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure
             apply_e2ee_conversation_provisioning_schema(&mut tx).await?;
             apply_e2ee_commit_mailbox_schema(&mut tx).await?;
             apply_e2ee_proposal_mailbox_schema(&mut tx).await?;
+            apply_e2ee_group_membership_schema(&mut tx).await?;
 
             tx.commit().await?;
 

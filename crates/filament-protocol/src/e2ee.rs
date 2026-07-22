@@ -76,6 +76,15 @@ pub const MAX_E2EE_COMMIT_ACK_BATCH_SIZE: usize = 100;
 /// Maximum number of proposal IDs acknowledged in one request.
 pub const MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE: usize = 100;
 
+/// Maximum root identities in one group DM.
+pub const MAX_MLS_GROUP_USERS: usize = 100;
+
+/// Maximum certified device leaves in one group DM.
+pub const MAX_MLS_GROUP_LEAVES: usize = 200;
+
+/// Maximum leaves removed by one participant-removal commit.
+pub const MAX_MLS_REMOVED_LEAVES: usize = 100;
+
 /// Root-identity rotation wire protocol version.
 pub const ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION: u16 = 1;
 
@@ -428,6 +437,34 @@ where
     Ok(value)
 }
 
+fn deserialize_group_invitees<'de, D>(deserializer: D) -> Result<Vec<MlsGroupInvite>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<MlsGroupInvite>::deserialize(deserializer)?;
+    if !(2..MAX_MLS_GROUP_USERS).contains(&value.len()) {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"between 2 and 99 group invitees",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_removed_leaves<'de, D>(deserializer: D) -> Result<Vec<MlsLeafRouting>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<MlsLeafRouting>::deserialize(deserializer)?;
+    if value.is_empty() || value.len() > MAX_MLS_REMOVED_LEAVES {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"between 1 and 100 removed MLS leaves",
+        ));
+    }
+    Ok(value)
+}
+
 // ---------------------------------------------------------------------------
 // Device Certificate endpoints
 // ---------------------------------------------------------------------------
@@ -710,6 +747,59 @@ pub struct CreateMlsConversationRequest {
     pub group_info_blob: Vec<u8>,
 }
 
+/// One initial group-DM invitee and the exact device receiving the shared Welcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MlsGroupInvite {
+    pub user_id: String,
+    pub welcome_device_id: String,
+    /// Initial invitee leaf indices are contiguous from one.
+    pub leaf_index: u32,
+}
+
+/// Atomic bootstrap for a new 3–100-user MLS group DM.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateMlsGroupConversationRequest {
+    pub conversation_id: String,
+    pub group_id: String,
+    pub suite_id: u16,
+    pub committer_device_id: String,
+    #[serde(deserialize_with = "deserialize_group_invitees")]
+    pub invitees: Vec<MlsGroupInvite>,
+    #[serde(deserialize_with = "deserialize_commit_blob")]
+    pub commit_blob: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_bounded_welcome_blob")]
+    pub welcome_blob: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_group_info_blob")]
+    pub group_info_blob: Vec<u8>,
+}
+
+/// Server routing view for one root-certified MLS leaf.
+///
+/// Native clients authenticate the same mapping from MLS credentials before
+/// accepting a commit or displaying membership.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MlsLeafRouting {
+    pub leaf_index: u32,
+    pub user_id: String,
+    pub device_id: String,
+}
+
+/// Bounded routing delta attached to an opaque member-authored MLS commit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MlsMembershipChange {
+    Add {
+        leaf: MlsLeafRouting,
+    },
+    Remove {
+        #[serde(deserialize_with = "deserialize_removed_leaves")]
+        leaves: Vec<MlsLeafRouting>,
+    },
+}
+
 /// Atomic bootstrap fields for explicitly upgrading an existing plaintext
 /// two-user conversation to MLS v1.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -806,6 +896,9 @@ pub struct PostCommitRequest {
         deserialize_with = "deserialize_optional_group_info_blob"
     )]
     pub group_info_blob: Option<Vec<u8>>,
+    /// Optional routing delta. Peers authenticate it against the MLS commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership_change: Option<MlsMembershipChange>,
 }
 
 /// Response body for `POST /e2ee/groups/{group_id}/commits` — commit result.
@@ -867,8 +960,12 @@ pub struct E2eeProposalMailboxEntry {
     pub proposal_id: String,
     /// Epoch routing hint; clients verify it against authenticated MLS data.
     pub epoch: u64,
-    /// Proposer routing hint; clients verify it after MLS authentication.
-    pub proposer_device_id: String,
+    /// Member proposer routing hint; absent for the Delivery Service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposer_device_id: Option<String>,
+    /// Present only for the pinned Delivery Service external sender.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_sender_index: Option<u32>,
     /// Serialized MLS proposal, opaque to the server.
     #[serde(deserialize_with = "deserialize_proposal_blob")]
     pub proposal_blob: Vec<u8>,
@@ -876,6 +973,9 @@ pub struct E2eeProposalMailboxEntry {
     pub created_at_unix: i64,
     /// Unix timestamp (seconds) after which the server hard-deletes it.
     pub expires_at_unix: i64,
+    /// Deadline for a policy-required cryptographic eviction, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciliation_deadline_unix: Option<i64>,
 }
 
 /// Response for `GET /e2ee/groups/{group_id}/proposals`.
@@ -1043,6 +1143,9 @@ pub struct E2eeCommitMailboxEntry {
         deserialize_with = "deserialize_optional_welcome_blob"
     )]
     pub welcome_blob: Option<Vec<u8>>,
+    /// Untrusted routing delta; clients compare it with authenticated MLS state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership_change: Option<MlsMembershipChange>,
     /// Unix timestamp (seconds) when the server accepted the commit.
     pub created_at_unix: i64,
     /// Unix timestamp (seconds) after which the server hard-deletes it.
@@ -1160,9 +1263,29 @@ pub struct MlsProposalEvent {
     pub proposal_id: String,
     /// The epoch in which the proposal was made.
     pub epoch: u64,
-    /// The proposing device ID (ULID string).
-    pub proposer_device_id: String,
+    /// Member proposer routing hint; absent for the Delivery Service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposer_device_id: Option<String>,
+    /// Delivery Service external-sender index; absent for member proposals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_sender_index: Option<u32>,
+    /// Policy reconciliation deadline for external Remove proposals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciliation_deadline_unix: Option<i64>,
     /// Unix timestamp (seconds) when the proposal was received.
+    pub created_at_unix: i64,
+}
+
+/// Routing-only notification for a commit that may change group membership.
+/// Clients display it only after authenticating the matching MLS commit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MlsMembershipChangeEvent {
+    pub group_id: String,
+    pub conversation_id: String,
+    pub epoch: u64,
+    pub committer_device_id: String,
+    pub membership_change: MlsMembershipChange,
     pub created_at_unix: i64,
 }
 
@@ -1461,6 +1584,58 @@ mod tests {
     }
 
     #[test]
+    fn group_provisioning_and_membership_deltas_are_bounded() {
+        let invite = MlsGroupInvite {
+            user_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            welcome_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+            leaf_index: 1,
+        };
+        let request = CreateMlsGroupConversationRequest {
+            conversation_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+            group_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
+            suite_id: 3,
+            committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+            invitees: vec![
+                invite.clone(),
+                MlsGroupInvite {
+                    leaf_index: 2,
+                    ..invite.clone()
+                },
+            ],
+            commit_blob: vec![1],
+            welcome_blob: vec![2],
+            group_info_blob: vec![3],
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            serde_json::from_str::<CreateMlsGroupConversationRequest>(&json).unwrap(),
+            request
+        );
+        let too_few = CreateMlsGroupConversationRequest {
+            invitees: vec![invite.clone()],
+            ..request.clone()
+        };
+        assert!(serde_json::from_str::<CreateMlsGroupConversationRequest>(
+            &serde_json::to_string(&too_few).unwrap()
+        )
+        .is_err());
+        let oversized_remove = MlsMembershipChange::Remove {
+            leaves: vec![
+                MlsLeafRouting {
+                    leaf_index: 1,
+                    user_id: invite.user_id,
+                    device_id: invite.welcome_device_id,
+                };
+                MAX_MLS_REMOVED_LEAVES + 1
+            ],
+        };
+        assert!(serde_json::from_str::<MlsMembershipChange>(
+            &serde_json::to_string(&oversized_remove).unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
     fn post_commit_request_with_optional_welcome_round_trip() {
         let req = PostCommitRequest {
             epoch: 3,
@@ -1470,6 +1645,7 @@ mod tests {
             welcome_blob: Some(vec![0x02; 256]),
             welcome_device_id: Some(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW")),
             group_info_blob: None,
+            membership_change: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let parsed: PostCommitRequest = serde_json::from_str(&json).unwrap();
@@ -1501,7 +1677,9 @@ mod tests {
         let entry = E2eeProposalMailboxEntry {
             proposal_id: proposal_id.clone(),
             epoch: 2,
-            proposer_device_id: device_id.clone(),
+            proposer_device_id: Some(device_id.clone()),
+            external_sender_index: None,
+            reconciliation_deadline_unix: None,
             proposal_blob: vec![0x42; 512],
             created_at_unix: 1,
             expires_at_unix: 2,
@@ -1535,7 +1713,9 @@ mod tests {
         let oversized_entry = E2eeProposalMailboxEntry {
             proposal_id: String::from("proposal"),
             epoch: 1,
-            proposer_device_id: String::from("device"),
+            proposer_device_id: Some(String::from("device")),
+            external_sender_index: None,
+            reconciliation_deadline_unix: None,
             proposal_blob: vec![0x43; MAX_PROPOSAL_BYTES],
             created_at_unix: 1,
             expires_at_unix: 2,
@@ -1658,6 +1838,7 @@ mod tests {
             committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             commit_blob: vec![0xA1; 512],
             welcome_blob: Some(vec![0xA2; 256]),
+            membership_change: None,
             created_at_unix: 1,
             expires_at_unix: 2,
         };
@@ -1694,6 +1875,7 @@ mod tests {
             committer_device_id: String::from("device"),
             commit_blob: vec![0xA1; MAX_COMMIT_BYTES],
             welcome_blob: None,
+            membership_change: None,
             created_at_unix: 1,
             expires_at_unix: 2,
         };
@@ -1742,6 +1924,7 @@ mod tests {
             welcome_blob: None,
             welcome_device_id: None,
             group_info_blob: None,
+            membership_change: None,
         };
         let json = serde_json::to_string(&oversized_commit).unwrap();
         assert!(serde_json::from_str::<PostCommitRequest>(&json).is_err());
@@ -1754,6 +1937,7 @@ mod tests {
             welcome_blob: Some(vec![0x02; MAX_WELCOME_BYTES + 1]),
             welcome_device_id: Some(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW")),
             group_info_blob: None,
+            membership_change: None,
         };
         let json = serde_json::to_string(&oversized_welcome).unwrap();
         assert!(serde_json::from_str::<PostCommitRequest>(&json).is_err());
@@ -1837,7 +2021,9 @@ mod tests {
             conversation_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAVD"),
             proposal_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAVE"),
             epoch: 1,
-            proposer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAVF"),
+            proposer_device_id: Some(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAVF")),
+            external_sender_index: None,
+            reconciliation_deadline_unix: None,
             created_at_unix: 1_700_000_000,
         };
         let json = serde_json::to_string(&event).unwrap();

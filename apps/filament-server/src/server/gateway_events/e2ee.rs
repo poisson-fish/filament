@@ -1,7 +1,7 @@
 use filament_core::{DeviceId, UserId};
 use filament_protocol::{
-    DeviceListUpdateEvent, KeyPackageLowEvent, MlsCommitEvent, MlsMessageEvent, MlsProposalEvent,
-    MlsWelcomeEvent,
+    DeviceListUpdateEvent, KeyPackageLowEvent, MlsCommitEvent, MlsMembershipChangeEvent,
+    MlsMessageEvent, MlsProposalEvent, MlsWelcomeEvent,
 };
 
 use super::{envelope::try_build_event, GatewayEvent};
@@ -10,6 +10,7 @@ pub(crate) const DEVICE_LIST_UPDATE_EVENT: &str = "device_list_update";
 pub(crate) const KEYPACKAGE_LOW_EVENT: &str = "keypackage_low";
 pub(crate) const MLS_COMMIT_EVENT: &str = "mls_commit";
 pub(crate) const MLS_MESSAGE_EVENT: &str = "mls_message";
+pub(crate) const MLS_MEMBERSHIP_CHANGE_EVENT: &str = "mls_membership_change";
 pub(crate) const MLS_PROPOSAL_EVENT: &str = "mls_proposal";
 pub(crate) const MLS_WELCOME_EVENT: &str = "mls_welcome";
 
@@ -51,6 +52,12 @@ pub(crate) fn try_mls_commit(payload: MlsCommitEvent) -> anyhow::Result<GatewayE
 
 pub(crate) fn try_mls_message(payload: MlsMessageEvent) -> anyhow::Result<GatewayEvent> {
     try_build_event(MLS_MESSAGE_EVENT, payload)
+}
+
+pub(crate) fn try_mls_membership_change(
+    payload: MlsMembershipChangeEvent,
+) -> anyhow::Result<GatewayEvent> {
+    try_build_event(MLS_MEMBERSHIP_CHANGE_EVENT, payload)
 }
 
 pub(crate) fn try_mls_proposal(payload: MlsProposalEvent) -> anyhow::Result<GatewayEvent> {
@@ -144,7 +151,9 @@ mod tests {
                 conversation_id: String::from("c"),
                 proposal_id: String::from("p"),
                 epoch: 2,
-                proposer_device_id: String::from("d"),
+                proposer_device_id: Some(String::from("d")),
+                external_sender_index: None,
+                reconciliation_deadline_unix: None,
                 created_at_unix: 13,
             })
             .expect("event should serialize"),

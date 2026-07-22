@@ -11,6 +11,8 @@ use filament_server::{
 };
 use tokio::net::TcpListener;
 
+type E2eeRuntimeLimits = (u32, u32, u32, u32, usize, Duration, Duration, Duration);
+
 fn parse_usize_env_or_default(var_name: &str, default: usize) -> anyhow::Result<usize> {
     std::env::var(var_name).map_or_else(
         |_| Ok(default),
@@ -110,9 +112,7 @@ fn parse_directory_runtime_limits_from_env(
     ))
 }
 
-fn parse_e2ee_runtime_limits_from_env(
-    defaults: &AppConfig,
-) -> anyhow::Result<(u32, u32, u32, u32, usize, Duration, Duration)> {
+fn parse_e2ee_runtime_limits_from_env(defaults: &AppConfig) -> anyhow::Result<E2eeRuntimeLimits> {
     let device_publish_per_minute = parse_u32_env_or_default(
         "FILAMENT_E2EE_DEVICE_PUBLISH_PER_MINUTE",
         defaults.e2ee_device_publish_per_minute,
@@ -141,6 +141,10 @@ fn parse_e2ee_runtime_limits_from_env(
         "FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS",
         defaults.e2ee_mailbox_gc_interval.as_secs(),
     )?;
+    let membership_reconciliation_window_secs = parse_u64_env_or_default(
+        "FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS",
+        defaults.e2ee_membership_reconciliation_window.as_secs(),
+    )?;
     Ok((
         device_publish_per_minute,
         keypackage_claim_per_minute,
@@ -149,6 +153,7 @@ fn parse_e2ee_runtime_limits_from_env(
         max_keypackage_pool_size,
         Duration::from_secs(mailbox_ttl_secs),
         Duration::from_secs(mailbox_gc_interval_secs),
+        Duration::from_secs(membership_reconciliation_window_secs),
     ))
 }
 
@@ -245,6 +250,7 @@ async fn main() -> anyhow::Result<()> {
         e2ee_max_keypackage_pool_size,
         e2ee_mailbox_ttl,
         e2ee_mailbox_gc_interval,
+        e2ee_membership_reconciliation_window,
     ) = parse_e2ee_runtime_limits_from_env(&defaults)?;
     let server_owner_user_id = parse_server_owner_user_id_from_env(&defaults)?;
     let captcha_hcaptcha_site_key = parse_optional_nonempty_env("FILAMENT_HCAPTCHA_SITE_KEY");
@@ -274,6 +280,7 @@ async fn main() -> anyhow::Result<()> {
         e2ee_max_keypackage_pool_size,
         e2ee_mailbox_ttl,
         e2ee_mailbox_gc_interval,
+        e2ee_membership_reconciliation_window,
         trusted_proxy_cidrs,
         server_owner_user_id,
         captcha_hcaptcha_site_key,
@@ -462,6 +469,7 @@ mod tests {
         std::env::set_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE", "64");
         std::env::set_var("FILAMENT_E2EE_MAILBOX_TTL_SECS", "86400");
         std::env::set_var("FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS", "15");
+        std::env::set_var("FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS", "120");
 
         let parsed = parse_e2ee_runtime_limits_from_env(&AppConfig::default())
             .expect("E2EE runtime limits should parse");
@@ -473,6 +481,7 @@ mod tests {
         std::env::remove_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE");
         std::env::remove_var("FILAMENT_E2EE_MAILBOX_TTL_SECS");
         std::env::remove_var("FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS");
+        std::env::remove_var("FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS");
         assert_eq!(
             parsed,
             (
@@ -483,6 +492,7 @@ mod tests {
                 64,
                 Duration::from_secs(86400),
                 Duration::from_secs(15),
+                Duration::from_secs(120),
             )
         );
     }

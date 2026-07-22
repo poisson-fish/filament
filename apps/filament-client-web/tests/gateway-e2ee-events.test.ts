@@ -124,11 +124,47 @@ describe("E2EE gateway events", () => {
       proposalId: PROPOSAL_ID,
       epoch: 2,
       proposerDeviceId: DEVICE_ID,
+      externalSenderIndex: null,
+      reconciliationDeadlineUnix: null,
       createdAtUnix: 1_710_000_005,
     });
     expect(decodeE2eeGatewayEvent("mls_proposal", {
       ...proposalPayload,
       proposal_blob: [1, 2, 3],
     })).toBeNull();
+
+    expect(decodeE2eeGatewayEvent("mls_proposal", {
+      group_id: GROUP_ID,
+      conversation_id: CONVERSATION_ID,
+      proposal_id: PROPOSAL_ID,
+      epoch: 2,
+      external_sender_index: 0,
+      reconciliation_deadline_unix: 1_710_000_100,
+      created_at_unix: 1_710_000_005,
+    })?.payload).toMatchObject({
+      proposerDeviceId: null,
+      externalSenderIndex: 0,
+      reconciliationDeadlineUnix: 1_710_000_100,
+    });
+
+    const onMlsMembershipChange = vi.fn();
+    expect(dispatchE2eeGatewayEvent("mls_membership_change", {
+      group_id: GROUP_ID,
+      conversation_id: CONVERSATION_ID,
+      epoch: 3,
+      committer_device_id: DEVICE_ID,
+      membership_change: {
+        kind: "remove",
+        leaves: [{ leaf_index: 2, user_id: USER_ID, device_id: DEVICE_ID }],
+      },
+      created_at_unix: 1_710_000_006,
+    }, { onMlsMembershipChange })).toBe(true);
+    expect(onMlsMembershipChange).toHaveBeenCalledWith(expect.objectContaining({
+      epoch: 3,
+      membershipChange: {
+        kind: "remove",
+        leaves: [{ leafIndex: 2, userId: USER_ID, deviceId: DEVICE_ID }],
+      },
+    }));
   });
 });
