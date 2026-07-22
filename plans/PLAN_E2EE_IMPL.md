@@ -191,9 +191,14 @@ only after acceptance-gated commit merge. Peer agreement, self-update rekey,
 and post-removal export denial are covered by native tests. A bounded periodic
 rekey scheduler stages ordinary MLS self-update commits at 60–3,600-second
 intervals (900 seconds by default) and resets after any authenticated epoch
-advance. No frame-encryption construction was invented: reviewed SFrame,
-LiveKit/native media integration, platform verification, and end-to-end frame
-tests remain required before media can be enabled.
+advance. An optional in-crate bridge now installs those secrets into LiveKit's
+native libwebrtc AES-GCM frame-cryptor key provider with HKDF, opaque key
+custody, strict same-group sequential epoch rotation, and no IPC surface.
+Native cryptor tests verify endpoint agreement, opaque ciphertext relay, and
+post-rotation exclusion for a peer without the new MLS exporter. No
+frame-encryption construction was invented. RTP sender/receiver attachment,
+real SFU tests, platform verification, and end-to-end media tests remain
+required before media can be enabled.
 
 ---
 
@@ -786,10 +791,13 @@ blocked for inactive/evicted devices; staged commits retain the old media epoch
 until Delivery Service acceptance, while accepted membership and self-update
 commits deterministically rotate peer-matching exporter secrets. A secret-free,
 bounded periodic scheduler stages the existing acceptance-gated MLS
-self-update path and fails closed on pending commits or timestamp overflow.
-This is key scheduling only: calls remain disabled until reviewed SFrame frame
-protection, native media/LiveKit wiring, and the platform verification matrix
-land.
+self-update path and fails closed on pending commits or timestamp overflow. An
+optional `livekit-media` bridge installs the exporter directly into LiveKit's
+native libwebrtc AES-GCM frame-cryptor provider. The provider stays opaque,
+uses HKDF, and rotates only for the exact next authenticated MLS epoch of the
+same group. Native cryptor tests cover peer decryption, ciphertext-only relay,
+wrong-key rejection, and post-rotation exclusion. Calls remain disabled until
+native RTP wiring, real SFU tests, and the platform verification matrix land.
 
 ### Deliverables
 

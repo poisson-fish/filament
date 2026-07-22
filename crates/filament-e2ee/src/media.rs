@@ -93,6 +93,11 @@ impl MediaEpochSecret {
         self.epoch
     }
 
+    #[cfg(feature = "livekit-media")]
+    pub(crate) fn key_bytes(&self) -> &[u8; MEDIA_EXPORTER_SECRET_BYTES] {
+        &self.secret
+    }
+
     #[cfg(test)]
     pub(crate) fn secret(&self) -> &[u8; MEDIA_EXPORTER_SECRET_BYTES] {
         &self.secret

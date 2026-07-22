@@ -329,9 +329,15 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - Periodic media self-updates are acceptance-gated and bounded to intervals of
   60–3,600 seconds (900 seconds by default). A membership or other
   authenticated epoch advance resets that deadline.
-- This exporter boundary is not itself frame protection. Production media
-  remains disabled until a reviewed SFrame implementation consumes the handle;
-  Filament does not define a bespoke frame-encryption construction.
+- The optional `livekit-media` build installs the exporter bytes directly into
+  LiveKit's Apache-2.0 native libwebrtc AES-GCM frame-cryptor key provider. The
+  provider is opaque outside the E2EE crate, uses HKDF, rejects failed key
+  installation, and accepts only the exact next epoch for the same group. Its
+  256 key indexes are transport slots, not an independent epoch or ratchet.
+- The key-provider bridge is not yet an RTP media path. Production E2EE media
+  remains disabled until the provider is attached to native RTP senders and
+  receivers, the SFU path is exercised end to end, and the platform matrix is
+  complete. Filament does not define a bespoke frame-encryption construction.
 - Insertable-streams support must be verified per webview target (WebView2, WKWebView, WebKitGTK) before media E2EE ships on that platform; where a webview lacks support, the required fallback is a native WebRTC media path in the host layer — never unencrypted media.
 
 ### Directory Audit (E2EE)

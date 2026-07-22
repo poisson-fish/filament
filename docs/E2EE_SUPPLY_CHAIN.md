@@ -23,6 +23,7 @@ The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9
 | `openmls_traits` | 0.5.0 + pinned upstream fix | MIT | Direct access to the approved provider traits used by device pairing |
 | `rusqlite` | 0.39.0 | MIT | Rust SQLCipher bindings for the device-local encrypted store |
 | `keyring` | 4.1.5 | MIT/Apache-2.0 | Cross-platform Keychain, Credential Manager, and Secret Service access |
+| `libwebrtc` | 0.3.42 | Apache-2.0 | Optional LiveKit native WebRTC/frame-cryptor bridge for Phase 5 media E2EE |
 
 ### Key Transitive Dependencies
 
@@ -42,6 +43,7 @@ The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9
 | SQLCipher / `libsqlite3-sys` | BSD-style / MIT | Bundled encrypted SQLite implementation and bindings | Allowed licenses |
 | OpenSSL 3 / `openssl-src` / `openssl-sys` | Apache-2.0 and MIT/Apache-2.0 wrapper crates | Vendored SQLCipher crypto provider for consistent desktop builds | Allowed licenses |
 | `keyring-core` and native store backends | MIT/Apache-2.0 | Platform credential-store adapters | Allowed licenses |
+| `webrtc-sys` / `webrtc-sys-build` | Apache-2.0 | LiveKit's generated native libwebrtc bindings and pinned artifact builder | Allowed licenses; pending formal source audit |
 
 The general `cargo-deny.toml` allowlist remains limited to MIT, Apache-2.0,
 BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, and Zlib. MPL-2.0 is allowed only
@@ -69,6 +71,12 @@ resolved as follows:
 - The previous LiveKit access-token stack enabled the unused `rsa 0.9.10`
   implementation. Upgrading to `livekit-api 0.5.6` selected LiveKit's HMAC-only
   JWT provider and removed that dependency and advisory without an ignore.
+- Phase 5's optional `livekit-media` feature pins `libwebrtc 0.3.42`, the
+  Apache-2.0 native component published by the existing LiveKit SDK vendor.
+  Filament uses its AES-GCM frame-cryptor key provider instead of defining a
+  media cipher. The new package set passes the advisory and license/source
+  gates. Cargo-vet exemptions record dependency intake, not a completed source
+  audit; formal media-stack review remains a Phase 7 gate.
 
 The Git patch is temporary. It must be removed in favor of crates.io packages
 when OpenMLS publishes a release containing the same dependency fix.

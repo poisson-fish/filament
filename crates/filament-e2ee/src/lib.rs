@@ -38,6 +38,8 @@ pub mod history_sync;
 pub mod identity;
 pub mod keypackage;
 pub mod keystore;
+#[cfg(feature = "livekit-media")]
+mod livekit_media;
 pub mod local_search;
 pub mod mailbox;
 pub mod media;
@@ -108,6 +110,8 @@ pub use keystore::{
     StoreKey, StoreKeyProvider, MAX_STORE_BATCH_ENTRIES, MAX_STORE_ENTRIES, MAX_STORE_KEY_BYTES,
     MAX_STORE_VALUE_BYTES, STORE_ENCRYPTION_KEY_BYTES,
 };
+#[cfg(feature = "livekit-media")]
+pub use livekit_media::LiveKitMediaKeyring;
 pub use local_search::{
     LocalSearchHit, LocalSearchIndex, LocalSearchQuery, MAX_LOCAL_SEARCH_QUERY_BYTES,
     MAX_LOCAL_SEARCH_QUERY_TERMS, MAX_LOCAL_SEARCH_RESULTS,

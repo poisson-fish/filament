@@ -19,6 +19,10 @@ audit-as-crates-io = true
 [policy.openmls_traits]
 audit-as-crates-io = true
 
+[[exemptions.adler2]]
+version = "2.0.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.aead]]
 version = "0.5.2"
 criteria = "safe-to-deploy"
@@ -252,6 +256,10 @@ criteria = "safe-to-deploy"
 version = "0.5.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.codespan-reporting]]
+version = "0.13.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.combine]]
 version = "4.6.7"
 criteria = "safe-to-deploy"
@@ -362,6 +370,22 @@ criteria = "safe-to-deploy"
 
 [[exemptions.curve25519-dalek-derive]]
 version = "0.1.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.cxx]]
+version = "1.0.198"
+criteria = "safe-to-deploy"
+
+[[exemptions.cxx-build]]
+version = "1.0.198"
+criteria = "safe-to-deploy"
+
+[[exemptions.cxxbridge-flags]]
+version = "1.0.198"
+criteria = "safe-to-deploy"
+
+[[exemptions.cxxbridge-macro]]
+version = "1.0.198"
 criteria = "safe-to-deploy"
 
 [[exemptions.darling]]
@@ -516,6 +540,10 @@ criteria = "safe-to-deploy"
 version = "0.4.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.flate2]]
+version = "1.1.9"
+criteria = "safe-to-deploy"
+
 [[exemptions.fnv]]
 version = "1.0.7"
 criteria = "safe-to-deploy"
@@ -534,6 +562,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.forwarded-header-value]]
 version = "0.1.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.fs2]]
+version = "0.4.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.fs4]]
@@ -991,6 +1023,15 @@ version = "0.37.0"
 criteria = "safe-to-deploy"
 notes = "Phase 1 E2EE inventory: MIT bindings that vendor SQLCipher for deterministic desktop builds; SQLCipher is permissively licensed. Pending formal source audit."
 
+[[exemptions.libwebrtc]]
+version = "0.3.42"
+criteria = "safe-to-deploy"
+notes = "Phase 5 E2EE inventory: Apache-2.0 LiveKit native WebRTC/frame-cryptor component, pinned exactly and used only behind the livekit-media feature. Pending formal source audit."
+
+[[exemptions.link-cplusplus]]
+version = "1.0.12"
+criteria = "safe-to-deploy"
+
 [[exemptions.linux-raw-sys]]
 version = "0.11.0"
 criteria = "safe-to-deploy"
@@ -1073,6 +1114,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.minimal-lexical]]
 version = "0.2.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.miniz_oxide]]
+version = "0.8.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.mio]]
@@ -1554,6 +1599,10 @@ criteria = "safe-to-deploy"
 version = "0.1.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.rtrb]]
+version = "0.3.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.rusqlite]]
 version = "0.39.0"
 criteria = "safe-to-deploy"
@@ -1609,6 +1658,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.scopeguard]]
 version = "1.2.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.scratch]]
+version = "1.0.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.sec1]]
@@ -1706,6 +1759,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.signature]]
 version = "3.0.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.simd-adler32]]
+version = "0.3.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.sketches-ddsketch]]
@@ -1834,6 +1891,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]
 version = "3.25.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.termcolor]]
+version = "1.4.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.thiserror]]
@@ -2021,6 +2082,10 @@ criteria = "safe-to-deploy"
 version = "0.1.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.unicode-width]]
+version = "0.2.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.unicode-xid]]
 version = "0.2.6"
 criteria = "safe-to-deploy"
@@ -2128,6 +2193,16 @@ criteria = "safe-to-deploy"
 [[exemptions.web-time]]
 version = "1.1.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.webrtc-sys]]
+version = "0.3.39"
+criteria = "safe-to-deploy"
+notes = "Phase 5 E2EE inventory: Apache-2.0 generated native bindings selected by libwebrtc 0.3.42. Pending formal source audit."
+
+[[exemptions.webrtc-sys-build]]
+version = "0.3.18"
+criteria = "safe-to-deploy"
+notes = "Phase 5 E2EE inventory: Apache-2.0 pinned-artifact build helper selected by libwebrtc 0.3.42. Pending formal source audit."
 
 [[exemptions.whoami]]
 version = "1.6.1"
@@ -2442,6 +2517,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zerovec-derive]]
 version = "0.11.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.zip]]
+version = "0.6.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.zmij]]

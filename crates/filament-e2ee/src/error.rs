@@ -206,6 +206,12 @@ pub enum MediaError {
     /// A rekey deadline cannot be represented safely.
     #[error("media rekey deadline overflow")]
     TimestampOverflow,
+    /// A native media key was presented out of MLS epoch order.
+    #[error("media epoch transition is invalid")]
+    InvalidEpochTransition,
+    /// The reviewed native frame cryptor rejected key installation.
+    #[error("native media key installation failed")]
+    KeyInstallationFailed,
     /// The authenticated MLS conversation could not export or advance state.
     #[error(transparent)]
     Conversation(ConversationError),

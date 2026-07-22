@@ -128,9 +128,12 @@ Configuration sources:
   tokens. No E2EE query or hit is sent to the Filament server.
 - Media key scheduling is native-only. The MLS exporter secret is held in an
   opaque, zeroizing Rust value and is never part of an IPC request or response.
-  Only group/epoch metadata may be surfaced to UI code. A reviewed native
-  SFrame adapter must consume the secret before encrypted calling is enabled;
-  the webview cannot request or copy raw media key material.
+  Only group/epoch metadata may be surfaced to UI code. With the optional
+  `livekit-media` feature, an in-crate bridge installs the key into LiveKit's
+  native libwebrtc frame-cryptor provider with no raw-key getter. Rotation is
+  group-bound and accepts exactly the next authenticated MLS epoch. This bridge
+  is not exposed as an IPC command and does not yet enable calls; native RTP
+  attachment and end-to-end SFU verification remain required.
 - The key-isolation audit and negative-test inventory are recorded in
   `docs/E2EE_KEY_ISOLATION_AUDIT.md`.
 
