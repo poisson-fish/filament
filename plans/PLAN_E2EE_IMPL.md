@@ -797,7 +797,12 @@ native libwebrtc AES-GCM frame-cryptor provider. The provider stays opaque,
 uses HKDF, and rotates only for the exact next authenticated MLS epoch of the
 same group. Native cryptor tests cover peer decryption, ciphertext-only relay,
 wrong-key rejection, and post-rotation exclusion. Calls remain disabled until
-native RTP wiring, real SFU tests, and the platform verification matrix land.
+real SFU tests and the platform verification matrix land. The bridge now owns
+bounded native RTP sender/receiver bindings, enables encryption before a track
+may publish or render, rejects duplicate/invalid bindings, and advances every
+attached cryptor's key index only after the next authenticated MLS epoch key is
+installed. It exposes no provider, cryptor, raw key, or encryption-disable API.
+LiveKit room lifecycle integration remains before calls can be enabled.
 
 ### Deliverables
 

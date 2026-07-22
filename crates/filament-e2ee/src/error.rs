@@ -200,6 +200,15 @@ pub enum AttachmentError {
 /// Errors from MLS-bound media key scheduling.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MediaError {
+    /// A native media track identifier violated its domain invariants.
+    #[error("native media track identifier is invalid")]
+    InvalidTrackId,
+    /// The same native sender or receiver binding was attached more than once.
+    #[error("native media track is already attached")]
+    DuplicateTrack,
+    /// A call attempted to attach more native media tracks than the hard cap.
+    #[error("native media track limit exceeded")]
+    TrackLimitExceeded,
     /// The periodic update interval falls outside the hard security bounds.
     #[error("media rekey interval is invalid")]
     InvalidRekeyInterval,

@@ -131,9 +131,14 @@ Configuration sources:
   Only group/epoch metadata may be surfaced to UI code. With the optional
   `livekit-media` feature, an in-crate bridge installs the key into LiveKit's
   native libwebrtc frame-cryptor provider with no raw-key getter. Rotation is
-  group-bound and accepts exactly the next authenticated MLS epoch. This bridge
-  is not exposed as an IPC command and does not yet enable calls; native RTP
-  attachment and end-to-end SFU verification remain required.
+  group-bound and accepts exactly the next authenticated MLS epoch. The bridge
+  owns a bounded set of native RTP sender/receiver cryptors, enables each one
+  before publish/render is permitted, and advances every binding to the newly
+  installed key index after authenticated rotation. It exposes neither the
+  provider/cryptors nor a disable-encryption switch. This bridge is not exposed
+  as an IPC command and does not yet enable calls; LiveKit room lifecycle
+  integration, end-to-end SFU verification, and platform verification remain
+  required.
 - The key-isolation audit and negative-test inventory are recorded in
   `docs/E2EE_KEY_ISOLATION_AUDIT.md`.
 

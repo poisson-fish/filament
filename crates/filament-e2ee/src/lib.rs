@@ -111,7 +111,10 @@ pub use keystore::{
     MAX_STORE_VALUE_BYTES, STORE_ENCRYPTION_KEY_BYTES,
 };
 #[cfg(feature = "livekit-media")]
-pub use livekit_media::LiveKitMediaKeyring;
+pub use livekit_media::{
+    LiveKitMediaKeyring, LiveKitMediaTrackId, MAX_LIVEKIT_MEDIA_TRACKS,
+    MAX_LIVEKIT_MEDIA_TRACK_ID_BYTES,
+};
 pub use local_search::{
     LocalSearchHit, LocalSearchIndex, LocalSearchQuery, MAX_LOCAL_SEARCH_QUERY_BYTES,
     MAX_LOCAL_SEARCH_QUERY_TERMS, MAX_LOCAL_SEARCH_RESULTS,
