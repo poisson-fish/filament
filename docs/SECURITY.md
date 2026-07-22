@@ -209,6 +209,16 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 
 ### Moderation Contract (E2EE)
 - The server is registered as an MLS external sender authorized to propose `Remove` only; clients hard-reject externally proposed `Add`s. The server can shrink a group's read audience, never grow it.
+- Group DMs pin exactly one Delivery Service Ed25519 public key in the MLS
+  `ExternalSenders` Group Context extension at index zero. Proposal routing
+  fields are hints only: OpenMLS verifies the proposal signature and epoch,
+  then the native core admits only a single-leaf `Remove` before proposal
+  storage. External `Add`, `Update`, context changes, malformed proposals, and
+  signatures from substituted keys fail closed without pending state.
+- A non-target member immediately stages the authenticated Remove in an
+  acceptance-gated member commit. The target stores the authenticated proposal
+  without attempting to commit its own removal, allowing it to authenticate
+  the winning referenced-proposal commit and become cryptographically inactive.
 - Kick/ban/role-loss produce Remove commits (cryptographic eviction). Policy enforcement acts immediately (routing stops); eviction lands at the next commit within a bounded window, or clients block sends in that group.
 - Workspace policy gate: `encrypted_channel_policy = disabled | require_moderator_membership | unrestricted` (per workspace, optionally per category).
 - User reports package the reporter's decrypted copies plus envelope references, with explicit reporter-side disclosure in UX.

@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use ed25519_dalek::VerifyingKey;
 use filament_core::{
     CiphersuiteId, ConversationCrypto, DeviceCertificate, DeviceId, GroupId as FilamentGroupId,
     UserId,
@@ -31,6 +32,8 @@ const MESSAGE_TRANSPORT_PADDING_BUCKETS: [usize; 4] = [512, 1_024, 4_096, 16_384
 const MAX_WELCOME_BYTES: usize = 65_536;
 const MAX_COMMIT_BYTES: usize = 65_536;
 const MAX_GROUP_INFO_BYTES: usize = 65_536;
+const MAX_EXTERNAL_PROPOSAL_BYTES: usize = 65_536;
+const DELIVERY_SERVICE_CREDENTIAL: &[u8] = b"filament-delivery-service-v1";
 /// Maximum MLS leaves in one conversation.
 pub const MAX_MLS_GROUP_LEAVES: usize = 200;
 /// Maximum root-identity users in one group DM.
@@ -56,6 +59,46 @@ pub struct PinnedUserIdentity {
     pub user_id: UserId,
     /// Ed25519 root identity public key.
     pub root_key_pub: [u8; 32],
+}
+
+/// Pinned Ed25519 identity for the MLS Delivery Service external sender.
+///
+/// This public key is supplied by authenticated server configuration, not by
+/// an individual proposal. Group DMs register exactly one such sender at
+/// extension index zero. Filament authorizes it only for Remove proposals.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct DeliveryServiceIdentity {
+    signature_key: [u8; 32],
+}
+
+impl DeliveryServiceIdentity {
+    /// Construct a pinned Delivery Service identity from a valid Ed25519 key.
+    ///
+    /// # Errors
+    /// Rejects encodings that are not valid, prime-order Ed25519 verifying keys.
+    pub fn try_new(signature_key: [u8; 32]) -> Result<Self, ConversationError> {
+        let verifying_key = VerifyingKey::from_bytes(&signature_key)
+            .map_err(|_| ConversationError::UntrustedCredential)?;
+        if verifying_key.is_weak() {
+            return Err(ConversationError::UntrustedCredential);
+        }
+        Ok(Self { signature_key })
+    }
+
+    /// Return the pinned Ed25519 public key.
+    #[must_use]
+    pub const fn signature_key(&self) -> &[u8; 32] {
+        &self.signature_key
+    }
+}
+
+impl core::fmt::Debug for DeliveryServiceIdentity {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("DeliveryServiceIdentity")
+            .field("signature_key", &"<public key omitted>")
+            .finish()
+    }
 }
 
 /// Locally enforced audience policy for an MLS conversation.
@@ -213,6 +256,38 @@ pub struct EncryptedGroupCommit {
     pub commit_blob: Vec<u8>,
 }
 
+/// Authenticated MLS proposal plus untrusted Delivery Service routing hints.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ExternalGroupProposal {
+    /// Locally pinned group identifier.
+    pub group_id: FilamentGroupId,
+    /// Epoch in which the proposal was signed.
+    pub epoch: u64,
+    /// TLS-serialized MLS PublicMessage containing the proposal.
+    pub proposal_blob: Vec<u8>,
+}
+
+/// Action produced after authenticating an external Remove proposal.
+#[derive(Debug)]
+pub enum ExternalProposalAction {
+    /// This device staged a member-authored commit for server acceptance.
+    Commit(PendingGroupCommit),
+    /// This device is the removal target and retained the authenticated
+    /// proposal so it can authenticate the winning peer commit by reference.
+    AwaitingPeerCommit,
+}
+
+impl core::fmt::Debug for ExternalGroupProposal {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ExternalGroupProposal")
+            .field("group_id", &self.group_id)
+            .field("epoch", &self.epoch)
+            .field("proposal_bytes", &self.proposal_blob.len())
+            .finish()
+    }
+}
+
 impl core::fmt::Debug for EncryptedGroupCommit {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
@@ -300,6 +375,7 @@ pub struct MlsConversation {
     own_device_id: DeviceId,
     audience: ConversationAudience,
     pinned_roots: HashMap<UserId, [u8; 32]>,
+    delivery_service: Option<DeliveryServiceIdentity>,
     outbound_generation: u64,
     inbound: HashMap<DeviceId, InboundGenerationQueue>,
     active: bool,
@@ -375,13 +451,20 @@ impl MlsConversation {
             .ok_or(ConversationError::LimitExceeded)?;
         let audience = self.audience;
         let pinned_roots = self.pinned_roots;
+        let delivery_service = self.delivery_service;
         if group.group_id().as_slice() != recovery.group_id.to_string().as_bytes()
             || group.epoch().as_u64() != expected_epoch
             || group.ciphersuite() != CIPHERSUITE
         {
             return Err(ConversationError::MetadataMismatch);
         }
-        validate_group(&group, &pinned_roots, audience, Some(device.device_id()))?;
+        validate_group(
+            &group,
+            &pinned_roots,
+            audience,
+            Some(device.device_id()),
+            delivery_service,
+        )?;
 
         let (commit, welcome, group_info) = bundle.into_contents();
         if welcome.is_some() {
@@ -414,6 +497,7 @@ impl MlsConversation {
             own_device_id: device.device_id(),
             audience,
             pinned_roots,
+            delivery_service,
             outbound_generation: self.outbound_generation,
             inbound: self.inbound,
             active: true,
@@ -440,6 +524,7 @@ impl MlsConversation {
             device,
             ConversationAudience::DirectMessage,
             &[(peer, peer_keypackage_blob)],
+            None,
         )
     }
 
@@ -461,7 +546,41 @@ impl MlsConversation {
             .iter()
             .map(|(identity, blob)| (*identity, blob.as_slice()))
             .collect::<Vec<_>>();
-        Self::create_with_members(group_id, device, ConversationAudience::GroupDm, &borrowed)
+        Self::create_with_members(
+            group_id,
+            device,
+            ConversationAudience::GroupDm,
+            &borrowed,
+            None,
+        )
+    }
+
+    /// Create a group DM that authenticates one pinned Delivery Service as
+    /// MLS external sender zero.
+    ///
+    /// The registered sender can authenticate proposals at the MLS layer, but
+    /// Filament's policy still permits only Remove proposals. External Add or
+    /// other proposal kinds are rejected before entering the proposal store.
+    ///
+    /// # Errors
+    /// Applies the same bounds and credential validation as [`Self::create_group`].
+    pub fn create_group_with_delivery_service(
+        group_id: FilamentGroupId,
+        device: &MlsDevice,
+        invitees: &[(PinnedUserIdentity, Vec<u8>)],
+        delivery_service: DeliveryServiceIdentity,
+    ) -> Result<(Self, PendingGroupCommit), ConversationError> {
+        let borrowed = invitees
+            .iter()
+            .map(|(identity, blob)| (*identity, blob.as_slice()))
+            .collect::<Vec<_>>();
+        Self::create_with_members(
+            group_id,
+            device,
+            ConversationAudience::GroupDm,
+            &borrowed,
+            Some(delivery_service),
+        )
     }
 
     fn create_with_members(
@@ -469,6 +588,7 @@ impl MlsConversation {
         device: &MlsDevice,
         audience: ConversationAudience,
         invitees: &[(PinnedUserIdentity, &[u8])],
+        delivery_service: Option<DeliveryServiceIdentity>,
     ) -> Result<(Self, PendingGroupCommit), ConversationError> {
         let expected_invitees = match audience {
             ConversationAudience::DirectMessage => 1..=1,
@@ -504,12 +624,16 @@ impl MlsConversation {
         let join_config = sender_ratchet_configuration();
         let openmls_group_id =
             openmls::prelude::GroupId::from_slice(group_id.to_string().as_bytes());
-        let mut group = MlsGroup::builder()
+        let mut builder = MlsGroup::builder()
             .with_group_id(openmls_group_id)
             .ciphersuite(CIPHERSUITE)
             .with_wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
             .use_ratchet_tree_extension(true)
-            .sender_ratchet_configuration(join_config)
+            .sender_ratchet_configuration(join_config);
+        if let Some(identity) = delivery_service {
+            builder = builder.with_group_context_extensions(delivery_service_extensions(identity)?);
+        }
+        let mut group = builder
             .build(
                 device.provider(),
                 device.signer(),
@@ -550,6 +674,7 @@ impl MlsConversation {
             own_device_id: device.device_id(),
             audience,
             pinned_roots,
+            delivery_service,
             outbound_generation: 0,
             inbound: HashMap::new(),
             active: false,
@@ -585,6 +710,7 @@ impl MlsConversation {
             ConversationAudience::DirectMessage,
             &[peer],
             welcome_blob,
+            None,
         )
     }
 
@@ -606,6 +732,30 @@ impl MlsConversation {
             ConversationAudience::GroupDm,
             participants,
             welcome_blob,
+            None,
+        )
+    }
+
+    /// Join a group DM and require its authenticated Group Context to contain
+    /// exactly the caller-pinned Delivery Service external sender.
+    ///
+    /// # Errors
+    /// Rejects a missing, substituted, or additional external sender as well
+    /// as every error documented by [`Self::join_group_from_welcome`].
+    pub fn join_group_from_welcome_with_delivery_service(
+        group_id: FilamentGroupId,
+        device: &MlsDevice,
+        participants: &[PinnedUserIdentity],
+        welcome_blob: &[u8],
+        delivery_service: DeliveryServiceIdentity,
+    ) -> Result<Self, ConversationError> {
+        Self::join_with_members(
+            group_id,
+            device,
+            ConversationAudience::GroupDm,
+            participants,
+            welcome_blob,
+            Some(delivery_service),
         )
     }
 
@@ -615,6 +765,7 @@ impl MlsConversation {
         audience: ConversationAudience,
         participants: &[PinnedUserIdentity],
         welcome_blob: &[u8],
+        delivery_service: Option<DeliveryServiceIdentity>,
     ) -> Result<Self, ConversationError> {
         let expected_participants = match audience {
             ConversationAudience::DirectMessage => 1..=1,
@@ -664,7 +815,13 @@ impl MlsConversation {
         } else if group.ciphersuite() != CIPHERSUITE {
             Err(ConversationError::MetadataMismatch)
         } else {
-            validate_group(&group, &pinned_roots, audience, Some(device.device_id()))
+            validate_group(
+                &group,
+                &pinned_roots,
+                audience,
+                Some(device.device_id()),
+                delivery_service,
+            )
         };
         if let Err(error) = validation {
             group
@@ -679,6 +836,7 @@ impl MlsConversation {
             own_device_id: device.device_id(),
             audience,
             pinned_roots,
+            delivery_service,
             outbound_generation: 0,
             inbound: HashMap::new(),
             active: true,
@@ -710,6 +868,7 @@ impl MlsConversation {
             &self.pinned_roots,
             self.audience,
             self.active.then_some(self.own_device_id),
+            self.delivery_service,
         )?;
         self.prune_inbound_for_current_members()?;
         Ok(())
@@ -863,7 +1022,7 @@ impl MlsConversation {
         if !self.active {
             return Err(ConversationError::NotActive);
         }
-        if self.group.pending_commit().is_some() {
+        if self.group.pending_commit().is_some() || self.group.has_pending_proposals() {
             return Err(ConversationError::PendingCommit);
         }
         let prior_epoch = self.group.epoch().as_u64();
@@ -1098,6 +1257,111 @@ impl MlsConversation {
         )
     }
 
+    /// Authenticate a Delivery Service Remove proposal and immediately stage
+    /// the corresponding member-authored commit for server ordering.
+    ///
+    /// The proposal is accepted only from external sender index zero in the
+    /// pinned Group Context. It must remove one currently authenticated leaf;
+    /// external Add, Update, group-context, and all other proposal kinds are
+    /// rejected before they enter OpenMLS's pending proposal store. The
+    /// returned action remains acceptance-gated like every local commit. A
+    /// targeted device queues the authenticated proposal and waits for a peer
+    /// commit because MLS does not permit it to commit its own removal.
+    ///
+    /// # Errors
+    /// Rejects groups without a pinned Delivery Service, non-group DMs,
+    /// malformed or stale envelopes, invalid signatures, non-Remove proposal
+    /// kinds, unsafe final-participant removal, and pending local commits.
+    pub fn process_external_remove_proposal(
+        &mut self,
+        device: &MlsDevice,
+        proposal: &ExternalGroupProposal,
+    ) -> Result<ExternalProposalAction, ConversationError> {
+        self.ensure_operational(device)?;
+        if self.audience != ConversationAudience::GroupDm || self.delivery_service.is_none() {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        if proposal.group_id != self.group_id
+            || proposal.epoch != self.epoch()
+            || proposal.proposal_blob.is_empty()
+            || proposal.proposal_blob.len() > MAX_EXTERNAL_PROPOSAL_BYTES
+        {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        let message = MlsMessageIn::tls_deserialize_exact(&proposal.proposal_blob)
+            .map_err(|_| ConversationError::SerializationFailed)?;
+        let protocol_message = message
+            .try_into_protocol_message()
+            .map_err(|_| ConversationError::InvalidCommit)?;
+        if protocol_message.group_id().as_slice() != self.group_id.to_string().as_bytes()
+            || protocol_message.epoch().as_u64() != proposal.epoch
+            || protocol_message.content_type() != ContentType::Proposal
+        {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        let ProtocolMessage::PublicMessage(public_message) = &protocol_message else {
+            return Err(ConversationError::InvalidCommit);
+        };
+        if public_message.sender() != &Sender::External(SenderExtensionIndex::new(0)) {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+
+        let processed = self
+            .group
+            .process_message(device.provider(), protocol_message)
+            .map_err(|_| ConversationError::CryptoError)?;
+        if processed.sender() != &Sender::External(SenderExtensionIndex::new(0)) {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        let ProcessedMessageContent::ProposalMessage(queued) = processed.into_content() else {
+            return Err(ConversationError::InvalidCommit);
+        };
+        if queued.sender() != &Sender::External(SenderExtensionIndex::new(0))
+            || queued.proposal().proposal_type() != ProposalType::Remove
+        {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        let Proposal::Remove(remove) = queued.proposal() else {
+            return Err(ConversationError::UnexpectedMembership);
+        };
+        let target = self.verify_member_at(remove.removed())?;
+        let members = verified_members(&self.group, &self.pinned_roots)?;
+        let target_device_count = members
+            .iter()
+            .filter(|(_, member)| member.user_id == target.user_id)
+            .count();
+        if target_device_count == 1 && self.pinned_roots.len() <= 2 {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+
+        let prior_epoch = self.epoch();
+        self.group
+            .store_pending_proposal(device.provider().storage(), *queued)
+            .map_err(|_| ConversationError::CryptoError)?;
+        if target.device_id == self.own_device_id {
+            return Ok(ExternalProposalAction::AwaitingPeerCommit);
+        }
+        let (commit, welcome, group_info) = self
+            .group
+            .commit_to_pending_proposals(device.provider(), device.signer())
+            .map_err(|_| ConversationError::CryptoError)?;
+        let pending = pending_commit_from_messages(
+            self.group_id,
+            prior_epoch,
+            self.own_device_id,
+            &self.group,
+            &commit,
+            welcome,
+            group_info,
+        )?;
+        let staged = self
+            .group
+            .pending_commit()
+            .ok_or(ConversationError::NoPendingCommit)?;
+        validate_staged_membership_change(&self.group, staged, &self.pinned_roots, self.audience)?;
+        Ok(ExternalProposalAction::Commit(pending))
+    }
+
     /// Authenticate, inspect, and merge one ordered peer commit.
     ///
     /// Phase 2 permits updates plus a single certified device Add or safe
@@ -1293,6 +1557,7 @@ impl MlsConversation {
             &self.pinned_roots,
             self.audience,
             self.active.then_some(self.own_device_id),
+            self.delivery_service,
         )?;
         self.prune_inbound_for_current_members()
     }
@@ -1339,6 +1604,9 @@ impl MlsConversation {
         }
         if !self.active {
             return Err(ConversationError::NotActive);
+        }
+        if self.group.has_pending_proposals() {
+            return Err(ConversationError::PendingCommit);
         }
         if plaintext.is_empty() || plaintext.len() > MAX_APPLICATION_PLAINTEXT_BYTES {
             return Err(ConversationError::LimitExceeded);
@@ -1492,6 +1760,7 @@ impl MlsConversation {
             own_device_id: self.own_device_id,
             audience: self.audience,
             pinned_roots,
+            delivery_service: self.delivery_service,
             outbound_generation: self.outbound_generation,
             inbound,
             active: self.active,
@@ -1507,7 +1776,11 @@ impl MlsConversation {
         {
             return Err(ConversationError::UnexpectedMembership);
         }
-        let pinned_roots = metadata.pinned_roots.into_iter().collect::<HashMap<_, _>>();
+        let pinned_roots = metadata
+            .pinned_roots
+            .iter()
+            .copied()
+            .collect::<HashMap<_, _>>();
         if !valid_root_count(metadata.audience, pinned_roots.len())
             || pinned_roots.get(&device.user_id()) != Some(device.root_key_public())
         {
@@ -1518,15 +1791,7 @@ impl MlsConversation {
         let group = MlsGroup::load(device.provider().storage(), &openmls_group_id)
             .map_err(|_| ConversationError::CryptoError)?
             .ok_or(ConversationError::CryptoError)?;
-        validate_restored_group(
-            &group,
-            &pinned_roots,
-            metadata.group_id,
-            metadata.epoch,
-            metadata.own_device_id,
-            metadata.audience,
-            metadata.active,
-        )?;
+        validate_restored_group(&group, &pinned_roots, &metadata)?;
 
         let mut inbound = HashMap::with_capacity(metadata.inbound.len());
         for queue in metadata.inbound {
@@ -1580,6 +1845,7 @@ impl MlsConversation {
             own_device_id: metadata.own_device_id,
             audience: metadata.audience,
             pinned_roots,
+            delivery_service: metadata.delivery_service,
             outbound_generation: metadata.outbound_generation,
             inbound,
             active: metadata.active,
@@ -1598,7 +1864,7 @@ impl MlsConversation {
         if !self.active {
             return Err(ConversationError::NotActive);
         }
-        if self.group.pending_commit().is_some() {
+        if self.group.pending_commit().is_some() || self.group.has_pending_proposals() {
             return Err(ConversationError::PendingCommit);
         }
         Ok(())
@@ -1790,6 +2056,7 @@ pub(crate) struct ConversationPersistenceMetadata {
     pub own_device_id: DeviceId,
     pub audience: ConversationAudience,
     pub pinned_roots: Vec<(UserId, [u8; 32])>,
+    pub delivery_service: Option<DeliveryServiceIdentity>,
     pub outbound_generation: u64,
     pub inbound: Vec<InboundPersistenceMetadata>,
     pub active: bool,
@@ -1804,32 +2071,46 @@ pub(crate) struct InboundPersistenceMetadata {
 fn validate_restored_group(
     group: &MlsGroup,
     pinned_roots: &HashMap<UserId, [u8; 32]>,
-    group_id: FilamentGroupId,
-    epoch: u64,
-    own_device_id: DeviceId,
-    audience: ConversationAudience,
-    active: bool,
+    metadata: &ConversationPersistenceMetadata,
 ) -> Result<(), ConversationError> {
-    if group.epoch().as_u64() != epoch
-        || group.group_id().as_slice() != group_id.to_string().as_bytes()
+    if group.epoch().as_u64() != metadata.epoch
+        || group.group_id().as_slice() != metadata.group_id.to_string().as_bytes()
         || group.ciphersuite() != CIPHERSUITE
-        || (active && !group.is_active())
+        || (metadata.active && !group.is_active())
     {
         return Err(ConversationError::MetadataMismatch);
     }
-    if active {
-        return validate_group(group, pinned_roots, audience, Some(own_device_id));
+    if metadata.active {
+        return validate_group(
+            group,
+            pinned_roots,
+            metadata.audience,
+            Some(metadata.own_device_id),
+            metadata.delivery_service,
+        );
     }
-    if epoch == 0 {
-        return validate_initial_pending_group(group, pinned_roots, audience, own_device_id);
+    if metadata.epoch == 0 {
+        validate_delivery_service_extensions(group, metadata.delivery_service)?;
+        return validate_initial_pending_group(
+            group,
+            pinned_roots,
+            metadata.audience,
+            metadata.own_device_id,
+        );
     }
     if group.is_active() {
         return Err(ConversationError::MetadataMismatch);
     }
-    validate_group(group, pinned_roots, audience, None)?;
+    validate_group(
+        group,
+        pinned_roots,
+        metadata.audience,
+        None,
+        metadata.delivery_service,
+    )?;
     if verified_members(group, pinned_roots)?
         .iter()
-        .any(|(_, member)| member.device_id == own_device_id)
+        .any(|(_, member)| member.device_id == metadata.own_device_id)
     {
         return Err(ConversationError::MetadataMismatch);
     }
@@ -1995,12 +2276,49 @@ fn valid_root_count(audience: ConversationAudience, count: usize) -> bool {
     }
 }
 
+fn delivery_service_extensions(
+    identity: DeliveryServiceIdentity,
+) -> Result<Extensions<GroupContext>, ConversationError> {
+    let credential: Credential = BasicCredential::new(DELIVERY_SERVICE_CREDENTIAL.to_vec()).into();
+    let sender = ExternalSender::new(identity.signature_key.to_vec().into(), credential);
+    Extensions::single(Extension::ExternalSenders(vec![sender]))
+        .map_err(|_| ConversationError::UnexpectedMembership)
+}
+
+fn validate_delivery_service_extensions(
+    group: &MlsGroup,
+    identity: Option<DeliveryServiceIdentity>,
+) -> Result<(), ConversationError> {
+    let expected = identity.map(delivery_service_extensions).transpose()?;
+    let actual = group
+        .extensions()
+        .iter()
+        .filter(|extension| matches!(extension, Extension::ExternalSenders(_)))
+        .collect::<Vec<_>>();
+    match expected {
+        Some(expected) => {
+            let expected = expected
+                .iter()
+                .next()
+                .ok_or(ConversationError::UnexpectedMembership)?;
+            if actual.as_slice() != [expected] {
+                return Err(ConversationError::UnexpectedMembership);
+            }
+        }
+        None if !actual.is_empty() => return Err(ConversationError::UnexpectedMembership),
+        None => {}
+    }
+    Ok(())
+}
+
 fn validate_group(
     group: &MlsGroup,
     pinned_roots: &HashMap<UserId, [u8; 32]>,
     audience: ConversationAudience,
     required_device_id: Option<DeviceId>,
+    delivery_service: Option<DeliveryServiceIdentity>,
 ) -> Result<(), ConversationError> {
+    validate_delivery_service_extensions(group, delivery_service)?;
     let members = verified_members(group, pinned_roots)?;
     let counts = verified_member_counts(group, pinned_roots)?;
     let missing_root_count = pinned_roots
@@ -2515,6 +2833,221 @@ mod tests {
             committer_device_id: pending.committer_device_id,
             commit_blob: pending.commit_blob.clone(),
         }
+    }
+
+    fn delivery_service_identity(device: &MlsDevice) -> DeliveryServiceIdentity {
+        DeliveryServiceIdentity::try_new(
+            device
+                .certificate()
+                .device_signature_pubkey
+                .as_slice()
+                .try_into()
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn delivery_service_identity_rejects_invalid_ed25519_encoding() {
+        assert_eq!(
+            DeliveryServiceIdentity::try_new([0; 32]).unwrap_err(),
+            ConversationError::UntrustedCredential
+        );
+    }
+
+    fn external_proposal(
+        message: &MlsMessageOut,
+        group_id: FilamentGroupId,
+        epoch: u64,
+    ) -> ExternalGroupProposal {
+        ExternalGroupProposal {
+            group_id,
+            epoch,
+            proposal_blob: message.to_bytes().unwrap(),
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn external_sender_can_only_remove_and_forgery_fails_for_every_member() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let charlie_root = RootIdentityKey::generate();
+        let dave_root = RootIdentityKey::generate();
+        let delivery_root = RootIdentityKey::generate();
+        let attacker_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let charlie = MlsDevice::generate(UserId::new(), DeviceId::new(), &charlie_root).unwrap();
+        let dave = MlsDevice::generate(UserId::new(), DeviceId::new(), &dave_root).unwrap();
+        let delivery = MlsDevice::generate(UserId::new(), DeviceId::new(), &delivery_root).unwrap();
+        let attacker = MlsDevice::generate(UserId::new(), DeviceId::new(), &attacker_root).unwrap();
+        let delivery_identity = delivery_service_identity(&delivery);
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let charlie_pin = PinnedUserIdentity::new(charlie.user_id(), *charlie.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let charlie_package = generate_key_package_batch(&charlie, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let group_id = FilamentGroupId::new();
+        let (mut alice_group, initial) = MlsConversation::create_group_with_delivery_service(
+            group_id,
+            &alice,
+            &[(bob_pin, bob_package), (charlie_pin, charlie_package)],
+            delivery_identity,
+        )
+        .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+
+        let mut bob_group = MlsConversation::join_group_from_welcome_with_delivery_service(
+            group_id,
+            &bob,
+            &[alice_pin, charlie_pin],
+            initial.welcome_blob.as_deref().unwrap(),
+            delivery_identity,
+        )
+        .unwrap();
+        let mut charlie_group = MlsConversation::join_group_from_welcome_with_delivery_service(
+            group_id,
+            &charlie,
+            &[alice_pin, bob_pin],
+            initial.welcome_blob.as_deref().unwrap(),
+            delivery_identity,
+        )
+        .unwrap();
+
+        let dave_package = generate_key_package_batch(&dave, 1).unwrap().remove(0);
+        let external_add = ExternalProposal::new_add::<openmls_rust_crypto::OpenMlsRustCrypto>(
+            dave_package.key_package().clone(),
+            alice_group.group.group_id().clone(),
+            alice_group.group.epoch(),
+            delivery.signer(),
+            SenderExtensionIndex::new(0),
+        )
+        .unwrap();
+        let external_add = external_proposal(&external_add, group_id, alice_group.epoch());
+        for (device, group) in [
+            (&alice, &mut alice_group),
+            (&bob, &mut bob_group),
+            (&charlie, &mut charlie_group),
+        ] {
+            assert_eq!(
+                group
+                    .process_external_remove_proposal(device, &external_add)
+                    .unwrap_err(),
+                ConversationError::UnexpectedMembership
+            );
+            assert!(group.group.pending_commit().is_none());
+            assert!(!group.group.has_pending_proposals());
+        }
+
+        let charlie_index = verified_members(&alice_group.group, &alice_group.pinned_roots)
+            .unwrap()
+            .into_iter()
+            .find_map(|(index, member)| (member.device_id == charlie.device_id()).then_some(index))
+            .unwrap();
+        let forged_remove = ExternalProposal::new_remove::<openmls_rust_crypto::OpenMlsRustCrypto>(
+            charlie_index,
+            alice_group.group.group_id().clone(),
+            alice_group.group.epoch(),
+            attacker.signer(),
+            SenderExtensionIndex::new(0),
+        )
+        .unwrap();
+        let forged_remove = external_proposal(&forged_remove, group_id, alice_group.epoch());
+        for (device, group) in [
+            (&alice, &mut alice_group),
+            (&bob, &mut bob_group),
+            (&charlie, &mut charlie_group),
+        ] {
+            assert_eq!(
+                group
+                    .process_external_remove_proposal(device, &forged_remove)
+                    .unwrap_err(),
+                ConversationError::CryptoError
+            );
+            assert!(group.group.pending_commit().is_none());
+            assert!(!group.group.has_pending_proposals());
+        }
+
+        let store = crate::InMemoryKeyStore::new();
+        crate::persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let mut restored = crate::load_mls_client_state(&store).unwrap();
+        let mut bob_group = restored.conversations.remove(0);
+        let bob = restored.device;
+
+        let valid_remove = ExternalProposal::new_remove::<openmls_rust_crypto::OpenMlsRustCrypto>(
+            charlie_index,
+            alice_group.group.group_id().clone(),
+            alice_group.group.epoch(),
+            delivery.signer(),
+            SenderExtensionIndex::new(0),
+        )
+        .unwrap();
+        let valid_remove = external_proposal(&valid_remove, group_id, alice_group.epoch());
+        let ExternalProposalAction::Commit(alice_commit) = alice_group
+            .process_external_remove_proposal(&alice, &valid_remove)
+            .unwrap()
+        else {
+            panic!("non-target member must auto-commit the authenticated Remove");
+        };
+        let ExternalProposalAction::Commit(bob_commit) = bob_group
+            .process_external_remove_proposal(&bob, &valid_remove)
+            .unwrap()
+        else {
+            panic!("non-target member must auto-commit the authenticated Remove");
+        };
+        assert!(matches!(
+            charlie_group
+                .process_external_remove_proposal(&charlie, &valid_remove)
+                .unwrap(),
+            ExternalProposalAction::AwaitingPeerCommit
+        ));
+        assert!(charlie_group.group.has_pending_proposals());
+        assert_eq!(
+            charlie_group
+                .encrypt_application_message(&charlie, b"removal pending")
+                .unwrap_err(),
+            ConversationError::PendingCommit
+        );
+        assert_eq!(alice_commit.prior_epoch, valid_remove.epoch);
+        assert_eq!(bob_commit.epoch, alice_commit.epoch);
+
+        alice_group.accept_pending_commit(&alice).unwrap();
+        assert!(matches!(
+            bob_group
+                .rebase_pending_commit(&bob, &encrypted_commit(&alice_commit))
+                .unwrap(),
+            PendingCommitRebase::AlreadySatisfied
+        ));
+        charlie_group
+            .process_incoming_commit(&charlie, &encrypted_commit(&alice_commit))
+            .unwrap();
+        assert_eq!(
+            charlie_group
+                .encrypt_application_message(&charlie, b"removed")
+                .unwrap_err(),
+            ConversationError::NotActive
+        );
+        let post_remove = alice_group
+            .encrypt_application_message(&alice, b"external removal committed")
+            .unwrap();
+        assert_eq!(
+            bob_group
+                .decrypt_application_message(&bob, &post_remove)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"external removal committed"
+        );
+        assert_eq!(
+            charlie_group
+                .decrypt_application_message(&charlie, &post_remove)
+                .unwrap_err(),
+            ConversationError::NotActive
+        );
     }
 
     #[test]

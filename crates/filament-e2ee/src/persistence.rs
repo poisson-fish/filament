@@ -15,13 +15,14 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     conversation::{ConversationPersistenceMetadata, InboundPersistenceMetadata},
     keypackage::ProviderRecord,
-    ConversationAudience, DecryptedApplicationMessage, ExternalCommitRecoveryInfo, KeyStoreError,
-    LocalKeyStore, MlsConversation, MlsDevice, PendingGroupCommit, PinnedUserIdentity, StoreKey,
-    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP, MAX_STORE_VALUE_BYTES,
+    ConversationAudience, DecryptedApplicationMessage, DeliveryServiceIdentity,
+    ExternalCommitRecoveryInfo, KeyStoreError, LocalKeyStore, MlsConversation, MlsDevice,
+    PendingGroupCommit, PinnedUserIdentity, StoreKey, MAX_APPLICATION_PLAINTEXT_BYTES,
+    MAX_BUFFERED_GENERATION_GAP, MAX_STORE_VALUE_BYTES,
 };
 
-const MLS_CLIENT_STATE_VERSION: u16 = 2;
-const LEGACY_MLS_CLIENT_STATE_VERSION: u16 = 1;
+const MLS_CLIENT_STATE_VERSION: u16 = 3;
+const LEGACY_MLS_CLIENT_STATE_VERSIONS: [u16; 2] = [1, 2];
 const MAX_MLS_CONVERSATIONS: usize = 1_024;
 const MAX_OPENMLS_STORAGE_RECORDS: usize = 16_384;
 const MAX_OPENMLS_STORAGE_KEY_BYTES: usize = 4_096;
@@ -237,6 +238,8 @@ struct PersistedConversation {
     #[serde(default)]
     audience: PersistedAudience,
     pinned_roots: Vec<PersistedRootPin>,
+    #[serde(default)]
+    delivery_service_signature_key: Option<Vec<u8>>,
     outbound_generation: u64,
     inbound: Vec<PersistedInboundQueue>,
     active: bool,
@@ -371,7 +374,8 @@ pub fn load_mls_client_state(store: &dyn LocalKeyStore) -> Result<MlsClientState
 }
 
 fn restore_snapshot(snapshot: &PersistedClientState) -> Result<MlsClientState, KeyStoreError> {
-    if ![LEGACY_MLS_CLIENT_STATE_VERSION, MLS_CLIENT_STATE_VERSION].contains(&snapshot.version)
+    if !(LEGACY_MLS_CLIENT_STATE_VERSIONS.contains(&snapshot.version)
+        || snapshot.version == MLS_CLIENT_STATE_VERSION)
         || snapshot.conversations.len() > MAX_MLS_CONVERSATIONS
         || snapshot.device.root_key_pub.len() != 32
     {
@@ -406,7 +410,7 @@ fn restore_snapshot(snapshot: &PersistedClientState) -> Result<MlsClientState, K
     let mut group_ids = HashSet::with_capacity(snapshot.conversations.len());
     let mut conversations = Vec::with_capacity(snapshot.conversations.len());
     for persisted in &snapshot.conversations {
-        if snapshot.version == LEGACY_MLS_CLIENT_STATE_VERSION
+        if snapshot.version == LEGACY_MLS_CLIENT_STATE_VERSIONS[0]
             && !matches!(persisted.audience, PersistedAudience::DirectMessage)
         {
             return Err(KeyStoreError::InvalidValue);
@@ -484,6 +488,9 @@ impl PersistedConversation {
                     root_key_pub: root_key_pub.to_vec(),
                 })
                 .collect(),
+            delivery_service_signature_key: metadata
+                .delivery_service
+                .map(|identity| identity.signature_key().to_vec()),
             outbound_generation: metadata.outbound_generation,
             inbound: metadata
                 .inbound
@@ -518,6 +525,16 @@ impl PersistedConversation {
             .iter()
             .map(PersistedInboundQueue::to_metadata)
             .collect::<Result<Vec<_>, _>>()?;
+        let delivery_service = self
+            .delivery_service_signature_key
+            .as_deref()
+            .map(|key| {
+                let signature_key: [u8; 32] =
+                    key.try_into().map_err(|_| KeyStoreError::InvalidValue)?;
+                DeliveryServiceIdentity::try_new(signature_key)
+                    .map_err(|_| KeyStoreError::InvalidValue)
+            })
+            .transpose()?;
         Ok(ConversationPersistenceMetadata {
             group_id,
             epoch: self.epoch,
@@ -527,6 +544,7 @@ impl PersistedConversation {
                 PersistedAudience::GroupDm => ConversationAudience::GroupDm,
             },
             pinned_roots,
+            delivery_service,
             outbound_generation: self.outbound_generation,
             inbound,
             active: self.active,
@@ -921,7 +939,7 @@ mod tests {
         persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
         let bytes = store.load(&StoreKey::mls_client_state()).unwrap();
         let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        value["version"] = serde_json::Value::from(LEGACY_MLS_CLIENT_STATE_VERSION);
+        value["version"] = serde_json::Value::from(LEGACY_MLS_CLIENT_STATE_VERSIONS[0]);
         value["conversations"][0]
             .as_object_mut()
             .unwrap()

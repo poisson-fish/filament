@@ -42,9 +42,10 @@ pub mod sqlcipher_store;
 // Re-export the most commonly used types.
 pub use commit_mailbox::{process_commit_mailbox, CommitMailboxBatch, RejectedMailboxCommit};
 pub use conversation::{
-    ConversationAudience, DecryptedApplicationMessage, DecryptionOutcome,
-    EncryptedApplicationMessage, EncryptedGroupCommit, ExternalCommitRecoveryInfo, MlsConversation,
-    PendingCommitRebase, PendingGroupCommit, PinnedUserIdentity, MAX_APPLICATION_PLAINTEXT_BYTES,
+    ConversationAudience, DecryptedApplicationMessage, DecryptionOutcome, DeliveryServiceIdentity,
+    EncryptedApplicationMessage, EncryptedGroupCommit, ExternalCommitRecoveryInfo,
+    ExternalGroupProposal, ExternalProposalAction, MlsConversation, PendingCommitRebase,
+    PendingGroupCommit, PinnedUserIdentity, MAX_APPLICATION_PLAINTEXT_BYTES,
     MAX_BUFFERED_GENERATION_GAP, MAX_MLS_DEVICES_PER_USER, MAX_MLS_GROUP_LEAVES,
     MAX_MLS_GROUP_USERS,
 };

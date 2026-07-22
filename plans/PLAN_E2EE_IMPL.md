@@ -133,11 +133,17 @@ and adopts the replacement only after exact server acceptance and durable
 persistence. Group DMs now use the same acceptance-gated recovery boundary
 with an exact caller-supplied root-pin set, authenticated replacement-leaf
 handling, durable restart coverage, and deterministic participant-Add rebase
-after a competing group commit wins. The desktop target now exposes the exact
-audited command manifest
-through a validated capability-oriented native backend without accepting key
-material, paths, or native identity. Final Tauri adapter and production
-backend/UI integration remain; attachment, media, guild-channel, hardening,
+after a competing group commit wins. Group DMs can now pin exactly one
+Delivery Service Ed25519 identity in the authenticated MLS Group Context.
+Every client authenticates external proposals against that pin, hard-rejects
+external Adds and all non-Remove kinds before proposal storage, and lets
+non-target members stage acceptance-gated commits for valid Removes; a
+targeted device retains the authenticated proposal only to verify the winning
+commit by reference. The desktop target now exposes the exact audited command
+manifest through a validated capability-oriented native backend without
+accepting key material, paths, or native identity. Final Tauri adapter and
+production backend/UI integration remain. The server signing-key lifecycle and
+proposal transport remain open; attachment, media, guild-channel, hardening,
 and key-transparency work has not started.
 
 ---
@@ -532,8 +538,12 @@ members cannot use post-removal epochs. Group commit races deterministically
 rebase pending participant Adds on the authenticated winner, and stale group
 members recover through an isolated external commit only when the caller's
 exact participant-root set and signed GroupInfo both validate. Server-side
-group provisioning, membership reconciliation/events, external-sender
-proposals, and encrypted message-adjacent features remain open.
+group provisioning, membership reconciliation/events, external-sender key
+custody/transport, and encrypted message-adjacent features remain open. The
+native core registers a caller-pinned Delivery Service external sender,
+auto-stages valid Remove proposals at non-target members, retains the proposal
+at the target so it can verify the winning commit, and rejects external Add or
+forged proposals at every member.
 
 ### Deliverables
 
@@ -578,9 +588,9 @@ proposals, and encrypted message-adjacent features remain open.
 - [x] Removed members fail to decrypt all post-removal epochs (cryptographic eviction verified)
 - [x] Concurrent commit races resolve deterministically
 - [x] Desync self-heals via external commit
-- [ ] External-sender Remove proposals are validated and auto-committed by clients
-- [ ] External-sender Add proposals are hard-rejected by clients
-- [ ] Ghost-member injection fails at every client
+- [x] External-sender Remove proposals are validated and auto-committed by clients
+- [x] External-sender Add proposals are hard-rejected by clients
+- [x] Ghost-member injection fails at every client
 - [ ] Message-adjacent features (reactions, edits, deletes, replies) work inside encrypted groups
 - [ ] All quality gates pass
 
