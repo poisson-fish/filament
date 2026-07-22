@@ -519,6 +519,15 @@ Implement the first end-to-end encrypted conversation type: 1:1 DMs as 2-member 
 
 Extend E2EE from 2-member DMs to N-member group DMs. Add MLS membership proposals/commits, join via Welcome, removal as cryptographic eviction, and external-commit recovery from desync.
 
+**Implemented increment (2026-07-21):** the native MLS core now has a typed
+direct-message/group-DM audience policy, bounded initial multi-member creation
+and Welcome join, explicitly root-pinned participant Adds, whole-participant
+Remove commits across all of that user's device leaves, versioned persistence,
+and churn coverage proving ordinary unpinned Adds fail closed and evicted
+members cannot use post-removal epochs. Server-side group provisioning,
+membership reconciliation/events, external-sender proposals, and encrypted
+message-adjacent features remain open.
+
 ### Deliverables
 
 1. **MLS membership operations** in `filament-e2ee`:
@@ -559,7 +568,7 @@ Extend E2EE from 2-member DMs to N-member group DMs. Add MLS membership proposal
 
 ### Exit Criteria
 
-- [ ] Removed members fail to decrypt all post-removal epochs (cryptographic eviction verified)
+- [x] Removed members fail to decrypt all post-removal epochs (cryptographic eviction verified)
 - [ ] Concurrent commit races resolve deterministically
 - [ ] Desync self-heals via external commit
 - [ ] External-sender Remove proposals are validated and auto-committed by clients

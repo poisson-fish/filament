@@ -75,6 +75,9 @@ implemented as of 2026-07-21. Two-user desync recovery also validates signed
 GroupInfo and external commits against pinned identities through an isolated,
 acceptance-gated checkpoint. ADR
 ratification is complete, while threat-model ratification remains open.
+The Phase 3 native core now supports bounded, explicitly root-pinned group-DM
+creation, participant Add, and all-device cryptographic eviction; server-side
+group membership orchestration is still pending.
 The packaged client now has a validated, capability-oriented native command
 host, but the final Tauri adapter is supply-chain blocked: Tauri 2.11.5 does not
 pass the repository's advisory/license gates. Production launcher/backend and
@@ -105,10 +108,18 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - Keys are non-exportable and live in platform keystores (Keychain / Android Keystore / TPM+DPAPI) where available. No private-key display or copy surface exists anywhere in the product.
 - Desktop device state uses SQLCipher with a random 32-byte database key held by the OS credential store. Store paths and keys are native-only; webview IPC is limited to initialization and a non-sensitive readiness status. Phase 1 limits the store to 64 MiB, 4,096 records, and 4 MiB per record.
 - The native client writes the complete OpenMLS provider, certified device
-  signer, pinned peer roots, group epochs, generation counters, and bounded gap
+  signer, pinned participant roots, typed audience policy, group epochs,
+  generation counters, and bounded gap
   buffers as one versioned SQLCipher record. Restore revalidates certificates,
   identifiers, group membership, pins, epochs, record bounds, and buffered
   plaintext before releasing operational state.
+- The native group-DM core caps groups at 100 root identities, 200 total MLS
+  leaves, and 100 certified devices per identity. New-participant commits are
+  rejected on the ordinary ingestion path until the client independently pins
+  the invited root. Participant removal deletes every device leaf in one MLS
+  epoch; removed clients retain only inactive local state and cannot process
+  later application epochs. Server-side group membership orchestration is not
+  yet implemented.
 - Native mailbox processing commits the updated MLS checkpoint, each bounded
   authenticated plaintext history record, and a per-group acknowledgment
   outbox in one SQLCipher transaction. A failed or uncertain transaction

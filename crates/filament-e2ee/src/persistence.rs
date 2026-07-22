@@ -15,12 +15,13 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     conversation::{ConversationPersistenceMetadata, InboundPersistenceMetadata},
     keypackage::ProviderRecord,
-    DecryptedApplicationMessage, ExternalCommitRecoveryInfo, KeyStoreError, LocalKeyStore,
-    MlsConversation, MlsDevice, PendingGroupCommit, PinnedUserIdentity, StoreKey,
+    ConversationAudience, DecryptedApplicationMessage, ExternalCommitRecoveryInfo, KeyStoreError,
+    LocalKeyStore, MlsConversation, MlsDevice, PendingGroupCommit, PinnedUserIdentity, StoreKey,
     MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP, MAX_STORE_VALUE_BYTES,
 };
 
-const MLS_CLIENT_STATE_VERSION: u16 = 1;
+const MLS_CLIENT_STATE_VERSION: u16 = 2;
+const LEGACY_MLS_CLIENT_STATE_VERSION: u16 = 1;
 const MAX_MLS_CONVERSATIONS: usize = 1_024;
 const MAX_OPENMLS_STORAGE_RECORDS: usize = 16_384;
 const MAX_OPENMLS_STORAGE_KEY_BYTES: usize = 4_096;
@@ -168,10 +169,20 @@ struct PersistedConversation {
     group_id: String,
     epoch: u64,
     own_device_id: String,
+    #[serde(default)]
+    audience: PersistedAudience,
     pinned_roots: Vec<PersistedRootPin>,
     outbound_generation: u64,
     inbound: Vec<PersistedInboundQueue>,
     active: bool,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Zeroize, Default)]
+#[serde(rename_all = "snake_case")]
+enum PersistedAudience {
+    #[default]
+    DirectMessage,
+    GroupDm,
 }
 
 #[derive(Serialize, Deserialize, Zeroize)]
@@ -295,7 +306,7 @@ pub fn load_mls_client_state(store: &dyn LocalKeyStore) -> Result<MlsClientState
 }
 
 fn restore_snapshot(snapshot: &PersistedClientState) -> Result<MlsClientState, KeyStoreError> {
-    if snapshot.version != MLS_CLIENT_STATE_VERSION
+    if ![LEGACY_MLS_CLIENT_STATE_VERSION, MLS_CLIENT_STATE_VERSION].contains(&snapshot.version)
         || snapshot.conversations.len() > MAX_MLS_CONVERSATIONS
         || snapshot.device.root_key_pub.len() != 32
     {
@@ -330,6 +341,11 @@ fn restore_snapshot(snapshot: &PersistedClientState) -> Result<MlsClientState, K
     let mut group_ids = HashSet::with_capacity(snapshot.conversations.len());
     let mut conversations = Vec::with_capacity(snapshot.conversations.len());
     for persisted in &snapshot.conversations {
+        if snapshot.version == LEGACY_MLS_CLIENT_STATE_VERSION
+            && !matches!(persisted.audience, PersistedAudience::DirectMessage)
+        {
+            return Err(KeyStoreError::InvalidValue);
+        }
         let metadata = persisted.to_metadata()?;
         if !group_ids.insert(metadata.group_id) {
             return Err(KeyStoreError::InvalidValue);
@@ -391,6 +407,10 @@ impl PersistedConversation {
             group_id: metadata.group_id.to_string(),
             epoch: metadata.epoch,
             own_device_id: metadata.own_device_id.to_string(),
+            audience: match metadata.audience {
+                ConversationAudience::DirectMessage => PersistedAudience::DirectMessage,
+                ConversationAudience::GroupDm => PersistedAudience::GroupDm,
+            },
             pinned_roots: metadata
                 .pinned_roots
                 .into_iter()
@@ -437,6 +457,10 @@ impl PersistedConversation {
             group_id,
             epoch: self.epoch,
             own_device_id,
+            audience: match self.audience {
+                PersistedAudience::DirectMessage => ConversationAudience::DirectMessage,
+                PersistedAudience::GroupDm => ConversationAudience::GroupDm,
+            },
             pinned_roots,
             outbound_generation: self.outbound_generation,
             inbound,
@@ -817,6 +841,44 @@ mod tests {
             .store(
                 StoreKey::mls_client_state(),
                 vec![b'x'; MAX_STORE_VALUE_BYTES],
+            )
+            .unwrap();
+        assert_eq!(
+            load_mls_client_state(&store).unwrap_err(),
+            KeyStoreError::InvalidValue
+        );
+    }
+
+    #[test]
+    fn version_one_checkpoint_migrates_to_direct_message_audience() {
+        let (_, _, bob, bob_group) = joined_conversations();
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let bytes = store.load(&StoreKey::mls_client_state()).unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["version"] = serde_json::Value::from(LEGACY_MLS_CLIENT_STATE_VERSION);
+        value["conversations"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("audience");
+        store
+            .store(
+                StoreKey::mls_client_state(),
+                serde_json::to_vec(&value).unwrap(),
+            )
+            .unwrap();
+
+        let restored = load_mls_client_state(&store).unwrap();
+        assert_eq!(
+            restored.conversations[0].audience(),
+            ConversationAudience::DirectMessage
+        );
+
+        value["conversations"][0]["audience"] = serde_json::Value::from("group_dm");
+        store
+            .store(
+                StoreKey::mls_client_state(),
+                serde_json::to_vec(&value).unwrap(),
             )
             .unwrap();
         assert_eq!(
