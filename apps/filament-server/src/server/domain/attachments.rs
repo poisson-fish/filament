@@ -293,7 +293,13 @@ pub(crate) async fn attachment_usage_for_user(
 ) -> Result<u64, AuthFailure> {
     if let Some(pool) = &state.db_pool {
         let row = sqlx::query(
-            "SELECT COALESCE(SUM(size_bytes)::BIGINT, 0) AS total FROM attachments WHERE owner_id = $1",
+            "SELECT (
+                COALESCE((SELECT SUM(size_bytes) FROM attachments WHERE owner_id = $1), 0)
+                + COALESCE((
+                    SELECT SUM(octet_length(ciphertext_blob))
+                    FROM e2ee_attachment_blobs WHERE owner_user_id = $1
+                ), 0)
+             )::BIGINT AS total",
         )
         .bind(user_id.to_string())
         .fetch_one(pool)

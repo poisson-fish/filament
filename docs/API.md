@@ -803,8 +803,49 @@ Acknowledges successfully decrypted messages for one owned active device.
   device's snapshotted group mailbox are ignored without exposing other groups.
 - When every snapshotted device has acknowledged a message, its ciphertext and
   delivery rows are hard-deleted atomically. Independently, a bounded
-  background worker hard-deletes messages, commits, and proposals at their TTL
-  deadline.
+  background worker hard-deletes messages, commits, proposals, and attachments
+  at their TTL deadline.
+
+### `PUT /e2ee/groups/{group_id}/attachments/{attachment_id}`
+Stores one client-encrypted attachment or thumbnail as an opaque mailbox blob.
+- Query: `?device_id=<uploader device ULID>`
+- Body: raw `application/octet-stream` ciphertext; private descriptor metadata
+  remains inside the authenticated MLS application event.
+- Response: `{ "attachment_id": "...", "ciphertext_bytes": 65536, "expires_at_unix": 0 }`
+- The object ID and uploader must be canonical active group leaves. Ciphertext
+  must be exactly `64 KiB`, `256 KiB`, `1 MiB`, `4 MiB`, `16 MiB`, or `32 MiB`;
+  the route has an independent `32 MiB` body cap.
+- Uploads snapshot the bounded active MLS leaf set and mark the uploader
+  delivered. Exact retries are idempotent; reuse of an object ID with different
+  group, owner, uploader, or bytes returns
+  `409 { "error": "e2ee_attachment_conflict" }`.
+- Opaque bytes count against the same per-user attachment quota as plaintext
+  uploads. The server stores no filename, MIME, content hash, thumbnail kind,
+  or content key. Uploads are rate-limited per IP, user, device, and group
+  (`20`/minute by default).
+
+### `GET /e2ee/groups/{group_id}/attachments/{attachment_id}`
+Returns one opaque blob to a snapshotted active group device.
+- Query: `?device_id=<recipient device ULID>`
+- Response: raw exact-bucket ciphertext with `Content-Type:
+  application/octet-stream`, `X-Content-Type-Options: nosniff`, and
+  `Cache-Control: private, no-store`.
+- Current conversation membership, leaf ownership, the send-time delivery row,
+  and the mailbox expiry must all match. New or removed devices cannot use this
+  endpoint to expand the original delivery audience.
+- Download does not acknowledge delivery. The native client first verifies
+  AEAD, authenticated padding, hash, and client-sniffed MIME against the private
+  MLS descriptor.
+
+### `POST /e2ee/groups/{group_id}/attachments/ack`
+Acknowledges successfully downloaded and verified encrypted attachments.
+- Request: `{ "device_id": "...", "attachment_ids": ["..."] }`
+- Response: `{ "acknowledged_count": 1, "deleted_count": 1 }`
+- Batches contain 1–100 unique canonical attachment ULIDs. IDs outside the
+  device's snapshotted group mailbox are ignored without exposing other groups.
+- Once every snapshotted device acknowledges, the ciphertext and delivery rows
+  are hard-deleted atomically and quota is reclaimed. Bounded TTL GC is an
+  independent upper bound.
 
 ## Notes
 - Search index is derived/cache; source of truth is persisted message storage.

@@ -60,6 +60,9 @@ Set these variables for `filament-server` (via `infra/.env`):
   device, and group (default `30`, must be >= `1`)
 - `FILAMENT_E2EE_MESSAGE_PER_MINUTE`: opaque MLS message cap per client IP,
   authenticated user, sender device, and group (default `120`, must be >= `1`)
+- `FILAMENT_E2EE_ATTACHMENT_PER_MINUTE`: opaque encrypted attachment upload,
+  download, and acknowledgment cap per client IP, authenticated user, device,
+  and group (default `20`, must be >= `1`)
 - `FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE`: maximum unclaimed KeyPackages per
   device (default `100`, valid range `1..=100`)
 - `FILAMENT_E2EE_MAILBOX_TTL_SECS`: expiry deadline applied to opaque MLS
@@ -87,6 +90,7 @@ Default compose values:
 - `FILAMENT_MAX_CREATED_GUILDS_PER_USER=5`
 - `FILAMENT_E2EE_COMMIT_PER_MINUTE=30`
 - `FILAMENT_E2EE_MESSAGE_PER_MINUTE=120`
+- `FILAMENT_E2EE_ATTACHMENT_PER_MINUTE=20`
 - `FILAMENT_E2EE_MAILBOX_TTL_SECS=2592000`
 - `FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS=60`
 - `FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS=300`

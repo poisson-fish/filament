@@ -164,8 +164,11 @@ progress. The native client encrypts files and client-generated thumbnails
 with independent random ChaCha20-Poly1305 keys through the approved OpenMLS
 provider, authenticates all private descriptors inside strict MLS application
 events, pads ciphertext to exact transport buckets, and verifies AEAD, padding,
-hash, and client-sniffed MIME before exposing plaintext. Server attachment
-mailboxes, history sync, backup, disappearing messages, and local search remain.
+hash, and client-sniffed MIME before exposing plaintext. The server now relays
+only exact-bucket opaque attachment blobs through active-leaf, quota-bounded,
+per-device transient mailboxes with explicit verification acknowledgments and
+all-device/TTL hard deletion. History sync, backup, disappearing messages, and
+local search remain.
 
 ---
 
@@ -647,7 +650,13 @@ object identity are authenticated and carried only inside a strict, bounded MLS
 application event. Exact ciphertext buckets, file/thumbnail caps, non-convergent
 encryption, zeroized temporary buffers, key-redacted debug output, and
 post-decryption padding/hash/MIME verification fail closed. The Delivery Service
-upload/download mailbox and GC path is the next increment.
+now accepts only those exact ciphertext buckets through active group leaves,
+stores no private descriptor fields, snapshots bounded per-device deliveries,
+counts opaque bytes against the uploader's shared attachment quota, and exposes
+no-store recipient downloads plus explicit verification acknowledgments.
+All-device acknowledgment and bounded TTL GC hard-delete blobs and reclaim quota;
+uploads are exact-idempotent and conflicting object reuse fails closed. The
+device-to-device history-sync path is the next increment.
 
 ### Deliverables
 
@@ -1010,7 +1019,7 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 | `v14_e2ee_mailbox` | 2 | pending per-device message deliveries |
 | `v15_e2ee_conversation_provisioning` | 2 | canonical encrypted DM pairs and downgrade prevention |
 | `v16_e2ee_commit_mailbox` | 2 | recipient-bound Welcomes and pending per-device commit deliveries |
-| future attachment migration (number TBD) | 4 | `e2ee_attachment_blobs`, `e2ee_attachment_acks` |
+| `v19_e2ee_attachment_mailbox` | 4 | `e2ee_attachment_blobs`, `e2ee_attachment_deliveries` |
 | future guild-channel migration (number TBD) | 6 | `e2ee_channel_membership`, `e2ee_channel_reconciliation` |
 | future KT migration (number TBD) | 8 | `e2ee_kt_entries`, `e2ee_kt_checkpoints` |
 
@@ -1038,6 +1047,9 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 | `POST /e2ee/groups/{group_id}/commits` | 2 |
 | `POST /e2ee/groups/{group_id}/commits/ack` | 2 |
 | `POST /e2ee/groups/{group_id}/messages` | 2 |
+| `PUT /e2ee/groups/{group_id}/attachments/{attachment_id}` | 4 |
+| `GET /e2ee/groups/{group_id}/attachments/{attachment_id}` | 4 |
+| `POST /e2ee/groups/{group_id}/attachments/ack` | 4 |
 
 ### Desktop Client (Tauri) Changes
 

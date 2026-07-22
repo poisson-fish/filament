@@ -38,12 +38,13 @@ use super::{
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
         e2ee::{
-            ack_group_commits, ack_group_messages, ack_group_proposals, claim_keypackage,
-            create_mls_conversation, create_mls_group_conversation, get_delivery_service_identity,
-            get_group_commit_mailbox, get_group_info, get_group_mailbox,
-            get_group_proposal_mailbox, get_root_identity, list_user_devices, post_group_commit,
-            post_group_message, post_group_proposal, publish_device_certificate, remove_device,
-            rotate_root_identity, upgrade_mls_conversation, upload_keypackages,
+            ack_group_attachments, ack_group_commits, ack_group_messages, ack_group_proposals,
+            claim_keypackage, create_mls_conversation, create_mls_group_conversation,
+            get_delivery_service_identity, get_group_attachment, get_group_commit_mailbox,
+            get_group_info, get_group_mailbox, get_group_proposal_mailbox, get_root_identity,
+            list_user_devices, post_group_commit, post_group_message, post_group_proposal,
+            publish_device_certificate, put_group_attachment, remove_device, rotate_root_identity,
+            upgrade_mls_conversation, upload_keypackages,
         },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
@@ -205,6 +206,9 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("POST", "/e2ee/groups/{group_id}/commits/ack"),
     ("POST", "/e2ee/groups/{group_id}/messages"),
     ("POST", "/e2ee/groups/{group_id}/messages/ack"),
+    ("PUT", "/e2ee/groups/{group_id}/attachments/{attachment_id}"),
+    ("GET", "/e2ee/groups/{group_id}/attachments/{attachment_id}"),
+    ("POST", "/e2ee/groups/{group_id}/attachments/ack"),
     ("GET", "/e2ee/groups/{group_id}/proposals"),
     ("POST", "/e2ee/groups/{group_id}/proposals"),
     ("POST", "/e2ee/groups/{group_id}/proposals/ack"),
@@ -384,6 +388,7 @@ fn validate_e2ee_config(config: &AppConfig) -> anyhow::Result<()> {
         (config.e2ee_keypackage_claim_per_minute, "KeyPackage claim"),
         (config.e2ee_commit_per_minute, "commit"),
         (config.e2ee_message_per_minute, "message"),
+        (config.e2ee_attachment_per_minute, "attachment"),
     ] {
         if value == 0 {
             return Err(anyhow!(
@@ -614,6 +619,18 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
             post(ack_group_messages),
         )
         .route(
+            "/e2ee/groups/{group_id}/attachments/{attachment_id}",
+            get(get_group_attachment)
+                .put(put_group_attachment)
+                .layer(DefaultBodyLimit::max(
+                    filament_protocol::MAX_E2EE_ATTACHMENT_BYTES,
+                )),
+        )
+        .route(
+            "/e2ee/groups/{group_id}/attachments/ack",
+            post(ack_group_attachments),
+        )
+        .route(
             "/e2ee/groups/{group_id}/proposals",
             get(get_group_proposal_mailbox).post(post_group_proposal),
         )
@@ -692,6 +709,12 @@ mod tests {
             ..AppConfig::default()
         };
         assert!(validate_router_config(&zero_message).is_err());
+
+        let zero_attachment = AppConfig {
+            e2ee_attachment_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_attachment).is_err());
 
         let oversized_pool = AppConfig {
             e2ee_max_keypackage_pool_size: filament_protocol::MAX_KEYPACKAGE_POOL_SIZE + 1,

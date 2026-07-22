@@ -3,13 +3,15 @@ use std::{env, time::Duration};
 use axum::{body::Body, http::Request, http::StatusCode, response::Response};
 use filament_core::{ConversationId, DeviceId, GroupId, UserId};
 use filament_e2ee::{
-    create_pairing_transfer, create_root_identity_rotation_proof, generate_key_package_batch,
-    generate_last_resort_key_package, verify_root_identity_rotation_proof, MlsConversation,
-    MlsDevice, PairingReceiver, PairingTransfer, PinnedUserIdentity, RootIdentityKey,
+    create_pairing_transfer, create_root_identity_rotation_proof, decrypt_attachment,
+    encrypt_attachment, generate_key_package_batch, generate_last_resort_key_package,
+    verify_root_identity_rotation_proof, EncryptedAttachment, MlsConversation, MlsDevice,
+    PairingReceiver, PairingTransfer, PinnedUserIdentity, RootIdentityKey,
     RootIdentityRotationProof, ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS,
 };
 use filament_protocol::{
-    AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
+    AckE2eeAttachmentsRequest, AckE2eeAttachmentsResponse, AckE2eeCommitsRequest,
+    AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
     AckE2eeProposalsRequest, AckE2eeProposalsResponse, ClaimKeyPackageRequest,
     ClaimKeyPackageResponse, CreateMlsConversationRequest, CreateMlsGroupConversationRequest,
     DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse,
@@ -17,9 +19,9 @@ use filament_protocol::{
     MlsConversationProvisionResponse, MlsGroupInvite, MlsLeafRouting, MlsMembershipChange,
     PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
     PostProposalRequest, PostProposalResponse, PublishDeviceCertificateRequest,
-    RemoveDeviceResponse, RootIdentityDirectoryResponse, RotateRootIdentityRequest,
-    RotateRootIdentityResponse, UpgradeMlsConversationRequest, UploadKeyPackagesRequest,
-    UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    PutE2eeAttachmentResponse, RemoveDeviceResponse, RootIdentityDirectoryResponse,
+    RotateRootIdentityRequest, RotateRootIdentityResponse, UpgradeMlsConversationRequest,
+    UploadKeyPackagesRequest, UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use futures_util::StreamExt;
@@ -1203,6 +1205,209 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     )
     .await;
     assert_eq!(resumed_message.status(), StatusCode::OK);
+
+    let attachment_plaintext = b"private attachment contents";
+    let (descriptor, encrypted) =
+        encrypt_attachment("private.txt", attachment_plaintext).expect("attachment should encrypt");
+    let attachment_id = descriptor.attachment_id.to_string();
+    let attachment_uri =
+        format!("/e2ee/groups/{group_id}/attachments/{attachment_id}?device_id={alice_device_id}");
+    let upload = send_opaque_attachment(
+        &app,
+        "PUT",
+        &attachment_uri,
+        &alice_auth.access_token,
+        "203.0.113.181",
+        encrypted.ciphertext.clone(),
+    )
+    .await;
+    assert_eq!(upload.status(), StatusCode::OK);
+    let uploaded: PutE2eeAttachmentResponse = parse_json(upload).await;
+    assert_eq!(uploaded.attachment_id, attachment_id);
+    assert_eq!(uploaded.ciphertext_bytes, 65_536);
+
+    let retry = send_opaque_attachment(
+        &app,
+        "PUT",
+        &attachment_uri,
+        &alice_auth.access_token,
+        "203.0.113.181",
+        encrypted.ciphertext.clone(),
+    )
+    .await;
+    assert_eq!(retry.status(), StatusCode::OK);
+    assert_eq!(
+        parse_json::<PutE2eeAttachmentResponse>(retry).await,
+        uploaded
+    );
+    let conflicting = send_opaque_attachment(
+        &app,
+        "PUT",
+        &attachment_uri,
+        &alice_auth.access_token,
+        "203.0.113.181",
+        vec![0xA7; 65_536],
+    )
+    .await;
+    assert_eq!(conflicting.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        parse_json::<serde_json::Value>(conflicting).await["error"],
+        "e2ee_attachment_conflict"
+    );
+
+    let stored_attachment: (Vec<u8>, i64, String, String) = sqlx::query_as(
+        "SELECT ciphertext_blob, octet_length(ciphertext_blob), owner_user_id, group_id
+         FROM e2ee_attachment_blobs WHERE attachment_id = $1",
+    )
+    .bind(&attachment_id)
+    .fetch_one(&audit_pool)
+    .await
+    .expect("opaque attachment should be stored");
+    assert_eq!(stored_attachment.0, encrypted.ciphertext);
+    assert_eq!(stored_attachment.1, 65_536);
+    assert_eq!(stored_attachment.2, alice_user_id.to_string());
+    assert_eq!(stored_attachment.3, group_id.to_string());
+    let private_metadata_columns: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_name = 'e2ee_attachment_blobs'
+           AND column_name = ANY($1::TEXT[])",
+    )
+    .bind(vec!["filename", "mime_type", "content_hash", "content_key"])
+    .fetch_one(&audit_pool)
+    .await
+    .expect("attachment schema should be inspectable");
+    assert_eq!(private_metadata_columns, 0);
+
+    let removed_member_download = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/attachments/{attachment_id}?device_id={charlie_device_id}"
+        ))
+        .header(
+            "authorization",
+            format!("Bearer {}", charlie_auth.access_token),
+        )
+        .header("x-forwarded-for", "203.0.113.183")
+        .body(Body::empty())
+        .expect("removed member download should build");
+    let removed_member_download = app
+        .clone()
+        .oneshot(removed_member_download)
+        .await
+        .expect("removed member download should execute");
+    assert_eq!(removed_member_download.status(), StatusCode::NOT_FOUND);
+
+    let pending_devices: Vec<String> = sqlx::query_scalar(
+        "SELECT device_id FROM e2ee_attachment_deliveries
+         WHERE attachment_id = $1 AND acked_at_unix IS NULL ORDER BY device_id",
+    )
+    .bind(&attachment_id)
+    .fetch_all(&audit_pool)
+    .await
+    .expect("pending attachment devices should be queryable");
+    assert_eq!(pending_devices.len(), 2);
+    assert!(pending_devices.contains(&bob_device_id.to_string()));
+    assert!(pending_devices.contains(&bob_second_device_id.to_string()));
+
+    for (index, device_id) in [bob_device_id, bob_second_device_id]
+        .into_iter()
+        .enumerate()
+    {
+        let download = Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/e2ee/groups/{group_id}/attachments/{attachment_id}?device_id={device_id}"
+            ))
+            .header("authorization", format!("Bearer {}", bob_auth.access_token))
+            .header("x-forwarded-for", "203.0.113.182")
+            .body(Body::empty())
+            .expect("attachment download should build");
+        let download = app
+            .clone()
+            .oneshot(download)
+            .await
+            .expect("attachment download should execute");
+        assert_eq!(download.status(), StatusCode::OK);
+        assert_eq!(
+            download.headers()["content-type"],
+            "application/octet-stream"
+        );
+        assert_eq!(download.headers()["cache-control"], "private, no-store");
+        let downloaded_bytes = axum::body::to_bytes(download.into_body(), 65_536)
+            .await
+            .expect("attachment body should be bounded and readable")
+            .to_vec();
+        let downloaded = EncryptedAttachment {
+            attachment_id: descriptor.attachment_id,
+            ciphertext: downloaded_bytes,
+        };
+        let content = decrypt_attachment(&descriptor, &downloaded)
+            .expect("recipient should authenticate and decrypt attachment");
+        assert_eq!(content.bytes.as_slice(), attachment_plaintext);
+
+        let ack = send_json(
+            &app,
+            "POST",
+            &format!("/e2ee/groups/{group_id}/attachments/ack"),
+            Some(&bob_auth.access_token),
+            "203.0.113.182",
+            &AckE2eeAttachmentsRequest {
+                device_id: device_id.to_string(),
+                attachment_ids: vec![attachment_id.clone()],
+            },
+        )
+        .await;
+        assert_eq!(ack.status(), StatusCode::OK);
+        let ack: AckE2eeAttachmentsResponse = parse_json(ack).await;
+        assert_eq!(ack.acknowledged_count, 1);
+        assert_eq!(ack.deleted_count, u32::from(index == 1));
+    }
+    let deleted_after_all_device_ack: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_attachment_blobs WHERE attachment_id = $1")
+            .bind(&attachment_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("attachment deletion should be queryable");
+    assert_eq!(deleted_after_all_device_ack, 0);
+
+    let (_, expiring) = encrypt_attachment("expiring.bin", b"expires from the mailbox")
+        .expect("expiring attachment should encrypt");
+    let expiring_id = expiring.attachment_id.to_string();
+    let expiring_upload = send_opaque_attachment(
+        &app,
+        "PUT",
+        &format!("/e2ee/groups/{group_id}/attachments/{expiring_id}?device_id={alice_device_id}"),
+        &alice_auth.access_token,
+        "203.0.113.181",
+        expiring.ciphertext,
+    )
+    .await;
+    assert_eq!(expiring_upload.status(), StatusCode::OK);
+    sqlx::query(
+        "UPDATE e2ee_attachment_blobs
+         SET created_at_unix = 0, expires_at_unix = 1 WHERE attachment_id = $1",
+    )
+    .bind(&expiring_id)
+    .execute(&audit_pool)
+    .await
+    .expect("attachment expiry should be adjustable for GC coverage");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let remaining: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM e2ee_attachment_blobs WHERE attachment_id = $1",
+            )
+            .bind(&expiring_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("expired attachment deletion should be queryable");
+            if remaining == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("background mailbox GC should delete expired attachments");
 }
 
 fn postgres_url() -> Option<String> {
@@ -1287,6 +1492,28 @@ async fn next_gateway_event(
     })
     .await
     .unwrap_or_else(|_| panic!("timed out waiting for gateway event {event_type}"))
+}
+
+async fn send_opaque_attachment(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    ip: &str,
+    ciphertext: Vec<u8>,
+) -> Response {
+    let request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/octet-stream")
+        .header("x-forwarded-for", ip)
+        .body(Body::from(ciphertext))
+        .expect("opaque attachment request should build");
+    app.clone()
+        .oneshot(request)
+        .await
+        .expect("opaque attachment request should execute")
 }
 
 async fn send_json<T: serde::Serialize>(

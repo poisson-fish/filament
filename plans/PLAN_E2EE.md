@@ -200,6 +200,13 @@ Server must not store plaintext content, content-derived metadata, or unwrapped 
 - `POST /e2ee/groups/{group_id}/commits` — Delivery Service ingestion point; enforces total order per group
   - single-writer-per-epoch: the first order-valid commit for epoch N is accepted; competing commits receive a deterministic typed rejection (`409 epoch_conflict`) and clients rebase pending proposals
 - `POST /e2ee/groups/{group_id}/messages` — application `PrivateMessage` transport
+- `PUT /e2ee/groups/{group_id}/attachments/{attachment_id}` — exact-bucket
+  opaque ciphertext upload from an active group device; the client-generated
+  object ID is authenticated inside the MLS application message
+- `GET /e2ee/groups/{group_id}/attachments/{attachment_id}` — no-store opaque
+  download for a snapshotted active device
+- `POST /e2ee/groups/{group_id}/attachments/ack` — batched per-device
+  acknowledgment after client-side authentication/decryption; drives hard-delete
 - Gateway events (new), all inside the `{ v, t, d }` envelope with strict bounds:
   - `mls_message`, `mls_commit`, `mls_welcome`, `mls_proposal`
   - `device_list_update`, `keypackage_low`

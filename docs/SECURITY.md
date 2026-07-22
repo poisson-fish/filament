@@ -207,6 +207,21 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   five original files.
 - Compensating controls for the MIME-sniff carve-out: hard size caps, per-user quotas, padding buckets, and mailbox TTL still apply server-side; content-type validation moves client-side after decryption.
 - No server-side thumbnailing, transcoding, or link unfurling for E2EE content; thumbnails are client-generated and encrypted.
+- The Delivery Service accepts only the six exact ciphertext buckets on a
+  separately body-capped route. Uploads require an authenticated active group
+  leaf, are exact-idempotent by client-generated object ID, and conflicting ID
+  reuse fails closed. The server persists only group/uploader routing, opaque
+  ciphertext, timestamps, and per-device delivery state; it has no filename,
+  MIME, content hash, thumbnail kind, or content-key columns.
+- Attachment bytes count toward the same configurable per-user quota as
+  plaintext attachments. The uploader is acknowledged at upload; other active
+  group leaves acknowledge only after native AEAD, padding, hash, and MIME
+  verification. All-device acknowledgment or bounded mailbox TTL hard-deletes
+  the blob and cascades delivery rows, deterministically reclaiming quota.
+- Attachment upload, download, and acknowledgment are independently rate-limited
+  per client IP, authenticated user, device, and group. Downloads are scoped to
+  the snapshotted active leaf and return `application/octet-stream` with
+  `nosniff` and `private, no-store` response controls.
 
 ### Client Verification and Delivery Integrity
 - Encryption indicators derive only from successful local cryptographic verification. Server-provided fields (`crypto`, `suite`, `epoch`, `sender_device_id`) are routing hints and can never upgrade a message's displayed trust.

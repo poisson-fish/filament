@@ -11,7 +11,7 @@ use filament_server::{
 };
 use tokio::net::TcpListener;
 
-type E2eeRuntimeLimits = (u32, u32, u32, u32, usize, Duration, Duration, Duration);
+type E2eeRuntimeLimits = (u32, u32, u32, u32, u32, usize, Duration, Duration, Duration);
 
 fn parse_usize_env_or_default(var_name: &str, default: usize) -> anyhow::Result<usize> {
     std::env::var(var_name).map_or_else(
@@ -129,6 +129,10 @@ fn parse_e2ee_runtime_limits_from_env(defaults: &AppConfig) -> anyhow::Result<E2
         "FILAMENT_E2EE_MESSAGE_PER_MINUTE",
         defaults.e2ee_message_per_minute,
     )?;
+    let attachment_per_minute = parse_u32_env_or_default(
+        "FILAMENT_E2EE_ATTACHMENT_PER_MINUTE",
+        defaults.e2ee_attachment_per_minute,
+    )?;
     let max_keypackage_pool_size = parse_usize_env_or_default(
         "FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE",
         defaults.e2ee_max_keypackage_pool_size,
@@ -150,6 +154,7 @@ fn parse_e2ee_runtime_limits_from_env(defaults: &AppConfig) -> anyhow::Result<E2
         keypackage_claim_per_minute,
         commit_per_minute,
         message_per_minute,
+        attachment_per_minute,
         max_keypackage_pool_size,
         Duration::from_secs(mailbox_ttl_secs),
         Duration::from_secs(mailbox_gc_interval_secs),
@@ -247,6 +252,7 @@ async fn main() -> anyhow::Result<()> {
         e2ee_keypackage_claim_per_minute,
         e2ee_commit_per_minute,
         e2ee_message_per_minute,
+        e2ee_attachment_per_minute,
         e2ee_max_keypackage_pool_size,
         e2ee_mailbox_ttl,
         e2ee_mailbox_gc_interval,
@@ -277,6 +283,7 @@ async fn main() -> anyhow::Result<()> {
         e2ee_keypackage_claim_per_minute,
         e2ee_commit_per_minute,
         e2ee_message_per_minute,
+        e2ee_attachment_per_minute,
         e2ee_max_keypackage_pool_size,
         e2ee_mailbox_ttl,
         e2ee_mailbox_gc_interval,
@@ -466,6 +473,7 @@ mod tests {
         std::env::set_var("FILAMENT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE", "37");
         std::env::set_var("FILAMENT_E2EE_COMMIT_PER_MINUTE", "17");
         std::env::set_var("FILAMENT_E2EE_MESSAGE_PER_MINUTE", "91");
+        std::env::set_var("FILAMENT_E2EE_ATTACHMENT_PER_MINUTE", "13");
         std::env::set_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE", "64");
         std::env::set_var("FILAMENT_E2EE_MAILBOX_TTL_SECS", "86400");
         std::env::set_var("FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS", "15");
@@ -478,6 +486,7 @@ mod tests {
         std::env::remove_var("FILAMENT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE");
         std::env::remove_var("FILAMENT_E2EE_COMMIT_PER_MINUTE");
         std::env::remove_var("FILAMENT_E2EE_MESSAGE_PER_MINUTE");
+        std::env::remove_var("FILAMENT_E2EE_ATTACHMENT_PER_MINUTE");
         std::env::remove_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE");
         std::env::remove_var("FILAMENT_E2EE_MAILBOX_TTL_SECS");
         std::env::remove_var("FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS");
@@ -489,6 +498,7 @@ mod tests {
                 37,
                 17,
                 91,
+                13,
                 64,
                 Duration::from_secs(86400),
                 Duration::from_secs(15),

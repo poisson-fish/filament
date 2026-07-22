@@ -24,6 +24,7 @@ pub(crate) enum AuthFailure {
     QuotaExceeded,
     E2eeCapabilityRequired,
     E2eeConversationConflict,
+    E2eeAttachmentConflict,
     EpochConflict,
     E2eeMembershipReconciliationPending,
     Internal,
@@ -55,6 +56,7 @@ impl IntoResponse for AuthFailure {
             | Self::QuotaExceeded
             | Self::E2eeCapabilityRequired
             | Self::E2eeConversationConflict
+            | Self::E2eeAttachmentConflict
             | Self::EpochConflict
             | Self::E2eeMembershipReconciliationPending
             | Self::Internal => {}
@@ -152,6 +154,13 @@ impl IntoResponse for AuthFailure {
                 StatusCode::CONFLICT,
                 Json(AuthError {
                     error: "e2ee_conversation_conflict",
+                }),
+            )
+                .into_response(),
+            Self::E2eeAttachmentConflict => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "e2ee_attachment_conflict",
                 }),
             )
                 .into_response(),

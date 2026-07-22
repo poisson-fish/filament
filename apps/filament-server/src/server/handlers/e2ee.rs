@@ -6,38 +6,43 @@
 use std::{collections::HashSet, fmt::Write as _, net::SocketAddr};
 
 use axum::{
+    body::{Body, Bytes},
     extract::{connect_info::ConnectInfo, Extension, Path, Query, State},
-    http::HeaderMap,
+    http::{header::CONTENT_LENGTH, header::CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+    response::Response,
     Json,
 };
 use filament_core::{
     CiphersuiteId, ConversationCrypto, ConversationId, DeviceId, GroupId, ProposalId, UserId,
 };
 use filament_e2ee::{
-    verify_device_certificate, verify_root_identity_rotation_proof, RootIdentityRotationProof,
-    MAX_MLS_GROUP_LEAVES, MAX_MLS_GROUP_USERS,
+    verify_device_certificate, verify_root_identity_rotation_proof, AttachmentId,
+    RootIdentityRotationProof, MAX_MLS_GROUP_LEAVES, MAX_MLS_GROUP_USERS,
 };
 use filament_protocol::{
-    AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
+    AckE2eeAttachmentsRequest, AckE2eeAttachmentsResponse, AckE2eeCommitsRequest,
+    AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
     AckE2eeProposalsRequest, AckE2eeProposalsResponse, ClaimKeyPackageRequest,
     ClaimKeyPackageResponse, CreateMlsConversationRequest, CreateMlsGroupConversationRequest,
     DeliveryServiceIdentityResponse, DeviceInfo, DeviceListResponse, E2eeCommitMailboxEntry,
     E2eeCommitMailboxQuery, E2eeCommitMailboxResponse, E2eeMailboxMessage, E2eeMailboxQuery,
     E2eeMailboxResponse, E2eeProposalMailboxEntry, E2eeProposalMailboxQuery,
-    E2eeProposalMailboxResponse, GroupInfoResponse, MlsCommitEvent,
+    E2eeProposalMailboxResponse, GetE2eeAttachmentQuery, GroupInfoResponse, MlsCommitEvent,
     MlsConversationProvisionResponse, MlsLeafRouting, MlsMembershipChange,
     MlsMembershipChangeEvent, MlsMessageEvent, MlsProposalEvent, MlsWelcomeEvent,
     PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
     PostProposalRequest, PostProposalResponse, PublishDeviceCertificateRequest,
-    PublishDeviceCertificateResponse, RemoveDeviceResponse, RootIdentityDirectoryResponse,
-    RootIdentityRotationEntry, RotateRootIdentityRequest, RotateRootIdentityResponse,
-    UpgradeMlsConversationRequest, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
-    DELIVERY_SERVICE_EXTERNAL_SENDER_INDEX, DELIVERY_SERVICE_IDENTITY_PROTOCOL_VERSION,
-    MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES,
-    MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES,
-    MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE,
-    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE,
-    MAX_ROOT_IDENTITY_ROTATIONS, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    PublishDeviceCertificateResponse, PutE2eeAttachmentQuery, PutE2eeAttachmentResponse,
+    RemoveDeviceResponse, RootIdentityDirectoryResponse, RootIdentityRotationEntry,
+    RotateRootIdentityRequest, RotateRootIdentityResponse, UpgradeMlsConversationRequest,
+    UploadKeyPackagesRequest, UploadKeyPackagesResponse, DELIVERY_SERVICE_EXTERNAL_SENDER_INDEX,
+    DELIVERY_SERVICE_IDENTITY_PROTOCOL_VERSION, E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS,
+    MAX_E2EE_ATTACHMENT_ACK_BATCH_SIZE, MAX_E2EE_COMMIT_ACK_BATCH_SIZE,
+    MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE,
+    MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
+    MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES,
+    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
+    ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -349,6 +354,50 @@ async fn emit_keypackage_low(
 
 fn is_valid_message_padding_bucket(byte_len: usize) -> bool {
     E2EE_MESSAGE_PADDING_BUCKETS.contains(&byte_len)
+}
+
+fn is_valid_attachment_padding_bucket(byte_len: usize) -> bool {
+    E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS.contains(&byte_len)
+}
+
+fn fits_attachment_quota(current_usage: u64, new_bytes: u64, quota_bytes: u64) -> bool {
+    current_usage
+        .checked_add(new_bytes)
+        .is_some_and(|total| total <= quota_bytes)
+}
+
+async fn locked_attachment_usage_for_user(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+) -> Result<u64, AuthFailure> {
+    let owner_id = user_id.to_string();
+    let lock_key = format!("attachment-quota:{owner_id}");
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(lock_key)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    let plaintext_usage: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(size_bytes), 0)::BIGINT
+         FROM attachments WHERE owner_id = $1",
+    )
+    .bind(&owner_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let encrypted_usage: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(octet_length(ciphertext_blob)), 0)::BIGINT
+         FROM e2ee_attachment_blobs WHERE owner_user_id = $1",
+    )
+    .bind(owner_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let plaintext_usage = u64::try_from(plaintext_usage).map_err(|_| AuthFailure::Internal)?;
+    let encrypted_usage = u64::try_from(encrypted_usage).map_err(|_| AuthFailure::Internal)?;
+    plaintext_usage
+        .checked_add(encrypted_usage)
+        .ok_or(AuthFailure::Internal)
 }
 
 async fn lock_group_for_member(
@@ -1223,6 +1272,69 @@ async fn snapshot_message_deliveries(
     )
     .bind(message_id)
     .bind(sender_device_id.to_string())
+    .bind(created_at_unix)
+    .bind(group_id.to_string())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let inserted = i64::try_from(inserted.rows_affected()).map_err(|_| AuthFailure::Internal)?;
+    if inserted != device_count {
+        return Err(AuthFailure::Internal);
+    }
+    Ok(())
+}
+
+async fn snapshot_attachment_deliveries(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conversation_id: &str,
+    group_id: GroupId,
+    attachment_id: AttachmentId,
+    uploader_device_id: DeviceId,
+    created_at_unix: i64,
+) -> Result<(), AuthFailure> {
+    let member_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM e2ee_conversation_members WHERE conversation_id = $1",
+    )
+    .bind(conversation_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let device_rows = sqlx::query(
+        "SELECT l.device_id, l.user_id
+         FROM e2ee_group_leaves l
+         JOIN e2ee_device_certificates d
+           ON d.device_id = l.device_id AND d.user_id = l.user_id
+          AND d.tombstoned_at_unix IS NULL
+         WHERE l.group_id = $1
+         ORDER BY l.leaf_index ASC
+         FOR SHARE OF d",
+    )
+    .bind(group_id.to_string())
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let device_count = i64::try_from(device_rows.len()).map_err(|_| AuthFailure::Internal)?;
+    let capable_users: HashSet<String> = device_rows
+        .iter()
+        .map(|row| row.try_get("user_id").map_err(|_| AuthFailure::Internal))
+        .collect::<Result<_, _>>()?;
+    let capable_member_count =
+        i64::try_from(capable_users.len()).map_err(|_| AuthFailure::Internal)?;
+    validate_delivery_audience_counts(member_count, capable_member_count, device_count)?;
+
+    let inserted = sqlx::query(
+        "INSERT INTO e2ee_attachment_deliveries
+            (attachment_id, device_id, acked_at_unix)
+         SELECT $1, l.device_id,
+                CASE WHEN l.device_id = $2 THEN $3 ELSE NULL END
+         FROM e2ee_group_leaves l
+         JOIN e2ee_device_certificates d
+           ON d.device_id = l.device_id AND d.user_id = l.user_id
+          AND d.tombstoned_at_unix IS NULL
+         WHERE l.group_id = $4",
+    )
+    .bind(attachment_id.to_string())
+    .bind(uploader_device_id.to_string())
     .bind(created_at_unix)
     .bind(group_id.to_string())
     .execute(&mut **transaction)
@@ -2826,6 +2938,346 @@ pub(crate) async fn get_group_info(
     }))
 }
 
+/// Store one exact-bucket encrypted attachment without parsing its interior.
+#[allow(clippy::too_many_lines)]
+pub(crate) async fn put_group_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path((group_id, attachment_id)): Path<(String, String)>,
+    Query(query): Query<PutE2eeAttachmentQuery>,
+    ciphertext: Bytes,
+) -> Result<Json<PutE2eeAttachmentResponse>, AuthFailure> {
+    if !is_valid_attachment_padding_bucket(ciphertext.len()) {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    let group_id = GroupId::try_from(group_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let attachment_id =
+        AttachmentId::try_from(attachment_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let uploader_device_id =
+        DeviceId::try_from(query.device_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        uploader_device_id,
+        group_id,
+        E2eeTransportRoute::AttachmentUpload,
+    )
+    .await?;
+
+    let ciphertext_bytes =
+        u64::try_from(ciphertext.len()).map_err(|_| AuthFailure::PayloadTooLarge)?;
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let ttl = i64::try_from(state.runtime.e2ee_mailbox_ttl.as_secs())
+        .map_err(|_| AuthFailure::Internal)?;
+    let expires_at = now.checked_add(ttl).ok_or(AuthFailure::Internal)?;
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, uploader_device_id).await?;
+    let group = lock_group_for_member(&mut transaction, group_id, auth.user_id).await?;
+    require_current_group_leaf(&mut transaction, group_id, auth.user_id, uploader_device_id)
+        .await?;
+    let reconciliation_pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM e2ee_membership_reconciliations
+            WHERE group_id = $1 AND completed_epoch IS NULL
+         )",
+    )
+    .bind(group_id.to_string())
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if reconciliation_pending {
+        return Err(AuthFailure::E2eeMembershipReconciliationPending);
+    }
+
+    if let Some(existing) = sqlx::query(
+        "SELECT group_id, owner_user_id, uploader_device_id, ciphertext_blob,
+                expires_at_unix
+         FROM e2ee_attachment_blobs WHERE attachment_id = $1 FOR UPDATE",
+    )
+    .bind(attachment_id.to_string())
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    {
+        let existing_expires_at: i64 = existing
+            .try_get("expires_at_unix")
+            .map_err(|_| AuthFailure::Internal)?;
+        if existing_expires_at <= now {
+            sqlx::query("DELETE FROM e2ee_attachment_blobs WHERE attachment_id = $1")
+                .bind(attachment_id.to_string())
+                .execute(&mut *transaction)
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+        } else {
+            let exact_retry = existing
+                .try_get::<String, _>("group_id")
+                .is_ok_and(|value| value == group_id.to_string())
+                && existing
+                    .try_get::<String, _>("owner_user_id")
+                    .is_ok_and(|value| value == auth.user_id.to_string())
+                && existing
+                    .try_get::<String, _>("uploader_device_id")
+                    .is_ok_and(|value| value == uploader_device_id.to_string())
+                && existing
+                    .try_get::<Vec<u8>, _>("ciphertext_blob")
+                    .is_ok_and(|value| value.as_slice() == ciphertext.as_ref());
+            if !exact_retry {
+                return Err(AuthFailure::E2eeAttachmentConflict);
+            }
+            transaction
+                .commit()
+                .await
+                .map_err(|_| AuthFailure::Internal)?;
+            return Ok(Json(PutE2eeAttachmentResponse {
+                attachment_id: attachment_id.to_string(),
+                ciphertext_bytes,
+                expires_at_unix: existing_expires_at,
+            }));
+        }
+    }
+
+    let usage = locked_attachment_usage_for_user(&mut transaction, auth.user_id).await?;
+    if !fits_attachment_quota(
+        usage,
+        ciphertext_bytes,
+        state.runtime.user_attachment_quota_bytes,
+    ) {
+        return Err(AuthFailure::QuotaExceeded);
+    }
+    sqlx::query(
+        "INSERT INTO e2ee_attachment_blobs
+            (attachment_id, group_id, owner_user_id, uploader_device_id,
+             ciphertext_blob, created_at_unix, expires_at_unix)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(attachment_id.to_string())
+    .bind(group_id.to_string())
+    .bind(auth.user_id.to_string())
+    .bind(uploader_device_id.to_string())
+    .bind(ciphertext.as_ref())
+    .bind(now)
+    .bind(expires_at)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| {
+        if error
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::constraint)
+            .is_some_and(|constraint| constraint.contains("e2ee_attachment_blobs_pkey"))
+        {
+            AuthFailure::E2eeAttachmentConflict
+        } else {
+            AuthFailure::Internal
+        }
+    })?;
+    snapshot_attachment_deliveries(
+        &mut transaction,
+        &group.conversation_id,
+        group_id,
+        attachment_id,
+        uploader_device_id,
+        now,
+    )
+    .await?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    Ok(Json(PutE2eeAttachmentResponse {
+        attachment_id: attachment_id.to_string(),
+        ciphertext_bytes,
+        expires_at_unix: expires_at,
+    }))
+}
+
+/// Return one opaque attachment only to a snapshotted active group device.
+pub(crate) async fn get_group_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path((group_id, attachment_id)): Path<(String, String)>,
+    Query(query): Query<GetE2eeAttachmentQuery>,
+) -> Result<Response, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    let group_id = GroupId::try_from(group_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let attachment_id =
+        AttachmentId::try_from(attachment_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let device_id = DeviceId::try_from(query.device_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        device_id,
+        group_id,
+        E2eeTransportRoute::AttachmentRead,
+    )
+    .await?;
+
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, device_id).await?;
+    let _group =
+        get_group_for_member_in_transaction(&mut transaction, group_id, auth.user_id).await?;
+    require_current_group_leaf(&mut transaction, group_id, auth.user_id, device_id).await?;
+    let ciphertext: Vec<u8> = sqlx::query_scalar(
+        "SELECT b.ciphertext_blob
+         FROM e2ee_attachment_deliveries d
+         JOIN e2ee_attachment_blobs b ON b.attachment_id = d.attachment_id
+         WHERE d.attachment_id = $1 AND d.device_id = $2
+           AND b.group_id = $3 AND b.expires_at_unix > $4",
+    )
+    .bind(attachment_id.to_string())
+    .bind(device_id.to_string())
+    .bind(group_id.to_string())
+    .bind(now)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    .ok_or(AuthFailure::NotFound)?;
+    if !is_valid_attachment_padding_bucket(ciphertext.len()) {
+        return Err(AuthFailure::Internal);
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    let ciphertext_len = ciphertext.len();
+    let mut response = Response::new(Body::from(ciphertext));
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    let content_length =
+        HeaderValue::from_str(&ciphertext_len.to_string()).map_err(|_| AuthFailure::Internal)?;
+    response
+        .headers_mut()
+        .insert(CONTENT_LENGTH, content_length);
+    response.headers_mut().insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("private, no-store"),
+    );
+    Ok(response)
+}
+
+/// Hard-delete blobs after every snapshotted device durably verifies them.
+pub(crate) async fn ack_group_attachments(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(group_id): Path<String>,
+    Json(payload): Json<AckE2eeAttachmentsRequest>,
+) -> Result<Json<AckE2eeAttachmentsResponse>, AuthFailure> {
+    if payload.attachment_ids.is_empty()
+        || payload.attachment_ids.len() > MAX_E2EE_ATTACHMENT_ACK_BATCH_SIZE
+    {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let mut unique_ids = HashSet::with_capacity(payload.attachment_ids.len());
+    let attachment_ids = payload
+        .attachment_ids
+        .iter()
+        .map(|attachment_id| {
+            let attachment_id = AttachmentId::try_from(attachment_id.clone())
+                .map_err(|_| AuthFailure::InvalidRequest)?;
+            if !unique_ids.insert(attachment_id) {
+                return Err(AuthFailure::InvalidRequest);
+            }
+            Ok(attachment_id.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    let group_id = GroupId::try_from(group_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    let device_id =
+        DeviceId::try_from(payload.device_id).map_err(|_| AuthFailure::InvalidRequest)?;
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        device_id,
+        group_id,
+        E2eeTransportRoute::AttachmentAck,
+    )
+    .await?;
+
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    require_active_owned_device(&mut transaction, auth.user_id, device_id).await?;
+    let _group = lock_group_for_member(&mut transaction, group_id, auth.user_id).await?;
+    require_current_group_leaf(&mut transaction, group_id, auth.user_id, device_id).await?;
+    let acknowledged_ids: Vec<String> = sqlx::query_scalar(
+        "UPDATE e2ee_attachment_deliveries d
+         SET acked_at_unix = COALESCE(d.acked_at_unix, $1)
+         FROM e2ee_attachment_blobs b
+         WHERE b.attachment_id = d.attachment_id
+           AND b.group_id = $2 AND b.expires_at_unix > $1
+           AND d.device_id = $3
+           AND d.attachment_id = ANY($4::TEXT[])
+         RETURNING d.attachment_id",
+    )
+    .bind(now)
+    .bind(group_id.to_string())
+    .bind(device_id.to_string())
+    .bind(&attachment_ids)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let deleted_count = if acknowledged_ids.is_empty() {
+        0
+    } else {
+        sqlx::query(
+            "DELETE FROM e2ee_attachment_blobs b
+             WHERE b.group_id = $1
+               AND b.attachment_id = ANY($2::TEXT[])
+               AND NOT EXISTS (
+                   SELECT 1 FROM e2ee_attachment_deliveries pending
+                   WHERE pending.attachment_id = b.attachment_id
+                     AND pending.acked_at_unix IS NULL
+               )",
+        )
+        .bind(group_id.to_string())
+        .bind(&acknowledged_ids)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .rows_affected()
+    };
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    Ok(Json(AckE2eeAttachmentsResponse {
+        acknowledged_count: u32::try_from(acknowledged_ids.len())
+            .map_err(|_| AuthFailure::Internal)?,
+        deleted_count: u32::try_from(deleted_count).map_err(|_| AuthFailure::Internal)?,
+    }))
+}
+
 /// Return a bounded page of opaque messages pending for one active device.
 pub(crate) async fn get_group_mailbox(
     State(state): State<AppState>,
@@ -3959,6 +4411,19 @@ mod tests {
         for invalid in [0, 511, 513, 2_048, 16_385, 65_536] {
             assert!(!is_valid_message_padding_bucket(invalid));
         }
+    }
+
+    #[test]
+    fn attachment_padding_accepts_only_protocol_buckets() {
+        for bucket in E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS {
+            assert!(is_valid_attachment_padding_bucket(bucket));
+        }
+        for invalid in [0, 65_535, 65_537, 2 * 1_024 * 1_024, 33 * 1_024 * 1_024] {
+            assert!(!is_valid_attachment_padding_bucket(invalid));
+        }
+        assert!(fits_attachment_quota(64, 32, 96));
+        assert!(!fits_attachment_quota(65, 32, 96));
+        assert!(!fits_attachment_quota(u64::MAX, 1, u64::MAX));
     }
 
     #[test]

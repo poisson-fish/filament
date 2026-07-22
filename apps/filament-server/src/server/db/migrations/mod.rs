@@ -8,6 +8,7 @@ pub(crate) mod v15_e2ee_conversation_provisioning;
 pub(crate) mod v16_e2ee_commit_mailbox;
 pub(crate) mod v17_e2ee_proposal_mailbox;
 pub(crate) mod v18_e2ee_group_membership;
+pub(crate) mod v19_e2ee_attachment_mailbox;
 pub(crate) mod v1_hierarchical_permissions;
 pub(crate) mod v2_attachment_schema;
 pub(crate) mod v3_social_graph_schema;

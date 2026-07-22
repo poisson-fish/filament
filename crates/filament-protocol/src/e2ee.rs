@@ -37,6 +37,19 @@ pub const MAX_WELCOME_BYTES: usize = 65_536;
 /// Maximum size for a serialized proposal blob (64 KiB).
 pub const MAX_PROPOSAL_BYTES: usize = 65_536;
 
+/// Maximum encrypted attachment object size (32 MiB).
+pub const MAX_E2EE_ATTACHMENT_BYTES: usize = 32 * 1_024 * 1_024;
+
+/// Exact encrypted attachment transport buckets.
+pub const E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS: [usize; 6] = [
+    64 * 1_024,
+    256 * 1_024,
+    1_024 * 1_024,
+    4 * 1_024 * 1_024,
+    16 * 1_024 * 1_024,
+    MAX_E2EE_ATTACHMENT_BYTES,
+];
+
 /// Maximum size for a serialized GroupInfo blob (64 KiB).
 pub const MAX_GROUP_INFO_BYTES: usize = 65_536;
 
@@ -75,6 +88,9 @@ pub const MAX_E2EE_COMMIT_ACK_BATCH_SIZE: usize = 100;
 
 /// Maximum number of proposal IDs acknowledged in one request.
 pub const MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE: usize = 100;
+
+/// Maximum number of attachment acknowledgments accepted in one request.
+pub const MAX_E2EE_ATTACHMENT_ACK_BATCH_SIZE: usize = 100;
 
 /// Maximum root identities in one group DM.
 pub const MAX_MLS_GROUP_USERS: usize = 100;
@@ -416,6 +432,20 @@ where
         return Err(de::Error::invalid_length(
             value.len(),
             &"between 1 and 100 proposal IDs",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_attachment_ack_ids<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<String>::deserialize(deserializer)?;
+    if value.is_empty() || value.len() > MAX_E2EE_ATTACHMENT_ACK_BATCH_SIZE {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"between 1 and 100 attachment IDs",
         ));
     }
     Ok(value)
@@ -1037,6 +1067,55 @@ pub struct PostMessageResponse {
     pub message_id: String,
     /// Unix timestamp (seconds) when the message was received.
     pub created_at_unix: i64,
+}
+
+/// Query parameters for uploading one opaque encrypted attachment object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PutE2eeAttachmentQuery {
+    /// Active group leaf that encrypted and uploaded the object.
+    pub device_id: String,
+}
+
+/// Result of an idempotent encrypted attachment upload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PutE2eeAttachmentResponse {
+    /// Client-generated object ID authenticated inside the MLS event.
+    pub attachment_id: String,
+    /// Exact opaque ciphertext size stored by the Delivery Service.
+    pub ciphertext_bytes: u64,
+    /// Unix timestamp (seconds) after which the server hard-deletes the blob.
+    pub expires_at_unix: i64,
+}
+
+/// Query parameters for downloading one pending opaque attachment object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GetE2eeAttachmentQuery {
+    /// Active snapshotted device retrieving its ciphertext delivery.
+    pub device_id: String,
+}
+
+/// Verified-decryption acknowledgments for encrypted attachment objects.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AckE2eeAttachmentsRequest {
+    /// Active device that downloaded, authenticated, and decrypted the blobs.
+    pub device_id: String,
+    /// Client-generated attachment IDs. Duplicates are rejected by the server.
+    #[serde(deserialize_with = "deserialize_attachment_ack_ids")]
+    pub attachment_ids: Vec<String>,
+}
+
+/// Result of a batched per-device attachment acknowledgment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AckE2eeAttachmentsResponse {
+    /// Delivery rows newly or previously acknowledged by this device.
+    pub acknowledged_count: u32,
+    /// Blobs hard-deleted because every snapshotted device acknowledged.
+    pub deleted_count: u32,
 }
 
 /// Query parameters for a device's pending message mailbox.
@@ -1746,6 +1825,65 @@ mod tests {
         let json = r#"{"epoch":1,"suite_id":3,"sender_device_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","message_blob":[170],"extra":1}"#;
         let result: Result<PostMessageRequest, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn attachment_transport_contracts_are_strict_and_bounded() {
+        let attachment_id = String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        let device_id = String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW");
+        let upload_query = PutE2eeAttachmentQuery {
+            device_id: device_id.clone(),
+        };
+        let json = serde_json::to_string(&upload_query).unwrap();
+        assert_eq!(
+            serde_json::from_str::<PutE2eeAttachmentQuery>(&json).unwrap(),
+            upload_query
+        );
+        let response = PutE2eeAttachmentResponse {
+            attachment_id: attachment_id.clone(),
+            ciphertext_bytes: 65_536,
+            expires_at_unix: 1_700_003_600,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(
+            serde_json::from_str::<PutE2eeAttachmentResponse>(&json).unwrap(),
+            response
+        );
+        let ack = AckE2eeAttachmentsRequest {
+            device_id,
+            attachment_ids: vec![attachment_id],
+        };
+        let json = serde_json::to_string(&ack).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AckE2eeAttachmentsRequest>(&json).unwrap(),
+            ack
+        );
+
+        let empty = AckE2eeAttachmentsRequest {
+            device_id: String::from("device"),
+            attachment_ids: Vec::new(),
+        };
+        assert!(serde_json::from_str::<AckE2eeAttachmentsRequest>(
+            &serde_json::to_string(&empty).unwrap()
+        )
+        .is_err());
+        let oversized = AckE2eeAttachmentsRequest {
+            device_id: String::from("device"),
+            attachment_ids: vec![
+                String::from("attachment");
+                MAX_E2EE_ATTACHMENT_ACK_BATCH_SIZE + 1
+            ],
+        };
+        assert!(serde_json::from_str::<AckE2eeAttachmentsRequest>(
+            &serde_json::to_string(&oversized).unwrap()
+        )
+        .is_err());
+        let unknown = r#"{"device_id":"device","attachment_ids":["attachment"],"extra":true}"#;
+        assert!(serde_json::from_str::<AckE2eeAttachmentsRequest>(unknown).is_err());
+        assert_eq!(
+            E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS.last().copied(),
+            Some(MAX_E2EE_ATTACHMENT_BYTES)
+        );
     }
 
     #[test]

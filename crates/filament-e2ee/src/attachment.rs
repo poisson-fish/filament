@@ -16,6 +16,10 @@ use ulid::Ulid;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::AttachmentError;
+pub use filament_protocol::{
+    E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS as ATTACHMENT_CIPHERTEXT_BUCKETS,
+    MAX_E2EE_ATTACHMENT_BYTES as MAX_ENCRYPTED_ATTACHMENT_BYTES,
+};
 
 const ATTACHMENT_PROTOCOL_VERSION: u16 = 1;
 const CONTENT_KEY_BYTES: usize = 32;
@@ -28,21 +32,10 @@ const ATTACHMENT_AAD_DOMAIN: &[u8] = b"filament:e2ee:attachment:v1";
 pub const MAX_ATTACHMENT_BYTES: usize = 24 * 1_024 * 1_024;
 /// Maximum original thumbnail size accepted by the native client.
 pub const MAX_THUMBNAIL_BYTES: usize = 1_024 * 1_024;
-/// Maximum encrypted attachment object size.
-pub const MAX_ENCRYPTED_ATTACHMENT_BYTES: usize = 32 * 1_024 * 1_024;
 /// Maximum UTF-8 bytes in a private attachment filename.
 pub const MAX_ATTACHMENT_FILENAME_BYTES: usize = 128;
 /// Maximum UTF-8 bytes in a private MIME type.
 pub const MAX_ATTACHMENT_MIME_BYTES: usize = 64;
-/// Exact transport sizes used to reduce attachment-size leakage.
-pub const ATTACHMENT_CIPHERTEXT_BUCKETS: [usize; 6] = [
-    64 * 1_024,
-    256 * 1_024,
-    1_024 * 1_024,
-    4 * 1_024 * 1_024,
-    16 * 1_024 * 1_024,
-    MAX_ENCRYPTED_ATTACHMENT_BYTES,
-];
 
 /// Canonical client-generated attachment identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
