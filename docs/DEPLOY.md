@@ -66,6 +66,13 @@ Set these variables for `filament-server` (via `infra/.env`):
   mailbox records (default `2592000`, valid range `1..=7776000`)
 - `FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS`: bounded hard-deletion sweep interval
   (default `60`, valid range `1..=3600`)
+- `FILAMENT_E2EE_DELIVERY_SERVICE_KEY_FILE`: optional absolute path to the
+  stable raw 32-byte Ed25519 seed used only for MLS external Remove proposals.
+  On Unix it must be a current-user-owned, single-link regular file with mode
+  `0400` or `0600`; symlinks, hardlinks, wrong owners, broader permissions, and
+  wrong lengths fail server startup. Without it, external-sender identity
+  discovery fails closed and groups requiring that capability must not be
+  provisioned.
 - `FILAMENT_HCAPTCHA_SITE_KEY`: optional hCaptcha site key (must be set with secret)
 - `FILAMENT_HCAPTCHA_SECRET`: optional hCaptcha server secret (must be set with site key)
 - `FILAMENT_HCAPTCHA_VERIFY_URL`: optional captcha verify endpoint (default `https://api.hcaptcha.com/siteverify`; localhost `http://` allowed for tests)
@@ -79,6 +86,14 @@ Default compose values:
 - `FILAMENT_E2EE_MESSAGE_PER_MINUTE=120`
 - `FILAMENT_E2EE_MAILBOX_TTL_SECS=2592000`
 - `FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS=60`
+
+Provision the Delivery Service seed once with a CSPRNG, mount it read-only as a
+container secret, and back it up under the same controls as other service
+identity keys. Never place it in `infra/.env`, source control, logs, or command
+arguments. Write 32 random bytes directly to the mounted secret file and set
+mode `0400` before server startup. Do not rotate this key while active MLS
+groups still pin it; rotation requires an authenticated group-context
+transition in every affected group and is not yet implemented.
 
 ### LiveKit signaling URL reachability
 

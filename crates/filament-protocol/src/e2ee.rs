@@ -88,6 +88,12 @@ pub const ED25519_PUBLIC_KEY_BYTES: usize = 32;
 /// Ed25519 signature size.
 pub const ED25519_SIGNATURE_BYTES: usize = 64;
 
+/// Delivery Service external-sender identity protocol version.
+pub const DELIVERY_SERVICE_IDENTITY_PROTOCOL_VERSION: u16 = 1;
+
+/// The only external-sender extension index registered by Filament groups.
+pub const DELIVERY_SERVICE_EXTERNAL_SENDER_INDEX: u32 = 0;
+
 fn deserialize_exact_bytes<'de, D, const N: usize>(deserializer: D) -> Result<Vec<u8>, D::Error>
 where
     D: Deserializer<'de>,
@@ -114,6 +120,32 @@ where
     D: Deserializer<'de>,
 {
     deserialize_exact_bytes::<D, ED25519_SIGNATURE_BYTES>(deserializer)
+}
+
+fn deserialize_delivery_service_identity_version<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u16::deserialize(deserializer)?;
+    if value != DELIVERY_SERVICE_IDENTITY_PROTOCOL_VERSION {
+        return Err(de::Error::custom(
+            "unsupported Delivery Service identity protocol version",
+        ));
+    }
+    Ok(value)
+}
+
+fn deserialize_delivery_service_sender_index<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u32::deserialize(deserializer)?;
+    if value != DELIVERY_SERVICE_EXTERNAL_SENDER_INDEX {
+        return Err(de::Error::custom(
+            "unsupported Delivery Service external-sender index",
+        ));
+    }
+    Ok(value)
 }
 
 fn deserialize_key_package_blob<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
@@ -399,6 +431,24 @@ where
 // ---------------------------------------------------------------------------
 // Device Certificate endpoints
 // ---------------------------------------------------------------------------
+
+/// Authenticated public configuration for the MLS Delivery Service sender.
+///
+/// Clients pin this identity before creating or joining a group. A changed key
+/// is a blocking identity change, not an automatic update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryServiceIdentityResponse {
+    /// Version of this public identity contract.
+    #[serde(deserialize_with = "deserialize_delivery_service_identity_version")]
+    pub protocol_version: u16,
+    /// Fixed index in the MLS `ExternalSenders` Group Context extension.
+    #[serde(deserialize_with = "deserialize_delivery_service_sender_index")]
+    pub external_sender_index: u32,
+    /// Stable Ed25519 public key authenticated by server configuration.
+    #[serde(deserialize_with = "deserialize_ed25519_public_key")]
+    pub signature_key: Vec<u8>,
+}
 
 /// Request body for `PUT /e2ee/devices/{device_id}` — publish device certificate.
 ///
@@ -1186,6 +1236,33 @@ mod tests {
     }
 
     // -- Device certificate DTOs --
+
+    #[test]
+    fn delivery_service_identity_is_strict_and_exact() {
+        let response = DeliveryServiceIdentityResponse {
+            protocol_version: DELIVERY_SERVICE_IDENTITY_PROTOCOL_VERSION,
+            external_sender_index: DELIVERY_SERVICE_EXTERNAL_SENDER_INDEX,
+            signature_key: vec![0xAB; ED25519_PUBLIC_KEY_BYTES],
+        };
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serde_json::from_value::<DeliveryServiceIdentityResponse>(value.clone()).unwrap(),
+            response
+        );
+
+        for (field, invalid) in [
+            ("protocol_version", serde_json::json!(2)),
+            ("external_sender_index", serde_json::json!(1)),
+            ("signature_key", serde_json::json!([1, 2, 3])),
+        ] {
+            let mut candidate = value.clone();
+            candidate[field] = invalid;
+            assert!(serde_json::from_value::<DeliveryServiceIdentityResponse>(candidate).is_err());
+        }
+        let mut unknown = value;
+        unknown["extra"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<DeliveryServiceIdentityResponse>(unknown).is_err());
+    }
 
     #[test]
     fn publish_device_certificate_request_deny_unknown_fields() {

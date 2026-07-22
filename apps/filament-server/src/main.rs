@@ -281,6 +281,8 @@ async fn main() -> anyhow::Result<()> {
         captcha_verify_url: std::env::var("FILAMENT_HCAPTCHA_VERIFY_URL")
             .unwrap_or_else(|_| String::from("https://api.hcaptcha.com/siteverify")),
         database_url: Some(database_url),
+        e2ee_delivery_service_key_file: std::env::var_os("FILAMENT_E2EE_DELIVERY_SERVICE_KEY_FILE")
+            .map(PathBuf::from),
         ..AppConfig::default()
     };
     let app = build_router_with_db_bootstrap(&app_config).await?;

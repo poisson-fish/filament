@@ -150,7 +150,9 @@ capability-oriented native backend without accepting key material, paths, or
 native identity. Final Tauri adapter and production backend/UI integration
 remain. Member-authored opaque proposal transport now uses bounded,
 epoch-checked, per-device mailboxes with active `mls_proposal` notifications;
-the server external-sender signing-key lifecycle remains open;
+the server external-sender now has stable operator-provisioned key custody, an
+authenticated public-identity contract, and a Remove-only signing surface;
+policy-triggered proposal generation remains open;
 attachment, media, guild-channel, hardening, and key-transparency work has not
 started.
 
@@ -546,8 +548,8 @@ members cannot use post-removal epochs. Group commit races deterministically
 rebase pending participant Adds on the authenticated winner, and stale group
 members recover through an isolated external commit only when the caller's
 exact participant-root set and signed GroupInfo both validate. Server-side
-group provisioning, membership reconciliation/events, and external-sender key
-custody remain open. Member-authored opaque proposals are now relayed through
+group provisioning, membership reconciliation/events, and policy-triggered
+external Remove generation remain open. Member-authored opaque proposals are now relayed through
 bounded per-device mailboxes with TTL/all-device-ack deletion. The
 native core registers a caller-pinned Delivery Service external sender,
 auto-stages valid Remove proposals at non-target members, retains the proposal

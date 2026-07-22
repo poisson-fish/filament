@@ -11,6 +11,7 @@ use argon2::password_hash::rand_core::{OsRng, RngCore};
 use filament_core::{
     ChannelKind, ChannelPermissionOverwrite, MarkdownToken, PermissionSet, Role, UserId, Username,
 };
+use filament_e2ee::DeliveryServiceSigner;
 use object_store::local::LocalFileSystem;
 use pasetors::{keys::SymmetricKey, version4::V4};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,7 @@ use super::{
         IpNetwork, DEFAULT_AUDIT_LIST_LIMIT_MAX, DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP,
         DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER, DEFAULT_GUILD_IP_BAN_MAX_ENTRIES,
     },
+    e2ee_delivery_service::load_delivery_service_signer,
     errors::AuthFailure,
     realtime::init_search_service,
 };
@@ -154,6 +156,7 @@ pub struct AppConfig {
     pub server_owner_user_id: Option<UserId>,
     pub attachment_root: PathBuf,
     pub database_url: Option<String>,
+    pub e2ee_delivery_service_key_file: Option<PathBuf>,
     pub e2ee_device_publish_per_minute: u32,
     pub e2ee_keypackage_claim_per_minute: u32,
     pub e2ee_commit_per_minute: u32,
@@ -203,6 +206,7 @@ impl Default for AppConfig {
             server_owner_user_id: None,
             attachment_root: PathBuf::from("./data/attachments"),
             database_url: None,
+            e2ee_delivery_service_key_file: None,
             e2ee_device_publish_per_minute: DEFAULT_E2EE_DEVICE_PUBLISH_PER_MINUTE,
             e2ee_keypackage_claim_per_minute: DEFAULT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE,
             e2ee_commit_per_minute: DEFAULT_E2EE_COMMIT_PER_MINUTE,
@@ -350,6 +354,7 @@ pub struct AppState {
     pub(crate) livekit: Option<Arc<LiveKitConfig>>,
     pub(crate) livekit_room: Option<Arc<livekit_api::services::room::RoomClient>>,
     pub(crate) http_client: Arc<reqwest::Client>,
+    pub(crate) e2ee_delivery_service: Option<Arc<DeliveryServiceSigner>>,
 }
 
 impl AppState {
@@ -381,6 +386,11 @@ impl AppState {
         let http_client = reqwest::Client::builder()
             .build()
             .map_err(|e| anyhow!("http client init failed: {e}"))?;
+        let e2ee_delivery_service = config
+            .e2ee_delivery_service_key_file
+            .as_deref()
+            .map(load_delivery_service_signer)
+            .transpose()?;
         let guilds = Arc::new(RwLock::new(HashMap::new()));
         let guild_roles = Arc::new(RwLock::new(HashMap::new()));
         let guild_role_assignments = Arc::new(RwLock::new(HashMap::new()));
@@ -481,6 +491,7 @@ impl AppState {
                 ))
             }),
             http_client: Arc::new(http_client),
+            e2ee_delivery_service,
         })
     }
 }

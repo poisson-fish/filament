@@ -79,7 +79,12 @@ The Phase 3 native core now supports bounded, explicitly root-pinned group-DM
 creation, participant Add, and all-device cryptographic eviction; server-side
 group membership orchestration is still pending. The Delivery Service now
 relays member-authored opaque proposals through bounded, per-device transient
-mailboxes; production external-sender signing-key custody remains pending.
+mailboxes. Stable external-sender key custody uses an operator-provisioned raw
+Ed25519 seed opened without symlink following and checked after open for exact
+length, private permissions, current ownership, and a single hard link. The
+authenticated endpoint exposes only its public identity, and the crypto API
+can sign only bounded Remove proposals. Policy-triggered proposal generation
+and group membership orchestration remain pending.
 The packaged client now has a validated, capability-oriented native command
 host, but the final Tauri adapter is supply-chain blocked: Tauri 2.11.5 does not
 pass the repository's advisory/license gates. Production launcher/backend and
@@ -223,6 +228,11 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   then the native core admits only a single-leaf `Remove` before proposal
   storage. External `Add`, `Update`, context changes, malformed proposals, and
   signatures from substituted keys fail closed without pending state.
+- The Delivery Service private seed is stable operator-managed key material,
+  separate from every user/client key and incapable of decrypting group
+  content. Startup rejects insecure key-file shape or permissions. Key rotation
+  is forbidden until every affected group can authenticate a Group Context
+  transition; clients never silently accept a replacement public key.
 - A non-target member immediately stages the authenticated Remove in an
   acceptance-gated member commit. The target stores the authenticated proposal
   without attempting to commit its own removal, allowing it to authenticate

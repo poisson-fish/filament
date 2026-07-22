@@ -1301,6 +1301,7 @@ dependencies = [
  "pasetors",
  "rand 0.10.2",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",

@@ -20,21 +20,23 @@ use filament_e2ee::{
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
     AckE2eeProposalsRequest, AckE2eeProposalsResponse, ClaimKeyPackageRequest,
-    ClaimKeyPackageResponse, CreateMlsConversationRequest, DeviceInfo, DeviceListResponse,
-    E2eeCommitMailboxEntry, E2eeCommitMailboxQuery, E2eeCommitMailboxResponse, E2eeMailboxMessage,
-    E2eeMailboxQuery, E2eeMailboxResponse, E2eeProposalMailboxEntry, E2eeProposalMailboxQuery,
-    E2eeProposalMailboxResponse, GroupInfoResponse, MlsCommitEvent,
-    MlsConversationProvisionResponse, MlsMessageEvent, MlsProposalEvent, MlsWelcomeEvent,
-    PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
-    PostProposalRequest, PostProposalResponse, PublishDeviceCertificateRequest,
-    PublishDeviceCertificateResponse, RemoveDeviceResponse, RootIdentityDirectoryResponse,
-    RootIdentityRotationEntry, RotateRootIdentityRequest, RotateRootIdentityResponse,
-    UpgradeMlsConversationRequest, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
-    MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES,
-    MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES,
-    MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE,
-    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE,
-    MAX_ROOT_IDENTITY_ROTATIONS, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    ClaimKeyPackageResponse, CreateMlsConversationRequest, DeliveryServiceIdentityResponse,
+    DeviceInfo, DeviceListResponse, E2eeCommitMailboxEntry, E2eeCommitMailboxQuery,
+    E2eeCommitMailboxResponse, E2eeMailboxMessage, E2eeMailboxQuery, E2eeMailboxResponse,
+    E2eeProposalMailboxEntry, E2eeProposalMailboxQuery, E2eeProposalMailboxResponse,
+    GroupInfoResponse, MlsCommitEvent, MlsConversationProvisionResponse, MlsMessageEvent,
+    MlsProposalEvent, MlsWelcomeEvent, PostCommitRequest, PostCommitResponse, PostMessageRequest,
+    PostMessageResponse, PostProposalRequest, PostProposalResponse,
+    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse, RemoveDeviceResponse,
+    RootIdentityDirectoryResponse, RootIdentityRotationEntry, RotateRootIdentityRequest,
+    RotateRootIdentityResponse, UpgradeMlsConversationRequest, UploadKeyPackagesRequest,
+    UploadKeyPackagesResponse, DELIVERY_SERVICE_EXTERNAL_SENDER_INDEX,
+    DELIVERY_SERVICE_IDENTITY_PROTOCOL_VERSION, MAX_E2EE_COMMIT_ACK_BATCH_SIZE,
+    MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE,
+    MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
+    MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES,
+    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
+    ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -61,6 +63,24 @@ const INITIAL_MLS_EPOCH: u64 = 1;
 
 type CertificateFields = ([u8; 32], [u8; 64], [u8; 32]);
 type RotationFields = ([u8; 32], [u8; 64], [u8; 64], [u8; 32], [u8; 64]);
+
+/// Return authenticated public configuration for the server's stable MLS
+/// external sender. The private key never crosses this boundary.
+pub(crate) async fn get_delivery_service_identity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<DeliveryServiceIdentityResponse>, AuthFailure> {
+    let _auth = authenticate(&state, &headers).await?;
+    let signer = state
+        .e2ee_delivery_service
+        .as_ref()
+        .ok_or(AuthFailure::E2eeCapabilityRequired)?;
+    Ok(Json(DeliveryServiceIdentityResponse {
+        protocol_version: DELIVERY_SERVICE_IDENTITY_PROTOCOL_VERSION,
+        external_sender_index: DELIVERY_SERVICE_EXTERNAL_SENDER_INDEX,
+        signature_key: signer.identity().signature_key().to_vec(),
+    }))
+}
 
 struct GroupAccess {
     conversation_id: String,

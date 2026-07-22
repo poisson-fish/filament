@@ -29,6 +29,7 @@
 pub mod application;
 pub mod commit_mailbox;
 pub mod conversation;
+pub mod delivery_service;
 pub mod durable_mailbox;
 pub mod error;
 pub mod identity;
@@ -56,6 +57,7 @@ pub use conversation::{
     MAX_BUFFERED_GENERATION_GAP, MAX_MLS_DEVICES_PER_USER, MAX_MLS_GROUP_LEAVES,
     MAX_MLS_GROUP_USERS,
 };
+pub use delivery_service::{DeliveryServiceSigner, DELIVERY_SERVICE_SEED_BYTES};
 pub use durable_mailbox::{
     confirm_commit_acknowledgment, confirm_message_acknowledgment, load_stored_message,
     pending_commit_acknowledgment, pending_message_acknowledgment, DurableCommitMailboxBatch,

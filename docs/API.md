@@ -531,7 +531,22 @@ The server tracks disconnect categories including:
 
 These endpoints provide the Delivery Service for MLS-based end-to-end encryption.
 The server stores and relays opaque blobs — it never parses MLS interiors or
-holds private keys. See `docs/adr/0001-e2ee-mls-openmls.md` for the protocol decision.
+holds client or content-decryption keys. Its distinct external-sender signing
+key can authorize only MLS Remove proposals. See
+`docs/adr/0001-e2ee-mls-openmls.md` for the protocol decision.
+
+### `GET /e2ee/delivery-service/identity`
+Returns the authenticated public configuration clients pin before creating or
+joining an MLS group with server-initiated removal support.
+- Response: `{ "protocol_version": 1, "external_sender_index": 0, "signature_key": [32 bytes] }`
+- Authentication is required. If the operator has not configured the stable
+  signing key, the endpoint fails closed with
+  `409 { "error": "e2ee_capability_required" }`.
+- Clients treat any change from their pinned key as a blocking identity change;
+  they never silently replace the Group Context external sender.
+- The response contains public material only. The server signing surface emits
+  only bounded external Remove proposals; it exposes no arbitrary signing or
+  external Add operation.
 
 ### `PUT /e2ee/devices/{device_id}`
 Publishes a device certificate for the authenticated user.
