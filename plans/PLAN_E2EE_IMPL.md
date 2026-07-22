@@ -159,8 +159,8 @@ and 200 leaves. The server atomically provisions 3–100-user groups with a
 shared multi-recipient Welcome, applies exact Add/Remove routing deltas, and
 blocks sends while policy eviction is unresolved. Native clients surface
 membership rows only after authenticating the matching MLS commit, and a
-20-member churn regression covers delivery and eviction. Phase 4 is now in
-progress. The native client encrypts files and client-generated thumbnails
+20-member churn regression covers delivery and eviction. Phase 4 is complete.
+The native client encrypts files and client-generated thumbnails
 with independent random ChaCha20-Poly1305 keys through the approved OpenMLS
 provider, authenticates all private descriptors inside strict MLS application
 events, pads ciphertext to exact transport buckets, and verifies AEAD, padding,
@@ -179,8 +179,11 @@ history in one conflict-safe SQLCipher transaction. Per-conversation
 disappearing timers are now negotiated in authenticated MLS events, mirrored
 by an exact bounded Delivery Service TTL, persisted with the mailbox
 checkpoint, carried through history sync and backup, hidden immediately at
-expiry, and hard-deleted through an atomic encrypted-store sweep. Local search
-remains.
+expiry, and hard-deleted through an atomic encrypted-store sweep. Native local
+search now rebuilds a bounded Tantivy RAM index from authenticated SQLCipher
+history, materializes same-author edits/deletes, excludes expired records,
+accepts only bounded literal-token queries, and returns safe Markdown tokens
+without any server request or plaintext index file.
 
 ---
 
@@ -691,8 +694,9 @@ opaque mailbox TTL without parsing semantics. Native clients atomically
 persist the conversation timer, authenticated expiration deadline, MLS state,
 and acknowledgment outbox; expired history is never returned and is
 hard-deleted in an atomic bounded sweep. Expiration metadata survives history
-sync and backup without restoring expired content. Local search is the next
-core increment.
+sync and backup without restoring expired content. Native search rebuilds an
+ephemeral Tantivy index from current authenticated local history, never
+persists plaintext index files, and never contacts the server.
 
 ### Deliverables
 
@@ -744,7 +748,7 @@ core increment.
 - [x] Mailbox GC verified for both messages and attachments
 - [x] Backup create + restore verified
 - [x] Disappearing messages enforced client-side and mirrored by server TTL
-- [ ] Local search works without server involvement for E2EE conversations
+- [x] Local search works without server involvement for E2EE conversations
 - [x] All quality gates pass
 
 ### Integration Points for Phase 5

@@ -38,6 +38,7 @@ pub mod history_sync;
 pub mod identity;
 pub mod keypackage;
 pub mod keystore;
+pub mod local_search;
 pub mod mailbox;
 pub mod pairing;
 pub mod persistence;
@@ -83,7 +84,7 @@ pub use durable_mailbox::{
 };
 pub use error::{
     AttachmentError, BackupError, ConversationError, E2eeError, HistorySyncError, IdentityError,
-    KeyPackageError, KeyStoreError, PairingError,
+    KeyPackageError, KeyStoreError, LocalSearchError, PairingError,
 };
 pub use filament_protocol::E2eeRetentionSeconds;
 pub use history_sync::{
@@ -105,6 +106,10 @@ pub use keystore::{
     load_root_identity, persist_root_identity, InMemoryKeyStore, LocalKeyStore, LocalStoreId,
     StoreKey, StoreKeyProvider, MAX_STORE_BATCH_ENTRIES, MAX_STORE_ENTRIES, MAX_STORE_KEY_BYTES,
     MAX_STORE_VALUE_BYTES, STORE_ENCRYPTION_KEY_BYTES,
+};
+pub use local_search::{
+    LocalSearchHit, LocalSearchIndex, LocalSearchQuery, MAX_LOCAL_SEARCH_QUERY_BYTES,
+    MAX_LOCAL_SEARCH_QUERY_TERMS, MAX_LOCAL_SEARCH_RESULTS,
 };
 pub use mailbox::{
     process_message_mailbox, AuthenticatedMailboxMessage, MailboxDecryptionBatch,

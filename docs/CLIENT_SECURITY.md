@@ -119,6 +119,13 @@ Configuration sources:
 - Each record remains capped at 4 MiB, each device store at 4,096 records, and
   the encrypted database at 64 MiB. History synchronization retains these
   conservative bounds and refuses snapshots beyond 4,096 history records.
+- Local E2EE search is a native-only, ephemeral derivative of authenticated
+  SQLCipher history. Tantivy runs against an in-memory index that is rebuilt on
+  demand and never persisted as plaintext. Rebuild excludes expired content,
+  materializes authenticated same-author edits/deletes, and skips non-chat
+  application events. Literal queries are limited to 256 UTF-8 bytes and 16
+  analyzed terms; results are capped at 50 and expose only safe Markdown UI
+  tokens. No E2EE query or hit is sent to the Filament server.
 - The key-isolation audit and negative-test inventory are recorded in
   `docs/E2EE_KEY_ISOLATION_AUDIT.md`.
 

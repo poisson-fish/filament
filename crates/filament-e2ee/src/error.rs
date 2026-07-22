@@ -67,6 +67,26 @@ pub enum KeyStoreError {
     LimitExceeded,
 }
 
+/// Errors from the native, ephemeral full-text search index.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum LocalSearchError {
+    /// A query was empty, malformed, or contained no searchable terms.
+    #[error("local search query is invalid")]
+    InvalidQuery,
+    /// A query, result request, or index input exceeded a hard bound.
+    #[error("local search limit exceeded")]
+    LimitExceeded,
+    /// Authenticated local history was corrupt or internally inconsistent.
+    #[error("local search history is invalid")]
+    InvalidHistory,
+    /// The in-memory index could not be built or queried.
+    #[error("local search index is unavailable")]
+    IndexUnavailable,
+    /// Encrypted local persistence failed.
+    #[error(transparent)]
+    KeyStore(#[from] KeyStoreError),
+}
+
 /// Errors from short-lived QR device pairing.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PairingError {

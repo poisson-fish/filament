@@ -218,6 +218,14 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   Expired records are hidden before any plaintext is returned, then
   hard-deleted with an atomic bounded sweep; history sync and backup preserve
   the authenticated deadline so restore cannot resurrect expired content.
+- Full-text search for E2EE history runs only in the native client. The client
+  rebuilds a bounded Tantivy RAM index from authenticated SQLCipher records,
+  applies same-author edits/deletes and expiration before indexing, and never
+  creates a plaintext index file. Queries are capped at 256 bytes, 16 literal
+  analyzed terms, and 50 results; Tantivy query syntax is not exposed. Search
+  results contain HTML-free Markdown UI tokens. The server's Tantivy index is
+  sourced only from its plaintext `messages` table and never from `mls_v1`
+  ciphertext/mailbox records.
 - The server must not store plaintext content, content-derived metadata, or unwrapped key material for `mls_v1` conversations; there are no mixed-mode records.
 
 ### Attachments in E2EE Conversations

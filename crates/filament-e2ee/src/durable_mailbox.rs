@@ -876,7 +876,9 @@ pub fn purge_expired_messages(
     }
 }
 
-fn parse_history_key(key: &StoreKey) -> Result<Option<(GroupId, String)>, KeyStoreError> {
+pub(crate) fn parse_history_key(
+    key: &StoreKey,
+) -> Result<Option<(GroupId, String)>, KeyStoreError> {
     let Some(suffix) = key.as_str().strip_prefix("history:") else {
         return Ok(None);
     };
