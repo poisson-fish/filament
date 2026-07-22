@@ -34,6 +34,7 @@ struct AuthResponse {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn postgres_e2ee_delivery_orders_commits_and_stores_only_padded_opaque_messages() {
     let Some(database_url) = postgres_url() else {
         eprintln!("skipping postgres-backed E2EE test: FILAMENT_TEST_DATABASE_URL is unset");
@@ -938,6 +939,7 @@ fn claim_request(
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() {
     let Some(database_url) = postgres_url() else {
         eprintln!("skipping postgres-backed E2EE test: FILAMENT_TEST_DATABASE_URL is unset");
@@ -1402,6 +1404,7 @@ async fn postgres_e2ee_publish_and_claim_routes_enforce_specific_rate_limits() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn postgres_root_identity_rotation_is_dual_signed_atomic_and_replay_safe() {
     let Some(database_url) = postgres_url() else {
         eprintln!("skipping postgres-backed E2EE test: FILAMENT_TEST_DATABASE_URL is unset");

@@ -668,6 +668,7 @@ pub(crate) async fn delete_message(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn add_reaction(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -779,6 +780,7 @@ pub(crate) async fn add_reaction(
     Ok(Json(response))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn remove_reaction(
     State(state): State<AppState>,
     headers: HeaderMap,

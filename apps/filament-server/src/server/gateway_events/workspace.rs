@@ -121,6 +121,8 @@ struct WorkspaceRoleUpdateFieldsPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     permissions: Option<Vec<filament_core::Permission>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    // Outer `None` means unchanged; inner `None` explicitly clears the color.
+    #[allow(clippy::option_option)]
     color_hex: Option<Option<String>>,
 }
 
@@ -336,6 +338,7 @@ pub(crate) fn try_workspace_role_create(
 }
 
 #[cfg(test)]
+#[allow(clippy::option_option)] // Three states: unchanged, set, and explicitly cleared.
 pub(crate) fn workspace_role_update(
     guild_id: &str,
     role_id: &str,
@@ -361,6 +364,7 @@ pub(crate) fn workspace_role_update(
     )
 }
 
+#[allow(clippy::option_option)] // Three states: unchanged, set, and explicitly cleared.
 pub(crate) fn try_workspace_role_update(
     guild_id: &str,
     role_id: &str,

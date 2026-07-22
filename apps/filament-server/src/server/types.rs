@@ -270,6 +270,8 @@ pub(crate) struct CreateGuildRoleRequest {
 pub(crate) struct UpdateGuildRoleRequest {
     pub(crate) name: Option<String>,
     pub(crate) permissions: Option<Vec<Permission>>,
+    // Outer `None` means unchanged; inner `None` explicitly clears the color.
+    #[allow(clippy::option_option)]
     pub(crate) color_hex: Option<Option<String>>,
 }
 

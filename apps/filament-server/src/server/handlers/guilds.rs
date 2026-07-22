@@ -226,6 +226,7 @@ pub(crate) async fn list_guilds(
     Ok(Json(GuildListResponse { guilds: response }))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn update_guild(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1457,7 +1458,7 @@ pub(crate) async fn update_guild_default_join_role(
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
-        guild.default_join_role_id = next_role_id.clone();
+        guild.default_join_role_id.clone_from(&next_role_id);
     }
 
     write_audit_log(
@@ -1473,6 +1474,7 @@ pub(crate) async fn update_guild_default_join_role(
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn create_guild_role(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1685,7 +1687,7 @@ pub(crate) async fn update_guild_role(
             .ok_or(AuthFailure::NotFound)?;
         role.name.clone_from(&next_name);
         role.permissions_allow = next_permissions;
-        role.color_hex = next_color_hex.clone();
+        role.color_hex.clone_from(&next_color_hex);
     }
 
     if payload.permissions.is_some() {
@@ -2176,6 +2178,7 @@ pub(crate) async fn assign_guild_role(
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn unassign_guild_role(
     State(state): State<AppState>,
     headers: HeaderMap,
