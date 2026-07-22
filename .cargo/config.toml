@@ -1,0 +1,5 @@
+# LiveKit's bundled libwebrtc contains Objective-C categories in its static
+# archive. Cargo does not propagate a dependency package's `rustc-link-arg` to
+# final downstream binaries, so macOS final links must retain those categories.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-ObjC"]

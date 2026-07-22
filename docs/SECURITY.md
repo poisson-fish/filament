@@ -351,7 +351,18 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - A network-denied diagnostic WebView2 host has recorded working sender and
   receiver transforms on current runtime `150.0.4078.83`. The result is strict,
   bounded test input and does not authorize media. Minimum-runtime and final
-  packaged WebView2 evidence and the WKWebView/WebKitGTK rows remain pending.
+  packaged WebView2 evidence remain pending.
+- A dependency-free diagnostic WKWebView host binds only an ephemeral loopback
+  listener, denies capture permissions and external navigation, and has
+  recorded both encoded-transform directions on WebKit `21624.1.16.11.4`
+  under macOS 26.4.1. Oldest-supported-macOS and final packaged evidence remain
+  pending, as does the WebKitGTK row. This result also cannot authorize media.
+- Apple Silicon testing also exposed Cargo's non-propagation of libwebrtc's
+  Objective-C category-retention link argument to final binaries. The
+  workspace now applies the standard `-ObjC` final-link flag only on macOS;
+  native media initialization and cryptor tests pass with the required
+  categories retained. This does not relax or work around the independent
+  SQLCipher/OpenSSL and libwebrtc/BoringSSL collision gate.
 
 ### Directory Audit (E2EE)
 - Directory mutations (device certificate publication, KeyPackage pool changes, claims) are audit-logged.

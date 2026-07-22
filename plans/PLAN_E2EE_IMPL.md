@@ -204,9 +204,12 @@ caps, and pre-publication cryptor verification. Remote publication discovery
 and subscription now stay behind the native guard: exact participant/SID and
 current-epoch cryptor checks gate bounded decoded audio/video streams,
 unsolicited subscriptions close the room, and timeout/drop paths unsubscribe.
-Target-platform verification and desktop packaging remain required before
-media can be enabled. The Apache-2.0 LiveKit client SDK is
-pinned to 0.7.53, matching the reviewed libwebrtc 0.3.42 bridge. Combined
+Current WebView2 and WKWebView diagnostic hosts have now exercised both encoded
+frame directions; minimum/oldest runtime, final packaged-client, and WebKitGTK
+verification remain required before media can be enabled. Apple Silicon native
+testing also found and fixed final-link stripping of libwebrtc Objective-C
+categories with a macOS-only standard retention flag. The Apache-2.0 LiveKit
+client SDK is pinned to 0.7.53, matching the reviewed libwebrtc 0.3.42 bridge. Combined
 desktop linkage is currently blocked because SQLCipher's vendored OpenSSL and
 libwebrtc's bundled BoringSSL export colliding symbols; no unsafe linker
 workaround or storage downgrade was added.
@@ -841,9 +844,17 @@ device. The desktop security policy selects native LiveKit GCM on every target,
 forbids webview media and key material, and disables calls when the native path
 is unavailable. A pinned, network-denied diagnostic WebView2 host has now
 exercised both encoded-frame directions on current runtime `150.0.4078.83` and
-its bounded record is enforced by desktop hardening tests. The minimum WebView2
-baseline, final packaged Windows client, WKWebView, and WebKitGTK runs are still
-pending.
+its bounded record is enforced by desktop hardening tests. A dependency-free,
+loopback-only WKWebView host has likewise exercised both directions on WebKit
+`21624.1.16.11.4` under macOS 26.4.1, with capture permissions and external
+navigation denied. The minimum WebView2 baseline, oldest-supported macOS,
+final packaged Windows/macOS clients, and WebKitGTK runs are still pending.
+Apple Silicon testing additionally found that Cargo did not propagate
+libwebrtc's Objective-C category-retention argument to final binaries, causing
+a codec-initialization abort despite successful compilation. A macOS-only
+workspace `-ObjC` final-link flag now retains those required categories and the
+native media cryptor suite passes. It does not bypass the independent
+SQLCipher/OpenSSL and libwebrtc/BoringSSL collision blocker.
 
 ### Deliverables
 

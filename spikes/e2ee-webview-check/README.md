@@ -1,8 +1,8 @@
 # Spike: Insertable-Streams / RTCRtpScriptTransform WebView Verification
 
 **Phase:** 0 (Engineering Spike)
-**Status:** Current WebView2 runtime verified — minimum WebView2 and packaged
-WKWebView/WebKitGTK target runs remain
+**Status:** Current WebView2 and WKWebView runtimes verified — minimum/oldest
+baselines and final packaged-client runs remain, along with WebKitGTK
 **Relates to:** Phase 5 (Voice/Video E2EE via SFrame)
 
 ## Purpose
@@ -44,7 +44,7 @@ sender-and-receiver frame path. The checked-in probe is the release evidence.
 | Target | Runtime | Runtime evidence | Shipping E2EE media path |
 |---|---|---|---|
 | Windows | WebView2 | Current `150.0.4078.83`: supported in diagnostic host; minimum and packaged-app runs pending | Native LiveKit GCM in Rust host |
-| macOS | WKWebView | Pending target run | Native LiveKit GCM in Rust host |
+| macOS | WKWebView | Current WebKit `21624.1.16.11.4` on macOS 26.4.1: supported in diagnostic host; oldest-supported and packaged-app runs pending | Native LiveKit GCM in Rust host |
 | Linux | WebKitGTK | Pending target run | Native LiveKit GCM in Rust host |
 
 Filament does not select a webview media path on any result. The probe is a
@@ -109,6 +109,28 @@ permissive 3-Clause BSD license. The current captured result is
 `results/windows-webview2-current.json` and is validated by the desktop
 hardening tests. This diagnostic-host result confirms the current runtime API,
 but it does not replace the required minimum-runtime or final packaged-app run.
+
+### Reproducible WKWebView host
+
+The dependency-free macOS diagnostic host in `hosts/wkwebview/` embeds the
+system WKWebView and serves only the four bounded probe assets from an
+ephemeral listener explicitly bound to `127.0.0.1`. The host rejects non-loopback
+connections, external navigation, capture permission requests, popups, and
+persistent website data. It does not contain a media implementation and its
+result cannot select the shipping media path.
+
+From this directory on macOS with the Command Line Tools or Xcode installed:
+
+```bash
+swift run --package-path hosts/wkwebview FilamentWKWebViewProbe .
+```
+
+The host has no package dependencies and links only the system AppKit, Network,
+and WebKit frameworks. The current captured result is
+`results/macos-wkwebview-current.json` and is validated by the desktop
+hardening tests. This confirms both encoded-frame directions on current WebKit
+`21624.1.16.11.4`; it does not replace the oldest-supported-macOS or final
+packaged-client run.
 
 For `unsupported` or `failed`, preserve the exact result and confirm that the
 native backend remains selected. A failure must never make a plaintext or

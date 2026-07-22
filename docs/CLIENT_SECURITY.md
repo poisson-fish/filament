@@ -164,13 +164,23 @@ Configuration sources:
 - The bounded diagnostic WebView2 host has exercised real sender and receiver
   encoded transforms on runtime `150.0.4078.83`. Its pinned record is
   compatibility evidence only; minimum-runtime and final packaged-client runs,
-  plus WKWebView and WebKitGTK results, remain release gates.
+  remain release gates.
+- The dependency-free, loopback-only WKWebView diagnostic host has exercised
+  both encoded-transform directions on WebKit `21624.1.16.11.4` under macOS
+  26.4.1. Its bounded record is also compatibility evidence only;
+  oldest-supported-macOS, final packaged-client, and WebKitGTK runs remain
+  release gates.
 - The full desktop binary is also blocked on native crypto-library linkage:
   SQLCipher's vendored OpenSSL and LiveKit/libwebrtc's bundled BoringSSL export
   colliding symbols when `sqlcipher-store` and `livekit-media` are linked
   together. Both isolated feature paths pass, but no linker workaround or
   weaker storage backend is approved. Resolve this packaging boundary before
   enabling the media feature in the desktop target.
+- On macOS, the workspace final-link configuration retains Objective-C
+  categories from LiveKit's static libwebrtc archive. Without the standard
+  `-ObjC` category-retention flag, the native SDK compiles but aborts while
+  initializing codecs because required category methods are absent. This flag
+  does not alter or bypass the separate OpenSSL/BoringSSL collision blocker.
 - The key-isolation audit and negative-test inventory are recorded in
   `docs/E2EE_KEY_ISOLATION_AUDIT.md`.
 

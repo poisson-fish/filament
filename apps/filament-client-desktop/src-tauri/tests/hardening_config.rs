@@ -295,3 +295,86 @@ fn webview2_probe_host_and_evidence_are_pinned_bounded_and_fail_closed() {
     assert_eq!(probe.features, expected_features);
     assert_eq!(probe.observed_directions, ["receiver", "sender"]);
 }
+
+#[test]
+fn wkwebview_probe_host_and_evidence_are_bounded_and_fail_closed() {
+    const MAX_RECORD_BYTES: u64 = 8 * 1024;
+    const MAX_METADATA_BYTES: usize = 128;
+
+    let root = repo_root();
+    let host_root = root.join("spikes/e2ee-webview-check/hosts/wkwebview");
+    let package = fs::read_to_string(host_root.join("Package.swift"))
+        .expect("WKWebView probe host package should exist");
+    let host = fs::read_to_string(host_root.join("Sources/FilamentWKWebViewProbe/main.swift"))
+        .expect("WKWebView probe host should exist");
+
+    assert!(package.contains(".executableTarget(name: \"FilamentWKWebViewProbe\")"));
+    assert!(!package.contains("dependencies:"));
+    assert!(host
+        .contains("parameters.requiredLocalEndpoint = .hostPort(host: \"127.0.0.1\", port: .any)"));
+    assert!(host.contains("guard Self.isLoopback(connection.endpoint)"));
+    assert!(host.contains("configuration.websiteDataStore = .nonPersistent()"));
+    assert!(host.contains("requestMediaCapturePermissionFor"));
+    assert!(host.contains("decisionHandler(.deny)"));
+    assert!(host.contains("navigationAction.request.url"));
+    assert!(host.contains("shipping_media_path\": \"native_livekit_gcm\""));
+    assert!(!host.contains("getUserMedia"));
+
+    let record_path = root.join("spikes/e2ee-webview-check/results/macos-wkwebview-current.json");
+    assert!(
+        fs::metadata(&record_path)
+            .expect("WKWebView evidence metadata should exist")
+            .len()
+            <= MAX_RECORD_BYTES
+    );
+    let record_raw = fs::read_to_string(record_path).expect("WKWebView evidence should exist");
+    let record: EncodedTransformProbeRecord =
+        serde_json::from_str(&record_raw).expect("WKWebView evidence should be strict JSON");
+
+    assert_eq!(record.host_schema_version, 1);
+    assert_eq!(record.target, "macos");
+    assert_eq!(record.runtime, "wkwebview");
+    assert_eq!(record.host_version, "wkwebview-diagnostic-v1");
+    assert_eq!(record.host_sdk_version, "system-webkit");
+    assert_eq!(record.shipping_media_path, "native_livekit_gcm");
+    for metadata in [
+        &record.os_version,
+        &record.runtime_version,
+        &record.host_version,
+        &record.host_sdk_version,
+    ] {
+        assert!(!metadata.is_empty());
+        assert!(metadata.len() <= MAX_METADATA_BYTES);
+        assert!(!metadata.chars().any(char::is_control));
+    }
+
+    let probe = record.probe;
+    assert_eq!(probe.schema_version, 1);
+    assert_eq!(probe.outcome, "supported");
+    assert!(probe.started_at.ends_with('Z'));
+    assert!(probe.started_at.len() <= MAX_METADATA_BYTES);
+    assert!(!probe.user_agent.is_empty());
+    assert!(probe.user_agent.len() <= 1024);
+    let expected_features = BTreeMap::from([
+        ("peer_connection".to_owned(), true),
+        ("receiver_transform".to_owned(), true),
+        ("script_transform".to_owned(), true),
+        ("secure_context".to_owned(), true),
+        ("sender_transform".to_owned(), true),
+        ("worker".to_owned(), true),
+    ]);
+    assert_eq!(probe.features, expected_features);
+    assert_eq!(probe.observed_directions, ["receiver", "sender"]);
+}
+
+#[test]
+fn macos_native_media_link_retains_libwebrtc_objective_c_categories() {
+    let root = repo_root();
+    let cargo_config = fs::read_to_string(root.join(".cargo/config.toml"))
+        .expect("workspace Cargo config should exist");
+
+    assert!(cargo_config.contains("[target.'cfg(target_os = \"macos\")']"));
+    assert!(cargo_config.contains("rustflags = [\"-C\", \"link-arg=-ObjC\"]"));
+    assert!(!cargo_config.contains("all_load"));
+    assert!(!cargo_config.contains("force_load"));
+}
