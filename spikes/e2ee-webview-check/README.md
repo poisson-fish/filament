@@ -1,8 +1,9 @@
 # Spike: Insertable-Streams / RTCRtpScriptTransform WebView Verification
 
 **Phase:** 0 (Engineering Spike)
-**Status:** Current WebView2 and WKWebView runtimes verified — minimum/oldest
-baselines and final packaged-client runs remain, along with WebKitGTK
+**Status:** Current WebView2, WKWebView, and Ubuntu WebKitGTK runtimes verified;
+WebKitGTK is unsupported and the native Rust path passes on Linux —
+minimum/oldest baselines and final packaged-client runs remain
 **Relates to:** Phase 5 (Voice/Video E2EE via SFrame)
 
 ## Purpose
@@ -45,7 +46,7 @@ sender-and-receiver frame path. The checked-in probe is the release evidence.
 |---|---|---|---|
 | Windows | WebView2 | Current `150.0.4078.83`: supported in diagnostic host; minimum and packaged-app runs pending | Native LiveKit GCM in Rust host |
 | macOS | WKWebView | Current WebKit `21624.1.16.11.4` on macOS 26.4.1: supported in diagnostic host; oldest-supported and packaged-app runs pending | Native LiveKit GCM in Rust host |
-| Linux | WebKitGTK | Pending target run | Native LiveKit GCM in Rust host |
+| Linux | WebKitGTK | Ubuntu 24.04.4 / WebKitGTK `2.52.3` / GStreamer `1.24.2`: unsupported (`RTCPeerConnection` and encoded transforms absent) | Native LiveKit GCM in Rust host; Linux binding/rotation test passed |
 
 Filament does not select a webview media path on any result. The probe is a
 compatibility matrix required by the design, while the security policy chooses
@@ -85,7 +86,13 @@ Record results for:
 3. **WebKitGTK (Linux):**
    - Record distribution, WebKitGTK, GStreamer, and packaged-app versions.
    - Run on every supported distribution baseline because port build flags and
-     multimedia packages can differ.
+   multimedia packages can differ.
+
+The current Ubuntu row is an `unsupported` result, which is a valid matrix
+outcome but cannot enable webview media. The same locked `livekit-media` build
+was compiled on Linux and its native RTP binding/epoch-rotation test passed,
+so this target follows the required Rust host path and remains fail-closed if
+that path is unavailable.
 
 ### Reproducible WebView2 host
 
@@ -131,6 +138,36 @@ and WebKit frameworks. The current captured result is
 hardening tests. This confirms both encoded-frame directions on current WebKit
 `21624.1.16.11.4`; it does not replace the oldest-supported-macOS or final
 packaged-client run.
+
+### Reproducible WebKitGTK host
+
+The C host in `hosts/webkitgtk/` compiles against WebKitGTK 6.0 and serves only
+the four allowlisted, size-capped probe assets through a local custom scheme.
+It uses an ephemeral network session, marks only that scheme as a secure local
+context, rejects external navigation, popups, permissions, symlinks, and
+oversized assets, and emits at most 8 KiB of evidence. The supplied Ubuntu
+24.04 container runs with networking disabled and bounded memory/process
+resources. Its extra namespace capabilities let WebKit's own bubblewrap
+sandbox run inside Docker; the WebKit sandbox is not disabled.
+
+From this directory with Docker available:
+
+```bash
+./hosts/webkitgtk/run-ubuntu-24.04.sh
+```
+
+The checked-in `results/linux-webkitgtk-ubuntu-24.04-current.json` records
+WebKitGTK `2.52.3` and GStreamer `1.24.2`. That port reported WebRTC and encoded
+transforms unavailable. This is compatibility evidence for the Ubuntu 24.04
+baseline only; every eventually supported Linux distribution and the final
+packaged client still require their own run.
+
+The native fallback was independently compiled and exercised on Linux with:
+
+```bash
+cargo test --locked -p filament-e2ee --features livekit-media \
+  native_rtp_bindings_are_enabled_and_follow_authenticated_epoch_rotation
+```
 
 For `unsupported` or `failed`, preserve the exact result and confirm that the
 native backend remains selected. A failure must never make a plaintext or

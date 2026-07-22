@@ -9,4 +9,5 @@ infra/certs/key.pem
 spikes/e2ee-webview-check/hosts/webview2/bin/
 spikes/e2ee-webview-check/hosts/webview2/obj/
 spikes/e2ee-webview-check/hosts/wkwebview/.build/
+spikes/e2ee-webview-check/hosts/webkitgtk/filament-webkitgtk-probe
 .gitignore

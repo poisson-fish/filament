@@ -205,8 +205,11 @@ and subscription now stay behind the native guard: exact participant/SID and
 current-epoch cryptor checks gate bounded decoded audio/video streams,
 unsolicited subscriptions close the room, and timeout/drop paths unsubscribe.
 Current WebView2 and WKWebView diagnostic hosts have now exercised both encoded
-frame directions; minimum/oldest runtime, final packaged-client, and WebKitGTK
-verification remain required before media can be enabled. Apple Silicon native
+frame directions. Ubuntu 24.04 WebKitGTK 2.52.3 reports WebRTC and encoded
+transforms unsupported; the pinned native LiveKit/libwebrtc binding and epoch
+rotation test passes on Linux. Minimum/oldest runtime, other supported Linux
+baselines, and final packaged-client verification remain required before media
+can be enabled. Apple Silicon native
 testing also found and fixed final-link stripping of libwebrtc Objective-C
 categories with a macOS-only standard retention flag. The Apache-2.0 LiveKit
 client SDK is pinned to 0.7.53, matching the reviewed libwebrtc 0.3.42 bridge. Combined
@@ -237,7 +240,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 cargo audit
-cargo deny --config cargo-deny.toml check
+cargo deny check --config cargo-deny.toml
 ```
 
 Phases that add OpenMLS or SQLCipher dependencies may need `cargo vet` configuration (see Phase 0 deliverable).
@@ -847,8 +850,14 @@ exercised both encoded-frame directions on current runtime `150.0.4078.83` and
 its bounded record is enforced by desktop hardening tests. A dependency-free,
 loopback-only WKWebView host has likewise exercised both directions on WebKit
 `21624.1.16.11.4` under macOS 26.4.1, with capture permissions and external
-navigation denied. The minimum WebView2 baseline, oldest-supported macOS,
-final packaged Windows/macOS clients, and WebKitGTK runs are still pending.
+navigation denied. A hardened, network-disabled WebKitGTK 6.0 host now records
+Ubuntu 24.04.4 with WebKitGTK `2.52.3` and GStreamer `1.24.2` as unsupported:
+that port exposes neither `RTCPeerConnection` nor encoded transforms. The
+locked native LiveKit/libwebrtc feature compiles on Linux and its RTP
+binding/authenticated epoch-rotation test passes there, satisfying the native
+fallback requirement without introducing a non-Rust media path. The minimum
+WebView2 baseline, oldest-supported macOS, other supported Linux baselines, and
+final packaged clients are still pending.
 Apple Silicon testing additionally found that Cargo did not propagate
 libwebrtc's Objective-C category-retention argument to final binaries, causing
 a codec-initialization abort despite successful compilation. A macOS-only
@@ -895,7 +904,7 @@ SQLCipher/OpenSSL and libwebrtc/BoringSSL collision blocker.
 - [x] Join/leave rekey verified
 - [x] Periodic update commit rekey verified
 - [ ] Insertable-streams verification matrix complete (WebView2 / WKWebView / WebKitGTK)
-- [ ] Native media path exercised on any platform lacking webview support
+- [x] Native media path exercised on any platform lacking webview support
 - [x] No unencrypted media fallback exists
 - [x] All quality gates pass
 
@@ -1235,7 +1244,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 cargo audit
-cargo deny --config cargo-deny.toml check
+cargo deny check --config cargo-deny.toml
 
 Commit with: feat(e2ee): phase <N> — <short description>
 ```

@@ -83,6 +83,8 @@ struct EncodedTransformProbeRecord {
     runtime_version: String,
     host_version: String,
     host_sdk_version: String,
+    #[serde(default)]
+    gstreamer_version: Option<String>,
     shipping_media_path: String,
     probe: EncodedTransformProbe,
 }
@@ -365,6 +367,99 @@ fn wkwebview_probe_host_and_evidence_are_bounded_and_fail_closed() {
     ]);
     assert_eq!(probe.features, expected_features);
     assert_eq!(probe.observed_directions, ["receiver", "sender"]);
+}
+
+#[test]
+fn webkitgtk_probe_host_and_unsupported_evidence_are_bounded_and_fail_closed() {
+    const MAX_RECORD_BYTES: u64 = 8 * 1024;
+    const MAX_METADATA_BYTES: usize = 128;
+
+    let root = repo_root();
+    let host_root = root.join("spikes/e2ee-webview-check/hosts/webkitgtk");
+    let source =
+        fs::read_to_string(host_root.join("main.c")).expect("WebKitGTK probe host should exist");
+    let makefile = fs::read_to_string(host_root.join("Makefile"))
+        .expect("WebKitGTK probe Makefile should exist");
+    let container = fs::read_to_string(host_root.join("Dockerfile.ubuntu-24.04"))
+        .expect("WebKitGTK probe container should exist");
+    let runner = fs::read_to_string(host_root.join("run-ubuntu-24.04.sh"))
+        .expect("WebKitGTK probe runner should exist");
+
+    assert!(makefile.contains("-Wall -Wextra -Werror"));
+    assert!(source.contains("O_NOFOLLOW"));
+    assert!(source.contains("MAX_ASSET_BYTES = 64 * 1024"));
+    assert!(source.contains("webkit_network_session_new_ephemeral"));
+    assert!(source.contains("webkit_settings_set_enable_webrtc(settings, TRUE)"));
+    assert!(source.contains("webkit_permission_request_deny"));
+    assert!(source.contains("webkit_policy_decision_ignore"));
+    assert!(source.contains("webkit_security_manager_register_uri_scheme_as_secure"));
+    assert!(source.contains("default-src 'none'; script-src 'self'; worker-src 'self'"));
+    assert!(source.contains("shipping_media_path\\\": \\\"native_livekit_gcm"));
+    assert!(source.contains("F_DUPFD_CLOEXEC"));
+    assert!(!source.contains("getUserMedia"));
+
+    assert!(container.contains("FROM ubuntu:24.04@sha256:"));
+    assert!(container.contains("libwebkitgtk-6.0-dev"));
+    assert!(container.contains("GST_AUDIO_SINK=fakesink"));
+    assert!(container.contains("FILAMENT_PROBE_OUTPUT_FD=3"));
+    assert!(runner.contains("--network none"));
+    assert!(runner.contains("--memory 2g"));
+    assert!(runner.contains("--pids-limit 512"));
+    assert!(!runner.contains("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"));
+
+    let record_path =
+        root.join("spikes/e2ee-webview-check/results/linux-webkitgtk-ubuntu-24.04-current.json");
+    assert!(
+        fs::metadata(&record_path)
+            .expect("WebKitGTK evidence metadata should exist")
+            .len()
+            <= MAX_RECORD_BYTES
+    );
+    let record_raw = fs::read_to_string(record_path).expect("WebKitGTK evidence should exist");
+    let record: EncodedTransformProbeRecord =
+        serde_json::from_str(&record_raw).expect("WebKitGTK evidence should be strict JSON");
+
+    assert_eq!(record.host_schema_version, 1);
+    assert_eq!(record.target, "linux");
+    assert_eq!(record.runtime, "webkitgtk");
+    assert_eq!(record.host_version, "webkitgtk-diagnostic-v1");
+    assert_eq!(record.host_sdk_version, record.runtime_version);
+    assert_eq!(record.shipping_media_path, "native_livekit_gcm");
+    let gstreamer = record
+        .gstreamer_version
+        .as_deref()
+        .expect("Linux evidence should pin GStreamer");
+    for metadata in [
+        record.os_version.as_str(),
+        record.runtime_version.as_str(),
+        record.host_version.as_str(),
+        record.host_sdk_version.as_str(),
+        gstreamer,
+    ] {
+        assert!(!metadata.is_empty());
+        assert!(metadata.len() <= MAX_METADATA_BYTES);
+        assert!(!metadata.chars().any(char::is_control));
+    }
+
+    let probe = record.probe;
+    assert_eq!(probe.schema_version, 1);
+    assert_eq!(probe.outcome, "unsupported");
+    assert!(probe.started_at.ends_with('Z'));
+    assert!(probe.started_at.len() <= MAX_METADATA_BYTES);
+    assert!(!probe.user_agent.is_empty());
+    assert!(probe.user_agent.len() <= 1024);
+    assert_eq!(
+        probe.features,
+        BTreeMap::from([
+            ("peer_connection".to_owned(), false),
+            ("receiver_transform".to_owned(), false),
+            ("script_transform".to_owned(), false),
+            ("secure_context".to_owned(), true),
+            ("sender_transform".to_owned(), false),
+            ("worker".to_owned(), true),
+        ])
+    );
+    assert!(probe.observed_directions.is_empty());
 }
 
 #[test]

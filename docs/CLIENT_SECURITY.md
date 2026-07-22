@@ -168,7 +168,13 @@ Configuration sources:
 - The dependency-free, loopback-only WKWebView diagnostic host has exercised
   both encoded-transform directions on WebKit `21624.1.16.11.4` under macOS
   26.4.1. Its bounded record is also compatibility evidence only;
-  oldest-supported-macOS, final packaged-client, and WebKitGTK runs remain
+  oldest-supported-macOS and final packaged-client runs remain release gates.
+- The network-disabled Ubuntu 24.04 diagnostic host recorded WebKitGTK `2.52.3`
+  with GStreamer `1.24.2` as unsupported: `RTCPeerConnection` and the encoded
+  transform APIs were absent. The locked native LiveKit/libwebrtc bridge was
+  then compiled on Linux and its RTP binding and authenticated epoch-rotation
+  test passed. Linux therefore remains on the native Rust path, while other
+  supported-distribution baselines and the final packaged client remain
   release gates.
 - The full desktop binary is also blocked on native crypto-library linkage:
   SQLCipher's vendored OpenSSL and LiveKit/libwebrtc's bundled BoringSSL export

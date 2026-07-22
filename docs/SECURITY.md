@@ -356,7 +356,13 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   listener, denies capture permissions and external navigation, and has
   recorded both encoded-transform directions on WebKit `21624.1.16.11.4`
   under macOS 26.4.1. Oldest-supported-macOS and final packaged evidence remain
-  pending, as does the WebKitGTK row. This result also cannot authorize media.
+  pending. This result also cannot authorize media.
+- A network-disabled Ubuntu 24.04 host recorded WebKitGTK `2.52.3` and
+  GStreamer `1.24.2` as unsupported because WebRTC and encoded-transform APIs
+  were absent. The pinned native LiveKit/libwebrtc bridge compiles on Linux and
+  its RTP binding/authenticated epoch-rotation test passes there. This proves
+  the required native fallback for the observed unsupported port; it does not
+  replace other distribution-baseline or final packaged-client evidence.
 - Apple Silicon testing also exposed Cargo's non-propagation of libwebrtc's
   Objective-C category-retention link argument to final binaries. The
   workspace now applies the standard `-ObjC` final-link flag only on macOS;
