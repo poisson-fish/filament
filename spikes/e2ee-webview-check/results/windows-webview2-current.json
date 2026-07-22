@@ -1,0 +1,28 @@
+{
+  "host_schema_version": 1,
+  "target": "windows",
+  "runtime": "webview2",
+  "os_version": "Microsoft Windows NT 10.0.26200.0",
+  "runtime_version": "150.0.4078.83",
+  "host_version": "webview2-diagnostic-v1",
+  "host_sdk_version": "1.0.4078.44",
+  "shipping_media_path": "native_livekit_gcm",
+  "probe": {
+    "schema_version": 1,
+    "started_at": "2026-07-22T22:51:35.910Z",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0",
+    "outcome": "supported",
+    "features": {
+      "secure_context": true,
+      "worker": true,
+      "peer_connection": true,
+      "script_transform": true,
+      "sender_transform": true,
+      "receiver_transform": true
+    },
+    "observed_directions": [
+      "receiver",
+      "sender"
+    ]
+  }
+}

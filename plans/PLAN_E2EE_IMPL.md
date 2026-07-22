@@ -839,7 +839,11 @@ strict local probe that requires actual sender and receiver encoded frames in a
 worker, captures bounded runtime evidence, and uses no network or capture
 device. The desktop security policy selects native LiveKit GCM on every target,
 forbids webview media and key material, and disables calls when the native path
-is unavailable. Target-runtime probe results are still pending.
+is unavailable. A pinned, network-denied diagnostic WebView2 host has now
+exercised both encoded-frame directions on current runtime `150.0.4078.83` and
+its bounded record is enforced by desktop hardening tests. The minimum WebView2
+baseline, final packaged Windows client, WKWebView, and WebKitGTK runs are still
+pending.
 
 ### Deliverables
 

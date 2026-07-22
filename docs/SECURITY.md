@@ -348,6 +348,10 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   controls remain disabled. The packaged-runtime encoded-transform probe is
   compatibility evidence only; it processes synthetic local frames and never
   receives credentials or MLS key material.
+- A network-denied diagnostic WebView2 host has recorded working sender and
+  receiver transforms on current runtime `150.0.4078.83`. The result is strict,
+  bounded test input and does not authorize media. Minimum-runtime and final
+  packaged WebView2 evidence and the WKWebView/WebKitGTK rows remain pending.
 
 ### Directory Audit (E2EE)
 - Directory mutations (device certificate publication, KeyPackage pool changes, claims) are audit-logged.

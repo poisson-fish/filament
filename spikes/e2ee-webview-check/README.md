@@ -1,8 +1,8 @@
 # Spike: Insertable-Streams / RTCRtpScriptTransform WebView Verification
 
 **Phase:** 0 (Engineering Spike)
-**Status:** Executable probe ready — target-runtime results still require
-Windows, macOS, and Linux packaged-app runs
+**Status:** Current WebView2 runtime verified — minimum WebView2 and packaged
+WKWebView/WebKitGTK target runs remain
 **Relates to:** Phase 5 (Voice/Video E2EE via SFrame)
 
 ## Purpose
@@ -41,9 +41,9 @@ The upstream engines implement or are actively testing the standardized API,
 but that is not evidence that a particular packaged webview exposes a working
 sender-and-receiver frame path. The checked-in probe is the release evidence.
 
-| Target | Runtime | Packaged runtime result | Shipping E2EE media path |
+| Target | Runtime | Runtime evidence | Shipping E2EE media path |
 |---|---|---|---|
-| Windows | WebView2 | Pending target run | Native LiveKit GCM in Rust host |
+| Windows | WebView2 | Current `150.0.4078.83`: supported in diagnostic host; minimum and packaged-app runs pending | Native LiveKit GCM in Rust host |
 | macOS | WKWebView | Pending target run | Native LiveKit GCM in Rust host |
 | Linux | WebKitGTK | Pending target run | Native LiveKit GCM in Rust host |
 
@@ -86,6 +86,29 @@ Record results for:
    - Record distribution, WebKitGTK, GStreamer, and packaged-app versions.
    - Run on every supported distribution baseline because port build flags and
      multimedia packages can differ.
+
+### Reproducible WebView2 host
+
+The Windows diagnostic host in `hosts/webview2/` embeds an actual WebView2
+control, maps only these local probe assets to a synthetic HTTPS origin, denies
+permission requests, downloads, popups, and every non-probe resource request,
+and prints the bounded evidence envelope to stdout. It does not contain a media
+implementation and its result cannot select the shipping media path.
+
+From this directory in a Windows checkout with the .NET 9 SDK and WebView2
+runtime installed:
+
+```powershell
+dotnet restore --locked-mode .\hosts\webview2\FilamentWebView2Probe.csproj
+dotnet run --no-restore --project .\hosts\webview2\FilamentWebView2Probe.csproj -- .
+```
+
+The SDK dependency is pinned and hash-locked at
+`Microsoft.Web.WebView2 1.0.4078.44`; Microsoft distributes it under the
+permissive 3-Clause BSD license. The current captured result is
+`results/windows-webview2-current.json` and is validated by the desktop
+hardening tests. This diagnostic-host result confirms the current runtime API,
+but it does not replace the required minimum-runtime or final packaged-app run.
 
 For `unsupported` or `failed`, preserve the exact result and confirm that the
 native backend remains selected. A failure must never make a plaintext or

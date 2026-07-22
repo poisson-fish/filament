@@ -6,4 +6,6 @@ apps/filament-client-web/.vite
 infra/.env
 apps/filament-client-web/.env.local
 infra/certs/key.pem
+spikes/e2ee-webview-check/hosts/webview2/bin/
+spikes/e2ee-webview-check/hosts/webview2/obj/
 .gitignore

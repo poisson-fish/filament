@@ -161,6 +161,10 @@ Configuration sources:
   forbidden. If the native encrypted-media backend is unavailable, calls stay
   disabled. The platform probe under `spikes/e2ee-webview-check/` is diagnostic
   only and cannot authorize another media path.
+- The bounded diagnostic WebView2 host has exercised real sender and receiver
+  encoded transforms on runtime `150.0.4078.83`. Its pinned record is
+  compatibility evidence only; minimum-runtime and final packaged-client runs,
+  plus WKWebView and WebKitGTK results, remain release gates.
 - The full desktop binary is also blocked on native crypto-library linkage:
   SQLCipher's vendored OpenSSL and LiveKit/libwebrtc's bundled BoringSSL export
   colliding symbols when `sqlcipher-store` and `livekit-media` are linked
