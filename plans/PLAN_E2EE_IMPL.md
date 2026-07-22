@@ -204,8 +204,8 @@ caps, and pre-publication cryptor verification. Remote publication discovery
 and subscription now stay behind the native guard: exact participant/SID and
 current-epoch cryptor checks gate bounded decoded audio/video streams,
 unsolicited subscriptions close the room, and timeout/drop paths unsubscribe.
-Real SFU tests, platform verification, and end-to-end media tests remain
-required before media can be enabled. The Apache-2.0 LiveKit client SDK is
+Target-platform verification and desktop packaging remain required before
+media can be enabled. The Apache-2.0 LiveKit client SDK is
 pinned to 0.7.53, matching the reviewed libwebrtc 0.3.42 bridge. Combined
 desktop linkage is currently blocked because SQLCipher's vendored OpenSSL and
 libwebrtc's bundled BoringSSL export colliding symbols; no unsafe linker
@@ -808,7 +808,8 @@ native libwebrtc AES-GCM frame-cryptor provider. The provider stays opaque,
 uses HKDF, and rotates only for the exact next authenticated MLS epoch of the
 same group. Native cryptor tests cover peer decryption, ciphertext-only relay,
 wrong-key rejection, and post-rotation exclusion. Calls remain disabled until
-real SFU tests and the platform verification matrix land. The bridge now owns
+the platform verification matrix and desktop packaging blockers are complete.
+The bridge now owns
 bounded native RTP sender/receiver bindings, enables encryption before a track
 may publish or render, rejects duplicate/invalid bindings, and advances every
 attached cryptor's key index only after the next authenticated MLS epoch key is
@@ -833,7 +834,12 @@ Calls remain disabled pending the platform verification matrix. The production
 desktop feature combination also remains blocked by the SQLCipher/OpenSSL and
 libwebrtc/BoringSSL duplicate-symbol collision; each feature passes
 independently, and the storage or linker security posture has not been weakened
-to combine them.
+to combine them. The original documentation-only webview spike now includes a
+strict local probe that requires actual sender and receiver encoded frames in a
+worker, captures bounded runtime evidence, and uses no network or capture
+device. The desktop security policy selects native LiveKit GCM on every target,
+forbids webview media and key material, and disables calls when the native path
+is unavailable. Target-runtime probe results are still pending.
 
 ### Deliverables
 
@@ -875,8 +881,8 @@ to combine them.
 - [x] Periodic update commit rekey verified
 - [ ] Insertable-streams verification matrix complete (WebView2 / WKWebView / WebKitGTK)
 - [ ] Native media path exercised on any platform lacking webview support
-- [ ] No unencrypted media fallback exists
-- [ ] All quality gates pass
+- [x] No unencrypted media fallback exists
+- [x] All quality gates pass
 
 ### Stop-and-Ask Triggers
 

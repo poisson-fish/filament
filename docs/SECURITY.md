@@ -342,6 +342,12 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   blockers are complete. Filament does not define a bespoke frame-encryption
   construction.
 - Insertable-streams support must be verified per webview target (WebView2, WKWebView, WebKitGTK) before media E2EE ships on that platform; where a webview lacks support, the required fallback is a native WebRTC media path in the host layer — never unencrypted media.
+- The desktop policy already selects that native LiveKit GCM path on every
+  target. It has no webview-media or plaintext variant: when native readiness
+  cannot be established, call setup returns a stable unavailable result and
+  controls remain disabled. The packaged-runtime encoded-transform probe is
+  compatibility evidence only; it processes synthetic local frames and never
+  receives credentials or MLS key material.
 
 ### Directory Audit (E2EE)
 - Directory mutations (device certificate publication, KeyPackage pool changes, claims) are audit-logged.

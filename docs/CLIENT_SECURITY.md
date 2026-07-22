@@ -156,6 +156,11 @@ Configuration sources:
   left on the pre-removal media epoch. This bridge is not exposed as an IPC
   command and does not yet enable calls; platform verification remains
   required.
+- The desktop security policy selects `native_livekit_gcm` on Windows, macOS,
+  and Linux. Webview media, webview key material, and plaintext fallback are
+  forbidden. If the native encrypted-media backend is unavailable, calls stay
+  disabled. The platform probe under `spikes/e2ee-webview-check/` is diagnostic
+  only and cannot authorize another media path.
 - The full desktop binary is also blocked on native crypto-library linkage:
   SQLCipher's vendored OpenSSL and LiveKit/libwebrtc's bundled BoringSSL export
   colliding symbols when `sqlcipher-store` and `livekit-media` are linked

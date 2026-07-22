@@ -1,0 +1,24 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+main {
+  margin: 2rem auto;
+  max-width: 52rem;
+  padding: 0 1rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.5rem 0.8rem;
+}
+
+pre {
+  border: 1px solid currentColor;
+  margin-top: 1rem;
+  min-height: 8rem;
+  overflow-wrap: anywhere;
+  padding: 1rem;
+  white-space: pre-wrap;
+}

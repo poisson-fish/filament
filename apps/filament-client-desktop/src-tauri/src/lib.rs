@@ -574,6 +574,52 @@ pub enum OsTarget {
     Linux,
 }
 
+/// Readiness of the only permitted desktop E2EE media backend.
+///
+/// The webview cannot claim readiness: this value must be supplied by the
+/// native host after it has established the MLS-bound `LiveKit` GCM room.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeE2eeMediaReadiness {
+    Ready,
+    Unavailable,
+}
+
+/// The sole media path authorized for an E2EE desktop call.
+///
+/// Deliberately having no webview or plaintext variant makes an accidental
+/// degraded fallback unrepresentable at this boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum E2eeMediaPath {
+    NativeLiveKitGcm,
+}
+
+/// Stable failure returned when the native encrypted-media backend cannot be
+/// established. Callers must leave call controls disabled.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum E2eeMediaPolicyError {
+    #[error("encrypted calls are unavailable")]
+    NativeMediaUnavailable,
+}
+
+/// Select the desktop E2EE media path without consulting webview capability.
+///
+/// Filament keeps MLS exporter material and decoded media in the Rust host on
+/// every desktop target. `RTCRtpScriptTransform` probing is therefore
+/// diagnostic only and can never authorize an alternate call path.
+///
+/// # Errors
+/// Returns [`E2eeMediaPolicyError::NativeMediaUnavailable`] when the native
+/// MLS-bound GCM backend is not ready. There is no unencrypted fallback.
+pub const fn select_e2ee_media_path(
+    _target: OsTarget,
+    readiness: NativeE2eeMediaReadiness,
+) -> Result<E2eeMediaPath, E2eeMediaPolicyError> {
+    match readiness {
+        NativeE2eeMediaReadiness::Ready => Ok(E2eeMediaPath::NativeLiveKitGcm),
+        NativeE2eeMediaReadiness::Unavailable => Err(E2eeMediaPolicyError::NativeMediaUnavailable),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TokenStoragePolicy {
     pub backend: &'static str,
@@ -783,6 +829,20 @@ mod tests {
         assert_eq!(linux.backend, "secret-service");
         assert_eq!(mac.account_prefix, windows.account_prefix);
         assert_eq!(windows.account_prefix, linux.account_prefix);
+    }
+
+    #[test]
+    fn every_desktop_target_requires_the_native_gcm_media_path() {
+        for target in [OsTarget::MacOs, OsTarget::Windows, OsTarget::Linux] {
+            assert_eq!(
+                select_e2ee_media_path(target, NativeE2eeMediaReadiness::Ready),
+                Ok(E2eeMediaPath::NativeLiveKitGcm)
+            );
+            assert_eq!(
+                select_e2ee_media_path(target, NativeE2eeMediaReadiness::Unavailable),
+                Err(E2eeMediaPolicyError::NativeMediaUnavailable)
+            );
+        }
     }
 
     #[test]

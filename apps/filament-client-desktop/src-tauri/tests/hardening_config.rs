@@ -9,6 +9,7 @@ use serde::Deserialize;
 struct SecurityPolicyFile {
     navigation: NavigationPolicy,
     ipc: IpcPolicy,
+    e2ee_media: E2eeMediaPolicy,
     updates: UpdatePolicy,
 }
 
@@ -22,6 +23,15 @@ struct NavigationPolicy {
 #[derive(Debug, Deserialize)]
 struct IpcPolicy {
     allowed_commands: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct E2eeMediaPolicy {
+    backend: String,
+    allow_webview_media: bool,
+    allow_webview_key_material: bool,
+    allow_plaintext_fallback: bool,
+    unavailable_behavior: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +104,12 @@ fn desktop_security_policy_is_strict() {
         .collect();
     assert_eq!(policy.ipc.allowed_commands, allowed_commands);
 
+    assert_eq!(policy.e2ee_media.backend, "native_livekit_gcm");
+    assert!(!policy.e2ee_media.allow_webview_media);
+    assert!(!policy.e2ee_media.allow_webview_key_material);
+    assert!(!policy.e2ee_media.allow_plaintext_fallback);
+    assert_eq!(policy.e2ee_media.unavailable_behavior, "disable_calls");
+
     assert!(policy.updates.signed_only);
 }
 
@@ -152,4 +168,33 @@ fn web_csp_baseline_stays_locked_down() {
         config.forbidden_script_behaviors,
         vec!["eval", "new Function", "inline-script"]
     );
+}
+
+#[test]
+fn encoded_transform_probe_is_local_bounded_and_capture_free() {
+    let root = repo_root();
+    let probe_root = root.join("spikes/e2ee-webview-check");
+    let html = fs::read_to_string(probe_root.join("probe.html"))
+        .expect("encoded-transform probe page should exist");
+    let script = fs::read_to_string(probe_root.join("probe.js"))
+        .expect("encoded-transform probe script should exist");
+    let worker = fs::read_to_string(probe_root.join("rtp-transform-worker.js"))
+        .expect("encoded-transform probe worker should exist");
+
+    assert!(html.contains("default-src 'none'"));
+    assert!(html.contains("script-src 'self'"));
+    assert!(html.contains("worker-src 'self'"));
+    assert!(!html.contains("http://"));
+    assert!(!html.contains("https://"));
+
+    assert!(script.contains("const PROBE_TIMEOUT_MS = 10_000;"));
+    assert!(script.contains("navigator.userAgent.slice(0, 1024)"));
+    assert!(script.contains("error.message.slice(0, 128)"));
+    assert!(script.contains("new RTCPeerConnection({ iceServers: [] })"));
+    assert!(!script.contains("getUserMedia"));
+    assert!(!script.contains("fetch("));
+    assert!(!script.contains("WebSocket"));
+
+    assert!(worker.contains("const MAX_REPORTED_FRAMES = 2;"));
+    assert!(worker.contains("controller.enqueue(frame)"));
 }
