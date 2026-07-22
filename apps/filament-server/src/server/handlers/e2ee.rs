@@ -58,7 +58,6 @@ use crate::server::{
 const KEYPACKAGE_LOW_WATER_MARK: u32 = 10;
 const E2EE_MESSAGE_PADDING_BUCKETS: [usize; 4] = [512, 1_024, 4_096, 16_384];
 const DEFAULT_E2EE_MAILBOX_PAGE_SIZE: usize = 20;
-const MAX_E2EE_1_TO_1_DELIVERY_DEVICES: i64 = 200;
 const INITIAL_MLS_EPOCH: u64 = 1;
 
 type CertificateFields = ([u8; 32], [u8; 64], [u8; 32]);
@@ -545,7 +544,9 @@ async fn lock_capable_two_user_membership(
     .map_err(|_| AuthFailure::Internal)?;
     let device_count = i64::try_from(rows.len()).map_err(|_| AuthFailure::Internal)?;
     let capable_users: HashSet<String> = rows.into_iter().collect();
-    if capable_users.len() != 2 || device_count > MAX_E2EE_1_TO_1_DELIVERY_DEVICES {
+    let max_device_count =
+        i64::try_from(MAX_MLS_GROUP_LEAVES).map_err(|_| AuthFailure::Internal)?;
+    if capable_users.len() != 2 || device_count > max_device_count {
         return Err(AuthFailure::E2eeCapabilityRequired);
     }
     Ok(())
@@ -784,6 +785,23 @@ async fn conversation_member_ids(
         .collect()
 }
 
+fn validate_delivery_audience_counts(
+    member_count: i64,
+    capable_member_count: i64,
+    device_count: i64,
+) -> Result<(), AuthFailure> {
+    let max_member_count = i64::try_from(MAX_MLS_GROUP_USERS).map_err(|_| AuthFailure::Internal)?;
+    let max_device_count =
+        i64::try_from(MAX_MLS_GROUP_LEAVES).map_err(|_| AuthFailure::Internal)?;
+    if !(2..=max_member_count).contains(&member_count)
+        || capable_member_count != member_count
+        || !(member_count..=max_device_count).contains(&device_count)
+    {
+        return Err(AuthFailure::E2eeCapabilityRequired);
+    }
+    Ok(())
+}
+
 async fn snapshot_message_deliveries(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     conversation_id: &str,
@@ -818,13 +836,7 @@ async fn snapshot_message_deliveries(
         .collect::<Result<_, _>>()?;
     let capable_member_count =
         i64::try_from(capable_users.len()).map_err(|_| AuthFailure::Internal)?;
-    if member_count != 2
-        || capable_member_count != member_count
-        || device_count < member_count
-        || device_count > MAX_E2EE_1_TO_1_DELIVERY_DEVICES
-    {
-        return Err(AuthFailure::E2eeCapabilityRequired);
-    }
+    validate_delivery_audience_counts(member_count, capable_member_count, device_count)?;
 
     let inserted = sqlx::query(
         "INSERT INTO e2ee_message_acks (message_id, device_id, acked_at_unix)
@@ -885,12 +897,7 @@ async fn snapshot_commit_deliveries(
         .collect::<Result<_, _>>()?;
     let capable_member_count =
         i64::try_from(capable_users.len()).map_err(|_| AuthFailure::Internal)?;
-    if member_count != 2
-        || capable_member_count != member_count
-        || !(member_count..=MAX_E2EE_1_TO_1_DELIVERY_DEVICES).contains(&device_count)
-    {
-        return Err(AuthFailure::E2eeCapabilityRequired);
-    }
+    validate_delivery_audience_counts(member_count, capable_member_count, device_count)?;
     let inserted = sqlx::query(
         "INSERT INTO e2ee_commit_deliveries
             (group_id, epoch, device_id, acked_at_unix)
@@ -950,15 +957,7 @@ async fn snapshot_proposal_deliveries(
         .collect::<Result<_, _>>()?;
     let capable_member_count =
         i64::try_from(capable_users.len()).map_err(|_| AuthFailure::Internal)?;
-    let max_member_count = i64::try_from(MAX_MLS_GROUP_USERS).map_err(|_| AuthFailure::Internal)?;
-    let max_device_count =
-        i64::try_from(MAX_MLS_GROUP_LEAVES).map_err(|_| AuthFailure::Internal)?;
-    if !(2..=max_member_count).contains(&member_count)
-        || capable_member_count != member_count
-        || !(member_count..=max_device_count).contains(&device_count)
-    {
-        return Err(AuthFailure::E2eeCapabilityRequired);
-    }
+    validate_delivery_audience_counts(member_count, capable_member_count, device_count)?;
 
     let inserted = sqlx::query(
         "INSERT INTO e2ee_proposal_deliveries
@@ -3069,5 +3068,35 @@ mod tests {
         assert!(parse_canonical_ulid(&canonical).is_ok());
         assert!(parse_canonical_ulid(&canonical.to_lowercase()).is_err());
         assert!(parse_canonical_ulid("not-a-ulid").is_err());
+    }
+
+    #[test]
+    fn delivery_audiences_accept_bounded_group_dms() {
+        assert!(validate_delivery_audience_counts(2, 2, 2).is_ok());
+        assert!(validate_delivery_audience_counts(20, 20, 40).is_ok());
+        assert!(validate_delivery_audience_counts(
+            i64::try_from(MAX_MLS_GROUP_USERS).unwrap(),
+            i64::try_from(MAX_MLS_GROUP_USERS).unwrap(),
+            i64::try_from(MAX_MLS_GROUP_LEAVES).unwrap(),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn delivery_audiences_fail_closed_outside_group_bounds() {
+        let max_members = i64::try_from(MAX_MLS_GROUP_USERS).unwrap();
+        let max_devices = i64::try_from(MAX_MLS_GROUP_LEAVES).unwrap();
+        for (members, capable_members, devices) in [
+            (1, 1, 1),
+            (3, 2, 3),
+            (3, 3, 2),
+            (max_members + 1, max_members + 1, max_members + 1),
+            (max_members, max_members, max_devices + 1),
+        ] {
+            assert!(matches!(
+                validate_delivery_audience_counts(members, capable_members, devices),
+                Err(AuthFailure::E2eeCapabilityRequired)
+            ));
+        }
     }
 }

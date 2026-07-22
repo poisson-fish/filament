@@ -299,6 +299,138 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         .status(),
         StatusCode::OK
     );
+
+    // Seed the server-side routing view for a three-user group. MLS interiors
+    // remain opaque here; this exercises only bounded Delivery Service fanout.
+    let group_conversation_id = ConversationId::new();
+    let group_delivery_id = GroupId::new();
+    let group_seeded_at = 1_750_000_001_i64;
+    let mut group_seed = audit_pool
+        .begin()
+        .await
+        .expect("group delivery seed transaction should begin");
+    sqlx::query(
+        "INSERT INTO e2ee_conversations
+            (conversation_id, conversation_crypto, created_by, created_at_unix)
+         VALUES ($1, 'mls_v1', $2, $3)",
+    )
+    .bind(group_conversation_id.to_string())
+    .bind(alice_user_id.to_string())
+    .bind(group_seeded_at)
+    .execute(&mut *group_seed)
+    .await
+    .expect("group delivery conversation should seed");
+    for user_id in [alice_user_id, bob_user_id, charlie_user_id] {
+        sqlx::query(
+            "INSERT INTO e2ee_conversation_members
+                (conversation_id, user_id, joined_at_unix) VALUES ($1, $2, $3)",
+        )
+        .bind(group_conversation_id.to_string())
+        .bind(user_id.to_string())
+        .bind(group_seeded_at)
+        .execute(&mut *group_seed)
+        .await
+        .expect("group delivery member should seed");
+    }
+    sqlx::query(
+        "INSERT INTO e2ee_groups
+            (group_id, conversation_id, current_epoch, suite_id,
+             group_info_blob, created_at_unix)
+         VALUES ($1, $2, 1, 3, $3, $4)",
+    )
+    .bind(group_delivery_id.to_string())
+    .bind(group_conversation_id.to_string())
+    .bind(vec![0x71_u8; 128])
+    .bind(group_seeded_at)
+    .execute(&mut *group_seed)
+    .await
+    .expect("group delivery MLS group should seed");
+    group_seed
+        .commit()
+        .await
+        .expect("group delivery seed transaction should commit");
+
+    let group_message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_delivery_id}/messages"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostMessageRequest {
+            epoch: 1,
+            suite_id: 3,
+            sender_device_id: alice_device_id.to_string(),
+            message_blob: vec![0x72; 512],
+        },
+    )
+    .await;
+    assert_eq!(group_message.status(), StatusCode::OK);
+    let group_message: PostMessageResponse = parse_json(group_message).await;
+    let charlie_group_mailbox = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_delivery_id}/mailbox?device_id={charlie_device_id}"
+        ))
+        .header(
+            "authorization",
+            format!("Bearer {}", charlie_auth.access_token),
+        )
+        .header("x-forwarded-for", "203.0.113.183")
+        .body(Body::empty())
+        .expect("group message mailbox request should build");
+    let charlie_group_mailbox = app
+        .clone()
+        .oneshot(charlie_group_mailbox)
+        .await
+        .expect("group message mailbox request should execute");
+    assert_eq!(charlie_group_mailbox.status(), StatusCode::OK);
+    let charlie_group_mailbox: E2eeMailboxResponse = parse_json(charlie_group_mailbox).await;
+    assert_eq!(charlie_group_mailbox.messages.len(), 1);
+    assert_eq!(
+        charlie_group_mailbox.messages[0].message_id,
+        group_message.message_id
+    );
+
+    let group_commit = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_delivery_id}/commits"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostCommitRequest {
+            epoch: 2,
+            prior_epoch: 1,
+            committer_device_id: alice_device_id.to_string(),
+            commit_blob: vec![0x73; 256],
+            welcome_blob: None,
+            welcome_device_id: None,
+            group_info_blob: Some(vec![0x74; 128]),
+        },
+    )
+    .await;
+    assert_eq!(group_commit.status(), StatusCode::OK);
+    let charlie_group_commits = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_delivery_id}/commits?device_id={charlie_device_id}"
+        ))
+        .header(
+            "authorization",
+            format!("Bearer {}", charlie_auth.access_token),
+        )
+        .header("x-forwarded-for", "203.0.113.183")
+        .body(Body::empty())
+        .expect("group commit mailbox request should build");
+    let charlie_group_commits = app
+        .clone()
+        .oneshot(charlie_group_commits)
+        .await
+        .expect("group commit mailbox request should execute");
+    assert_eq!(charlie_group_commits.status(), StatusCode::OK);
+    let charlie_group_commits: E2eeCommitMailboxResponse = parse_json(charlie_group_commits).await;
+    assert_eq!(charlie_group_commits.commits.len(), 1);
+    assert_eq!(charlie_group_commits.commits[0].epoch, 2);
+
     let plaintext_conversation_id = ConversationId::new();
     let seeded_at = 1_750_000_000_i64;
     let mut seed = audit_pool

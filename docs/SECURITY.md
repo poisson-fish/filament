@@ -77,9 +77,10 @@ acceptance-gated checkpoint. ADR
 ratification is complete, while threat-model ratification remains open.
 The Phase 3 native core now supports bounded, explicitly root-pinned group-DM
 creation, participant Add, and all-device cryptographic eviction; server-side
-group membership orchestration is still pending. The Delivery Service now
-relays member-authored opaque proposals through bounded, per-device transient
-mailboxes. Stable external-sender key custody uses an operator-provisioned raw
+group membership orchestration is still pending. Delivery Service message,
+commit, and proposal fanout now shares one fail-closed bound of 2–100 capable
+users and at most 200 active device leaves, and relays member-authored opaque
+proposals through per-device transient mailboxes. Stable external-sender key custody uses an operator-provisioned raw
 Ed25519 seed opened without symlink following and checked after open for exact
 length, private permissions, current ownership, and a single hard link. The
 authenticated endpoint exposes only its public identity, and the crypto API

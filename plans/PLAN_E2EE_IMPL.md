@@ -152,7 +152,12 @@ remain. Member-authored opaque proposal transport now uses bounded,
 epoch-checked, per-device mailboxes with active `mls_proposal` notifications;
 the server external-sender now has stable operator-provisioned key custody, an
 authenticated public-identity contract, and a Remove-only signing surface;
-policy-triggered proposal generation remains open;
+policy-triggered proposal generation remains open. Message, commit, and
+proposal mailbox fanout now share the same fail-closed group-DM audience
+bounds: 2–100 capable users, at least one active device per member, and no more
+than 200 total leaves. A Postgres-backed three-user transport regression covers
+both application messages and commits; server-side group provisioning and
+membership reconciliation remain open;
 attachment, media, guild-channel, hardening, and key-transparency work has not
 started.
 
@@ -554,7 +559,9 @@ bounded per-device mailboxes with TTL/all-device-ack deletion. The
 native core registers a caller-pinned Delivery Service external sender,
 auto-stages valid Remove proposals at non-target members, retains the proposal
 at the target so it can verify the winning commit, and rejects external Add or
-forged proposals at every member.
+forged proposals at every member. Message, commit, and proposal fanout now use
+one bounded group audience invariant (2–100 capable users and at most 200
+active device leaves), with three-user Postgres transport coverage.
 
 ### Deliverables
 

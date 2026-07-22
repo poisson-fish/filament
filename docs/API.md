@@ -687,6 +687,9 @@ Returns opaque commits pending for one owned active device.
 - Active participant devices are snapshotted in the commit transaction; the
   committer is immediately marked delivered. A Welcome is returned only to
   its exact target device and is omitted from every other device's response.
+- Commit fanout accepts 2–100 capable conversation members and no more than
+  200 active device leaves. Every member must have at least one active device;
+  otherwise the transaction fails closed with `e2ee_capability_required`.
 - Pages are capped at 50 records and `256 KiB` aggregate commit/Welcome bytes.
   New devices do not gain access to earlier commits through this endpoint.
 - Native clients preflight the whole page, join only through a device-bound
@@ -748,9 +751,10 @@ Stores one opaque MLS `PrivateMessage` in the bounded delivery mailbox.
 - Rows are always tagged `mls_v1`, contain no plaintext/content-derived fields,
   and receive a configurable mailbox-expiry deadline (30 days by default,
   90-day hard maximum). Active participant devices are snapshotted in the same
-  transaction; the sending device is immediately marked delivered. A missing
-  active device for either participant fails closed with
-  `409 { "error": "e2ee_capability_required" }`. The default
+  transaction; the sending device is immediately marked delivered. Fanout is
+  bounded to 2–100 capable conversation members and 200 active device leaves.
+  A missing active device for any member or an audience outside those bounds
+  fails closed with `409 { "error": "e2ee_capability_required" }`. The default
   per-IP/user/device/group rate is 120 messages/minute.
 
 ### `GET /e2ee/groups/{group_id}/mailbox`
