@@ -15,8 +15,21 @@ Server-provided data is always treated as untrusted input.
   - `read_session_metadata`
   - `initialize_e2ee_store`
   - `read_e2ee_store_status`
+  - `read_encryption_settings`
+  - `rotate_root_identity`
+- The native command host exposes exactly that audited manifest through a
+  capability-oriented backend. Session identity, platform credential access,
+  filesystem paths, network submission, and MLS state cannot be supplied as
+  command arguments.
+- Session tokens and native command state use redacted `Debug` output. IPC
+  failures are closed, non-sensitive codes rather than backend error strings.
 - Signed updates are required.
 - Crash logs must redact all access/refresh token material.
+
+The final Tauri adapter remains blocked on the current Tauri 2.11.5 dependency
+graph: it fails this repository's advisory and license gates through
+unmaintained GTK3 bindings, an unsound GLib advisory, and disallowed MPL-2.0
+transitives. Do not add advisory/license exceptions to bypass this blocker.
 
 Configuration sources:
 - `apps/filament-client-desktop/tauri.conf.json`

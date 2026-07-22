@@ -17,6 +17,13 @@ use thiserror::Error;
 use url::Url;
 use zeroize::Zeroizing;
 
+mod tauri_host;
+
+pub use tauri_host::{
+    registered_desktop_commands, DesktopCommandBackend, DesktopCommandBackendError,
+    DesktopCommandError, DesktopCommandHost, SessionMetadata,
+};
+
 pub const DESKTOP_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;";
 pub const WEB_CSP: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local wss://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;";
 
@@ -46,8 +53,14 @@ pub enum SecurityError {
     IdentityRotationUnavailable,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SessionToken(String);
+
+impl fmt::Debug for SessionToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SessionToken([REDACTED])")
+    }
+}
 
 impl SessionToken {
     /// Returns a bounded-printable token value.
@@ -99,18 +112,41 @@ impl UnixExpiry {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StoreSessionRequest {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at_unix: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl fmt::Debug for StoreSessionRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StoreSessionRequest")
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .field("expires_at_unix", &self.expires_at_unix)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct ValidatedStoreSessionRequest {
     pub access_token: SessionToken,
     pub refresh_token: SessionToken,
     pub expires_at_unix: UnixExpiry,
+}
+
+impl fmt::Debug for ValidatedStoreSessionRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValidatedStoreSessionRequest")
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .field("expires_at_unix", &self.expires_at_unix)
+            .finish()
+    }
 }
 
 impl ValidatedStoreSessionRequest {

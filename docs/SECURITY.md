@@ -75,8 +75,10 @@ implemented as of 2026-07-21. Two-user desync recovery also validates signed
 GroupInfo and external commits against pinned identities through an isolated,
 acceptance-gated checkpoint. ADR
 ratification is complete, while threat-model ratification remains open.
-Packaged-client runtime wiring remains unfinished, so E2EE is not yet
-generally available.
+The packaged client now has a validated, capability-oriented native command
+host, but the final Tauri adapter is supply-chain blocked: Tauri 2.11.5 does not
+pass the repository's advisory/license gates. Production launcher/backend and
+end-to-end UI wiring remain unfinished, so E2EE is not yet generally available.
 Items below remain binding for later phases; the exact completed/remaining
 split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 

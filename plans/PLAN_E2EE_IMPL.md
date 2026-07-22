@@ -60,10 +60,12 @@ Still required before Phase 1 can be called complete:
 
 - Conversation-scoped peer surfacing of device-list changes follows the Phase
   2 conversation mapping; Phase 1 emits owner-scoped directory notifications.
-- The repository's desktop target currently provides the hardened native
-  security/IPC layer rather than a runnable Tauri command host. The settings
-  view and native rotation state machine are implemented and tested, but final
-  runtime command registration awaits that host scaffold.
+- The desktop target now provides a validated, redacted native host boundary
+  for the seven audited commands. The thin Tauri adapter is supply-chain
+  blocked: Tauri 2.11.5 pulls unmaintained GTK3 bindings, an unsound GLib
+  advisory, and MPL-2.0 transitives forbidden by `cargo-deny.toml`. No policy
+  exception was added. A production launcher/backend still must inject
+  authenticated session, platform storage, network, and MLS capabilities.
 
 Phase 2 is now in progress. The client core implements a bounded two-user MLS
 conversation lifecycle: claimed-KeyPackage validation against pinned roots,
@@ -127,9 +129,12 @@ now validates signed GroupInfo routing fields and pinned membership, constructs
 the external commit against an isolated clone of the complete MLS checkpoint,
 accepts only the constrained root-certified `NewMemberCommit` shape at peers,
 and adopts the replacement only after exact server acceptance and durable
-persistence. Final packaged command registration remains to be implemented.
-Generalized group-DM recovery and later attachment, media, guild-channel,
-hardening, and key-transparency work has not started.
+persistence. The desktop target now exposes the exact audited command manifest
+through a validated capability-oriented native backend without accepting key
+material, paths, or native identity. Final Tauri adapter and production
+backend/UI integration remain; generalized group-DM recovery and later
+attachment, media, guild-channel, hardening, and key-transparency work has not
+started.
 
 ---
 
@@ -491,7 +496,7 @@ Implement the first end-to-end encrypted conversation type: 1:1 DMs as 2-member 
 - [x] Mailbox ack and GC verified (all-device ack triggers delete; TTL triggers delete)
 - [x] Capability gating fails closed with typed error
 - [x] Downgrade attempts surface warnings / fail closed, never fall back
-- [ ] All quality gates pass
+- [x] All quality gates pass
 
 ### Stop-and-Ask Triggers
 

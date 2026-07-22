@@ -7,13 +7,16 @@
 
 The Phase 1 key-isolation boundary passes its source and negative-test audit.
 MLS/root/database key material remains in native Rust. The desktop webview can
-request encrypted-store initialization and read a fixed readiness response; it
-has no command that returns or accepts key material, database paths, record
-keys, or raw E2EE state.
+request encrypted-store initialization, read fixed readiness and public
+settings responses, and confirm an identity rotation; it has no command that
+returns or accepts key material, database paths, record keys, or raw E2EE
+state.
 
-This result covers the current command-contract scaffold. When the full Tauri
-runtime registers these commands, registration must be tested against the same
-allowlist before release.
+The native command host is covered by tests that exercise boundary validation,
+redaction, and exact alignment with the audited command manifest. The native
+backend remains capability-oriented: the webview cannot provide a filesystem
+path, credential account, native user/device identity, MLS state, or key
+material to any command.
 
 ## Native Data Flow
 
@@ -53,6 +56,9 @@ allowlist before release.
 - `apps/filament-client-desktop/src-tauri/src/lib.rs`: native-only store setup,
   status serialization negative test, fixed OS-keyring service, and redacted
   debug output.
+- `apps/filament-client-desktop/src-tauri/src/tauri_host.rs`: native command
+  backend boundary, validation, opaque errors, redaction, and exact-manifest
+  negative tests.
 - `apps/filament-client-desktop/src-tauri/tests/hardening_config.rs`: exact IPC
   allowlist alignment with `security-policy.json`.
 
@@ -61,6 +67,10 @@ allowlist before release.
 - Exercise each real OS credential backend on signed macOS, Windows, and Linux
   packages; headless CI uses a deterministic provider and does not claim this
   platform smoke coverage.
+- Add the thin Tauri runtime adapter only after its dependency graph passes the
+  existing advisory and license policy. Tauri 2.11.5 was evaluated on
+  2026-07-21 and rejected because it pulled unmaintained GTK3 bindings, an
+  unsound GLib advisory, and disallowed MPL-2.0 transitives.
 - Re-run the audit whenever a Tauri command, serialization type, key-storage
   backend, crash reporter, or E2EE logging path changes.
 - Phase 4 must review the 64 MiB/4,096-record foundation limits and add the
