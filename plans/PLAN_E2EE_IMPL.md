@@ -139,12 +139,18 @@ Every client authenticates external proposals against that pin, hard-rejects
 external Adds and all non-Remove kinds before proposal storage, and lets
 non-target members stage acceptance-gated commits for valid Removes; a
 targeted device retains the authenticated proposal only to verify the winning
-commit by reference. The desktop target now exposes the exact audited command
-manifest through a validated capability-oriented native backend without
-accepting key material, paths, or native identity. Final Tauri adapter and
-production backend/UI integration remain. The server signing-key lifecycle and
-proposal transport remain open; attachment, media, guild-channel, hardening,
-and key-transparency work has not started.
+commit by reference. Group message creation/replies, edits,
+delete-for-everyone, reactions, and pins now use a strict, versioned event
+envelope wholly inside the MLS application ciphertext. Canonical typed IDs and
+independent content/event caps are enforced before encryption and after
+decryption; Markdown and quote previews expose only safe UI tokens, while link
+previews, typing, and read receipts remain absent from protocol v1. The desktop
+target now exposes the exact audited command manifest through a validated
+capability-oriented native backend without accepting key material, paths, or
+native identity. Final Tauri adapter and production backend/UI integration
+remain. The server signing-key lifecycle and proposal transport remain open;
+attachment, media, guild-channel, hardening, and key-transparency work has not
+started.
 
 ---
 
@@ -591,7 +597,7 @@ forged proposals at every member.
 - [x] External-sender Remove proposals are validated and auto-committed by clients
 - [x] External-sender Add proposals are hard-rejected by clients
 - [x] Ghost-member injection fails at every client
-- [ ] Message-adjacent features (reactions, edits, deletes, replies) work inside encrypted groups
+- [x] Message-adjacent features (reactions, edits, deletes, replies) work inside encrypted groups
 - [ ] All quality gates pass
 
 ### Integration Points for Phase 4

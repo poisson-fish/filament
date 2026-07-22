@@ -26,6 +26,7 @@
 //! See [`docs/adr/0001-e2ee-mls-openmls.md`] for the protocol decision and
 //! [`plans/PLAN_E2EE.md`] for the full design specification.
 
+pub mod application;
 pub mod commit_mailbox;
 pub mod conversation;
 pub mod durable_mailbox;
@@ -40,6 +41,12 @@ pub mod persistence;
 pub mod sqlcipher_store;
 
 // Re-export the most commonly used types.
+pub use application::{
+    ApplicationEventId, ChatMessageBody, EncryptedChatEvent, EncryptedMessageId, QuotePreview,
+    ReactionAction, ReactionToken, ReplyReference, VersionedApplicationEvent,
+    MAX_APPLICATION_EVENT_BYTES, MAX_CHAT_MESSAGE_BYTES, MAX_QUOTE_PREVIEW_BYTES,
+    MAX_REACTION_CHARS,
+};
 pub use commit_mailbox::{process_commit_mailbox, CommitMailboxBatch, RejectedMailboxCommit};
 pub use conversation::{
     ConversationAudience, DecryptedApplicationMessage, DecryptionOutcome, DeliveryServiceIdentity,

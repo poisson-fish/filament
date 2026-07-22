@@ -219,6 +219,16 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   acceptance-gated member commit. The target stores the authenticated proposal
   without attempting to commit its own removal, allowing it to authenticate
   the winning referenced-proposal commit and become cryptographically inactive.
+- Group-DM message-adjacent semantics use a strict, versioned application
+  envelope inside the MLS `PrivateMessage`. Message creation/replies, edits,
+  delete-for-everyone, reactions, and pins are therefore opaque to the Delivery
+  Service. Client-generated event and message identifiers are canonical ULIDs;
+  bodies, quote previews, reactions, and serialized events have independent
+  hard caps. Decrypted Markdown is exposed through the safe UI token model,
+  never HTML. Reply previews are explicitly sender-authored display context,
+  not proof of the referenced content. Unknown event kinds or fields fail
+  closed. Link previews, typing indicators, and read receipts have no v1 event
+  variant and remain unavailable by default.
 - Kick/ban/role-loss produce Remove commits (cryptographic eviction). Policy enforcement acts immediately (routing stops); eviction lands at the next commit within a bounded window, or clients block sends in that group.
 - Workspace policy gate: `encrypted_channel_policy = disabled | require_moderator_membership | unrestricted` (per workspace, optionally per category).
 - User reports package the reporter's decrypted copies plus envelope references, with explicit reporter-side disclosure in UX.
