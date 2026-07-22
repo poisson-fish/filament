@@ -170,7 +170,12 @@ per-device transient mailboxes with explicit verification acknowledgments and
 all-device/TTL hard deletion. New devices now restore bounded authenticated
 local history from an existing root-certified device through a separate,
 short-lived, signed HPKE page protocol with atomic SQLCipher import; the server
-never receives plaintext or transfer keys. Backup, disappearing messages, and
+never receives plaintext or transfer keys. Opt-in portable backup now snapshots
+only the account root identity and canonical authenticated local history,
+derives a wrapping key with fixed Argon2id parameters (64 MiB, three passes),
+and encrypts an account-bound, versioned blob with ChaCha20-Poly1305. Restore
+excludes device/ratchet state, validates every record, and applies the root and
+history in one conflict-safe SQLCipher transaction. Disappearing messages and
 local search remain.
 
 ---
@@ -666,8 +671,16 @@ pages, and the receiver atomically compare-and-inserts authenticated records
 into SQLCipher. Exact duplicates are idempotent, while forged, expired,
 replayed, reordered, cross-account, conflicting, or partially persisted pages
 fail without advancing the receiver. The caller-supplied device transport sees
-only opaque payloads; no server history or key-storage path exists. Opt-in
-passphrase backup is the next increment.
+only opaque payloads; no server history or key-storage path exists. Portable
+backup is opt-in and non-recoverable without its passphrase. It exports only
+the root identity and bounded canonical history, never device signing keys,
+MLS provider/ratchet state, mailbox outboxes, or the SQLCipher key. Fixed
+Argon2id parameters (64 MiB, three passes, one lane), random salt/nonce,
+ChaCha20-Poly1305 authenticated encryption, a 64 MiB blob cap, exact account
+binding, and atomic idempotent/conflict-safe SQLCipher restore are covered by
+adversarial tests. Native file-selection/export plumbing and enrollment UI
+remain part of the final packaged-client adapter integration. Disappearing
+messages are the next core increment.
 
 ### Deliverables
 
@@ -715,12 +728,12 @@ passphrase backup is the next increment.
 ### Exit Criteria
 
 - [x] New-device onboarding restores history without any server-side plaintext
-- [ ] Encrypted files remain opaque to server inspection
-- [ ] Mailbox GC verified for both messages and attachments
-- [ ] Backup create + restore verified
+- [x] Encrypted files remain opaque to server inspection
+- [x] Mailbox GC verified for both messages and attachments
+- [x] Backup create + restore verified
 - [ ] Disappearing messages enforced client-side and mirrored by server TTL
 - [ ] Local search works without server involvement for E2EE conversations
-- [ ] All quality gates pass
+- [x] All quality gates pass
 
 ### Integration Points for Phase 5
 

@@ -194,6 +194,18 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   atomically compare-and-inserts records into SQLCipher. Replay, conflict,
   partial persistence, sender substitution, and expiry fail closed. The server
   receives no history plaintext or transfer key.
+- Portable recovery backup is explicit opt-in. The native core snapshots only
+  the account root identity and canonical authenticated `history:*` records;
+  device signing keys, MLS ratchets/provider state, mailbox outboxes, and the
+  SQLCipher key are never exported. Backups use Argon2id (64 MiB, 3 passes,
+  one lane) to derive a 256-bit key, then authenticate and encrypt a versioned,
+  account-bound blob with ChaCha20-Poly1305 through the approved OpenMLS
+  provider. The complete blob is capped at 64 MiB and 4,095 history records.
+  Restore requires the authenticated native account ID, validates every local
+  history record canonically, and compare-and-inserts the root plus all history
+  in one SQLCipher transaction. A wrong passphrase, tampering, cross-account
+  blob, KDF-parameter downgrade, or any local conflict fails without partial
+  writes. A lost passphrase cannot be recovered by Filament or the server.
 - E2EE application envelopes are authenticated-padded before MLS encryption;
   opaque transport frames are then zero-filled to size buckets (baseline
   `512 B / 1 KiB / 4 KiB / 16 KiB`) and clients reject nonzero transport fill.

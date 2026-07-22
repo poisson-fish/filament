@@ -28,6 +28,7 @@
 
 pub mod application;
 pub mod attachment;
+pub mod backup;
 pub mod commit_mailbox;
 pub mod conversation;
 pub mod delivery_service;
@@ -56,6 +57,11 @@ pub use attachment::{
     ATTACHMENT_CIPHERTEXT_BUCKETS, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILENAME_BYTES,
     MAX_ATTACHMENT_MIME_BYTES, MAX_ENCRYPTED_ATTACHMENT_BYTES, MAX_THUMBNAIL_BYTES,
 };
+pub use backup::{
+    create_passphrase_backup, restore_passphrase_backup, BackupRestore, EncryptedBackup,
+    ARGON2_BACKUP_ITERATIONS, ARGON2_BACKUP_MEMORY_KIB, MAX_BACKUP_BLOB_BYTES,
+    MAX_BACKUP_PASSPHRASE_BYTES, MIN_BACKUP_PASSPHRASE_BYTES,
+};
 pub use commit_mailbox::{
     process_commit_mailbox, process_group_commit_mailbox, CommitMailboxBatch, RejectedMailboxCommit,
 };
@@ -75,7 +81,7 @@ pub use durable_mailbox::{
     DurableMailboxError, DurableMessageMailboxBatch, DurableMlsClient, StoredMailboxMessage,
 };
 pub use error::{
-    AttachmentError, ConversationError, E2eeError, HistorySyncError, IdentityError,
+    AttachmentError, BackupError, ConversationError, E2eeError, HistorySyncError, IdentityError,
     KeyPackageError, KeyStoreError, PairingError,
 };
 pub use history_sync::{

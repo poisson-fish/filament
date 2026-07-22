@@ -131,6 +131,35 @@ pub enum HistorySyncError {
     KeyStore(#[from] KeyStoreError),
 }
 
+/// Errors from portable passphrase-encrypted backup operations.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum BackupError {
+    /// The passphrase does not meet the bounded native-client policy.
+    #[error("backup passphrase is invalid")]
+    InvalidPassphrase,
+    /// The backup header, version, KDF parameters, or payload is malformed.
+    #[error("invalid encrypted backup")]
+    InvalidBackup,
+    /// The backup exceeds a hard byte or record limit.
+    #[error("encrypted backup limit exceeded")]
+    LimitExceeded,
+    /// The passphrase is wrong or the authenticated blob was modified.
+    #[error("encrypted backup authentication failed")]
+    AuthenticationFailed,
+    /// The decrypted backup belongs to a different account.
+    #[error("encrypted backup user mismatch")]
+    UserMismatch,
+    /// A local identity or history record conflicts with the backup.
+    #[error("encrypted backup conflicts with local state")]
+    Conflict,
+    /// Argon2id or the approved AEAD provider failed.
+    #[error("encrypted backup crypto operation failed")]
+    CryptoError,
+    /// Encrypted local persistence failed.
+    #[error(transparent)]
+    KeyStore(#[from] KeyStoreError),
+}
+
 /// Errors from encrypted attachment preparation and verification.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AttachmentError {
@@ -222,6 +251,9 @@ pub enum E2eeError {
     /// Device-to-device history synchronization error.
     #[error(transparent)]
     HistorySync(#[from] HistorySyncError),
+    /// Portable passphrase backup error.
+    #[error(transparent)]
+    Backup(#[from] BackupError),
     /// Encrypted attachment error.
     #[error(transparent)]
     Attachment(#[from] AttachmentError),

@@ -204,6 +204,26 @@ pub trait LocalKeyStore: Send + Sync {
         Err(KeyStoreError::BackendError)
     }
 
+    /// Atomically restore a complete portable backup without overwriting any
+    /// different local value.
+    ///
+    /// Backup restoration may contain the root identity plus the full bounded
+    /// history snapshot, so it has a larger batch ceiling than ordinary
+    /// mailbox transactions. Exact existing values are idempotent. Production
+    /// encrypted stores must override this method with one transaction.
+    ///
+    /// # Errors
+    /// Returns a limit, conflict, or backend error without partial mutation.
+    fn restore_backup_batch(
+        &self,
+        mut entries: Vec<(StoreKey, Vec<u8>)>,
+    ) -> Result<usize, KeyStoreError> {
+        for (_, value) in &mut entries {
+            value.zeroize();
+        }
+        Err(KeyStoreError::BackendError)
+    }
+
     /// Retrieve a secret value by key.
     ///
     /// # Errors
@@ -317,6 +337,39 @@ impl LocalKeyStore for InMemoryKeyStore {
         Ok(inserted)
     }
 
+    fn restore_backup_batch(
+        &self,
+        entries: Vec<(StoreKey, Vec<u8>)>,
+    ) -> Result<usize, KeyStoreError> {
+        validate_backup_restore_batch(&entries)?;
+        let entries = entries
+            .into_iter()
+            .map(|(key, value)| (key, Zeroizing::new(value)))
+            .collect::<Vec<_>>();
+        let mut data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
+        if entries.iter().any(|(key, value)| {
+            data.get(key)
+                .is_some_and(|existing| existing.as_slice() != value.as_slice())
+        }) {
+            return Err(KeyStoreError::InvalidValue);
+        }
+        let inserted = entries
+            .iter()
+            .filter(|(key, _)| !data.contains_key(key))
+            .count();
+        if data
+            .len()
+            .checked_add(inserted)
+            .is_none_or(|count| count > MAX_STORE_ENTRIES)
+        {
+            return Err(KeyStoreError::LimitExceeded);
+        }
+        for (key, value) in entries {
+            data.entry(key).or_insert(value);
+        }
+        Ok(inserted)
+    }
+
     fn load(&self, key: &StoreKey) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
         let data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
         data.get(key)
@@ -346,6 +399,21 @@ impl LocalKeyStore for InMemoryKeyStore {
 
 pub(crate) fn validate_store_batch(entries: &[(StoreKey, Vec<u8>)]) -> Result<(), KeyStoreError> {
     if entries.is_empty() || entries.len() > MAX_STORE_BATCH_ENTRIES {
+        return Err(KeyStoreError::LimitExceeded);
+    }
+    let mut keys = HashSet::with_capacity(entries.len());
+    for (key, value) in entries {
+        if value.is_empty() || value.len() > MAX_STORE_VALUE_BYTES || !keys.insert(key.as_str()) {
+            return Err(KeyStoreError::LimitExceeded);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_backup_restore_batch(
+    entries: &[(StoreKey, Vec<u8>)],
+) -> Result<(), KeyStoreError> {
+    if entries.is_empty() || entries.len() > MAX_STORE_ENTRIES {
         return Err(KeyStoreError::LimitExceeded);
     }
     let mut keys = HashSet::with_capacity(entries.len());

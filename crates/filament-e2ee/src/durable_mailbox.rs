@@ -461,11 +461,20 @@ pub fn load_stored_message(
 ) -> Result<StoredMailboxMessage, KeyStoreError> {
     validate_ulid(message_id)?;
     let encoded = store.load(&history_key(group_id, message_id)?)?;
+    decode_stored_message(group_id, message_id, &encoded)
+}
+
+pub(crate) fn decode_stored_message(
+    group_id: GroupId,
+    message_id: &str,
+    encoded: &[u8],
+) -> Result<StoredMailboxMessage, KeyStoreError> {
+    validate_ulid(message_id)?;
     if encoded.len() > MAX_LOCAL_HISTORY_RECORD_BYTES {
         return Err(KeyStoreError::InvalidValue);
     }
     let mut record: HistoryRecord =
-        serde_json::from_slice(&encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+        serde_json::from_slice(encoded).map_err(|_| KeyStoreError::InvalidValue)?;
     if record.version != HISTORY_RECORD_VERSION
         || record.message_id != message_id
         || !(0..=MAX_UNIX_TIMESTAMP).contains(&record.created_at_unix)

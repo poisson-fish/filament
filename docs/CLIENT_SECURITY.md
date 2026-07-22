@@ -79,6 +79,28 @@ Configuration sources:
   server. The webview receives neither the HPKE receiver secret nor decrypted
   transfer pages.
 
+## E2EE Portable Backup Boundary
+
+- Backup is opt-in and performed by the native Rust core. The passphrase and
+  decrypted backup payload must not enter logs, telemetry, crash reports, or a
+  JavaScript heap. If the passphrase is lost, neither the operator nor Filament
+  can recover the backup.
+- A fresh random 128-bit salt feeds Argon2id with 64 MiB of memory, three
+  passes, and one lane. The derived 256-bit key encrypts the versioned backup
+  with a fresh ChaCha20-Poly1305 nonce through the approved OpenMLS provider.
+  Header version, exact KDF parameters, salt, nonce, and ciphertext length are
+  authenticated; parameter downgrade and trailing data fail before restore.
+- The portable payload contains only the account root identity and a bounded
+  snapshot of canonical authenticated local history. It never contains a
+  device signing identity, MLS provider checkpoint/ratchet, pending mailbox
+  acknowledgment, SQLCipher database key, or platform-keystore secret. A
+  restored installation enrolls as a fresh device for future epochs.
+- The blob is capped at 64 MiB, the passphrase at 1,024 UTF-8 bytes, and the
+  snapshot at 4,095 records. Restore binds the decrypted account ID to the
+  authenticated native session and validates every record before one atomic,
+  conflict-safe SQLCipher transaction. Exact repeats are idempotent; a root or
+  history conflict rolls back the complete restore.
+
 ## E2EE Local Storage Boundary
 
 - E2EE state is stored by the native Rust core in a device-scoped SQLCipher

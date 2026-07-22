@@ -1252,6 +1252,7 @@ dependencies = [
 name = "filament-e2ee"
 version = "0.1.0"
 dependencies = [
+ "argon2",
  "base64 0.22.1",
  "ed25519-dalek",
  "filament-core",
