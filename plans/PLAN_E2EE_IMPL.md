@@ -122,10 +122,14 @@ records, and per-group message or commit acknowledgment outboxes. Pending
 acknowledgments survive restart and block additional group processing until a
 successful idempotent server response; uncertain writes shut the runtime down
 until the last complete checkpoint reloads. Downgrade routing hints are exposed
-as typed rejections and never written or acknowledged. Final packaged command
-registration and external-commit recovery remain to be implemented. Phase 3 and
-later attachment, media, guild-channel, hardening, and key-transparency work has
-not started.
+as typed rejections and never written or acknowledged. Two-user desync recovery
+now validates signed GroupInfo routing fields and pinned membership, constructs
+the external commit against an isolated clone of the complete MLS checkpoint,
+accepts only the constrained root-certified `NewMemberCommit` shape at peers,
+and adopts the replacement only after exact server acceptance and durable
+persistence. Final packaged command registration remains to be implemented.
+Generalized group-DM recovery and later attachment, media, guild-channel,
+hardening, and key-transparency work has not started.
 
 ---
 

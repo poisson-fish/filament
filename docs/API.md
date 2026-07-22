@@ -634,6 +634,11 @@ Returns the latest opaque `GroupInfo` for an authenticated member of an
 - Missing GroupInfo, non-membership, plaintext conversation mode, and unknown
   groups return `404` without revealing which authorization check failed.
 - The server treats GroupInfo as opaque and applies the `64 KiB` hard cap.
+- Native recovery treats every response field as an untrusted routing hint.
+  The signed GroupInfo must match the pinned group, epoch, baseline suite,
+  ratchet tree, and two-user root identities before an external commit is
+  created. Recovery is prepared against an isolated clone of the complete MLS
+  checkpoint, so rejection cannot overwrite the live provider state.
 
 ### `POST /e2ee/groups/{group_id}/commits`
 Atomically orders one opaque MLS commit for an authenticated conversation member.
@@ -653,6 +658,12 @@ Atomically orders one opaque MLS commit for an authenticated conversation member
   `64 KiB`. The default per-IP/user/device/group rate is 30 commits/minute.
 - `welcome_blob` and `welcome_device_id` must be supplied together. The target
   must be a distinct active device owned by a conversation member.
+- A recovery external commit is accepted by peers only when OpenMLS
+  authenticates a `NewMemberCommit` whose update-path credential chains to one
+  of the two pinned roots and matches the routed committer device. Its proposal
+  shape is exactly one `ExternalInit` plus only the automatic same-device
+  replacement `Remove`, when required. The candidate replaces local state only
+  after an exact accepted-epoch response and an atomic encrypted checkpoint.
 
 ### `GET /e2ee/groups/{group_id}/commits`
 Returns opaque commits pending for one owned active device.

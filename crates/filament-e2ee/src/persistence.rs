@@ -15,8 +15,9 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     conversation::{ConversationPersistenceMetadata, InboundPersistenceMetadata},
     keypackage::ProviderRecord,
-    DecryptedApplicationMessage, KeyStoreError, LocalKeyStore, MlsConversation, MlsDevice,
-    StoreKey, MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP, MAX_STORE_VALUE_BYTES,
+    DecryptedApplicationMessage, ExternalCommitRecoveryInfo, KeyStoreError, LocalKeyStore,
+    MlsConversation, MlsDevice, PendingGroupCommit, PinnedUserIdentity, StoreKey,
+    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP, MAX_STORE_VALUE_BYTES,
 };
 
 const MLS_CLIENT_STATE_VERSION: u16 = 1;
@@ -31,6 +32,45 @@ pub struct MlsClientState {
     pub conversations: Vec<MlsConversation>,
 }
 
+/// Isolated candidate state for one acceptance-gated external commit.
+///
+/// Building an external commit writes group secrets into the OpenMLS
+/// provider. This type owns a clone of the complete native checkpoint so a
+/// rejected Delivery Service write cannot alter the currently usable state.
+pub struct PendingExternalCommitRecovery {
+    state: MlsClientState,
+    commit: PendingGroupCommit,
+    base_checkpoint: Zeroizing<Vec<u8>>,
+}
+
+impl core::fmt::Debug for PendingExternalCommitRecovery {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("PendingExternalCommitRecovery")
+            .field("group_id", &self.commit.group_id)
+            .field("base_checkpoint", &"<MLS key material omitted>")
+            .field("recovery_epoch", &self.commit.epoch)
+            .field("state", &"<MLS key material omitted>")
+            .finish()
+    }
+}
+
+impl PendingExternalCommitRecovery {
+    /// Opaque commit material to submit to the Delivery Service.
+    #[must_use]
+    pub const fn pending_commit(&self) -> &PendingGroupCommit {
+        &self.commit
+    }
+
+    pub(crate) fn base_checkpoint(&self) -> &[u8] {
+        &self.base_checkpoint
+    }
+
+    pub(crate) fn into_state(self) -> MlsClientState {
+        self.state
+    }
+}
+
 impl core::fmt::Debug for MlsClientState {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
@@ -39,6 +79,60 @@ impl core::fmt::Debug for MlsClientState {
             .field("conversation_count", &self.conversations.len())
             .field("state", &"<MLS key material omitted>")
             .finish()
+    }
+}
+
+impl MlsClientState {
+    /// Build an external-commit recovery against an isolated checkpoint.
+    ///
+    /// The current state is not mutated. Callers submit [`PendingGroupCommit`]
+    /// to the Delivery Service and adopt the candidate only after an exact
+    /// acceptance response and durable persistence.
+    ///
+    /// # Errors
+    /// Returns a fail-closed conversation error for stale/mismatched routing
+    /// hints, untrusted `GroupInfo`, invalid membership, or MLS failure.
+    pub fn prepare_external_commit_recovery(
+        &self,
+        peer: PinnedUserIdentity,
+        recovery: &ExternalCommitRecoveryInfo,
+    ) -> Result<PendingExternalCommitRecovery, crate::ConversationError> {
+        let current = self
+            .conversations
+            .iter()
+            .find(|conversation| conversation.group_id() == recovery.group_id)
+            .ok_or(crate::ConversationError::GroupMismatch)?;
+        let metadata = current.persistence_metadata();
+        let peer_pin_matches = metadata
+            .pinned_roots
+            .iter()
+            .any(|(user_id, root_key)| *user_id == peer.user_id && *root_key == peer.root_key_pub);
+        if !peer_pin_matches
+            || (metadata.active && recovery.epoch <= metadata.epoch)
+            || (!metadata.active && recovery.epoch < metadata.epoch)
+        {
+            return Err(crate::ConversationError::MetadataMismatch);
+        }
+
+        let conversations = self.conversations.iter().collect::<Vec<_>>();
+        let base_checkpoint = encode_mls_client_state(&self.device, &conversations)
+            .map_err(|_| crate::ConversationError::CryptoError)?;
+        let mut candidate = clone_client_state(&base_checkpoint)
+            .map_err(|_| crate::ConversationError::CryptoError)?;
+        let position = candidate
+            .conversations
+            .iter()
+            .position(|conversation| conversation.group_id() == recovery.group_id)
+            .ok_or(crate::ConversationError::GroupMismatch)?;
+        let current = candidate.conversations.remove(position);
+        let (conversation, commit) =
+            current.recover_by_external_commit(recovery, &candidate.device, peer)?;
+        candidate.conversations.insert(position, conversation);
+        Ok(PendingExternalCommitRecovery {
+            state: candidate,
+            commit,
+            base_checkpoint,
+        })
     }
 }
 
@@ -248,6 +342,14 @@ fn restore_snapshot(snapshot: &PersistedClientState) -> Result<MlsClientState, K
         device,
         conversations,
     })
+}
+
+fn clone_client_state(encoded: &[u8]) -> Result<MlsClientState, KeyStoreError> {
+    let mut snapshot: PersistedClientState =
+        serde_json::from_slice(encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    let cloned = restore_snapshot(&snapshot);
+    snapshot.zeroize();
+    cloned
 }
 
 fn validate_provider_records(records: &[ProviderRecord]) -> Result<(), KeyStoreError> {

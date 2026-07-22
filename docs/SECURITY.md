@@ -71,7 +71,9 @@ foundation, and initial Phase 2 two-user conversation provisioning, opaque
 transport, message mailbox, recipient-bound commit/Welcome mailbox, native
 message- and commit-mailbox authentication/decryption processing, and native
 MLS client checkpoints with bounded multi-device membership churn are
-implemented as of 2026-07-21; ADR
+implemented as of 2026-07-21. Two-user desync recovery also validates signed
+GroupInfo and external commits against pinned identities through an isolated,
+acceptance-gated checkpoint. ADR
 ratification is complete, while threat-model ratification remains open.
 Packaged-client runtime wiring remains unfinished, so E2EE is not yet
 generally available.
@@ -110,6 +112,13 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   outbox in one SQLCipher transaction. A failed or uncertain transaction
   shuts the crypto runtime down until the preceding complete checkpoint is
   reloaded; it never emits an acknowledgment from volatile state.
+- External-commit recovery clones the complete validated MLS checkpoint before
+  OpenMLS builds or stores replacement group state. Signed GroupInfo must match
+  the routed group, epoch, suite, ratchet tree, and pinned two-user membership.
+  Peers accept only a root-certified `NewMemberCommit` with the constrained
+  external-init/same-device-replacement shape. A server rejection or
+  contradictory acceptance response leaves live state unchanged; exact
+  acceptance becomes usable only after the replacement checkpoint is durable.
 - The server never holds root keys and cannot mint devices; uncertified devices fail verification at every peer.
 - Device removal is first-class: MLS Remove of that device's leaves from all groups (cryptographic eviction) plus KeyPackage tombstoning.
 - Phase 2 two-user groups add one certified device per commit and bind its

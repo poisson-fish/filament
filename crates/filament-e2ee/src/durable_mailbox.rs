@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use filament_core::{DeviceId, GroupId, UserId};
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeMessagesRequest, E2eeCommitMailboxResponse, E2eeMailboxResponse,
-    MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
+    PostCommitResponse, MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -19,8 +19,9 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     persistence::encode_mls_client_state, process_commit_mailbox, process_message_mailbox,
-    ConversationError, DecryptedApplicationMessage, KeyStoreError, LocalKeyStore, MlsClientState,
-    MlsConversation, PinnedUserIdentity, RejectedMailboxCommit, RejectedMailboxMessage, StoreKey,
+    ConversationError, DecryptedApplicationMessage, ExternalCommitRecoveryInfo, KeyStoreError,
+    LocalKeyStore, MlsClientState, MlsConversation, PendingExternalCommitRecovery,
+    PinnedUserIdentity, RejectedMailboxCommit, RejectedMailboxMessage, StoreKey,
     MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
 };
 
@@ -158,6 +159,85 @@ impl DurableMlsClient {
     pub fn reload(&mut self, store: &dyn LocalKeyStore) -> Result<(), KeyStoreError> {
         self.state = None;
         self.state = Some(crate::load_mls_client_state(store)?);
+        Ok(())
+    }
+
+    /// Prepare an isolated external-commit recovery candidate.
+    ///
+    /// Existing mailbox acknowledgment outboxes for the group must be drained
+    /// first. The live state remains usable and unchanged until
+    /// [`Self::confirm_external_commit_recovery`] receives an exact accepted
+    /// epoch and durably checkpoints the candidate.
+    ///
+    /// # Errors
+    /// Returns a durability or fail-closed MLS validation error.
+    pub fn prepare_external_commit_recovery(
+        &self,
+        store: &dyn LocalKeyStore,
+        peer: PinnedUserIdentity,
+        recovery: &ExternalCommitRecoveryInfo,
+    ) -> Result<PendingExternalCommitRecovery, DurableMailboxError> {
+        if store.exists(&message_ack_key(recovery.group_id)?)?
+            || store.exists(&commit_ack_key(recovery.group_id)?)?
+        {
+            return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+        let state = self
+            .state
+            .as_ref()
+            .ok_or(DurableMailboxError::Unavailable)?;
+        state
+            .prepare_external_commit_recovery(peer, recovery)
+            .map_err(Into::into)
+    }
+
+    /// Adopt an externally recovered group after exact server acceptance.
+    ///
+    /// The replacement provider and all conversations are checkpointed as one
+    /// encrypted record before they become usable. An uncertain local write
+    /// shuts the runtime down until [`Self::reload`] restores the last complete
+    /// checkpoint.
+    ///
+    /// # Errors
+    /// Rejects stale candidates and untrusted acceptance metadata without
+    /// changing live state. Persistence failure makes the runtime unavailable.
+    pub fn confirm_external_commit_recovery(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        recovery: PendingExternalCommitRecovery,
+        response: &PostCommitResponse,
+    ) -> Result<(), DurableMailboxError> {
+        let pending = recovery.pending_commit();
+        if !response.accepted || response.epoch != pending.epoch {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        let group_id = pending.group_id;
+        let current = self
+            .state
+            .as_ref()
+            .ok_or(DurableMailboxError::Unavailable)?;
+        if !current
+            .conversations
+            .iter()
+            .any(|conversation| conversation.group_id() == group_id)
+        {
+            return Err(DurableMailboxError::ConversationNotFound);
+        }
+        let current_conversations = current.conversations.iter().collect::<Vec<_>>();
+        let current_checkpoint = encode_mls_client_state(&current.device, &current_conversations)?;
+        if current_checkpoint.as_slice() != recovery.base_checkpoint() {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+
+        let candidate = recovery.into_state();
+        self.state = None;
+        let conversations = candidate.conversations.iter().collect::<Vec<_>>();
+        if let Err(error) =
+            crate::persist_mls_client_state(store, &candidate.device, &conversations)
+        {
+            return Err(error.into());
+        }
+        self.state = Some(candidate);
         Ok(())
     }
 
@@ -533,7 +613,9 @@ fn validate_ulid(value: &str) -> Result<(), KeyStoreError> {
 #[cfg(test)]
 mod tests {
     use filament_core::{ConversationCrypto, DeviceId, GroupId, UserId};
-    use filament_protocol::{E2eeCommitMailboxEntry, E2eeMailboxMessage};
+    use filament_protocol::{
+        E2eeCommitMailboxEntry, E2eeMailboxMessage, GroupInfoResponse, PostCommitResponse,
+    };
 
     use super::*;
     use crate::{
@@ -854,6 +936,222 @@ mod tests {
                 .err(),
             Some(DurableMailboxError::Conversation(
                 ConversationError::InvalidMailboxPage
+            ))
+        );
+        assert!(runtime.is_ready());
+    }
+
+    #[test]
+    fn external_commit_recovery_is_isolated_accepted_and_restart_safe() {
+        let JoinedFixture {
+            alice,
+            mut alice_group,
+            bob,
+            mut bob_group,
+            group_id,
+        } = joined_fixture();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let before_recovery = alice_group
+            .encrypt_application_message(&alice, b"before recovery")
+            .unwrap();
+        bob_group
+            .decrypt_application_message(&bob, &before_recovery)
+            .unwrap();
+        let before_recovery_reply = bob_group
+            .encrypt_application_message(&bob, b"before recovery reply")
+            .unwrap();
+        alice_group
+            .decrypt_application_message(&alice, &before_recovery_reply)
+            .unwrap();
+        let update = alice_group.create_self_update(&alice).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let recovery_info = ExternalCommitRecoveryInfo::try_from(GroupInfoResponse {
+            group_id: group_id.to_string(),
+            epoch: update.epoch,
+            suite_id: update.suite.as_u16(),
+            group_info_blob: update.group_info_blob.clone().unwrap(),
+        })
+        .unwrap();
+
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let recovery = runtime
+            .prepare_external_commit_recovery(&store, alice_pin, &recovery_info)
+            .unwrap();
+        let pending = recovery.pending_commit();
+        assert_eq!(pending.prior_epoch, update.epoch);
+        assert_eq!(pending.epoch, update.epoch + 1);
+        assert!(pending.welcome_blob.is_none());
+
+        let encrypted_commit = crate::EncryptedGroupCommit {
+            group_id,
+            prior_epoch: pending.prior_epoch,
+            epoch: pending.epoch,
+            committer_device_id: pending.committer_device_id,
+            commit_blob: pending.commit_blob.clone(),
+        };
+        let mut forged_hint = encrypted_commit.clone();
+        forged_hint.committer_device_id = DeviceId::new();
+        assert_eq!(
+            alice_group.process_incoming_commit(&alice, &forged_hint),
+            Err(ConversationError::MetadataMismatch)
+        );
+        assert_eq!(alice_group.epoch(), update.epoch);
+        alice_group
+            .process_incoming_commit(&alice, &encrypted_commit)
+            .unwrap();
+        runtime
+            .confirm_external_commit_recovery(
+                &store,
+                recovery,
+                &PostCommitResponse {
+                    accepted: true,
+                    epoch: update.epoch + 1,
+                },
+            )
+            .unwrap();
+        drop(runtime);
+
+        let mut restarted = DurableMlsClient::load(&store).unwrap();
+        let encrypted = alice_group
+            .encrypt_application_message(&alice, b"after external recovery")
+            .unwrap();
+        let state = restarted.state.as_mut().unwrap();
+        let recovered = state
+            .conversations
+            .iter_mut()
+            .find(|conversation| conversation.group_id() == group_id)
+            .unwrap();
+        let outcome = recovered
+            .decrypt_application_message(&state.device, &encrypted)
+            .unwrap();
+        assert_eq!(
+            outcome.ready_messages[0].plaintext,
+            b"after external recovery"
+        );
+        let reply = recovered
+            .encrypt_application_message(&state.device, b"reply after external recovery")
+            .unwrap();
+        let reply_outcome = alice_group
+            .decrypt_application_message(&alice, &reply)
+            .unwrap();
+        assert_eq!(
+            reply_outcome.ready_messages[0].plaintext,
+            b"reply after external recovery"
+        );
+    }
+
+    #[test]
+    fn rejected_recovery_response_leaves_original_checkpoint_usable() {
+        let JoinedFixture {
+            alice,
+            mut alice_group,
+            bob,
+            bob_group,
+            group_id,
+        } = joined_fixture();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let update = alice_group.create_self_update(&alice).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let recovery_info = ExternalCommitRecoveryInfo::try_from(GroupInfoResponse {
+            group_id: group_id.to_string(),
+            epoch: update.epoch,
+            suite_id: update.suite.as_u16(),
+            group_info_blob: update.group_info_blob.clone().unwrap(),
+        })
+        .unwrap();
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let recovery = runtime
+            .prepare_external_commit_recovery(&store, alice_pin, &recovery_info)
+            .unwrap();
+
+        assert_eq!(
+            runtime.confirm_external_commit_recovery(
+                &store,
+                recovery,
+                &PostCommitResponse {
+                    accepted: true,
+                    epoch: update.epoch + 2,
+                },
+            ),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
+            ))
+        );
+        assert!(runtime.is_ready());
+
+        let state = runtime.state.as_mut().unwrap();
+        state.conversations[0]
+            .process_incoming_commit(
+                &state.device,
+                &crate::EncryptedGroupCommit {
+                    group_id,
+                    prior_epoch: update.prior_epoch,
+                    epoch: update.epoch,
+                    committer_device_id: update.committer_device_id,
+                    commit_blob: update.commit_blob,
+                },
+            )
+            .unwrap();
+        assert_eq!(state.conversations[0].epoch(), update.epoch);
+    }
+
+    #[test]
+    fn recovery_candidate_cannot_roll_back_same_epoch_mailbox_progress() {
+        let JoinedFixture {
+            alice,
+            mut alice_group,
+            bob,
+            bob_group,
+            group_id,
+        } = joined_fixture();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let encrypted = alice_group
+            .encrypt_application_message(&alice, b"must not be rolled back")
+            .unwrap();
+        let update = alice_group.create_self_update(&alice).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let recovery_info = ExternalCommitRecoveryInfo::try_from(GroupInfoResponse {
+            group_id: group_id.to_string(),
+            epoch: update.epoch,
+            suite_id: update.suite.as_u16(),
+            group_info_blob: update.group_info_blob.unwrap(),
+        })
+        .unwrap();
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let recovery = runtime
+            .prepare_external_commit_recovery(&store, alice_pin, &recovery_info)
+            .unwrap();
+
+        let message_id = Ulid::new().to_string();
+        let page = E2eeMailboxResponse {
+            messages: vec![message_entry(message_id.clone(), encrypted)],
+            next_after_message_id: Some(message_id),
+        };
+        let batch = runtime
+            .process_message_mailbox(&store, group_id, page)
+            .unwrap();
+        assert_eq!(
+            batch.ready_messages[0].plaintext,
+            b"must not be rolled back"
+        );
+
+        assert_eq!(
+            runtime.confirm_external_commit_recovery(
+                &store,
+                recovery,
+                &PostCommitResponse {
+                    accepted: true,
+                    epoch: update.epoch + 1,
+                },
+            ),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
             ))
         );
         assert!(runtime.is_ready());

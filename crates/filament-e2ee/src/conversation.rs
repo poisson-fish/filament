@@ -10,6 +10,7 @@ use filament_core::{
     CiphersuiteId, ConversationCrypto, DeviceCertificate, DeviceId, GroupId as FilamentGroupId,
     UserId,
 };
+use filament_protocol::GroupInfoResponse;
 use openmls::prelude::group_info::GroupInfo;
 use openmls::prelude::*;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
@@ -94,6 +95,45 @@ pub struct PendingGroupCommit {
     pub welcome_blob: Option<Vec<u8>>,
     /// Optional TLS-serialized GroupInfo for recovery.
     pub group_info_blob: Option<Vec<u8>>,
+}
+
+/// Strictly validated Delivery Service input for external-commit recovery.
+///
+/// Every field remains an untrusted routing hint until it is matched against
+/// the signed MLS `GroupInfo` while building the recovery commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalCommitRecoveryInfo {
+    /// Locally routed MLS group.
+    pub group_id: FilamentGroupId,
+    /// Delivery Service's claimed current epoch.
+    pub epoch: u64,
+    /// Delivery Service's claimed ciphersuite.
+    pub suite: CiphersuiteId,
+    /// TLS-serialized signed MLS `GroupInfo`.
+    pub group_info_blob: Vec<u8>,
+}
+
+impl TryFrom<GroupInfoResponse> for ExternalCommitRecoveryInfo {
+    type Error = ConversationError;
+
+    fn try_from(response: GroupInfoResponse) -> Result<Self, Self::Error> {
+        let group_id = FilamentGroupId::try_from(response.group_id)
+            .map_err(|_| ConversationError::MetadataMismatch)?;
+        let suite = CiphersuiteId::try_from(response.suite_id)
+            .map_err(|_| ConversationError::MetadataMismatch)?;
+        if response.epoch == 0
+            || response.group_info_blob.is_empty()
+            || response.group_info_blob.len() > MAX_GROUP_INFO_BYTES
+        {
+            return Err(ConversationError::LimitExceeded);
+        }
+        Ok(Self {
+            group_id,
+            epoch: response.epoch,
+            suite,
+            group_info_blob: response.group_info_blob,
+        })
+    }
 }
 
 impl core::fmt::Debug for PendingGroupCommit {
@@ -261,6 +301,108 @@ impl core::fmt::Debug for MlsConversation {
 }
 
 impl MlsConversation {
+    pub(crate) fn recover_by_external_commit(
+        self,
+        recovery: &ExternalCommitRecoveryInfo,
+        device: &MlsDevice,
+        peer: PinnedUserIdentity,
+    ) -> Result<(Self, PendingGroupCommit), ConversationError> {
+        self.ensure_device(device)?;
+        if self.group_id != recovery.group_id
+            || self.pinned_roots.get(&peer.user_id) != Some(&peer.root_key_pub)
+            || self.pinned_roots.get(&device.user_id()) != Some(device.root_key_public())
+            || peer.user_id == device.user_id()
+            || recovery.suite != CiphersuiteId::baseline()
+            || recovery.group_info_blob.is_empty()
+            || recovery.group_info_blob.len() > MAX_GROUP_INFO_BYTES
+        {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        let message = MlsMessageIn::tls_deserialize_exact(&recovery.group_info_blob)
+            .map_err(|_| ConversationError::SerializationFailed)?;
+        let MlsMessageBodyIn::GroupInfo(group_info) = message.extract() else {
+            return Err(ConversationError::InvalidCommit);
+        };
+        if group_info.group_id().as_slice() != recovery.group_id.to_string().as_bytes()
+            || group_info.epoch().as_u64() != recovery.epoch
+            || group_info.ciphersuite() != CIPHERSUITE
+        {
+            return Err(ConversationError::MetadataMismatch);
+        }
+
+        let join_config = MlsGroupJoinConfig::builder()
+            .wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
+            .use_ratchet_tree_extension(true)
+            .sender_ratchet_configuration(sender_ratchet_configuration())
+            .build();
+        let (group, bundle) = MlsGroup::external_commit_builder()
+            .with_config(join_config)
+            .build_group(device.provider(), group_info, device.credential_with_key())
+            .map_err(|_| ConversationError::CryptoError)?
+            .load_psks(device.provider().storage())
+            .map_err(|_| ConversationError::CryptoError)?
+            .use_ratchet_tree_extension(true)
+            .build(
+                device.provider().rand(),
+                device.provider().crypto(),
+                device.signer(),
+                |_| true,
+            )
+            .map_err(|_| ConversationError::CryptoError)?
+            .finalize(device.provider())
+            .map_err(|_| ConversationError::CryptoError)?;
+
+        let expected_epoch = recovery
+            .epoch
+            .checked_add(1)
+            .ok_or(ConversationError::LimitExceeded)?;
+        let pinned_roots = self.pinned_roots;
+        if group.group_id().as_slice() != recovery.group_id.to_string().as_bytes()
+            || group.epoch().as_u64() != expected_epoch
+            || group.ciphersuite() != CIPHERSUITE
+        {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        validate_two_user_group(&group, &pinned_roots, Some(device.device_id()))?;
+
+        let (commit, welcome, group_info) = bundle.into_contents();
+        if welcome.is_some() {
+            return Err(ConversationError::UnexpectedMembership);
+        }
+        let commit_blob = commit
+            .to_bytes()
+            .map_err(|_| ConversationError::SerializationFailed)?;
+        let group_info_blob = group_info
+            .map(|info| {
+                MlsMessageOut::from(info)
+                    .to_bytes()
+                    .map_err(|_| ConversationError::SerializationFailed)
+            })
+            .transpose()?;
+        enforce_serialized_limits(&commit_blob, None, group_info_blob.as_deref())?;
+        let pending = PendingGroupCommit {
+            group_id: recovery.group_id,
+            prior_epoch: recovery.epoch,
+            epoch: expected_epoch,
+            suite: CiphersuiteId::baseline(),
+            committer_device_id: device.device_id(),
+            commit_blob,
+            welcome_blob: None,
+            group_info_blob,
+        };
+        let mut recovered = Self {
+            group_id: recovery.group_id,
+            group,
+            own_device_id: device.device_id(),
+            pinned_roots,
+            outbound_generation: self.outbound_generation,
+            inbound: self.inbound,
+            active: true,
+        };
+        recovered.prune_inbound_for_current_members()?;
+        Ok((recovered, pending))
+    }
+
     /// Create a two-user group and stage an Add commit from a claimed peer
     /// `KeyPackage`. The caller must submit the returned commit to the Delivery
     /// Service, then call [`Self::accept_pending_commit`] only after acceptance.
@@ -773,25 +915,18 @@ impl MlsConversation {
         {
             return Err(ConversationError::MetadataMismatch);
         }
-        let expected_sender_index = self
-            .group
-            .members()
-            .find_map(|member| {
-                verify_member_credential(
-                    &member.credential,
-                    &member.signature_key,
-                    &self.pinned_roots,
-                )
-                .ok()
-                .filter(|verified| verified.device_id == commit.committer_device_id)
-                .map(|_| member.index)
-            })
-            .ok_or(ConversationError::MetadataMismatch)?;
         let ProtocolMessage::PublicMessage(public_message) = &protocol_message else {
             return Err(ConversationError::InvalidCommit);
         };
-        if public_message.sender() != &Sender::Member(expected_sender_index) {
-            return Err(ConversationError::MetadataMismatch);
+        match public_message.sender() {
+            Sender::Member(sender_index) => {
+                let verified = self.verify_member_at(*sender_index)?;
+                if verified.device_id != commit.committer_device_id {
+                    return Err(ConversationError::MetadataMismatch);
+                }
+            }
+            Sender::NewMemberCommit => {}
+            _ => return Err(ConversationError::MetadataMismatch),
         }
         Ok(protocol_message)
     }
@@ -816,19 +951,29 @@ impl MlsConversation {
             .group
             .process_message(device.provider(), protocol_message)
             .map_err(|_| ConversationError::CryptoError)?;
-        let Sender::Member(sender_index) = processed.sender() else {
-            return Err(ConversationError::UnexpectedMembership);
-        };
-        let verified_sender = self.verify_member_at(*sender_index)?;
-        if verified_sender.device_id != commit.committer_device_id {
-            return Err(ConversationError::MetadataMismatch);
-        }
+        let sender = processed.sender().clone();
         let ProcessedMessageContent::StagedCommitMessage(staged_commit) = processed.into_content()
         else {
             return Err(ConversationError::InvalidCommit);
         };
-        self.validate_staged_commit(&staged_commit, verified_sender, commit.epoch)?;
-        validate_staged_membership_change(&self.group, &staged_commit, &self.pinned_roots)?;
+        match sender {
+            Sender::Member(sender_index) => {
+                let verified_sender = self.verify_member_at(sender_index)?;
+                if verified_sender.device_id != commit.committer_device_id {
+                    return Err(ConversationError::MetadataMismatch);
+                }
+                self.validate_staged_commit(&staged_commit, verified_sender, commit.epoch)?;
+                validate_staged_membership_change(&self.group, &staged_commit, &self.pinned_roots)?;
+            }
+            Sender::NewMemberCommit => validate_external_commit(
+                &self.group,
+                &staged_commit,
+                &self.pinned_roots,
+                commit.committer_device_id,
+                commit.epoch,
+            )?,
+            _ => return Err(ConversationError::UnexpectedMembership),
+        }
         Ok(staged_commit)
     }
 
@@ -1523,6 +1668,72 @@ fn validate_staged_membership_change(
         return Err(ConversationError::UnexpectedMembership);
     }
     Ok(())
+}
+
+fn validate_external_commit(
+    group: &MlsGroup,
+    staged_commit: &StagedCommit,
+    pinned_roots: &HashMap<UserId, [u8; 32]>,
+    committer_device_id: DeviceId,
+    expected_epoch: u64,
+) -> Result<(), ConversationError> {
+    if staged_commit.epoch().as_u64() != expected_epoch {
+        return Err(ConversationError::MetadataMismatch);
+    }
+    let joining_leaf = staged_commit
+        .update_path_leaf_node()
+        .ok_or(ConversationError::UnexpectedMembership)?;
+    let joining_member = verify_member_credential(
+        joining_leaf.credential(),
+        joining_leaf.signature_key().as_slice(),
+        pinned_roots,
+    )?;
+    if joining_member.device_id != committer_device_id {
+        return Err(ConversationError::MetadataMismatch);
+    }
+
+    let proposals = staged_commit.queued_proposals().collect::<Vec<_>>();
+    let external_init_count = proposals
+        .iter()
+        .filter(|proposal| proposal.proposal().proposal_type() == ProposalType::ExternalInit)
+        .count();
+    let remove_count = staged_commit.remove_proposals().count();
+    if external_init_count != 1
+        || remove_count > 1
+        || proposals.len() != 1 + remove_count
+        || proposals
+            .iter()
+            .any(|proposal| proposal.sender() != &Sender::NewMemberCommit)
+    {
+        return Err(ConversationError::UnexpectedMembership);
+    }
+
+    let members = verified_members(group, pinned_roots)?;
+    let existing = members
+        .iter()
+        .find(|(_, member)| member.device_id == joining_member.device_id);
+    match (existing, staged_commit.remove_proposals().next()) {
+        (Some((existing_index, _)), Some(remove))
+            if remove.remove_proposal().removed() == *existing_index =>
+        {
+            Ok(())
+        }
+        (None, None) => {
+            let counts = verified_member_counts(group, pinned_roots)?;
+            if counts.total >= MAX_MLS_GROUP_LEAVES
+                || counts
+                    .per_user
+                    .get(&joining_member.user_id)
+                    .copied()
+                    .unwrap_or(0)
+                    >= MAX_MLS_DEVICES_PER_USER
+            {
+                return Err(ConversationError::UnexpectedMembership);
+            }
+            Ok(())
+        }
+        _ => Err(ConversationError::UnexpectedMembership),
+    }
 }
 
 fn validate_initial_pending_group(
