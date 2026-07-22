@@ -175,8 +175,12 @@ only the account root identity and canonical authenticated local history,
 derives a wrapping key with fixed Argon2id parameters (64 MiB, three passes),
 and encrypts an account-bound, versioned blob with ChaCha20-Poly1305. Restore
 excludes device/ratchet state, validates every record, and applies the root and
-history in one conflict-safe SQLCipher transaction. Disappearing messages and
-local search remain.
+history in one conflict-safe SQLCipher transaction. Per-conversation
+disappearing timers are now negotiated in authenticated MLS events, mirrored
+by an exact bounded Delivery Service TTL, persisted with the mailbox
+checkpoint, carried through history sync and backup, hidden immediately at
+expiry, and hard-deleted through an atomic encrypted-store sweep. Local search
+remains.
 
 ---
 
@@ -680,7 +684,15 @@ ChaCha20-Poly1305 authenticated encryption, a 64 MiB blob cap, exact account
 binding, and atomic idempotent/conflict-safe SQLCipher restore are covered by
 adversarial tests. Native file-selection/export plumbing and enrollment UI
 remain part of the final packaged-client adapter integration. Disappearing
-messages are the next core increment.
+messages now use a bounded typed duration authenticated inside every affected
+MLS application envelope. Timer changes are ciphertext-only control events;
+the server sees only the same duration as a routing hint and shortens the
+opaque mailbox TTL without parsing semantics. Native clients atomically
+persist the conversation timer, authenticated expiration deadline, MLS state,
+and acknowledgment outbox; expired history is never returned and is
+hard-deleted in an atomic bounded sweep. Expiration metadata survives history
+sync and backup without restoring expired content. Local search is the next
+core increment.
 
 ### Deliverables
 
@@ -731,7 +743,7 @@ messages are the next core increment.
 - [x] Encrypted files remain opaque to server inspection
 - [x] Mailbox GC verified for both messages and attachments
 - [x] Backup create + restore verified
-- [ ] Disappearing messages enforced client-side and mirrored by server TTL
+- [x] Disappearing messages enforced client-side and mirrored by server TTL
 - [ ] Local search works without server involvement for E2EE conversations
 - [x] All quality gates pass
 

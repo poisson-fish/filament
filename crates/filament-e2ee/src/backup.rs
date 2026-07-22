@@ -586,6 +586,7 @@ mod tests {
             message_id: Ulid::new().to_string(),
             group_id,
             created_at_unix: 1_700_000_000,
+            expires_at_unix: None,
             message: DecryptedApplicationMessage {
                 sender_user_id,
                 sender_device_id: DeviceId::new(),

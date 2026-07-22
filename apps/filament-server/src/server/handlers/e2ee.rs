@@ -4290,7 +4290,14 @@ pub(crate) async fn post_group_message(
     let epoch = i64::try_from(payload.epoch).map_err(|_| AuthFailure::InvalidRequest)?;
     let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
     let now = now_unix();
-    let ttl = i64::try_from(state.runtime.e2ee_mailbox_ttl.as_secs())
+    let configured_ttl = state.runtime.e2ee_mailbox_ttl.as_secs();
+    let requested_ttl = payload
+        .retention_secs
+        .map(filament_protocol::E2eeRetentionSeconds::as_u64);
+    if requested_ttl.is_some_and(|ttl| ttl > configured_ttl) {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    let ttl = i64::try_from(requested_ttl.unwrap_or(configured_ttl))
         .map_err(|_| AuthFailure::Internal)?;
     let expires_at = now.checked_add(ttl).ok_or(AuthFailure::Internal)?;
     let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;

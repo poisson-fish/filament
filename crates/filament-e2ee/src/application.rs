@@ -5,6 +5,7 @@
 //! bodies through Filament's safe Markdown token model.
 
 use filament_core::{tokenize_markdown, MarkdownToken};
+use filament_protocol::E2eeRetentionSeconds;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 use zeroize::Zeroizing;
@@ -288,6 +289,13 @@ pub enum ReactionAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EncryptedChatEvent {
+    /// Change the conversation timer for subsequently authored events.
+    /// `None` disables disappearing messages. The control event and its value
+    /// remain wholly inside MLS ciphertext.
+    SetDisappearingTimer {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retention_secs: Option<E2eeRetentionSeconds>,
+    },
     /// Create a message, optionally as a reply.
     Message {
         message_id: EncryptedMessageId,
@@ -329,6 +337,8 @@ pub enum EncryptedChatEvent {
 struct ApplicationEventEnvelope {
     v: u16,
     event_id: ApplicationEventId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retention_secs: Option<E2eeRetentionSeconds>,
     event: EncryptedChatEvent,
 }
 
@@ -337,6 +347,9 @@ struct ApplicationEventEnvelope {
 pub struct VersionedApplicationEvent {
     /// Unique identifier used for local idempotence.
     pub event_id: ApplicationEventId,
+    /// Authenticated duration applied to this event by the current
+    /// per-conversation disappearing-message setting.
+    pub retention_secs: Option<E2eeRetentionSeconds>,
     /// Chat operation hidden from the Delivery Service.
     pub event: EncryptedChatEvent,
 }
@@ -350,6 +363,7 @@ impl VersionedApplicationEvent {
         let bytes = serde_json::to_vec(&ApplicationEventEnvelope {
             v: APPLICATION_EVENT_VERSION,
             event_id: self.event_id,
+            retention_secs: self.retention_secs,
             event: self.event.clone(),
         })
         .map_err(|_| ConversationError::SerializationFailed)?;
@@ -374,6 +388,7 @@ impl VersionedApplicationEvent {
         }
         Ok(Self {
             event_id: envelope.event_id,
+            retention_secs: envelope.retention_secs,
             event: envelope.event,
         })
     }
@@ -413,6 +428,9 @@ mod tests {
         let (file, _) = encrypt_attachment("notes.bin", b"private attachment").unwrap();
         let (thumbnail, _) = encrypt_thumbnail("preview.bin", b"private preview").unwrap();
         let cases = [
+            EncryptedChatEvent::SetDisappearingTimer {
+                retention_secs: Some(E2eeRetentionSeconds::new(3_600).unwrap()),
+            },
             EncryptedChatEvent::Message {
                 message_id,
                 body: body("hello **group**"),
@@ -451,6 +469,7 @@ mod tests {
         for event in cases {
             let envelope = VersionedApplicationEvent {
                 event_id: ApplicationEventId::new(),
+                retention_secs: None,
                 event,
             };
             assert_eq!(
@@ -624,6 +643,7 @@ mod tests {
         for event in events {
             let expected = VersionedApplicationEvent {
                 event_id: ApplicationEventId::new(),
+                retention_secs: Some(E2eeRetentionSeconds::new(60).unwrap()),
                 event,
             };
             let ciphertext = alice_group.encrypt_chat_event(&alice, &expected).unwrap();

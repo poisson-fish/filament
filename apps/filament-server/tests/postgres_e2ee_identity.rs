@@ -15,7 +15,7 @@ use filament_protocol::{
     AckE2eeProposalsRequest, AckE2eeProposalsResponse, ClaimKeyPackageRequest,
     ClaimKeyPackageResponse, CreateMlsConversationRequest, CreateMlsGroupConversationRequest,
     DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse,
-    E2eeProposalMailboxResponse, GroupInfoResponse, KeyPackageEntry,
+    E2eeProposalMailboxResponse, E2eeRetentionSeconds, GroupInfoResponse, KeyPackageEntry,
     MlsConversationProvisionResponse, MlsGroupInvite, MlsLeafRouting, MlsMembershipChange,
     PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
     PostProposalRequest, PostProposalResponse, PublishDeviceCertificateRequest,
@@ -430,6 +430,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
             epoch: 1,
             suite_id: 3,
             sender_device_id: alice_device_id.to_string(),
+            retention_secs: None,
             message_blob: vec![0x72; 512],
         },
     )
@@ -897,6 +898,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         epoch: 2,
         suite_id: 3,
         sender_device_id: alice_device_id.to_string(),
+        retention_secs: Some(E2eeRetentionSeconds::new(60).unwrap()),
         message_blob: message_blob.clone(),
     };
     let message = send_json(
@@ -920,7 +922,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .expect("opaque message should be stored");
     assert_eq!(stored_message.0, message_blob);
     assert_eq!(stored_message.1, "mls_v1");
-    assert!(stored_message.3 > stored_message.2);
+    assert_eq!(stored_message.3, stored_message.2 + 60);
 
     for device_id in [bob_device_id, bob_second_device_id] {
         let mailbox = Request::builder()
@@ -1147,6 +1149,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
             epoch: 1,
             suite_id: 3,
             sender_device_id: alice_device_id.to_string(),
+            retention_secs: None,
             message_blob: vec![0xEE; 512],
         },
     )
@@ -1200,6 +1203,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
             epoch: 2,
             suite_id: 3,
             sender_device_id: alice_device_id.to_string(),
+            retention_secs: None,
             message_blob: vec![0xF1; 512],
         },
     )

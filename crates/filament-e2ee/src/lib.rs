@@ -76,14 +76,16 @@ pub use conversation::{
 };
 pub use delivery_service::{DeliveryServiceSigner, DELIVERY_SERVICE_SEED_BYTES};
 pub use durable_mailbox::{
-    confirm_commit_acknowledgment, confirm_message_acknowledgment, load_stored_message,
-    pending_commit_acknowledgment, pending_message_acknowledgment, DurableCommitMailboxBatch,
+    confirm_commit_acknowledgment, confirm_message_acknowledgment, load_disappearing_timer,
+    load_stored_message, load_stored_message_at, pending_commit_acknowledgment,
+    pending_message_acknowledgment, purge_expired_messages, DurableCommitMailboxBatch,
     DurableMailboxError, DurableMessageMailboxBatch, DurableMlsClient, StoredMailboxMessage,
 };
 pub use error::{
     AttachmentError, BackupError, ConversationError, E2eeError, HistorySyncError, IdentityError,
     KeyPackageError, KeyStoreError, PairingError,
 };
+pub use filament_protocol::E2eeRetentionSeconds;
 pub use history_sync::{
     EncryptedHistorySyncPage, HistorySyncImport, HistorySyncReceiver, HistorySyncSender,
     ScannedHistorySyncOffer, DEFAULT_HISTORY_SYNC_TTL_SECS, MAX_HISTORY_SYNC_OFFER_BYTES,

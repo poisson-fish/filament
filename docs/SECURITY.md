@@ -209,7 +209,15 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - E2EE application envelopes are authenticated-padded before MLS encryption;
   opaque transport frames are then zero-filled to size buckets (baseline
   `512 B / 1 KiB / 4 KiB / 16 KiB`) and clients reject nonzero transport fill.
-- Disappearing-message timers are negotiated inside ciphertext, enforced client-side, and mirrored by server mailbox TTL.
+- Disappearing-message timers are bounded typed values negotiated through
+  authenticated MLS control events and repeated inside every affected
+  application envelope. The Delivery Service sees only the same duration as
+  an untrusted routing hint and may use it solely to shorten (never extend) its
+  configured mailbox TTL. Native clients persist the timer and per-record
+  deadline in SQLCipher with the consumed MLS state and acknowledgment outbox.
+  Expired records are hidden before any plaintext is returned, then
+  hard-deleted with an atomic bounded sweep; history sync and backup preserve
+  the authenticated deadline so restore cannot resurrect expired content.
 - The server must not store plaintext content, content-derived metadata, or unwrapped key material for `mls_v1` conversations; there are no mixed-mode records.
 
 ### Attachments in E2EE Conversations

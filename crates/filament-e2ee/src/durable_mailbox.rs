@@ -5,12 +5,13 @@
 //! outbox into one encrypted-store transaction. Network acknowledgments are
 //! exposed only after that transaction commits and survive process restarts.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use filament_core::{DeviceId, GroupId, UserId};
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeMessagesRequest, E2eeCommitMailboxResponse, E2eeMailboxResponse,
-    PostCommitResponse, MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
+    E2eeRetentionSeconds, PostCommitResponse, MAX_E2EE_COMMIT_ACK_BATCH_SIZE,
+    MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -25,7 +26,8 @@ use crate::{
     MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
 };
 
-const HISTORY_RECORD_VERSION: u16 = 1;
+const HISTORY_RECORD_VERSION: u16 = 2;
+const RETENTION_POLICY_VERSION: u16 = 1;
 const MAX_LOCAL_HISTORY_RECORD_BYTES: usize = (MAX_APPLICATION_PLAINTEXT_BYTES * 4) + 2_048;
 const MAX_UNIX_TIMESTAMP: i64 = 253_402_300_799;
 
@@ -99,6 +101,8 @@ pub struct StoredMailboxMessage {
     pub message_id: String,
     pub group_id: GroupId,
     pub created_at_unix: i64,
+    /// Authenticated local deletion deadline, or `None` for retained history.
+    pub expires_at_unix: Option<i64>,
     pub message: DecryptedApplicationMessage,
 }
 
@@ -109,6 +113,8 @@ struct HistoryRecordRef<'a> {
     message_id: &'a str,
     group_id: String,
     created_at_unix: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at_unix: Option<i64>,
     sender_user_id: String,
     sender_device_id: String,
     generation: u64,
@@ -122,10 +128,20 @@ struct HistoryRecord {
     message_id: String,
     group_id: String,
     created_at_unix: i64,
+    #[serde(default)]
+    expires_at_unix: Option<i64>,
     sender_user_id: String,
     sender_device_id: String,
     generation: u64,
     plaintext: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetentionPolicyRecord {
+    version: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retention_secs: Option<E2eeRetentionSeconds>,
 }
 
 impl DurableMlsClient {
@@ -283,6 +299,28 @@ impl DurableMlsClient {
         group_id: GroupId,
         page: E2eeMailboxResponse,
     ) -> Result<DurableMessageMailboxBatch, DurableMailboxError> {
+        self.process_message_mailbox_at(store, group_id, page, unix_now())
+    }
+
+    /// Process one message page using an explicit native clock value.
+    ///
+    /// This exists for deterministic host integration and tests. Authenticated
+    /// records already past their local deadline are consumed and acknowledged
+    /// but never persisted or released as plaintext.
+    ///
+    /// # Errors
+    /// Returns the same durability and validation errors as
+    /// [`Self::process_message_mailbox`], plus invalid native clock values.
+    pub fn process_message_mailbox_at(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        group_id: GroupId,
+        page: E2eeMailboxResponse,
+        now_unix: i64,
+    ) -> Result<DurableMessageMailboxBatch, DurableMailboxError> {
+        if !(0..=MAX_UNIX_TIMESTAMP).contains(&now_unix) {
+            return Err(KeyStoreError::InvalidValue.into());
+        }
         if store.exists(&message_ack_key(group_id)?)? {
             return Err(DurableMailboxError::PendingAcknowledgment);
         }
@@ -295,7 +333,7 @@ impl DurableMlsClient {
             self.state = Some(state);
             return Err(DurableMailboxError::ConversationNotFound);
         };
-        let batch = match process_message_mailbox(
+        let mut batch = match process_message_mailbox(
             &mut state.conversations[position],
             &state.device,
             page,
@@ -307,8 +345,25 @@ impl DurableMlsClient {
             }
         };
 
+        let mut generation_expiries = stored_generation_expiries(store, group_id)?;
+        for authenticated in &batch.authenticated_messages {
+            generation_expiries.insert(
+                (
+                    authenticated.message.sender_device_id,
+                    authenticated.message.generation,
+                ),
+                authenticated_local_expiry(authenticated)?,
+            );
+        }
+        batch.ready_messages.retain(|message| {
+            generation_expiries
+                .get(&(message.sender_device_id, message.generation))
+                .is_some_and(|expires_at| expires_at.is_none_or(|expiry| expiry > now_unix))
+        });
+
         if let Some(acknowledgment) = &batch.pending_acknowledgment {
-            let entries = message_durability_entries(&state, group_id, &batch, acknowledgment)?;
+            let entries =
+                message_durability_entries(&state, group_id, &batch, acknowledgment, now_unix)?;
             if let Err(error) = store.store_batch(entries) {
                 // Consumed forward-secure state must not remain usable when its
                 // durability is uncertain. Reload restores the previous atomic state.
@@ -459,9 +514,33 @@ pub fn load_stored_message(
     group_id: GroupId,
     message_id: &str,
 ) -> Result<StoredMailboxMessage, KeyStoreError> {
+    load_stored_message_at(store, group_id, message_id, unix_now())
+}
+
+/// Read one message while enforcing its authenticated local deletion deadline.
+/// Expired ciphertext is atomically removed before `NotFound` is returned.
+///
+/// # Errors
+/// Rejects invalid identifiers or records and propagates encrypted-store
+/// failures without returning expired plaintext.
+pub fn load_stored_message_at(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    message_id: &str,
+    now_unix: i64,
+) -> Result<StoredMailboxMessage, KeyStoreError> {
     validate_ulid(message_id)?;
-    let encoded = store.load(&history_key(group_id, message_id)?)?;
-    decode_stored_message(group_id, message_id, &encoded)
+    let key = history_key(group_id, message_id)?;
+    let encoded = store.load(&key)?;
+    let message = decode_stored_message(group_id, message_id, &encoded)?;
+    if message
+        .expires_at_unix
+        .is_some_and(|expires_at| expires_at <= now_unix)
+    {
+        store.remove_batch(&[key])?;
+        return Err(KeyStoreError::NotFound);
+    }
+    Ok(message)
 }
 
 pub(crate) fn decode_stored_message(
@@ -475,11 +554,14 @@ pub(crate) fn decode_stored_message(
     }
     let mut record: HistoryRecord =
         serde_json::from_slice(encoded).map_err(|_| KeyStoreError::InvalidValue)?;
-    if record.version != HISTORY_RECORD_VERSION
+    if !matches!(record.version, 1 | HISTORY_RECORD_VERSION)
         || record.message_id != message_id
         || !(0..=MAX_UNIX_TIMESTAMP).contains(&record.created_at_unix)
         || record.plaintext.is_empty()
         || record.plaintext.len() > MAX_APPLICATION_PLAINTEXT_BYTES
+        || record.expires_at_unix.is_some_and(|expires_at| {
+            expires_at <= record.created_at_unix || expires_at > MAX_UNIX_TIMESTAMP
+        })
     {
         record.zeroize();
         return Err(KeyStoreError::InvalidValue);
@@ -503,6 +585,7 @@ pub(crate) fn decode_stored_message(
         message_id: core::mem::take(&mut record.message_id),
         group_id: parsed_group,
         created_at_unix: record.created_at_unix,
+        expires_at_unix: record.expires_at_unix,
         message: DecryptedApplicationMessage {
             sender_user_id,
             sender_device_id,
@@ -519,19 +602,32 @@ fn message_durability_entries(
     group_id: GroupId,
     batch: &crate::MailboxDecryptionBatch,
     acknowledgment: &AckE2eeMessagesRequest,
+    now_unix: i64,
 ) -> Result<Vec<(StoreKey, Vec<u8>)>, DurableMailboxError> {
     if batch.authenticated_messages.len() != acknowledgment.message_ids.len() {
         return Err(KeyStoreError::InvalidValue.into());
     }
-    let mut entries = Vec::with_capacity(batch.authenticated_messages.len() + 2);
+    let mut entries = Vec::with_capacity(batch.authenticated_messages.len() + 3);
     entries.push((StoreKey::mls_client_state(), encode_state(state)?));
+    let mut retention_update = None;
     for authenticated in &batch.authenticated_messages {
         let message = &authenticated.message;
+        let application = crate::VersionedApplicationEvent::decode(&message.plaintext).ok();
+        let expires_at_unix = authenticated_local_expiry(authenticated)?;
+        if expires_at_unix.is_some_and(|expires_at| expires_at <= now_unix) {
+            continue;
+        }
+        if let Some(crate::EncryptedChatEvent::SetDisappearingTimer { retention_secs }) =
+            application.as_ref().map(|event| &event.event)
+        {
+            retention_update = Some(*retention_secs);
+        }
         let record = HistoryRecordRef {
             version: HISTORY_RECORD_VERSION,
             message_id: &authenticated.message_id,
             group_id: group_id.to_string(),
             created_at_unix: authenticated.created_at_unix,
+            expires_at_unix,
             sender_user_id: message.sender_user_id.to_string(),
             sender_device_id: message.sender_device_id.to_string(),
             generation: message.generation,
@@ -543,8 +639,61 @@ fn message_durability_entries(
         }
         entries.push((history_key(group_id, &authenticated.message_id)?, encoded));
     }
+    if let Some(retention_secs) = retention_update {
+        entries.push((
+            retention_policy_key(group_id)?,
+            encode_json(&RetentionPolicyRecord {
+                version: RETENTION_POLICY_VERSION,
+                retention_secs,
+            })?,
+        ));
+    }
     entries.push((message_ack_key(group_id)?, encode_json(acknowledgment)?));
     Ok(entries)
+}
+
+fn authenticated_local_expiry(
+    authenticated: &crate::AuthenticatedMailboxMessage,
+) -> Result<Option<i64>, KeyStoreError> {
+    let retention_secs = crate::VersionedApplicationEvent::decode(&authenticated.message.plaintext)
+        .ok()
+        .and_then(|event| event.retention_secs);
+    retention_secs
+        .map(|duration| {
+            authenticated
+                .created_at_unix
+                .checked_add(
+                    i64::try_from(duration.as_u64()).map_err(|_| KeyStoreError::InvalidValue)?,
+                )
+                .filter(|expires_at| *expires_at <= MAX_UNIX_TIMESTAMP)
+                .ok_or(KeyStoreError::InvalidValue)
+        })
+        .transpose()
+}
+
+fn stored_generation_expiries(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+) -> Result<HashMap<(DeviceId, u64), Option<i64>>, KeyStoreError> {
+    let mut expiries = HashMap::new();
+    let prefix = format!("history:{group_id}:");
+    for key in store.list_keys()? {
+        let Some(message_id) = key.as_str().strip_prefix(&prefix) else {
+            continue;
+        };
+        let encoded = store.load(&key)?;
+        let stored = decode_stored_message(group_id, message_id, &encoded)?;
+        if expiries
+            .insert(
+                (stored.message.sender_device_id, stored.message.generation),
+                stored.expires_at_unix,
+            )
+            .is_some()
+        {
+            return Err(KeyStoreError::InvalidValue);
+        }
+    }
+    Ok(expiries)
 }
 
 pub(crate) fn history_storage_entry(
@@ -552,6 +701,9 @@ pub(crate) fn history_storage_entry(
 ) -> Result<(StoreKey, Vec<u8>), KeyStoreError> {
     validate_ulid(&message.message_id)?;
     if !(0..=MAX_UNIX_TIMESTAMP).contains(&message.created_at_unix)
+        || message.expires_at_unix.is_some_and(|expires_at| {
+            expires_at <= message.created_at_unix || expires_at > MAX_UNIX_TIMESTAMP
+        })
         || message.message.plaintext.is_empty()
         || message.message.plaintext.len() > MAX_APPLICATION_PLAINTEXT_BYTES
     {
@@ -562,6 +714,7 @@ pub(crate) fn history_storage_entry(
         message_id: &message.message_id,
         group_id: message.group_id.to_string(),
         created_at_unix: message.created_at_unix,
+        expires_at_unix: message.expires_at_unix,
         sender_user_id: message.message.sender_user_id.to_string(),
         sender_device_id: message.message.sender_device_id.to_string(),
         generation: message.message.generation,
@@ -666,6 +819,84 @@ fn commit_ack_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
     StoreKey::new(format!("mailbox:commit_ack:{group_id}"))
 }
 
+fn retention_policy_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
+    StoreKey::new(format!("settings:disappearing:{group_id}"))
+}
+
+/// Load the authenticated per-conversation timer used by the native composer.
+///
+/// # Errors
+/// Rejects corrupt or unknown policy records and propagates store failures.
+pub fn load_disappearing_timer(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+) -> Result<Option<E2eeRetentionSeconds>, KeyStoreError> {
+    let key = retention_policy_key(group_id)?;
+    if !store.exists(&key)? {
+        return Ok(None);
+    }
+    let encoded = store.load(&key)?;
+    let policy: RetentionPolicyRecord =
+        serde_json::from_slice(&encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    if policy.version != RETENTION_POLICY_VERSION {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    Ok(policy.retention_secs)
+}
+
+/// Atomically hard-delete every expired authenticated local-history record.
+///
+/// # Errors
+/// Fails closed on invalid clocks, corrupt history, or encrypted-store errors.
+pub fn purge_expired_messages(
+    store: &dyn LocalKeyStore,
+    now_unix: i64,
+) -> Result<usize, KeyStoreError> {
+    if !(0..=MAX_UNIX_TIMESTAMP).contains(&now_unix) {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let mut expired = Vec::new();
+    for key in store.list_keys()? {
+        let Some((group_id, message_id)) = parse_history_key(&key)? else {
+            continue;
+        };
+        let encoded = store.load(&key)?;
+        let message = decode_stored_message(group_id, &message_id, &encoded)?;
+        if message
+            .expires_at_unix
+            .is_some_and(|expires_at| expires_at <= now_unix)
+        {
+            expired.push(key);
+        }
+    }
+    if expired.is_empty() {
+        Ok(0)
+    } else {
+        store.remove_batch(&expired)
+    }
+}
+
+fn parse_history_key(key: &StoreKey) -> Result<Option<(GroupId, String)>, KeyStoreError> {
+    let Some(suffix) = key.as_str().strip_prefix("history:") else {
+        return Ok(None);
+    };
+    let (group_id, message_id) = suffix
+        .split_once(':')
+        .ok_or(KeyStoreError::InvalidIdentifier)?;
+    let group_id =
+        GroupId::try_from(group_id.to_owned()).map_err(|_| KeyStoreError::InvalidIdentifier)?;
+    validate_ulid(message_id)?;
+    Ok(Some((group_id, message_id.to_owned())))
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+        })
+}
+
 fn validate_ulid(value: &str) -> Result<(), KeyStoreError> {
     if Ulid::from_string(value).is_ok_and(|parsed| parsed.to_string() == value) {
         Ok(())
@@ -683,8 +914,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        generate_key_package_batch, persist_mls_client_state, InMemoryKeyStore, MlsDevice,
-        RootIdentityKey,
+        generate_key_package_batch, persist_mls_client_state, ApplicationEventId, ChatMessageBody,
+        EncryptedChatEvent, EncryptedMessageId, InMemoryKeyStore, MlsDevice, RootIdentityKey,
+        VersionedApplicationEvent,
     };
 
     struct JoinedFixture {
@@ -800,6 +1032,236 @@ mod tests {
             pending_message_acknowledgment(&store, group_id, bob_device_id).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn authenticated_timer_is_durable_and_expired_history_is_hard_deleted() {
+        let JoinedFixture {
+            alice,
+            mut alice_group,
+            bob,
+            bob_group,
+            group_id,
+            ..
+        } = joined_fixture();
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let timer = E2eeRetentionSeconds::new(60).unwrap();
+        let policy = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: None,
+            event: EncryptedChatEvent::SetDisappearingTimer {
+                retention_secs: Some(timer),
+            },
+        };
+        let disappearing = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: Some(timer),
+            event: EncryptedChatEvent::Message {
+                message_id: EncryptedMessageId::new(),
+                body: ChatMessageBody::try_from("vanishes locally".to_owned()).unwrap(),
+                reply: None,
+            },
+        };
+        let policy_id = Ulid::new().to_string();
+        let message_id = Ulid::new().to_string();
+        let policy_ciphertext = alice_group.encrypt_chat_event(&alice, &policy).unwrap();
+        let message_ciphertext = alice_group
+            .encrypt_chat_event(&alice, &disappearing)
+            .unwrap();
+        let page = E2eeMailboxResponse {
+            messages: vec![
+                message_entry(policy_id.clone(), policy_ciphertext),
+                message_entry(message_id.clone(), message_ciphertext),
+            ],
+            next_after_message_id: Some(message_id.clone()),
+        };
+
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let batch = runtime
+            .process_message_mailbox_at(&store, group_id, page, 20)
+            .unwrap();
+        assert_eq!(batch.ready_messages.len(), 2);
+        confirm_message_acknowledgment(&store, group_id, batch.acknowledgment.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(
+            load_disappearing_timer(&store, group_id).unwrap(),
+            Some(timer)
+        );
+        assert_eq!(
+            load_stored_message_at(&store, group_id, &message_id, 69)
+                .unwrap()
+                .expires_at_unix,
+            Some(70)
+        );
+        assert_eq!(
+            load_stored_message_at(&store, group_id, &message_id, 70),
+            Err(KeyStoreError::NotFound)
+        );
+        assert_eq!(
+            load_stored_message_at(&store, group_id, &policy_id, i64::MAX)
+                .unwrap()
+                .expires_at_unix,
+            None
+        );
+    }
+
+    #[test]
+    fn already_expired_authenticated_message_is_acked_without_plaintext_release() {
+        let JoinedFixture {
+            alice,
+            mut alice_group,
+            bob,
+            bob_group,
+            group_id,
+            ..
+        } = joined_fixture();
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let message_id = Ulid::new().to_string();
+        let event = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: Some(E2eeRetentionSeconds::new(60).unwrap()),
+            event: EncryptedChatEvent::Message {
+                message_id: EncryptedMessageId::new(),
+                body: ChatMessageBody::try_from("must never be exposed".to_owned()).unwrap(),
+                reply: None,
+            },
+        };
+        let mut entry = message_entry(
+            message_id.clone(),
+            alice_group.encrypt_chat_event(&alice, &event).unwrap(),
+        );
+        entry.created_at_unix = 30;
+        entry.expires_at_unix = 90;
+
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let batch = runtime
+            .process_message_mailbox_at(
+                &store,
+                group_id,
+                E2eeMailboxResponse {
+                    messages: vec![entry],
+                    next_after_message_id: Some(message_id.clone()),
+                },
+                90,
+            )
+            .unwrap();
+        assert!(batch.ready_messages.is_empty());
+        assert!(batch.acknowledgment.is_some());
+        assert_eq!(
+            load_stored_message_at(&store, group_id, &message_id, 90),
+            Err(KeyStoreError::NotFound)
+        );
+    }
+
+    #[test]
+    fn buffered_generation_is_not_released_after_its_authenticated_expiry() {
+        let JoinedFixture {
+            alice,
+            mut alice_group,
+            bob,
+            bob_group,
+            group_id,
+            ..
+        } = joined_fixture();
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let retained = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: None,
+            event: EncryptedChatEvent::Message {
+                message_id: EncryptedMessageId::new(),
+                body: ChatMessageBody::try_from("fills the gap".to_owned()).unwrap(),
+                reply: None,
+            },
+        };
+        let disappearing = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: Some(E2eeRetentionSeconds::new(60).unwrap()),
+            event: EncryptedChatEvent::Message {
+                message_id: EncryptedMessageId::new(),
+                body: ChatMessageBody::try_from("expires while buffered".to_owned()).unwrap(),
+                reply: None,
+            },
+        };
+        let retained_ciphertext = alice_group.encrypt_chat_event(&alice, &retained).unwrap();
+        let disappearing_ciphertext = alice_group
+            .encrypt_chat_event(&alice, &disappearing)
+            .unwrap();
+        let disappearing_id = Ulid::new().to_string();
+        let retained_id = Ulid::new().to_string();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+
+        let buffered = runtime
+            .process_message_mailbox_at(
+                &store,
+                group_id,
+                E2eeMailboxResponse {
+                    messages: vec![message_entry(
+                        disappearing_id.clone(),
+                        disappearing_ciphertext,
+                    )],
+                    next_after_message_id: Some(disappearing_id),
+                },
+                20,
+            )
+            .unwrap();
+        assert!(buffered.ready_messages.is_empty());
+        confirm_message_acknowledgment(&store, group_id, buffered.acknowledgment.as_ref().unwrap())
+            .unwrap();
+
+        let released = runtime
+            .process_message_mailbox_at(
+                &store,
+                group_id,
+                E2eeMailboxResponse {
+                    messages: vec![message_entry(retained_id.clone(), retained_ciphertext)],
+                    next_after_message_id: Some(retained_id),
+                },
+                80,
+            )
+            .unwrap();
+        assert_eq!(released.ready_messages.len(), 1);
+        assert_eq!(
+            VersionedApplicationEvent::decode(&released.ready_messages[0].plaintext)
+                .unwrap()
+                .event,
+            retained.event
+        );
+    }
+
+    #[test]
+    fn expiry_sweep_is_bounded_atomic_and_keeps_retained_history() {
+        let store = InMemoryKeyStore::new();
+        let group_id = GroupId::new();
+        let sender_user_id = UserId::new();
+        let retained_id = Ulid::new().to_string();
+        let expired_id = Ulid::new().to_string();
+        for (message_id, expires_at_unix) in
+            [(retained_id.clone(), None), (expired_id.clone(), Some(20))]
+        {
+            let entry = history_storage_entry(&StoredMailboxMessage {
+                message_id,
+                group_id,
+                created_at_unix: 10,
+                expires_at_unix,
+                message: DecryptedApplicationMessage {
+                    sender_user_id,
+                    sender_device_id: DeviceId::new(),
+                    generation: 0,
+                    plaintext: b"authenticated history".to_vec(),
+                },
+            })
+            .unwrap();
+            store.store(entry.0, entry.1).unwrap();
+        }
+        assert_eq!(purge_expired_messages(&store, 20).unwrap(), 1);
+        assert_eq!(
+            load_stored_message_at(&store, group_id, &expired_id, 20),
+            Err(KeyStoreError::NotFound)
+        );
+        assert!(load_stored_message_at(&store, group_id, &retained_id, 20).is_ok());
     }
 
     #[test]

@@ -754,6 +754,8 @@ struct HistorySyncRecord {
     message_id: String,
     group_id: String,
     created_at_unix: i64,
+    #[serde(default)]
+    expires_at_unix: Option<i64>,
     sender_user_id: String,
     sender_device_id: String,
     generation: u64,
@@ -803,6 +805,7 @@ impl HistorySyncRecord {
             message_id: message.message_id,
             group_id: message.group_id.to_string(),
             created_at_unix: message.created_at_unix,
+            expires_at_unix: message.expires_at_unix,
             sender_user_id: message.message.sender_user_id.to_string(),
             sender_device_id: message.message.sender_device_id.to_string(),
             generation: message.message.generation,
@@ -814,6 +817,9 @@ impl HistorySyncRecord {
         if self.plaintext.is_empty()
             || self.plaintext.len() > MAX_APPLICATION_PLAINTEXT_BYTES
             || !(0..=MAX_UNIX_TIMESTAMP).contains(&self.created_at_unix)
+            || self.expires_at_unix.is_some_and(|expires_at| {
+                expires_at <= self.created_at_unix || expires_at > MAX_UNIX_TIMESTAMP
+            })
         {
             return Err(HistorySyncError::InvalidPayload);
         }
@@ -822,6 +828,7 @@ impl HistorySyncRecord {
             group_id: GroupId::try_from(self.group_id.clone())
                 .map_err(|_| HistorySyncError::InvalidPayload)?,
             created_at_unix: self.created_at_unix,
+            expires_at_unix: self.expires_at_unix,
             message: DecryptedApplicationMessage {
                 sender_user_id: UserId::try_from(self.sender_user_id.clone())
                     .map_err(|_| HistorySyncError::InvalidPayload)?,
@@ -1111,6 +1118,7 @@ mod tests {
             message_id,
             group_id,
             created_at_unix: NOW - 60,
+            expires_at_unix: None,
             message: DecryptedApplicationMessage {
                 sender_user_id,
                 sender_device_id,

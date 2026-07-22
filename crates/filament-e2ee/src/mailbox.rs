@@ -38,6 +38,9 @@ pub struct AuthenticatedMailboxMessage {
     pub message_id: String,
     /// Bounded server receipt time retained only as untrusted display metadata.
     pub created_at_unix: i64,
+    /// Untrusted Delivery Service deletion deadline. Local disappearing-message
+    /// enforcement derives its deadline only from the MLS-authenticated event.
+    pub server_expires_at_unix: i64,
     /// Sender and plaintext authenticated by MLS, independent of server hints.
     pub message: DecryptedApplicationMessage,
 }
@@ -88,6 +91,7 @@ pub fn process_message_mailbox(
     for (entry_index, entry) in page.messages.into_iter().enumerate() {
         let message_id = entry.message_id.clone();
         let created_at_unix = entry.created_at_unix;
+        let server_expires_at_unix = entry.expires_at_unix;
         match into_encrypted_message(conversation, entry)
             .and_then(|message| conversation.decrypt_application_message(device, &message))
         {
@@ -95,6 +99,7 @@ pub fn process_message_mailbox(
                 authenticated_messages.push(AuthenticatedMailboxMessage {
                     message_id: message_id.clone(),
                     created_at_unix,
+                    server_expires_at_unix,
                     message: outcome.authenticated_message,
                 });
                 ready_messages.extend(outcome.ready_messages);

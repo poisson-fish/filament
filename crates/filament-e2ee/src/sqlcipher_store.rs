@@ -17,7 +17,7 @@ use rusqlite::{limits::Limit, params, Connection, OpenFlags, OptionalExtension a
 use zeroize::Zeroizing;
 
 use crate::{
-    keystore::{validate_backup_restore_batch, validate_store_batch},
+    keystore::{validate_backup_restore_batch, validate_remove_batch, validate_store_batch},
     KeyStoreError, LocalKeyStore, LocalStoreId, StoreKey, StoreKeyProvider, MAX_STORE_ENTRIES,
     MAX_STORE_KEY_BYTES, MAX_STORE_VALUE_BYTES, STORE_ENCRYPTION_KEY_BYTES,
 };
@@ -153,6 +153,27 @@ impl LocalKeyStore for SqlCipherKeyStore {
             return Err(KeyStoreError::NotFound);
         }
         Ok(())
+    }
+
+    fn remove_batch(&self, keys: &[StoreKey]) -> Result<usize, KeyStoreError> {
+        validate_remove_batch(keys)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(map_backend_error)?;
+        let mut removed = 0_usize;
+        for key in keys {
+            removed = removed
+                .checked_add(
+                    transaction
+                        .execute(
+                            "DELETE FROM local_secrets WHERE store_key = ?1",
+                            [key.as_str()],
+                        )
+                        .map_err(map_backend_error)?,
+                )
+                .ok_or(KeyStoreError::BackendError)?;
+        }
+        transaction.commit().map_err(map_backend_error)?;
+        Ok(removed)
     }
 
     fn exists(&self, key: &StoreKey) -> Result<bool, KeyStoreError> {
@@ -544,6 +565,34 @@ mod tests {
         assert!(!store
             .exists(&StoreKey::new("history:third").unwrap())
             .unwrap());
+    }
+
+    #[test]
+    fn disappearing_message_batch_is_deleted_in_one_sqlcipher_transaction() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("device.db");
+        let provider = FixedKeyProvider::new(0x42);
+        let store = SqlCipherKeyStore::open(&path, &store_id(), &provider).unwrap();
+        let first = StoreKey::new("history:expired:first").unwrap();
+        let second = StoreKey::new("history:expired:second").unwrap();
+        let retained = StoreKey::new("history:retained").unwrap();
+        store
+            .store_batch(vec![
+                (first.clone(), vec![1]),
+                (second.clone(), vec![2]),
+                (retained.clone(), vec![3]),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            store
+                .remove_batch(&[first.clone(), second.clone()])
+                .unwrap(),
+            2
+        );
+        assert!(!store.exists(&first).unwrap());
+        assert!(!store.exists(&second).unwrap());
+        assert!(store.exists(&retained).unwrap());
     }
 
     #[test]

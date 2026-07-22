@@ -1054,6 +1054,11 @@ pub struct PostMessageRequest {
     pub suite_id: u16,
     /// The sending device ID (ULID string, routing hint only).
     pub sender_device_id: String,
+    /// Optional client-authenticated disappearing-message duration mirrored by
+    /// the Delivery Service as a shorter mailbox TTL. The server treats this
+    /// as an untrusted routing hint and never infers message semantics from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_secs: Option<E2eeRetentionSeconds>,
     /// The serialized MLS PrivateMessage blob (opaque to the server).
     #[serde(deserialize_with = "deserialize_mls_message_blob")]
     pub message_blob: Vec<u8>,
@@ -1067,6 +1072,50 @@ pub struct PostMessageResponse {
     pub message_id: String,
     /// Unix timestamp (seconds) when the message was received.
     pub created_at_unix: i64,
+}
+
+/// Bounded disappearing-message duration shared by the opaque transport and
+/// the authenticated native application envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u64", into = "u64")]
+pub struct E2eeRetentionSeconds(u32);
+
+impl E2eeRetentionSeconds {
+    /// Longest disappearing-message timer accepted by protocol v1 (30 days).
+    pub const MAX: u64 = 30 * 24 * 60 * 60;
+
+    /// Construct a non-zero, bounded duration.
+    ///
+    /// # Errors
+    /// Returns an error when `seconds` is zero or exceeds 30 days.
+    pub fn new(seconds: u64) -> Result<Self, &'static str> {
+        if seconds == 0 || seconds > Self::MAX {
+            return Err("E2EE retention duration is outside the protocol limit");
+        }
+        Ok(Self(
+            u32::try_from(seconds).map_err(|_| "E2EE retention duration overflow")?,
+        ))
+    }
+
+    /// Return the duration in seconds.
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0 as u64
+    }
+}
+
+impl TryFrom<u64> for E2eeRetentionSeconds {
+    type Error = &'static str;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<E2eeRetentionSeconds> for u64 {
+    fn from(value: E2eeRetentionSeconds) -> Self {
+        value.as_u64()
+    }
 }
 
 /// Query parameters for uploading one opaque encrypted attachment object.
@@ -1813,11 +1862,14 @@ mod tests {
             epoch: 1,
             suite_id: 0x0003,
             sender_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            retention_secs: Some(E2eeRetentionSeconds::new(60).unwrap()),
             message_blob: vec![0xAA; 1024],
         };
         let json = serde_json::to_string(&req).unwrap();
         let parsed: PostMessageRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, req);
+        assert!(E2eeRetentionSeconds::new(0).is_err());
+        assert!(E2eeRetentionSeconds::new(E2eeRetentionSeconds::MAX + 1).is_err());
     }
 
     #[test]
@@ -2084,6 +2136,7 @@ mod tests {
             epoch: 1,
             suite_id: 3,
             sender_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            retention_secs: None,
             message_blob: vec![0x03; MAX_MLS_MESSAGE_BYTES + 1],
         };
         let json = serde_json::to_string(&oversized_message).unwrap();

@@ -236,6 +236,18 @@ pub trait LocalKeyStore: Send + Sync {
     /// Returns [`KeyStoreError::NotFound`] if the key doesn't exist.
     fn remove(&self, key: &StoreKey) -> Result<(), KeyStoreError>;
 
+    /// Atomically remove a bounded set of distinct records.
+    ///
+    /// Production stores override this so disappearing-message sweeps cannot
+    /// leave a partially deleted batch after a backend failure.
+    ///
+    /// # Errors
+    /// Returns a limit or backend error without applying partial deletion.
+    fn remove_batch(&self, keys: &[StoreKey]) -> Result<usize, KeyStoreError> {
+        let _ = keys;
+        Err(KeyStoreError::BackendError)
+    }
+
     /// Check if a key exists in the store.
     ///
     /// # Errors
@@ -384,6 +396,18 @@ impl LocalKeyStore for InMemoryKeyStore {
         Ok(())
     }
 
+    fn remove_batch(&self, keys: &[StoreKey]) -> Result<usize, KeyStoreError> {
+        validate_remove_batch(keys)?;
+        let mut data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
+        let mut removed = 0;
+        for key in keys {
+            if data.remove(key).is_some() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     fn exists(&self, key: &StoreKey) -> Result<bool, KeyStoreError> {
         let data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
         Ok(data.contains_key(key))
@@ -394,6 +418,18 @@ impl LocalKeyStore for InMemoryKeyStore {
         let mut keys: Vec<_> = data.keys().cloned().collect();
         keys.sort();
         Ok(keys)
+    }
+}
+
+pub(crate) fn validate_remove_batch(keys: &[StoreKey]) -> Result<(), KeyStoreError> {
+    if keys.is_empty() || keys.len() > MAX_STORE_ENTRIES {
+        return Err(KeyStoreError::LimitExceeded);
+    }
+    let mut unique = HashSet::with_capacity(keys.len());
+    if keys.iter().all(|key| unique.insert(key.as_str())) {
+        Ok(())
+    } else {
+        Err(KeyStoreError::LimitExceeded)
     }
 }
 

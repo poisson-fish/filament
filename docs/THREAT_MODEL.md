@@ -118,6 +118,10 @@ E2EE abuse cases (`PLAN_E2EE.md`):
 - Encryption-state integrity: trust indicators derive from local verification only, never from server-supplied fields.
 - Delivery integrity: withheld or dropped messages are detectable.
 - Retention minimization: server holds E2EE ciphertext transiently (mailbox model), shrinking the harvest surface.
+- Authenticated disappearing timers additionally shorten both opaque mailbox
+  retention and encrypted local history. A malicious server can ignore its own
+  deletion deadline, but cannot make an endpoint disclose locally expired
+  plaintext or extend the authenticated client timer.
 
 ## Mandatory Mitigations (Phase 0 baseline)
 - Global request body cap and request timeout.
