@@ -167,7 +167,10 @@ events, pads ciphertext to exact transport buckets, and verifies AEAD, padding,
 hash, and client-sniffed MIME before exposing plaintext. The server now relays
 only exact-bucket opaque attachment blobs through active-leaf, quota-bounded,
 per-device transient mailboxes with explicit verification acknowledgments and
-all-device/TTL hard deletion. History sync, backup, disappearing messages, and
+all-device/TTL hard deletion. New devices now restore bounded authenticated
+local history from an existing root-certified device through a separate,
+short-lived, signed HPKE page protocol with atomic SQLCipher import; the server
+never receives plaintext or transfer keys. Backup, disappearing messages, and
 local search remain.
 
 ---
@@ -656,7 +659,15 @@ counts opaque bytes against the uploader's shared attachment quota, and exposes
 no-store recipient downloads plus explicit verification acknowledgments.
 All-device acknowledgment and bounded TTL GC hard-delete blobs and reclaim quota;
 uploads are exact-idempotent and conflicting object reuse fails closed. The
-device-to-device history-sync path is the next increment.
+native history-sync path now runs separately after QR pairing: the new
+root-certified device signs a short-lived ephemeral HPKE offer, one existing
+device freezes and encrypts a bounded local-history snapshot in signed ordered
+pages, and the receiver atomically compare-and-inserts authenticated records
+into SQLCipher. Exact duplicates are idempotent, while forged, expired,
+replayed, reordered, cross-account, conflicting, or partially persisted pages
+fail without advancing the receiver. The caller-supplied device transport sees
+only opaque payloads; no server history or key-storage path exists. Opt-in
+passphrase backup is the next increment.
 
 ### Deliverables
 
@@ -703,7 +714,7 @@ device-to-device history-sync path is the next increment.
 
 ### Exit Criteria
 
-- [ ] New-device onboarding restores history without any server-side plaintext
+- [x] New-device onboarding restores history without any server-side plaintext
 - [ ] Encrypted files remain opaque to server inspection
 - [ ] Mailbox GC verified for both messages and attachments
 - [ ] Backup create + restore verified

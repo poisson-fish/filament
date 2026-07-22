@@ -185,6 +185,15 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   devices acknowledge delivery or a TTL expires (default `30 days`,
   configurable), then hard-deleted. No long-term server-side archive exists.
 - The client's local encrypted store (SQLCipher-or-equivalent; store key in platform keystore) is canonical history; the server is a delivery mailbox for E2EE payloads.
+- New-device history restoration is a separate, short-lived device-to-device
+  protocol after QR pairing and certification. The new device signs an
+  ephemeral X25519 receiver offer; one existing device verifies it against the
+  shared root, freezes a bounded local snapshot, and sends signed HPKE pages.
+  Pages contain at most 64 records / 512 KiB plaintext and are capped at 1 MiB
+  encoded. The receiver enforces a single sender and strict page order, then
+  atomically compare-and-inserts records into SQLCipher. Replay, conflict,
+  partial persistence, sender substitution, and expiry fail closed. The server
+  receives no history plaintext or transfer key.
 - E2EE application envelopes are authenticated-padded before MLS encryption;
   opaque transport frames are then zero-filled to size buckets (baseline
   `512 B / 1 KiB / 4 KiB / 16 KiB`) and clients reject nonzero transport fill.

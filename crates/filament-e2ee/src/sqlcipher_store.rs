@@ -108,6 +108,61 @@ impl LocalKeyStore for SqlCipherKeyStore {
         Ok(())
     }
 
+    fn store_batch_if_absent_or_equal(
+        &self,
+        entries: Vec<(StoreKey, Vec<u8>)>,
+    ) -> Result<usize, KeyStoreError> {
+        validate_store_batch(&entries)?;
+        let entries = entries
+            .into_iter()
+            .map(|(key, value)| (key, Zeroizing::new(value)))
+            .collect::<Vec<_>>();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(map_backend_error)?;
+        let existing_count = transaction
+            .query_row("SELECT COUNT(*) FROM local_secrets", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(map_backend_error)?;
+        let existing_count =
+            usize::try_from(existing_count).map_err(|_| KeyStoreError::BackendError)?;
+        let mut inserted = 0_usize;
+        for (key, value) in &entries {
+            let existing = transaction
+                .query_row(
+                    "SELECT secret_value FROM local_secrets WHERE store_key = ?1",
+                    [key.as_str()],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional()
+                .map_err(map_backend_error)?
+                .map(Zeroizing::new);
+            match existing {
+                Some(existing) if existing.as_slice() != value.as_slice() => {
+                    return Err(KeyStoreError::InvalidValue);
+                }
+                Some(_) => {}
+                None => {
+                    transaction
+                        .execute(
+                            "INSERT INTO local_secrets (store_key, secret_value) VALUES (?1, ?2)",
+                            params![key.as_str(), value.as_slice()],
+                        )
+                        .map_err(|error| map_sqlite_limit_error(&error))?;
+                    inserted += 1;
+                }
+            }
+        }
+        if existing_count
+            .checked_add(inserted)
+            .is_none_or(|count| count > MAX_STORE_ENTRIES)
+        {
+            return Err(KeyStoreError::LimitExceeded);
+        }
+        transaction.commit().map_err(map_backend_error)?;
+        Ok(inserted)
+    }
+
     fn load(&self, key: &StoreKey) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
         let connection = self.connection()?;
         let value = connection
@@ -441,6 +496,37 @@ mod tests {
         persist_root_identity(&store, key.clone(), &original).unwrap();
         let restored = load_root_identity(&store, &key).unwrap();
         assert_eq!(original.public_key_bytes(), restored.public_key_bytes());
+    }
+
+    #[test]
+    fn compare_and_insert_rolls_back_the_whole_sqlcipher_batch_on_conflict() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("device.db");
+        let provider = FixedKeyProvider::new(0x42);
+        let store = SqlCipherKeyStore::open(&path, &store_id(), &provider).unwrap();
+        let first = StoreKey::new("history:first").unwrap();
+        let second = StoreKey::new("history:second").unwrap();
+        store.store(first.clone(), vec![1]).unwrap();
+        assert_eq!(
+            store
+                .store_batch_if_absent_or_equal(vec![
+                    (first.clone(), vec![1]),
+                    (second.clone(), vec![2]),
+                ])
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store.store_batch_if_absent_or_equal(vec![
+                (first.clone(), vec![9]),
+                (StoreKey::new("history:third").unwrap(), vec![3]),
+            ]),
+            Err(KeyStoreError::InvalidValue)
+        );
+        assert_eq!(store.load(&first).unwrap().as_slice(), [1]);
+        assert!(!store
+            .exists(&StoreKey::new("history:third").unwrap())
+            .unwrap());
     }
 
     #[test]

@@ -538,6 +538,33 @@ fn message_durability_entries(
     Ok(entries)
 }
 
+pub(crate) fn history_storage_entry(
+    message: &StoredMailboxMessage,
+) -> Result<(StoreKey, Vec<u8>), KeyStoreError> {
+    validate_ulid(&message.message_id)?;
+    if !(0..=MAX_UNIX_TIMESTAMP).contains(&message.created_at_unix)
+        || message.message.plaintext.is_empty()
+        || message.message.plaintext.len() > MAX_APPLICATION_PLAINTEXT_BYTES
+    {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let record = HistoryRecordRef {
+        version: HISTORY_RECORD_VERSION,
+        message_id: &message.message_id,
+        group_id: message.group_id.to_string(),
+        created_at_unix: message.created_at_unix,
+        sender_user_id: message.message.sender_user_id.to_string(),
+        sender_device_id: message.message.sender_device_id.to_string(),
+        generation: message.message.generation,
+        plaintext: &message.message.plaintext,
+    };
+    let encoded = encode_json(&record)?;
+    if encoded.len() > MAX_LOCAL_HISTORY_RECORD_BYTES {
+        return Err(KeyStoreError::LimitExceeded);
+    }
+    Ok((history_key(message.group_id, &message.message_id)?, encoded))
+}
+
 fn encode_state(state: &MlsClientState) -> Result<Vec<u8>, KeyStoreError> {
     let conversations = state.conversations.iter().collect::<Vec<_>>();
     encode_mls_client_state(&state.device, &conversations).map(|encoded| encoded.to_vec())
@@ -617,7 +644,7 @@ where
     store.remove(key)
 }
 
-fn history_key(group_id: GroupId, message_id: &str) -> Result<StoreKey, KeyStoreError> {
+pub(crate) fn history_key(group_id: GroupId, message_id: &str) -> Result<StoreKey, KeyStoreError> {
     validate_ulid(message_id)?;
     StoreKey::new(format!("history:{group_id}:{message_id}"))
 }

@@ -137,6 +137,12 @@ impl MlsDevice {
             .map_err(|_| KeyPackageError::CreationFailed)
     }
 
+    pub(crate) fn sign_history_sync(&self, payload: &[u8]) -> Result<Vec<u8>, KeyPackageError> {
+        self.signer
+            .sign(payload)
+            .map_err(|_| KeyPackageError::CreationFailed)
+    }
+
     pub(crate) fn provider_records(&self) -> Result<Vec<ProviderRecord>, KeyStoreError> {
         let values = self
             .provider

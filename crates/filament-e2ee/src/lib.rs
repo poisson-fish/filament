@@ -33,6 +33,7 @@ pub mod conversation;
 pub mod delivery_service;
 pub mod durable_mailbox;
 pub mod error;
+pub mod history_sync;
 pub mod identity;
 pub mod keypackage;
 pub mod keystore;
@@ -74,8 +75,13 @@ pub use durable_mailbox::{
     DurableMailboxError, DurableMessageMailboxBatch, DurableMlsClient, StoredMailboxMessage,
 };
 pub use error::{
-    AttachmentError, ConversationError, E2eeError, IdentityError, KeyPackageError, KeyStoreError,
-    PairingError,
+    AttachmentError, ConversationError, E2eeError, HistorySyncError, IdentityError,
+    KeyPackageError, KeyStoreError, PairingError,
+};
+pub use history_sync::{
+    EncryptedHistorySyncPage, HistorySyncImport, HistorySyncReceiver, HistorySyncSender,
+    ScannedHistorySyncOffer, DEFAULT_HISTORY_SYNC_TTL_SECS, MAX_HISTORY_SYNC_OFFER_BYTES,
+    MAX_HISTORY_SYNC_PAGE_BYTES, MAX_HISTORY_SYNC_TTL_SECS,
 };
 pub use identity::{
     create_root_identity_rotation_proof, safety_number, verify_device_certificate,

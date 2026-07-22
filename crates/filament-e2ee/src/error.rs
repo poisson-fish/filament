@@ -93,6 +93,44 @@ pub enum PairingError {
     SerializationFailed,
 }
 
+/// Errors from authenticated device-to-device history synchronization.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum HistorySyncError {
+    /// An offer, page, or decrypted record violated its wire invariants.
+    #[error("invalid history sync payload")]
+    InvalidPayload,
+    /// The short-lived receiving session expired.
+    #[error("history sync session expired")]
+    Expired,
+    /// The two devices do not belong to the same account identity.
+    #[error("history sync user mismatch")]
+    UserMismatch,
+    /// A device attempted to synchronize with itself or the wrong receiver.
+    #[error("history sync device mismatch")]
+    DeviceMismatch,
+    /// A certificate, signature, HPKE context, or ciphertext was not authentic.
+    #[error("history sync authentication failed")]
+    AuthenticationFailed,
+    /// A hard page, record, byte, or session limit was exceeded.
+    #[error("history sync limit exceeded")]
+    LimitExceeded,
+    /// A page was replayed, skipped, or received after the terminal page.
+    #[error("history sync page is out of order")]
+    OutOfOrder,
+    /// Imported history conflicts with an existing durable local record.
+    #[error("history sync record conflicts with local history")]
+    Conflict,
+    /// The approved provider could not complete a history sync operation.
+    #[error("history sync crypto operation failed")]
+    CryptoError,
+    /// Strict history sync serialization failed.
+    #[error("history sync serialization failed")]
+    SerializationFailed,
+    /// Encrypted local persistence failed.
+    #[error(transparent)]
+    KeyStore(#[from] KeyStoreError),
+}
+
 /// Errors from encrypted attachment preparation and verification.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AttachmentError {
@@ -181,6 +219,9 @@ pub enum E2eeError {
     /// Device pairing error.
     #[error(transparent)]
     Pairing(#[from] PairingError),
+    /// Device-to-device history synchronization error.
+    #[error(transparent)]
+    HistorySync(#[from] HistorySyncError),
     /// Encrypted attachment error.
     #[error(transparent)]
     Attachment(#[from] AttachmentError),

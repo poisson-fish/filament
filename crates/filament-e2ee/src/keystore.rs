@@ -182,6 +182,28 @@ pub trait LocalKeyStore: Send + Sync {
     /// Returns a limit or backend error without applying a partial batch.
     fn store_batch(&self, entries: Vec<(StoreKey, Vec<u8>)>) -> Result<(), KeyStoreError>;
 
+    /// Atomically insert records without changing any existing value.
+    ///
+    /// Exact existing records are accepted idempotently. If any key exists
+    /// with different bytes, the whole operation returns
+    /// [`KeyStoreError::InvalidValue`] without applying partial writes. The
+    /// success value is the number of newly inserted records.
+    ///
+    /// Backends that cannot provide this compare-and-insert transaction fail
+    /// closed. Production encrypted stores must override this method.
+    ///
+    /// # Errors
+    /// Returns a limit, conflict, or backend error without partial mutation.
+    fn store_batch_if_absent_or_equal(
+        &self,
+        mut entries: Vec<(StoreKey, Vec<u8>)>,
+    ) -> Result<usize, KeyStoreError> {
+        for (_, value) in &mut entries {
+            value.zeroize();
+        }
+        Err(KeyStoreError::BackendError)
+    }
+
     /// Retrieve a secret value by key.
     ///
     /// # Errors
@@ -260,6 +282,39 @@ impl LocalKeyStore for InMemoryKeyStore {
             data.insert(key, value);
         }
         Ok(())
+    }
+
+    fn store_batch_if_absent_or_equal(
+        &self,
+        entries: Vec<(StoreKey, Vec<u8>)>,
+    ) -> Result<usize, KeyStoreError> {
+        validate_store_batch(&entries)?;
+        let entries = entries
+            .into_iter()
+            .map(|(key, value)| (key, Zeroizing::new(value)))
+            .collect::<Vec<_>>();
+        let mut data = self.data.lock().map_err(|_| KeyStoreError::BackendError)?;
+        if entries.iter().any(|(key, value)| {
+            data.get(key)
+                .is_some_and(|existing| existing.as_slice() != value.as_slice())
+        }) {
+            return Err(KeyStoreError::InvalidValue);
+        }
+        let inserted = entries
+            .iter()
+            .filter(|(key, _)| !data.contains_key(key))
+            .count();
+        if data
+            .len()
+            .checked_add(inserted)
+            .is_none_or(|count| count > MAX_STORE_ENTRIES)
+        {
+            return Err(KeyStoreError::LimitExceeded);
+        }
+        for (key, value) in entries {
+            data.entry(key).or_insert(value);
+        }
+        Ok(inserted)
     }
 
     fn load(&self, key: &StoreKey) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
@@ -385,6 +440,34 @@ mod tests {
 
         let loaded = store.load(&key).unwrap();
         assert_eq!(loaded.as_slice(), [4, 5, 6]);
+    }
+
+    #[test]
+    fn compare_and_insert_is_idempotent_and_atomic_on_conflict() {
+        let store = InMemoryKeyStore::new();
+        let first = StoreKey::new("history:first").unwrap();
+        let second = StoreKey::new("history:second").unwrap();
+        store.store(first.clone(), vec![1]).unwrap();
+        assert_eq!(
+            store
+                .store_batch_if_absent_or_equal(vec![
+                    (first.clone(), vec![1]),
+                    (second.clone(), vec![2]),
+                ])
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store.store_batch_if_absent_or_equal(vec![
+                (first.clone(), vec![9]),
+                (StoreKey::new("history:third").unwrap(), vec![3]),
+            ]),
+            Err(KeyStoreError::InvalidValue)
+        );
+        assert_eq!(store.load(&first).unwrap().as_slice(), [1]);
+        assert!(!store
+            .exists(&StoreKey::new("history:third").unwrap())
+            .unwrap());
     }
 
     #[test]

@@ -54,6 +54,31 @@ Configuration sources:
   rejection, and accepted only once by the in-memory receiver state. Pairing
   restores identity only; history synchronization is a separate protocol.
 
+## E2EE History Sync Boundary
+
+- After pairing and device certification, the new device creates a separate
+  five-minute X25519 HPKE receiving offer signed by its device key. The source
+  verifies that certificate against its own account root before exporting any
+  history; self-sync, cross-account, expired, forged, and substituted offers
+  fail closed.
+- One existing root-certified device freezes a bounded snapshot of the local
+  authenticated history keys. It encrypts at most 64 records and 512 KiB of
+  plaintext per ordered page with the approved OpenMLS provider's
+  X25519/HKDF-SHA-256/ChaCha20-Poly1305 HPKE suite and signs the full page
+  transcript with its device key. Encoded pages are capped at 1 MiB.
+- The receiver authenticates the source certificate and signature before HPKE
+  decryption. Pages are accepted only in sequence from one source device;
+  replay, skipping, sender substitution, malformed records, and post-terminal
+  data fail closed.
+- Imported records are written through an atomic compare-and-insert SQLCipher
+  transaction. Exact records are idempotent; any conflicting local value rolls
+  back the entire page, and receiver sequence state advances only after the
+  transaction succeeds.
+- Offers and ciphertext pages may use an untrusted direct transport, but no
+  history plaintext or decryption key is sent to or stored by the Filament
+  server. The webview receives neither the HPKE receiver secret nor decrypted
+  transfer pages.
+
 ## E2EE Local Storage Boundary
 
 - E2EE state is stored by the native Rust core in a device-scoped SQLCipher
@@ -69,9 +94,9 @@ Configuration sources:
   SQLCipher plaintext headers are disabled, temporary tables remain in memory,
   secure deletion is enabled, and the rollback journal stays inside the
   private directory.
-- Phase 1 caps each record at 4 MiB, each device store at 4,096 records, and the
-  encrypted database at 64 MiB. Phase 4 must review these caps before adding
-  full local message history.
+- Each record remains capped at 4 MiB, each device store at 4,096 records, and
+  the encrypted database at 64 MiB. History synchronization retains these
+  conservative bounds and refuses snapshots beyond 4,096 history records.
 - The key-isolation audit and negative-test inventory are recorded in
   `docs/E2EE_KEY_ISOLATION_AUDIT.md`.
 
