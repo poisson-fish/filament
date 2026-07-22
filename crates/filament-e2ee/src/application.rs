@@ -7,8 +7,10 @@
 use filament_core::{tokenize_markdown, MarkdownToken};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
+use zeroize::Zeroizing;
 
 use crate::{
+    attachment::{validate_attachment_ids, AttachmentDescriptor, AttachmentKind},
     conversation::{EncryptedApplicationMessage, MlsConversation},
     error::ConversationError,
     keypackage::MlsDevice,
@@ -23,6 +25,8 @@ pub const MAX_CHAT_MESSAGE_BYTES: usize = 2_000;
 pub const MAX_REACTION_CHARS: usize = 32;
 /// Maximum UTF-8 bytes in a sender-authored reply preview.
 pub const MAX_QUOTE_PREVIEW_BYTES: usize = 280;
+/// Maximum original attachments referenced by one encrypted chat event.
+pub const MAX_ATTACHMENTS_PER_EVENT: usize = 5;
 
 macro_rules! application_id {
     ($name:ident, $error:literal) => {
@@ -209,6 +213,64 @@ pub struct ReplyReference {
     pub preview: Option<QuotePreview>,
 }
 
+/// One encrypted file and its optional independently encrypted thumbnail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptedAttachmentReference {
+    /// Original file descriptor carried only inside MLS ciphertext.
+    pub file: AttachmentDescriptor,
+    /// Optional client-generated thumbnail descriptor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<AttachmentDescriptor>,
+}
+
+/// Non-empty, bounded attachment set for one encrypted chat event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    try_from = "Vec<EncryptedAttachmentReference>",
+    into = "Vec<EncryptedAttachmentReference>"
+)]
+pub struct AttachmentSet(Vec<EncryptedAttachmentReference>);
+
+impl AttachmentSet {
+    /// Access the validated attachment references.
+    #[must_use]
+    pub fn as_slice(&self) -> &[EncryptedAttachmentReference] {
+        &self.0
+    }
+}
+
+impl TryFrom<Vec<EncryptedAttachmentReference>> for AttachmentSet {
+    type Error = ConversationError;
+
+    fn try_from(value: Vec<EncryptedAttachmentReference>) -> Result<Self, Self::Error> {
+        if value.is_empty() || value.len() > MAX_ATTACHMENTS_PER_EVENT {
+            return Err(ConversationError::LimitExceeded);
+        }
+        if value.iter().any(|reference| {
+            reference.file.kind != AttachmentKind::File
+                || reference
+                    .thumbnail
+                    .as_ref()
+                    .is_some_and(|thumbnail| thumbnail.kind != AttachmentKind::Thumbnail)
+        }) {
+            return Err(ConversationError::InvalidApplicationMessage);
+        }
+        let descriptors = value.iter().flat_map(|reference| {
+            core::iter::once(&reference.file).chain(reference.thumbnail.as_ref())
+        });
+        validate_attachment_ids(descriptors)
+            .map_err(|_| ConversationError::InvalidApplicationMessage)?;
+        Ok(Self(value))
+    }
+}
+
+impl From<AttachmentSet> for Vec<EncryptedAttachmentReference> {
+    fn from(value: AttachmentSet) -> Self {
+        value.0
+    }
+}
+
 /// Whether the sender is adding or removing its own reaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -232,6 +294,13 @@ pub enum EncryptedChatEvent {
         body: ChatMessageBody,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply: Option<ReplyReference>,
+    },
+    /// Create a message whose encrypted objects are fetched separately.
+    Attachments {
+        message_id: EncryptedMessageId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body: Option<ChatMessageBody>,
+        attachments: AttachmentSet,
     },
     /// Replace the body of a message. Clients enforce same-author ownership.
     Edit {
@@ -320,14 +389,18 @@ impl MlsConversation {
         device: &MlsDevice,
         event: &VersionedApplicationEvent,
     ) -> Result<EncryptedApplicationMessage, ConversationError> {
-        self.encrypt_application_message(device, &event.encode()?)
+        let encoded = Zeroizing::new(event.encode()?);
+        self.encrypt_application_message(device, &encoded)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{generate_key_package_batch, PinnedUserIdentity, RootIdentityKey};
+    use crate::{
+        encrypt_attachment, encrypt_thumbnail, generate_key_package_batch, PinnedUserIdentity,
+        RootIdentityKey,
+    };
     use filament_core::{DeviceId, GroupId, UserId};
 
     fn body(value: &str) -> ChatMessageBody {
@@ -337,6 +410,8 @@ mod tests {
     #[test]
     fn strict_round_trip_covers_all_message_adjacent_events() {
         let message_id = EncryptedMessageId::new();
+        let (file, _) = encrypt_attachment("notes.bin", b"private attachment").unwrap();
+        let (thumbnail, _) = encrypt_thumbnail("preview.bin", b"private preview").unwrap();
         let cases = [
             EncryptedChatEvent::Message {
                 message_id,
@@ -345,6 +420,15 @@ mod tests {
                     target_message_id: EncryptedMessageId::new(),
                     preview: Some(QuotePreview::try_from("earlier message".to_owned()).unwrap()),
                 }),
+            },
+            EncryptedChatEvent::Attachments {
+                message_id: EncryptedMessageId::new(),
+                body: Some(body("attached securely")),
+                attachments: AttachmentSet::try_from(vec![EncryptedAttachmentReference {
+                    file,
+                    thumbnail: Some(thumbnail),
+                }])
+                .unwrap(),
             },
             EncryptedChatEvent::Edit {
                 target_message_id: message_id,
@@ -374,6 +458,43 @@ mod tests {
                 envelope
             );
         }
+    }
+
+    #[test]
+    fn attachment_sets_are_bounded_typed_and_unique() {
+        assert_eq!(
+            AttachmentSet::try_from(Vec::new()).unwrap_err(),
+            ConversationError::LimitExceeded
+        );
+
+        let (file, _) = encrypt_attachment("file.bin", b"private").unwrap();
+        assert_eq!(
+            AttachmentSet::try_from(vec![
+                EncryptedAttachmentReference {
+                    file: file.clone(),
+                    thumbnail: None,
+                },
+                EncryptedAttachmentReference {
+                    file,
+                    thumbnail: None,
+                },
+            ])
+            .unwrap_err(),
+            ConversationError::InvalidApplicationMessage
+        );
+
+        let mut too_many = Vec::new();
+        for index in 0..=MAX_ATTACHMENTS_PER_EVENT {
+            let (file, _) = encrypt_attachment(format!("file-{index}.bin"), b"private").unwrap();
+            too_many.push(EncryptedAttachmentReference {
+                file,
+                thumbnail: None,
+            });
+        }
+        assert_eq!(
+            AttachmentSet::try_from(too_many).unwrap_err(),
+            ConversationError::LimitExceeded
+        );
     }
 
     #[test]
@@ -463,6 +584,7 @@ mod tests {
 
         let original_id = EncryptedMessageId::new();
         let reply_target = EncryptedMessageId::new();
+        let (file, _) = encrypt_attachment("group.bin", b"group attachment").unwrap();
         let events = [
             EncryptedChatEvent::Message {
                 message_id: original_id,
@@ -471,6 +593,15 @@ mod tests {
                     target_message_id: reply_target,
                     preview: Some(QuotePreview::try_from("quoted context".to_owned()).unwrap()),
                 }),
+            },
+            EncryptedChatEvent::Attachments {
+                message_id: EncryptedMessageId::new(),
+                body: None,
+                attachments: AttachmentSet::try_from(vec![EncryptedAttachmentReference {
+                    file,
+                    thumbnail: None,
+                }])
+                .unwrap(),
             },
             EncryptedChatEvent::Reaction {
                 target_message_id: original_id,

@@ -194,6 +194,17 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 ### Attachments in E2EE Conversations
 - Random per-file content key; AEAD aligned with the group suite; no convergent encryption or cross-user deduplication (equality oracle).
 - File keys and metadata (filename, MIME, size, content hash, thumbnail key) travel inside MLS application messages; server-side blobs and descriptors are opaque.
+- Native clients use the approved OpenMLS provider's ChaCha20-Poly1305 AEAD
+  with an independent random 256-bit key and 96-bit nonce for every file and
+  thumbnail. Filename, kind, MIME, plaintext size, content hash, and object ID
+  are authenticated as associated data. Plaintext and temporary associated-data
+  buffers are zeroized after use; key material is redacted from debug output.
+- Ciphertexts are padded before encryption to an exact `64 KiB / 256 KiB /
+  1 MiB / 4 MiB / 16 MiB / 32 MiB` transport bucket. Clients reject all other
+  ciphertext sizes, non-zero authenticated padding, descriptor substitution,
+  hash mismatch, and post-decryption MIME mismatch. Original files are capped
+  at `24 MiB`; thumbnails are capped at `1 MiB`; one event references at most
+  five original files.
 - Compensating controls for the MIME-sniff carve-out: hard size caps, per-user quotas, padding buckets, and mailbox TTL still apply server-side; content-type validation moves client-side after decryption.
 - No server-side thumbnailing, transcoding, or link unfurling for E2EE content; thumbnails are client-generated and encrypted.
 

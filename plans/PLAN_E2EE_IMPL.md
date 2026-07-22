@@ -68,7 +68,7 @@ Still required before Phase 1 can be called complete:
   exception was added. A production launcher/backend still must inject
   authenticated session, platform storage, network, and MLS capabilities.
 
-Phase 3 is now in progress. The client core implements a bounded two-user MLS
+Phases 2 and 3 are complete. The client core implements a bounded two-user MLS
 conversation lifecycle: claimed-KeyPackage validation against pinned roots,
 staged Add/Welcome and safe Remove creation, acceptance-gated commit merge,
 strict multi-device Welcome/membership validation, PrivateMessage
@@ -159,9 +159,13 @@ and 200 leaves. The server atomically provisions 3–100-user groups with a
 shared multi-recipient Welcome, applies exact Add/Remove routing deltas, and
 blocks sends while policy eviction is unresolved. Native clients surface
 membership rows only after authenticating the matching MLS commit, and a
-20-member churn regression covers delivery and eviction. Phase 3 is complete;
-attachment, media, guild-channel, hardening, and key-transparency work has not
-started.
+20-member churn regression covers delivery and eviction. Phase 4 is now in
+progress. The native client encrypts files and client-generated thumbnails
+with independent random ChaCha20-Poly1305 keys through the approved OpenMLS
+provider, authenticates all private descriptors inside strict MLS application
+events, pads ciphertext to exact transport buckets, and verifies AEAD, padding,
+hash, and client-sniffed MIME before exposing plaintext. Server attachment
+mailboxes, history sync, backup, disappearing messages, and local search remain.
 
 ---
 
@@ -634,6 +638,16 @@ authentication. Coverage includes three-user PostgreSQL transport and
 ### Goal
 
 Add encrypted attachments, device-to-device history sync, opt-in passphrase backup, disappearing messages, and local search — completing the E2EE text experience.
+
+**Implemented increment (updated 2026-07-22):** the native client attachment
+core now creates independent random content keys/nonces for original files and
+client-generated thumbnails using the approved OpenMLS provider's
+ChaCha20-Poly1305 implementation. Private filename, MIME, size, hash, kind, and
+object identity are authenticated and carried only inside a strict, bounded MLS
+application event. Exact ciphertext buckets, file/thumbnail caps, non-convergent
+encryption, zeroized temporary buffers, key-redacted debug output, and
+post-decryption padding/hash/MIME verification fail closed. The Delivery Service
+upload/download mailbox and GC path is the next increment.
 
 ### Deliverables
 

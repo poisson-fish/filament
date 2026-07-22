@@ -1255,6 +1255,7 @@ dependencies = [
  "ed25519-dalek",
  "filament-core",
  "filament-protocol",
+ "infer",
  "openmls",
  "openmls_basic_credential",
  "openmls_rust_crypto",

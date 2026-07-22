@@ -93,6 +93,23 @@ pub enum PairingError {
     SerializationFailed,
 }
 
+/// Errors from encrypted attachment preparation and verification.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AttachmentError {
+    /// A filename, descriptor, MIME value, or ciphertext shape was invalid.
+    #[error("invalid encrypted attachment")]
+    InvalidAttachment,
+    /// A plaintext or encrypted attachment exceeded a hard client limit.
+    #[error("encrypted attachment limit exceeded")]
+    LimitExceeded,
+    /// The approved provider could not complete an attachment operation.
+    #[error("encrypted attachment crypto operation failed")]
+    CryptoError,
+    /// Authenticated decryption or post-decryption content verification failed.
+    #[error("encrypted attachment verification failed")]
+    VerificationFailed,
+}
+
 /// Errors from an MLS conversation lifecycle operation.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ConversationError {
@@ -164,6 +181,9 @@ pub enum E2eeError {
     /// Device pairing error.
     #[error(transparent)]
     Pairing(#[from] PairingError),
+    /// Encrypted attachment error.
+    #[error(transparent)]
+    Attachment(#[from] AttachmentError),
     /// MLS conversation lifecycle error.
     #[error(transparent)]
     Conversation(#[from] ConversationError),

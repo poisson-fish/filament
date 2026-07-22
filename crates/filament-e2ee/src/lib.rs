@@ -27,6 +27,7 @@
 //! [`plans/PLAN_E2EE.md`] for the full design specification.
 
 pub mod application;
+pub mod attachment;
 pub mod commit_mailbox;
 pub mod conversation;
 pub mod delivery_service;
@@ -43,10 +44,16 @@ pub mod sqlcipher_store;
 
 // Re-export the most commonly used types.
 pub use application::{
-    ApplicationEventId, ChatMessageBody, EncryptedChatEvent, EncryptedMessageId, QuotePreview,
-    ReactionAction, ReactionToken, ReplyReference, VersionedApplicationEvent,
-    MAX_APPLICATION_EVENT_BYTES, MAX_CHAT_MESSAGE_BYTES, MAX_QUOTE_PREVIEW_BYTES,
-    MAX_REACTION_CHARS,
+    ApplicationEventId, AttachmentSet, ChatMessageBody, EncryptedAttachmentReference,
+    EncryptedChatEvent, EncryptedMessageId, QuotePreview, ReactionAction, ReactionToken,
+    ReplyReference, VersionedApplicationEvent, MAX_APPLICATION_EVENT_BYTES,
+    MAX_ATTACHMENTS_PER_EVENT, MAX_CHAT_MESSAGE_BYTES, MAX_QUOTE_PREVIEW_BYTES, MAX_REACTION_CHARS,
+};
+pub use attachment::{
+    decrypt_attachment, encrypt_attachment, encrypt_thumbnail, AttachmentContent,
+    AttachmentDescriptor, AttachmentId, AttachmentKind, EncryptedAttachment,
+    ATTACHMENT_CIPHERTEXT_BUCKETS, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILENAME_BYTES,
+    MAX_ATTACHMENT_MIME_BYTES, MAX_ENCRYPTED_ATTACHMENT_BYTES, MAX_THUMBNAIL_BYTES,
 };
 pub use commit_mailbox::{
     process_commit_mailbox, process_group_commit_mailbox, CommitMailboxBatch, RejectedMailboxCommit,
@@ -67,7 +74,8 @@ pub use durable_mailbox::{
     DurableMailboxError, DurableMessageMailboxBatch, DurableMlsClient, StoredMailboxMessage,
 };
 pub use error::{
-    ConversationError, E2eeError, IdentityError, KeyPackageError, KeyStoreError, PairingError,
+    AttachmentError, ConversationError, E2eeError, IdentityError, KeyPackageError, KeyStoreError,
+    PairingError,
 };
 pub use identity::{
     create_root_identity_rotation_proof, safety_number, verify_device_certificate,
