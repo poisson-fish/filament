@@ -334,10 +334,13 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   provider is opaque outside the E2EE crate, uses HKDF, rejects failed key
   installation, and accepts only the exact next epoch for the same group. Its
   256 key indexes are transport slots, not an independent epoch or ratchet.
-- The key-provider bridge is not yet an RTP media path. Production E2EE media
-  remains disabled until the provider is attached to native RTP senders and
-  receivers, the SFU path is exercised end to end, and the platform matrix is
-  complete. Filament does not define a bespoke frame-encryption construction.
+- The native bridge attaches the provider to SDK-owned RTP senders and
+  receivers before publish or render. An opt-in three-participant test against
+  the pinned LiveKit SFU exercises encrypted publication, guarded endpoint
+  decode, join-epoch rotation, and post-removal exclusion. Production E2EE
+  media remains disabled until the platform matrix and desktop packaging
+  blockers are complete. Filament does not define a bespoke frame-encryption
+  construction.
 - Insertable-streams support must be verified per webview target (WebView2, WKWebView, WebKitGTK) before media E2EE ships on that platform; where a webview lacks support, the required fallback is a native WebRTC media path in the host layer — never unencrypted media.
 
 ### Directory Audit (E2EE)

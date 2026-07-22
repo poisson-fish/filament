@@ -47,7 +47,8 @@ Set these variables for `filament-server` (via `infra/.env`):
 - `FILAMENT_DATABASE_URL`: required in runtime; points to Postgres
 - `FILAMENT_ATTACHMENT_ROOT`: required attachment object storage root
 - `FILAMENT_LIVEKIT_API_KEY`: required LiveKit API key for token minting
-- `FILAMENT_LIVEKIT_API_SECRET`: required paired LiveKit secret
+- `FILAMENT_LIVEKIT_API_SECRET`: required paired LiveKit secret (at least 32
+  characters, as required by the pinned LiveKit server)
 - `FILAMENT_LIVEKIT_URL`: required signaling URL exposed to clients (`ws://` or `wss://`), and it must be reachable from end-user browsers
 - `FILAMENT_BIND_ADDR`: bind socket for server process (default `0.0.0.0:3000`)
 - `FILAMENT_MAX_CREATED_GUILDS_PER_USER`: max guilds an authenticated user may create (default `5`, must be >= `1`)

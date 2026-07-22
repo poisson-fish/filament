@@ -823,11 +823,17 @@ epoch. Remote subscriptions are serialized through a bounded native command
 queue and release only bounded decoded native streams after exact
 participant/SID, GCM, enabled-cryptor, and current-key-index verification;
 unsolicited subscriptions close the room and timeout/drop paths unsubscribe.
-Calls remain disabled pending real-SFU, multi-participant, and platform
-verification. The production desktop feature combination also remains blocked
-by the SQLCipher/OpenSSL and libwebrtc/BoringSSL duplicate-symbol collision;
-each feature passes independently, and the storage or linker security posture
-has not been weakened to combine them.
+An opt-in native integration test now runs three participants against the
+pinned LiveKit 1.8.3 SFU. It verifies mandatory GCM publication and guarded
+subscription, endpoint-only decoded audio, an accepted join-epoch rotation,
+continued media for remaining endpoints, and fail-closed rejection of a client
+left on the pre-removal key. The local Compose path now defers runtime variable
+expansion correctly and uses a LiveKit-compliant development secret length.
+Calls remain disabled pending the platform verification matrix. The production
+desktop feature combination also remains blocked by the SQLCipher/OpenSSL and
+libwebrtc/BoringSSL duplicate-symbol collision; each feature passes
+independently, and the storage or linker security posture has not been weakened
+to combine them.
 
 ### Deliverables
 
@@ -864,9 +870,9 @@ has not been weakened to combine them.
 
 ### Exit Criteria
 
-- [ ] SFU relays encrypted media only; decryption exclusively at endpoints
-- [ ] Join/leave rekey verified
-- [ ] Periodic update commit rekey verified
+- [x] SFU relays encrypted media only; decryption exclusively at endpoints
+- [x] Join/leave rekey verified
+- [x] Periodic update commit rekey verified
 - [ ] Insertable-streams verification matrix complete (WebView2 / WKWebView / WebKitGTK)
 - [ ] Native media path exercised on any platform lacking webview support
 - [ ] No unencrypted media fallback exists

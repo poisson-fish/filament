@@ -1419,6 +1419,7 @@ dependencies = [
  "infer",
  "libwebrtc",
  "livekit",
+ "livekit-api",
  "openmls",
  "openmls_basic_credential",
  "openmls_rust_crypto",

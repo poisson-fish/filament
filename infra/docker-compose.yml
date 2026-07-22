@@ -35,22 +35,22 @@ services:
       LIVEKIT_USE_EXTERNAL_IP: ${LIVEKIT_USE_EXTERNAL_IP:-false}
       LIVEKIT_NODE_IP: ${LIVEKIT_NODE_IP:-}
       FILAMENT_LIVEKIT_API_KEY: ${FILAMENT_LIVEKIT_API_KEY:-devkey}
-      FILAMENT_LIVEKIT_API_SECRET: ${FILAMENT_LIVEKIT_API_SECRET:-devsecret}
+      FILAMENT_LIVEKIT_API_SECRET: ${FILAMENT_LIVEKIT_API_SECRET:-filament-local-livekit-secret-change-me}
     command:
       - |
         cat > /tmp/livekit.yaml <<EOF
-        port: ${LIVEKIT_PORT}
+        port: $${LIVEKIT_PORT}
         rtc:
-          tcp_port: ${LIVEKIT_TCP_PORT}
-          udp_port: ${LIVEKIT_UDP_PORT}
-          use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP}
+          tcp_port: $${LIVEKIT_TCP_PORT}
+          udp_port: $${LIVEKIT_UDP_PORT}
+          use_external_ip: $${LIVEKIT_USE_EXTERNAL_IP}
         EOF
-        if [ -n "${LIVEKIT_NODE_IP}" ]; then
-          printf "  node_ip: %s\n" "${LIVEKIT_NODE_IP}" >> /tmp/livekit.yaml
+        if [ -n "$${LIVEKIT_NODE_IP}" ]; then
+          printf "  node_ip: %s\n" "$${LIVEKIT_NODE_IP}" >> /tmp/livekit.yaml
         fi
         cat >> /tmp/livekit.yaml <<EOF
         keys:
-          ${FILAMENT_LIVEKIT_API_KEY}: ${FILAMENT_LIVEKIT_API_SECRET}
+          $${FILAMENT_LIVEKIT_API_KEY}: $${FILAMENT_LIVEKIT_API_SECRET}
         logging:
           level: info
         EOF
@@ -91,7 +91,7 @@ services:
       FILAMENT_TRUSTED_PROXY_CIDRS: ${FILAMENT_TRUSTED_PROXY_CIDRS:-}
       FILAMENT_ATTACHMENT_ROOT: ${FILAMENT_ATTACHMENT_ROOT:-/var/lib/filament/attachments}
       FILAMENT_LIVEKIT_API_KEY: ${FILAMENT_LIVEKIT_API_KEY:-devkey}
-      FILAMENT_LIVEKIT_API_SECRET: ${FILAMENT_LIVEKIT_API_SECRET:-devsecret}
+      FILAMENT_LIVEKIT_API_SECRET: ${FILAMENT_LIVEKIT_API_SECRET:-filament-local-livekit-secret-change-me}
       FILAMENT_LIVEKIT_URL: ${FILAMENT_LIVEKIT_URL:-ws://localhost:7880}
       FILAMENT_HCAPTCHA_SITE_KEY: ${FILAMENT_HCAPTCHA_SITE_KEY:-}
       FILAMENT_HCAPTCHA_SECRET: ${FILAMENT_HCAPTCHA_SECRET:-}

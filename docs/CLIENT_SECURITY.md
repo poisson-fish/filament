@@ -150,8 +150,11 @@ Configuration sources:
   Unsolicited subscriptions close the room, dropping a stream unsubscribes it,
   and any later room rejection ends frame delivery. Remote rooms are capped at
   200 participants and 256 tracks. Explicit close and drop both signal native
-  shutdown. This bridge is not exposed as an IPC command and does not yet
-  enable calls; end-to-end SFU verification and platform verification remain
+  shutdown. An opt-in native integration test uses the pinned LiveKit 1.8.3
+  container and three clients to verify GCM publication/subscription,
+  endpoint-only decoded audio, join-epoch rotation, and rejection of a client
+  left on the pre-removal media epoch. This bridge is not exposed as an IPC
+  command and does not yet enable calls; platform verification remains
   required.
 - The full desktop binary is also blocked on native crypto-library linkage:
   SQLCipher's vendored OpenSSL and LiveKit/libwebrtc's bundled BoringSSL export
@@ -161,6 +164,19 @@ Configuration sources:
   enabling the media feature in the desktop target.
 - The key-isolation audit and negative-test inventory are recorded in
   `docs/E2EE_KEY_ISOLATION_AUDIT.md`.
+
+The real-SFU media test is intentionally ignored by ordinary unit runs. Run it
+against the repository's local stack with:
+
+```bash
+docker compose -f infra/docker-compose.yml up -d livekit
+FILAMENT_TEST_LIVEKIT_URL=ws://127.0.0.1:7880 \
+FILAMENT_TEST_LIVEKIT_API_KEY=devkey \
+FILAMENT_TEST_LIVEKIT_API_SECRET=filament-local-livekit-secret-change-me \
+cargo test -p filament-e2ee --features livekit-media \
+  real_sfu_keeps_three_party_media_endpoint_only_across_join_and_leave_rekeys \
+  -- --ignored
+```
 
 ## Token Storage Strategy by OS
 

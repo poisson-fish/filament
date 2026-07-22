@@ -1380,6 +1380,8 @@ fn configure_cryptor(cryptor: &FrameCryptor, epoch: u64) {
 
 #[cfg(test)]
 mod tests {
+    use std::{env, future::poll_fn};
+
     use filament_core::{LiveKitIdentity, LiveKitRoomName};
     use libwebrtc::native::frame_cryptor::{
         DataPacketCryptor, EncryptedPacket, EncryptionAlgorithm,
@@ -1391,6 +1393,11 @@ mod tests {
             native::PeerConnectionFactoryExt, PeerConnectionFactory, RtcConfiguration,
         },
     };
+    use livekit::{
+        prelude::{LocalAudioTrack, TrackSource},
+        webrtc::audio_source::RtcAudioSource,
+    };
+    use livekit_api::access_token::{AccessToken, VideoGrants};
 
     use super::*;
 
@@ -1412,6 +1419,130 @@ mod tests {
 
     fn access_token() -> String {
         String::from("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature")
+    }
+
+    struct SfuTestConfig {
+        url: String,
+        api_key: String,
+        api_secret: String,
+    }
+
+    impl SfuTestConfig {
+        fn from_env() -> Option<Self> {
+            let url = env::var("FILAMENT_TEST_LIVEKIT_URL").ok()?;
+            let api_key = env::var("FILAMENT_TEST_LIVEKIT_API_KEY").ok()?;
+            let api_secret = env::var("FILAMENT_TEST_LIVEKIT_API_SECRET").ok()?;
+            Some(Self {
+                url,
+                api_key,
+                api_secret,
+            })
+        }
+
+        fn connection(&self, room: &str, identity: &str) -> LiveKitMediaConnection {
+            let token = AccessToken::with_api_key(&self.api_key, &self.api_secret)
+                .with_ttl(Duration::from_secs(300))
+                .with_grants(VideoGrants {
+                    room_join: true,
+                    room: room.to_owned(),
+                    can_publish: true,
+                    can_subscribe: true,
+                    can_publish_data: false,
+                    ..VideoGrants::default()
+                })
+                .with_identity(identity)
+                .with_name(identity)
+                .to_jwt()
+                .unwrap();
+            LiveKitMediaConnection::new(
+                self.url.clone(),
+                token,
+                room_name(room),
+                participant(identity),
+            )
+            .unwrap()
+        }
+    }
+
+    async fn wait_for_remote_audio(
+        room: &LiveKitMediaRoom,
+        expected_participant: &LiveKitIdentity,
+    ) -> LiveKitRemoteTrackInfo {
+        timeout(Duration::from_secs(10), async {
+            loop {
+                if let Some(track) = room
+                    .remote_tracks()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find(|track| {
+                        track.participant() == expected_participant
+                            && track.kind() == LiveKitMediaTrackKind::Audio
+                    })
+                {
+                    return track;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("encrypted remote publication should become visible")
+    }
+
+    async fn next_audio_frame(
+        stream: &mut LiveKitRemoteAudioStream,
+    ) -> Option<AudioFrame<'static>> {
+        poll_fn(|context| Pin::new(&mut *stream).poll_next(context)).await
+    }
+
+    fn into_audio_stream(stream: LiveKitRemoteMediaStream) -> LiveKitRemoteAudioStream {
+        match stream {
+            LiveKitRemoteMediaStream::Audio(stream) => stream,
+            LiveKitRemoteMediaStream::Video(_) => panic!("audio publication returned video"),
+        }
+    }
+
+    fn start_audio(source: NativeAudioSource, sample: i16) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let samples = [sample; 480];
+            for _ in 0..20 {
+                let frame = AudioFrame {
+                    data: samples.as_slice().into(),
+                    sample_rate: 48_000,
+                    num_channels: 1,
+                    samples_per_channel: 480,
+                };
+                source.capture_frame(&frame).await.unwrap();
+            }
+        })
+    }
+
+    async fn connect_sfu_room(
+        config: &SfuTestConfig,
+        room: &str,
+        identity: &LiveKitIdentity,
+        group_id: GroupId,
+        epoch: u64,
+        key_byte: u8,
+    ) -> LiveKitMediaRoom {
+        LiveKitMediaRoom::connect(
+            config.connection(room, identity.as_str()),
+            secret(group_id, epoch, key_byte),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn subscribe_audio(
+        room: &LiveKitMediaRoom,
+        participant: &LiveKitIdentity,
+        track: &LiveKitRemoteTrackInfo,
+    ) -> LiveKitRemoteAudioStream {
+        into_audio_stream(
+            room.subscribe_remote_track(participant.clone(), track.track_id().clone())
+                .await
+                .unwrap(),
+        )
     }
 
     #[test]
@@ -1764,6 +1895,104 @@ mod tests {
         drop(keyring);
         subscriber.close();
         publisher.close();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires FILAMENT_TEST_LIVEKIT_* and a real LiveKit SFU"]
+    async fn real_sfu_keeps_three_party_media_endpoint_only_across_join_and_leave_rekeys() {
+        let config = SfuTestConfig::from_env()
+            .expect("ignored real-SFU test requires all FILAMENT_TEST_LIVEKIT_* variables");
+        let group_id = GroupId::new();
+        let room = format!("filament.voice.e2ee.{group_id}");
+        let publisher_identity = participant("e2ee_publisher");
+        let receiver_identity = participant("e2ee_receiver");
+        let joining_identity = participant("e2ee_joining_receiver");
+
+        let mut publisher =
+            connect_sfu_room(&config, &room, &publisher_identity, group_id, 0, 0x41).await;
+        let mut receiver =
+            connect_sfu_room(&config, &room, &receiver_identity, group_id, 0, 0x41).await;
+
+        let source = NativeAudioSource::new(AudioSourceOptions::default(), 48_000, 1, 1_000);
+        let track = LocalAudioTrack::create_audio_track(
+            "filament-e2ee-sfu-audio",
+            RtcAudioSource::Native(source.clone()),
+        );
+        let publish_options = TrackPublishOptions {
+            source: TrackSource::Microphone,
+            ..TrackPublishOptions::default()
+        };
+        let published_track = publisher
+            .publish_track(LocalTrack::Audio(track), publish_options)
+            .await
+            .unwrap();
+
+        let receiver_track = wait_for_remote_audio(&receiver, &publisher_identity).await;
+        assert_eq!(receiver_track.track_id(), &published_track);
+        let mut receiver_stream =
+            subscribe_audio(&receiver, &publisher_identity, &receiver_track).await;
+        let initial_audio = start_audio(source.clone(), 1_000);
+        assert!(timeout(
+            Duration::from_secs(10),
+            next_audio_frame(&mut receiver_stream)
+        )
+        .await
+        .expect("initial endpoint should receive encrypted audio")
+        .is_some());
+        initial_audio.await.unwrap();
+
+        publisher.rotate(secret(group_id, 1, 0x52)).unwrap();
+        receiver.rotate(secret(group_id, 1, 0x52)).unwrap();
+        let joining = connect_sfu_room(&config, &room, &joining_identity, group_id, 1, 0x52).await;
+        let joining_track = wait_for_remote_audio(&joining, &publisher_identity).await;
+        assert_eq!(joining_track.track_id(), &published_track);
+        let mut joining_stream =
+            subscribe_audio(&joining, &publisher_identity, &joining_track).await;
+        let joined_audio = start_audio(source.clone(), 2_000);
+        let (receiver_frame, joining_frame) = tokio::join!(
+            timeout(
+                Duration::from_secs(10),
+                next_audio_frame(&mut receiver_stream)
+            ),
+            timeout(
+                Duration::from_secs(10),
+                next_audio_frame(&mut joining_stream)
+            ),
+        );
+        assert!(receiver_frame
+            .expect("existing endpoint should receive post-join audio")
+            .is_some());
+        assert!(joining_frame
+            .expect("joining endpoint should receive current-epoch audio")
+            .is_some());
+        joined_audio.await.unwrap();
+
+        publisher.rotate(secret(group_id, 2, 0x63)).unwrap();
+        receiver.rotate(secret(group_id, 2, 0x63)).unwrap();
+        let post_removal_audio = start_audio(source, 3_000);
+        assert!(timeout(
+            Duration::from_secs(10),
+            next_audio_frame(&mut receiver_stream)
+        )
+        .await
+        .expect("remaining endpoint should receive post-removal audio")
+        .is_some());
+        post_removal_audio.await.unwrap();
+        timeout(Duration::from_secs(5), async {
+            while joining.health.load(Ordering::Acquire) == ROOM_HEALTHY {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("endpoint without the accepted MLS exporter must be rejected");
+        assert_eq!(joining.health.load(Ordering::Acquire), ROOM_REJECTED);
+        assert!(next_audio_frame(&mut joining_stream).await.is_none());
+
+        drop(joining_stream);
+        drop(receiver_stream);
+        joining.close().await.unwrap();
+        receiver.close().await.unwrap();
+        publisher.close().await.unwrap();
     }
 
     #[test]
