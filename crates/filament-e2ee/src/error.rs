@@ -230,6 +230,15 @@ pub enum MediaError {
     /// A call attempted to attach more native media tracks than the hard cap.
     #[error("native media track limit exceeded")]
     TrackLimitExceeded,
+    /// The requested remote publication does not exist or cannot be subscribed safely.
+    #[error("native remote media track is unavailable")]
+    RemoteTrackUnavailable,
+    /// A second remote subscription was requested before the first completed.
+    #[error("native remote media subscription is already pending")]
+    SubscriptionInProgress,
+    /// LiveKit did not establish the guarded subscription within the hard deadline.
+    #[error("native remote media subscription timed out")]
+    SubscriptionTimedOut,
     /// The periodic update interval falls outside the hard security bounds.
     #[error("media rekey interval is invalid")]
     InvalidRekeyInterval,

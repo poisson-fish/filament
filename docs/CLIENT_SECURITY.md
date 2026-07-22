@@ -142,10 +142,17 @@ Configuration sources:
   disables automatic remote subscriptions, and continuously drains the SDK
   event stream; plaintext publications, failed cryptor states, missing native
   bindings, or the 256-track cap close the room. A local track remains disabled
-  until its SDK-owned cryptor is enabled at the accepted MLS epoch. Explicit
-  close and drop both signal native shutdown. This bridge is not exposed as an
-  IPC command and does not yet enable calls; guarded remote subscription/render,
-  end-to-end SFU verification, and platform verification remain required.
+  until its SDK-owned cryptor is enabled at the accepted MLS epoch. Remote
+  subscriptions are explicit, serialized through a bounded native command
+  queue, and limited to ten seconds. Participant identity, track SID, GCM mode,
+  enabled receiver cryptor, and current MLS key index must all match before a
+  bounded decoded audio/video stream is released to native rendering code.
+  Unsolicited subscriptions close the room, dropping a stream unsubscribes it,
+  and any later room rejection ends frame delivery. Remote rooms are capped at
+  200 participants and 256 tracks. Explicit close and drop both signal native
+  shutdown. This bridge is not exposed as an IPC command and does not yet
+  enable calls; end-to-end SFU verification and platform verification remain
+  required.
 - The full desktop binary is also blocked on native crypto-library linkage:
   SQLCipher's vendored OpenSSL and LiveKit/libwebrtc's bundled BoringSSL export
   colliding symbols when `sqlcipher-store` and `livekit-media` are linked

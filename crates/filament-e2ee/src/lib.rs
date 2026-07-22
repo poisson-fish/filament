@@ -113,7 +113,9 @@ pub use keystore::{
 #[cfg(feature = "livekit-media")]
 pub use livekit_media::{
     LiveKitMediaConnection, LiveKitMediaKeyring, LiveKitMediaRoom, LiveKitMediaTrackId,
-    MAX_LIVEKIT_MEDIA_ACCESS_TOKEN_BYTES, MAX_LIVEKIT_MEDIA_TRACKS,
+    LiveKitMediaTrackKind, LiveKitRemoteAudioStream, LiveKitRemoteMediaStream,
+    LiveKitRemoteTrackInfo, LiveKitRemoteVideoStream, LIVEKIT_MEDIA_SUBSCRIPTION_TIMEOUT_SECS,
+    MAX_LIVEKIT_MEDIA_ACCESS_TOKEN_BYTES, MAX_LIVEKIT_MEDIA_PARTICIPANTS, MAX_LIVEKIT_MEDIA_TRACKS,
     MAX_LIVEKIT_MEDIA_TRACK_ID_BYTES, MAX_LIVEKIT_MEDIA_URL_BYTES,
 };
 pub use local_search::{

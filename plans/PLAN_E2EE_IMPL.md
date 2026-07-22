@@ -200,13 +200,16 @@ frame-encryption construction was invented. Native sender/receiver attachment
 and the LiveKit Rust SDK room connection lifecycle now fail closed around
 mandatory GCM, exact room/participant bindings, loopback-only plaintext
 signaling, disabled automatic subscriptions, bounded event draining, track
-caps, and pre-publication cryptor verification. Guarded remote rendering, real
-SFU tests, platform verification, and end-to-end media tests remain required
-before media can be enabled. The Apache-2.0 LiveKit client SDK is pinned to
-0.7.53, matching the reviewed libwebrtc 0.3.42 bridge. Combined desktop linkage
-is currently blocked because SQLCipher's vendored OpenSSL and libwebrtc's
-bundled BoringSSL export colliding symbols; no unsafe linker workaround or
-storage downgrade was added.
+caps, and pre-publication cryptor verification. Remote publication discovery
+and subscription now stay behind the native guard: exact participant/SID and
+current-epoch cryptor checks gate bounded decoded audio/video streams,
+unsolicited subscriptions close the room, and timeout/drop paths unsubscribe.
+Real SFU tests, platform verification, and end-to-end media tests remain
+required before media can be enabled. The Apache-2.0 LiveKit client SDK is
+pinned to 0.7.53, matching the reviewed libwebrtc 0.3.42 bridge. Combined
+desktop linkage is currently blocked because SQLCipher's vendored OpenSSL and
+libwebrtc's bundled BoringSSL export colliding symbols; no unsafe linker
+workaround or storage downgrade was added.
 
 ---
 
@@ -816,11 +819,15 @@ room/participant bindings, disables automatic subscription, and drains native
 events behind a fail-closed guard. Plaintext publications, failed cryptor
 states, missing bindings, or track-cap violations close the room. Local tracks
 stay disabled until the SDK-owned cryptor is verified at the accepted MLS
-epoch. Guarded remote subscription/render integration remains before calls can
-be enabled. The production desktop feature combination also remains blocked by
-the SQLCipher/OpenSSL and libwebrtc/BoringSSL duplicate-symbol collision; each
-feature passes independently, and the storage or linker security posture has
-not been weakened to combine them.
+epoch. Remote subscriptions are serialized through a bounded native command
+queue and release only bounded decoded native streams after exact
+participant/SID, GCM, enabled-cryptor, and current-key-index verification;
+unsolicited subscriptions close the room and timeout/drop paths unsubscribe.
+Calls remain disabled pending real-SFU, multi-participant, and platform
+verification. The production desktop feature combination also remains blocked
+by the SQLCipher/OpenSSL and libwebrtc/BoringSSL duplicate-symbol collision;
+each feature passes independently, and the storage or linker security posture
+has not been weakened to combine them.
 
 ### Deliverables
 

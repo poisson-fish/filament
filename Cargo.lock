@@ -1415,6 +1415,7 @@ dependencies = [
  "ed25519-dalek",
  "filament-core",
  "filament-protocol",
+ "futures-core",
  "infer",
  "libwebrtc",
  "livekit",

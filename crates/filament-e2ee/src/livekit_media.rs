@@ -8,14 +8,20 @@ use std::{
     collections::HashMap,
     fmt,
     net::IpAddr,
+    pin::Pin,
     sync::{
         atomic::{AtomicI32, AtomicU8, Ordering},
         Arc,
     },
+    task::{Context, Poll},
+    time::Duration,
 };
 
 use filament_core::{GroupId, LiveKitIdentity, LiveKitRoomName};
+use futures_core::Stream;
 use libwebrtc::{
+    audio_frame::AudioFrame,
+    audio_stream::native::NativeAudioStream,
     native::frame_cryptor::{
         EncryptionAlgorithm, EncryptionState, FrameCryptor, KeyDerivationAlgorithm, KeyProvider,
         KeyProviderOptions,
@@ -23,6 +29,8 @@ use libwebrtc::{
     peer_connection_factory::PeerConnectionFactory,
     rtp_receiver::RtpReceiver,
     rtp_sender::RtpSender,
+    video_frame::BoxVideoFrame,
+    video_stream::native::NativeVideoStream,
 };
 use livekit::{
     e2ee::{
@@ -32,12 +40,16 @@ use livekit::{
         EncryptionType,
     },
     options::TrackPublishOptions,
-    prelude::{LocalTrack, LocalTrackPublication, Room, RoomEvent, RoomOptions},
+    prelude::{
+        LocalTrack, LocalTrackPublication, RemoteTrack, RemoteTrackPublication, Room, RoomEvent,
+        RoomOptions, TrackKind,
+    },
 };
 use rand::{rngs::OsRng, RngCore};
 use tokio::{
-    sync::{mpsc::UnboundedReceiver, oneshot},
+    sync::{mpsc, mpsc::UnboundedReceiver, oneshot},
     task::JoinHandle,
+    time::timeout,
 };
 use url::{Host, Url};
 use zeroize::Zeroizing;
@@ -50,12 +62,20 @@ const LIVEKIT_RATCHET_WINDOW_SIZE: i32 = 16;
 const LIVEKIT_RATCHET_SALT: &[u8] = b"FilamentLiveKitMediaV1";
 /// Maximum simultaneously attached encrypted RTP senders and receivers.
 pub const MAX_LIVEKIT_MEDIA_TRACKS: usize = 256;
+/// Maximum remote participants inspected by one native media room.
+pub const MAX_LIVEKIT_MEDIA_PARTICIPANTS: usize = 200;
 /// Maximum encoded bytes in a LiveKit track SID.
 pub const MAX_LIVEKIT_MEDIA_TRACK_ID_BYTES: usize = 128;
 /// Maximum encoded bytes in a native LiveKit signaling URL.
 pub const MAX_LIVEKIT_MEDIA_URL_BYTES: usize = 256;
 /// Maximum encoded bytes in a short-lived LiveKit JWT.
 pub const MAX_LIVEKIT_MEDIA_ACCESS_TOKEN_BYTES: usize = 8 * 1024;
+/// Maximum time allowed for an explicit remote-track subscription.
+pub const LIVEKIT_MEDIA_SUBSCRIPTION_TIMEOUT_SECS: u64 = 10;
+
+const LIVEKIT_MEDIA_COMMAND_QUEUE_CAPACITY: usize = 16;
+const LIVEKIT_AUDIO_SAMPLE_RATE: i32 = 48_000;
+const LIVEKIT_AUDIO_CHANNELS: i32 = 2;
 
 const ROOM_HEALTHY: u8 = 0;
 const ROOM_CLOSED: u8 = 1;
@@ -86,6 +106,156 @@ impl TryFrom<String> for LiveKitMediaTrackId {
             return Err(MediaError::InvalidTrackId);
         }
         Ok(Self(value))
+    }
+}
+
+/// Native media kind for a remote encrypted LiveKit publication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveKitMediaTrackKind {
+    /// Decoded audio remains inside the native host.
+    Audio,
+    /// Decoded video remains inside the native host.
+    Video,
+}
+
+impl From<TrackKind> for LiveKitMediaTrackKind {
+    fn from(value: TrackKind) -> Self {
+        match value {
+            TrackKind::Audio => Self::Audio,
+            TrackKind::Video => Self::Video,
+        }
+    }
+}
+
+/// Public, secret-free description of one GCM-protected remote publication.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveKitRemoteTrackInfo {
+    participant: LiveKitIdentity,
+    track_id: LiveKitMediaTrackId,
+    kind: LiveKitMediaTrackKind,
+}
+
+impl LiveKitRemoteTrackInfo {
+    /// Authenticated LiveKit identity that published this track.
+    #[must_use]
+    pub const fn participant(&self) -> &LiveKitIdentity {
+        &self.participant
+    }
+
+    /// Validated LiveKit track SID.
+    #[must_use]
+    pub const fn track_id(&self) -> &LiveKitMediaTrackId {
+        &self.track_id
+    }
+
+    /// Native media kind.
+    #[must_use]
+    pub const fn kind(&self) -> LiveKitMediaTrackKind {
+        self.kind
+    }
+}
+
+struct LiveKitRemoteStreamGuard {
+    info: LiveKitRemoteTrackInfo,
+    publication: RemoteTrackPublication,
+    health: Arc<AtomicU8>,
+}
+
+impl Drop for LiveKitRemoteStreamGuard {
+    fn drop(&mut self) {
+        self.publication.set_subscribed(false);
+    }
+}
+
+/// Bounded decoded audio stream released only after native GCM verification.
+pub struct LiveKitRemoteAudioStream {
+    guard: LiveKitRemoteStreamGuard,
+    stream: NativeAudioStream,
+}
+
+impl LiveKitRemoteAudioStream {
+    /// Secret-free remote-track metadata.
+    #[must_use]
+    pub const fn info(&self) -> &LiveKitRemoteTrackInfo {
+        &self.guard.info
+    }
+}
+
+impl Stream for LiveKitRemoteAudioStream {
+    type Item = AudioFrame<'static>;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.guard.health.load(Ordering::Acquire) != ROOM_HEALTHY {
+            self.stream.close();
+            return Poll::Ready(None);
+        }
+        Pin::new(&mut self.stream).poll_next(context)
+    }
+}
+
+impl fmt::Debug for LiveKitRemoteAudioStream {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveKitRemoteAudioStream")
+            .field("info", &self.guard.info)
+            .field("decoded_frames", &"<native-only>")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Bounded decoded video stream released only after native GCM verification.
+pub struct LiveKitRemoteVideoStream {
+    guard: LiveKitRemoteStreamGuard,
+    stream: NativeVideoStream,
+}
+
+impl LiveKitRemoteVideoStream {
+    /// Secret-free remote-track metadata.
+    #[must_use]
+    pub const fn info(&self) -> &LiveKitRemoteTrackInfo {
+        &self.guard.info
+    }
+}
+
+impl Stream for LiveKitRemoteVideoStream {
+    type Item = BoxVideoFrame;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.guard.health.load(Ordering::Acquire) != ROOM_HEALTHY {
+            self.stream.close();
+            return Poll::Ready(None);
+        }
+        Pin::new(&mut self.stream).poll_next(context)
+    }
+}
+
+impl fmt::Debug for LiveKitRemoteVideoStream {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveKitRemoteVideoStream")
+            .field("info", &self.guard.info)
+            .field("decoded_frames", &"<native-only>")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Native decoded media handle that never crosses the webview IPC boundary.
+#[derive(Debug)]
+pub enum LiveKitRemoteMediaStream {
+    /// Bounded audio frames from a verified GCM receiver.
+    Audio(LiveKitRemoteAudioStream),
+    /// Bounded video frames from a verified GCM receiver.
+    Video(LiveKitRemoteVideoStream),
+}
+
+impl LiveKitRemoteMediaStream {
+    /// Secret-free remote-track metadata.
+    #[must_use]
+    pub const fn info(&self) -> &LiveKitRemoteTrackInfo {
+        match self {
+            Self::Audio(stream) => stream.info(),
+            Self::Video(stream) => stream.info(),
+        }
     }
 }
 
@@ -360,8 +530,31 @@ pub struct LiveKitMediaRoom {
     participant: LiveKitIdentity,
     current_key_index: Arc<AtomicI32>,
     health: Arc<AtomicU8>,
+    command_tx: mpsc::Sender<LiveKitMediaRoomCommand>,
     guard_shutdown: Option<oneshot::Sender<()>>,
     guard: Option<JoinHandle<()>>,
+}
+
+enum LiveKitMediaRoomCommand {
+    ListRemoteTracks {
+        response: oneshot::Sender<Result<Vec<LiveKitRemoteTrackInfo>, MediaError>>,
+    },
+    Subscribe {
+        participant: LiveKitIdentity,
+        track_id: LiveKitMediaTrackId,
+        response: oneshot::Sender<Result<LiveKitRemoteMediaStream, MediaError>>,
+    },
+    CancelSubscription {
+        participant: LiveKitIdentity,
+        track_id: LiveKitMediaTrackId,
+    },
+}
+
+struct PendingRemoteSubscription {
+    participant: LiveKitIdentity,
+    track_id: LiveKitMediaTrackId,
+    publication: RemoteTrackPublication,
+    response: oneshot::Sender<Result<LiveKitRemoteMediaStream, MediaError>>,
 }
 
 impl LiveKitMediaRoom {
@@ -410,10 +603,12 @@ impl LiveKitMediaRoom {
 
         let current_key_index = Arc::new(AtomicI32::new(keyring.key_index()));
         let health = Arc::new(AtomicU8::new(ROOM_HEALTHY));
+        let (command_tx, commands) = mpsc::channel(LIVEKIT_MEDIA_COMMAND_QUEUE_CAPACITY);
         let (guard_shutdown, shutdown) = oneshot::channel();
         let guard = tokio::spawn(guard_room_events(
             room.clone(),
             events,
+            commands,
             current_key_index.clone(),
             health.clone(),
             shutdown,
@@ -426,6 +621,7 @@ impl LiveKitMediaRoom {
             participant,
             current_key_index,
             health,
+            command_tx,
             guard_shutdown: Some(guard_shutdown),
             guard: Some(guard),
         })
@@ -453,6 +649,72 @@ impl LiveKitMediaRoom {
     #[must_use]
     pub const fn participant(&self) -> &LiveKitIdentity {
         &self.participant
+    }
+
+    /// List bounded, GCM-protected remote publications without exposing SDK
+    /// room or publication handles.
+    ///
+    /// # Errors
+    /// Returns a typed error if the room is unhealthy or LiveKit reports an
+    /// invalid participant, track identifier, plaintext publication, or count
+    /// above the hard per-call cap.
+    pub async fn remote_tracks(&self) -> Result<Vec<LiveKitRemoteTrackInfo>, MediaError> {
+        self.ensure_healthy()?;
+        let (response, result) = oneshot::channel();
+        self.command_tx
+            .try_send(LiveKitMediaRoomCommand::ListRemoteTracks { response })
+            .map_err(|_| MediaError::RoomUnavailable)?;
+        timeout(
+            Duration::from_secs(LIVEKIT_MEDIA_SUBSCRIPTION_TIMEOUT_SECS),
+            result,
+        )
+        .await
+        .map_err(|_| MediaError::SubscriptionTimedOut)?
+        .map_err(|_| MediaError::RoomUnavailable)?
+    }
+
+    /// Explicitly subscribe to one remote publication and return a bounded
+    /// decoded native stream only after its SDK-owned GCM cryptor is enabled
+    /// at the current accepted MLS epoch.
+    ///
+    /// Automatic subscription stays disabled. The room guard permits one
+    /// pending subscription at a time, rejects unsolicited subscriptions, and
+    /// cancels a request that exceeds the hard deadline. Dropping the returned
+    /// stream unsubscribes the publication.
+    ///
+    /// # Errors
+    /// Returns a typed error if the target is missing, another subscription is
+    /// pending, the room becomes unhealthy, or cryptor verification times out.
+    pub async fn subscribe_remote_track(
+        &self,
+        participant: LiveKitIdentity,
+        track_id: LiveKitMediaTrackId,
+    ) -> Result<LiveKitRemoteMediaStream, MediaError> {
+        self.ensure_healthy()?;
+        let (response, result) = oneshot::channel();
+        self.command_tx
+            .try_send(LiveKitMediaRoomCommand::Subscribe {
+                participant: participant.clone(),
+                track_id: track_id.clone(),
+                response,
+            })
+            .map_err(|_| MediaError::RoomUnavailable)?;
+        if let Ok(result) = timeout(
+            Duration::from_secs(LIVEKIT_MEDIA_SUBSCRIPTION_TIMEOUT_SECS),
+            result,
+        )
+        .await
+        {
+            result.map_err(|_| MediaError::RoomUnavailable)?
+        } else {
+            let _ = self
+                .command_tx
+                .try_send(LiveKitMediaRoomCommand::CancelSubscription {
+                    participant,
+                    track_id,
+                });
+            Err(MediaError::SubscriptionTimedOut)
+        }
     }
 
     /// Publish a native track only after its SDK-owned frame cryptor exists,
@@ -572,35 +834,336 @@ impl Drop for LiveKitMediaRoom {
 async fn guard_room_events(
     room: Arc<Room>,
     mut events: UnboundedReceiver<RoomEvent>,
+    mut commands: mpsc::Receiver<LiveKitMediaRoomCommand>,
     current_key_index: Arc<AtomicI32>,
     health: Arc<AtomicU8>,
     mut shutdown: oneshot::Receiver<()>,
 ) {
+    let mut pending = None;
     loop {
         tokio::select! {
             _ = &mut shutdown => {
+                reject_pending_subscription(&mut pending, MediaError::RoomUnavailable);
                 health.store(ROOM_CLOSED, Ordering::Release);
                 let _ = room.close().await;
                 return;
             }
+            command = commands.recv() => {
+                let Some(command) = command else {
+                    reject_pending_subscription(&mut pending, MediaError::RoomUnavailable);
+                    health.store(ROOM_CLOSED, Ordering::Release);
+                    let _ = room.close().await;
+                    return;
+                };
+                if !handle_room_command(&room, command, &mut pending) {
+                    reject_pending_subscription(&mut pending, MediaError::UnsafeTrack);
+                    health.store(ROOM_REJECTED, Ordering::Release);
+                    let _ = room.close().await;
+                    return;
+                }
+            }
             event = events.recv() => {
                 let Some(event) = event else {
+                    reject_pending_subscription(&mut pending, MediaError::RoomUnavailable);
                     health.store(ROOM_CLOSED, Ordering::Release);
                     return;
                 };
                 let key_index = current_key_index.load(Ordering::Acquire);
                 if !validate_room_event(&room, &event, key_index) {
+                    reject_pending_subscription(&mut pending, MediaError::UnsafeTrack);
+                    health.store(ROOM_REJECTED, Ordering::Release);
+                    let _ = room.close().await;
+                    return;
+                }
+                if !handle_subscription_event(&event, &health, &mut pending) {
+                    reject_pending_subscription(&mut pending, MediaError::UnsafeTrack);
                     health.store(ROOM_REJECTED, Ordering::Release);
                     let _ = room.close().await;
                     return;
                 }
                 if matches!(event, RoomEvent::Disconnected { .. }) {
+                    reject_pending_subscription(&mut pending, MediaError::RoomUnavailable);
                     health.store(ROOM_CLOSED, Ordering::Release);
                     return;
                 }
             }
         }
     }
+}
+
+fn handle_room_command(
+    room: &Room,
+    command: LiveKitMediaRoomCommand,
+    pending: &mut Option<PendingRemoteSubscription>,
+) -> bool {
+    match command {
+        LiveKitMediaRoomCommand::ListRemoteTracks { response } => {
+            let result = list_remote_tracks(room);
+            let safe = !matches!(
+                result,
+                Err(MediaError::UnsafeTrack
+                    | MediaError::InvalidTrackId
+                    | MediaError::TrackLimitExceeded)
+            );
+            let _ = response.send(result);
+            safe
+        }
+        LiveKitMediaRoomCommand::Subscribe {
+            participant,
+            track_id,
+            response,
+        } => {
+            if pending.is_some() {
+                let _ = response.send(Err(MediaError::SubscriptionInProgress));
+                return true;
+            }
+            let publication = match find_remote_publication(room, &participant, &track_id) {
+                Ok(publication) => publication,
+                Err(error) => {
+                    let safe = error == MediaError::RemoteTrackUnavailable;
+                    let _ = response.send(Err(error));
+                    return safe;
+                }
+            };
+            if publication.is_desired() || publication.is_subscribed() {
+                let _ = response.send(Err(MediaError::DuplicateTrack));
+                return true;
+            }
+            *pending = Some(PendingRemoteSubscription {
+                participant,
+                track_id,
+                publication: publication.clone(),
+                response,
+            });
+            publication.set_subscribed(true);
+            true
+        }
+        LiveKitMediaRoomCommand::CancelSubscription {
+            participant,
+            track_id,
+        } => {
+            if pending.as_ref().is_some_and(|request| {
+                request.participant == participant && request.track_id == track_id
+            }) {
+                reject_pending_subscription(pending, MediaError::SubscriptionTimedOut);
+            }
+            true
+        }
+    }
+}
+
+fn handle_subscription_event(
+    event: &RoomEvent,
+    health: &Arc<AtomicU8>,
+    pending: &mut Option<PendingRemoteSubscription>,
+) -> bool {
+    match event {
+        RoomEvent::TrackSubscribed {
+            track,
+            publication,
+            participant,
+        } => {
+            let Some(request) = pending.take() else {
+                return false;
+            };
+            if !remote_target_matches(
+                &request.participant,
+                &request.track_id,
+                participant.identity().as_str(),
+                publication.sid().as_str(),
+            ) {
+                *pending = Some(request);
+                return false;
+            }
+            let stream = make_remote_stream(track, publication, participant, health.clone());
+            match stream {
+                Ok(stream) => {
+                    if request.response.send(Ok(stream)).is_err() {
+                        publication.set_subscribed(false);
+                    }
+                    true
+                }
+                Err(error) => {
+                    let _ = request.response.send(Err(error));
+                    false
+                }
+            }
+        }
+        RoomEvent::TrackSubscriptionFailed {
+            participant,
+            track_sid,
+            ..
+        } => {
+            if pending.as_ref().is_some_and(|request| {
+                remote_target_matches(
+                    &request.participant,
+                    &request.track_id,
+                    participant.identity().as_str(),
+                    track_sid.as_str(),
+                )
+            }) {
+                reject_pending_subscription(pending, MediaError::RemoteTrackUnavailable);
+            }
+            true
+        }
+        RoomEvent::TrackUnpublished {
+            publication,
+            participant,
+        } => {
+            if pending.as_ref().is_some_and(|request| {
+                remote_target_matches(
+                    &request.participant,
+                    &request.track_id,
+                    participant.identity().as_str(),
+                    publication.sid().as_str(),
+                )
+            }) {
+                reject_pending_subscription(pending, MediaError::RemoteTrackUnavailable);
+            }
+            true
+        }
+        RoomEvent::ParticipantDisconnected(participant) => {
+            if pending.as_ref().is_some_and(|request| {
+                participant.identity().as_str() == request.participant.as_str()
+            }) {
+                reject_pending_subscription(pending, MediaError::RemoteTrackUnavailable);
+            }
+            true
+        }
+        _ => true,
+    }
+}
+
+fn remote_target_matches(
+    expected_participant: &LiveKitIdentity,
+    expected_track_id: &LiveKitMediaTrackId,
+    actual_participant: &str,
+    actual_track_id: &str,
+) -> bool {
+    expected_participant.as_str() == actual_participant
+        && expected_track_id.as_str() == actual_track_id
+}
+
+fn reject_pending_subscription(pending: &mut Option<PendingRemoteSubscription>, error: MediaError) {
+    if let Some(request) = pending.take() {
+        request.publication.set_subscribed(false);
+        let _ = request.response.send(Err(error));
+    }
+}
+
+fn list_remote_tracks(room: &Room) -> Result<Vec<LiveKitRemoteTrackInfo>, MediaError> {
+    let mut tracks = Vec::new();
+    let participants = room.remote_participants();
+    if !remote_room_counts_within_limits(participants.len(), 0) {
+        return Err(MediaError::TrackLimitExceeded);
+    }
+    for remote in participants.into_values() {
+        let participant = LiveKitIdentity::try_from(remote.identity().as_str().to_owned())
+            .map_err(|_| MediaError::UnsafeTrack)?;
+        for publication in remote.track_publications().into_values() {
+            if tracks.len() >= MAX_LIVEKIT_MEDIA_TRACKS {
+                return Err(MediaError::TrackLimitExceeded);
+            }
+            if publication.encryption_type() != EncryptionType::Gcm {
+                return Err(MediaError::UnsafeTrack);
+            }
+            tracks.push(LiveKitRemoteTrackInfo {
+                participant: participant.clone(),
+                track_id: LiveKitMediaTrackId::try_from(publication.sid().as_str().to_owned())?,
+                kind: publication.kind().into(),
+            });
+        }
+    }
+    tracks.sort_unstable_by(|left, right| {
+        left.participant
+            .as_str()
+            .cmp(right.participant.as_str())
+            .then_with(|| left.track_id.as_str().cmp(right.track_id.as_str()))
+    });
+    Ok(tracks)
+}
+
+fn participant_publications(
+    room: &Room,
+    participant: &LiveKitIdentity,
+) -> Vec<RemoteTrackPublication> {
+    room.remote_participants()
+        .into_values()
+        .find(|remote| remote.identity().as_str() == participant.as_str())
+        .map_or_else(Vec::new, |remote| {
+            remote.track_publications().into_values().collect()
+        })
+}
+
+fn find_remote_publication(
+    room: &Room,
+    participant: &LiveKitIdentity,
+    track_id: &LiveKitMediaTrackId,
+) -> Result<RemoteTrackPublication, MediaError> {
+    let _ = list_remote_tracks(room)?;
+    let publications = participant_publications(room, participant);
+    let publication = publications
+        .into_iter()
+        .find(|publication| publication.sid().as_str() == track_id.as_str())
+        .ok_or(MediaError::RemoteTrackUnavailable)?;
+    if publication.encryption_type() != EncryptionType::Gcm {
+        return Err(MediaError::UnsafeTrack);
+    }
+    Ok(publication)
+}
+
+fn make_remote_stream(
+    track: &RemoteTrack,
+    publication: &RemoteTrackPublication,
+    participant: &livekit::prelude::RemoteParticipant,
+    health: Arc<AtomicU8>,
+) -> Result<LiveKitRemoteMediaStream, MediaError> {
+    if !remote_track_shape_matches(
+        publication.kind().into(),
+        publication.sid().as_str(),
+        track.kind().into(),
+        track.sid().as_str(),
+    ) {
+        return Err(MediaError::UnsafeTrack);
+    }
+    let info = LiveKitRemoteTrackInfo {
+        participant: LiveKitIdentity::try_from(participant.identity().as_str().to_owned())
+            .map_err(|_| MediaError::UnsafeTrack)?,
+        track_id: LiveKitMediaTrackId::try_from(publication.sid().as_str().to_owned())?,
+        kind: publication.kind().into(),
+    };
+    let guard = LiveKitRemoteStreamGuard {
+        info,
+        publication: publication.clone(),
+        health,
+    };
+    match track {
+        RemoteTrack::Audio(track) => {
+            Ok(LiveKitRemoteMediaStream::Audio(LiveKitRemoteAudioStream {
+                guard,
+                stream: NativeAudioStream::new(
+                    track.rtc_track(),
+                    LIVEKIT_AUDIO_SAMPLE_RATE,
+                    LIVEKIT_AUDIO_CHANNELS,
+                ),
+            }))
+        }
+        RemoteTrack::Video(track) => {
+            Ok(LiveKitRemoteMediaStream::Video(LiveKitRemoteVideoStream {
+                guard,
+                stream: NativeVideoStream::new(track.rtc_track()),
+            }))
+        }
+    }
+}
+
+fn remote_track_shape_matches(
+    publication_kind: LiveKitMediaTrackKind,
+    publication_track_id: &str,
+    receiver_kind: LiveKitMediaTrackKind,
+    receiver_track_id: &str,
+) -> bool {
+    publication_kind == receiver_kind && publication_track_id == receiver_track_id
 }
 
 fn validate_room_event(room: &Room, event: &RoomEvent, key_index: i32) -> bool {
@@ -614,14 +1177,24 @@ fn validate_room_event(room: &Room, event: &RoomEvent, key_index: i32) -> bool {
     match event {
         RoomEvent::Connected {
             participants_with_tracks,
-        } => participants_with_tracks.iter().all(|(_, publications)| {
-            publications.len() <= MAX_LIVEKIT_MEDIA_TRACKS
-                && publications
-                    .iter()
-                    .all(|publication| publication.encryption_type() == EncryptionType::Gcm)
-        }),
+        } => {
+            participants_with_tracks
+                .iter()
+                .try_fold(0_usize, |count, (_, publications)| {
+                    count.checked_add(publications.len())
+                })
+                .is_some_and(|track_count| {
+                    remote_room_counts_within_limits(participants_with_tracks.len(), track_count)
+                })
+                && participants_with_tracks.iter().all(|(_, publications)| {
+                    publications
+                        .iter()
+                        .all(|publication| publication.encryption_type() == EncryptionType::Gcm)
+                })
+                && list_remote_tracks(room).is_ok()
+        }
         RoomEvent::TrackPublished { publication, .. } => {
-            publication.encryption_type() == EncryptionType::Gcm
+            publication.encryption_type() == EncryptionType::Gcm && list_remote_tracks(room).is_ok()
         }
         RoomEvent::LocalTrackPublished {
             publication,
@@ -656,6 +1229,10 @@ fn validate_room_event(room: &Room, event: &RoomEvent, key_index: i32) -> bool {
         ),
         _ => true,
     }
+}
+
+const fn remote_room_counts_within_limits(participant_count: usize, track_count: usize) -> bool {
+    participant_count <= MAX_LIVEKIT_MEDIA_PARTICIPANTS && track_count <= MAX_LIVEKIT_MEDIA_TRACKS
 }
 
 fn configure_published_track(
@@ -975,6 +1552,76 @@ mod tests {
             MediaError::InvalidTrackId
         );
         assert_eq!(track_id("TR_audio-01").as_str(), "TR_audio-01");
+    }
+
+    #[test]
+    fn remote_track_metadata_and_subscription_targets_are_typed_and_exact() {
+        let expected_participant = participant("user_device_remote");
+        let expected_track = track_id("TR_remote_audio");
+        let info = LiveKitRemoteTrackInfo {
+            participant: expected_participant.clone(),
+            track_id: expected_track.clone(),
+            kind: LiveKitMediaTrackKind::Audio,
+        };
+
+        assert_eq!(info.participant(), &expected_participant);
+        assert_eq!(info.track_id(), &expected_track);
+        assert_eq!(info.kind(), LiveKitMediaTrackKind::Audio);
+        assert!(remote_target_matches(
+            &expected_participant,
+            &expected_track,
+            "user_device_remote",
+            "TR_remote_audio"
+        ));
+        assert!(!remote_target_matches(
+            &expected_participant,
+            &expected_track,
+            "user_device_attacker",
+            "TR_remote_audio"
+        ));
+        assert!(!remote_target_matches(
+            &expected_participant,
+            &expected_track,
+            "user_device_remote",
+            "TR_other_audio"
+        ));
+        assert!(remote_track_shape_matches(
+            LiveKitMediaTrackKind::Audio,
+            "TR_remote_audio",
+            LiveKitMediaTrackKind::Audio,
+            "TR_remote_audio"
+        ));
+        assert!(!remote_track_shape_matches(
+            LiveKitMediaTrackKind::Audio,
+            "TR_remote_audio",
+            LiveKitMediaTrackKind::Video,
+            "TR_remote_audio"
+        ));
+        assert!(!remote_track_shape_matches(
+            LiveKitMediaTrackKind::Audio,
+            "TR_remote_audio",
+            LiveKitMediaTrackKind::Audio,
+            "TR_substituted"
+        ));
+    }
+
+    #[test]
+    fn remote_room_participant_and_track_counts_are_hard_capped() {
+        let participant_limit = std::hint::black_box(MAX_LIVEKIT_MEDIA_PARTICIPANTS);
+        let track_limit = std::hint::black_box(MAX_LIVEKIT_MEDIA_TRACKS);
+
+        assert!(remote_room_counts_within_limits(
+            participant_limit,
+            track_limit
+        ));
+        assert!(!remote_room_counts_within_limits(
+            participant_limit + 1,
+            track_limit
+        ));
+        assert!(!remote_room_counts_within_limits(
+            participant_limit,
+            track_limit + 1
+        ));
     }
 
     #[test]
