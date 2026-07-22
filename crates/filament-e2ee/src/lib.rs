@@ -40,6 +40,7 @@ pub mod keypackage;
 pub mod keystore;
 pub mod local_search;
 pub mod mailbox;
+pub mod media;
 pub mod pairing;
 pub mod persistence;
 #[cfg(feature = "sqlcipher-store")]
@@ -84,7 +85,7 @@ pub use durable_mailbox::{
 };
 pub use error::{
     AttachmentError, BackupError, ConversationError, E2eeError, HistorySyncError, IdentityError,
-    KeyPackageError, KeyStoreError, LocalSearchError, PairingError,
+    KeyPackageError, KeyStoreError, LocalSearchError, MediaError, PairingError,
 };
 pub use filament_protocol::E2eeRetentionSeconds;
 pub use history_sync::{
@@ -114,6 +115,11 @@ pub use local_search::{
 pub use mailbox::{
     process_message_mailbox, AuthenticatedMailboxMessage, MailboxDecryptionBatch,
     RejectedMailboxMessage,
+};
+pub use media::{
+    MediaEpochSecret, MediaRekeyAction, MediaRekeyInterval, PeriodicMediaRekey,
+    DEFAULT_MEDIA_REKEY_INTERVAL_SECS, MAX_MEDIA_REKEY_INTERVAL_SECS,
+    MIN_MEDIA_REKEY_INTERVAL_SECS,
 };
 pub use pairing::{
     create_pairing_transfer, PairedRootIdentity, PairingReceiver, PairingTransfer,

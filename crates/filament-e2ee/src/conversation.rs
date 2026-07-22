@@ -15,11 +15,15 @@ use filament_protocol::GroupInfoResponse;
 use openmls::prelude::group_info::GroupInfo;
 use openmls::prelude::*;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
+use zeroize::Zeroizing;
 
 use crate::{
     error::ConversationError,
     identity::verify_device_certificate,
     keypackage::{MlsDevice, DEVICE_CREDENTIAL_DOMAIN},
+    media::{
+        exporter_context, MediaEpochSecret, MEDIA_EXPORTER_LABEL, MEDIA_EXPORTER_SECRET_BYTES,
+    },
 };
 
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519;
@@ -1860,6 +1864,53 @@ impl MlsConversation {
         self.group.epoch().as_u64()
     }
 
+    /// Export native SFrame key-schedule input from the authenticated MLS epoch.
+    ///
+    /// The returned handle keeps raw key material inside the Rust core. The
+    /// public API exposes only its group/epoch binding; a reviewed native
+    /// SFrame adapter consumes the secret internally.
+    ///
+    /// A pending commit intentionally leaves the current media secret valid.
+    /// The exporter changes only after the normal acceptance-gated merge.
+    ///
+    /// # Errors
+    /// Rejects a different local device, inactive membership, a non-baseline
+    /// ciphersuite, or an OpenMLS exporter failure.
+    pub fn export_media_epoch_secret(
+        &self,
+        device: &MlsDevice,
+    ) -> Result<MediaEpochSecret, ConversationError> {
+        self.ensure_media_access(device)?;
+        let epoch = self.epoch();
+        let context = exporter_context(self.group_id, epoch);
+        let exported = Zeroizing::new(
+            self.group
+                .export_secret(
+                    device.provider().crypto(),
+                    MEDIA_EXPORTER_LABEL,
+                    &context,
+                    MEDIA_EXPORTER_SECRET_BYTES,
+                )
+                .map_err(|_| ConversationError::CryptoError)?,
+        );
+        let secret = exported
+            .as_slice()
+            .try_into()
+            .map_err(|_| ConversationError::CryptoError)?;
+        Ok(MediaEpochSecret::new(self.group_id, epoch, secret))
+    }
+
+    pub(crate) fn ensure_media_access(&self, device: &MlsDevice) -> Result<(), ConversationError> {
+        self.ensure_device(device)?;
+        if !self.active {
+            return Err(ConversationError::NotActive);
+        }
+        if self.group.ciphersuite() != CIPHERSUITE {
+            return Err(ConversationError::MetadataMismatch);
+        }
+        Ok(())
+    }
+
     /// Locally pinned group identifier.
     #[must_use]
     pub const fn group_id(&self) -> FilamentGroupId {
@@ -2972,7 +3023,10 @@ fn decode_application_payload(bytes: &[u8]) -> Result<(u64, Vec<u8>), Conversati
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{generate_key_package_batch, RootIdentityKey};
+    use crate::{
+        generate_key_package_batch, MediaRekeyAction, MediaRekeyInterval, PeriodicMediaRekey,
+        RootIdentityKey,
+    };
 
     struct Fixture {
         alice: MlsDevice,
@@ -3632,6 +3686,108 @@ mod tests {
             outcome.ready_messages[0].sender_device_id,
             alice.device_id()
         );
+    }
+
+    #[test]
+    fn media_exporter_matches_peers_and_rotates_only_after_commit_acceptance() {
+        let (alice, mut alice_group, bob, mut bob_group) = joined_conversations();
+        let alice_epoch_one = alice_group.export_media_epoch_secret(&alice).unwrap();
+        let bob_epoch_one = bob_group.export_media_epoch_secret(&bob).unwrap();
+        assert_eq!(alice_epoch_one.group_id(), bob_epoch_one.group_id());
+        assert_eq!(alice_epoch_one.epoch(), 1);
+        assert_eq!(alice_epoch_one.secret(), bob_epoch_one.secret());
+        assert_eq!(
+            alice_group.export_media_epoch_secret(&bob).unwrap_err(),
+            ConversationError::UnexpectedMembership
+        );
+        assert!(format!("{alice_epoch_one:?}").contains("<MLS exporter secret omitted>"));
+
+        let update = alice_group.create_self_update(&alice).unwrap();
+        let while_pending = alice_group.export_media_epoch_secret(&alice).unwrap();
+        assert_eq!(while_pending.epoch(), 1);
+        assert_eq!(while_pending.secret(), alice_epoch_one.secret());
+
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&update))
+            .unwrap();
+        let alice_epoch_two = alice_group.export_media_epoch_secret(&alice).unwrap();
+        let bob_epoch_two = bob_group.export_media_epoch_secret(&bob).unwrap();
+        assert_eq!(alice_epoch_two.epoch(), 2);
+        assert_eq!(alice_epoch_two.secret(), bob_epoch_two.secret());
+        assert_ne!(alice_epoch_one.secret(), alice_epoch_two.secret());
+    }
+
+    #[test]
+    fn removed_device_cannot_export_post_removal_media_secret() {
+        let ThreeDeviceFixture {
+            alice,
+            mut alice_group,
+            bob,
+            mut bob_group,
+            bob_second,
+            mut bob_second_group,
+        } = three_device_fixture();
+        let before = alice_group.export_media_epoch_secret(&alice).unwrap();
+        assert_eq!(
+            before.secret(),
+            bob_group.export_media_epoch_secret(&bob).unwrap().secret()
+        );
+
+        let remove = alice_group
+            .create_remove_device(&alice, bob.device_id())
+            .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_second_group
+            .process_incoming_commit(&bob_second, &encrypted_commit(&remove))
+            .unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&remove))
+            .unwrap();
+
+        assert_eq!(
+            bob_group.export_media_epoch_secret(&bob).unwrap_err(),
+            ConversationError::NotActive
+        );
+        let alice_after = alice_group.export_media_epoch_secret(&alice).unwrap();
+        let bob_second_after = bob_second_group
+            .export_media_epoch_secret(&bob_second)
+            .unwrap();
+        assert_eq!(alice_after.secret(), bob_second_after.secret());
+        assert_ne!(before.secret(), alice_after.secret());
+    }
+
+    #[test]
+    fn periodic_media_rekey_uses_acceptance_gated_self_update() {
+        let (alice, mut alice_group, bob, mut bob_group) = joined_conversations();
+        let interval = MediaRekeyInterval::try_from(60).unwrap();
+        let mut scheduler = PeriodicMediaRekey::new(&alice_group, &alice, interval, 1_000).unwrap();
+        assert_eq!(scheduler.next_rekey_at_unix(), 1_060);
+        assert!(matches!(
+            scheduler.poll(&mut alice_group, &alice, 1_059).unwrap(),
+            MediaRekeyAction::NotDue
+        ));
+        let MediaRekeyAction::Commit(update) =
+            scheduler.poll(&mut alice_group, &alice, 1_060).unwrap()
+        else {
+            panic!("deadline must stage a self-update");
+        };
+        assert_eq!(alice_group.epoch(), 1);
+        assert_eq!(update.epoch, 2);
+        assert_eq!(
+            scheduler.poll(&mut alice_group, &alice, 1_061).unwrap_err(),
+            crate::MediaError::Conversation(ConversationError::PendingCommit)
+        );
+
+        alice_group.accept_pending_commit(&alice).unwrap();
+        bob_group
+            .process_incoming_commit(&bob, &encrypted_commit(&update))
+            .unwrap();
+        assert!(matches!(
+            scheduler.poll(&mut alice_group, &alice, 1_061).unwrap(),
+            MediaRekeyAction::EpochAdvanced { epoch: 2 }
+        ));
+        assert_eq!(scheduler.next_rekey_at_unix(), 1_121);
     }
 
     #[test]

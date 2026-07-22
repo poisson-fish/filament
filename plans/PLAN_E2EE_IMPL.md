@@ -9,8 +9,8 @@
 
 ## Implementation Status — 2026-07-22
 
-The repository is currently implementing **Phase 3 native group-DM support**,
-but E2EE messaging is not yet a production client path. Plaintext
+The repository is currently implementing **Phase 5 voice/video E2EE**, but
+E2EE messaging and media are not yet production client paths. Plaintext
 conversations remain the only production message path.
 
 Completed and committed:
@@ -184,6 +184,16 @@ search now rebuilds a bounded Tantivy RAM index from authenticated SQLCipher
 history, materializes same-author edits/deletes, excludes expired records,
 accepts only bounded literal-token queries, and returns safe Markdown tokens
 without any server request or plaintext index file.
+Phase 5 has begun with the native MLS-to-media boundary. Clients derive a
+32-byte, domain-separated exporter secret bound to the exact authenticated
+group and epoch, retain it only in an opaque zeroizing Rust handle, and rotate
+only after acceptance-gated commit merge. Peer agreement, self-update rekey,
+and post-removal export denial are covered by native tests. A bounded periodic
+rekey scheduler stages ordinary MLS self-update commits at 60–3,600-second
+intervals (900 seconds by default) and resets after any authenticated epoch
+advance. No frame-encryption construction was invented: reviewed SFrame,
+LiveKit/native media integration, platform verification, and end-to-end frame
+tests remain required before media can be enabled.
 
 ---
 
@@ -766,6 +776,20 @@ persists plaintext index files, and never contacts the server.
 ### Goal
 
 Add E2EE for voice/video via SFrame keyed from MLS exporter secrets. The SFU (LiveKit) forwards opaque encrypted frames and cannot decrypt media.
+
+**Implemented increment (updated 2026-07-22):** the native MLS core now
+exports a 32-byte media key-schedule input under a Filament-specific label and
+a versioned group/epoch context. The value is zeroized on drop, redacted from
+debug output, and unavailable through its public API, leaving only group and
+epoch metadata visible outside the future in-crate SFrame adapter. Export is
+blocked for inactive/evicted devices; staged commits retain the old media epoch
+until Delivery Service acceptance, while accepted membership and self-update
+commits deterministically rotate peer-matching exporter secrets. A secret-free,
+bounded periodic scheduler stages the existing acceptance-gated MLS
+self-update path and fails closed on pending commits or timestamp overflow.
+This is key scheduling only: calls remain disabled until reviewed SFrame frame
+protection, native media/LiveKit wiring, and the platform verification matrix
+land.
 
 ### Deliverables
 

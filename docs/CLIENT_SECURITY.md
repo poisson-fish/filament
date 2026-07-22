@@ -126,6 +126,11 @@ Configuration sources:
   application events. Literal queries are limited to 256 UTF-8 bytes and 16
   analyzed terms; results are capped at 50 and expose only safe Markdown UI
   tokens. No E2EE query or hit is sent to the Filament server.
+- Media key scheduling is native-only. The MLS exporter secret is held in an
+  opaque, zeroizing Rust value and is never part of an IPC request or response.
+  Only group/epoch metadata may be surfaced to UI code. A reviewed native
+  SFrame adapter must consume the secret before encrypted calling is enabled;
+  the webview cannot request or copy raw media key material.
 - The key-isolation audit and negative-test inventory are recorded in
   `docs/E2EE_KEY_ISOLATION_AUDIT.md`.
 

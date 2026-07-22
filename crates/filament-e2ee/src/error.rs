@@ -197,6 +197,20 @@ pub enum AttachmentError {
     VerificationFailed,
 }
 
+/// Errors from MLS-bound media key scheduling.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum MediaError {
+    /// The periodic update interval falls outside the hard security bounds.
+    #[error("media rekey interval is invalid")]
+    InvalidRekeyInterval,
+    /// A rekey deadline cannot be represented safely.
+    #[error("media rekey deadline overflow")]
+    TimestampOverflow,
+    /// The authenticated MLS conversation could not export or advance state.
+    #[error(transparent)]
+    Conversation(ConversationError),
+}
+
 /// Errors from an MLS conversation lifecycle operation.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ConversationError {
@@ -277,6 +291,9 @@ pub enum E2eeError {
     /// Encrypted attachment error.
     #[error(transparent)]
     Attachment(#[from] AttachmentError),
+    /// MLS-bound media key scheduling error.
+    #[error(transparent)]
+    Media(#[from] MediaError),
     /// MLS conversation lifecycle error.
     #[error(transparent)]
     Conversation(#[from] ConversationError),

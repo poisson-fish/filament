@@ -319,6 +319,19 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
 - All LiveKit token issuance, publish-source, and subscribe policies above remain in force; SFrame layers content confidentiality on top.
 - The SFU forwards opaque encrypted frames and cannot decrypt media.
 - Media keys derive from the MLS group `exporter_secret`; media epoch equals MLS epoch; rekey on membership commits and periodic update commits.
+- The native MLS core exports 32 bytes with the domain-separated label
+  `filament media sframe v1` and a versioned context binding the exact group
+  identifier and authenticated epoch. Exported bytes live in an opaque,
+  zeroizing Rust handle whose public surface exposes only the group and epoch.
+- Locally staged commits do not rotate media early. The exporter changes only
+  after Delivery Service acceptance and authenticated commit merge. Evicted
+  devices cannot export the post-removal epoch.
+- Periodic media self-updates are acceptance-gated and bounded to intervals of
+  60–3,600 seconds (900 seconds by default). A membership or other
+  authenticated epoch advance resets that deadline.
+- This exporter boundary is not itself frame protection. Production media
+  remains disabled until a reviewed SFrame implementation consumes the handle;
+  Filament does not define a bespoke frame-encryption construction.
 - Insertable-streams support must be verified per webview target (WebView2, WKWebView, WebKitGTK) before media E2EE ships on that platform; where a webview lacks support, the required fallback is a native WebRTC media path in the host layer — never unencrypted media.
 
 ### Directory Audit (E2EE)
