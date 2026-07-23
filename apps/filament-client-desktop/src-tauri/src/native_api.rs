@@ -13,11 +13,13 @@ use filament_e2ee::{
 };
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
-    DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse, KeyPackageEntry,
-    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse,
-    RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
-    UploadKeyPackagesRequest, UploadKeyPackagesResponse, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE,
-    MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
+    AckE2eeProposalsRequest, AckE2eeProposalsResponse, DeviceListResponse,
+    E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxResponse, KeyPackageEntry,
+    PostCommitRequest, PostCommitResponse, PublishDeviceCertificateRequest,
+    PublishDeviceCertificateResponse, RootIdentityDirectoryResponse, RotateRootIdentityRequest,
+    RotateRootIdentityResponse, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
+    MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_SIZE,
+    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
     ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use reqwest::{
@@ -107,6 +109,27 @@ pub(crate) trait NativeEnrollmentApi: Send + Sync + 'static {
         group_id: GroupId,
         request: &AckE2eeCommitsRequest,
     ) -> Result<(), NativeApiError>;
+
+    fn proposal_mailbox(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        device_id: DeviceId,
+    ) -> Result<E2eeProposalMailboxResponse, NativeApiError>;
+
+    fn acknowledge_proposals(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &AckE2eeProposalsRequest,
+    ) -> Result<(), NativeApiError>;
+
+    fn post_commit(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &PostCommitRequest,
+    ) -> Result<PostCommitResponse, NativeApiError>;
 }
 
 pub(crate) struct ReqwestNativeEnrollmentApi {
@@ -353,6 +376,59 @@ impl NativeEnrollmentApi for ReqwestNativeEnrollmentApi {
             response.acknowledged_count,
             response.deleted_count,
             requested,
+        )
+    }
+
+    fn proposal_mailbox(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        device_id: DeviceId,
+    ) -> Result<E2eeProposalMailboxResponse, NativeApiError> {
+        self.get_url_with_limit(
+            access_token,
+            self.origin.endpoint_with_query(
+                &format!("/e2ee/groups/{group_id}/proposals"),
+                &[
+                    ("device_id", device_id.to_string()),
+                    ("limit", MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE.to_string()),
+                ],
+            )?,
+            MAX_NATIVE_MAILBOX_RESPONSE_BYTES,
+        )
+    }
+
+    fn acknowledge_proposals(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &AckE2eeProposalsRequest,
+    ) -> Result<(), NativeApiError> {
+        let requested = request.proposal_ids.len();
+        let response: AckE2eeProposalsResponse = self.send_json(
+            access_token,
+            reqwest::Method::POST,
+            &format!("/e2ee/groups/{group_id}/proposals/ack"),
+            request,
+        )?;
+        validate_acknowledgment_counts(
+            response.acknowledged_count,
+            response.deleted_count,
+            requested,
+        )
+    }
+
+    fn post_commit(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &PostCommitRequest,
+    ) -> Result<PostCommitResponse, NativeApiError> {
+        self.send_json(
+            access_token,
+            reqwest::Method::POST,
+            &format!("/e2ee/groups/{group_id}/commits"),
+            request,
         )
     }
 }

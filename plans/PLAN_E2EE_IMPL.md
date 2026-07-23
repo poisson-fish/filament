@@ -309,8 +309,13 @@ state with a proposal-acknowledgment outbox and exact member-authored commit
 request. Commit response loss is restart-safe through exact retries, accepted
 commits merge only after a matching server response, and a durable accepted
 marker closes the crash window between the merged checkpoint and outbox
-cleanup. Production REST transport, epoch-conflict winner rebase, and proposal
-mailbox scheduling in the packaged host remain fail closed.
+cleanup. The packaged host now reads bounded proposal mailboxes from its pinned
+HTTPS authority, submits exact durable commits before releasing proposal
+acknowledgments, and retries accepted commits idempotently after response loss
+or restart. Proposal work uses the same bounded rotating group selection and
+per-group iteration cap as the other mailboxes and precedes commit/message
+reads, while targeted devices retain authenticated proposals until the peer
+commit arrives. Epoch-conflict winner rebase remains fail closed.
 
 ---
 
