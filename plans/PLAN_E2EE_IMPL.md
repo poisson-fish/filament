@@ -294,6 +294,15 @@ clears it independently of remote teardown, encrypted-store initialization
 feeds only a strictly decoded public settings snapshot to the UI, and
 destructive root rotation requires the exact typed confirmation. No privileged
 command was added; encrypted conversation send/presentation remains disabled.
+The Delivery Service now persists a fixed SHA-256 receipt covering every
+commit request field and recognizes only exact field-equivalent retries
+of the accepted epoch. The receipt survives transient commit-mailbox deletion
+but expires through the same bounded TTL collector.
+Response-loss reconciliation can therefore return the original success
+without replaying membership, mailbox, or notification side effects, while
+altered same-epoch requests remain deterministic conflicts. This is the
+durability prerequisite for production proposal and outbound commit
+coordination.
 
 ---
 

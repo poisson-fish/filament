@@ -679,6 +679,14 @@ Atomically orders one opaque MLS commit for an authenticated conversation member
 - Commits must advance exactly one epoch. A row lock makes the first valid
   commit for an epoch the sole winner; competitors receive
   `409 { "error": "epoch_conflict" }` and must rebase client-side.
+- An exact retry of the accepted request returns the same successful epoch
+  without repeating membership, reconciliation, delivery, or notification
+  side effects. Every request field, including opaque Commit, Welcome, and
+  GroupInfo blobs, the target device, and routing delta, is covered by a fixed
+  SHA-256 receipt; any altered retry
+  remains an epoch conflict. The receipt survives transient commit-mailbox
+  deletion, expires at the same bounded TTL, and permits a native durable
+  commit outbox to reconcile a lost response safely.
 - Rebase fetches and authenticates the accepted commit before clearing the
   rejected local commit. The native core advances through the normal pinned
   membership checks and restages a still-safe self-update, one-device Add, or

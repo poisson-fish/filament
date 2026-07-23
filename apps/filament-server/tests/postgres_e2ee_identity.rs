@@ -647,16 +647,49 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
             .count(),
         1
     );
-    let (accepted_response, conflict_response) = if first_response.status() == StatusCode::OK {
-        (first_response, competing_response)
-    } else {
-        (competing_response, first_response)
-    };
+    let (accepted_response, conflict_response, accepted_request) =
+        if first_response.status() == StatusCode::OK {
+            (first_response, competing_response, first_commit)
+        } else {
+            (competing_response, first_response, competing_commit)
+        };
     let accepted: PostCommitResponse = parse_json(accepted_response).await;
     assert!(accepted.accepted);
     assert_eq!(accepted.epoch, 2);
     let conflict: serde_json::Value = parse_json(conflict_response).await;
     assert_eq!(conflict["error"], "epoch_conflict");
+
+    let exact_retry = send_json(
+        &app,
+        "POST",
+        &commit_uri,
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &accepted_request,
+    )
+    .await;
+    assert_eq!(exact_retry.status(), StatusCode::OK);
+    assert_eq!(
+        parse_json::<PostCommitResponse>(exact_retry).await,
+        accepted
+    );
+    let conflicting_retry = send_json(
+        &app,
+        "POST",
+        &commit_uri,
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostCommitRequest {
+            group_info_blob: Some(vec![0xC3; 128]),
+            ..accepted_request.clone()
+        },
+    )
+    .await;
+    assert_eq!(conflicting_retry.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        parse_json::<serde_json::Value>(conflicting_retry).await["error"],
+        "epoch_conflict"
+    );
     let stored_commit_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_commits WHERE group_id = $1 AND epoch = 2")
             .bind(group_id.to_string())
@@ -664,6 +697,16 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
             .await
             .expect("accepted commit should be stored once");
     assert_eq!(stored_commit_count, 1);
+    let stored_receipts: Vec<Vec<u8>> = sqlx::query_scalar(
+        "SELECT request_sha256 FROM e2ee_commit_receipts
+         WHERE group_id = $1 AND epoch = 2",
+    )
+    .bind(group_id.to_string())
+    .fetch_all(&audit_pool)
+    .await
+    .expect("accepted commit should retain one retry receipt");
+    assert_eq!(stored_receipts.len(), 1);
+    assert_eq!(stored_receipts[0].len(), 32);
     let stored_group_info: Vec<u8> =
         sqlx::query_scalar("SELECT group_info_blob FROM e2ee_groups WHERE group_id = $1")
             .bind(group_id.to_string())

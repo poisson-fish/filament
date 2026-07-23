@@ -537,6 +537,31 @@ async fn lock_group_for_member(
     })
 }
 
+fn commit_request_sha256(payload: &PostCommitRequest) -> Result<[u8; 32], AuthFailure> {
+    let encoded = serde_json::to_vec(payload).map_err(|_| AuthFailure::InvalidRequest)?;
+    Ok(Sha256::digest(encoded).into())
+}
+
+async fn commit_receipt_matches(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    group_id: GroupId,
+    payload: &PostCommitRequest,
+) -> Result<bool, AuthFailure> {
+    let epoch = i64::try_from(payload.epoch).map_err(|_| AuthFailure::InvalidRequest)?;
+    let expected = commit_request_sha256(payload)?;
+    let stored: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT request_sha256 FROM e2ee_commit_receipts
+         WHERE group_id = $1 AND epoch = $2 AND expires_at_unix > $3",
+    )
+    .bind(group_id.to_string())
+    .bind(epoch)
+    .bind(now_unix())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    Ok(stored.as_deref() == Some(expected.as_slice()))
+}
+
 async fn get_group_for_member(
     pool: &sqlx::PgPool,
     group_id: GroupId,
@@ -4179,6 +4204,18 @@ pub(crate) async fn post_group_commit(
         committer_device_id,
     )
     .await?;
+    if group.current_epoch >= payload.epoch
+        && commit_receipt_matches(&mut transaction, group_id, &payload).await?
+    {
+        transaction
+            .commit()
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        return Ok(Json(PostCommitResponse {
+            accepted: true,
+            epoch: payload.epoch,
+        }));
+    }
     if group.current_epoch != payload.prior_epoch {
         return Err(AuthFailure::EpochConflict);
     }
@@ -4269,6 +4306,19 @@ pub(crate) async fn post_group_commit(
             AuthFailure::Internal
         }
     })?;
+    sqlx::query(
+        "INSERT INTO e2ee_commit_receipts
+            (group_id, epoch, committer_device_id, request_sha256, expires_at_unix)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(group_id.to_string())
+    .bind(epoch)
+    .bind(committer_device_id.to_string())
+    .bind(commit_request_sha256(&payload)?.to_vec())
+    .bind(expires_at)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
     if let Some(change) = &payload.membership_change {
         apply_membership_change(
             &mut transaction,
@@ -4516,6 +4566,64 @@ mod tests {
             sha256_hex(b"test"),
             "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
         );
+    }
+
+    #[test]
+    fn commit_retry_receipt_covers_every_request_field() {
+        let base = PostCommitRequest {
+            epoch: 2,
+            prior_epoch: 1,
+            committer_device_id: DeviceId::new().to_string(),
+            commit_blob: vec![0x11; 32],
+            welcome_blob: Some(vec![0x22; 32]),
+            welcome_device_id: Some(DeviceId::new().to_string()),
+            group_info_blob: Some(vec![0x33; 32]),
+            membership_change: Some(MlsMembershipChange::Remove {
+                leaves: vec![MlsLeafRouting {
+                    leaf_index: 1,
+                    user_id: UserId::new().to_string(),
+                    device_id: DeviceId::new().to_string(),
+                }],
+            }),
+        };
+        let expected = commit_request_sha256(&base).unwrap();
+        let variants = [
+            PostCommitRequest {
+                epoch: 3,
+                ..base.clone()
+            },
+            PostCommitRequest {
+                prior_epoch: 0,
+                ..base.clone()
+            },
+            PostCommitRequest {
+                committer_device_id: DeviceId::new().to_string(),
+                ..base.clone()
+            },
+            PostCommitRequest {
+                commit_blob: vec![0x44; 32],
+                ..base.clone()
+            },
+            PostCommitRequest {
+                welcome_blob: None,
+                ..base.clone()
+            },
+            PostCommitRequest {
+                welcome_device_id: None,
+                ..base.clone()
+            },
+            PostCommitRequest {
+                group_info_blob: None,
+                ..base.clone()
+            },
+            PostCommitRequest {
+                membership_change: None,
+                ..base.clone()
+            },
+        ];
+        for variant in variants {
+            assert_ne!(commit_request_sha256(&variant).unwrap(), expected);
+        }
     }
 
     #[test]
