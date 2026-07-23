@@ -233,9 +233,16 @@ packaged probe passes. The first shared Tauri runtime now compiles and produces
 a locally launchable macOS `.app`; it binds generated ACL permissions to only
 the seven audited commands, caps IPC requests at 16 KiB, blocks remote runtime
 navigation, disables update artifacts, and uses a typed fail-closed backend
-until production coordination is wired. Android generation is locally blocked
-on the absent NDK/API 36 toolchain, and iOS generation on absent full Xcode and
-the iPhone SDK; both required implementation paths remain selected.
+until production coordination is wired. The desktop packaging gate now builds
+the declared Linux Debian/AppImage, macOS 15 Apple-silicon and Intel app/DMG,
+and Windows MSI paths on explicit host architectures. A bounded cross-platform
+verifier rejects symlinks, secret-like or source-map assets, remote HTML code,
+missing/duplicate formats, and oversized bundles before emitting deterministic
+artifact and local-web-bundle SHA-256 evidence. These are packaging gates, not
+the still-pending production messaging or install/upgrade smoke suites. Android
+generation is locally blocked on the absent NDK/API 36 toolchain, and iOS
+generation on absent full Xcode and the iPhone SDK; both required implementation
+paths remain selected.
 
 ---
 

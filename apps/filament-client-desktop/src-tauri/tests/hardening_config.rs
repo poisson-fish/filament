@@ -245,7 +245,10 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
 
     assert_eq!(contract.runtime.ui, "bundled_solidjs");
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
-    assert_eq!(contract.runtime.status, "adapter_scaffolded_fail_closed");
+    assert_eq!(
+        contract.runtime.status,
+        "desktop_packages_ci_gated_fail_closed"
+    );
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(
         contract.runtime.accepted_risks,
@@ -448,7 +451,6 @@ fn tauri_config_enforces_hardening_controls() {
         package["devDependencies"]["@tauri-apps/cli"],
         serde_json::Value::String("2.11.4".to_owned())
     );
-
     let notices = fs::read_to_string(root.join("THIRD_PARTY_NOTICES.txt"))
         .expect("third-party notices should exist");
     for component in [
@@ -473,6 +475,75 @@ fn tauri_config_enforces_hardening_controls() {
         .expect("server Dockerfile should exist");
     assert!(server_dockerfile
         .contains("COPY THIRD_PARTY_NOTICES.txt /usr/share/doc/filament/THIRD_PARTY_NOTICES.txt"));
+}
+
+#[test]
+fn packaged_artifact_gates_cover_the_reviewed_desktop_matrix() {
+    let root = repo_root();
+    let desktop_root = root.join("apps/filament-client-desktop");
+    let package_raw = fs::read_to_string(desktop_root.join("package.json"))
+        .expect("packaged-client npm manifest should exist");
+    let package: serde_json::Value =
+        serde_json::from_str(&package_raw).expect("packaged-client npm manifest should parse");
+    assert_eq!(
+        package["scripts"]["test:package-policy"],
+        serde_json::Value::String("node --test tests/package-artifacts.test.mjs".to_owned())
+    );
+    assert_eq!(
+        package["scripts"]["verify:package"],
+        serde_json::Value::String("node tools/verify-package.mjs".to_owned())
+    );
+
+    let verifier = fs::read_to_string(desktop_root.join("tools/verify-package.mjs"))
+        .expect("packaged-client artifact verifier should exist");
+    for required_control in [
+        "MAX_WEB_BUNDLE_FILES",
+        "MAX_WEB_BUNDLE_BYTES",
+        "MAX_WEB_ASSET_BYTES",
+        "MAX_INDEX_HTML_BYTES",
+        "MAX_ARTIFACT_BYTES",
+        "symbolic links are forbidden",
+        "remote_application_code_allowed !== false",
+        "createUpdaterArtifacts !== false",
+        "THIRD_PARTY_NOTICES.txt",
+    ] {
+        assert!(
+            verifier.contains(required_control),
+            "artifact verifier should retain {required_control}"
+        );
+    }
+
+    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .expect("CI workflow should exist");
+    for required_job in [
+        "packaged-client-linux:",
+        "packaged-client-macos:",
+        "packaged-client-windows:",
+    ] {
+        assert!(
+            workflow.contains(required_job),
+            "CI should retain {required_job}"
+        );
+    }
+    for required_runner in ["ubuntu-24.04", "macos-15", "macos-15-intel", "windows-2025"] {
+        assert!(
+            workflow.contains(required_runner),
+            "CI should retain package runner {required_runner}"
+        );
+    }
+    for required_bundle in [
+        "--bundles deb,appimage",
+        "--bundles app --ci --no-sign",
+        "hdiutil create",
+        "--bundles msi",
+    ] {
+        assert!(
+            workflow.contains(required_bundle),
+            "CI should retain package format gate {required_bundle}"
+        );
+    }
+    assert_eq!(workflow.matches("run verify:package --").count(), 3);
+    assert_eq!(workflow.matches("SHA256SUMS").count(), 6);
 }
 
 #[test]

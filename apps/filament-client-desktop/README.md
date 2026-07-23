@@ -13,6 +13,11 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
 - Native IPC request bodies are capped at 16 KiB before command dispatch.
 - Runtime navigation permits only Tauri's exact local-bundle origins. The
   HTTPS development origin is compiled in only for development builds.
+- CI builds the exact Ubuntu 24.04 x86-64, macOS 15 Apple-silicon and Intel,
+  and Windows x86-64 package formats declared in `platform-support.json`.
+- A cross-platform artifact gate rejects missing or duplicate formats,
+  symlinks, secret-like/source-map assets, oversized bundles, remote HTML
+  scripts, missing macOS notices, and emits deterministic SHA-256 evidence.
 - The runtime backend returns typed `unavailable` errors until production
   session, transport, mailbox, and MLS coordination are injected. It never
   claims secure storage or messaging is ready.
@@ -30,7 +35,11 @@ npm ci
 Build a local desktop package from this directory:
 
 ```bash
-npm run build -- --debug --bundles app  # macOS
+npm run build -- --debug --bundles app  # macOS app
+mkdir -p ../../target/debug/bundle/dmg
+hdiutil create -volname Filament \
+  -srcfolder ../../target/debug/bundle/macos/Filament.app \
+  -format UDZO ../../target/debug/bundle/dmg/Filament_local.dmg
 npm run build -- --debug --bundles deb,appimage  # Linux
 npm run build -- --debug --bundles msi  # Windows
 ```

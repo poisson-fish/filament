@@ -166,6 +166,7 @@ jobs:
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -197,14 +198,183 @@ jobs:
           npm --prefix apps/filament-client-web ci
           npm --prefix apps/filament-client-desktop ci
 
-      - name: Build unsigned local Debian package
-        working-directory: apps/filament-client-desktop
-        run: npm run build -- --debug --bundles deb --ci --no-sign
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
 
-      - name: Upload Debian smoke artifact
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "x86_64"
+
+      - name: Build unsigned local Linux packages
+        working-directory: apps/filament-client-desktop
+        run: npm run build -- --debug --bundles deb,appimage --ci --no-sign
+
+      - name: Verify package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform linux
+          --architecture x86_64
+          --bundle-root target/debug/bundle
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/linux-x86_64/manifest.json
+          --checksums target/package-evidence/linux-x86_64/SHA256SUMS
+
+      - name: Upload verified Linux smoke artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: filament-linux-deb-smoke
-          path: target/debug/bundle/deb/*.deb
+          name: filament-linux-x86_64-smoke
+          path: |
+            target/debug/bundle/deb/*.deb
+            target/debug/bundle/appimage/*.AppImage
+            target/package-evidence/linux-x86_64/manifest.json
+            target/package-evidence/linux-x86_64/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  packaged-client-macos:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: aarch64
+            runner_architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+            runner_architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.runner_architecture }}"
+
+      - name: Build unsigned local macOS app
+        working-directory: apps/filament-client-desktop
+        run: npm run build -- --debug --bundles app --ci --no-sign
+
+      - name: Create noninteractive macOS disk image
+        run: |
+          mkdir -p target/debug/bundle/dmg
+          hdiutil create \
+            -volname Filament \
+            -srcfolder target/debug/bundle/macos/Filament.app \
+            -ov \
+            -format UDZO \
+            target/debug/bundle/dmg/Filament_${{ matrix.architecture }}.dmg
+
+      - name: Verify package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform macos
+          --architecture ${{ matrix.architecture }}
+          --bundle-root target/debug/bundle
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/macos-${{ matrix.architecture }}/manifest.json
+          --checksums target/package-evidence/macos-${{ matrix.architecture }}/SHA256SUMS
+
+      - name: Upload verified macOS smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-macos-${{ matrix.architecture }}-smoke
+          path: |
+            target/debug/bundle/macos/*.app
+            target/debug/bundle/dmg/*.dmg
+            target/package-evidence/macos-${{ matrix.architecture }}/manifest.json
+            target/package-evidence/macos-${{ matrix.architecture }}/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  packaged-client-windows:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
+
+      - name: Verify runner architecture
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
+            throw "packaged Windows build requires x86_64"
+          }
+
+      - name: Build unsigned local Windows package
+        working-directory: apps/filament-client-desktop
+        run: npm run build -- --debug --bundles msi --ci --no-sign
+
+      - name: Verify package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform windows
+          --architecture x86_64
+          --bundle-root target/debug/bundle
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/windows-x86_64/manifest.json
+          --checksums target/package-evidence/windows-x86_64/SHA256SUMS
+
+      - name: Upload verified Windows smoke artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-windows-x86_64-smoke
+          path: |
+            target/debug/bundle/msi/*.msi
+            target/package-evidence/windows-x86_64/manifest.json
+            target/package-evidence/windows-x86_64/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
