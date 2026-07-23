@@ -32,6 +32,10 @@ const PLATFORM_FORMATS = Object.freeze({
   windows: Object.freeze([
     Object.freeze({ directory: "msi", kind: "msi", suffix: ".msi", type: "file" }),
   ]),
+  android: Object.freeze([
+    Object.freeze({ directory: "apk", kind: "apk", suffix: ".apk", type: "file" }),
+    Object.freeze({ directory: "bundle", kind: "aab", suffix: ".aab", type: "file" }),
+  ]),
 });
 
 const FORBIDDEN_WEB_SUFFIXES = Object.freeze([
@@ -298,6 +302,13 @@ async function verifyArtifacts(platform, bundleRoot) {
     if (candidates.length !== 1) {
       fail(`expected exactly one ${format.kind} artifact, found ${candidates.length}`);
     }
+    if (
+      platform === "android" &&
+      (!path.basename(candidates[0]).toLowerCase().includes("release") ||
+        path.basename(candidates[0]).toLowerCase().includes("debug"))
+    ) {
+      fail(`Android ${format.kind} must be a release-variant artifact`);
+    }
     records.push(
       format.type === "file"
         ? await fileArtifactRecord(bundleRoot, candidates[0], format.kind)
@@ -331,6 +342,9 @@ async function verifyPackagingContracts(platform, architecture) {
   );
   if (tauriConfig?.bundle?.createUpdaterArtifacts !== false) {
     fail("Tauri update artifacts must remain disabled");
+  }
+  if (platform === "android" && tauriConfig?.bundle?.android?.minSdkVersion !== 33) {
+    fail("Android minimum SDK must remain API 33");
   }
   return {
     remoteApplicationCodeAllowed: support.support_policy.remote_application_code_allowed,

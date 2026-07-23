@@ -14,7 +14,8 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
 - Runtime navigation permits only Tauri's exact local-bundle origins. The
   HTTPS development origin is compiled in only for development builds.
 - CI builds the exact Ubuntu 24.04 x86-64, macOS 15 Apple-silicon and Intel,
-  and Windows x86-64 package formats declared in `platform-support.json`.
+  Windows x86-64, and Android API 36 arm64 package formats declared in
+  `platform-support.json`.
 - A cross-platform artifact gate rejects missing or duplicate formats,
   symlinks, secret-like/source-map assets, oversized bundles, remote HTML
   scripts, missing macOS notices, and emits deterministic SHA-256 evidence.
@@ -54,11 +55,17 @@ npm run android:init -- --ci
 npm run ios:init -- --ci
 ```
 
-The current development host has Android SDK 35 but lacks an NDK, API 36,
-build-tools 36, and Android Rust targets. It also has only Apple command-line
-tools, not full Xcode or an iPhone SDK. Those local toolchain gaps prevent
-generating or validating the mobile projects here; they do not change the
-required Android target or the feasibility-gated iOS path.
+Android CI pins API 36, build-tools 36.0.0, NDK 27.2.12479018, Java 21, and
+the `aarch64-linux-android` Rust target. It regenerates the Tauri Android
+project from the locked CLI, verifies the API 33 minimum/API 36 target and
+cleartext-traffic denial, then builds and checksums `.apk` and `.aab` paths.
+Release signing credentials remain external to the repository.
+
+The current development host has Android SDK 35 but lacks the pinned NDK, API
+36, build-tools 36, and Android Rust target. It also has only Apple
+command-line tools, not full Xcode or an iPhone SDK. Those local toolchain
+gaps do not change the required Android target or the feasibility-gated iOS
+path.
 
 ## Verified evidence
 

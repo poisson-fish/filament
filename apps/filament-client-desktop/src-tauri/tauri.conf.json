@@ -37,6 +37,9 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": false,
+    "android": {
+      "minSdkVersion": 33
+    },
     "resources": {
       "../../../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
     }

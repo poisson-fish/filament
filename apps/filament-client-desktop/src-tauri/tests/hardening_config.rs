@@ -134,7 +134,14 @@ struct DesktopSecurity {
 struct DesktopBundle {
     #[serde(rename = "createUpdaterArtifacts")]
     create_updater_artifacts: bool,
+    android: AndroidBundle,
     resources: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AndroidBundle {
+    #[serde(rename = "minSdkVersion")]
+    min_sdk_version: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -247,7 +254,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
     assert_eq!(
         contract.runtime.status,
-        "desktop_packages_ci_gated_fail_closed"
+        "desktop_android_packages_ci_gated_fail_closed"
     );
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(
@@ -402,6 +409,7 @@ fn tauri_config_enforces_hardening_controls() {
     assert_eq!(config.app.security.csp, DESKTOP_CSP);
     assert!(!csp_has_forbidden_tokens(&config.app.security.csp));
     assert!(!config.bundle.create_updater_artifacts);
+    assert_eq!(config.bundle.android.min_sdk_version, 33);
     assert_eq!(
         config
             .bundle
@@ -478,7 +486,7 @@ fn tauri_config_enforces_hardening_controls() {
 }
 
 #[test]
-fn packaged_artifact_gates_cover_the_reviewed_desktop_matrix() {
+fn packaged_artifact_gates_cover_the_reviewed_initial_matrix() {
     let root = repo_root();
     let desktop_root = root.join("apps/filament-client-desktop");
     let package_raw = fs::read_to_string(desktop_root.join("package.json"))
@@ -519,6 +527,7 @@ fn packaged_artifact_gates_cover_the_reviewed_desktop_matrix() {
         "packaged-client-linux:",
         "packaged-client-macos:",
         "packaged-client-windows:",
+        "packaged-client-android:",
     ] {
         assert!(
             workflow.contains(required_job),
@@ -536,14 +545,15 @@ fn packaged_artifact_gates_cover_the_reviewed_desktop_matrix() {
         "--bundles app --ci --no-sign",
         "hdiutil create",
         "--bundles msi",
+        "--target aarch64 --apk --aab --ci",
     ] {
         assert!(
             workflow.contains(required_bundle),
             "CI should retain package format gate {required_bundle}"
         );
     }
-    assert_eq!(workflow.matches("run verify:package --").count(), 3);
-    assert_eq!(workflow.matches("SHA256SUMS").count(), 6);
+    assert_eq!(workflow.matches("run verify:package --").count(), 4);
+    assert_eq!(workflow.matches("SHA256SUMS").count(), 8);
 }
 
 #[test]

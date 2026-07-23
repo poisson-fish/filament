@@ -139,8 +139,12 @@ until production backends are injected. A local macOS `.app` package launched
 successfully from embedded assets on 2026-07-22 with dead network proxies.
 Every resulting artifact still requires local-bundle integrity checks,
 target-specific signing, advisory/license/vet checks, and packaged smoke-test
-evidence. The next privileged command expansion must be reviewed before
-implementation.
+evidence. CI now regenerates the Android project from the locked Tauri CLI,
+pins API 36, build-tools 36.0.0, NDK 27.2.12479018, Java 21, and the arm64
+Rust target, verifies the API 33 floor/API 36 target and cleartext denial, and
+produces integrity-checked local `.apk` and `.aab` paths. Release credentials
+remain external. The next privileged command expansion must be reviewed
+before implementation.
 
 ## Authoritative baseline references
 

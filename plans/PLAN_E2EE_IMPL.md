@@ -239,10 +239,14 @@ and Windows MSI paths on explicit host architectures. A bounded cross-platform
 verifier rejects symlinks, secret-like or source-map assets, remote HTML code,
 missing/duplicate formats, and oversized bundles before emitting deterministic
 artifact and local-web-bundle SHA-256 evidence. These are packaging gates, not
-the still-pending production messaging or install/upgrade smoke suites. Android
-generation is locally blocked on the absent NDK/API 36 toolchain, and iOS
-generation on absent full Xcode and the iPhone SDK; both required implementation
-paths remain selected.
+the still-pending production messaging or install/upgrade smoke suites. The
+Android gate now pins API 36, build-tools 36.0.0, NDK 27.2.12479018, Java 21,
+and the arm64 Rust target; regenerates the mobile project from the locked CLI;
+verifies the API 33 floor, API 36 target, and cleartext denial; and produces
+integrity-checked local `.apk` and `.aab` paths without repository signing
+secrets. Local Android generation remains blocked on the development host's
+absent toolchain, and iOS generation on absent full Xcode and the iPhone SDK.
+Both implementation paths remain selected.
 
 ---
 

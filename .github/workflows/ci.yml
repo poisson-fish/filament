@@ -378,3 +378,122 @@ jobs:
             target/package-evidence/windows-x86_64/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
+
+  packaged-client-android:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ANDROID_API_LEVEL: "36"
+      ANDROID_BUILD_TOOLS_VERSION: "36.0.0"
+      ANDROID_NDK_VERSION: "27.2.12479018"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          targets: aarch64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Install exact Android SDK and NDK
+        shell: bash
+        run: |
+          SDK_MANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDK_MANAGER"
+          printf 'y\n%.0s' {1..20} | "$SDK_MANAGER" --licenses >/dev/null
+          "$SDK_MANAGER" \
+            "platforms;android-$ANDROID_API_LEVEL" \
+            "build-tools;$ANDROID_BUILD_TOOLS_VERSION" \
+            "platform-tools" \
+            "ndk;$ANDROID_NDK_VERSION"
+          test -d "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
+
+      - name: Generate pinned Android project
+        working-directory: apps/filament-client-desktop
+        run: npm run android:init -- --ci --skip-targets-install
+
+      - name: Verify generated Android platform contract
+        working-directory: apps/filament-client-desktop
+        run: |
+          GRADLE_FILE="src-tauri/gen/android/app/build.gradle.kts"
+          rg --fixed-strings 'compileSdk = 36' "$GRADLE_FILE"
+          rg --fixed-strings 'minSdk = 33' "$GRADLE_FILE"
+          rg --fixed-strings 'targetSdk = 36' "$GRADLE_FILE"
+          rg --fixed-strings 'manifestPlaceholders["usesCleartextTraffic"] = "false"' "$GRADLE_FILE"
+
+      - name: Build local Android arm64 packages
+        working-directory: apps/filament-client-desktop
+        run: npm run android:build -- --target aarch64 --apk --aab --ci
+
+      - name: Verify Android artifacts contain only arm64 native code
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          APK_FILES=(apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*.apk)
+          AAB_FILES=(apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*.aab)
+          test "${#APK_FILES[@]}" -eq 1
+          test "${#AAB_FILES[@]}" -eq 1
+          APK_ENTRIES="$(unzip -Z1 "${APK_FILES[0]}")"
+          AAB_ENTRIES="$(unzip -Z1 "${AAB_FILES[0]}")"
+          printf '%s\n' "$APK_ENTRIES" | rg '^lib/arm64-v8a/[^/]+\.so$'
+          printf '%s\n' "$AAB_ENTRIES" | rg '^base/lib/arm64-v8a/[^/]+\.so$'
+          if printf '%s\n' "$APK_ENTRIES" | rg '^lib/' | rg -v '^lib/arm64-v8a/' >/dev/null; then
+            echo "APK contains a non-arm64 native library" >&2
+            exit 1
+          fi
+          if printf '%s\n' "$AAB_ENTRIES" | rg '^base/lib/' | rg -v '^base/lib/arm64-v8a/' >/dev/null; then
+            echo "AAB contains a non-arm64 native library" >&2
+            exit 1
+          fi
+
+      - name: Verify Android package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform android
+          --architecture aarch64
+          --bundle-root apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/android-aarch64/manifest.json
+          --checksums target/package-evidence/android-aarch64/SHA256SUMS
+
+      - name: Upload verified Android package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-android-aarch64-smoke
+          path: |
+            apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*.apk
+            apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*.aab
+            target/package-evidence/android-aarch64/manifest.json
+            target/package-evidence/android-aarch64/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7

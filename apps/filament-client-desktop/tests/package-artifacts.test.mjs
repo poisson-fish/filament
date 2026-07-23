@@ -83,6 +83,49 @@ test("accepts a macOS app only when notices and a native executable are present"
   );
 });
 
+test("accepts exact Android APK and AAB formats for the reviewed arm64 target", async () => {
+  const options = await fixture();
+  await mkdir(path.join(options.bundleRoot, "apk", "universal", "release"), {
+    recursive: true,
+  });
+  await mkdir(path.join(options.bundleRoot, "bundle", "universalRelease"), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(
+      options.bundleRoot,
+      "apk",
+      "universal",
+      "release",
+      "app-universal-release-unsigned.apk",
+    ),
+    "p".repeat(32),
+  );
+  await writeFile(
+    path.join(
+      options.bundleRoot,
+      "bundle",
+      "universalRelease",
+      "app-universal-release.aab",
+    ),
+    "b".repeat(32),
+  );
+
+  const manifest = await verifyPackage({
+    ...options,
+    platform: "android",
+    architecture: "aarch64",
+  });
+
+  assert.deepEqual(
+    manifest.artifacts.map((artifact) => artifact.kind),
+    ["apk", "aab"],
+  );
+  const checksums = await readFile(options.checksumsPath, "utf8");
+  assert.match(checksums, /^[a-f0-9]{64}  apk\/.+\.apk$/mu);
+  assert.match(checksums, /^[a-f0-9]{64}  bundle\/.+\.aab$/mu);
+});
+
 test("rejects a remote application script before writing evidence", async () => {
   const options = await fixture();
   await mkdir(path.join(options.bundleRoot, "msi"));
@@ -95,6 +138,25 @@ test("rejects a remote application script before writing evidence", async () => 
   await assert.rejects(
     verifyPackage({ ...options, platform: "windows", architecture: "x86_64" }),
     /script src must reference a local bundled asset/u,
+  );
+});
+
+test("rejects Android debug packages from release artifact evidence", async () => {
+  const options = await fixture();
+  await mkdir(path.join(options.bundleRoot, "apk"), { recursive: true });
+  await mkdir(path.join(options.bundleRoot, "bundle"), { recursive: true });
+  await writeFile(
+    path.join(options.bundleRoot, "apk", "app-universal-debug.apk"),
+    "p".repeat(32),
+  );
+  await writeFile(
+    path.join(options.bundleRoot, "bundle", "app-universal-debug.aab"),
+    "b".repeat(32),
+  );
+
+  await assert.rejects(
+    verifyPackage({ ...options, platform: "android", architecture: "aarch64" }),
+    /Android apk must be a release-variant artifact/u,
   );
 });
 
