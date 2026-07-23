@@ -32,7 +32,7 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'apps/filament-server/**'
-              - 'apps/filament-client-desktop/src-tauri/**'
+              - 'apps/filament-client-desktop/**'
               - 'crates/**'
               - 'cargo-deny.toml'
               - 'supply-chain/**'

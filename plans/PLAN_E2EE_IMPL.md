@@ -229,7 +229,13 @@ confirming that 2.11.5 remains the latest stable release. Patchable `anyhow`,
 `time`, and `quick-xml` findings remain denied, the exception scope expires for
 review on 2027-01-18, and no unsafe FFI fallback or privileged-command
 expansion was added. Media remains disabled on every target until its final
-packaged probe passes.
+packaged probe passes. The first shared Tauri runtime now compiles and produces
+a locally launchable macOS `.app`; it binds generated ACL permissions to only
+the seven audited commands, caps IPC requests at 16 KiB, blocks remote runtime
+navigation, disables update artifacts, and uses a typed fail-closed backend
+until production coordination is wired. Android generation is locally blocked
+on the absent NDK/API 36 toolchain, and iOS generation on absent full Xcode and
+the iPhone SDK; both required implementation paths remain selected.
 
 ---
 

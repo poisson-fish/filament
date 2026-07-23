@@ -89,13 +89,35 @@ struct PackagedTarget {
 
 #[derive(Debug, Deserialize)]
 struct DesktopTauriConfig {
+    identifier: String,
+    build: DesktopBuild,
     app: DesktopApp,
     bundle: DesktopBundle,
 }
 
 #[derive(Debug, Deserialize)]
+struct DesktopBuild {
+    #[serde(rename = "frontendDist")]
+    frontend_dist: String,
+    #[serde(rename = "devUrl")]
+    dev_url: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct DesktopApp {
+    windows: Vec<DesktopWindow>,
     security: DesktopSecurity,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopWindow {
+    label: String,
+    url: String,
+    devtools: bool,
+    #[serde(rename = "dragDropEnabled")]
+    drag_drop_enabled: bool,
+    #[serde(rename = "useHttpsScheme")]
+    use_https_scheme: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,6 +126,7 @@ struct DesktopSecurity {
     freeze_prototype: bool,
     #[serde(rename = "dangerousDisableAssetCspModification")]
     dangerous_disable_asset_csp_modification: bool,
+    capabilities: Vec<String>,
     csp: String,
 }
 
@@ -112,6 +135,17 @@ struct DesktopBundle {
     #[serde(rename = "createUpdaterArtifacts")]
     create_updater_artifacts: bool,
     resources: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DesktopCapability {
+    #[serde(rename = "$schema")]
+    schema: String,
+    identifier: String,
+    description: String,
+    windows: Vec<String>,
+    permissions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,10 +245,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
 
     assert_eq!(contract.runtime.ui, "bundled_solidjs");
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
-    assert_eq!(
-        contract.runtime.status,
-        "approved_exact_exceptions_pending_adapter"
-    );
+    assert_eq!(contract.runtime.status, "adapter_scaffolded_fail_closed");
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(
         contract.runtime.accepted_risks,
@@ -346,22 +377,76 @@ fn tauri_policy_exceptions_are_exact_and_keep_patchable_findings_denied() {
 #[test]
 fn tauri_config_enforces_hardening_controls() {
     let root = repo_root();
-    let raw = fs::read_to_string(root.join("apps/filament-client-desktop/tauri.conf.json"))
-        .expect("tauri config should exist");
+    let desktop_root = root.join("apps/filament-client-desktop");
+    let tauri_root = desktop_root.join("src-tauri");
+    let raw =
+        fs::read_to_string(tauri_root.join("tauri.conf.json")).expect("tauri config should exist");
     let config: DesktopTauriConfig = serde_json::from_str(&raw).expect("tauri config should parse");
 
+    assert_eq!(config.identifier, "com.filament.desktop");
+    assert_eq!(config.build.frontend_dist, "../../filament-client-web/dist");
+    assert_eq!(config.build.dev_url, "https://app.filament.local");
+    assert_eq!(config.app.windows.len(), 1);
+    let window = &config.app.windows[0];
+    assert_eq!(window.label, "main");
+    assert_eq!(window.url, "index.html");
+    assert!(!window.devtools);
+    assert!(!window.drag_drop_enabled);
+    assert!(window.use_https_scheme);
     assert!(config.app.security.freeze_prototype);
     assert!(!config.app.security.dangerous_disable_asset_csp_modification);
+    assert_eq!(config.app.security.capabilities, ["main"]);
     assert_eq!(config.app.security.csp, DESKTOP_CSP);
     assert!(!csp_has_forbidden_tokens(&config.app.security.csp));
-    assert!(config.bundle.create_updater_artifacts);
+    assert!(!config.bundle.create_updater_artifacts);
     assert_eq!(
         config
             .bundle
             .resources
-            .get("../../THIRD_PARTY_NOTICES.txt")
+            .get("../../../THIRD_PARTY_NOTICES.txt")
             .map(String::as_str),
         Some("THIRD_PARTY_NOTICES.txt")
+    );
+
+    let capability_raw = fs::read_to_string(tauri_root.join("capabilities/main.json"))
+        .expect("main capability should exist");
+    let capability: DesktopCapability =
+        serde_json::from_str(&capability_raw).expect("main capability should be strict JSON");
+    assert_eq!(capability.schema, "../gen/schemas/desktop-schema.json");
+    assert_eq!(capability.identifier, "main");
+    assert!(!capability.description.is_empty());
+    assert_eq!(capability.windows, ["main"]);
+    assert_eq!(
+        capability.permissions,
+        DesktopCommand::all()
+            .iter()
+            .map(|command| format!("allow-{command}").replace('_', "-"))
+            .collect::<Vec<_>>()
+    );
+
+    let build_script = fs::read_to_string(tauri_root.join("build.rs"))
+        .expect("Tauri ACL build script should exist");
+    for command in DesktopCommand::all() {
+        assert_eq!(
+            build_script.matches(&format!("\"{command}\"")).count(),
+            1,
+            "Tauri ACL manifest should contain exactly one {command} command"
+        );
+    }
+    assert!(build_script.contains("AppManifest::new().commands(COMMANDS)"));
+
+    let cargo_manifest = fs::read_to_string(tauri_root.join("Cargo.toml"))
+        .expect("packaged-client Cargo manifest should exist");
+    assert!(cargo_manifest.contains("tauri = { version = \"=2.11.5\", features = [] }"));
+    assert!(cargo_manifest.contains("tauri-build = { version = \"=2.6.3\", features = [] }"));
+
+    let package_raw = fs::read_to_string(desktop_root.join("package.json"))
+        .expect("packaged-client npm manifest should exist");
+    let package: serde_json::Value =
+        serde_json::from_str(&package_raw).expect("packaged-client npm manifest should parse");
+    assert_eq!(
+        package["devDependencies"]["@tauri-apps/cli"],
+        serde_json::Value::String("2.11.4".to_owned())
     );
 
     let notices = fs::read_to_string(root.join("THIRD_PARTY_NOTICES.txt"))
@@ -370,6 +455,12 @@ fn tauri_config_enforces_hardening_controls() {
         "hpke-rs 0.7.0",
         "hpke-rs-crypto 0.7.0",
         "hpke-rs-rust-crypto 0.7.0",
+        "cssparser 0.36.0",
+        "cssparser-macros 0.6.1",
+        "dtoa-short 0.3.5",
+        "option-ext 0.2.0",
+        "selectors 0.36.1",
+        "target-lexicon 0.12.16",
     ] {
         assert!(
             notices.contains(component),

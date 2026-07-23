@@ -1,0 +1,63 @@
+# Filament Packaged Clients
+
+This directory packages the locally built SolidJS client with the shared
+Tauri 2 host. The native process owns the security boundary. The webview has
+no filesystem, shell, updater, opener, clipboard, or general network plugin.
+
+## Current increment
+
+- Tauri `2.11.5` and Tauri CLI `2.11.4` are pinned in lockfiles.
+- The `main` webview can invoke only the seven commands in
+  `security-policy.json`; generated application ACL permissions enforce the
+  same list.
+- Native IPC request bodies are capped at 16 KiB before command dispatch.
+- Runtime navigation permits only Tauri's exact local-bundle origins. The
+  HTTPS development origin is compiled in only for development builds.
+- The runtime backend returns typed `unavailable` errors until production
+  session, transport, mailbox, and MLS coordination are injected. It never
+  claims secure storage or messaging is ready.
+- Calls and automatic updates remain disabled.
+
+## Developer commands
+
+Install both locked JavaScript dependency sets:
+
+```bash
+npm --prefix ../filament-client-web ci
+npm ci
+```
+
+Build a local desktop package from this directory:
+
+```bash
+npm run build -- --debug --bundles app  # macOS
+npm run build -- --debug --bundles deb,appimage  # Linux
+npm run build -- --debug --bundles msi  # Windows
+```
+
+Release bundles omit `--debug` and require the platform signing gates. No
+signing credentials belong in the repository.
+
+Mobile project generation uses the same Rust entry point:
+
+```bash
+npm run android:init -- --ci
+npm run ios:init -- --ci
+```
+
+The current development host has Android SDK 35 but lacks an NDK, API 36,
+build-tools 36, and Android Rust targets. It also has only Apple command-line
+tools, not full Xcode or an iPhone SDK. Those local toolchain gaps prevent
+generating or validating the mobile projects here; they do not change the
+required Android target or the feasibility-gated iOS path.
+
+## Verified evidence
+
+On 2026-07-22, an unsigned local macOS `Filament.app` built successfully,
+launched with dead HTTP/HTTPS proxy endpoints, stayed alive, opened no network
+socket during the launch probe, and emitted no runtime error. The artifact
+contained the executable, application metadata, icon, embedded local assets,
+and `THIRD_PARTY_NOTICES.txt`.
+
+This is host-scaffold evidence, not the Phase 5.5 messaging exit suite.
+Production E2EE messaging and mobile platform custody remain fail-closed work.

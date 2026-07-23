@@ -17,7 +17,10 @@ use thiserror::Error;
 use url::Url;
 use zeroize::Zeroizing;
 
+mod runtime;
 mod tauri_host;
+
+pub use runtime::{run, MAX_TAURI_IPC_REQUEST_BYTES};
 
 pub use tauri_host::{
     registered_desktop_commands, DesktopCommandBackend, DesktopCommandBackendError,
@@ -690,10 +693,35 @@ pub fn redact_crash_log(event: CrashLogEvent) -> RedactedCrashLogEvent {
 /// [`SecurityError::ForbiddenNavigationScheme`] for non-`tauri`/`https` schemes,
 /// and [`SecurityError::ForbiddenNavigationHost`] for non-allowlisted `https` hosts.
 pub fn validate_desktop_navigation(url: &str) -> Result<(), SecurityError> {
+    validate_runtime_navigation(url, true)
+}
+
+/// Validate a packaged-runtime navigation, allowing the development origin
+/// only when explicitly requested by the native host.
+///
+/// # Errors
+/// Returns a closed navigation-policy error for malformed, remote, credentialed,
+/// or otherwise non-allowlisted URLs.
+pub fn validate_runtime_navigation(
+    url: &str,
+    allow_development_origin: bool,
+) -> Result<(), SecurityError> {
     let parsed = Url::parse(url).map_err(|_| SecurityError::InvalidNavigationUrl)?;
     let scheme = parsed.scheme();
 
+    if !parsed.username().is_empty() || parsed.password().is_some() || parsed.port().is_some() {
+        return Err(SecurityError::ForbiddenNavigationHost);
+    }
+
     if scheme == "tauri" {
+        return if parsed.host_str() == Some("localhost") {
+            Ok(())
+        } else {
+            Err(SecurityError::ForbiddenNavigationHost)
+        };
+    }
+
+    if matches!(scheme, "http" | "https") && parsed.host_str() == Some("tauri.localhost") {
         return Ok(());
     }
 
@@ -701,9 +729,10 @@ pub fn validate_desktop_navigation(url: &str) -> Result<(), SecurityError> {
         return Err(SecurityError::ForbiddenNavigationScheme);
     }
 
-    match parsed.host_str() {
-        Some("app.filament.local") => Ok(()),
-        _ => Err(SecurityError::ForbiddenNavigationHost),
+    if allow_development_origin && parsed.host_str() == Some("app.filament.local") {
+        Ok(())
+    } else {
+        Err(SecurityError::ForbiddenNavigationHost)
     }
 }
 
@@ -807,7 +836,21 @@ mod tests {
     #[test]
     fn navigation_policy_blocks_remote_hosts_and_http() {
         assert!(validate_desktop_navigation("tauri://localhost/index.html").is_ok());
+        assert!(validate_runtime_navigation("https://tauri.localhost/index.html", false).is_ok());
+        assert!(validate_runtime_navigation("http://tauri.localhost/index.html", false).is_ok());
         assert!(validate_desktop_navigation("https://app.filament.local/channels").is_ok());
+        assert_eq!(
+            validate_runtime_navigation("https://app.filament.local/channels", false),
+            Err(SecurityError::ForbiddenNavigationHost)
+        );
+        assert_eq!(
+            validate_desktop_navigation("tauri://evil.example/index.html"),
+            Err(SecurityError::ForbiddenNavigationHost)
+        );
+        assert_eq!(
+            validate_desktop_navigation("https://user@tauri.localhost/index.html"),
+            Err(SecurityError::ForbiddenNavigationHost)
+        );
         assert_eq!(
             validate_desktop_navigation("https://evil.example/phish"),
             Err(SecurityError::ForbiddenNavigationHost)

@@ -32,7 +32,7 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'apps/filament-server/**'
-              - 'apps/filament-client-desktop/src-tauri/**'
+              - 'apps/filament-client-desktop/**'
               - 'crates/**'
               - '.github/workflows/ci.yml'
               - '.github/workflows/security.yml'
@@ -74,6 +74,11 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Rust format check
         run: cargo fmt --all --check
@@ -156,3 +161,50 @@ jobs:
 
       - name: Build web client
         run: npm run build
+
+  packaged-client-linux:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Build unsigned local Debian package
+        working-directory: apps/filament-client-desktop
+        run: npm run build -- --debug --bundles deb --ci --no-sign
+
+      - name: Upload Debian smoke artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-linux-deb-smoke
+          path: target/debug/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 7
