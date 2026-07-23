@@ -6,16 +6,19 @@
 
 use std::{collections::HashSet, io::Read as _, time::Duration};
 
-use filament_core::{DeviceCertificate, DeviceId, UserId, Username};
+use filament_core::{DeviceCertificate, DeviceId, GroupId, UserId, Username};
 use filament_e2ee::{
     verify_root_identity_rotation_chain, verify_root_identity_rotation_proof, MlsDevice,
     PendingKeyPackageUpload, RootIdentityRotationProof,
 };
 use filament_protocol::{
-    DeviceListResponse, KeyPackageEntry, PublishDeviceCertificateRequest,
-    PublishDeviceCertificateResponse, RootIdentityDirectoryResponse, RotateRootIdentityRequest,
-    RotateRootIdentityResponse, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
-    MAX_ROOT_IDENTITY_ROTATIONS, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
+    DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse, KeyPackageEntry,
+    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse,
+    RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
+    UploadKeyPackagesRequest, UploadKeyPackagesResponse, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE,
+    MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
+    ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use reqwest::{
     blocking::{Client, Response},
@@ -33,6 +36,7 @@ const DEFAULT_NATIVE_API_ORIGIN: &str = "https://api.filament.local";
 const NATIVE_API_TIMEOUT: Duration = Duration::from_secs(7);
 const MAX_NATIVE_API_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_NATIVE_API_RESPONSE_BYTES: usize = 256 * 1024;
+const MAX_NATIVE_MAILBOX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_PROFILE_MARKDOWN_BYTES: usize = 2_000;
 const MAX_PROFILE_MARKDOWN_TOKENS: usize = 4_096;
 
@@ -75,6 +79,34 @@ pub(crate) trait NativeEnrollmentApi: Send + Sync + 'static {
         access_token: &SessionToken,
         request: &RotateRootIdentityRequest,
     ) -> Result<RotateRootIdentityResponse, NativeApiError>;
+
+    fn message_mailbox(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        device_id: DeviceId,
+    ) -> Result<E2eeMailboxResponse, NativeApiError>;
+
+    fn acknowledge_messages(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &AckE2eeMessagesRequest,
+    ) -> Result<(), NativeApiError>;
+
+    fn commit_mailbox(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        device_id: DeviceId,
+    ) -> Result<E2eeCommitMailboxResponse, NativeApiError>;
+
+    fn acknowledge_commits(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &AckE2eeCommitsRequest,
+    ) -> Result<(), NativeApiError>;
 }
 
 pub(crate) struct ReqwestNativeEnrollmentApi {
@@ -108,13 +140,30 @@ impl ReqwestNativeEnrollmentApi {
         access_token: &SessionToken,
         path: &str,
     ) -> Result<T, NativeApiError> {
+        self.get_url(access_token, self.origin.endpoint(path)?)
+    }
+
+    fn get_url<T: DeserializeOwned>(
+        &self,
+        access_token: &SessionToken,
+        endpoint: Url,
+    ) -> Result<T, NativeApiError> {
+        self.get_url_with_limit(access_token, endpoint, MAX_NATIVE_API_RESPONSE_BYTES)
+    }
+
+    fn get_url_with_limit<T: DeserializeOwned>(
+        &self,
+        access_token: &SessionToken,
+        endpoint: Url,
+        response_limit: usize,
+    ) -> Result<T, NativeApiError> {
         let response = self
             .client
-            .get(self.origin.endpoint(path)?)
+            .get(endpoint)
             .header(AUTHORIZATION, bearer_value(access_token)?)
             .send()
             .map_err(|_| NativeApiError::Unavailable)?;
-        decode_response(response)
+        decode_response_with_limit(response, response_limit)
     }
 
     fn send_json<Request: Serialize, ResponseBody: DeserializeOwned>(
@@ -228,6 +277,84 @@ impl NativeEnrollmentApi for ReqwestNativeEnrollmentApi {
             request,
         )
     }
+
+    fn message_mailbox(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        device_id: DeviceId,
+    ) -> Result<E2eeMailboxResponse, NativeApiError> {
+        self.get_url_with_limit(
+            access_token,
+            self.origin.endpoint_with_query(
+                &format!("/e2ee/groups/{group_id}/mailbox"),
+                &[
+                    ("device_id", device_id.to_string()),
+                    ("limit", MAX_E2EE_MAILBOX_PAGE_SIZE.to_string()),
+                ],
+            )?,
+            MAX_NATIVE_MAILBOX_RESPONSE_BYTES,
+        )
+    }
+
+    fn acknowledge_messages(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &AckE2eeMessagesRequest,
+    ) -> Result<(), NativeApiError> {
+        let requested = request.message_ids.len();
+        let response: AckE2eeMessagesResponse = self.send_json(
+            access_token,
+            reqwest::Method::POST,
+            &format!("/e2ee/groups/{group_id}/messages/ack"),
+            request,
+        )?;
+        validate_acknowledgment_counts(
+            response.acknowledged_count,
+            response.deleted_count,
+            requested,
+        )
+    }
+
+    fn commit_mailbox(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        device_id: DeviceId,
+    ) -> Result<E2eeCommitMailboxResponse, NativeApiError> {
+        self.get_url_with_limit(
+            access_token,
+            self.origin.endpoint_with_query(
+                &format!("/e2ee/groups/{group_id}/commits"),
+                &[
+                    ("device_id", device_id.to_string()),
+                    ("limit", MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE.to_string()),
+                ],
+            )?,
+            MAX_NATIVE_MAILBOX_RESPONSE_BYTES,
+        )
+    }
+
+    fn acknowledge_commits(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &AckE2eeCommitsRequest,
+    ) -> Result<(), NativeApiError> {
+        let requested = request.epochs.len();
+        let response: AckE2eeCommitsResponse = self.send_json(
+            access_token,
+            reqwest::Method::POST,
+            &format!("/e2ee/groups/{group_id}/commits/ack"),
+            request,
+        )?;
+        validate_acknowledgment_counts(
+            response.acknowledged_count,
+            response.deleted_count,
+            requested,
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -255,6 +382,21 @@ impl NativeApiOrigin {
         }
         let mut endpoint = self.0.clone();
         endpoint.set_path(path);
+        Ok(endpoint)
+    }
+
+    fn endpoint_with_query(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<Url, NativeApiError> {
+        let mut endpoint = self.endpoint(path)?;
+        {
+            let mut pairs = endpoint.query_pairs_mut();
+            for (key, value) in query {
+                pairs.append_pair(key, value);
+            }
+        }
         Ok(endpoint)
     }
 }
@@ -291,7 +433,14 @@ fn bearer_value(access_token: &SessionToken) -> Result<HeaderValue, NativeApiErr
     Ok(header)
 }
 
-fn decode_response<T: DeserializeOwned>(mut response: Response) -> Result<T, NativeApiError> {
+fn decode_response<T: DeserializeOwned>(response: Response) -> Result<T, NativeApiError> {
+    decode_response_with_limit(response, MAX_NATIVE_API_RESPONSE_BYTES)
+}
+
+fn decode_response_with_limit<T: DeserializeOwned>(
+    mut response: Response,
+    response_limit: usize,
+) -> Result<T, NativeApiError> {
     if !response.status().is_success() {
         return Err(map_status(response.status()));
     }
@@ -300,23 +449,31 @@ fn decode_response<T: DeserializeOwned>(mut response: Response) -> Result<T, Nat
         .get(CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<usize>().ok())
-        .is_some_and(|length| length > MAX_NATIVE_API_RESPONSE_BYTES)
+        .is_some_and(|length| length > response_limit)
     {
         return Err(NativeApiError::Rejected);
     }
-    let limit = u64::try_from(MAX_NATIVE_API_RESPONSE_BYTES + 1)
-        .map_err(|_| NativeApiError::Unavailable)?;
+    let limit =
+        u64::try_from(response_limit.saturating_add(1)).map_err(|_| NativeApiError::Unavailable)?;
     let mut bytes = Vec::new();
     response
         .by_ref()
         .take(limit)
         .read_to_end(&mut bytes)
         .map_err(|_| NativeApiError::Unavailable)?;
-    decode_json_bytes(&bytes)
+    decode_json_bytes_with_limit(&bytes, response_limit)
 }
 
+#[cfg(test)]
 fn decode_json_bytes<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, NativeApiError> {
-    if bytes.is_empty() || bytes.len() > MAX_NATIVE_API_RESPONSE_BYTES {
+    decode_json_bytes_with_limit(bytes, MAX_NATIVE_API_RESPONSE_BYTES)
+}
+
+fn decode_json_bytes_with_limit<T: DeserializeOwned>(
+    bytes: &[u8],
+    response_limit: usize,
+) -> Result<T, NativeApiError> {
+    if bytes.is_empty() || bytes.len() > response_limit {
         return Err(NativeApiError::Rejected);
     }
     serde_json::from_slice(bytes).map_err(|_| NativeApiError::Rejected)
@@ -337,6 +494,20 @@ fn validate_upload_confirmation(
     if usize::try_from(response.stored_count)
         .is_ok_and(|stored_count| stored_count <= requested_count)
     {
+        Ok(())
+    } else {
+        Err(NativeApiError::Rejected)
+    }
+}
+
+fn validate_acknowledgment_counts(
+    acknowledged_count: u32,
+    deleted_count: u32,
+    requested_count: usize,
+) -> Result<(), NativeApiError> {
+    let acknowledged = usize::try_from(acknowledged_count).map_err(|_| NativeApiError::Rejected)?;
+    let deleted = usize::try_from(deleted_count).map_err(|_| NativeApiError::Rejected)?;
+    if acknowledged <= requested_count && deleted <= requested_count {
         Ok(())
     } else {
         Err(NativeApiError::Rejected)
@@ -557,6 +728,34 @@ mod tests {
             assert!(NativeApiOrigin::parse(invalid).is_err(), "{invalid}");
         }
         assert!(origin.endpoint("https://evil.example").is_err());
+
+        let mailbox = origin
+            .endpoint_with_query(
+                "/e2ee/groups/01ARZ3NDEKTSV4RRFFQ69G5FAV/mailbox",
+                &[
+                    ("device_id", "01ARZ3NDEKTSV4RRFFQ69G5FAW".to_owned()),
+                    ("limit", "50".to_owned()),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            mailbox.as_str(),
+            "https://chat.example:8443/e2ee/groups/01ARZ3NDEKTSV4RRFFQ69G5FAV/mailbox?device_id=01ARZ3NDEKTSV4RRFFQ69G5FAW&limit=50"
+        );
+    }
+
+    #[test]
+    fn mailbox_acknowledgment_counts_cannot_exceed_the_submitted_batch() {
+        assert_eq!(validate_acknowledgment_counts(0, 0, 1), Ok(()));
+        assert_eq!(validate_acknowledgment_counts(1, 1, 1), Ok(()));
+        assert_eq!(
+            validate_acknowledgment_counts(2, 0, 1),
+            Err(NativeApiError::Rejected)
+        );
+        assert_eq!(
+            validate_acknowledgment_counts(0, 2, 1),
+            Err(NativeApiError::Rejected)
+        );
     }
 
     #[test]

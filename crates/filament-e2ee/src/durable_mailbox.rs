@@ -19,11 +19,11 @@ use ulid::Ulid;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    persistence::encode_mls_client_state, process_commit_mailbox, process_message_mailbox,
-    ConversationError, DecryptedApplicationMessage, ExternalCommitRecoveryInfo, KeyStoreError,
-    LocalKeyStore, MlsClientState, MlsConversation, PendingExternalCommitRecovery,
-    PinnedUserIdentity, RejectedMailboxCommit, RejectedMailboxMessage, StoreKey,
-    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
+    persistence::encode_mls_client_state, process_commit_mailbox, process_group_commit_mailbox,
+    process_message_mailbox, ConversationAudience, ConversationError, DecryptedApplicationMessage,
+    ExternalCommitRecoveryInfo, KeyStoreError, LocalKeyStore, MlsClientState, MlsConversation,
+    PendingExternalCommitRecovery, PinnedUserIdentity, RejectedMailboxCommit,
+    RejectedMailboxMessage, StoreKey, MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
 };
 
 const HISTORY_RECORD_VERSION: u16 = 2;
@@ -93,6 +93,18 @@ pub struct DurableCommitMailboxBatch {
     pub rejected_commit: Option<RejectedMailboxCommit>,
     /// Durable request safe for the native network boundary to submit.
     pub acknowledgment: Option<AckE2eeCommitsRequest>,
+}
+
+/// Public routing metadata required by the native mailbox transport.
+///
+/// Root pins are public identity material, but remain native-only so an
+/// untrusted UI cannot choose or alter the membership trust set used for
+/// commit processing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailboxConversationRoute {
+    pub group_id: GroupId,
+    pub audience: ConversationAudience,
+    pub participants: Vec<PinnedUserIdentity>,
 }
 
 /// One authenticated plaintext record loaded from encrypted native history.
@@ -166,6 +178,52 @@ impl DurableMlsClient {
     #[must_use]
     pub const fn is_ready(&self) -> bool {
         self.state.is_some()
+    }
+
+    /// Return a bounded native-only snapshot of locally authenticated mailbox
+    /// routes.
+    ///
+    /// # Errors
+    /// Rejects unavailable state or a checkpoint whose pinned audience no
+    /// longer satisfies the direct-message/group-message invariants.
+    pub fn mailbox_routes(&self) -> Result<Vec<MailboxConversationRoute>, DurableMailboxError> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or(DurableMailboxError::Unavailable)?;
+        let own_user_id = state.device.user_id();
+        state
+            .conversations
+            .iter()
+            .map(|conversation| {
+                let metadata = conversation.persistence_metadata();
+                let own_pin_count = metadata
+                    .pinned_roots
+                    .iter()
+                    .filter(|(user_id, root)| {
+                        *user_id == own_user_id && root == state.device.root_key_public()
+                    })
+                    .count();
+                let participants = metadata
+                    .pinned_roots
+                    .into_iter()
+                    .filter(|(user_id, _)| *user_id != own_user_id)
+                    .map(|(user_id, root_key_pub)| PinnedUserIdentity::new(user_id, root_key_pub))
+                    .collect::<Vec<_>>();
+                let valid_audience = match metadata.audience {
+                    ConversationAudience::DirectMessage => participants.len() == 1,
+                    ConversationAudience::GroupDm => (2..=99).contains(&participants.len()),
+                };
+                if own_pin_count != 1 || !valid_audience {
+                    return Err(ConversationError::MetadataMismatch.into());
+                }
+                Ok(MailboxConversationRoute {
+                    group_id: metadata.group_id,
+                    audience: metadata.audience,
+                    participants,
+                })
+            })
+            .collect()
     }
 
     /// Reload the last complete checkpoint after an uncertain local write.
@@ -416,6 +474,67 @@ impl DurableMlsClient {
                     return Err(error.into());
                 }
             };
+        if let Some(conversation) = conversation {
+            insert_conversation(&mut state.conversations, existing_position, conversation);
+        }
+
+        if let Some(acknowledgment) = &batch.pending_acknowledgment {
+            let checkpoint = encode_state(&state)?;
+            let outbox = encode_json(acknowledgment)?;
+            if let Err(error) = store.store_batch(vec![
+                (StoreKey::mls_client_state(), checkpoint),
+                (commit_ack_key(group_id)?, outbox),
+            ]) {
+                return Err(error.into());
+            }
+        }
+
+        self.state = Some(state);
+        Ok(DurableCommitMailboxBatch {
+            processed_epochs: batch.processed_epochs,
+            rejected_commit: batch.rejected_commit,
+            acknowledgment: batch.pending_acknowledgment,
+        })
+    }
+
+    /// Process an ordered group-DM commit page against an exact locally pinned
+    /// participant set and atomically persist its successful prefix.
+    ///
+    /// # Errors
+    /// Returns fail-closed mailbox, audience, MLS, or durability errors.
+    pub fn process_group_commit_mailbox(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        group_id: GroupId,
+        participants: &[PinnedUserIdentity],
+        page: E2eeCommitMailboxResponse,
+    ) -> Result<DurableCommitMailboxBatch, DurableMailboxError> {
+        if store.exists(&commit_ack_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+        let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
+        let existing_position = state
+            .conversations
+            .iter()
+            .position(|conversation| conversation.group_id() == group_id);
+        let mut conversation =
+            existing_position.map(|position| state.conversations.remove(position));
+        let batch = match process_group_commit_mailbox(
+            &mut conversation,
+            &state.device,
+            group_id,
+            participants,
+            page,
+        ) {
+            Ok(batch) => batch,
+            Err(error) => {
+                if let Some(conversation) = conversation {
+                    insert_conversation(&mut state.conversations, existing_position, conversation);
+                }
+                self.state = Some(state);
+                return Err(error.into());
+            }
+        };
         if let Some(conversation) = conversation {
             insert_conversation(&mut state.conversations, existing_position, conversation);
         }
@@ -1730,6 +1849,79 @@ mod tests {
                 .ready_messages[0]
                 .plaintext,
             b"group recovery reply"
+        );
+    }
+
+    #[test]
+    fn group_mailbox_route_and_commit_prefix_are_derived_from_the_durable_checkpoint() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let charlie_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let charlie = MlsDevice::generate(UserId::new(), DeviceId::new(), &charlie_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let charlie_pin = PinnedUserIdentity::new(charlie.user_id(), *charlie.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let charlie_package = generate_key_package_batch(&charlie, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let group_id = GroupId::new();
+        let (mut alice_group, initial) = MlsConversation::create_group(
+            group_id,
+            &alice,
+            &[(bob_pin, bob_package), (charlie_pin, charlie_package)],
+        )
+        .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let bob_group = MlsConversation::join_group_from_welcome(
+            group_id,
+            &bob,
+            &[alice_pin, charlie_pin],
+            initial.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let update = alice_group.create_self_update(&alice).unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let update_epoch = update.epoch;
+        let page = E2eeCommitMailboxResponse {
+            commits: vec![E2eeCommitMailboxEntry {
+                epoch: update.epoch,
+                prior_epoch: update.prior_epoch,
+                committer_device_id: update.committer_device_id.to_string(),
+                commit_blob: update.commit_blob,
+                welcome_blob: None,
+                membership_change: None,
+                created_at_unix: 10,
+                expires_at_unix: 20,
+            }],
+            next_after_epoch: Some(update_epoch),
+        };
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &bob, &[&bob_group]).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let routes = runtime.mailbox_routes().unwrap();
+        let mut expected_participants = vec![alice_pin, charlie_pin];
+        expected_participants.sort_by_key(|pin| pin.user_id.to_string());
+        assert_eq!(
+            routes,
+            vec![MailboxConversationRoute {
+                group_id,
+                audience: ConversationAudience::GroupDm,
+                participants: expected_participants,
+            }]
+        );
+
+        let batch = runtime
+            .process_group_commit_mailbox(&store, group_id, &routes[0].participants, page)
+            .unwrap();
+        assert_eq!(batch.processed_epochs, vec![update_epoch]);
+        assert_eq!(batch.acknowledgment.unwrap().epochs, vec![update_epoch]);
+        assert_eq!(
+            crate::load_mls_client_state(&store).unwrap().conversations[0].epoch(),
+            update_epoch
         );
     }
 

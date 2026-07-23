@@ -30,8 +30,10 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
 - The native host discovers the authenticated user through the compile-time
   `FILAMENT_NATIVE_API_ORIGIN` HTTPS authority (default
   `https://api.filament.local`). Redirects are disabled, bearer headers are
-  sensitive/redacted, requests and responses are capped at 256 KiB, and strict
-  server DTO validation fails closed.
+  sensitive/redacted, requests and ordinary responses are capped at 256 KiB,
+  and strict server DTO validation fails closed. Mailbox responses have a
+  separate 2 MiB encoded-body cap around the protocol's 256 KiB aggregate
+  opaque-blob limit.
 - A server account with an empty certified-device directory can enroll its
   first device. The host creates the device ID itself, atomically persists the
   root identity, complete MLS provider, and retryable KeyPackage upload outbox
@@ -45,8 +47,15 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   reconciles an exact idempotent retry after a lost response or restart.
   Successful rotation resets MLS groups for authenticated external-commit
   recovery and never exposes replacement secrets to the webview.
-- Mailbox/messaging coordination, pairing UI, packaged end-to-end smoke
-  coverage, and mobile platform custody evidence remain fail closed.
+- On initialization and authenticated settings refresh, the host drains a
+  bounded rotating set of locally authenticated DM/group-DM commit and message
+  mailboxes. It submits any prior durable acknowledgment before another read,
+  commits MLS state/history/outboxes atomically in SQLCipher, and clears an
+  outbox only after an idempotent server response. Rejected MLS data stops that
+  group without exposing plaintext or adding IPC.
+- Conversation provisioning, encrypted send/presentation UI, proposal and
+  attachment coordination, pairing UI, packaged end-to-end smoke coverage,
+  and mobile platform custody evidence remain fail closed.
 - Calls and automatic updates remain disabled.
 
 ## Developer commands

@@ -279,7 +279,15 @@ signer/provider checkpoint, and KeyPackage outbox before submission, and
 reconciles exact idempotent retries after response loss or restart. Confirmed
 adoption atomically resets MLS group state for authenticated external-commit
 recovery, advances the durable sequence, and never exposes replacement secrets
-to UI code.
+to UI code. The packaged host now drains a bounded rotating set of known
+DM/group-DM commit and message mailboxes from the compile-time HTTPS authority.
+It derives all routes and root pins from the authenticated MLS checkpoint,
+retries durable acknowledgment outboxes before later reads, processes commits
+before messages, and stops a group on hostile MLS data. Lost acknowledgment
+responses survive restart without duplicate decryption or volatile
+acknowledgment. Conversation provisioning, encrypted send/presentation UI,
+proposal and attachment coordination, packaged network smoke coverage, and
+non-desktop platform custody evidence remain fail closed.
 
 ---
 

@@ -53,6 +53,11 @@ IDs; neither value can be selected by the webview.
    local adoption atomically replaces the root, resets MLS groups for
    authenticated recovery, and retains the upload outbox before clearing the
    retry record.
+8. The packaged host derives mailbox routes and root pins from that checkpoint,
+   reads fixed same-origin commit/message endpoints, and invokes the durable
+   native coordinator. MLS state, authenticated history, and an acknowledgment
+   outbox commit atomically; a lost response leaves the outbox for exact retry
+   before any later page. No group, device, root pin, or plaintext enters IPC.
 
 ## Guardrails Verified
 
@@ -81,6 +86,10 @@ IDs; neither value can be selected by the webview.
 - Replacement root and device secrets remain inside zeroizing native values
   and SQLCipher records. Lost rotation responses leave a durable candidate;
   they cannot cause generation of a second replacement identity.
+- Mailbox URLs use only native checkpoint group/device identifiers and the
+  compile-time authority. Reads, pages, groups per pass, response bodies, and
+  acknowledgment batches are bounded; hostile routing hints are authenticated
+  by MLS before history is stored or acknowledged.
 - IPC policy contains no private-key display, copy, export, database read, or
   generic filesystem command.
 
@@ -101,7 +110,9 @@ IDs; neither value can be selected by the webview.
   redacted credential-store diagnostics.
 - `apps/filament-client-desktop/src-tauri/src/native_api.rs`: pinned HTTPS
   origin policy, bounded strict DTO handling, sensitive authorization headers,
-  and ghost-device/root-replacement rejection.
+  ghost-device/root-replacement rejection, and fixed mailbox/ack transports.
+- `apps/filament-client-desktop/src-tauri/src/runtime.rs`: bounded native
+  commit-before-message coordination and lost-response acknowledgment retry.
 - `apps/filament-client-desktop/src-tauri/src/device_registry.rs`: fixed,
   bounded native account/device bindings with duplicate and corruption
   rejection.

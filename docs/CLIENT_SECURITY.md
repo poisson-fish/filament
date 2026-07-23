@@ -24,14 +24,22 @@ Server-provided data is always treated as untrusted input.
 - Session tokens and native command state use redacted `Debug` output. IPC
   failures are closed, non-sensitive codes rather than backend error strings.
 - Native REST uses one compile-time HTTPS authority, disables redirects, caps
-  requests/responses at 256 KiB, marks bearer headers sensitive, and strictly
-  parses hostile server responses. The webview cannot select a server origin.
+  requests and ordinary responses at 256 KiB, marks bearer headers sensitive,
+  and strictly parses hostile server responses. Mailbox responses have a
+  separate 2 MiB encoded-body cap around the protocol's 256 KiB aggregate
+  opaque-blob limit. The webview cannot select a server origin.
 - First-device enrollment is permitted only when the authenticated account's
   certified-device directory is empty. Existing-device accounts require QR
   pairing; they never auto-generate a replacement identity root.
 - Root identity, complete MLS provider state, and the exact pending
   KeyPackage upload are atomically persisted in SQLCipher. A network-uncertain
   upload remains in the native outbox for an exact idempotent retry.
+- The packaged host derives mailbox group IDs and participant root pins only
+  from the validated native MLS checkpoint. Commit processing precedes message
+  processing; a prior durable per-group acknowledgment is retried before any
+  later page. Processing is bounded to eight rotating groups and four pages
+  per mailbox per synchronization call. Rejected commits/messages stop the
+  affected group, and no mailbox capability is exposed through IPC.
 - Signed updates are required.
 - Crash logs must redact all access/refresh token material.
 

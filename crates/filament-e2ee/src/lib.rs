@@ -83,7 +83,8 @@ pub use durable_mailbox::{
     confirm_commit_acknowledgment, confirm_message_acknowledgment, load_disappearing_timer,
     load_stored_message, load_stored_message_at, pending_commit_acknowledgment,
     pending_message_acknowledgment, purge_expired_messages, DurableCommitMailboxBatch,
-    DurableMailboxError, DurableMessageMailboxBatch, DurableMlsClient, StoredMailboxMessage,
+    DurableMailboxError, DurableMessageMailboxBatch, DurableMlsClient, MailboxConversationRoute,
+    StoredMailboxMessage,
 };
 pub use error::{
     AttachmentError, BackupError, ConversationError, E2eeError, HistorySyncError, IdentityError,
