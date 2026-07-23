@@ -191,7 +191,7 @@ jobs:
       - name: Install Tauri Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev lsof xvfb
 
       - name: Install locked application dependencies
         run: |
@@ -218,6 +218,32 @@ jobs:
           --manifest target/package-evidence/linux-x86_64/manifest.json
           --checksums target/package-evidence/linux-x86_64/SHA256SUMS
 
+      - name: Install and launch Debian package offline
+        shell: bash
+        run: |
+          mapfile -t DEB_FILES < <(find "$GITHUB_WORKSPACE/target/debug/bundle/deb" -maxdepth 1 -type f -name '*.deb' -print)
+          test "${#DEB_FILES[@]}" -eq 1
+          sudo apt-get install -y "${DEB_FILES[0]}"
+          INSTALLED_EXECUTABLE="$(command -v filament)"
+          test -x "$INSTALLED_EXECUTABLE"
+          xvfb-run -a npm --prefix apps/filament-client-desktop run smoke:desktop -- \
+            --platform linux \
+            --executable "$INSTALLED_EXECUTABLE" \
+            --evidence "$GITHUB_WORKSPACE/target/package-evidence/linux-x86_64/deb-launch.json"
+
+      - name: Launch AppImage offline
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          mapfile -t APPIMAGE_FILES < <(find "$GITHUB_WORKSPACE/target/debug/bundle/appimage" -maxdepth 1 -type f -name '*.AppImage' -print)
+          test "${#APPIMAGE_FILES[@]}" -eq 1
+          chmod u+x "${APPIMAGE_FILES[0]}"
+          xvfb-run -a npm --prefix apps/filament-client-desktop run smoke:desktop -- \
+            --platform linux \
+            --executable "${APPIMAGE_FILES[0]}" \
+            --evidence "$GITHUB_WORKSPACE/target/package-evidence/linux-x86_64/appimage-launch.json"
+
       - name: Upload verified Linux smoke artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -227,6 +253,8 @@ jobs:
             target/debug/bundle/appimage/*.AppImage
             target/package-evidence/linux-x86_64/manifest.json
             target/package-evidence/linux-x86_64/SHA256SUMS
+            target/package-evidence/linux-x86_64/deb-launch.json
+            target/package-evidence/linux-x86_64/appimage-launch.json
           if-no-files-found: error
           retention-days: 7
 
@@ -301,6 +329,26 @@ jobs:
           --manifest target/package-evidence/macos-${{ matrix.architecture }}/manifest.json
           --checksums target/package-evidence/macos-${{ matrix.architecture }}/SHA256SUMS
 
+      - name: Mount packaged disk image
+        run: |
+          mkdir -p "$RUNNER_TEMP/filament-dmg"
+          hdiutil attach \
+            -nobrowse \
+            -readonly \
+            -mountpoint "$RUNNER_TEMP/filament-dmg" \
+            target/debug/bundle/dmg/Filament_${{ matrix.architecture }}.dmg
+
+      - name: Launch packaged macOS app offline
+        run: >-
+          npm --prefix apps/filament-client-desktop run smoke:desktop --
+          --platform macos
+          --executable "$RUNNER_TEMP/filament-dmg/Filament.app/Contents/MacOS/filament"
+          --evidence "$GITHUB_WORKSPACE/target/package-evidence/macos-${{ matrix.architecture }}/dmg-launch.json"
+
+      - name: Unmount packaged disk image
+        if: always()
+        run: hdiutil detach "$RUNNER_TEMP/filament-dmg" || true
+
       - name: Upload verified macOS smoke artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -310,6 +358,7 @@ jobs:
             target/debug/bundle/dmg/*.dmg
             target/package-evidence/macos-${{ matrix.architecture }}/manifest.json
             target/package-evidence/macos-${{ matrix.architecture }}/SHA256SUMS
+            target/package-evidence/macos-${{ matrix.architecture }}/dmg-launch.json
           if-no-files-found: error
           retention-days: 7
 
@@ -368,6 +417,68 @@ jobs:
           --manifest target/package-evidence/windows-x86_64/manifest.json
           --checksums target/package-evidence/windows-x86_64/SHA256SUMS
 
+      - name: Install Windows package
+        shell: pwsh
+        run: |
+          $msiFiles = @(Get-ChildItem "$env:GITHUB_WORKSPACE\target\debug\bundle\msi\*.msi")
+          if ($msiFiles.Count -ne 1) {
+            throw "expected exactly one MSI package"
+          }
+          $installer = Start-Process msiexec.exe `
+            -ArgumentList "/i `"$($msiFiles[0].FullName)`" /qn /norestart" `
+            -Wait `
+            -PassThru
+          if ($installer.ExitCode -ne 0) {
+            throw "MSI installation failed"
+          }
+          $registryPaths = @(
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          $registryCandidates = @(
+            Get-ItemProperty -Path $registryPaths -ErrorAction SilentlyContinue |
+              Where-Object { $_.DisplayName -eq "Filament" -and $_.InstallLocation } |
+              ForEach-Object { Join-Path $_.InstallLocation "filament.exe" }
+          )
+          $candidates = @($registryCandidates) + @(
+            "$env:LOCALAPPDATA\Filament\filament.exe",
+            "$env:LOCALAPPDATA\Programs\Filament\filament.exe",
+            "$env:ProgramFiles\Filament\filament.exe",
+            "${env:ProgramFiles(x86)}\Filament\filament.exe"
+          )
+          $candidates = @(
+            $candidates |
+              Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+              Sort-Object -Unique
+          )
+          if ($candidates.Count -ne 1) {
+            throw "expected exactly one installed Filament executable"
+          }
+          "FILAMENT_INSTALLED_EXECUTABLE=$($candidates[0])" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FILAMENT_INSTALLER_PATH=$($msiFiles[0].FullName)" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Launch installed Windows app offline
+        run: >-
+          npm --prefix apps/filament-client-desktop run smoke:desktop --
+          --platform windows
+          --executable "$env:FILAMENT_INSTALLED_EXECUTABLE"
+          --evidence "$env:GITHUB_WORKSPACE\target\package-evidence\windows-x86_64\msi-launch.json"
+
+      - name: Uninstall Windows package
+        if: always() && env.FILAMENT_INSTALLER_PATH != ''
+        shell: pwsh
+        run: |
+          $uninstaller = Start-Process msiexec.exe `
+            -ArgumentList "/x `"$env:FILAMENT_INSTALLER_PATH`" /qn /norestart" `
+            -Wait `
+            -PassThru
+          if ($uninstaller.ExitCode -ne 0) {
+            throw "MSI uninstall failed"
+          }
+
       - name: Upload verified Windows smoke artifact
         uses: actions/upload-artifact@v4
         with:
@@ -376,6 +487,7 @@ jobs:
             target/debug/bundle/msi/*.msi
             target/package-evidence/windows-x86_64/manifest.json
             target/package-evidence/windows-x86_64/SHA256SUMS
+            target/package-evidence/windows-x86_64/msi-launch.json
           if-no-files-found: error
           retention-days: 7
 

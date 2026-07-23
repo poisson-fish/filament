@@ -19,6 +19,10 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
 - A cross-platform artifact gate rejects missing or duplicate formats,
   symlinks, secret-like/source-map assets, oversized bundles, remote HTML
   scripts, missing macOS notices, and emits deterministic SHA-256 evidence.
+- Desktop CI installs the Debian and MSI packages, mounts the macOS disk image,
+  and launches those paths plus the AppImage with dead proxy endpoints. A
+  bounded process-tree probe rejects early exit, output floods, or any network
+  socket before emitting redacted launch evidence.
 - The runtime backend returns typed `unavailable` errors until production
   session, transport, mailbox, and MLS coordination are injected. It never
   claims secure storage or messaging is ready.
@@ -47,6 +51,21 @@ npm run build -- --debug --bundles msi  # Windows
 
 Release bundles omit `--debug` and require the platform signing gates. No
 signing credentials belong in the repository.
+
+Run the bounded offline launch probe against an already-built desktop
+executable:
+
+```bash
+npm run smoke:desktop -- \
+  --platform macos \
+  --executable ../../target/debug/bundle/macos/Filament.app/Contents/MacOS/filament \
+  --evidence ../../target/package-evidence/local-macos-launch.json
+```
+
+Use `linux` or `windows` only on the matching host. The probe accepts only a
+regular executable, passes a minimal environment with dead proxy endpoints,
+samples the complete process group for network sockets, caps captured output,
+and terminates the process after an eight-second observation.
 
 Mobile project generation uses the same Rust entry point:
 
@@ -100,4 +119,7 @@ contained the executable, application metadata, icon, embedded local assets,
 and `THIRD_PARTY_NOTICES.txt`.
 
 This is host-scaffold evidence, not the Phase 5.5 messaging exit suite.
-Production E2EE messaging and mobile platform custody remain fail-closed work.
+The same probe is now required for Debian, AppImage, macOS disk-image, and MSI
+CI artifacts. Production E2EE messaging, upgrade semantics, and mobile
+platform custody remain fail-closed work; Android and iOS simulator launch
+tests are intentionally deferred.

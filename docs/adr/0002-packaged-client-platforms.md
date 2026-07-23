@@ -138,12 +138,18 @@ request cap and exact local navigation, and returns typed unavailable errors
 until production backends are injected. A local macOS `.app` package launched
 successfully from embedded assets on 2026-07-22 with dead network proxies.
 Every resulting artifact still requires local-bundle integrity checks,
-target-specific signing, advisory/license/vet checks, and packaged smoke-test
-evidence. CI now regenerates the Android project from the locked Tauri CLI,
-pins API 36, build-tools 36.0.0, NDK 27.2.12479018, Java 21, and the arm64
-Rust target, verifies the API 33 floor/API 36 target and cleartext denial, and
-produces integrity-checked local `.apk` and `.aab` paths. Release credentials
-remain external. CI also regenerates the iOS Xcode project under full Xcode,
+target-specific signing, and advisory/license/vet checks. CI now installs the
+Debian and MSI artifacts, mounts the macOS disk image, and launches those
+executables plus the AppImage with a minimal environment and dead proxy
+endpoints. The bounded verifier fails on early exit, output flooding, or any
+observed process-tree network socket and emits only redacted launch evidence.
+This verifies desktop install/offline-launch behavior, not production E2EE
+messaging or upgrade semantics. CI also regenerates the Android project from
+the locked Tauri CLI, pins API 36, build-tools 36.0.0, NDK 27.2.12479018, Java
+21, and the arm64 Rust target, verifies the API 33 floor/API 36 target and
+cleartext denial, and produces integrity-checked local `.apk` and `.aab` paths.
+Release credentials remain external. CI also regenerates the iOS Xcode project
+under full Xcode,
 locks the iOS 17 deployment floor, builds the Apple-silicon simulator target,
 and emits integrity evidence for its unsigned `.app`. Device-release evidence
 requires both the signed `.app` and `.ipa`; the verifier does not let simulator
@@ -152,7 +158,9 @@ evidence satisfy that requirement. The development host has only
 an SDK, so local generation is toolchain-blocked rather than evidence that iOS
 is infeasible. Signed device packaging remains gated on externally supplied
 Apple Developer credentials and owner review. The next privileged command
-expansion must be reviewed before implementation.
+expansion must be reviewed before implementation. Android and iOS simulator
+launch suites remain deferred until mobile runtime testing is needed; their
+existing build and artifact-integrity gates remain active.
 
 ## Authoritative baseline references
 

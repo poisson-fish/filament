@@ -262,7 +262,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
     assert_eq!(
         contract.runtime.status,
-        "desktop_android_ios_simulator_packages_ci_gated_fail_closed"
+        "desktop_install_offline_launch_android_ios_simulator_packages_ci_gated_fail_closed"
     );
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(
@@ -504,13 +504,15 @@ fn packaged_artifact_gates_cover_the_reviewed_initial_matrix() {
         serde_json::from_str(&package_raw).expect("packaged-client npm manifest should parse");
     assert_eq!(
         package["scripts"]["test:package-policy"],
-        serde_json::Value::String("node --test tests/package-artifacts.test.mjs".to_owned())
+        serde_json::Value::String(
+            "node --test tests/package-artifacts.test.mjs tests/desktop-package-smoke.test.mjs"
+                .to_owned()
+        )
     );
     assert_eq!(
         package["scripts"]["verify:package"],
         serde_json::Value::String("node tools/verify-package.mjs".to_owned())
     );
-
     let verifier = fs::read_to_string(desktop_root.join("tools/verify-package.mjs"))
         .expect("packaged-client artifact verifier should exist");
     for required_control in [
@@ -578,6 +580,58 @@ fn packaged_artifact_gates_cover_the_reviewed_initial_matrix() {
     }
     assert_eq!(workflow.matches("run verify:package --").count(), 5);
     assert_eq!(workflow.matches("SHA256SUMS").count(), 10);
+}
+
+#[test]
+fn desktop_package_offline_launch_gate_is_bounded() {
+    let root = repo_root();
+    let desktop_root = root.join("apps/filament-client-desktop");
+    let package_raw = fs::read_to_string(desktop_root.join("package.json"))
+        .expect("packaged-client npm manifest should exist");
+    let package: serde_json::Value =
+        serde_json::from_str(&package_raw).expect("packaged-client npm manifest should parse");
+    assert_eq!(
+        package["scripts"]["smoke:desktop"],
+        serde_json::Value::String("node tools/smoke-desktop-package.mjs".to_owned())
+    );
+
+    let smoke = fs::read_to_string(desktop_root.join("tools/smoke-desktop-package.mjs"))
+        .expect("desktop package smoke verifier should exist");
+    for required_control in [
+        "MAX_CAPTURE_BYTES",
+        "MAX_OBSERVATION_MS",
+        "ENVIRONMENT_ALLOWLIST",
+        "HTTP_PROXY: \"http://127.0.0.1:9\"",
+        "desktop package opened a network socket during offline launch",
+        "desktop package exited before the offline launch observation completed",
+        "offline_bundle_launch: true",
+    ] {
+        assert!(
+            smoke.contains(required_control),
+            "desktop smoke verifier should retain {required_control}"
+        );
+    }
+
+    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .expect("CI workflow should exist");
+    for required_desktop_smoke in [
+        "Install and launch Debian package offline",
+        "Launch AppImage offline",
+        "Mount packaged disk image",
+        "Launch packaged macOS app offline",
+        "Install Windows package",
+        "Launch installed Windows app offline",
+        "run smoke:desktop --",
+        "deb-launch.json",
+        "appimage-launch.json",
+        "dmg-launch.json",
+        "msi-launch.json",
+    ] {
+        assert!(
+            workflow.contains(required_desktop_smoke),
+            "CI should retain desktop offline launch gate {required_desktop_smoke}"
+        );
+    }
 }
 
 #[test]

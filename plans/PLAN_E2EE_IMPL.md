@@ -239,7 +239,12 @@ and Windows MSI paths on explicit host architectures. A bounded cross-platform
 verifier rejects symlinks, secret-like or source-map assets, remote HTML code,
 missing/duplicate formats, and oversized bundles before emitting deterministic
 artifact and local-web-bundle SHA-256 evidence. These are packaging gates, not
-the still-pending production messaging or install/upgrade smoke suites. The
+the still-pending production messaging or upgrade smoke suites. Debian and MSI
+artifacts are now installed in CI, the macOS disk image is mounted, and all
+three paths plus the AppImage must survive a bounded offline launch with dead
+proxy endpoints and no process-tree network socket. Redacted launch evidence
+is retained with each desktop artifact. Mobile simulator launch tests remain
+deferred; their build and artifact-integrity gates remain active. The
 Android gate now pins API 36, build-tools 36.0.0, NDK 27.2.12479018, Java 21,
 and the arm64 Rust target; regenerates the mobile project from the locked CLI;
 verifies the API 33 floor, API 36 target, and cleartext denial; and produces
