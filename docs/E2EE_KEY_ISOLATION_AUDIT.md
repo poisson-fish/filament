@@ -18,6 +18,12 @@ backend remains capability-oriented: the webview cannot provide a filesystem
 path, credential account, native user/device identity, MLS state, or key
 material to any command.
 
+The packaged runtime now persists the validated access/refresh pair as one
+versioned credential record under fixed native service/account identifiers.
+The record is capped at 12 KiB, revalidated on load, rejects unknown fields and
+versions, and uses zeroizing native buffers. Session metadata exposes only
+presence and access-token expiry; tokens cannot be read back through IPC.
+
 ## Native Data Flow
 
 1. The native authenticated session supplies typed `UserId` and `DeviceId`
@@ -44,6 +50,8 @@ material to any command.
 - Relative paths, symlinks, hard-linked files, non-regular files, oversized
   databases, oversized values, and invalid record identifiers are rejected.
 - Debug and error output omits credential accounts, paths, values, and keys.
+- Session writes cannot select a credential service/account or create a
+  mismatched access/refresh pair; logout deletion is idempotent.
 - IPC policy contains no private-key display, copy, export, database read, or
   generic filesystem command.
 
@@ -59,18 +67,21 @@ material to any command.
 - `apps/filament-client-desktop/src-tauri/src/tauri_host.rs`: native command
   backend boundary, validation, opaque errors, redaction, and exact-manifest
   negative tests.
+- `apps/filament-client-desktop/src-tauri/src/session_store.rs`: bounded
+  single-record session custody, strict reload validation, zeroization, and
+  redacted credential-store diagnostics.
 - `apps/filament-client-desktop/src-tauri/tests/hardening_config.rs`: exact IPC
   allowlist alignment with `security-policy.json`.
 
 ## Remaining Release Checks
 
-- Exercise each real OS credential backend on signed macOS, Windows, and Linux
-  packages; headless CI uses a deterministic provider and does not claim this
-  platform smoke coverage.
-- Add the thin Tauri runtime adapter using only the exact Tauri 2.11.5
-  exceptions approved on 2026-07-22 and recorded in ADR 0002. Patchable
-  findings remain denied, and the temporary GTK3/GLib/MPL exception set must
-  be reviewed on every Tauri release and no later than 2027-01-18.
+- Exercise session write/read/logout and SQLCipher-key custody against each real
+  OS credential backend from signed macOS, Windows, and Linux packages;
+  headless and offline-launch CI do not claim this platform smoke coverage.
+- The exact Tauri 2.11.5 exceptions approved on 2026-07-22 and recorded in ADR
+  0002 remain temporary. Patchable findings remain denied, and the
+  GTK3/GLib/MPL exception set must be reviewed on every Tauri release and no
+  later than 2027-01-18.
 - Re-run the audit whenever a Tauri command, serialization type, key-storage
   backend, crash reporter, or E2EE logging path changes.
 - Phase 4 must review the 64 MiB/4,096-record foundation limits and add the

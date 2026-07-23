@@ -15,9 +15,10 @@ use rand::{rngs::OsRng, RngCore as _};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize as _, Zeroizing};
 
 mod runtime;
+mod session_store;
 mod tauri_host;
 
 pub use runtime::{run, MAX_TAURI_IPC_REQUEST_BYTES};
@@ -56,7 +57,7 @@ pub enum SecurityError {
     IdentityRotationUnavailable,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct SessionToken(String);
 
 impl fmt::Debug for SessionToken {
@@ -92,7 +93,13 @@ impl SessionToken {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl Drop for SessionToken {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct UnixExpiry(i64);
 
 impl UnixExpiry {
@@ -102,7 +109,7 @@ impl UnixExpiry {
     ///
     /// Returns [`SecurityError::InvalidExpiry`] when `expires_at_unix <= now_unix`.
     pub fn new(expires_at_unix: i64, now_unix: i64) -> Result<Self, SecurityError> {
-        if expires_at_unix <= now_unix {
+        if expires_at_unix <= now_unix || expires_at_unix > 253_402_300_799 {
             return Err(SecurityError::InvalidExpiry);
         }
 
@@ -115,12 +122,19 @@ impl UnixExpiry {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StoreSessionRequest {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at_unix: i64,
+}
+
+impl Drop for StoreSessionRequest {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+    }
 }
 
 impl fmt::Debug for StoreSessionRequest {
@@ -134,7 +148,7 @@ impl fmt::Debug for StoreSessionRequest {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct ValidatedStoreSessionRequest {
     pub access_token: SessionToken,
     pub refresh_token: SessionToken,
@@ -158,10 +172,13 @@ impl ValidatedStoreSessionRequest {
     /// # Errors
     ///
     /// Returns any [`SecurityError`] raised by token or expiry validation.
-    pub fn try_from_dto(dto: StoreSessionRequest, now_unix: i64) -> Result<Self, SecurityError> {
+    pub fn try_from_dto(
+        mut dto: StoreSessionRequest,
+        now_unix: i64,
+    ) -> Result<Self, SecurityError> {
         Ok(Self {
-            access_token: SessionToken::new(dto.access_token)?,
-            refresh_token: SessionToken::new(dto.refresh_token)?,
+            access_token: SessionToken::new(core::mem::take(&mut dto.access_token))?,
+            refresh_token: SessionToken::new(core::mem::take(&mut dto.refresh_token))?,
             expires_at_unix: UnixExpiry::new(dto.expires_at_unix, now_unix)?,
         })
     }
@@ -790,6 +807,18 @@ mod tests {
         };
 
         let result = ValidatedStoreSessionRequest::try_from_dto(request, 101);
+        assert_eq!(result, Err(SecurityError::InvalidExpiry));
+    }
+
+    #[test]
+    fn store_session_validation_rejects_out_of_range_expiry() {
+        let request = StoreSessionRequest {
+            access_token: "A".repeat(64),
+            refresh_token: "B".repeat(64),
+            expires_at_unix: 253_402_300_800,
+        };
+
+        let result = ValidatedStoreSessionRequest::try_from_dto(request, 100);
         assert_eq!(result, Err(SecurityError::InvalidExpiry));
     }
 

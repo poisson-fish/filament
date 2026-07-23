@@ -134,9 +134,13 @@ the same package-level security evidence as the initial matrix.
 The target and artifact matrix is stable enough to build CI and packaging
 contracts, and the exact Tauri 2.11.5 graph now backs a compiling adapter. The
 adapter registers only the seven pre-existing commands, enforces a 16 KiB IPC
-request cap and exact local navigation, and returns typed unavailable errors
-until production backends are injected. A local macOS `.app` package launched
-successfully from embedded assets on 2026-07-22 with dead network proxies.
+request cap and exact local navigation, and stores the validated access/refresh
+session as one versioned, bounded platform-credential record under fixed native
+identifiers. Logout deletion is idempotent; corrupt records are rejected and
+token buffers are zeroized on drop. Encrypted-store initialization and all
+network/MLS coordination remain typed-unavailable until authenticated device
+enrollment is wired. A local macOS `.app` package launched successfully from
+embedded assets on 2026-07-22 with dead network proxies.
 Every resulting artifact still requires local-bundle integrity checks,
 target-specific signing, and advisory/license/vet checks. CI now installs the
 Debian and MSI artifacts, mounts the macOS disk image, and launches those

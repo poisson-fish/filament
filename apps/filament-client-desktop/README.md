@@ -23,9 +23,14 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   and launches those paths plus the AppImage with dead proxy endpoints. A
   bounded process-tree probe rejects early exit, output floods, or any network
   socket before emitting redacted launch evidence.
-- The runtime backend returns typed `unavailable` errors until production
-  session, transport, mailbox, and MLS coordination are injected. It never
-  claims secure storage or messaging is ready.
+- The runtime stores one versioned, bounded access/refresh session record in
+  the platform credential service under fixed native identifiers. Logout
+  deletes that record idempotently; malformed stored records fail closed and
+  token buffers are zeroized on drop.
+- Store initialization, transport, mailbox, settings, rotation, and MLS
+  coordination still return typed `unavailable` errors. The runtime never
+  claims encrypted storage or messaging is ready before authenticated device
+  enrollment is wired.
 - Calls and automatic updates remain disabled.
 
 ## Developer commands
@@ -118,8 +123,8 @@ socket during the launch probe, and emitted no runtime error. The artifact
 contained the executable, application metadata, icon, embedded local assets,
 and `THIRD_PARTY_NOTICES.txt`.
 
-This is host-scaffold evidence, not the Phase 5.5 messaging exit suite.
+This is host/session-scaffold evidence, not the Phase 5.5 messaging exit suite.
 The same probe is now required for Debian, AppImage, macOS disk-image, and MSI
 CI artifacts. Production E2EE messaging, upgrade semantics, and mobile
-platform custody remain fail-closed work; Android and iOS simulator launch
-tests are intentionally deferred.
+platform custody smoke coverage remains fail-closed work; Android and iOS
+simulator launch tests are intentionally deferred.

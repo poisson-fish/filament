@@ -258,7 +258,13 @@ release gate. Local Android generation remains blocked on the development
 host's absent toolchain, while local iOS generation is blocked by command-line
 tools without an iPhone SDK. Both implementation paths remain selected;
 signed iOS device packaging awaits external Apple credentials and owner
-review.
+review. The packaged runtime now injects native session custody through the
+existing audited commands: it stores one strict, versioned access/refresh
+record in the platform credential service, caps the record at 12 KiB,
+revalidates it on load, zeroizes token buffers, and deletes it idempotently on
+logout. Credential identifiers remain native-only. Authenticated device
+enrollment, SQLCipher initialization, network/mailbox coordination, and the
+packaged messaging suite remain fail closed.
 
 ---
 

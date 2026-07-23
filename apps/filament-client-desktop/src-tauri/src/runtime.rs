@@ -1,8 +1,8 @@
 //! Concrete Tauri runtime wiring for the packaged Filament clients.
 //!
-//! The initial runtime is intentionally fail closed: it exposes only the
-//! already-audited command names and returns an opaque unavailable result until
-//! the production session/network coordinator is injected.
+//! The runtime persists the bounded session in the platform credential store.
+//! E2EE store, settings, rotation, and network coordination remain fail closed
+//! until authenticated device enrollment is injected.
 
 use std::sync::Arc;
 
@@ -10,6 +10,10 @@ use filament_protocol::RotateRootIdentityResponse;
 use tauri::ipc::InvokeBody;
 
 use crate::{
+    session_store::{
+        OsSessionCredentialStore, SessionCredentialError, SessionCredentialStore,
+        StoredSessionMetadata,
+    },
     validate_runtime_navigation, DesktopCommandBackend, DesktopCommandBackendError,
     DesktopCommandError, DesktopCommandHost, E2eeStoreStatus, EncryptionSettingsSnapshot,
     RotateIdentityCommandRequest, SessionMetadata, StoreSessionRequest,
@@ -19,23 +23,52 @@ use crate::{
 /// Maximum serialized request body accepted at the native IPC boundary.
 pub const MAX_TAURI_IPC_REQUEST_BYTES: usize = 16 * 1024;
 
-#[derive(Debug, Default)]
-struct UnavailableDesktopBackend;
+struct ProductionDesktopBackend {
+    session_store: Arc<dyn SessionCredentialStore>,
+}
 
-impl DesktopCommandBackend for UnavailableDesktopBackend {
+impl core::fmt::Debug for ProductionDesktopBackend {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("ProductionDesktopBackend(<native state redacted>)")
+    }
+}
+
+impl Default for ProductionDesktopBackend {
+    fn default() -> Self {
+        Self {
+            session_store: Arc::new(OsSessionCredentialStore),
+        }
+    }
+}
+
+impl ProductionDesktopBackend {
+    #[cfg(test)]
+    fn with_session_store(session_store: Arc<dyn SessionCredentialStore>) -> Self {
+        Self { session_store }
+    }
+}
+
+impl DesktopCommandBackend for ProductionDesktopBackend {
     fn store_session(
         &self,
-        _request: ValidatedStoreSessionRequest,
+        request: ValidatedStoreSessionRequest,
     ) -> Result<SessionMetadata, DesktopCommandBackendError> {
-        Err(DesktopCommandBackendError::Unavailable)
+        let metadata = self
+            .session_store
+            .store(&request)
+            .map_err(map_session_error)?;
+        Ok(session_metadata(Some(metadata)))
     }
 
     fn clear_session(&self) -> Result<(), DesktopCommandBackendError> {
-        Err(DesktopCommandBackendError::Unavailable)
+        self.session_store.clear().map_err(map_session_error)
     }
 
     fn read_session_metadata(&self) -> Result<SessionMetadata, DesktopCommandBackendError> {
-        Err(DesktopCommandBackendError::Unavailable)
+        self.session_store
+            .metadata()
+            .map(session_metadata)
+            .map_err(map_session_error)
     }
 
     fn initialize_e2ee_store(&self) -> Result<E2eeStoreStatus, DesktopCommandBackendError> {
@@ -57,6 +90,26 @@ impl DesktopCommandBackend for UnavailableDesktopBackend {
         _request: RotateIdentityCommandRequest,
     ) -> Result<RotateRootIdentityResponse, DesktopCommandBackendError> {
         Err(DesktopCommandBackendError::Unavailable)
+    }
+}
+
+const fn session_metadata(metadata: Option<StoredSessionMetadata>) -> SessionMetadata {
+    match metadata {
+        Some(metadata) => SessionMetadata {
+            stored: true,
+            expires_at_unix: Some(metadata.expires_at_unix),
+        },
+        None => SessionMetadata {
+            stored: false,
+            expires_at_unix: None,
+        },
+    }
+}
+
+const fn map_session_error(error: SessionCredentialError) -> DesktopCommandBackendError {
+    match error {
+        SessionCredentialError::Unavailable => DesktopCommandBackendError::Unavailable,
+        SessionCredentialError::Rejected => DesktopCommandBackendError::Rejected,
     }
 }
 
@@ -150,7 +203,9 @@ fn invoke_body_within_limit(body: &InvokeBody) -> bool {
 /// this initialization boundary.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let host = Arc::new(DesktopCommandHost::new(Arc::new(UnavailableDesktopBackend)));
+    let host = Arc::new(DesktopCommandHost::new(Arc::new(
+        ProductionDesktopBackend::default(),
+    )));
 
     tauri::Builder::default()
         .manage(RuntimeState { host })
@@ -186,7 +241,40 @@ fn handle_invoke(invoke: tauri::ipc::Invoke<tauri::Wry>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    #[derive(Default)]
+    struct MemorySessionStore {
+        expiry: Mutex<Option<i64>>,
+    }
+
+    impl SessionCredentialStore for MemorySessionStore {
+        fn store(
+            &self,
+            request: &ValidatedStoreSessionRequest,
+        ) -> Result<StoredSessionMetadata, SessionCredentialError> {
+            let expiry = request.expires_at_unix.as_i64();
+            *self.expiry.lock().unwrap() = Some(expiry);
+            Ok(StoredSessionMetadata {
+                expires_at_unix: expiry,
+            })
+        }
+
+        fn clear(&self) -> Result<(), SessionCredentialError> {
+            *self.expiry.lock().unwrap() = None;
+            Ok(())
+        }
+
+        fn metadata(&self) -> Result<Option<StoredSessionMetadata>, SessionCredentialError> {
+            Ok(self
+                .expiry
+                .lock()
+                .unwrap()
+                .map(|expires_at_unix| StoredSessionMetadata { expires_at_unix }))
+        }
+    }
 
     #[test]
     fn ipc_request_limit_is_inclusive_and_rejects_raw_oversize() {
@@ -202,11 +290,40 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_backend_never_claims_native_state_is_ready() {
-        let backend = UnavailableDesktopBackend;
+    fn production_backend_persists_session_but_keeps_unwired_e2ee_state_closed() {
+        let session_store = Arc::new(MemorySessionStore::default());
+        let backend = ProductionDesktopBackend::with_session_store(session_store);
+        let request = ValidatedStoreSessionRequest::try_from_dto(
+            StoreSessionRequest {
+                access_token: "A".repeat(64),
+                refresh_token: "B".repeat(64),
+                expires_at_unix: 500,
+            },
+            100,
+        )
+        .unwrap();
+
+        assert_eq!(
+            backend.store_session(request),
+            Ok(SessionMetadata {
+                stored: true,
+                expires_at_unix: Some(500),
+            })
+        );
         assert_eq!(
             backend.read_session_metadata(),
-            Err(DesktopCommandBackendError::Unavailable)
+            Ok(SessionMetadata {
+                stored: true,
+                expires_at_unix: Some(500),
+            })
+        );
+        assert_eq!(backend.clear_session(), Ok(()));
+        assert_eq!(
+            backend.read_session_metadata(),
+            Ok(SessionMetadata {
+                stored: false,
+                expires_at_unix: None,
+            })
         );
         assert_eq!(
             backend.initialize_e2ee_store(),
@@ -215,6 +332,10 @@ mod tests {
         assert_eq!(
             backend.read_encryption_settings(),
             Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert_eq!(
+            format!("{backend:?}"),
+            "ProductionDesktopBackend(<native state redacted>)"
         );
     }
 }
