@@ -99,6 +99,12 @@ impl StoreKey {
         Self(String::from("mls:client_state:v1"))
     }
 
+    /// Canonical record key for an upload that must be retried idempotently.
+    #[must_use]
+    pub fn pending_keypackage_upload() -> Self {
+        Self(String::from("mls:keypackages:pending:v1"))
+    }
+
     /// Borrow the validated database key.
     #[must_use]
     pub fn as_str(&self) -> &str {

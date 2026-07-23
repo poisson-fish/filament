@@ -137,18 +137,24 @@ adapter registers only the seven pre-existing commands, enforces a 16 KiB IPC
 request cap and exact local navigation, and stores the validated access/refresh
 session as one versioned, bounded platform-credential record under fixed native
 identifiers. Logout deletion is idempotent; corrupt records are rejected and
-token buffers are zeroized on drop. Encrypted-store initialization and all
-network/MLS coordination remain typed-unavailable until authenticated device
-enrollment is wired. A local macOS `.app` package launched successfully from
-embedded assets on 2026-07-22 with dead network proxies.
+token buffers are zeroized on drop. The native host now pins one compile-time
+HTTPS API authority, disables redirects, bounds REST bodies, discovers the
+authenticated user without an IPC identity field, and enrolls only an
+account whose certified-device directory is empty. Root identity, complete MLS
+provider state, and an idempotent KeyPackage upload outbox are atomically
+persisted in SQLCipher before publication. Existing accounts remain
+pairing-gated and cannot silently replace their root. A local macOS `.app`
+package launched successfully from embedded assets on 2026-07-22 with dead
+network proxies.
 Every resulting artifact still requires local-bundle integrity checks,
 target-specific signing, and advisory/license/vet checks. CI now installs the
 Debian and MSI artifacts, mounts the macOS disk image, and launches those
 executables plus the AppImage with a minimal environment and dead proxy
 endpoints. The bounded verifier fails on early exit, output flooding, or any
 observed process-tree network socket and emits only redacted launch evidence.
-This verifies desktop install/offline-launch behavior, not production E2EE
-messaging or upgrade semantics. CI also regenerates the Android project from
+This verifies desktop install/offline-launch behavior, not the new
+authenticated enrollment path, production E2EE messaging, or upgrade
+semantics. CI also regenerates the Android project from
 the locked Tauri CLI, pins API 36, build-tools 36.0.0, NDK 27.2.12479018, Java
 21, and the arm64 Rust target, verifies the API 33 floor/API 36 target and
 cleartext denial, and produces integrity-checked local `.apk` and `.aab` paths.

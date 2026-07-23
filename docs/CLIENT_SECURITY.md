@@ -23,13 +23,21 @@ Server-provided data is always treated as untrusted input.
   command arguments.
 - Session tokens and native command state use redacted `Debug` output. IPC
   failures are closed, non-sensitive codes rather than backend error strings.
+- Native REST uses one compile-time HTTPS authority, disables redirects, caps
+  requests/responses at 256 KiB, marks bearer headers sensitive, and strictly
+  parses hostile server responses. The webview cannot select a server origin.
+- First-device enrollment is permitted only when the authenticated account's
+  certified-device directory is empty. Existing-device accounts require QR
+  pairing; they never auto-generate a replacement identity root.
+- Root identity, complete MLS provider state, and the exact pending
+  KeyPackage upload are atomically persisted in SQLCipher. A network-uncertain
+  upload remains in the native outbox for an exact idempotent retry.
 - Signed updates are required.
 - Crash logs must redact all access/refresh token material.
 
-The final Tauri adapter remains blocked on the current Tauri 2.11.5 dependency
-graph: it fails this repository's advisory and license gates through
-unmaintained GTK3 bindings, an unsound GLib advisory, and disallowed MPL-2.0
-transitives. Do not add advisory/license exceptions to bypass this blocker.
+The exact Tauri 2.11.5 advisory/license exceptions are temporary,
+owner-approved, and recorded in ADR 0002. They must not be generalized to new
+versions or expanded without review; patchable advisories remain denied.
 
 Configuration sources:
 - `apps/filament-client-desktop/tauri.conf.json`

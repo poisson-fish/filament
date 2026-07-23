@@ -23,11 +23,16 @@ versioned credential record under fixed native service/account identifiers.
 The record is capped at 12 KiB, revalidated on load, rejects unknown fields and
 versions, and uses zeroizing native buffers. Session metadata exposes only
 presence and access-token expiry; tokens cannot be read back through IPC.
+Authenticated identity discovery uses one compile-time HTTPS authority with
+redirects disabled and 256 KiB request/response caps. A separate bounded
+native credential record maps authenticated account IDs to host-created device
+IDs; neither value can be selected by the webview.
 
 ## Native Data Flow
 
-1. The native authenticated session supplies typed `UserId` and `DeviceId`
-   values to `LocalStoreId`; these values are not accepted from store IPC.
+1. The stored access token authenticates `/auth/me` through the pinned native
+   origin. The validated server `UserId` and native registry `DeviceId` supply
+   `LocalStoreId`; neither value is accepted from store IPC.
 2. `DesktopE2eeStore` derives the database filename beneath the host-provided
    application-data directory.
 3. `OsStoreKeyProvider` loads or creates a random 32-byte key in the fixed
@@ -37,6 +42,10 @@ presence and access-token expiry; tokens cannot be read back through IPC.
    `LocalKeyStore` interface.
 5. IPC receives only `{ ready, backend, key_custody }`; none of those fields is
    secret or a storage locator.
+6. Fresh-account enrollment atomically compare-and-inserts the root secret,
+   complete OpenMLS provider checkpoint, and exact pending KeyPackage upload
+   into SQLCipher. The outbox survives uncertain network results and is
+   removed only after a confirmed idempotent upload.
 
 ## Guardrails Verified
 
@@ -52,6 +61,14 @@ presence and access-token expiry; tokens cannot be read back through IPC.
 - Debug and error output omits credential accounts, paths, values, and keys.
 - Session writes cannot select a credential service/account or create a
   mismatched access/refresh pair; logout deletion is idempotent.
+- The native REST origin cannot be supplied over IPC, redirects are disabled,
+  bearer headers are marked sensitive, and hostile/oversized response fields
+  cannot select an account, device, path, or credential identifier.
+- Automatic enrollment is limited to an account whose authenticated public
+  device directory is empty. Accounts with existing devices require the
+  separately authenticated pairing flow; root replacement fails closed.
+- Every returned device certificate is checked against the locally persisted
+  root before settings or readiness is exposed.
 - IPC policy contains no private-key display, copy, export, database read, or
   generic filesystem command.
 
@@ -70,6 +87,14 @@ presence and access-token expiry; tokens cannot be read back through IPC.
 - `apps/filament-client-desktop/src-tauri/src/session_store.rs`: bounded
   single-record session custody, strict reload validation, zeroization, and
   redacted credential-store diagnostics.
+- `apps/filament-client-desktop/src-tauri/src/native_api.rs`: pinned HTTPS
+  origin policy, bounded strict DTO handling, sensitive authorization headers,
+  and ghost-device/root-replacement rejection.
+- `apps/filament-client-desktop/src-tauri/src/device_registry.rs`: fixed,
+  bounded native account/device bindings with duplicate and corruption
+  rejection.
+- `crates/filament-e2ee/src/persistence.rs`: atomic initial root/provider/
+  KeyPackage-outbox persistence and restart-safe retry coverage.
 - `apps/filament-client-desktop/src-tauri/tests/hardening_config.rs`: exact IPC
   allowlist alignment with `security-policy.json`.
 
@@ -78,6 +103,9 @@ presence and access-token expiry; tokens cannot be read back through IPC.
 - Exercise session write/read/logout and SQLCipher-key custody against each real
   OS credential backend from signed macOS, Windows, and Linux packages;
   headless and offline-launch CI do not claim this platform smoke coverage.
+- Exercise authenticated first-device publication and KeyPackage upload
+  against packaged clients and the PostgreSQL server; unit tests use a hostile
+  in-process transport fixture and do not claim packaged-network evidence.
 - The exact Tauri 2.11.5 exceptions approved on 2026-07-22 and recorded in ADR
   0002 remain temporary. Patchable findings remain denied, and the
   GTK3/GLib/MPL exception set must be reviewed on every Tauri release and no

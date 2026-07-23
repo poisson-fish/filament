@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::{fmt, fs, path::Path};
+use std::{fmt, fs, path::Path, sync::Arc};
 
 use filament_e2ee::{
     create_root_identity_rotation_proof, persist_root_identity, safety_number, KeyStoreError,
@@ -17,6 +17,8 @@ use thiserror::Error;
 use url::Url;
 use zeroize::{Zeroize as _, Zeroizing};
 
+mod device_registry;
+mod native_api;
 mod runtime;
 mod session_store;
 mod tauri_host;
@@ -288,6 +290,11 @@ impl EncryptionSettingsDevice {
             verification,
         })
     }
+
+    #[must_use]
+    pub const fn is_current_device(&self) -> bool {
+        self.is_current_device
+    }
 }
 
 /// Redacted encryption-settings presentation model.
@@ -488,6 +495,14 @@ impl DesktopE2eeStore {
     #[must_use]
     pub const fn native_store(&self) -> &dyn LocalKeyStore {
         &self.store
+    }
+
+    /// Move the encrypted backend into a native runtime coordinator.
+    ///
+    /// The returned trait object remains Rust-only and is not serializable.
+    #[must_use]
+    pub fn into_shared_native_store(self) -> Arc<dyn LocalKeyStore> {
+        Arc::new(self.store)
     }
 }
 

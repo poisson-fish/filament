@@ -137,7 +137,9 @@ pub use pairing::{
     MAX_PAIRING_TRANSFER_BYTES, MAX_PAIRING_TTL_SECS,
 };
 pub use persistence::{
-    load_mls_client_state, persist_mls_client_state, MlsClientState, PendingExternalCommitRecovery,
+    clear_pending_keypackage_upload, load_mls_client_state, load_pending_keypackage_upload,
+    persist_initial_device_bootstrap, persist_mls_client_state, MlsClientState,
+    PendingExternalCommitRecovery, PendingKeyPackage, PendingKeyPackageUpload,
 };
 #[cfg(feature = "sqlcipher-store")]
 pub use sqlcipher_store::{SqlCipherKeyStore, MAX_ENCRYPTED_STORE_BYTES};

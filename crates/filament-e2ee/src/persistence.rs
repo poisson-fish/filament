@@ -14,12 +14,13 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     conversation::{ConversationPersistenceMetadata, InboundPersistenceMetadata},
-    keypackage::ProviderRecord,
+    keypackage::{GeneratedKeyPackage, ProviderRecord},
     ConversationAudience, DecryptedApplicationMessage, DeliveryServiceIdentity,
     ExternalCommitRecoveryInfo, KeyStoreError, LocalKeyStore, MlsConversation, MlsDevice,
-    PendingGroupCommit, PinnedUserIdentity, StoreKey, MAX_APPLICATION_PLAINTEXT_BYTES,
-    MAX_BUFFERED_GENERATION_GAP, MAX_STORE_VALUE_BYTES,
+    PendingGroupCommit, PinnedUserIdentity, RootIdentityKey, StoreKey,
+    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP, MAX_STORE_VALUE_BYTES,
 };
+use filament_protocol::{MAX_KEYPACKAGE_BYTES, MAX_KEYPACKAGE_POOL_SIZE};
 
 const MLS_CLIENT_STATE_VERSION: u16 = 3;
 const LEGACY_MLS_CLIENT_STATE_VERSIONS: [u16; 2] = [1, 2];
@@ -27,6 +28,45 @@ const MAX_MLS_CONVERSATIONS: usize = 1_024;
 const MAX_OPENMLS_STORAGE_RECORDS: usize = 16_384;
 const MAX_OPENMLS_STORAGE_KEY_BYTES: usize = 4_096;
 const MAX_OPENMLS_STORAGE_RECORD_BYTES: usize = 1024 * 1024;
+const PENDING_KEYPACKAGE_UPLOAD_VERSION: u16 = 1;
+
+/// One opaque public KeyPackage retained until the Delivery Service confirms
+/// its idempotent upload.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PendingKeyPackage {
+    pub blob: Vec<u8>,
+    pub is_last_resort: bool,
+}
+
+impl core::fmt::Debug for PendingKeyPackage {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("PendingKeyPackage")
+            .field("blob_bytes", &self.blob.len())
+            .field("is_last_resort", &self.is_last_resort)
+            .finish()
+    }
+}
+
+/// Bounded native-only upload outbox for freshly generated KeyPackages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingKeyPackageUpload {
+    pub packages: Vec<PendingKeyPackage>,
+}
+
+#[derive(Serialize, Deserialize, Zeroize)]
+#[serde(deny_unknown_fields)]
+struct PersistedPendingKeyPackageUpload {
+    version: u16,
+    packages: Vec<PersistedPendingKeyPackage>,
+}
+
+#[derive(Serialize, Deserialize, Zeroize)]
+#[serde(deny_unknown_fields)]
+struct PersistedPendingKeyPackage {
+    blob: Vec<u8>,
+    is_last_resort: bool,
+}
 
 /// Restored native-only MLS state for one certified device.
 pub struct MlsClientState {
@@ -294,6 +334,136 @@ pub fn persist_mls_client_state(
 ) -> Result<(), KeyStoreError> {
     let encoded = encode_mls_client_state(device, conversations)?;
     store.store(StoreKey::mls_client_state(), encoded.to_vec())
+}
+
+/// Atomically create a new device's root identity, complete MLS provider
+/// checkpoint, and retryable KeyPackage upload outbox.
+///
+/// Existing exact records make this operation idempotent. Any conflicting
+/// record fails closed without overwriting the previously enrolled identity.
+///
+/// # Errors
+/// Returns [`KeyStoreError`] for mismatched identity material, invalid package
+/// bounds, serialization failures, or an encrypted-store conflict.
+pub fn persist_initial_device_bootstrap(
+    store: &dyn LocalKeyStore,
+    root_identity: &RootIdentityKey,
+    device: &MlsDevice,
+    packages: &[GeneratedKeyPackage],
+) -> Result<(), KeyStoreError> {
+    if device.root_key_public() != &root_identity.public_key_bytes() {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let expected_credential = device.credential_with_key();
+    if packages.iter().any(|package| {
+        package.key_package().leaf_node().credential() != &expected_credential.credential
+            || package.key_package().leaf_node().signature_key()
+                != &expected_credential.signature_key
+    }) {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let checkpoint = encode_mls_client_state(device, &[])?;
+    let pending = encode_pending_keypackages(packages)?;
+    let root_secret = root_identity.secret_bytes();
+    store.store_batch_if_absent_or_equal(vec![
+        (StoreKey::root_identity(), root_secret.to_vec()),
+        (StoreKey::mls_client_state(), checkpoint.to_vec()),
+        (StoreKey::pending_keypackage_upload(), pending.to_vec()),
+    ])?;
+    Ok(())
+}
+
+/// Load and revalidate the exact KeyPackage upload outbox after restart.
+///
+/// # Errors
+/// Returns [`KeyStoreError`] if the record is missing, corrupt, oversized, or
+/// violates the single last-resort package invariant.
+pub fn load_pending_keypackage_upload(
+    store: &dyn LocalKeyStore,
+) -> Result<PendingKeyPackageUpload, KeyStoreError> {
+    let encoded = store.load(&StoreKey::pending_keypackage_upload())?;
+    let mut persisted: PersistedPendingKeyPackageUpload =
+        serde_json::from_slice(&encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    let result =
+        validate_persisted_pending_keypackages(&persisted).map(|()| PendingKeyPackageUpload {
+            packages: persisted
+                .packages
+                .iter()
+                .map(|package| PendingKeyPackage {
+                    blob: package.blob.clone(),
+                    is_last_resort: package.is_last_resort,
+                })
+                .collect(),
+        });
+    persisted.zeroize();
+    result
+}
+
+/// Remove a confirmed KeyPackage upload outbox. Missing state is accepted so
+/// a repeated confirmed response is harmless.
+///
+/// # Errors
+/// Returns an opaque backend error if the encrypted store cannot be queried or
+/// updated.
+pub fn clear_pending_keypackage_upload(store: &dyn LocalKeyStore) -> Result<(), KeyStoreError> {
+    let key = StoreKey::pending_keypackage_upload();
+    if store.exists(&key)? {
+        store.remove(&key)?;
+    }
+    Ok(())
+}
+
+fn encode_pending_keypackages(
+    packages: &[GeneratedKeyPackage],
+) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
+    let mut persisted = PersistedPendingKeyPackageUpload {
+        version: PENDING_KEYPACKAGE_UPLOAD_VERSION,
+        packages: packages
+            .iter()
+            .map(|package| PersistedPendingKeyPackage {
+                blob: package.blob.clone(),
+                is_last_resort: package.is_last_resort,
+            })
+            .collect(),
+    };
+    validate_persisted_pending_keypackages(&persisted)?;
+    let encoded = serde_json::to_vec(&persisted)
+        .map(Zeroizing::new)
+        .map_err(|_| KeyStoreError::BackendError);
+    persisted.zeroize();
+    let encoded = encoded?;
+    if encoded.is_empty() || encoded.len() > MAX_STORE_VALUE_BYTES {
+        return Err(KeyStoreError::LimitExceeded);
+    }
+    Ok(encoded)
+}
+
+fn validate_persisted_pending_keypackages(
+    pending: &PersistedPendingKeyPackageUpload,
+) -> Result<(), KeyStoreError> {
+    let unique_blobs = pending
+        .packages
+        .iter()
+        .map(|package| package.blob.as_slice())
+        .collect::<HashSet<_>>();
+    if pending.version != PENDING_KEYPACKAGE_UPLOAD_VERSION
+        || pending.packages.is_empty()
+        || pending.packages.len() > MAX_KEYPACKAGE_POOL_SIZE
+        || unique_blobs.len() != pending.packages.len()
+        || pending
+            .packages
+            .iter()
+            .any(|package| package.blob.is_empty() || package.blob.len() > MAX_KEYPACKAGE_BYTES)
+        || pending
+            .packages
+            .iter()
+            .filter(|package| package.is_last_resort)
+            .count()
+            != 1
+    {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    Ok(())
 }
 
 pub(crate) fn encode_mls_client_state(
@@ -613,8 +783,86 @@ mod tests {
 
     use super::*;
     use crate::{
-        generate_key_package_batch, InMemoryKeyStore, PinnedUserIdentity, RootIdentityKey,
+        generate_key_package_batch, generate_last_resort_key_package, InMemoryKeyStore,
+        PinnedUserIdentity, RootIdentityKey,
     };
+
+    #[test]
+    fn initial_device_bootstrap_is_atomic_idempotent_and_retryable() {
+        let root = RootIdentityKey::generate();
+        let device = MlsDevice::generate(UserId::new(), DeviceId::new(), &root).unwrap();
+        let mut packages = generate_key_package_batch(&device, 2).unwrap();
+        packages.push(generate_last_resort_key_package(&device).unwrap());
+        let store = InMemoryKeyStore::new();
+
+        persist_initial_device_bootstrap(&store, &root, &device, &packages).unwrap();
+        persist_initial_device_bootstrap(&store, &root, &device, &packages).unwrap();
+
+        let restored = load_mls_client_state(&store).unwrap();
+        assert_eq!(restored.device.user_id(), device.user_id());
+        assert_eq!(restored.device.device_id(), device.device_id());
+        assert!(restored.conversations.is_empty());
+        let pending = load_pending_keypackage_upload(&store).unwrap();
+        assert_eq!(pending.packages.len(), 3);
+        assert_eq!(
+            pending
+                .packages
+                .iter()
+                .filter(|package| package.is_last_resort)
+                .count(),
+            1
+        );
+        assert_eq!(pending.packages[0].blob, packages[0].blob);
+
+        clear_pending_keypackage_upload(&store).unwrap();
+        clear_pending_keypackage_upload(&store).unwrap();
+        assert_eq!(
+            load_pending_keypackage_upload(&store),
+            Err(KeyStoreError::NotFound)
+        );
+    }
+
+    #[test]
+    fn initial_device_bootstrap_rejects_identity_conflict_and_corrupt_outbox() {
+        let root = RootIdentityKey::generate();
+        let other_root = RootIdentityKey::generate();
+        let device = MlsDevice::generate(UserId::new(), DeviceId::new(), &root).unwrap();
+        let mut packages = generate_key_package_batch(&device, 1).unwrap();
+        packages.push(generate_last_resort_key_package(&device).unwrap());
+        let store = InMemoryKeyStore::new();
+
+        assert_eq!(
+            persist_initial_device_bootstrap(&store, &other_root, &device, &packages),
+            Err(KeyStoreError::InvalidValue)
+        );
+        assert!(store.list_keys().unwrap().is_empty());
+
+        let other_device = MlsDevice::generate(device.user_id(), DeviceId::new(), &root).unwrap();
+        let mut other_packages = generate_key_package_batch(&other_device, 1).unwrap();
+        other_packages.push(generate_last_resort_key_package(&other_device).unwrap());
+        assert_eq!(
+            persist_initial_device_bootstrap(&store, &root, &device, &other_packages),
+            Err(KeyStoreError::InvalidValue)
+        );
+        let duplicate_packages = vec![packages[1].clone(), packages[1].clone()];
+        assert_eq!(
+            persist_initial_device_bootstrap(&store, &root, &device, &duplicate_packages),
+            Err(KeyStoreError::InvalidValue)
+        );
+        assert!(store.list_keys().unwrap().is_empty());
+
+        persist_initial_device_bootstrap(&store, &root, &device, &packages).unwrap();
+        store
+            .store(
+                StoreKey::pending_keypackage_upload(),
+                br#"{"version":1,"packages":[]}"#.to_vec(),
+            )
+            .unwrap();
+        assert_eq!(
+            load_pending_keypackage_upload(&store),
+            Err(KeyStoreError::InvalidValue)
+        );
+    }
 
     fn joined_conversations() -> (MlsDevice, MlsConversation, MlsDevice, MlsConversation) {
         let alice_root = RootIdentityKey::generate();

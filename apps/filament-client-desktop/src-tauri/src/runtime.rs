@@ -1,22 +1,42 @@
 //! Concrete Tauri runtime wiring for the packaged Filament clients.
 //!
-//! The runtime persists the bounded session in the platform credential store.
-//! E2EE store, settings, rotation, and network coordination remain fail closed
-//! until authenticated device enrollment is injected.
+//! The runtime persists the bounded session in the platform credential store,
+//! discovers the authenticated user through a pinned native HTTPS origin, and
+//! enrolls only a fresh account as its first certified MLS device. Existing
+//! accounts without a native device binding remain pairing-gated.
 
-use std::sync::Arc;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
+use filament_core::{DeviceId, UserId};
+use filament_e2ee::{
+    clear_pending_keypackage_upload, generate_key_package_batch, generate_last_resort_key_package,
+    load_mls_client_state, load_pending_keypackage_upload, load_root_identity,
+    persist_initial_device_bootstrap, KeyStoreError, LocalKeyStore, LocalStoreId, MlsDevice,
+    RootIdentityKey, StoreKey, DEFAULT_BATCH_SIZE,
+};
 use filament_protocol::RotateRootIdentityResponse;
 use tauri::ipc::InvokeBody;
+use tauri::Manager as _;
 
 use crate::{
+    device_registry::{DeviceRegistry, DeviceRegistryError, OsDeviceRegistry},
+    native_api::{
+        verify_directory_device, verify_directory_root, NativeApiError, NativeEnrollmentApi,
+        ReqwestNativeEnrollmentApi,
+    },
     session_store::{
-        OsSessionCredentialStore, SessionCredentialError, SessionCredentialStore,
+        OsSessionCredentialStore, SessionCredentialError, SessionCredentialStore, StoredSession,
         StoredSessionMetadata,
     },
     validate_runtime_navigation, DesktopCommandBackend, DesktopCommandBackendError,
-    DesktopCommandError, DesktopCommandHost, E2eeStoreStatus, EncryptionSettingsSnapshot,
-    RotateIdentityCommandRequest, SessionMetadata, StoreSessionRequest,
+    DesktopCommandError, DesktopCommandHost, DesktopE2eeStore, E2eeStoreStatus,
+    EncryptionDeviceVerification, EncryptionSettingsDevice, EncryptionSettingsSnapshot,
+    RotateIdentityCommandRequest, SessionMetadata, StoreSessionRequest, UnixExpiry,
     ValidatedStoreSessionRequest,
 };
 
@@ -25,6 +45,11 @@ pub const MAX_TAURI_IPC_REQUEST_BYTES: usize = 16 * 1024;
 
 struct ProductionDesktopBackend {
     session_store: Arc<dyn SessionCredentialStore>,
+    device_registry: Arc<dyn DeviceRegistry>,
+    api: Arc<dyn NativeEnrollmentApi>,
+    store_factory: Arc<dyn NativeStoreFactory>,
+    clock: Arc<Clock>,
+    active: Mutex<Option<ActiveE2eeState>>,
 }
 
 impl core::fmt::Debug for ProductionDesktopBackend {
@@ -33,18 +58,235 @@ impl core::fmt::Debug for ProductionDesktopBackend {
     }
 }
 
-impl Default for ProductionDesktopBackend {
-    fn default() -> Self {
-        Self {
+impl ProductionDesktopBackend {
+    fn new(app_data_root: PathBuf) -> Result<Self, DesktopCommandBackendError> {
+        Ok(Self {
             session_store: Arc::new(OsSessionCredentialStore),
+            device_registry: Arc::new(OsDeviceRegistry),
+            api: Arc::new(
+                ReqwestNativeEnrollmentApi::from_build_config().map_err(map_native_api_error)?,
+            ),
+            store_factory: Arc::new(DesktopStoreFactory { app_data_root }),
+            clock: Arc::new(system_time_unix),
+            active: Mutex::new(None),
+        })
+    }
+
+    #[cfg(test)]
+    fn with_dependencies(
+        session_store: Arc<dyn SessionCredentialStore>,
+        device_registry: Arc<dyn DeviceRegistry>,
+        api: Arc<dyn NativeEnrollmentApi>,
+        store_factory: Arc<dyn NativeStoreFactory>,
+        clock: impl Fn() -> Result<i64, DesktopCommandBackendError> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            session_store,
+            device_registry,
+            api,
+            store_factory,
+            clock: Arc::new(clock),
+            active: Mutex::new(None),
         }
     }
-}
 
-impl ProductionDesktopBackend {
-    #[cfg(test)]
-    fn with_session_store(session_store: Arc<dyn SessionCredentialStore>) -> Self {
-        Self { session_store }
+    fn load_valid_session(&self) -> Result<StoredSession, DesktopCommandBackendError> {
+        let session = self
+            .session_store
+            .load()
+            .map_err(map_session_error)?
+            .ok_or(DesktopCommandBackendError::Rejected)?;
+        UnixExpiry::new(session.expires_at_unix, (self.clock)()?)
+            .map_err(|_| DesktopCommandBackendError::Rejected)?;
+        Ok(session)
+    }
+
+    fn open_store(
+        &self,
+        user_id: UserId,
+        device_id: DeviceId,
+    ) -> Result<Arc<dyn LocalKeyStore>, DesktopCommandBackendError> {
+        self.store_factory
+            .open(LocalStoreId::new(user_id, device_id))
+    }
+
+    fn initialize_existing_or_pending(
+        &self,
+        session: &StoredSession,
+        user_id: UserId,
+        device_id: DeviceId,
+        store: &Arc<dyn LocalKeyStore>,
+    ) -> Result<(), DesktopCommandBackendError> {
+        let root_exists = store
+            .exists(&StoreKey::root_identity())
+            .map_err(|error| map_keystore_error(&error))?;
+        let state_exists = store
+            .exists(&StoreKey::mls_client_state())
+            .map_err(|error| map_keystore_error(&error))?;
+        if root_exists != state_exists {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        if !root_exists {
+            let directory = self
+                .api
+                .list_devices(&session.access_token, user_id)
+                .map_err(map_native_api_error)?;
+            if !directory.devices.is_empty() {
+                return Err(DesktopCommandBackendError::Rejected);
+            }
+            return self.bootstrap_first_device(session, user_id, device_id, store);
+        }
+
+        let root = load_root_identity(store.as_ref(), &StoreKey::root_identity())
+            .map_err(|error| map_keystore_error(&error))?;
+        let state =
+            load_mls_client_state(store.as_ref()).map_err(|error| map_keystore_error(&error))?;
+        if state.device.user_id() != user_id
+            || state.device.device_id() != device_id
+            || state.device.root_key_public() != &root.public_key_bytes()
+        {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        let mut directory = self
+            .api
+            .list_devices(&session.access_token, user_id)
+            .map_err(map_native_api_error)?;
+        if directory.devices.is_empty() {
+            self.api
+                .publish_device(&session.access_token, &state.device)
+                .map_err(map_native_api_error)?;
+            directory = self
+                .api
+                .list_devices(&session.access_token, user_id)
+                .map_err(map_native_api_error)?;
+        }
+        verify_directory_device(
+            user_id,
+            device_id,
+            state.device.certificate(),
+            state.device.root_key_public(),
+            &directory,
+        )
+        .map_err(map_native_api_error)?;
+        self.flush_pending_keypackages(session, device_id, store.as_ref())
+    }
+
+    fn bootstrap_first_device(
+        &self,
+        session: &StoredSession,
+        user_id: UserId,
+        device_id: DeviceId,
+        store: &Arc<dyn LocalKeyStore>,
+    ) -> Result<(), DesktopCommandBackendError> {
+        let root = RootIdentityKey::generate();
+        let device = MlsDevice::generate(user_id, device_id, &root)
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+        let mut packages = generate_key_package_batch(&device, DEFAULT_BATCH_SIZE)
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+        packages.push(
+            generate_last_resort_key_package(&device)
+                .map_err(|_| DesktopCommandBackendError::Unavailable)?,
+        );
+        persist_initial_device_bootstrap(store.as_ref(), &root, &device, &packages)
+            .map_err(|error| map_keystore_error(&error))?;
+        self.api
+            .publish_device(&session.access_token, &device)
+            .map_err(map_native_api_error)?;
+        self.flush_pending_keypackages(session, device_id, store.as_ref())?;
+        let directory = self
+            .api
+            .list_devices(&session.access_token, user_id)
+            .map_err(map_native_api_error)?;
+        verify_directory_device(
+            user_id,
+            device_id,
+            device.certificate(),
+            device.root_key_public(),
+            &directory,
+        )
+        .map_err(map_native_api_error)?;
+        Ok(())
+    }
+
+    fn flush_pending_keypackages(
+        &self,
+        session: &StoredSession,
+        device_id: DeviceId,
+        store: &dyn LocalKeyStore,
+    ) -> Result<(), DesktopCommandBackendError> {
+        let pending = match load_pending_keypackage_upload(store) {
+            Ok(pending) => pending,
+            Err(KeyStoreError::NotFound) => return Ok(()),
+            Err(error) => return Err(map_keystore_error(&error)),
+        };
+        self.api
+            .upload_keypackages(&session.access_token, device_id, &pending)
+            .map_err(map_native_api_error)?;
+        clear_pending_keypackage_upload(store).map_err(|error| map_keystore_error(&error))
+    }
+
+    fn settings_snapshot(
+        &self,
+        session: &StoredSession,
+        active: &ActiveE2eeState,
+    ) -> Result<EncryptionSettingsSnapshot, DesktopCommandBackendError> {
+        let root = load_root_identity(active.store.as_ref(), &StoreKey::root_identity())
+            .map_err(|error| map_keystore_error(&error))?;
+        let root_public = root.public_key_bytes();
+        let directory = self
+            .api
+            .list_devices(&session.access_token, active.user_id)
+            .map_err(map_native_api_error)?;
+        verify_directory_root(active.user_id, &root_public, &directory)
+            .map_err(map_native_api_error)?;
+        let mut devices = Vec::with_capacity(directory.devices.len());
+        for entry in directory.devices {
+            let device_id = DeviceId::try_from(entry.device_id)
+                .map_err(|_| DesktopCommandBackendError::Rejected)?;
+            let signature_key: &[u8; 32] = entry
+                .device_signature_pubkey
+                .as_slice()
+                .try_into()
+                .map_err(|_| DesktopCommandBackendError::Rejected)?;
+            let signature: &[u8; 64] = entry
+                .root_key_signature
+                .as_slice()
+                .try_into()
+                .map_err(|_| DesktopCommandBackendError::Rejected)?;
+            let entry_root: &[u8; 32] = entry
+                .root_key_pub
+                .as_slice()
+                .try_into()
+                .map_err(|_| DesktopCommandBackendError::Rejected)?;
+            if entry_root != &root_public {
+                return Err(DesktopCommandBackendError::Rejected);
+            }
+            filament_e2ee::verify_device_certificate(
+                entry_root,
+                active.user_id,
+                device_id,
+                signature_key,
+                signature,
+            )
+            .map_err(|_| DesktopCommandBackendError::Rejected)?;
+            devices.push(
+                EncryptionSettingsDevice::new(
+                    device_id,
+                    entry.created_at_unix,
+                    device_id == active.device_id,
+                    EncryptionDeviceVerification::Verified,
+                )
+                .map_err(|_| DesktopCommandBackendError::Rejected)?,
+            );
+        }
+        if !devices
+            .iter()
+            .any(EncryptionSettingsDevice::is_current_device)
+        {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        EncryptionSettingsSnapshot::new(&root_public, 0, devices, false)
+            .map_err(|_| DesktopCommandBackendError::Rejected)
     }
 }
 
@@ -53,6 +295,10 @@ impl DesktopCommandBackend for ProductionDesktopBackend {
         &self,
         request: ValidatedStoreSessionRequest,
     ) -> Result<SessionMetadata, DesktopCommandBackendError> {
+        *self
+            .active
+            .lock()
+            .map_err(|_| DesktopCommandBackendError::Unavailable)? = None;
         let metadata = self
             .session_store
             .store(&request)
@@ -61,7 +307,12 @@ impl DesktopCommandBackend for ProductionDesktopBackend {
     }
 
     fn clear_session(&self) -> Result<(), DesktopCommandBackendError> {
-        self.session_store.clear().map_err(map_session_error)
+        let result = self.session_store.clear().map_err(map_session_error);
+        *self
+            .active
+            .lock()
+            .map_err(|_| DesktopCommandBackendError::Unavailable)? = None;
+        result
     }
 
     fn read_session_metadata(&self) -> Result<SessionMetadata, DesktopCommandBackendError> {
@@ -72,17 +323,80 @@ impl DesktopCommandBackend for ProductionDesktopBackend {
     }
 
     fn initialize_e2ee_store(&self) -> Result<E2eeStoreStatus, DesktopCommandBackendError> {
-        Err(DesktopCommandBackendError::Unavailable)
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+        if active.is_some() {
+            return Ok(store_status());
+        }
+        let session = self.load_valid_session()?;
+        let user_id = self
+            .api
+            .current_user(&session.access_token)
+            .map_err(map_native_api_error)?;
+        let device_id = if let Some(device_id) = self
+            .device_registry
+            .device_for(user_id)
+            .map_err(map_device_registry_error)?
+        {
+            device_id
+        } else {
+            let directory = self
+                .api
+                .list_devices(&session.access_token, user_id)
+                .map_err(map_native_api_error)?;
+            if !directory.devices.is_empty() {
+                return Err(DesktopCommandBackendError::Rejected);
+            }
+            let device_id = DeviceId::new();
+            self.device_registry
+                .bind(user_id, device_id)
+                .map_err(map_device_registry_error)?;
+            device_id
+        };
+        let store = self.open_store(user_id, device_id)?;
+        self.initialize_existing_or_pending(&session, user_id, device_id, &store)?;
+        *active = Some(ActiveE2eeState {
+            user_id,
+            device_id,
+            store,
+        });
+        Ok(store_status())
     }
 
     fn read_e2ee_store_status(&self) -> Result<E2eeStoreStatus, DesktopCommandBackendError> {
-        Err(DesktopCommandBackendError::Unavailable)
+        if self
+            .active
+            .lock()
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?
+            .is_some()
+        {
+            Ok(store_status())
+        } else {
+            Err(DesktopCommandBackendError::Unavailable)
+        }
     }
 
     fn read_encryption_settings(
         &self,
     ) -> Result<EncryptionSettingsSnapshot, DesktopCommandBackendError> {
-        Err(DesktopCommandBackendError::Unavailable)
+        let session = self.load_valid_session()?;
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+        let active = active
+            .as_ref()
+            .ok_or(DesktopCommandBackendError::Unavailable)?;
+        let user_id = self
+            .api
+            .current_user(&session.access_token)
+            .map_err(map_native_api_error)?;
+        if user_id != active.user_id {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        self.settings_snapshot(&session, active)
     }
 
     fn rotate_root_identity(
@@ -90,6 +404,44 @@ impl DesktopCommandBackend for ProductionDesktopBackend {
         _request: RotateIdentityCommandRequest,
     ) -> Result<RotateRootIdentityResponse, DesktopCommandBackendError> {
         Err(DesktopCommandBackendError::Unavailable)
+    }
+}
+
+type Clock = dyn Fn() -> Result<i64, DesktopCommandBackendError> + Send + Sync;
+
+struct ActiveE2eeState {
+    user_id: UserId,
+    device_id: DeviceId,
+    store: Arc<dyn LocalKeyStore>,
+}
+
+trait NativeStoreFactory: Send + Sync + 'static {
+    fn open(
+        &self,
+        store_id: LocalStoreId,
+    ) -> Result<Arc<dyn LocalKeyStore>, DesktopCommandBackendError>;
+}
+
+struct DesktopStoreFactory {
+    app_data_root: PathBuf,
+}
+
+impl NativeStoreFactory for DesktopStoreFactory {
+    fn open(
+        &self,
+        store_id: LocalStoreId,
+    ) -> Result<Arc<dyn LocalKeyStore>, DesktopCommandBackendError> {
+        DesktopE2eeStore::open(&self.app_data_root, store_id)
+            .map(DesktopE2eeStore::into_shared_native_store)
+            .map_err(|_| DesktopCommandBackendError::Unavailable)
+    }
+}
+
+const fn store_status() -> E2eeStoreStatus {
+    E2eeStoreStatus {
+        ready: true,
+        backend: "sqlcipher",
+        key_custody: "platform_keystore",
     }
 }
 
@@ -111,6 +463,41 @@ const fn map_session_error(error: SessionCredentialError) -> DesktopCommandBacke
         SessionCredentialError::Unavailable => DesktopCommandBackendError::Unavailable,
         SessionCredentialError::Rejected => DesktopCommandBackendError::Rejected,
     }
+}
+
+const fn map_device_registry_error(error: DeviceRegistryError) -> DesktopCommandBackendError {
+    match error {
+        DeviceRegistryError::Unavailable => DesktopCommandBackendError::Unavailable,
+        DeviceRegistryError::Rejected => DesktopCommandBackendError::Rejected,
+    }
+}
+
+const fn map_native_api_error(error: NativeApiError) -> DesktopCommandBackendError {
+    match error {
+        NativeApiError::Unavailable => DesktopCommandBackendError::Unavailable,
+        NativeApiError::Rejected => DesktopCommandBackendError::Rejected,
+    }
+}
+
+const fn map_keystore_error(error: &KeyStoreError) -> DesktopCommandBackendError {
+    match error {
+        KeyStoreError::BackendError | KeyStoreError::KeyUnavailable => {
+            DesktopCommandBackendError::Unavailable
+        }
+        KeyStoreError::NotFound
+        | KeyStoreError::InvalidIdentifier
+        | KeyStoreError::InvalidPath
+        | KeyStoreError::InvalidValue
+        | KeyStoreError::LimitExceeded => DesktopCommandBackendError::Rejected,
+    }
+}
+
+fn system_time_unix() -> Result<i64, DesktopCommandBackendError> {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| DesktopCommandBackendError::Unavailable)?
+        .as_secs();
+    i64::try_from(seconds).map_err(|_| DesktopCommandBackendError::Unavailable)
 }
 
 struct RuntimeState {
@@ -203,12 +590,20 @@ fn invoke_body_within_limit(body: &InvokeBody) -> bool {
 /// this initialization boundary.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let host = Arc::new(DesktopCommandHost::new(Arc::new(
-        ProductionDesktopBackend::default(),
-    )));
-
     tauri::Builder::default()
-        .manage(RuntimeState { host })
+        .setup(|app| {
+            let app_data_root = app
+                .path()
+                .app_data_dir()
+                .map_err(|_| std::io::Error::other("native app-data path is unavailable"))?;
+            prepare_app_data_root(&app_data_root)?;
+            let backend = ProductionDesktopBackend::new(app_data_root)
+                .map_err(|_| std::io::Error::other("native backend initialization failed"))?;
+            app.manage(RuntimeState {
+                host: Arc::new(DesktopCommandHost::new(Arc::new(backend))),
+            });
+            Ok(())
+        })
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("filament-navigation-policy")
                 .on_navigation(|_webview, url| {
@@ -219,6 +614,15 @@ pub fn run() {
         .invoke_handler(handle_invoke)
         .run(tauri::generate_context!())
         .expect("hardened Tauri runtime failed");
+}
+
+fn prepare_app_data_root(path: &Path) -> Result<(), std::io::Error> {
+    fs::create_dir_all(path)?;
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() || !path.is_absolute() {
+        return Err(std::io::Error::other("native app-data root is invalid"));
+    }
+    Ok(())
 }
 
 fn handle_invoke(invoke: tauri::ipc::Invoke<tauri::Wry>) -> bool {
@@ -241,13 +645,21 @@ fn handle_invoke(invoke: tauri::ipc::Invoke<tauri::Wry>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::{
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Mutex,
+        },
+    };
 
     use super::*;
+    use filament_e2ee::{InMemoryKeyStore, PendingKeyPackageUpload};
+    use filament_protocol::{DeviceInfo, DeviceListResponse};
 
     #[derive(Default)]
     struct MemorySessionStore {
-        expiry: Mutex<Option<i64>>,
+        session: Mutex<Option<(String, String, i64)>>,
     }
 
     impl SessionCredentialStore for MemorySessionStore {
@@ -256,24 +668,222 @@ mod tests {
             request: &ValidatedStoreSessionRequest,
         ) -> Result<StoredSessionMetadata, SessionCredentialError> {
             let expiry = request.expires_at_unix.as_i64();
-            *self.expiry.lock().unwrap() = Some(expiry);
+            *self.session.lock().unwrap() = Some((
+                request.access_token.expose().to_owned(),
+                request.refresh_token.expose().to_owned(),
+                expiry,
+            ));
             Ok(StoredSessionMetadata {
                 expires_at_unix: expiry,
             })
         }
 
         fn clear(&self) -> Result<(), SessionCredentialError> {
-            *self.expiry.lock().unwrap() = None;
+            *self.session.lock().unwrap() = None;
             Ok(())
         }
 
         fn metadata(&self) -> Result<Option<StoredSessionMetadata>, SessionCredentialError> {
             Ok(self
-                .expiry
+                .session
                 .lock()
                 .unwrap()
-                .map(|expires_at_unix| StoredSessionMetadata { expires_at_unix }))
+                .as_ref()
+                .map(|(_, _, expires_at_unix)| StoredSessionMetadata {
+                    expires_at_unix: *expires_at_unix,
+                }))
         }
+
+        fn load(&self) -> Result<Option<StoredSession>, SessionCredentialError> {
+            self.session
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|(access_token, refresh_token, expires_at_unix)| {
+                    Ok(StoredSession {
+                        access_token: crate::SessionToken::new(access_token.clone())
+                            .map_err(|_| SessionCredentialError::Rejected)?,
+                        expires_at_unix: *expires_at_unix,
+                    })
+                    .and_then(|session| {
+                        let refresh_token = crate::SessionToken::new(refresh_token.clone())
+                            .map_err(|_| SessionCredentialError::Rejected)?;
+                        drop(refresh_token);
+                        Ok(session)
+                    })
+                })
+                .transpose()
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryDeviceRegistry {
+        bindings: Mutex<HashMap<UserId, DeviceId>>,
+    }
+
+    impl DeviceRegistry for MemoryDeviceRegistry {
+        fn device_for(&self, user_id: UserId) -> Result<Option<DeviceId>, DeviceRegistryError> {
+            Ok(self.bindings.lock().unwrap().get(&user_id).copied())
+        }
+
+        fn bind(&self, user_id: UserId, device_id: DeviceId) -> Result<(), DeviceRegistryError> {
+            let mut bindings = self.bindings.lock().unwrap();
+            match bindings.get(&user_id) {
+                Some(existing) if *existing != device_id => Err(DeviceRegistryError::Rejected),
+                Some(_) => Ok(()),
+                None => {
+                    bindings.insert(user_id, device_id);
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    struct MemoryStoreFactory {
+        store: Arc<InMemoryKeyStore>,
+    }
+
+    impl NativeStoreFactory for MemoryStoreFactory {
+        fn open(
+            &self,
+            _store_id: LocalStoreId,
+        ) -> Result<Arc<dyn LocalKeyStore>, DesktopCommandBackendError> {
+            Ok(self.store.clone())
+        }
+    }
+
+    struct MockEnrollmentApi {
+        user_id: UserId,
+        devices: Mutex<Vec<DeviceInfo>>,
+        uploaded: AtomicUsize,
+        reject_upload: AtomicBool,
+    }
+
+    impl MockEnrollmentApi {
+        fn fresh(user_id: UserId) -> Self {
+            Self {
+                user_id,
+                devices: Mutex::new(Vec::new()),
+                uploaded: AtomicUsize::new(0),
+                reject_upload: AtomicBool::new(false),
+            }
+        }
+
+        fn with_device(device: &MlsDevice) -> Self {
+            Self {
+                user_id: device.user_id(),
+                devices: Mutex::new(vec![device_info(device)]),
+                uploaded: AtomicUsize::new(0),
+                reject_upload: AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl NativeEnrollmentApi for MockEnrollmentApi {
+        fn current_user(
+            &self,
+            _access_token: &crate::SessionToken,
+        ) -> Result<UserId, NativeApiError> {
+            Ok(self.user_id)
+        }
+
+        fn list_devices(
+            &self,
+            _access_token: &crate::SessionToken,
+            user_id: UserId,
+        ) -> Result<DeviceListResponse, NativeApiError> {
+            if user_id != self.user_id {
+                return Err(NativeApiError::Rejected);
+            }
+            Ok(DeviceListResponse {
+                user_id: user_id.to_string(),
+                devices: self.devices.lock().unwrap().clone(),
+            })
+        }
+
+        fn publish_device(
+            &self,
+            _access_token: &crate::SessionToken,
+            device: &MlsDevice,
+        ) -> Result<(), NativeApiError> {
+            if device.user_id() != self.user_id {
+                return Err(NativeApiError::Rejected);
+            }
+            let entry = device_info(device);
+            let mut devices = self.devices.lock().unwrap();
+            match devices
+                .iter()
+                .find(|existing| existing.device_id == entry.device_id)
+            {
+                Some(existing) if existing != &entry => Err(NativeApiError::Rejected),
+                Some(_) => Ok(()),
+                None if devices.is_empty() => {
+                    devices.push(entry);
+                    Ok(())
+                }
+                None => Err(NativeApiError::Rejected),
+            }
+        }
+
+        fn upload_keypackages(
+            &self,
+            _access_token: &crate::SessionToken,
+            _device_id: DeviceId,
+            pending: &PendingKeyPackageUpload,
+        ) -> Result<(), NativeApiError> {
+            if self.reject_upload.load(Ordering::SeqCst) {
+                return Err(NativeApiError::Unavailable);
+            }
+            self.uploaded
+                .store(pending.packages.len(), Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn device_info(device: &MlsDevice) -> DeviceInfo {
+        DeviceInfo {
+            device_id: device.device_id().to_string(),
+            device_signature_pubkey: device.certificate().device_signature_pubkey.clone(),
+            root_key_signature: device.certificate().root_key_signature.clone(),
+            root_key_pub: device.root_key_public().to_vec(),
+            created_at_unix: 200,
+            tombstoned_at_unix: None,
+        }
+    }
+
+    fn backend_fixture(
+        api: Arc<MockEnrollmentApi>,
+    ) -> (
+        ProductionDesktopBackend,
+        Arc<MemorySessionStore>,
+        Arc<MemoryDeviceRegistry>,
+        Arc<InMemoryKeyStore>,
+    ) {
+        let session_store = Arc::new(MemorySessionStore::default());
+        let registry = Arc::new(MemoryDeviceRegistry::default());
+        let local_store = Arc::new(InMemoryKeyStore::new());
+        let backend = ProductionDesktopBackend::with_dependencies(
+            session_store.clone(),
+            registry.clone(),
+            api,
+            Arc::new(MemoryStoreFactory {
+                store: local_store.clone(),
+            }),
+            || Ok(100),
+        );
+        (backend, session_store, registry, local_store)
+    }
+
+    fn valid_session() -> ValidatedStoreSessionRequest {
+        ValidatedStoreSessionRequest::try_from_dto(
+            StoreSessionRequest {
+                access_token: "A".repeat(64),
+                refresh_token: "B".repeat(64),
+                expires_at_unix: 500,
+            },
+            100,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -290,21 +900,13 @@ mod tests {
     }
 
     #[test]
-    fn production_backend_persists_session_but_keeps_unwired_e2ee_state_closed() {
-        let session_store = Arc::new(MemorySessionStore::default());
-        let backend = ProductionDesktopBackend::with_session_store(session_store);
-        let request = ValidatedStoreSessionRequest::try_from_dto(
-            StoreSessionRequest {
-                access_token: "A".repeat(64),
-                refresh_token: "B".repeat(64),
-                expires_at_unix: 500,
-            },
-            100,
-        )
-        .unwrap();
+    fn production_backend_enrolls_fresh_device_and_exposes_public_settings() {
+        let user_id = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (backend, _session_store, registry, local_store) = backend_fixture(api.clone());
 
         assert_eq!(
-            backend.store_session(request),
+            backend.store_session(valid_session()),
             Ok(SessionMetadata {
                 stored: true,
                 expires_at_unix: Some(500),
@@ -317,6 +919,23 @@ mod tests {
                 expires_at_unix: Some(500),
             })
         );
+        assert_eq!(backend.initialize_e2ee_store(), Ok(store_status()));
+        assert_eq!(backend.read_e2ee_store_status(), Ok(store_status()));
+        assert_eq!(api.uploaded.load(Ordering::SeqCst), DEFAULT_BATCH_SIZE + 1);
+        assert_eq!(
+            local_store.exists(&StoreKey::pending_keypackage_upload()),
+            Ok(false)
+        );
+        let device_id = registry.device_for(user_id).unwrap().unwrap();
+        let restored = load_mls_client_state(local_store.as_ref()).unwrap();
+        assert_eq!(restored.device.user_id(), user_id);
+        assert_eq!(restored.device.device_id(), device_id);
+
+        let settings = backend.read_encryption_settings().unwrap();
+        assert!(settings.ready);
+        assert_eq!(settings.devices.len(), 1);
+        assert!(settings.devices[0].is_current_device());
+
         assert_eq!(backend.clear_session(), Ok(()));
         assert_eq!(
             backend.read_session_metadata(),
@@ -326,13 +945,56 @@ mod tests {
             })
         );
         assert_eq!(
+            backend.read_e2ee_store_status(),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert_eq!(
+            backend.initialize_e2ee_store(),
+            Err(DesktopCommandBackendError::Rejected)
+        );
+    }
+
+    #[test]
+    fn bootstrap_upload_outbox_survives_uncertain_network_result() {
+        let user_id = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        api.reject_upload.store(true, Ordering::SeqCst);
+        let (backend, _session_store, registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+
+        assert_eq!(
             backend.initialize_e2ee_store(),
             Err(DesktopCommandBackendError::Unavailable)
         );
         assert_eq!(
-            backend.read_encryption_settings(),
-            Err(DesktopCommandBackendError::Unavailable)
+            local_store.exists(&StoreKey::pending_keypackage_upload()),
+            Ok(true)
         );
+        assert!(registry.device_for(user_id).unwrap().is_some());
+
+        api.reject_upload.store(false, Ordering::SeqCst);
+        assert_eq!(backend.initialize_e2ee_store(), Ok(store_status()));
+        assert_eq!(
+            local_store.exists(&StoreKey::pending_keypackage_upload()),
+            Ok(false)
+        );
+        assert_eq!(api.uploaded.load(Ordering::SeqCst), DEFAULT_BATCH_SIZE + 1);
+    }
+
+    #[test]
+    fn existing_account_without_native_binding_remains_pairing_gated() {
+        let root = RootIdentityKey::generate();
+        let device = MlsDevice::generate(UserId::new(), DeviceId::new(), &root).unwrap();
+        let api = Arc::new(MockEnrollmentApi::with_device(&device));
+        let (backend, _session_store, registry, local_store) = backend_fixture(api);
+        backend.store_session(valid_session()).unwrap();
+
+        assert_eq!(
+            backend.initialize_e2ee_store(),
+            Err(DesktopCommandBackendError::Rejected)
+        );
+        assert_eq!(registry.device_for(device.user_id()), Ok(None));
+        assert!(local_store.list_keys().unwrap().is_empty());
         assert_eq!(
             format!("{backend:?}"),
             "ProductionDesktopBackend(<native state redacted>)"

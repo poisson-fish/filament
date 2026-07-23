@@ -262,9 +262,17 @@ review. The packaged runtime now injects native session custody through the
 existing audited commands: it stores one strict, versioned access/refresh
 record in the platform credential service, caps the record at 12 KiB,
 revalidates it on load, zeroizes token buffers, and deletes it idempotently on
-logout. Credential identifiers remain native-only. Authenticated device
-enrollment, SQLCipher initialization, network/mailbox coordination, and the
-packaged messaging suite remain fail closed.
+logout. Credential identifiers remain native-only. The host now discovers the
+authenticated user through one compile-time HTTPS authority with redirects
+disabled and 256 KiB body caps. Accounts with an empty certified-device
+directory can enroll their first native device: the root identity, complete
+OpenMLS provider state, and an exact retryable KeyPackage upload outbox are
+atomically persisted in SQLCipher before certificate publication. Existing
+accounts remain QR-pairing-gated, every returned device certificate is checked
+against the local root, and uncertain uploads retry idempotently after restart.
+Mailbox coordination, encrypted messaging UI, rotation submission, packaged
+network smoke coverage, and non-desktop platform custody evidence remain fail
+closed.
 
 ---
 

@@ -27,10 +27,21 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   the platform credential service under fixed native identifiers. Logout
   deletes that record idempotently; malformed stored records fail closed and
   token buffers are zeroized on drop.
-- Store initialization, transport, mailbox, settings, rotation, and MLS
-  coordination still return typed `unavailable` errors. The runtime never
-  claims encrypted storage or messaging is ready before authenticated device
-  enrollment is wired.
+- The native host discovers the authenticated user through the compile-time
+  `FILAMENT_NATIVE_API_ORIGIN` HTTPS authority (default
+  `https://api.filament.local`). Redirects are disabled, bearer headers are
+  sensitive/redacted, requests and responses are capped at 256 KiB, and strict
+  server DTO validation fails closed.
+- A server account with an empty certified-device directory can enroll its
+  first device. The host creates the device ID itself, atomically persists the
+  root identity, complete MLS provider, and retryable KeyPackage upload outbox
+  in SQLCipher, publishes the certificate, and clears the outbox only after a
+  confirmed idempotent upload. An account that already has devices remains
+  pairing-gated; the runtime never creates a replacement root.
+- Encrypted-store readiness and public encryption settings are now backed by
+  the authenticated native device. Mailbox/messaging coordination, pairing UI,
+  rotation submission, and packaged end-to-end smoke coverage remain fail
+  closed.
 - Calls and automatic updates remain disabled.
 
 ## Developer commands
@@ -53,6 +64,11 @@ hdiutil create -volname Filament \
 npm run build -- --debug --bundles deb,appimage  # Linux
 npm run build -- --debug --bundles msi  # Windows
 ```
+
+Self-hosted builds may pin a different native API authority at compile time,
+for example `FILAMENT_NATIVE_API_ORIGIN=https://chat.example npm run build`.
+Only one HTTPS authority with no path, credentials, query, or fragment is
+accepted. The server origin is never selectable through IPC.
 
 Release bundles omit `--debug` and require the platform signing gates. No
 signing credentials belong in the repository.
@@ -123,7 +139,8 @@ socket during the launch probe, and emitted no runtime error. The artifact
 contained the executable, application metadata, icon, embedded local assets,
 and `THIRD_PARTY_NOTICES.txt`.
 
-This is host/session-scaffold evidence, not the Phase 5.5 messaging exit suite.
+This is host/session/bootstrap-scaffold evidence, not the Phase 5.5 messaging
+exit suite.
 The same probe is now required for Debian, AppImage, macOS disk-image, and MSI
 CI artifacts. Production E2EE messaging, upgrade semantics, and mobile
 platform custody smoke coverage remains fail-closed work; Android and iOS

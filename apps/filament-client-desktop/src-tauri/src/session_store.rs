@@ -21,6 +21,21 @@ pub(crate) struct StoredSessionMetadata {
     pub(crate) expires_at_unix: i64,
 }
 
+pub(crate) struct StoredSession {
+    pub(crate) access_token: SessionToken,
+    pub(crate) expires_at_unix: i64,
+}
+
+impl core::fmt::Debug for StoredSession {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("StoredSession")
+            .field("access_token", &"[REDACTED]")
+            .field("expires_at_unix", &self.expires_at_unix)
+            .finish()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionCredentialError {
     Unavailable,
@@ -34,6 +49,8 @@ pub(crate) trait SessionCredentialStore: Send + Sync + 'static {
     ) -> Result<StoredSessionMetadata, SessionCredentialError>;
 
     fn clear(&self) -> Result<(), SessionCredentialError>;
+
+    fn load(&self) -> Result<Option<StoredSession>, SessionCredentialError>;
 
     fn metadata(&self) -> Result<Option<StoredSessionMetadata>, SessionCredentialError>;
 }
@@ -68,12 +85,20 @@ impl SessionCredentialStore for OsSessionCredentialStore {
     }
 
     fn metadata(&self) -> Result<Option<StoredSessionMetadata>, SessionCredentialError> {
+        self.load().map(|session| {
+            session.map(|session| StoredSessionMetadata {
+                expires_at_unix: session.expires_at_unix,
+            })
+        })
+    }
+
+    fn load(&self) -> Result<Option<StoredSession>, SessionCredentialError> {
         let serialized = match session_entry()?.get_secret() {
             Ok(secret) => Zeroizing::new(secret),
             Err(keyring::Error::NoEntry) => return Ok(None),
             Err(_) => return Err(SessionCredentialError::Unavailable),
         };
-        decode_session_metadata(&serialized).map(Some)
+        decode_session(&serialized).map(Some)
     }
 }
 
@@ -125,9 +150,7 @@ fn encode_session(
     Ok(serialized)
 }
 
-fn decode_session_metadata(
-    serialized: &[u8],
-) -> Result<StoredSessionMetadata, SessionCredentialError> {
+fn decode_session(serialized: &[u8]) -> Result<StoredSession, SessionCredentialError> {
     if serialized.len() > MAX_SESSION_CREDENTIAL_BYTES {
         return Err(SessionCredentialError::Rejected);
     }
@@ -142,9 +165,10 @@ fn decode_session_metadata(
     let refresh_token =
         SessionToken::new(mem::take(&mut record.refresh_token)).map_err(map_validation_error)?;
     let expiry = UnixExpiry::new(record.expires_at_unix, 0).map_err(map_validation_error)?;
-    drop((access_token, refresh_token));
+    drop(refresh_token);
 
-    Ok(StoredSessionMetadata {
+    Ok(StoredSession {
+        access_token,
         expires_at_unix: expiry.as_i64(),
     })
 }
@@ -174,12 +198,9 @@ mod tests {
     fn session_record_round_trip_exposes_metadata_only() {
         let request = valid_session();
         let serialized = encode_session(&request).unwrap();
-        assert_eq!(
-            decode_session_metadata(&serialized),
-            Ok(StoredSessionMetadata {
-                expires_at_unix: 500,
-            })
-        );
+        let decoded = decode_session(&serialized).unwrap();
+        assert_eq!(decoded.expires_at_unix, 500);
+        assert_eq!(decoded.access_token.expose(), "A".repeat(64));
         assert!(serialized.len() <= MAX_SESSION_CREDENTIAL_BYTES);
     }
 
@@ -187,18 +208,18 @@ mod tests {
     fn session_record_rejects_unknown_version_fields_and_oversize() {
         let unknown_version = br#"{"version":2,"access_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","refresh_token":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","expires_at_unix":500}"#;
         assert_eq!(
-            decode_session_metadata(unknown_version),
+            decode_session(unknown_version).map(|_| ()),
             Err(SessionCredentialError::Rejected)
         );
 
         let unknown_field = br#"{"version":1,"access_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","refresh_token":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","expires_at_unix":500,"server":"https://evil.example"}"#;
         assert_eq!(
-            decode_session_metadata(unknown_field),
+            decode_session(unknown_field).map(|_| ()),
             Err(SessionCredentialError::Rejected)
         );
 
         assert_eq!(
-            decode_session_metadata(&vec![b'A'; MAX_SESSION_CREDENTIAL_BYTES + 1]),
+            decode_session(&vec![b'A'; MAX_SESSION_CREDENTIAL_BYTES + 1]).map(|_| ()),
             Err(SessionCredentialError::Rejected)
         );
     }
@@ -207,13 +228,13 @@ mod tests {
     fn session_record_revalidates_tokens_and_timestamp_after_keyring_load() {
         let malformed_token = br#"{"version":1,"access_token":"short","refresh_token":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","expires_at_unix":500}"#;
         assert_eq!(
-            decode_session_metadata(malformed_token),
+            decode_session(malformed_token).map(|_| ()),
             Err(SessionCredentialError::Rejected)
         );
 
         let invalid_expiry = br#"{"version":1,"access_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","refresh_token":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","expires_at_unix":253402300800}"#;
         assert_eq!(
-            decode_session_metadata(invalid_expiry),
+            decode_session(invalid_expiry).map(|_| ()),
             Err(SessionCredentialError::Rejected)
         );
     }
