@@ -7,17 +7,19 @@
 
 use std::collections::{HashMap, HashSet};
 
-use filament_core::{CiphersuiteId, DeviceId, GroupId, ProposalId, UserId};
+use filament_core::{CiphersuiteId, ConversationId, DeviceId, GroupId, ProposalId, UserId};
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeMessagesRequest, AckE2eeProposalsRequest,
-    E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxResponse,
-    E2eeRetentionSeconds, MlsMembershipChange, PostCommitRequest, PostCommitResponse,
-    PostMessageRequest, PostMessageResponse, MAX_E2EE_COMMIT_ACK_BATCH_SIZE,
+    ClaimKeyPackageResponse, CreateMlsConversationRequest, E2eeCommitMailboxResponse,
+    E2eeMailboxResponse, E2eeProposalMailboxResponse, E2eeRetentionSeconds,
+    MlsConversationProvisionResponse, MlsMembershipChange, PostCommitRequest, PostCommitResponse,
+    PostMessageRequest, PostMessageResponse, MAX_COMMIT_BYTES, MAX_E2EE_COMMIT_ACK_BATCH_SIZE,
     MAX_E2EE_MESSAGE_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE,
     MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE,
-    MAX_PROPOSAL_BYTES,
+    MAX_GROUP_INFO_BYTES, MAX_KEYPACKAGE_BYTES, MAX_PROPOSAL_BYTES, MAX_WELCOME_BYTES,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use ulid::Ulid;
 use zeroize::{Zeroize, Zeroizing};
@@ -38,6 +40,7 @@ const HISTORY_RECORD_VERSION: u16 = 2;
 const RETENTION_POLICY_VERSION: u16 = 1;
 const OUTBOUND_COMMIT_RECORD_VERSION: u16 = 1;
 const OUTBOUND_MESSAGE_RECORD_VERSION: u16 = 1;
+const CONVERSATION_PROVISION_RECORD_VERSION: u16 = 1;
 const MAX_LOCAL_HISTORY_RECORD_BYTES: usize = (MAX_APPLICATION_PLAINTEXT_BYTES * 4) + 2_048;
 const MAX_UNIX_TIMESTAMP: i64 = 253_402_300_799;
 
@@ -81,6 +84,12 @@ pub enum DurableMailboxError {
     /// An encrypted application message must be resolved before the group epoch changes.
     #[error("an outbound MLS message is already pending")]
     PendingOutboundMessage,
+    /// A restart-safe conversation bootstrap must be resolved first.
+    #[error("an MLS conversation provision is already pending")]
+    PendingConversationProvision,
+    /// A direct-message MLS conversation already pins this peer.
+    #[error("an MLS conversation for this peer already exists")]
+    ConversationAlreadyExists,
     /// The requested group has no local MLS state.
     #[error("MLS conversation is not available locally")]
     ConversationNotFound,
@@ -221,6 +230,17 @@ struct OutboundMessageRecord {
     plaintext: Vec<u8>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConversationProvisionRecord {
+    version: u16,
+    accepted: bool,
+    base_checkpoint_sha256: [u8; 32],
+    request: CreateMlsConversationRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response: Option<MlsConversationProvisionResponse>,
+}
+
 impl Drop for OutboundMessageRecord {
     fn drop(&mut self) {
         self.plaintext.zeroize();
@@ -304,6 +324,235 @@ impl DurableMlsClient {
     pub fn reload(&mut self, store: &dyn LocalKeyStore) -> Result<(), KeyStoreError> {
         self.state = None;
         self.state = Some(crate::load_mls_client_state(store)?);
+        Ok(())
+    }
+
+    /// Stage a new two-user MLS conversation behind a durable retry outbox.
+    ///
+    /// The claimed KeyPackage is authenticated against `peer`, including the
+    /// server-routed device ID. The live MLS state remains unchanged. An
+    /// isolated candidate checkpoint and exact provisioning request are
+    /// inserted atomically before the request may cross the network boundary.
+    ///
+    /// # Errors
+    /// Rejects duplicate peers/groups, malformed claims, pending local work,
+    /// untrusted KeyPackages, or any encrypted-store failure.
+    pub fn prepare_direct_message_provision(
+        &self,
+        store: &dyn LocalKeyStore,
+        conversation_id: ConversationId,
+        group_id: GroupId,
+        peer: PinnedUserIdentity,
+        claimed: &ClaimKeyPackageResponse,
+    ) -> Result<CreateMlsConversationRequest, DurableMailboxError> {
+        let provision_key = StoreKey::pending_conversation_provision();
+        let checkpoint_key = StoreKey::pending_conversation_checkpoint();
+        if store.exists(&provision_key)? || store.exists(&checkpoint_key)? {
+            return Err(DurableMailboxError::PendingConversationProvision);
+        }
+        let state = self
+            .state
+            .as_ref()
+            .ok_or(DurableMailboxError::Unavailable)?;
+        if peer.user_id == state.device.user_id()
+            || state
+                .conversations
+                .iter()
+                .any(|conversation| conversation.group_id() == group_id)
+        {
+            return Err(DurableMailboxError::ConversationAlreadyExists);
+        }
+        for conversation in &state.conversations {
+            let metadata = conversation.persistence_metadata();
+            if metadata.audience == ConversationAudience::DirectMessage
+                && metadata
+                    .pinned_roots
+                    .iter()
+                    .any(|(user_id, _)| *user_id == peer.user_id)
+            {
+                return Err(DurableMailboxError::ConversationAlreadyExists);
+            }
+        }
+        if has_any_pending_group_work(store, state)? {
+            return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+        let welcome_device_id = DeviceId::try_from(claimed.device_id.clone())
+            .map_err(|_| ConversationError::MetadataMismatch)?;
+        if claimed.key_package_blob.is_empty()
+            || claimed.key_package_blob.len() > MAX_KEYPACKAGE_BYTES
+            || crate::conversation::verified_keypackage_device(
+                &state.device,
+                &claimed.key_package_blob,
+                peer,
+            )? != welcome_device_id
+        {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+
+        let current_checkpoint = encode_state(state)?;
+        let mut candidate = crate::persistence::clone_client_state(&current_checkpoint)?;
+        let (conversation, pending) = MlsConversation::create_two_member(
+            group_id,
+            &candidate.device,
+            peer,
+            &claimed.key_package_blob,
+        )?;
+        if pending.prior_epoch != 0
+            || pending.epoch != 1
+            || pending.suite != CiphersuiteId::baseline()
+            || pending.committer_device_id != candidate.device.device_id()
+        {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        let welcome_blob = pending
+            .welcome_blob
+            .ok_or(ConversationError::MetadataMismatch)?;
+        let group_info_blob = pending
+            .group_info_blob
+            .ok_or(ConversationError::MetadataMismatch)?;
+        if pending.commit_blob.is_empty()
+            || pending.commit_blob.len() > MAX_COMMIT_BYTES
+            || welcome_blob.is_empty()
+            || welcome_blob.len() > MAX_WELCOME_BYTES
+            || group_info_blob.is_empty()
+            || group_info_blob.len() > MAX_GROUP_INFO_BYTES
+        {
+            return Err(ConversationError::LimitExceeded.into());
+        }
+        let request = CreateMlsConversationRequest {
+            conversation_id: conversation_id.to_string(),
+            peer_user_id: peer.user_id.to_string(),
+            group_id: group_id.to_string(),
+            suite_id: pending.suite.as_u16(),
+            committer_device_id: candidate.device.device_id().to_string(),
+            welcome_device_id: welcome_device_id.to_string(),
+            commit_blob: pending.commit_blob,
+            welcome_blob,
+            group_info_blob,
+        };
+        candidate.conversations.push(conversation);
+        let candidate_checkpoint = encode_state(&candidate)?;
+        let record = ConversationProvisionRecord {
+            version: CONVERSATION_PROVISION_RECORD_VERSION,
+            accepted: false,
+            base_checkpoint_sha256: Sha256::digest(&current_checkpoint).into(),
+            request: request.clone(),
+            response: None,
+        };
+        store.store_batch_if_absent_or_equal(vec![
+            (provision_key, encode_json(&record)?),
+            (checkpoint_key, candidate_checkpoint),
+        ])?;
+        Ok(request)
+    }
+
+    /// Return the exact pending provisioning request, reconciling a completed
+    /// local adoption marker after restart.
+    ///
+    /// # Errors
+    /// Rejects torn, corrupt, or state-conflicting outboxes. An accepted marker
+    /// is removed only when its checkpoint exactly equals the active one.
+    pub fn pending_conversation_provision(
+        &mut self,
+        store: &dyn LocalKeyStore,
+    ) -> Result<Option<CreateMlsConversationRequest>, DurableMailboxError> {
+        let provision_key = StoreKey::pending_conversation_provision();
+        let checkpoint_key = StoreKey::pending_conversation_checkpoint();
+        let has_record = store.exists(&provision_key)?;
+        let has_checkpoint = store.exists(&checkpoint_key)?;
+        if has_record != has_checkpoint {
+            return Err(KeyStoreError::InvalidValue.into());
+        }
+        if !has_record {
+            return Ok(None);
+        }
+        let record = load_conversation_provision_record(store)?;
+        let checkpoint = store.load(&checkpoint_key)?;
+        let candidate = crate::persistence::decode_mls_client_state(&checkpoint)?;
+        validate_conversation_provision_candidate(&record, &candidate)?;
+        if !record.accepted {
+            validate_conversation_provision_base(store, &record)?;
+            return Ok(Some(record.request));
+        }
+        let current_checkpoint = store.load(&StoreKey::mls_client_state())?;
+        if current_checkpoint.as_slice() != checkpoint.as_slice() {
+            return Err(KeyStoreError::InvalidValue.into());
+        }
+        let current = crate::persistence::decode_mls_client_state(&current_checkpoint)?;
+        validate_accepted_conversation_provision(&record, &current)?;
+        self.state = Some(current);
+        let removed = match store.remove_batch(&[provision_key, checkpoint_key]) {
+            Ok(removed) => removed,
+            Err(error) => {
+                self.state = None;
+                return Err(error.into());
+            }
+        };
+        if removed != 2 {
+            self.state = None;
+            return Err(KeyStoreError::BackendError.into());
+        }
+        Ok(None)
+    }
+
+    /// Adopt an exact server-accepted conversation and durably close the
+    /// response-loss window.
+    ///
+    /// # Errors
+    /// Rejects substituted requests/responses or corrupt candidate state.
+    /// Persistence uncertainty shuts the runtime down until reload.
+    pub fn confirm_conversation_provision(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        submitted: &CreateMlsConversationRequest,
+        response: &MlsConversationProvisionResponse,
+    ) -> Result<(), DurableMailboxError> {
+        let mut record = load_conversation_provision_record(store)?;
+        if record.accepted || record.request != *submitted {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        validate_conversation_provision_base(store, &record)?;
+        validate_conversation_provision_response(submitted, response)?;
+        let checkpoint_key = StoreKey::pending_conversation_checkpoint();
+        let checkpoint = store.load(&checkpoint_key)?;
+        let mut candidate = crate::persistence::decode_mls_client_state(&checkpoint)?;
+        validate_conversation_provision_candidate(&record, &candidate)?;
+        let group_id = GroupId::try_from(submitted.group_id.clone())
+            .map_err(|_| ConversationError::MetadataMismatch)?;
+        let position = candidate
+            .conversations
+            .iter()
+            .position(|conversation| conversation.group_id() == group_id)
+            .ok_or(DurableMailboxError::ConversationNotFound)?;
+        candidate.conversations[position].accept_pending_commit(&candidate.device)?;
+        let accepted_checkpoint = encode_state(&candidate)?;
+        record.accepted = true;
+        record.response = Some(response.clone());
+        self.state = None;
+        if let Err(error) = store.store_batch(vec![
+            (StoreKey::mls_client_state(), accepted_checkpoint.clone()),
+            (checkpoint_key.clone(), accepted_checkpoint),
+            (
+                StoreKey::pending_conversation_provision(),
+                encode_json(&record)?,
+            ),
+        ]) {
+            return Err(error.into());
+        }
+        self.state = Some(candidate);
+        let removed = match store
+            .remove_batch(&[StoreKey::pending_conversation_provision(), checkpoint_key])
+        {
+            Ok(removed) => removed,
+            Err(error) => {
+                self.state = None;
+                return Err(error.into());
+            }
+        };
+        if removed != 2 {
+            self.state = None;
+            return Err(KeyStoreError::BackendError.into());
+        }
         Ok(())
     }
 
@@ -1471,6 +1720,134 @@ fn encode_state(state: &MlsClientState) -> Result<Vec<u8>, KeyStoreError> {
     encode_mls_client_state(&state.device, &conversations).map(|encoded| encoded.to_vec())
 }
 
+fn has_any_pending_group_work(
+    store: &dyn LocalKeyStore,
+    state: &MlsClientState,
+) -> Result<bool, KeyStoreError> {
+    for conversation in &state.conversations {
+        let group_id = conversation.group_id();
+        if store.exists(&message_ack_key(group_id)?)?
+            || store.exists(&commit_ack_key(group_id)?)?
+            || store.exists(&proposal_ack_key(group_id)?)?
+            || store.exists(&outbound_commit_key(group_id)?)?
+            || store.exists(&outbound_message_key(group_id)?)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn load_conversation_provision_record(
+    store: &dyn LocalKeyStore,
+) -> Result<ConversationProvisionRecord, KeyStoreError> {
+    let encoded = store.load(&StoreKey::pending_conversation_provision())?;
+    if encoded.is_empty() || encoded.len() > MAX_STORE_VALUE_BYTES {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    serde_json::from_slice(&encoded).map_err(|_| KeyStoreError::InvalidValue)
+}
+
+fn validate_conversation_provision_base(
+    store: &dyn LocalKeyStore,
+    record: &ConversationProvisionRecord,
+) -> Result<(), DurableMailboxError> {
+    let current = store.load(&StoreKey::mls_client_state())?;
+    let digest: [u8; 32] = Sha256::digest(&current).into();
+    if digest != record.base_checkpoint_sha256 {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    Ok(())
+}
+
+fn validate_conversation_provision_candidate(
+    record: &ConversationProvisionRecord,
+    candidate: &MlsClientState,
+) -> Result<(), DurableMailboxError> {
+    let request = &record.request;
+    let conversation_id = ConversationId::try_from(request.conversation_id.clone())
+        .map_err(|_| ConversationError::MetadataMismatch)?;
+    let peer_user_id = UserId::try_from(request.peer_user_id.clone())
+        .map_err(|_| ConversationError::MetadataMismatch)?;
+    let group_id = GroupId::try_from(request.group_id.clone())
+        .map_err(|_| ConversationError::MetadataMismatch)?;
+    let committer_device_id = DeviceId::try_from(request.committer_device_id.clone())
+        .map_err(|_| ConversationError::MetadataMismatch)?;
+    let welcome_device_id = DeviceId::try_from(request.welcome_device_id.clone())
+        .map_err(|_| ConversationError::MetadataMismatch)?;
+    if record.version != CONVERSATION_PROVISION_RECORD_VERSION
+        || conversation_id.to_string() != request.conversation_id
+        || peer_user_id == candidate.device.user_id()
+        || committer_device_id != candidate.device.device_id()
+        || welcome_device_id == committer_device_id
+        || request.suite_id != CiphersuiteId::baseline().as_u16()
+        || request.commit_blob.is_empty()
+        || request.commit_blob.len() > MAX_COMMIT_BYTES
+        || request.welcome_blob.is_empty()
+        || request.welcome_blob.len() > MAX_WELCOME_BYTES
+        || request.group_info_blob.is_empty()
+        || request.group_info_blob.len() > MAX_GROUP_INFO_BYTES
+        || record.accepted != record.response.is_some()
+    {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    let matches = candidate
+        .conversations
+        .iter()
+        .filter(|conversation| conversation.group_id() == group_id)
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    let metadata = matches[0].persistence_metadata();
+    let expected_epoch = u64::from(record.accepted);
+    if metadata.audience != ConversationAudience::DirectMessage
+        || metadata.active != record.accepted
+        || metadata.epoch != expected_epoch
+        || metadata.own_device_id != candidate.device.device_id()
+        || metadata.pinned_roots.len() != 2
+        || !metadata.pinned_roots.iter().any(|(user_id, root)| {
+            *user_id == candidate.device.user_id() && root == candidate.device.root_key_public()
+        })
+        || !metadata
+            .pinned_roots
+            .iter()
+            .any(|(user_id, _)| *user_id == peer_user_id)
+    {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    if let Some(response) = &record.response {
+        validate_conversation_provision_response(request, response)?;
+    }
+    Ok(())
+}
+
+fn validate_accepted_conversation_provision(
+    record: &ConversationProvisionRecord,
+    state: &MlsClientState,
+) -> Result<(), DurableMailboxError> {
+    if !record.accepted || record.response.is_none() {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    validate_conversation_provision_candidate(record, state)
+}
+
+fn validate_conversation_provision_response(
+    request: &CreateMlsConversationRequest,
+    response: &MlsConversationProvisionResponse,
+) -> Result<(), DurableMailboxError> {
+    if response.conversation_id != request.conversation_id
+        || response.group_id != request.group_id
+        || response.crypto != "mls_v1"
+        || response.epoch != 1
+        || response.suite_id != request.suite_id
+        || !(0..=MAX_UNIX_TIMESTAMP).contains(&response.provisioned_at_unix)
+    {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    Ok(())
+}
+
 fn encode_json(value: &impl Serialize) -> Result<Vec<u8>, KeyStoreError> {
     let encoded = serde_json::to_vec(value).map_err(|_| KeyStoreError::BackendError)?;
     if encoded.is_empty() || encoded.len() > MAX_STORE_VALUE_BYTES {
@@ -1971,7 +2348,9 @@ fn validate_ulid(value: &str) -> Result<(), KeyStoreError> {
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use filament_core::{CiphersuiteId, ConversationCrypto, DeviceId, GroupId, ProposalId, UserId};
+    use filament_core::{
+        CiphersuiteId, ConversationCrypto, ConversationId, DeviceId, GroupId, ProposalId, UserId,
+    };
     use filament_protocol::{
         E2eeCommitMailboxEntry, E2eeMailboxMessage, E2eeProposalMailboxEntry,
         E2eeProposalMailboxResponse, GroupInfoResponse, MlsMembershipChange, PostCommitResponse,
@@ -2019,6 +2398,207 @@ mod tests {
             bob_group,
             group_id,
         }
+    }
+
+    #[test]
+    fn direct_message_provision_is_exactly_retryable_and_joins_the_peer() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let claimed = ClaimKeyPackageResponse {
+            device_id: bob.device_id().to_string(),
+            key_package_blob: generate_key_package_batch(&bob, 1).unwrap().remove(0).blob,
+            is_last_resort: false,
+        };
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &alice, &[]).unwrap();
+        let conversation_id = ConversationId::new();
+        let group_id = GroupId::new();
+        let runtime = DurableMlsClient::load(&store).unwrap();
+        let request = runtime
+            .prepare_direct_message_provision(&store, conversation_id, group_id, bob_pin, &claimed)
+            .unwrap();
+        assert_eq!(request.welcome_device_id, bob.device_id().to_string());
+        assert_eq!(request.committer_device_id, alice.device_id().to_string());
+        assert!(runtime.mailbox_routes().unwrap().is_empty());
+        drop(runtime);
+
+        let mut restarted = DurableMlsClient::load(&store).unwrap();
+        assert_eq!(
+            restarted.pending_conversation_provision(&store).unwrap(),
+            Some(request.clone())
+        );
+        let response = MlsConversationProvisionResponse {
+            conversation_id: conversation_id.to_string(),
+            group_id: group_id.to_string(),
+            crypto: String::from("mls_v1"),
+            epoch: 1,
+            suite_id: CiphersuiteId::baseline().as_u16(),
+            provisioned_at_unix: 100,
+        };
+        restarted
+            .confirm_conversation_provision(&store, &request, &response)
+            .unwrap();
+        assert_eq!(
+            restarted.pending_conversation_provision(&store).unwrap(),
+            None
+        );
+        assert_eq!(restarted.mailbox_routes().unwrap().len(), 1);
+
+        let mut bob_group =
+            MlsConversation::join_from_welcome(group_id, &bob, alice_pin, &request.welcome_blob)
+                .unwrap();
+        let event = restarted
+            .state
+            .as_mut()
+            .unwrap()
+            .conversations
+            .first_mut()
+            .unwrap()
+            .encrypt_application_message(&alice, b"provisioned")
+            .unwrap();
+        assert_eq!(
+            bob_group
+                .decrypt_application_message(&bob, &event)
+                .unwrap()
+                .ready_messages[0]
+                .plaintext,
+            b"provisioned"
+        );
+    }
+
+    #[test]
+    fn direct_message_provision_rejects_routing_and_response_substitution() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let key_package = generate_key_package_batch(&bob, 2).unwrap();
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &alice, &[]).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let wrong_route = ClaimKeyPackageResponse {
+            device_id: DeviceId::new().to_string(),
+            key_package_blob: key_package[0].blob.clone(),
+            is_last_resort: false,
+        };
+        assert_eq!(
+            runtime.prepare_direct_message_provision(
+                &store,
+                ConversationId::new(),
+                GroupId::new(),
+                bob_pin,
+                &wrong_route,
+            ),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
+            ))
+        );
+        assert!(!store
+            .exists(&StoreKey::pending_conversation_provision())
+            .unwrap());
+
+        let conversation_id = ConversationId::new();
+        let group_id = GroupId::new();
+        let request = runtime
+            .prepare_direct_message_provision(
+                &store,
+                conversation_id,
+                group_id,
+                bob_pin,
+                &ClaimKeyPackageResponse {
+                    device_id: bob.device_id().to_string(),
+                    key_package_blob: key_package[1].blob.clone(),
+                    is_last_resort: false,
+                },
+            )
+            .unwrap();
+        let substituted = MlsConversationProvisionResponse {
+            conversation_id: ConversationId::new().to_string(),
+            group_id: group_id.to_string(),
+            crypto: String::from("mls_v1"),
+            epoch: 1,
+            suite_id: CiphersuiteId::baseline().as_u16(),
+            provisioned_at_unix: 100,
+        };
+        assert_eq!(
+            runtime.confirm_conversation_provision(&store, &request, &substituted),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
+            ))
+        );
+        assert_eq!(
+            runtime.pending_conversation_provision(&store).unwrap(),
+            Some(request)
+        );
+        assert!(runtime.mailbox_routes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn direct_message_provision_cannot_roll_back_newer_group_progress() {
+        let JoinedFixture {
+            alice, alice_group, ..
+        } = joined_fixture();
+        let charlie_root = RootIdentityKey::generate();
+        let charlie = MlsDevice::generate(UserId::new(), DeviceId::new(), &charlie_root).unwrap();
+        let charlie_pin = PinnedUserIdentity::new(charlie.user_id(), *charlie.root_key_public());
+        let claimed = ClaimKeyPackageResponse {
+            device_id: charlie.device_id().to_string(),
+            key_package_blob: generate_key_package_batch(&charlie, 1)
+                .unwrap()
+                .remove(0)
+                .blob,
+            is_last_resort: false,
+        };
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &alice, &[&alice_group]).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let request = runtime
+            .prepare_direct_message_provision(
+                &store,
+                ConversationId::new(),
+                GroupId::new(),
+                charlie_pin,
+                &claimed,
+            )
+            .unwrap();
+
+        let state = runtime.state.as_mut().unwrap();
+        state.conversations[0]
+            .create_self_update(&state.device)
+            .unwrap();
+        state.conversations[0]
+            .accept_pending_commit(&state.device)
+            .unwrap();
+        let conversations = state.conversations.iter().collect::<Vec<_>>();
+        persist_mls_client_state(&store, &state.device, &conversations).unwrap();
+        let response = MlsConversationProvisionResponse {
+            conversation_id: request.conversation_id.clone(),
+            group_id: request.group_id.clone(),
+            crypto: String::from("mls_v1"),
+            epoch: 1,
+            suite_id: request.suite_id,
+            provisioned_at_unix: 100,
+        };
+
+        assert_eq!(
+            runtime.confirm_conversation_provision(&store, &request, &response),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
+            ))
+        );
+        assert_eq!(
+            runtime.pending_conversation_provision(&store),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
+            ))
+        );
+        let restored = crate::load_mls_client_state(&store).unwrap();
+        assert_eq!(restored.conversations[0].epoch(), 2);
     }
 
     #[test]
@@ -2179,6 +2759,13 @@ mod tests {
             self.inner.store_batch(entries)
         }
 
+        fn store_batch_if_absent_or_equal(
+            &self,
+            entries: Vec<(StoreKey, Vec<u8>)>,
+        ) -> Result<usize, KeyStoreError> {
+            self.inner.store_batch_if_absent_or_equal(entries)
+        }
+
         fn load(&self, key: &StoreKey) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
             self.inner.load(key)
         }
@@ -2202,6 +2789,61 @@ mod tests {
         fn list_keys(&self) -> Result<Vec<StoreKey>, KeyStoreError> {
             self.inner.list_keys()
         }
+    }
+
+    #[test]
+    fn accepted_conversation_marker_closes_cleanup_crash_window() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let claimed = ClaimKeyPackageResponse {
+            device_id: bob.device_id().to_string(),
+            key_package_blob: generate_key_package_batch(&bob, 1).unwrap().remove(0).blob,
+            is_last_resort: false,
+        };
+        let store = RejectFirstRemoveStore {
+            inner: InMemoryKeyStore::new(),
+            reject_remove: AtomicBool::new(true),
+        };
+        persist_mls_client_state(&store.inner, &alice, &[]).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let request = runtime
+            .prepare_direct_message_provision(
+                &store,
+                ConversationId::new(),
+                GroupId::new(),
+                bob_pin,
+                &claimed,
+            )
+            .unwrap();
+        let response = MlsConversationProvisionResponse {
+            conversation_id: request.conversation_id.clone(),
+            group_id: request.group_id.clone(),
+            crypto: String::from("mls_v1"),
+            epoch: 1,
+            suite_id: request.suite_id,
+            provisioned_at_unix: 100,
+        };
+        assert!(matches!(
+            runtime.confirm_conversation_provision(&store, &request, &response),
+            Err(DurableMailboxError::KeyStore(KeyStoreError::BackendError))
+        ));
+        assert!(!runtime.is_ready());
+
+        let mut restarted = DurableMlsClient::load(&store).unwrap();
+        assert_eq!(
+            restarted.pending_conversation_provision(&store).unwrap(),
+            None
+        );
+        assert_eq!(restarted.mailbox_routes().unwrap().len(), 1);
+        assert!(!store
+            .exists(&StoreKey::pending_conversation_provision())
+            .unwrap());
+        assert!(!store
+            .exists(&StoreKey::pending_conversation_checkpoint())
+            .unwrap());
     }
 
     #[test]

@@ -13,8 +13,9 @@ use filament_e2ee::{
 };
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
-    AckE2eeProposalsRequest, AckE2eeProposalsResponse, DeviceListResponse,
-    E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxResponse, KeyPackageEntry,
+    AckE2eeProposalsRequest, AckE2eeProposalsResponse, CreateMlsConversationRequest,
+    DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse,
+    E2eeProposalMailboxResponse, KeyPackageEntry, MlsConversationProvisionResponse,
     PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
     PublishDeviceCertificateRequest, PublishDeviceCertificateResponse,
     RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
@@ -77,6 +78,12 @@ pub(crate) trait NativeEnrollmentApi: Send + Sync + 'static {
         access_token: &SessionToken,
         user_id: UserId,
     ) -> Result<RootIdentityDirectoryResponse, NativeApiError>;
+
+    fn provision_conversation(
+        &self,
+        access_token: &SessionToken,
+        request: &CreateMlsConversationRequest,
+    ) -> Result<MlsConversationProvisionResponse, NativeApiError>;
 
     fn rotate_root_identity(
         &self,
@@ -319,6 +326,19 @@ impl NativeEnrollmentApi for ReqwestNativeEnrollmentApi {
         user_id: UserId,
     ) -> Result<RootIdentityDirectoryResponse, NativeApiError> {
         self.get(access_token, &format!("/e2ee/users/{user_id}/identity"))
+    }
+
+    fn provision_conversation(
+        &self,
+        access_token: &SessionToken,
+        request: &CreateMlsConversationRequest,
+    ) -> Result<MlsConversationProvisionResponse, NativeApiError> {
+        self.send_json(
+            access_token,
+            reqwest::Method::POST,
+            "/e2ee/conversations",
+            request,
+        )
     }
 
     fn rotate_root_identity(

@@ -2450,6 +2450,22 @@ fn parse_and_verify_keypackage(
     Ok(key_package)
 }
 
+pub(crate) fn verified_keypackage_device(
+    device: &MlsDevice,
+    blob: &[u8],
+    peer: PinnedUserIdentity,
+) -> Result<DeviceId, ConversationError> {
+    let key_package = parse_and_verify_keypackage(device, blob, peer)?;
+    let mut pins = HashMap::with_capacity(1);
+    pins.insert(peer.user_id, peer.root_key_pub);
+    verify_member_credential(
+        key_package.leaf_node().credential(),
+        key_package.leaf_node().signature_key().as_slice(),
+        &pins,
+    )
+    .map(|verified| verified.device_id)
+}
+
 struct VerifiedMemberCounts {
     total: usize,
     per_user: HashMap<UserId, usize>,

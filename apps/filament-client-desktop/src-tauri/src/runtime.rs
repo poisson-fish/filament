@@ -364,6 +364,7 @@ impl ProductionDesktopBackend {
         session: &StoredSession,
         active: &mut ActiveE2eeState,
     ) -> Result<(), DesktopCommandBackendError> {
+        self.flush_pending_conversation_provision(session, active)?;
         let routes = active
             .mailbox
             .mailbox_routes()
@@ -380,6 +381,28 @@ impl ProductionDesktopBackend {
         }
         active.mailbox_route_offset = (start + selected_count) % route_count;
         Ok(())
+    }
+
+    fn flush_pending_conversation_provision(
+        &self,
+        session: &StoredSession,
+        active: &mut ActiveE2eeState,
+    ) -> Result<(), DesktopCommandBackendError> {
+        let Some(request) = active
+            .mailbox
+            .pending_conversation_provision(active.store.as_ref())
+            .map_err(map_durable_mailbox_error)?
+        else {
+            return Ok(());
+        };
+        let response = self
+            .api
+            .provision_conversation(&session.access_token, &request)
+            .map_err(map_native_api_error)?;
+        active
+            .mailbox
+            .confirm_conversation_provision(active.store.as_ref(), &request, &response)
+            .map_err(map_durable_mailbox_error)
     }
 
     fn synchronize_group_mailboxes(
@@ -941,6 +964,8 @@ fn map_durable_mailbox_error(error: DurableMailboxError) -> DesktopCommandBacken
         DurableMailboxError::PendingAcknowledgment
         | DurableMailboxError::PendingOutboundCommit
         | DurableMailboxError::PendingOutboundMessage
+        | DurableMailboxError::PendingConversationProvision
+        | DurableMailboxError::ConversationAlreadyExists
         | DurableMailboxError::InvalidatedOutboundCommit
         | DurableMailboxError::ConversationNotFound
         | DurableMailboxError::Conversation(_) => DesktopCommandBackendError::Rejected,
@@ -1114,9 +1139,10 @@ mod tests {
         DELIVERY_SERVICE_SEED_BYTES,
     };
     use filament_protocol::{
-        AckE2eeCommitsRequest, AckE2eeMessagesRequest, AckE2eeProposalsRequest, DeviceInfo,
-        DeviceListResponse, E2eeCommitMailboxEntry, E2eeCommitMailboxResponse, E2eeMailboxResponse,
-        E2eeProposalMailboxEntry, E2eeProposalMailboxResponse, PostCommitRequest,
+        AckE2eeCommitsRequest, AckE2eeMessagesRequest, AckE2eeProposalsRequest,
+        CreateMlsConversationRequest, DeviceInfo, DeviceListResponse, E2eeCommitMailboxEntry,
+        E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxEntry,
+        E2eeProposalMailboxResponse, MlsConversationProvisionResponse, PostCommitRequest,
         PostCommitResponse, PostMessageRequest, PostMessageResponse, RootIdentityDirectoryResponse,
         RootIdentityRotationEntry, RotateRootIdentityRequest,
         ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
@@ -1241,6 +1267,17 @@ mod tests {
             Mutex<HashMap<filament_core::GroupId, (PostCommitRequest, PostCommitResponse)>>,
         lose_commit_response: AtomicBool,
         commit_attempts: AtomicUsize,
+        accepted_provisions: Mutex<
+            HashMap<
+                filament_core::ConversationId,
+                (
+                    CreateMlsConversationRequest,
+                    MlsConversationProvisionResponse,
+                ),
+            >,
+        >,
+        lose_provision_response: AtomicBool,
+        provision_attempts: AtomicUsize,
     }
 
     impl MockEnrollmentApi {
@@ -1267,6 +1304,9 @@ mod tests {
                 accepted_commits: Mutex::new(HashMap::new()),
                 lose_commit_response: AtomicBool::new(false),
                 commit_attempts: AtomicUsize::new(0),
+                accepted_provisions: Mutex::new(HashMap::new()),
+                lose_provision_response: AtomicBool::new(false),
+                provision_attempts: AtomicUsize::new(0),
             }
         }
 
@@ -1293,6 +1333,9 @@ mod tests {
                 accepted_commits: Mutex::new(HashMap::new()),
                 lose_commit_response: AtomicBool::new(false),
                 commit_attempts: AtomicUsize::new(0),
+                accepted_provisions: Mutex::new(HashMap::new()),
+                lose_provision_response: AtomicBool::new(false),
+                provision_attempts: AtomicUsize::new(0),
             }
         }
     }
@@ -1376,6 +1419,40 @@ mod tests {
                     .map_err(|_| NativeApiError::Unavailable)?,
                 rotations,
             })
+        }
+
+        fn provision_conversation(
+            &self,
+            _access_token: &crate::SessionToken,
+            request: &CreateMlsConversationRequest,
+        ) -> Result<MlsConversationProvisionResponse, NativeApiError> {
+            self.provision_attempts.fetch_add(1, Ordering::SeqCst);
+            let conversation_id =
+                filament_core::ConversationId::try_from(request.conversation_id.clone())
+                    .map_err(|_| NativeApiError::Rejected)?;
+            let mut accepted = self.accepted_provisions.lock().unwrap();
+            let response =
+                if let Some((previous, response)) = accepted.get(&conversation_id).cloned() {
+                    if previous != *request {
+                        return Err(NativeApiError::Rejected);
+                    }
+                    response
+                } else {
+                    let response = MlsConversationProvisionResponse {
+                        conversation_id: request.conversation_id.clone(),
+                        group_id: request.group_id.clone(),
+                        crypto: String::from("mls_v1"),
+                        epoch: 1,
+                        suite_id: request.suite_id,
+                        provisioned_at_unix: 201,
+                    };
+                    accepted.insert(conversation_id, (request.clone(), response.clone()));
+                    response
+                };
+            if self.lose_provision_response.swap(false, Ordering::SeqCst) {
+                return Err(NativeApiError::Unavailable);
+            }
+            Ok(response)
         }
 
         fn rotate_root_identity(
@@ -1732,6 +1809,77 @@ mod tests {
         assert_eq!(
             backend.initialize_e2ee_store(),
             Err(DesktopCommandBackendError::Rejected)
+        );
+    }
+
+    #[test]
+    fn production_conversation_provision_retries_exact_request_after_response_loss() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let bob_pin = filament_e2ee::PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let claimed = filament_protocol::ClaimKeyPackageResponse {
+            device_id: bob.device_id().to_string(),
+            key_package_blob: generate_key_package_batch(&bob, 1).unwrap().remove(0).blob,
+            is_last_resort: false,
+        };
+        let api = Arc::new(MockEnrollmentApi::with_device(&alice));
+        api.lose_provision_response.store(true, Ordering::SeqCst);
+        let (backend, _session_store, registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        registry.bind(alice.user_id(), alice.device_id()).unwrap();
+        filament_e2ee::persist_root_identity(
+            local_store.as_ref(),
+            StoreKey::root_identity(),
+            &alice_root,
+        )
+        .unwrap();
+        filament_e2ee::persist_mls_client_state(local_store.as_ref(), &alice, &[]).unwrap();
+        let conversation_id = filament_core::ConversationId::new();
+        let group_id = filament_core::GroupId::new();
+        let runtime = DurableMlsClient::load(local_store.as_ref()).unwrap();
+        let request = runtime
+            .prepare_direct_message_provision(
+                local_store.as_ref(),
+                conversation_id,
+                group_id,
+                bob_pin,
+                &claimed,
+            )
+            .unwrap();
+
+        assert_eq!(
+            backend.initialize_e2ee_store(),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert_eq!(api.provision_attempts.load(Ordering::SeqCst), 1);
+        let mut restarted = DurableMlsClient::load(local_store.as_ref()).unwrap();
+        assert_eq!(
+            restarted
+                .pending_conversation_provision(local_store.as_ref())
+                .unwrap(),
+            Some(request.clone())
+        );
+
+        assert_eq!(backend.initialize_e2ee_store(), Ok(store_status()));
+        assert_eq!(api.provision_attempts.load(Ordering::SeqCst), 2);
+        let mut restored = DurableMlsClient::load(local_store.as_ref()).unwrap();
+        assert_eq!(
+            restored
+                .pending_conversation_provision(local_store.as_ref())
+                .unwrap(),
+            None
+        );
+        assert_eq!(restored.mailbox_routes().unwrap().len(), 1);
+        assert_eq!(
+            api.accepted_provisions
+                .lock()
+                .unwrap()
+                .get(&conversation_id)
+                .unwrap()
+                .0,
+            request
         );
     }
 

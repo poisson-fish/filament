@@ -285,7 +285,7 @@ It derives all routes and root pins from the authenticated MLS checkpoint,
 retries durable acknowledgment outboxes before later reads, processes commits
 before messages, and stops a group on hostile MLS data. Lost acknowledgment
 responses survive restart without duplicate decryption or volatile
-acknowledgment. Conversation provisioning, encrypted send/presentation UI,
+acknowledgment. Conversation initiation, encrypted send/presentation UI,
 proposal and attachment coordination, packaged network smoke coverage, and
 non-desktop platform custody evidence remain fail closed. The locally bundled
 SolidJS client now exercises the existing audited command manifest: login and
@@ -330,8 +330,18 @@ retry, survives transient mailbox deletion, rejects altered replay metadata,
 and expires through bounded garbage collection. The packaged host retries that
 durable request before processing later group epoch work and commits the
 sender's authenticated local-history row only after the exact response is
-confirmed. The existing seven-command IPC surface is unchanged; conversation
-provisioning and the encrypted composer/presentation UI remain fail closed.
+confirmed. Native direct-message provisioning now authenticates a claimed
+KeyPackage against an exact root pin and server-routed device, rejects
+duplicate peer/group state, and atomically persists the exact request with an
+isolated complete MLS candidate and exact base-checkpoint digest before
+submission. The packaged host
+reconciles that durable request through the bounded HTTPS authority before any
+mailbox work, adopts the accepted epoch only after exact response validation,
+and closes both response-loss and accepted-checkpoint cleanup crash windows
+across restart. The existing seven-command IPC surface is unchanged:
+KeyPackage claim/directory selection and conversation initiation are not
+exposed to the webview pending explicit privileged-surface review, and the
+encrypted composer/presentation UI remains fail closed.
 
 ---
 

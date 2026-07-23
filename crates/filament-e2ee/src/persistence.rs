@@ -721,7 +721,7 @@ fn pending_rotation_proof(
     })
 }
 
-fn decode_mls_client_state(encoded: &[u8]) -> Result<MlsClientState, KeyStoreError> {
+pub(crate) fn decode_mls_client_state(encoded: &[u8]) -> Result<MlsClientState, KeyStoreError> {
     if encoded.is_empty() || encoded.len() > MAX_STORE_VALUE_BYTES {
         return Err(KeyStoreError::InvalidValue);
     }
@@ -991,12 +991,8 @@ fn restore_snapshot(snapshot: &PersistedClientState) -> Result<MlsClientState, K
     })
 }
 
-fn clone_client_state(encoded: &[u8]) -> Result<MlsClientState, KeyStoreError> {
-    let mut snapshot: PersistedClientState =
-        serde_json::from_slice(encoded).map_err(|_| KeyStoreError::InvalidValue)?;
-    let cloned = restore_snapshot(&snapshot);
-    snapshot.zeroize();
-    cloned
+pub(crate) fn clone_client_state(encoded: &[u8]) -> Result<MlsClientState, KeyStoreError> {
+    decode_mls_client_state(encoded)
 }
 
 fn validate_provider_records(records: &[ProviderRecord]) -> Result<(), KeyStoreError> {

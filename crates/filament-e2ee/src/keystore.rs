@@ -111,6 +111,18 @@ impl StoreKey {
         Self(String::from("identity:root_rotation:pending:v1"))
     }
 
+    /// Canonical metadata record for restart-safe MLS conversation provisioning.
+    #[must_use]
+    pub fn pending_conversation_provision() -> Self {
+        Self(String::from("mls:conversation:provision:pending:v1"))
+    }
+
+    /// Canonical isolated MLS checkpoint for conversation provisioning.
+    #[must_use]
+    pub fn pending_conversation_checkpoint() -> Self {
+        Self(String::from("mls:conversation:provision:checkpoint:v1"))
+    }
+
     /// Canonical record key for the last authenticated root rotation sequence.
     #[must_use]
     pub fn root_identity_rotation_sequence() -> Self {
