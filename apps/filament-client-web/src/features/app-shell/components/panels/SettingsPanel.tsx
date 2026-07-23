@@ -5,9 +5,10 @@ import type {
   VoiceDevicePreferences,
 } from "../../../../lib/voice-device-settings";
 import { PROFILE_ABOUT_MAX_CHARS, type ProfileRecord } from "../../../../domain/chat";
+import { NATIVE_ROTATE_IDENTITY_CONFIRMATION } from "../../../../lib/native-client";
 import { SafeMarkdown } from "../SafeMarkdown";
 
-export const ROTATE_IDENTITY_CONFIRMATION = "ROTATE MY IDENTITY";
+export const ROTATE_IDENTITY_CONFIRMATION = NATIVE_ROTATE_IDENTITY_CONFIRMATION;
 
 export interface EncryptionSettingsDeviceView {
   deviceId: string;
@@ -418,11 +419,14 @@ export function SettingsPanel(props: SettingsPanelProps) {
               when={props.encryptionSettings?.ready === true}
               fallback={
                 <section class="grid gap-[0.45rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.78rem]">
-                  <p class="m-0 font-[700] text-ink-0">Packaged client required</p>
+                  <p class="m-0 font-[700] text-ink-0">Native encryption unavailable</p>
                   <p class="muted m-0">
                     Encryption keys are device-bound and available only through the signed native client.
                     No plaintext fallback or browser key access is provided.
                   </p>
+                  <Show when={props.identityRotationError}>
+                    <p class="status error">{props.identityRotationError}</p>
+                  </Show>
                 </section>
               }
             >

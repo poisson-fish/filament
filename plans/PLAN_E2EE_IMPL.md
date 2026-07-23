@@ -287,7 +287,13 @@ before messages, and stops a group on hostile MLS data. Lost acknowledgment
 responses survive restart without duplicate decryption or volatile
 acknowledgment. Conversation provisioning, encrypted send/presentation UI,
 proposal and attachment coordination, packaged network smoke coverage, and
-non-desktop platform custody evidence remain fail closed.
+non-desktop platform custody evidence remain fail closed. The locally bundled
+SolidJS client now exercises the existing audited command manifest: login and
+refresh establish native credential custody before session adoption, logout
+clears it independently of remote teardown, encrypted-store initialization
+feeds only a strictly decoded public settings snapshot to the UI, and
+destructive root rotation requires the exact typed confirmation. No privileged
+command was added; encrypted conversation send/presentation remains disabled.
 
 ---
 

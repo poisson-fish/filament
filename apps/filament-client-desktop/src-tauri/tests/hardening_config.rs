@@ -262,7 +262,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
     assert_eq!(
         contract.runtime.status,
-        "desktop_durable_mls_mailbox_root_rotation_fresh_device_enrollment_sqlcipher_session_install_offline_launch_mobile_packages_ci_gated_fail_closed"
+        "desktop_ui_native_session_settings_durable_mls_mailbox_root_rotation_fresh_device_enrollment_sqlcipher_install_offline_launch_mobile_packages_ci_gated_fail_closed"
     );
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(

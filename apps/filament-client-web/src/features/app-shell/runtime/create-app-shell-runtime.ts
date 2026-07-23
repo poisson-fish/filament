@@ -21,6 +21,7 @@ import {
   createMessageMediaPreviewController,
 } from "../controllers/message-controller";
 import { createModerationController } from "../controllers/moderation-controller";
+import { createNativeEncryptionController } from "../controllers/native-encryption-controller";
 import {
   createOverlayPanelAuthorizationController,
   createOverlayPanelEscapeController,
@@ -95,6 +96,9 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
   const voiceState = createVoiceState();
   const diagnosticsState = createDiagnosticsState();
   const overlayState = createOverlayState();
+  const nativeEncryptionController = createNativeEncryptionController({
+    session: auth.session,
+  });
 
   const profileController = createProfileController({
     session: auth.session,
@@ -671,7 +675,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     setActiveChannelId: workspaceChannelState.setActiveChannelId,
   });
 
-  const panelHostPropGroups = createPanelHostPropGroupsFactory({
+  const basePanelHostPropGroups = createPanelHostPropGroupsFactory({
     workspaceChannelCreate: {
       workspaceChannelState,
       selectors,
@@ -690,7 +694,12 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
       profileController,
       roleManagementActions,
       sessionDiagnostics,
-      openSettingsCategory,
+      openSettingsCategory: (category) => {
+        openSettingsCategory(category);
+        if (category === "encryption") {
+          void nativeEncryptionController.refresh();
+        }
+      },
       setVoiceDevicePreference,
       refreshAudioDeviceInventory,
       saveWorkspaceSettings,
@@ -716,6 +725,23 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
       openWorkspaceSettingsPanel,
     },
   });
+  const panelHostPropGroups = () => {
+    const groups = basePanelHostPropGroups();
+    return {
+      ...groups,
+      settingsPanelProps: {
+        ...groups.settingsPanelProps,
+        encryptionSettings: nativeEncryptionController.settings(),
+        rotationConfirmation: nativeEncryptionController.rotationConfirmation(),
+        isRotatingIdentity: nativeEncryptionController.isRotatingIdentity(),
+        identityRotationStatus: nativeEncryptionController.status(),
+        identityRotationError: nativeEncryptionController.error(),
+        onRotationConfirmationInput:
+          nativeEncryptionController.setRotationConfirmation,
+        onRotateIdentity: nativeEncryptionController.rotateIdentity,
+      },
+    };
+  };
 
   return {
     workspaceState,
@@ -739,6 +765,7 @@ export function createAppShellRuntime(auth: AppShellAuthContext) {
     workspaceChannelOperations,
     messageHistoryActions,
     sessionDiagnostics,
+    nativeEncryptionController,
     panelHostPropGroups,
     openOverlayPanel,
     closeOverlayPanel,

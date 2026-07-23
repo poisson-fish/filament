@@ -85,6 +85,11 @@ on 2026-07-22. The maintainer approved an exact temporary exception set so
 Phase 5.5 packaged-client work can proceed while upstream remains on GTK3 and
 the current `tauri-utils` graph:
 
+The locally bundled web application also pins `@tauri-apps/api 2.11.1`
+exactly. That Apache-2.0-or-MIT package has no npm dependencies and supplies
+only the supported typed core `invoke` adapter; no Tauri plugin capability was
+added.
+
 - MPL-2.0 is accepted only for `cssparser 0.36.0`,
   `cssparser-macros 0.6.1`, `dtoa-short 0.3.5`, `option-ext 0.2.0`, and
   `selectors 0.36.1`. `target-lexicon 0.12.16` receives an exact

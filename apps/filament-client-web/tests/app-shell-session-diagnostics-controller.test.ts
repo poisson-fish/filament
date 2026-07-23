@@ -37,6 +37,7 @@ describe("app shell session diagnostics controller", () => {
         expires_in_secs: 3600,
       }),
     );
+    const storeNativeSession = vi.fn(async () => undefined);
 
     const controller = createSessionDiagnosticsController(
       {
@@ -60,12 +61,14 @@ describe("app shell session diagnostics controller", () => {
       },
       {
         refreshAuthSession: refreshAuthSessionMock,
+        storeNativeSession,
       },
     );
 
     await controller.refreshSession();
 
     expect(refreshAuthSessionMock).toHaveBeenCalledWith(SESSION.refreshToken);
+    expect(storeNativeSession).toHaveBeenCalledTimes(1);
     expect(setAuthenticatedSession).toHaveBeenCalledTimes(1);
     expect(sessionStatus()).toBe("Session refreshed.");
     expect(sessionError()).toBe("");
@@ -93,6 +96,7 @@ describe("app shell session diagnostics controller", () => {
     const logoutAuthSessionMock = vi.fn(async () => {
       throw new Error("offline");
     });
+    const clearNativeSession = vi.fn(async () => undefined);
 
     const controller = createSessionDiagnosticsController(
       {
@@ -116,6 +120,7 @@ describe("app shell session diagnostics controller", () => {
       },
       {
         logoutAuthSession: logoutAuthSessionMock,
+        clearNativeSession,
         clearWorkspaceCache,
       },
     );
@@ -125,9 +130,65 @@ describe("app shell session diagnostics controller", () => {
     expect(leaveVoiceChannel).toHaveBeenCalledTimes(1);
     expect(releaseRtcClient).toHaveBeenCalledTimes(1);
     expect(logoutAuthSessionMock).toHaveBeenCalledWith(SESSION.refreshToken);
+    expect(clearNativeSession).toHaveBeenCalledTimes(1);
     expect(clearAuthenticatedSession).toHaveBeenCalledTimes(1);
     expect(clearWorkspaceCache).toHaveBeenCalledTimes(1);
     expect(recordDiagnosticsEvent).toHaveBeenCalledWith("logout_requested");
+  });
+
+  it("does not adopt a refreshed session when native custody rejects it", async () => {
+    const [session] = createSignal(SESSION);
+    const [isRefreshingSession, setRefreshingSession] = createSignal(false);
+    const [sessionStatus, setSessionStatus] = createSignal("");
+    const [sessionError, setSessionError] = createSignal("");
+    const [isCheckingHealth, setCheckingHealth] = createSignal(false);
+    const [healthStatus, setHealthStatus] = createSignal("");
+    const [diagError, setDiagError] = createSignal("");
+    const [isEchoing, setEchoing] = createSignal(false);
+    const [echoInput] = createSignal("ping");
+    const setAuthenticatedSession = vi.fn();
+    const recordDiagnosticsEvent = vi.fn();
+
+    const controller = createSessionDiagnosticsController(
+      {
+        session,
+        setAuthenticatedSession,
+        clearAuthenticatedSession: vi.fn(),
+        leaveVoiceChannel: vi.fn(async () => undefined),
+        releaseRtcClient: vi.fn(async () => undefined),
+        isRefreshingSession,
+        setRefreshingSession,
+        setSessionStatus,
+        setSessionError,
+        isCheckingHealth,
+        setCheckingHealth,
+        setHealthStatus,
+        setDiagError,
+        isEchoing,
+        setEchoing,
+        echoInput,
+        recordDiagnosticsEvent,
+      },
+      {
+        refreshAuthSession: vi.fn(async () =>
+          authSessionFromResponse({
+            access_token: "C".repeat(64),
+            refresh_token: "D".repeat(64),
+            expires_in_secs: 3600,
+          }),
+        ),
+        storeNativeSession: vi.fn(async () => {
+          throw new Error("native custody unavailable");
+        }),
+      },
+    );
+
+    await controller.refreshSession();
+
+    expect(setAuthenticatedSession).not.toHaveBeenCalled();
+    expect(sessionStatus()).toBe("");
+    expect(sessionError()).toBe("Unable to refresh session.");
+    expect(recordDiagnosticsEvent).toHaveBeenCalledWith("session_refresh_failed");
   });
 
   it("runs health and echo diagnostics with bounded state transitions", async () => {

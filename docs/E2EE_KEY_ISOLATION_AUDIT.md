@@ -58,6 +58,11 @@ IDs; neither value can be selected by the webview.
    native coordinator. MLS state, authenticated history, and an acknowledgment
    outbox commit atomically; a lost response leaves the outbox for exact retry
    before any later page. No group, device, root pin, or plaintext enters IPC.
+9. The bundled SolidJS client invokes only the generated seven-command ACL.
+   Session adoption follows successful native custody, settings decode only
+   exact public fields, and root rotation accepts only the fixed typed
+   confirmation. Native failures map to closed codes without reflecting host
+   or server text.
 
 ## Guardrails Verified
 
@@ -92,6 +97,9 @@ IDs; neither value can be selected by the webview.
   by MLS before history is stored or acknowledged.
 - IPC policy contains no private-key display, copy, export, database read, or
   generic filesystem command.
+- Webview tests reject extra native response fields, duplicate/current-device
+  inconsistencies, malformed public identifiers, and inexact destructive
+  confirmations before values reach presentation state.
 
 ## Automated Evidence
 
@@ -113,6 +121,10 @@ IDs; neither value can be selected by the webview.
   ghost-device/root-replacement rejection, and fixed mailbox/ack transports.
 - `apps/filament-client-desktop/src-tauri/src/runtime.rs`: bounded native
   commit-before-message coordination and lost-response acknowledgment retry.
+- `apps/filament-client-web/src/lib/native-client.ts`: exact native command
+  requests, strict public-response decoding, and fixed redacted error mapping.
+- `apps/filament-client-web/src/features/app-shell/controllers/native-encryption-controller.ts`:
+  fail-closed custody/store initialization and settings/rotation state.
 - `apps/filament-client-desktop/src-tauri/src/device_registry.rs`: fixed,
   bounded native account/device bindings with duplicate and corruption
   rejection.

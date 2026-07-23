@@ -9,6 +9,7 @@ import {
 import { ApiError, loginWithPassword, registerWithPassword } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { ensureHcaptchaScript, hcaptchaSiteKey } from "../lib/hcaptcha";
+import { nativeClientBridge } from "../lib/native-client";
 import { isSessionExpired } from "../lib/session";
 
 function mapApiError(error: unknown): string {
@@ -135,6 +136,7 @@ export function LoginPage() {
           password: validatedPassword,
           captchaToken: validatedCaptchaToken,
         });
+        await nativeClientBridge.storeSession(session);
         auth.setAuthenticatedSession(session);
         navigate("/app", { replace: true });
       }

@@ -18,9 +18,15 @@ Server-provided data is always treated as untrusted input.
   - `read_encryption_settings`
   - `rotate_root_identity`
 - The native command host exposes exactly that audited manifest through a
-  capability-oriented backend. Session identity, platform credential access,
-  filesystem paths, network submission, and MLS state cannot be supplied as
-  command arguments.
+  capability-oriented backend. The webview may submit only a freshly
+  authenticated, bounded token pair to `store_session`; user/device identity,
+  credential identifiers, filesystem paths, network destinations, and MLS
+  state cannot be supplied as command arguments.
+- The bundled UI uses the pinned `@tauri-apps/api` core invoke adapter. Login
+  and refresh establish native session custody before adopting the session;
+  logout invokes native deletion independently of best-effort server logout.
+  Every native response is decoded with exact fields, identifiers, counts, and
+  timestamp bounds before public settings enter UI state.
 - Session tokens and native command state use redacted `Debug` output. IPC
   failures are closed, non-sensitive codes rather than backend error strings.
 - Native REST uses one compile-time HTTPS authority, disables redirects, caps

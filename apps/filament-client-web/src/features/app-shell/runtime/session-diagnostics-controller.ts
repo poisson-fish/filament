@@ -6,6 +6,7 @@ import {
   logoutAuthSession,
   refreshAuthSession,
 } from "../../../lib/api";
+import { nativeClientBridge } from "../../../lib/native-client";
 import { clearWorkspaceCache } from "../../../lib/workspace-cache";
 import { mapError } from "../helpers";
 import type { DiagnosticsEventType } from "../state/diagnostics-event-counters";
@@ -37,6 +38,8 @@ export interface SessionDiagnosticsControllerDependencies {
   echoMessage: typeof echoMessage;
   mapError: (error: unknown, fallback: string) => string;
   clearWorkspaceCache: () => void;
+  storeNativeSession: typeof nativeClientBridge.storeSession;
+  clearNativeSession: typeof nativeClientBridge.clearSession;
 }
 
 export interface SessionDiagnosticsController {
@@ -54,6 +57,8 @@ const DEFAULT_SESSION_DIAGNOSTICS_CONTROLLER_DEPENDENCIES: SessionDiagnosticsCon
     echoMessage,
     mapError,
     clearWorkspaceCache,
+    storeNativeSession: (session) => nativeClientBridge.storeSession(session),
+    clearNativeSession: () => nativeClientBridge.clearSession(),
   };
 
 export function createSessionDiagnosticsController(
@@ -76,6 +81,7 @@ export function createSessionDiagnosticsController(
     options.setSessionStatus("");
     try {
       const next = await deps.refreshAuthSession(session.refreshToken);
+      await deps.storeNativeSession(next);
       options.setAuthenticatedSession(next);
       options.setSessionStatus("Session refreshed.");
       options.recordDiagnosticsEvent("session_refresh_succeeded");
@@ -98,6 +104,12 @@ export function createSessionDiagnosticsController(
       } catch {
         // Best-effort remote session teardown; local session is still cleared.
       }
+    }
+    try {
+      await deps.clearNativeSession();
+    } catch {
+      // The UI session must still close. The native host keeps E2EE inactive
+      // even when platform credential deletion fails.
     }
     options.clearAuthenticatedSession();
     deps.clearWorkspaceCache();
