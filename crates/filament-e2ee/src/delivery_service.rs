@@ -149,7 +149,7 @@ mod tests {
             conversation
                 .process_external_remove_proposal(&alice, &proposal)
                 .unwrap(),
-            crate::ExternalProposalAction::Commit(_)
+            crate::ExternalProposalAction::Commit { .. }
         ));
     }
 

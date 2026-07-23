@@ -7,11 +7,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use filament_core::{DeviceId, GroupId, UserId};
+use filament_core::{DeviceId, GroupId, ProposalId, UserId};
 use filament_protocol::{
-    AckE2eeCommitsRequest, AckE2eeMessagesRequest, E2eeCommitMailboxResponse, E2eeMailboxResponse,
-    E2eeRetentionSeconds, PostCommitResponse, MAX_E2EE_COMMIT_ACK_BATCH_SIZE,
-    MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
+    AckE2eeCommitsRequest, AckE2eeMessagesRequest, AckE2eeProposalsRequest,
+    E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxResponse,
+    E2eeRetentionSeconds, MlsMembershipChange, PostCommitRequest, PostCommitResponse,
+    MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
+    MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES,
+    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_PROPOSAL_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -21,13 +24,15 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     persistence::encode_mls_client_state, process_commit_mailbox, process_group_commit_mailbox,
     process_message_mailbox, ConversationAudience, ConversationError, DecryptedApplicationMessage,
-    ExternalCommitRecoveryInfo, KeyStoreError, LocalKeyStore, MlsClientState, MlsConversation,
-    PendingExternalCommitRecovery, PinnedUserIdentity, RejectedMailboxCommit,
-    RejectedMailboxMessage, StoreKey, MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
+    ExternalCommitRecoveryInfo, ExternalGroupProposal, ExternalProposalAction, KeyStoreError,
+    LocalKeyStore, MlsClientState, MlsConversation, PendingExternalCommitRecovery,
+    PinnedUserIdentity, RejectedMailboxCommit, RejectedMailboxMessage, StoreKey,
+    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
 };
 
 const HISTORY_RECORD_VERSION: u16 = 2;
 const RETENTION_POLICY_VERSION: u16 = 1;
+const OUTBOUND_COMMIT_RECORD_VERSION: u16 = 1;
 const MAX_LOCAL_HISTORY_RECORD_BYTES: usize = (MAX_APPLICATION_PLAINTEXT_BYTES * 4) + 2_048;
 const MAX_UNIX_TIMESTAMP: i64 = 253_402_300_799;
 
@@ -62,6 +67,9 @@ pub enum DurableMailboxError {
     /// A previous durable acknowledgment must be submitted first.
     #[error("a durable mailbox acknowledgment is already pending")]
     PendingAcknowledgment,
+    /// An acceptance-gated local commit must be resolved before another proposal.
+    #[error("an outbound MLS commit is already pending")]
+    PendingOutboundCommit,
     /// The requested group has no local MLS state.
     #[error("MLS conversation is not available locally")]
     ConversationNotFound,
@@ -93,6 +101,18 @@ pub struct DurableCommitMailboxBatch {
     pub rejected_commit: Option<RejectedMailboxCommit>,
     /// Durable request safe for the native network boundary to submit.
     pub acknowledgment: Option<AckE2eeCommitsRequest>,
+}
+
+/// A Delivery Service proposal result whose MLS effects and acknowledgment are durable.
+pub struct DurableProposalMailboxBatch {
+    /// Server proposal IDs authenticated and checkpointed by this call.
+    pub processed_proposal_ids: Vec<String>,
+    /// Durable request safe for the native network boundary to submit.
+    pub acknowledgment: Option<AckE2eeProposalsRequest>,
+    /// Exact acceptance-gated commit request staged by a non-target member.
+    pub outbound_commit: Option<PostCommitRequest>,
+    /// Whether this device authenticated its own removal and awaits a peer commit.
+    pub awaiting_peer_commit: bool,
 }
 
 /// Public routing metadata required by the native mailbox transport.
@@ -154,6 +174,14 @@ struct RetentionPolicyRecord {
     version: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retention_secs: Option<E2eeRetentionSeconds>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OutboundCommitRecord {
+    version: u16,
+    accepted: bool,
+    request: PostCommitRequest,
 }
 
 impl DurableMlsClient {
@@ -340,6 +368,223 @@ impl DurableMlsClient {
             return Err(error.into());
         }
         self.state = Some(candidate);
+        Ok(())
+    }
+
+    /// Authenticate and durably checkpoint at most one Delivery Service proposal.
+    ///
+    /// Processing one record at a time bounds native work and ensures a
+    /// proposal-derived commit is ordered before any later proposal. The
+    /// checkpoint, proposal acknowledgment, and exact outbound commit request
+    /// are persisted atomically. Only the pinned Delivery Service external
+    /// sender at index zero is accepted by the underlying MLS conversation.
+    ///
+    /// # Errors
+    /// Rejects malformed pages, member-authored proposals, stale routing hints,
+    /// unsupported audiences, or any existing acknowledgment/commit outbox.
+    pub fn process_proposal_mailbox(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        group_id: GroupId,
+        page: E2eeProposalMailboxResponse,
+    ) -> Result<DurableProposalMailboxBatch, DurableMailboxError> {
+        validate_proposal_page(&page)?;
+        if store.exists(&proposal_ack_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+        if store.exists(&outbound_commit_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingOutboundCommit);
+        }
+        let Some(entry) = page.proposals.into_iter().next() else {
+            return Ok(DurableProposalMailboxBatch {
+                processed_proposal_ids: Vec::new(),
+                acknowledgment: None,
+                outbound_commit: None,
+                awaiting_peer_commit: false,
+            });
+        };
+        if entry.proposer_device_id.is_some() || entry.external_sender_index != Some(0) {
+            return Err(ConversationError::UnexpectedMembership.into());
+        }
+        let proposal_id = ProposalId::try_from(entry.proposal_id.clone())
+            .map_err(|_| ConversationError::InvalidMailboxPage)?;
+        let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
+        let Some(position) = state
+            .conversations
+            .iter()
+            .position(|conversation| conversation.group_id() == group_id)
+        else {
+            self.state = Some(state);
+            return Err(DurableMailboxError::ConversationNotFound);
+        };
+        let proposal = ExternalGroupProposal {
+            group_id,
+            epoch: entry.epoch,
+            proposal_blob: entry.proposal_blob,
+        };
+        let action = match state.conversations[position]
+            .process_external_remove_proposal(&state.device, &proposal)
+        {
+            Ok(action) => action,
+            Err(error) => {
+                self.state = Some(state);
+                return Err(error.into());
+            }
+        };
+        let acknowledgment = AckE2eeProposalsRequest {
+            device_id: state.device.device_id().to_string(),
+            proposal_ids: vec![proposal_id.to_string()],
+        };
+        let (outbound_commit, awaiting_peer_commit) = match action {
+            ExternalProposalAction::Commit {
+                commit,
+                removed_leaf,
+            } => {
+                let request = PostCommitRequest {
+                    epoch: commit.epoch,
+                    prior_epoch: commit.prior_epoch,
+                    committer_device_id: commit.committer_device_id.to_string(),
+                    commit_blob: commit.commit_blob,
+                    welcome_blob: None,
+                    welcome_device_id: None,
+                    group_info_blob: commit.group_info_blob,
+                    membership_change: Some(MlsMembershipChange::Remove {
+                        leaves: vec![removed_leaf],
+                    }),
+                };
+                validate_outbound_commit_request(state.device.device_id(), &request)?;
+                (Some(request), false)
+            }
+            ExternalProposalAction::AwaitingPeerCommit => (None, true),
+        };
+
+        let mut entries = vec![
+            (StoreKey::mls_client_state(), encode_state(&state)?),
+            (proposal_ack_key(group_id)?, encode_json(&acknowledgment)?),
+        ];
+        if let Some(request) = &outbound_commit {
+            entries.push((
+                outbound_commit_key(group_id)?,
+                encode_json(&OutboundCommitRecord {
+                    version: OUTBOUND_COMMIT_RECORD_VERSION,
+                    accepted: false,
+                    request: request.clone(),
+                })?,
+            ));
+        }
+        if let Err(error) = store.store_batch(entries) {
+            return Err(error.into());
+        }
+        self.state = Some(state);
+        Ok(DurableProposalMailboxBatch {
+            processed_proposal_ids: acknowledgment.proposal_ids.clone(),
+            acknowledgment: Some(acknowledgment),
+            outbound_commit,
+            awaiting_peer_commit,
+        })
+    }
+
+    /// Return the exact durable commit request that must be retried.
+    ///
+    /// An accepted marker left behind after a successful atomic checkpoint is
+    /// removed only after verifying that the restored MLS epoch matches it.
+    ///
+    /// # Errors
+    /// Rejects corrupt, cross-group/device, or checkpoint-mismatched outboxes.
+    pub fn pending_outbound_commit(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        group_id: GroupId,
+    ) -> Result<Option<PostCommitRequest>, DurableMailboxError> {
+        let Some(record) = load_outbound_commit_record(store, group_id)? else {
+            return Ok(None);
+        };
+        let state = self
+            .state
+            .as_ref()
+            .ok_or(DurableMailboxError::Unavailable)?;
+        validate_outbound_commit_request(state.device.device_id(), &record.request)?;
+        let conversation = state
+            .conversations
+            .iter()
+            .find(|conversation| conversation.group_id() == group_id)
+            .ok_or(DurableMailboxError::ConversationNotFound)?;
+        if record.accepted {
+            if conversation.epoch() != record.request.epoch {
+                return Err(ConversationError::MetadataMismatch.into());
+            }
+            let removed = store.remove_batch(&[outbound_commit_key(group_id)?])?;
+            if removed != 1 {
+                return Err(KeyStoreError::InvalidValue.into());
+            }
+            return Ok(None);
+        }
+        if conversation.epoch() != record.request.prior_epoch {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        Ok(Some(record.request))
+    }
+
+    /// Merge an exact retry-safe outbound commit after server acceptance.
+    ///
+    /// The merged checkpoint and an accepted outbox marker are stored
+    /// atomically. A crash before marker cleanup is reconciled by
+    /// [`Self::pending_outbound_commit`] after restart.
+    ///
+    /// # Errors
+    /// Rejects substituted requests/responses or local state that no longer
+    /// matches the pending epoch. An uncertain checkpoint write shuts down the
+    /// runtime until reload.
+    pub fn confirm_outbound_commit(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        group_id: GroupId,
+        submitted: &PostCommitRequest,
+        response: &PostCommitResponse,
+    ) -> Result<(), DurableMailboxError> {
+        let record = load_outbound_commit_record(store, group_id)?
+            .ok_or(DurableMailboxError::PendingOutboundCommit)?;
+        if record.accepted
+            || &record.request != submitted
+            || !response.accepted
+            || response.epoch != submitted.epoch
+        {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
+        validate_outbound_commit_request(state.device.device_id(), submitted)?;
+        let Some(position) = state
+            .conversations
+            .iter()
+            .position(|conversation| conversation.group_id() == group_id)
+        else {
+            self.state = Some(state);
+            return Err(DurableMailboxError::ConversationNotFound);
+        };
+        if state.conversations[position].epoch() != submitted.prior_epoch {
+            self.state = Some(state);
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        if let Err(error) = state.conversations[position].accept_pending_commit(&state.device) {
+            self.state = Some(state);
+            return Err(error.into());
+        }
+        let accepted = OutboundCommitRecord {
+            version: OUTBOUND_COMMIT_RECORD_VERSION,
+            accepted: true,
+            request: submitted.clone(),
+        };
+        if let Err(error) = store.store_batch(vec![
+            (StoreKey::mls_client_state(), encode_state(&state)?),
+            (outbound_commit_key(group_id)?, encode_json(&accepted)?),
+        ]) {
+            return Err(error.into());
+        }
+        self.state = Some(state);
+        let removed = store.remove_batch(&[outbound_commit_key(group_id)?])?;
+        if removed != 1 {
+            return Err(KeyStoreError::InvalidValue.into());
+        }
         Ok(())
     }
 
@@ -557,6 +802,38 @@ impl DurableMlsClient {
             acknowledgment: batch.pending_acknowledgment,
         })
     }
+}
+
+/// Load a restart-safe proposal acknowledgment from the native outbox.
+///
+/// # Errors
+/// Rejects corrupt, cross-device, duplicate, oversized, or non-canonical data.
+pub fn pending_proposal_acknowledgment(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    expected_device_id: DeviceId,
+) -> Result<Option<AckE2eeProposalsRequest>, KeyStoreError> {
+    let key = proposal_ack_key(group_id)?;
+    if !store.exists(&key)? {
+        return Ok(None);
+    }
+    let encoded = store.load(&key)?;
+    let acknowledgment: AckE2eeProposalsRequest =
+        serde_json::from_slice(&encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    validate_proposal_ack(&acknowledgment, expected_device_id)?;
+    Ok(Some(acknowledgment))
+}
+
+/// Remove a proposal acknowledgment only after a successful server response.
+///
+/// # Errors
+/// Rejects a request that does not exactly match the durable outbox record.
+pub fn confirm_proposal_acknowledgment(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    submitted: &AckE2eeProposalsRequest,
+) -> Result<(), KeyStoreError> {
+    confirm_ack(store, &proposal_ack_key(group_id)?, submitted)
 }
 
 /// Load a restart-safe message acknowledgment from the native outbox.
@@ -909,6 +1186,28 @@ fn validate_commit_ack(
     Ok(())
 }
 
+fn validate_proposal_ack(
+    acknowledgment: &AckE2eeProposalsRequest,
+    expected_device_id: DeviceId,
+) -> Result<(), KeyStoreError> {
+    if acknowledgment.device_id != expected_device_id.to_string()
+        || acknowledgment.proposal_ids.is_empty()
+        || acknowledgment.proposal_ids.len() > MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE
+    {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let mut ids = HashSet::with_capacity(acknowledgment.proposal_ids.len());
+    if acknowledgment
+        .proposal_ids
+        .iter()
+        .all(|value| ProposalId::try_from(value.clone()).is_ok() && ids.insert(value.as_str()))
+    {
+        Ok(())
+    } else {
+        Err(KeyStoreError::InvalidValue)
+    }
+}
+
 fn confirm_ack<T>(
     store: &dyn LocalKeyStore,
     key: &StoreKey,
@@ -938,8 +1237,109 @@ fn commit_ack_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
     StoreKey::new(format!("mailbox:commit_ack:{group_id}"))
 }
 
+fn proposal_ack_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
+    StoreKey::new(format!("mailbox:proposal_ack:{group_id}"))
+}
+
+fn outbound_commit_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
+    StoreKey::new(format!("mailbox:outbound_commit:{group_id}"))
+}
+
 fn retention_policy_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
     StoreKey::new(format!("settings:disappearing:{group_id}"))
+}
+
+fn load_outbound_commit_record(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+) -> Result<Option<OutboundCommitRecord>, KeyStoreError> {
+    let key = outbound_commit_key(group_id)?;
+    if !store.exists(&key)? {
+        return Ok(None);
+    }
+    let encoded = store.load(&key)?;
+    let record: OutboundCommitRecord =
+        serde_json::from_slice(&encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    if record.version != OUTBOUND_COMMIT_RECORD_VERSION {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    Ok(Some(record))
+}
+
+fn validate_outbound_commit_request(
+    expected_device_id: DeviceId,
+    request: &PostCommitRequest,
+) -> Result<(), DurableMailboxError> {
+    if request.prior_epoch.checked_add(1) != Some(request.epoch)
+        || request.committer_device_id != expected_device_id.to_string()
+        || request.commit_blob.is_empty()
+        || request.commit_blob.len() > 65_536
+        || request.welcome_blob.is_some()
+        || request.welcome_device_id.is_some()
+        || request
+            .group_info_blob
+            .as_ref()
+            .is_some_and(|blob| blob.is_empty() || blob.len() > 65_536)
+    {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    let Some(MlsMembershipChange::Remove { leaves }) = &request.membership_change else {
+        return Err(ConversationError::UnexpectedMembership.into());
+    };
+    if leaves.len() != 1
+        || UserId::try_from(leaves[0].user_id.clone()).is_err()
+        || DeviceId::try_from(leaves[0].device_id.clone()).is_err()
+    {
+        return Err(ConversationError::UnexpectedMembership.into());
+    }
+    Ok(())
+}
+
+fn validate_proposal_page(page: &E2eeProposalMailboxResponse) -> Result<(), DurableMailboxError> {
+    if page.proposals.len() > MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE {
+        return Err(ConversationError::InvalidMailboxPage.into());
+    }
+    let aggregate = page.proposals.iter().try_fold(0_usize, |total, entry| {
+        total.checked_add(entry.proposal_blob.len())
+    });
+    if aggregate.is_none_or(|total| total > MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES) {
+        return Err(ConversationError::InvalidMailboxPage.into());
+    }
+    let mut previous_id: Option<&str> = None;
+    let mut ids = HashSet::with_capacity(page.proposals.len());
+    for entry in &page.proposals {
+        if ProposalId::try_from(entry.proposal_id.clone()).is_err()
+            || !ids.insert(entry.proposal_id.as_str())
+            || previous_id.is_some_and(|previous| previous >= entry.proposal_id.as_str())
+            || entry.epoch == 0
+            || entry.proposal_blob.is_empty()
+            || entry.proposal_blob.len() > MAX_PROPOSAL_BYTES
+            || entry.created_at_unix < 0
+            || entry.expires_at_unix <= entry.created_at_unix
+            || entry.reconciliation_deadline_unix.is_some_and(|deadline| {
+                deadline < entry.created_at_unix || deadline > entry.expires_at_unix
+            })
+            || matches!(
+                (&entry.proposer_device_id, entry.external_sender_index),
+                (Some(_), Some(_)) | (None, None)
+            )
+            || entry
+                .proposer_device_id
+                .as_ref()
+                .is_some_and(|device_id| DeviceId::try_from(device_id.clone()).is_err())
+        {
+            return Err(ConversationError::InvalidMailboxPage.into());
+        }
+        previous_id = Some(entry.proposal_id.as_str());
+    }
+    match (
+        page.proposals.last(),
+        page.next_after_proposal_id.as_deref(),
+    ) {
+        (None, None) => Ok(()),
+        (Some(last), Some(cursor)) if cursor == last.proposal_id => Ok(()),
+        _ => Err(ConversationError::InvalidMailboxPage.into()),
+    }
 }
 
 /// Load the authenticated per-conversation timer used by the native composer.
@@ -1028,16 +1428,17 @@ fn validate_ulid(value: &str) -> Result<(), KeyStoreError> {
 
 #[cfg(test)]
 mod tests {
-    use filament_core::{ConversationCrypto, DeviceId, GroupId, UserId};
+    use filament_core::{ConversationCrypto, DeviceId, GroupId, ProposalId, UserId};
     use filament_protocol::{
-        E2eeCommitMailboxEntry, E2eeMailboxMessage, GroupInfoResponse, PostCommitResponse,
+        E2eeCommitMailboxEntry, E2eeMailboxMessage, E2eeProposalMailboxEntry,
+        E2eeProposalMailboxResponse, GroupInfoResponse, MlsMembershipChange, PostCommitResponse,
     };
 
     use super::*;
     use crate::{
         generate_key_package_batch, persist_mls_client_state, ApplicationEventId, ChatMessageBody,
-        EncryptedChatEvent, EncryptedMessageId, InMemoryKeyStore, MlsDevice, RootIdentityKey,
-        VersionedApplicationEvent,
+        DeliveryServiceSigner, EncryptedChatEvent, EncryptedMessageId, InMemoryKeyStore, MlsDevice,
+        RootIdentityKey, VersionedApplicationEvent, DELIVERY_SERVICE_SEED_BYTES,
     };
 
     struct JoinedFixture {
@@ -1090,6 +1491,212 @@ mod tests {
             created_at_unix: 10,
             expires_at_unix: 20,
         }
+    }
+
+    struct ProposalFixture {
+        alice: MlsDevice,
+        charlie: MlsDevice,
+        group_id: GroupId,
+        page: E2eeProposalMailboxResponse,
+        store: InMemoryKeyStore,
+    }
+
+    fn external_remove_proposal_fixture() -> ProposalFixture {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let charlie_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let charlie = MlsDevice::generate(UserId::new(), DeviceId::new(), &charlie_root).unwrap();
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let charlie_pin = PinnedUserIdentity::new(charlie.user_id(), *charlie.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let charlie_package = generate_key_package_batch(&charlie, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let delivery =
+            DeliveryServiceSigner::from_seed([0x31; DELIVERY_SERVICE_SEED_BYTES]).unwrap();
+        let group_id = GroupId::new();
+        let (mut group, _) = MlsConversation::create_group_with_delivery_service(
+            group_id,
+            &alice,
+            &[(bob_pin, bob_package), (charlie_pin, charlie_package)],
+            delivery.identity(),
+        )
+        .unwrap();
+        group.accept_pending_commit(&alice).unwrap();
+        let proposal = delivery.sign_remove(group_id, group.epoch(), 2).unwrap();
+        let proposal_id = ProposalId::new().to_string();
+        let page = E2eeProposalMailboxResponse {
+            proposals: vec![E2eeProposalMailboxEntry {
+                proposal_id: proposal_id.clone(),
+                epoch: proposal.epoch,
+                proposer_device_id: None,
+                external_sender_index: Some(0),
+                proposal_blob: proposal.proposal_blob,
+                created_at_unix: 100,
+                expires_at_unix: 200,
+                reconciliation_deadline_unix: Some(150),
+            }],
+            next_after_proposal_id: Some(proposal_id.clone()),
+        };
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &alice, &[&group]).unwrap();
+        ProposalFixture {
+            alice,
+            charlie,
+            group_id,
+            page,
+            store,
+        }
+    }
+
+    #[test]
+    fn external_remove_proposal_commit_and_ack_outboxes_survive_response_loss() {
+        let ProposalFixture {
+            alice,
+            charlie,
+            group_id,
+            page,
+            store,
+        } = external_remove_proposal_fixture();
+        let proposal_id = page.proposals[0].proposal_id.clone();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+
+        let batch = runtime
+            .process_proposal_mailbox(&store, group_id, page)
+            .unwrap();
+        assert_eq!(batch.processed_proposal_ids, vec![proposal_id.clone()]);
+        assert!(!batch.awaiting_peer_commit);
+        let acknowledgment = batch.acknowledgment.unwrap();
+        assert_eq!(acknowledgment.proposal_ids, vec![proposal_id]);
+        let request = batch.outbound_commit.unwrap();
+        assert_eq!(request.prior_epoch, 1);
+        assert_eq!(request.epoch, 2);
+        assert!(request.welcome_blob.is_none());
+        assert!(request.welcome_device_id.is_none());
+        let Some(MlsMembershipChange::Remove { leaves }) = &request.membership_change else {
+            panic!("policy proposal must produce one authenticated Remove routing delta");
+        };
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(leaves[0].leaf_index, 2);
+        assert_eq!(leaves[0].user_id, charlie.user_id().to_string());
+        assert_eq!(leaves[0].device_id, charlie.device_id().to_string());
+
+        let durable_ack = pending_proposal_acknowledgment(&store, group_id, alice.device_id())
+            .unwrap()
+            .unwrap();
+        assert_eq!(durable_ack, acknowledgment);
+
+        // An uncertain network response leaves the exact request retryable.
+        let mut restarted = DurableMlsClient::load(&store).unwrap();
+        assert_eq!(
+            restarted.pending_outbound_commit(&store, group_id).unwrap(),
+            Some(request.clone())
+        );
+        assert_eq!(
+            restarted.pending_outbound_commit(&store, group_id).unwrap(),
+            Some(request.clone())
+        );
+
+        let mut substituted = request.clone();
+        substituted.commit_blob.push(0);
+        assert_eq!(
+            restarted.confirm_outbound_commit(
+                &store,
+                group_id,
+                &substituted,
+                &PostCommitResponse {
+                    accepted: true,
+                    epoch: request.epoch,
+                },
+            ),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
+            ))
+        );
+        assert!(restarted.is_ready());
+
+        restarted
+            .confirm_outbound_commit(
+                &store,
+                group_id,
+                &request,
+                &PostCommitResponse {
+                    accepted: true,
+                    epoch: request.epoch,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            restarted.pending_outbound_commit(&store, group_id).unwrap(),
+            None
+        );
+        confirm_proposal_acknowledgment(&store, group_id, &acknowledgment).unwrap();
+
+        let restored = crate::load_mls_client_state(&store).unwrap();
+        assert_eq!(restored.conversations[0].epoch(), request.epoch);
+        assert!(!restored.conversations[0]
+            .has_verified_member_device(charlie.device_id())
+            .unwrap());
+    }
+
+    #[test]
+    fn accepted_outbound_marker_is_reconciled_only_against_the_merged_epoch() {
+        let ProposalFixture {
+            alice,
+            group_id,
+            page,
+            store,
+            ..
+        } = external_remove_proposal_fixture();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let request = runtime
+            .process_proposal_mailbox(&store, group_id, page)
+            .unwrap()
+            .outbound_commit
+            .unwrap();
+
+        // Model a crash after the accepted checkpoint transaction but before
+        // the best-effort accepted-marker cleanup.
+        let mut accepted_state = crate::load_mls_client_state(&store).unwrap();
+        accepted_state.conversations[0]
+            .accept_pending_commit(&accepted_state.device)
+            .unwrap();
+        store
+            .store_batch(vec![
+                (
+                    StoreKey::mls_client_state(),
+                    encode_state(&accepted_state).unwrap(),
+                ),
+                (
+                    outbound_commit_key(group_id).unwrap(),
+                    encode_json(&OutboundCommitRecord {
+                        version: OUTBOUND_COMMIT_RECORD_VERSION,
+                        accepted: true,
+                        request,
+                    })
+                    .unwrap(),
+                ),
+            ])
+            .unwrap();
+
+        let mut restarted = DurableMlsClient::load(&store).unwrap();
+        assert_eq!(
+            restarted.pending_outbound_commit(&store, group_id).unwrap(),
+            None
+        );
+        assert!(!store
+            .exists(&outbound_commit_key(group_id).unwrap())
+            .unwrap());
+        assert_eq!(
+            crate::load_mls_client_state(&store)
+                .unwrap()
+                .device
+                .device_id(),
+            alice.device_id()
+        );
     }
 
     #[test]

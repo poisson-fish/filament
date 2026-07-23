@@ -302,7 +302,15 @@ Response-loss reconciliation can therefore return the original success
 without replaying membership, mailbox, or notification side effects, while
 altered same-epoch requests remain deterministic conflicts. This is the
 durability prerequisite for production proposal and outbound commit
-coordination.
+coordination. The native MLS coordinator now consumes one bounded Delivery
+Service proposal at a time, accepts only the pinned external sender's
+authenticated Remove shape, and atomically checkpoints the resulting MLS
+state with a proposal-acknowledgment outbox and exact member-authored commit
+request. Commit response loss is restart-safe through exact retries, accepted
+commits merge only after a matching server response, and a durable accepted
+marker closes the crash window between the merged checkpoint and outbox
+cleanup. Production REST transport, epoch-conflict winner rebase, and proposal
+mailbox scheduling in the packaged host remain fail closed.
 
 ---
 

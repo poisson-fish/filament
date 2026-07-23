@@ -11,7 +11,7 @@ use filament_core::{
     CiphersuiteId, ConversationCrypto, DeviceCertificate, DeviceId, GroupId as FilamentGroupId,
     UserId,
 };
-use filament_protocol::GroupInfoResponse;
+use filament_protocol::{GroupInfoResponse, MlsLeafRouting};
 use openmls::prelude::group_info::GroupInfo;
 use openmls::prelude::*;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
@@ -275,7 +275,12 @@ pub struct ExternalGroupProposal {
 #[derive(Debug)]
 pub enum ExternalProposalAction {
     /// This device staged a member-authored commit for server acceptance.
-    Commit(PendingGroupCommit),
+    Commit {
+        /// Opaque MLS commit material awaiting Delivery Service acceptance.
+        commit: PendingGroupCommit,
+        /// MLS-authenticated routing row for the removed leaf.
+        removed_leaf: MlsLeafRouting,
+    },
     /// This device is the removal target and retained the authenticated
     /// proposal so it can authenticate the winning peer commit by reference.
     AwaitingPeerCommit,
@@ -1368,6 +1373,11 @@ impl MlsConversation {
             return Err(ConversationError::UnexpectedMembership);
         };
         let target = self.verify_member_at(remove.removed())?;
+        let removed_leaf = MlsLeafRouting {
+            leaf_index: remove.removed().u32(),
+            user_id: target.user_id.to_string(),
+            device_id: target.device_id.to_string(),
+        };
         let members = verified_members(&self.group, &self.pinned_roots)?;
         let target_device_count = members
             .iter()
@@ -1402,7 +1412,10 @@ impl MlsConversation {
             .pending_commit()
             .ok_or(ConversationError::NoPendingCommit)?;
         validate_staged_membership_change(&self.group, staged, &self.pinned_roots, self.audience)?;
-        Ok(ExternalProposalAction::Commit(pending))
+        Ok(ExternalProposalAction::Commit {
+            commit: pending,
+            removed_leaf,
+        })
     }
 
     /// Authenticate, inspect, and merge one ordered peer commit.
@@ -3253,18 +3266,28 @@ mod tests {
         )
         .unwrap();
         let valid_remove = external_proposal(&valid_remove, group_id, alice_group.epoch());
-        let ExternalProposalAction::Commit(alice_commit) = alice_group
+        let ExternalProposalAction::Commit {
+            commit: alice_commit,
+            removed_leaf: alice_removed,
+        } = alice_group
             .process_external_remove_proposal(&alice, &valid_remove)
             .unwrap()
         else {
             panic!("non-target member must auto-commit the authenticated Remove");
         };
-        let ExternalProposalAction::Commit(bob_commit) = bob_group
+        let ExternalProposalAction::Commit {
+            commit: bob_commit,
+            removed_leaf: bob_removed,
+        } = bob_group
             .process_external_remove_proposal(&bob, &valid_remove)
             .unwrap()
         else {
             panic!("non-target member must auto-commit the authenticated Remove");
         };
+        assert_eq!(alice_removed, bob_removed);
+        assert_eq!(alice_removed.leaf_index, charlie_index.u32());
+        assert_eq!(alice_removed.user_id, charlie.user_id().to_string());
+        assert_eq!(alice_removed.device_id, charlie.device_id().to_string());
         assert!(matches!(
             charlie_group
                 .process_external_remove_proposal(&charlie, &valid_remove)

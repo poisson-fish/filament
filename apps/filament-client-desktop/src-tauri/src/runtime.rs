@@ -787,6 +787,7 @@ fn map_durable_mailbox_error(error: DurableMailboxError) -> DesktopCommandBacken
         DurableMailboxError::Unavailable => DesktopCommandBackendError::Unavailable,
         DurableMailboxError::KeyStore(error) => map_keystore_error(&error),
         DurableMailboxError::PendingAcknowledgment
+        | DurableMailboxError::PendingOutboundCommit
         | DurableMailboxError::ConversationNotFound
         | DurableMailboxError::Conversation(_) => DesktopCommandBackendError::Rejected,
     }
