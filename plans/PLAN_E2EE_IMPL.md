@@ -216,6 +216,17 @@ client SDK is pinned to 0.7.53, matching the reviewed libwebrtc 0.3.42 bridge. C
 desktop linkage is currently blocked because SQLCipher's vendored OpenSSL and
 libwebrtc's bundled BoringSSL export colliding symbols; no unsafe linker
 workaround or storage downgrade was added.
+Phase 5.5 has begun with a machine-readable packaged-client support contract
+and ADR. The initial matrix is Ubuntu 24.04 x86-64 (`.deb` and AppImage),
+macOS 15 on architecture-scoped Apple-silicon and x86-64 artifacts, supported
+Windows 11 x86-64 (MSI), Android API 33+ arm64 targeting API 36, and iOS 17+
+device/simulator builds behind the existing feasibility gate. Tauri v2 is the
+selected desktop/mobile adapter so the locally bundled SolidJS application can
+reuse one typed Rust boundary, but runtime scaffolding remains blocked: the
+current Tauri 2.11.5 graph still fails the repository's advisory and license
+policy. No exception, unsafe FFI fallback, or privileged-command expansion was
+added. Media remains disabled on every target until its final packaged probe
+passes.
 
 ---
 

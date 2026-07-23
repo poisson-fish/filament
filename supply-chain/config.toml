@@ -176,6 +176,11 @@ criteria = "safe-to-deploy"
 version = "1.6.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.bmrng]]
+version = "0.5.2"
+criteria = "safe-to-deploy"
+notes = "Phase 5 pinned LiveKit graph intake. Pending formal source audit."
+
 [[exemptions.bon]]
 version = "3.9.0"
 criteria = "safe-to-deploy"
@@ -389,12 +394,27 @@ version = "1.0.198"
 criteria = "safe-to-deploy"
 
 [[exemptions.darling]]
+version = "0.14.4"
+criteria = "safe-to-deploy"
+notes = "Phase 5 pinned LiveKit graph intake. Pending formal source audit."
+
+[[exemptions.darling]]
 version = "0.23.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.darling_core]]
+version = "0.14.4"
+criteria = "safe-to-deploy"
+notes = "Phase 5 pinned LiveKit graph intake. Pending formal source audit."
+
+[[exemptions.darling_core]]
 version = "0.23.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.darling_macro]]
+version = "0.14.4"
+criteria = "safe-to-deploy"
+notes = "Phase 5 pinned LiveKit graph intake. Pending formal source audit."
 
 [[exemptions.darling_macro]]
 version = "0.23.0"
@@ -563,6 +583,16 @@ criteria = "safe-to-deploy"
 [[exemptions.forwarded-header-value]]
 version = "0.1.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.from_variants]]
+version = "1.0.2"
+criteria = "safe-to-deploy"
+notes = "Phase 5 pinned LiveKit graph intake. Pending formal source audit."
+
+[[exemptions.from_variants_impl]]
+version = "1.0.2"
+criteria = "safe-to-deploy"
+notes = "Phase 5 pinned LiveKit graph intake. Pending formal source audit."
 
 [[exemptions.fs2]]
 version = "0.4.3"
@@ -1040,6 +1070,11 @@ criteria = "safe-to-deploy"
 version = "0.8.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.livekit]]
+version = "0.7.53"
+criteria = "safe-to-deploy"
+notes = "Phase 5 Apache-2.0 native client SDK, pinned exactly for the reviewed libwebrtc bridge. Pending formal source audit."
+
 [[exemptions.livekit-api]]
 version = "0.5.6"
 criteria = "safe-to-deploy"
@@ -1049,6 +1084,16 @@ notes = "Apache-2.0 LiveKit server SDK. Upgraded to its HMAC-only JWT provider t
 version = "0.1.0"
 criteria = "safe-to-deploy"
 notes = "Apache-2.0 support crate introduced by livekit-api 0.5.6. Pending formal source audit."
+
+[[exemptions.livekit-data-stream]]
+version = "0.1.0"
+criteria = "safe-to-deploy"
+notes = "Phase 5 Apache-2.0 LiveKit client transport component. Pending formal source audit."
+
+[[exemptions.livekit-datatrack]]
+version = "0.1.11"
+criteria = "safe-to-deploy"
+notes = "Phase 5 Apache-2.0 LiveKit client transport component. Pending formal source audit."
 
 [[exemptions.livekit-protocol]]
 version = "0.7.10"
@@ -1830,12 +1875,22 @@ version = "0.1.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.strsim]]
+version = "0.10.0"
+criteria = "safe-to-deploy"
+notes = "Phase 5 pinned LiveKit graph intake. Pending formal source audit."
+
+[[exemptions.strsim]]
 version = "0.11.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.subtle]]
 version = "2.6.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.syn]]
+version = "1.0.109"
+criteria = "safe-to-deploy"
+notes = "Phase 5 pinned LiveKit graph intake. Pending formal source audit."
 
 [[exemptions.syn]]
 version = "2.0.114"

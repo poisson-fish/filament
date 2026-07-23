@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-07-22",
+  "review_interval_days": 180,
+  "support_policy": {
+    "client_release_support_months": 12,
+    "minimum_os_change_notice_days": 180,
+    "vendor_security_support_required": true,
+    "remote_application_code_allowed": false,
+    "automatic_updates_enabled": false,
+    "media_default": "disabled_until_packaged_probe_passes"
+  },
+  "runtime": {
+    "ui": "bundled_solidjs",
+    "adapter": "tauri_v2_desktop_and_mobile",
+    "status": "supply_chain_blocked",
+    "reviewed_version": "2.11.5",
+    "blockers": [
+      "disallowed_mpl_transitives",
+      "unmaintained_transitives",
+      "active_rustsec_findings"
+    ],
+    "unsafe_ffi_fallback_allowed": false
+  },
+  "targets": [
+    {
+      "target": "linux",
+      "requirement": "required",
+      "minimum_os": "ubuntu_24_04_lts",
+      "architectures": ["x86_64"],
+      "package_formats": ["deb", "appimage"],
+      "key_custody": "secret_service_fail_closed",
+      "webview": "webkitgtk_6",
+      "media": "disabled_until_packaged_probe_passes"
+    },
+    {
+      "target": "macos",
+      "requirement": "required",
+      "minimum_os": "15.0",
+      "architectures": ["aarch64", "x86_64"],
+      "package_formats": ["app", "dmg"],
+      "key_custody": "keychain",
+      "webview": "wkwebview",
+      "media": "disabled_until_packaged_probe_passes"
+    },
+    {
+      "target": "windows",
+      "requirement": "required",
+      "minimum_os": "windows_11_vendor_supported",
+      "architectures": ["x86_64"],
+      "package_formats": ["msi"],
+      "key_custody": "credential_manager",
+      "webview": "webview2_evergreen_150.0.4078.83_or_newer",
+      "media": "disabled_until_packaged_probe_passes"
+    },
+    {
+      "target": "android",
+      "requirement": "required",
+      "minimum_os": "api_33",
+      "architectures": ["aarch64"],
+      "package_formats": ["apk", "aab"],
+      "key_custody": "android_keystore",
+      "webview": "android_system_webview",
+      "media": "disabled_until_packaged_probe_passes"
+    },
+    {
+      "target": "ios",
+      "requirement": "feasibility_gated",
+      "minimum_os": "17.0",
+      "architectures": ["aarch64", "aarch64_simulator"],
+      "package_formats": ["app", "ipa"],
+      "key_custody": "keychain",
+      "webview": "wkwebview",
+      "media": "disabled_until_packaged_probe_passes"
+    }
+  ]
+}

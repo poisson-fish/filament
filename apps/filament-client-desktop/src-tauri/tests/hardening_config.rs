@@ -40,6 +40,52 @@ struct UpdatePolicy {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlatformSupportContract {
+    schema_version: u8,
+    reviewed_at: String,
+    review_interval_days: u16,
+    support_policy: PlatformSupportPolicy,
+    runtime: PackagedRuntime,
+    targets: Vec<PackagedTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlatformSupportPolicy {
+    client_release_support_months: u8,
+    minimum_os_change_notice_days: u16,
+    vendor_security_support_required: bool,
+    remote_application_code_allowed: bool,
+    automatic_updates_enabled: bool,
+    media_default: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackagedRuntime {
+    ui: String,
+    adapter: String,
+    status: String,
+    reviewed_version: String,
+    blockers: Vec<String>,
+    unsafe_ffi_fallback_allowed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackagedTarget {
+    target: String,
+    requirement: String,
+    minimum_os: String,
+    architectures: Vec<String>,
+    package_formats: Vec<String>,
+    key_custody: String,
+    webview: String,
+    media: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct DesktopTauriConfig {
     app: DesktopApp,
     bundle: DesktopBundle,
@@ -138,6 +184,94 @@ fn desktop_security_policy_is_strict() {
     assert_eq!(policy.e2ee_media.unavailable_behavior, "disable_calls");
 
     assert!(policy.updates.signed_only);
+}
+
+#[test]
+fn packaged_platform_contract_is_explicit_and_fail_closed() {
+    let root = repo_root();
+    let raw = fs::read_to_string(root.join("apps/filament-client-desktop/platform-support.json"))
+        .expect("platform support contract should exist");
+    let contract: PlatformSupportContract =
+        serde_json::from_str(&raw).expect("platform support contract should be strict JSON");
+
+    assert_eq!(contract.schema_version, 1);
+    assert_eq!(contract.reviewed_at, "2026-07-22");
+    assert!(contract.review_interval_days <= 180);
+    assert_eq!(contract.support_policy.client_release_support_months, 12);
+    assert!(contract.support_policy.minimum_os_change_notice_days >= 180);
+    assert!(contract.support_policy.vendor_security_support_required);
+    assert!(!contract.support_policy.remote_application_code_allowed);
+    assert!(!contract.support_policy.automatic_updates_enabled);
+    assert_eq!(
+        contract.support_policy.media_default,
+        "disabled_until_packaged_probe_passes"
+    );
+
+    assert_eq!(contract.runtime.ui, "bundled_solidjs");
+    assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
+    assert_eq!(contract.runtime.status, "supply_chain_blocked");
+    assert_eq!(contract.runtime.reviewed_version, "2.11.5");
+    assert_eq!(
+        contract.runtime.blockers,
+        [
+            "disallowed_mpl_transitives",
+            "unmaintained_transitives",
+            "active_rustsec_findings"
+        ]
+    );
+    assert!(!contract.runtime.unsafe_ffi_fallback_allowed);
+
+    let targets: BTreeMap<&str, &PackagedTarget> = contract
+        .targets
+        .iter()
+        .map(|target| (target.target.as_str(), target))
+        .collect();
+    assert_eq!(targets.len(), contract.targets.len());
+    assert_eq!(
+        targets.keys().copied().collect::<Vec<_>>(),
+        ["android", "ios", "linux", "macos", "windows"]
+    );
+
+    for required in ["linux", "macos", "windows", "android"] {
+        assert_eq!(targets[required].requirement, "required");
+    }
+    assert_eq!(targets["ios"].requirement, "feasibility_gated");
+
+    assert_eq!(targets["linux"].minimum_os, "ubuntu_24_04_lts");
+    assert_eq!(targets["linux"].architectures, ["x86_64"]);
+    assert_eq!(targets["linux"].package_formats, ["deb", "appimage"]);
+    assert_eq!(targets["linux"].key_custody, "secret_service_fail_closed");
+
+    assert_eq!(targets["macos"].minimum_os, "15.0");
+    assert_eq!(targets["macos"].architectures, ["aarch64", "x86_64"]);
+    assert_eq!(targets["macos"].package_formats, ["app", "dmg"]);
+    assert_eq!(targets["macos"].key_custody, "keychain");
+
+    assert_eq!(targets["windows"].minimum_os, "windows_11_vendor_supported");
+    assert_eq!(targets["windows"].architectures, ["x86_64"]);
+    assert_eq!(targets["windows"].package_formats, ["msi"]);
+    assert_eq!(targets["windows"].key_custody, "credential_manager");
+    assert!(targets["windows"]
+        .webview
+        .starts_with("webview2_evergreen_"));
+
+    assert_eq!(targets["android"].minimum_os, "api_33");
+    assert_eq!(targets["android"].architectures, ["aarch64"]);
+    assert_eq!(targets["android"].package_formats, ["apk", "aab"]);
+    assert_eq!(targets["android"].key_custody, "android_keystore");
+
+    assert_eq!(targets["ios"].minimum_os, "17.0");
+    assert_eq!(
+        targets["ios"].architectures,
+        ["aarch64", "aarch64_simulator"]
+    );
+    assert_eq!(targets["ios"].package_formats, ["app", "ipa"]);
+    assert_eq!(targets["ios"].key_custody, "keychain");
+
+    for target in targets.values() {
+        assert_eq!(target.media, "disabled_until_packaged_probe_passes");
+        assert!(!target.webview.is_empty());
+    }
 }
 
 #[test]
