@@ -578,9 +578,12 @@ Destructively rotates the authenticated user's root identity using protocol v1.
 - The replacement root also certifies fresh signing material for one retained
   active device. Every other device is irreversibly tombstoned and all
   unclaimed KeyPackages for the user are destroyed in the same transaction.
-- A stale sequence, replay, malformed proof, unowned device, or unsupported
-  protocol version is rejected. The bounded public proof and mutation counts
-  are audit logged; no private key material reaches the server.
+- A stale sequence, conflicting replay, malformed proof, unowned device, or
+  unsupported protocol version is rejected. An exact retry of the immediately
+  committed transition returns the original confirmation and mutation counts,
+  allowing a native client to reconcile a lost response without generating a
+  second root. The bounded public proof and mutation counts are audit logged;
+  no private key material reaches the server.
 
 ### `DELETE /e2ee/devices/{device_id}`
 Irreversibly removes a device owned by the authenticated user.

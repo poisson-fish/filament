@@ -246,7 +246,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
         serde_json::from_str(&raw).expect("platform support contract should be strict JSON");
 
     assert_eq!(contract.schema_version, 2);
-    assert_eq!(contract.reviewed_at, "2026-07-22");
+    assert_eq!(contract.reviewed_at, "2026-07-23");
     assert!(contract.review_interval_days <= 180);
     assert_eq!(contract.support_policy.client_release_support_months, 12);
     assert!(contract.support_policy.minimum_os_change_notice_days >= 180);
@@ -262,7 +262,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
     assert_eq!(
         contract.runtime.status,
-        "desktop_fresh_device_enrollment_sqlcipher_session_install_offline_launch_mobile_packages_ci_gated_fail_closed"
+        "desktop_restart_safe_root_rotation_fresh_device_enrollment_sqlcipher_session_install_offline_launch_mobile_packages_ci_gated_fail_closed"
     );
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(

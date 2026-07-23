@@ -39,9 +39,14 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   confirmed idempotent upload. An account that already has devices remains
   pairing-gated; the runtime never creates a replacement root.
 - Encrypted-store readiness and public encryption settings are now backed by
-  the authenticated native device. Mailbox/messaging coordination, pairing UI,
-  rotation submission, and packaged end-to-end smoke coverage remain fail
-  closed.
+  the authenticated native device. The destructive root-identity command now
+  verifies the bounded public continuity chain, persists a replacement root,
+  signer/provider checkpoint, and KeyPackage outbox before submission, and
+  reconciles an exact idempotent retry after a lost response or restart.
+  Successful rotation resets MLS groups for authenticated external-commit
+  recovery and never exposes replacement secrets to the webview.
+- Mailbox/messaging coordination, pairing UI, packaged end-to-end smoke
+  coverage, and mobile platform custody evidence remain fail closed.
 - Calls and automatic updates remain disabled.
 
 ## Developer commands

@@ -127,6 +127,15 @@ Configuration sources:
 - Each record remains capped at 4 MiB, each device store at 4,096 records, and
   the encrypted database at 64 MiB. History synchronization retains these
   conservative bounds and refuses snapshots beyond 4,096 history records.
+- Root-identity rotation is a destructive native recovery boundary. Before
+  network submission, SQLCipher durably stores one bounded candidate containing
+  the replacement root, certified signer/provider checkpoint, public
+  dual-signed request, and fresh KeyPackage upload outbox. Exact server retries
+  return the original confirmation, so response loss or restart cannot strand
+  the account or generate a second replacement. Confirmed adoption atomically
+  replaces the root and fresh device checkpoint, records the authenticated
+  monotonic sequence, and resets MLS groups for authenticated external-commit
+  recovery. No replacement secret or server origin crosses IPC.
 - Local E2EE search is a native-only, ephemeral derivative of authenticated
   SQLCipher history. Tantivy runs against an in-memory index that is rebuilt on
   demand and never persisted as plaintext. Rebuild excludes expired content,

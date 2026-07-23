@@ -138,8 +138,11 @@ pub use pairing::{
 };
 pub use persistence::{
     clear_pending_keypackage_upload, load_mls_client_state, load_pending_keypackage_upload,
-    persist_initial_device_bootstrap, persist_mls_client_state, MlsClientState,
-    PendingExternalCommitRecovery, PendingKeyPackage, PendingKeyPackageUpload,
+    load_pending_root_identity_rotation, load_root_identity_rotation_sequence,
+    persist_initial_device_bootstrap, persist_mls_client_state,
+    persist_root_identity_rotation_sequence, prepare_pending_root_identity_rotation,
+    MlsClientState, PendingExternalCommitRecovery, PendingKeyPackage, PendingKeyPackageUpload,
+    PendingRootIdentityRotation,
 };
 #[cfg(feature = "sqlcipher-store")]
 pub use sqlcipher_store::{SqlCipherKeyStore, MAX_ENCRYPTED_STORE_BYTES};

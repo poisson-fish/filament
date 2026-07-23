@@ -9,18 +9,26 @@
 use std::collections::HashSet;
 
 use filament_core::{DeviceCertificate, DeviceId, GroupId, UserId};
+use filament_protocol::{
+    RotateRootIdentityRequest, RotateRootIdentityResponse, MAX_KEYPACKAGE_BYTES,
+    MAX_KEYPACKAGE_POOL_SIZE, MAX_ROOT_IDENTITY_ROTATIONS, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+};
+use openmls::prelude::{KeyPackageIn, ProtocolVersion};
+use openmls_traits::OpenMlsProvider as _;
 use serde::{Deserialize, Serialize};
+use tls_codec::Deserialize as _;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     conversation::{ConversationPersistenceMetadata, InboundPersistenceMetadata},
+    create_root_identity_rotation_proof,
     keypackage::{GeneratedKeyPackage, ProviderRecord},
-    ConversationAudience, DecryptedApplicationMessage, DeliveryServiceIdentity,
-    ExternalCommitRecoveryInfo, KeyStoreError, LocalKeyStore, MlsConversation, MlsDevice,
-    PendingGroupCommit, PinnedUserIdentity, RootIdentityKey, StoreKey,
-    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_BUFFERED_GENERATION_GAP, MAX_STORE_VALUE_BYTES,
+    verify_root_identity_rotation_proof, ConversationAudience, DecryptedApplicationMessage,
+    DeliveryServiceIdentity, ExternalCommitRecoveryInfo, KeyStoreError, LocalKeyStore,
+    MlsConversation, MlsDevice, PendingGroupCommit, PinnedUserIdentity, RootIdentityKey,
+    RootIdentityRotationProof, StoreKey, MAX_APPLICATION_PLAINTEXT_BYTES,
+    MAX_BUFFERED_GENERATION_GAP, MAX_STORE_VALUE_BYTES,
 };
-use filament_protocol::{MAX_KEYPACKAGE_BYTES, MAX_KEYPACKAGE_POOL_SIZE};
 
 const MLS_CLIENT_STATE_VERSION: u16 = 3;
 const LEGACY_MLS_CLIENT_STATE_VERSIONS: [u16; 2] = [1, 2];
@@ -29,6 +37,113 @@ const MAX_OPENMLS_STORAGE_RECORDS: usize = 16_384;
 const MAX_OPENMLS_STORAGE_KEY_BYTES: usize = 4_096;
 const MAX_OPENMLS_STORAGE_RECORD_BYTES: usize = 1024 * 1024;
 const PENDING_KEYPACKAGE_UPLOAD_VERSION: u16 = 1;
+const PENDING_ROOT_ROTATION_VERSION: u16 = 1;
+const ROTATION_SEQUENCE_BYTES: usize = size_of::<u64>();
+
+/// Restart-safe native candidate for a destructive account-root rotation.
+///
+/// The replacement root, device signer, and KeyPackage private material are
+/// loaded only from the encrypted local store. Public wire fields can be
+/// submitted repeatedly until the Delivery Service confirms the exact
+/// transition.
+pub struct PendingRootIdentityRotation {
+    request: RotateRootIdentityRequest,
+    previous_root_key_pub: [u8; 32],
+    replacement_root: RootIdentityKey,
+    replacement_device: MlsDevice,
+    checkpoint: Zeroizing<Vec<u8>>,
+    pending_keypackages: Zeroizing<Vec<u8>>,
+}
+
+impl core::fmt::Debug for PendingRootIdentityRotation {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("PendingRootIdentityRotation")
+            .field(
+                "expected_rotation_sequence",
+                &self.request.expected_rotation_sequence,
+            )
+            .field("device_id", &self.request.device_id)
+            .field("secret_state", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PendingRootIdentityRotation {
+    /// Return the public, dual-signed transition for bounded native transport.
+    #[must_use]
+    pub const fn wire_request(&self) -> &RotateRootIdentityRequest {
+        &self.request
+    }
+
+    /// Atomically adopt the confirmed replacement identity and fresh MLS
+    /// provider, then remove the encrypted retry record.
+    ///
+    /// Existing MLS groups are intentionally not copied: root rotation is a
+    /// destructive recovery boundary and the replacement device must recover
+    /// conversations through authenticated external commits.
+    ///
+    /// # Errors
+    /// Rejects any response that differs from the durable candidate, or a
+    /// local-store failure before the replacement checkpoint is durable.
+    pub fn finish(
+        self,
+        response: &RotateRootIdentityResponse,
+        store: &dyn LocalKeyStore,
+    ) -> Result<MlsDevice, KeyStoreError> {
+        let next_sequence = self
+            .request
+            .expected_rotation_sequence
+            .checked_add(1)
+            .ok_or(KeyStoreError::InvalidValue)?;
+        if response.protocol_version != ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION
+            || response.user_id != self.replacement_device.user_id().to_string()
+            || response.device_id != self.replacement_device.device_id().to_string()
+            || response.rotation_sequence != next_sequence
+            || response.previous_root_key_pub != self.previous_root_key_pub
+            || response.new_root_key_pub != self.replacement_root.public_key_bytes()
+            || !(0..=253_402_300_799).contains(&response.rotated_at_unix)
+        {
+            return Err(KeyStoreError::InvalidValue);
+        }
+        let root_secret = self.replacement_root.secret_bytes();
+        store.store_batch(vec![
+            (StoreKey::root_identity(), root_secret.to_vec()),
+            (StoreKey::mls_client_state(), self.checkpoint.to_vec()),
+            (
+                StoreKey::pending_keypackage_upload(),
+                self.pending_keypackages.to_vec(),
+            ),
+            (
+                StoreKey::root_identity_rotation_sequence(),
+                next_sequence.to_be_bytes().to_vec(),
+            ),
+        ])?;
+        let removed = store.remove_batch(&[StoreKey::pending_root_identity_rotation()])?;
+        if removed != 1 {
+            return Err(KeyStoreError::BackendError);
+        }
+        Ok(self.replacement_device)
+    }
+}
+
+#[derive(Serialize, Deserialize, Zeroize)]
+#[serde(deny_unknown_fields)]
+struct PersistedPendingRootIdentityRotation {
+    version: u16,
+    expected_rotation_sequence: u64,
+    user_id: String,
+    device_id: String,
+    previous_root_key_pub: Vec<u8>,
+    replacement_root_secret: Vec<u8>,
+    new_root_key_pub: Vec<u8>,
+    previous_root_signature: Vec<u8>,
+    new_root_signature: Vec<u8>,
+    new_device_signature_pubkey: Vec<u8>,
+    new_device_root_signature: Vec<u8>,
+    checkpoint: Vec<u8>,
+    pending_keypackages: Vec<u8>,
+}
 
 /// One opaque public KeyPackage retained until the Delivery Service confirms
 /// its idempotent upload.
@@ -336,6 +451,125 @@ pub fn persist_mls_client_state(
     store.store(StoreKey::mls_client_state(), encoded.to_vec())
 }
 
+/// Create and durably retain a fresh destructive root-rotation candidate.
+///
+/// The encrypted retry record is written before callers may submit the public
+/// request. An existing candidate is never overwritten with new randomness;
+/// callers must load and reconcile it instead.
+///
+/// # Errors
+/// Returns a validation, generation, serialization, or encrypted-store error.
+pub fn prepare_pending_root_identity_rotation(
+    store: &dyn LocalKeyStore,
+    user_id: UserId,
+    device_id: DeviceId,
+    expected_rotation_sequence: u64,
+    previous_root: &RootIdentityKey,
+) -> Result<PendingRootIdentityRotation, KeyStoreError> {
+    if store.exists(&StoreKey::pending_root_identity_rotation())? {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let next_sequence = expected_rotation_sequence
+        .checked_add(1)
+        .filter(|sequence| {
+            usize::try_from(*sequence).is_ok_and(|sequence| sequence <= MAX_ROOT_IDENTITY_ROTATIONS)
+        })
+        .ok_or(KeyStoreError::LimitExceeded)?;
+    let replacement_root = RootIdentityKey::generate();
+    let proof = create_root_identity_rotation_proof(
+        previous_root,
+        &replacement_root,
+        user_id,
+        next_sequence,
+    )
+    .map_err(|_| KeyStoreError::InvalidValue)?;
+    let replacement_device = MlsDevice::generate(user_id, device_id, &replacement_root)
+        .map_err(|_| KeyStoreError::BackendError)?;
+    let mut packages =
+        crate::generate_key_package_batch(&replacement_device, crate::DEFAULT_BATCH_SIZE)
+            .map_err(|_| KeyStoreError::BackendError)?;
+    packages.push(
+        crate::generate_last_resort_key_package(&replacement_device)
+            .map_err(|_| KeyStoreError::BackendError)?,
+    );
+    let checkpoint = encode_mls_client_state(&replacement_device, &[])?;
+    let pending_keypackages = encode_pending_keypackages(&packages)?;
+    let certificate = replacement_device.certificate();
+    let mut persisted = PersistedPendingRootIdentityRotation {
+        version: PENDING_ROOT_ROTATION_VERSION,
+        expected_rotation_sequence,
+        user_id: user_id.to_string(),
+        device_id: device_id.to_string(),
+        previous_root_key_pub: proof.previous_root_key_pub.to_vec(),
+        replacement_root_secret: replacement_root.secret_bytes().to_vec(),
+        new_root_key_pub: proof.new_root_key_pub.to_vec(),
+        previous_root_signature: proof.previous_root_signature.to_vec(),
+        new_root_signature: proof.new_root_signature.to_vec(),
+        new_device_signature_pubkey: certificate.device_signature_pubkey.clone(),
+        new_device_root_signature: certificate.root_key_signature.clone(),
+        checkpoint: checkpoint.to_vec(),
+        pending_keypackages: pending_keypackages.to_vec(),
+    };
+    let encoded = serde_json::to_vec(&persisted).map_err(|_| KeyStoreError::BackendError);
+    persisted.zeroize();
+    let encoded = Zeroizing::new(encoded?);
+    if encoded.is_empty() || encoded.len() > MAX_STORE_VALUE_BYTES {
+        return Err(KeyStoreError::LimitExceeded);
+    }
+    store.store_batch_if_absent_or_equal(vec![(
+        StoreKey::pending_root_identity_rotation(),
+        encoded.to_vec(),
+    )])?;
+    decode_pending_root_identity_rotation(&encoded)
+}
+
+/// Restore and fully revalidate a pending destructive root rotation.
+///
+/// # Errors
+/// Rejects missing, corrupt, oversized, or internally inconsistent state.
+pub fn load_pending_root_identity_rotation(
+    store: &dyn LocalKeyStore,
+) -> Result<PendingRootIdentityRotation, KeyStoreError> {
+    let encoded = store.load(&StoreKey::pending_root_identity_rotation())?;
+    decode_pending_root_identity_rotation(&encoded)
+}
+
+/// Persist the last authenticated root-rotation sequence.
+///
+/// # Errors
+/// Returns a limit or encrypted-store backend error.
+pub fn persist_root_identity_rotation_sequence(
+    store: &dyn LocalKeyStore,
+    sequence: u64,
+) -> Result<(), KeyStoreError> {
+    if !usize::try_from(sequence).is_ok_and(|sequence| sequence <= MAX_ROOT_IDENTITY_ROTATIONS) {
+        return Err(KeyStoreError::LimitExceeded);
+    }
+    store.store(
+        StoreKey::root_identity_rotation_sequence(),
+        sequence.to_be_bytes().to_vec(),
+    )
+}
+
+/// Load the last authenticated root-rotation sequence.
+///
+/// # Errors
+/// Rejects missing, malformed, or out-of-range records.
+pub fn load_root_identity_rotation_sequence(
+    store: &dyn LocalKeyStore,
+) -> Result<u64, KeyStoreError> {
+    let encoded = store.load(&StoreKey::root_identity_rotation_sequence())?;
+    let bytes: [u8; ROTATION_SEQUENCE_BYTES] = encoded
+        .as_slice()
+        .try_into()
+        .map_err(|_| KeyStoreError::InvalidValue)?;
+    let sequence = u64::from_be_bytes(bytes);
+    if !usize::try_from(sequence).is_ok_and(|sequence| sequence <= MAX_ROOT_IDENTITY_ROTATIONS) {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    Ok(sequence)
+}
+
 /// Atomically create a new device's root identity, complete MLS provider
 /// checkpoint, and retryable KeyPackage upload outbox.
 ///
@@ -369,8 +603,166 @@ pub fn persist_initial_device_bootstrap(
         (StoreKey::root_identity(), root_secret.to_vec()),
         (StoreKey::mls_client_state(), checkpoint.to_vec()),
         (StoreKey::pending_keypackage_upload(), pending.to_vec()),
+        (
+            StoreKey::root_identity_rotation_sequence(),
+            0_u64.to_be_bytes().to_vec(),
+        ),
     ])?;
     Ok(())
+}
+
+fn decode_pending_root_identity_rotation(
+    encoded: &[u8],
+) -> Result<PendingRootIdentityRotation, KeyStoreError> {
+    if encoded.is_empty() || encoded.len() > MAX_STORE_VALUE_BYTES {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let mut persisted: PersistedPendingRootIdentityRotation =
+        serde_json::from_slice(encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    let result = (|| {
+        let user_id =
+            UserId::try_from(persisted.user_id.clone()).map_err(|_| KeyStoreError::InvalidValue)?;
+        let device_id = DeviceId::try_from(persisted.device_id.clone())
+            .map_err(|_| KeyStoreError::InvalidValue)?;
+        let next_sequence = persisted
+            .expected_rotation_sequence
+            .checked_add(1)
+            .filter(|sequence| {
+                usize::try_from(*sequence)
+                    .is_ok_and(|sequence| sequence <= MAX_ROOT_IDENTITY_ROTATIONS)
+            })
+            .ok_or(KeyStoreError::InvalidValue)?;
+        if persisted.version != PENDING_ROOT_ROTATION_VERSION
+            || persisted.replacement_root_secret.len() != 32
+        {
+            return Err(KeyStoreError::InvalidValue);
+        }
+        let proof = pending_rotation_proof(&persisted, next_sequence)?;
+        verify_root_identity_rotation_proof(user_id, &proof)
+            .map_err(|_| KeyStoreError::InvalidValue)?;
+        let replacement_secret: [u8; 32] = persisted
+            .replacement_root_secret
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyStoreError::InvalidValue)?;
+        let replacement_secret = Zeroizing::new(replacement_secret);
+        let replacement_root = RootIdentityKey::from_secret_bytes(&replacement_secret);
+        if replacement_root.public_key_bytes() != proof.new_root_key_pub {
+            return Err(KeyStoreError::InvalidValue);
+        }
+        let replacement_state = decode_mls_client_state(&persisted.checkpoint)?;
+        if !replacement_state.conversations.is_empty()
+            || replacement_state.device.user_id() != user_id
+            || replacement_state.device.device_id() != device_id
+            || replacement_state.device.root_key_public() != &proof.new_root_key_pub
+            || replacement_state
+                .device
+                .certificate()
+                .device_signature_pubkey
+                != persisted.new_device_signature_pubkey
+            || replacement_state.device.certificate().root_key_signature
+                != persisted.new_device_root_signature
+        {
+            return Err(KeyStoreError::InvalidValue);
+        }
+        validate_keypackage_upload_for_device(
+            &persisted.pending_keypackages,
+            &replacement_state.device,
+        )?;
+        let request = RotateRootIdentityRequest {
+            protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+            expected_rotation_sequence: persisted.expected_rotation_sequence,
+            device_id: device_id.to_string(),
+            new_root_key_pub: proof.new_root_key_pub.to_vec(),
+            previous_root_signature: proof.previous_root_signature.to_vec(),
+            new_root_signature: proof.new_root_signature.to_vec(),
+            new_device_signature_pubkey: persisted.new_device_signature_pubkey.clone(),
+            new_device_root_signature: persisted.new_device_root_signature.clone(),
+        };
+        Ok(PendingRootIdentityRotation {
+            request,
+            previous_root_key_pub: proof.previous_root_key_pub,
+            replacement_root,
+            replacement_device: replacement_state.device,
+            checkpoint: Zeroizing::new(persisted.checkpoint.clone()),
+            pending_keypackages: Zeroizing::new(persisted.pending_keypackages.clone()),
+        })
+    })();
+    persisted.zeroize();
+    result
+}
+
+fn pending_rotation_proof(
+    persisted: &PersistedPendingRootIdentityRotation,
+    sequence: u64,
+) -> Result<RootIdentityRotationProof, KeyStoreError> {
+    Ok(RootIdentityRotationProof {
+        sequence,
+        previous_root_key_pub: persisted
+            .previous_root_key_pub
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyStoreError::InvalidValue)?,
+        new_root_key_pub: persisted
+            .new_root_key_pub
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyStoreError::InvalidValue)?,
+        previous_root_signature: persisted
+            .previous_root_signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyStoreError::InvalidValue)?,
+        new_root_signature: persisted
+            .new_root_signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyStoreError::InvalidValue)?,
+    })
+}
+
+fn decode_mls_client_state(encoded: &[u8]) -> Result<MlsClientState, KeyStoreError> {
+    if encoded.is_empty() || encoded.len() > MAX_STORE_VALUE_BYTES {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let mut snapshot: PersistedClientState =
+        serde_json::from_slice(encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    let restored = restore_snapshot(&snapshot);
+    snapshot.zeroize();
+    restored
+}
+
+fn validate_keypackage_upload_for_device(
+    encoded: &[u8],
+    device: &MlsDevice,
+) -> Result<(), KeyStoreError> {
+    let mut persisted: PersistedPendingKeyPackageUpload =
+        serde_json::from_slice(encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    let result = (|| {
+        validate_persisted_pending_keypackages(&persisted)?;
+        let expected = device.credential_with_key();
+        for package in &persisted.packages {
+            let mut bytes = package.blob.as_slice();
+            let incoming = KeyPackageIn::tls_deserialize(&mut bytes)
+                .map_err(|_| KeyStoreError::InvalidValue)?;
+            if !bytes.is_empty() {
+                return Err(KeyStoreError::InvalidValue);
+            }
+            let validated = incoming
+                .validate(device.provider().crypto(), ProtocolVersion::Mls10)
+                .map_err(|_| KeyStoreError::InvalidValue)?;
+            if validated.ciphersuite()
+                != openmls::prelude::Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519
+                || validated.leaf_node().credential() != &expected.credential
+                || validated.leaf_node().signature_key() != &expected.signature_key
+            {
+                return Err(KeyStoreError::InvalidValue);
+            }
+        }
+        Ok(())
+    })();
+    persisted.zeroize();
+    result
 }
 
 /// Load and revalidate the exact KeyPackage upload outbox after restart.
@@ -783,8 +1175,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        generate_key_package_batch, generate_last_resort_key_package, InMemoryKeyStore,
-        PinnedUserIdentity, RootIdentityKey,
+        generate_key_package_batch, generate_last_resort_key_package, load_root_identity,
+        InMemoryKeyStore, PinnedUserIdentity, RootIdentityKey, DEFAULT_BATCH_SIZE,
     };
 
     #[test]
@@ -813,6 +1205,7 @@ mod tests {
             1
         );
         assert_eq!(pending.packages[0].blob, packages[0].blob);
+        assert_eq!(load_root_identity_rotation_sequence(&store), Ok(0));
 
         clear_pending_keypackage_upload(&store).unwrap();
         clear_pending_keypackage_upload(&store).unwrap();
@@ -861,6 +1254,120 @@ mod tests {
         assert_eq!(
             load_pending_keypackage_upload(&store),
             Err(KeyStoreError::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn pending_root_rotation_survives_restart_and_adopts_atomically() {
+        let user_id = UserId::new();
+        let device_id = DeviceId::new();
+        let root = RootIdentityKey::generate();
+        let device = MlsDevice::generate(user_id, device_id, &root).unwrap();
+        let mut packages = generate_key_package_batch(&device, 1).unwrap();
+        packages.push(generate_last_resort_key_package(&device).unwrap());
+        let store = InMemoryKeyStore::new();
+        persist_initial_device_bootstrap(&store, &root, &device, &packages).unwrap();
+
+        let pending =
+            prepare_pending_root_identity_rotation(&store, user_id, device_id, 0, &root).unwrap();
+        let request = pending.wire_request().clone();
+        assert!(store
+            .exists(&StoreKey::pending_root_identity_rotation())
+            .unwrap());
+        assert_eq!(
+            prepare_pending_root_identity_rotation(&store, user_id, device_id, 0, &root)
+                .unwrap_err(),
+            KeyStoreError::InvalidValue
+        );
+        drop(pending);
+
+        let pending = load_pending_root_identity_rotation(&store).unwrap();
+        assert_eq!(pending.wire_request(), &request);
+        let response = RotateRootIdentityResponse {
+            protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+            user_id: user_id.to_string(),
+            device_id: device_id.to_string(),
+            rotation_sequence: 1,
+            previous_root_key_pub: root.public_key_bytes().to_vec(),
+            new_root_key_pub: request.new_root_key_pub.clone(),
+            revoked_device_count: 0,
+            deleted_keypackage_count: 2,
+            rotated_at_unix: 500,
+        };
+        pending.finish(&response, &store).unwrap();
+
+        assert!(!store
+            .exists(&StoreKey::pending_root_identity_rotation())
+            .unwrap());
+        assert_eq!(load_root_identity_rotation_sequence(&store), Ok(1));
+        assert_eq!(
+            load_root_identity(&store, &StoreKey::root_identity())
+                .unwrap()
+                .public_key_bytes()
+                .to_vec(),
+            request.new_root_key_pub
+        );
+        let state = load_mls_client_state(&store).unwrap();
+        assert_eq!(state.device.user_id(), user_id);
+        assert_eq!(state.device.device_id(), device_id);
+        assert!(state.conversations.is_empty());
+        assert_eq!(
+            load_pending_keypackage_upload(&store)
+                .unwrap()
+                .packages
+                .len(),
+            DEFAULT_BATCH_SIZE + 1
+        );
+    }
+
+    #[test]
+    fn pending_root_rotation_rejects_tampering_and_mismatched_confirmation() {
+        let user_id = UserId::new();
+        let device_id = DeviceId::new();
+        let root = RootIdentityKey::generate();
+        let device = MlsDevice::generate(user_id, device_id, &root).unwrap();
+        let mut packages = generate_key_package_batch(&device, 1).unwrap();
+        packages.push(generate_last_resort_key_package(&device).unwrap());
+        let store = InMemoryKeyStore::new();
+        persist_initial_device_bootstrap(&store, &root, &device, &packages).unwrap();
+        let pending =
+            prepare_pending_root_identity_rotation(&store, user_id, device_id, 0, &root).unwrap();
+        let request = pending.wire_request().clone();
+        let mut response = RotateRootIdentityResponse {
+            protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+            user_id: user_id.to_string(),
+            device_id: device_id.to_string(),
+            rotation_sequence: 1,
+            previous_root_key_pub: root.public_key_bytes().to_vec(),
+            new_root_key_pub: request.new_root_key_pub.clone(),
+            revoked_device_count: 0,
+            deleted_keypackage_count: 0,
+            rotated_at_unix: 500,
+        };
+        response.new_root_key_pub[0] ^= 1;
+        assert_eq!(
+            pending.finish(&response, &store).unwrap_err(),
+            KeyStoreError::InvalidValue
+        );
+        assert_eq!(
+            load_root_identity(&store, &StoreKey::root_identity())
+                .unwrap()
+                .public_key_bytes(),
+            root.public_key_bytes()
+        );
+
+        let mut encoded = store
+            .load(&StoreKey::pending_root_identity_rotation())
+            .unwrap()
+            .to_vec();
+        let last = encoded.last_mut().unwrap();
+        *last ^= 1;
+        store
+            .store(StoreKey::pending_root_identity_rotation(), encoded)
+            .unwrap();
+        assert_eq!(
+            load_pending_root_identity_rotation(&store).unwrap_err(),
+            KeyStoreError::InvalidValue
         );
     }
 

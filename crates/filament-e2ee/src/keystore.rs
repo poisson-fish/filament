@@ -105,6 +105,18 @@ impl StoreKey {
         Self(String::from("mls:keypackages:pending:v1"))
     }
 
+    /// Canonical record key for a restart-safe destructive root rotation.
+    #[must_use]
+    pub fn pending_root_identity_rotation() -> Self {
+        Self(String::from("identity:root_rotation:pending:v1"))
+    }
+
+    /// Canonical record key for the last authenticated root rotation sequence.
+    #[must_use]
+    pub fn root_identity_rotation_sequence() -> Self {
+        Self(String::from("identity:root_rotation:sequence:v1"))
+    }
+
     /// Borrow the validated database key.
     #[must_use]
     pub fn as_str(&self) -> &str {

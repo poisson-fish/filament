@@ -175,6 +175,108 @@ fn validate_rotation_fields(
     ))
 }
 
+async fn confirmed_rotation_retry(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+    payload: &RotateRootIdentityRequest,
+    current_root_key: &[u8],
+    current_sequence: u64,
+) -> Result<Option<RotateRootIdentityResponse>, AuthFailure> {
+    let row = sqlx::query(
+        "SELECT r.previous_root_key_pub, r.new_root_key_pub,
+                r.previous_root_signature, r.new_root_signature,
+                r.rotating_device_id, r.rotated_at_unix,
+                dc.device_sig_pubkey, dc.root_key_sig, dc.root_key_pub,
+                a.metadata_json::TEXT AS audit_metadata
+         FROM e2ee_root_identity_rotations r
+         JOIN e2ee_device_certificates dc
+           ON dc.user_id = r.user_id AND dc.device_id = r.rotating_device_id
+          AND dc.tombstoned_at_unix IS NULL
+         JOIN LATERAL (
+             SELECT metadata_json
+             FROM e2ee_audit_log
+             WHERE action = 'identity_rotate'
+               AND user_id = r.user_id
+               AND device_id = r.rotating_device_id
+               AND (metadata_json->>'rotation_sequence')::BIGINT = r.sequence
+             ORDER BY id DESC LIMIT 1
+         ) a ON TRUE
+         WHERE r.user_id = $1 AND r.sequence = $2",
+    )
+    .bind(user_id.to_string())
+    .bind(i64::try_from(current_sequence).map_err(|_| AuthFailure::Internal)?)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let previous_root_key_pub: Vec<u8> = row
+        .try_get("previous_root_key_pub")
+        .map_err(|_| AuthFailure::Internal)?;
+    let new_root_key_pub: Vec<u8> = row
+        .try_get("new_root_key_pub")
+        .map_err(|_| AuthFailure::Internal)?;
+    let rotating_device_id: String = row
+        .try_get("rotating_device_id")
+        .map_err(|_| AuthFailure::Internal)?;
+    let exact_retry = payload.expected_rotation_sequence.checked_add(1) == Some(current_sequence)
+        && payload.device_id == rotating_device_id
+        && payload.new_root_key_pub == new_root_key_pub
+        && payload.previous_root_signature
+            == row
+                .try_get::<Vec<u8>, _>("previous_root_signature")
+                .map_err(|_| AuthFailure::Internal)?
+        && payload.new_root_signature
+            == row
+                .try_get::<Vec<u8>, _>("new_root_signature")
+                .map_err(|_| AuthFailure::Internal)?
+        && payload.new_device_signature_pubkey
+            == row
+                .try_get::<Vec<u8>, _>("device_sig_pubkey")
+                .map_err(|_| AuthFailure::Internal)?
+        && payload.new_device_root_signature
+            == row
+                .try_get::<Vec<u8>, _>("root_key_sig")
+                .map_err(|_| AuthFailure::Internal)?
+        && current_root_key == new_root_key_pub
+        && row
+            .try_get::<Vec<u8>, _>("root_key_pub")
+            .map_err(|_| AuthFailure::Internal)?
+            == new_root_key_pub;
+    if !exact_retry {
+        return Ok(None);
+    }
+    let audit_metadata: String = row
+        .try_get("audit_metadata")
+        .map_err(|_| AuthFailure::Internal)?;
+    let audit_metadata: serde_json::Value =
+        serde_json::from_str(&audit_metadata).map_err(|_| AuthFailure::Internal)?;
+    let revoked_device_count = audit_metadata
+        .get("revoked_device_count")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or(AuthFailure::Internal)?;
+    let deleted_keypackage_count = audit_metadata
+        .get("deleted_keypackage_count")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or(AuthFailure::Internal)?;
+    Ok(Some(RotateRootIdentityResponse {
+        protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+        user_id: user_id.to_string(),
+        device_id: rotating_device_id,
+        rotation_sequence: current_sequence,
+        previous_root_key_pub,
+        new_root_key_pub,
+        revoked_device_count,
+        deleted_keypackage_count,
+        rotated_at_unix: row
+            .try_get("rotated_at_unix")
+            .map_err(|_| AuthFailure::Internal)?,
+    }))
+}
+
 fn keypackage_low_water_mark(max_pool_size: usize) -> Result<u32, AuthFailure> {
     let max_pool_size = u32::try_from(max_pool_size).map_err(|_| AuthFailure::Internal)?;
     Ok(KEYPACKAGE_LOW_WATER_MARK.min(max_pool_size))
@@ -1874,9 +1976,21 @@ pub(crate) async fn rotate_root_identity(
     let current_sequence: i64 = current
         .try_get("rotation_sequence")
         .map_err(|_| AuthFailure::Internal)?;
-    if u64::try_from(current_sequence).map_err(|_| AuthFailure::Internal)?
-        != payload.expected_rotation_sequence
-    {
+    let current_sequence = u64::try_from(current_sequence).map_err(|_| AuthFailure::Internal)?;
+    if current_sequence != payload.expected_rotation_sequence {
+        if current_sequence == next_sequence {
+            if let Some(response) = confirmed_rotation_retry(
+                &mut transaction,
+                auth.user_id,
+                &payload,
+                &previous_root_key,
+                current_sequence,
+            )
+            .await?
+            {
+                return Ok(Json(response));
+            }
+        }
         return Err(AuthFailure::Forbidden);
     }
     let previous_root_key_array: [u8; 32] = previous_root_key

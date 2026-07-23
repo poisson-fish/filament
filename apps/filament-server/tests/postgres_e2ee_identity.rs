@@ -2242,7 +2242,22 @@ async fn postgres_root_identity_rotation_is_dual_signed_atomic_and_replay_safe()
         &rotation_request,
     )
     .await;
-    assert_eq!(replay.status(), StatusCode::FORBIDDEN);
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay: RotateRootIdentityResponse = parse_json(replay).await;
+    assert_eq!(replay, rotated);
+
+    let mut conflicting_replay = rotation_request.clone();
+    conflicting_replay.new_device_signature_pubkey[0] ^= 1;
+    let conflicting_replay = send_json(
+        &app,
+        "POST",
+        "/e2ee/identity/rotate",
+        Some(&auth.access_token),
+        ip,
+        &conflicting_replay,
+    )
+    .await;
+    assert_eq!(conflicting_replay.status(), StatusCode::FORBIDDEN);
 
     let identity = Request::builder()
         .method("GET")

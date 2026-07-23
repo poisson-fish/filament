@@ -1,6 +1,6 @@
 # E2EE Key-Isolation Audit — Phase 1
 
-**Date:** 2026-07-19
+**Date:** 2026-07-23
 **Scope:** desktop SQLCipher key custody and the Rust/webview boundary
 
 ## Result
@@ -46,6 +46,13 @@ IDs; neither value can be selected by the webview.
    complete OpenMLS provider checkpoint, and exact pending KeyPackage upload
    into SQLCipher. The outbox survives uncertain network results and is
    removed only after a confirmed idempotent upload.
+7. Destructive identity rotation validates the authenticated public continuity
+   chain against the local pin and sequence. A fresh replacement root, device
+   signer/provider checkpoint, and KeyPackage outbox are written as one
+   encrypted pending record before submission. Exact retries are idempotent;
+   local adoption atomically replaces the root, resets MLS groups for
+   authenticated recovery, and retains the upload outbox before clearing the
+   retry record.
 
 ## Guardrails Verified
 
@@ -68,7 +75,12 @@ IDs; neither value can be selected by the webview.
   device directory is empty. Accounts with existing devices require the
   separately authenticated pairing flow; root replacement fails closed.
 - Every returned device certificate is checked against the locally persisted
-  root before settings or readiness is exposed.
+  root before settings or readiness is exposed. Every returned rotation chain
+  is checked for exact length, continuity, dual signatures, monotonic sequence,
+  and the local pin.
+- Replacement root and device secrets remain inside zeroizing native values
+  and SQLCipher records. Lost rotation responses leave a durable candidate;
+  they cannot cause generation of a second replacement identity.
 - IPC policy contains no private-key display, copy, export, database read, or
   generic filesystem command.
 

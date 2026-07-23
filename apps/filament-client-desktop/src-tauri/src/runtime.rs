@@ -15,9 +15,10 @@ use std::{
 use filament_core::{DeviceId, UserId};
 use filament_e2ee::{
     clear_pending_keypackage_upload, generate_key_package_batch, generate_last_resort_key_package,
-    load_mls_client_state, load_pending_keypackage_upload, load_root_identity,
-    persist_initial_device_bootstrap, KeyStoreError, LocalKeyStore, LocalStoreId, MlsDevice,
-    RootIdentityKey, StoreKey, DEFAULT_BATCH_SIZE,
+    load_mls_client_state, load_pending_keypackage_upload, load_pending_root_identity_rotation,
+    load_root_identity, load_root_identity_rotation_sequence, persist_initial_device_bootstrap,
+    persist_root_identity_rotation_sequence, prepare_pending_root_identity_rotation, KeyStoreError,
+    LocalKeyStore, LocalStoreId, MlsDevice, RootIdentityKey, StoreKey, DEFAULT_BATCH_SIZE,
 };
 use filament_protocol::RotateRootIdentityResponse;
 use tauri::ipc::InvokeBody;
@@ -26,8 +27,8 @@ use tauri::Manager as _;
 use crate::{
     device_registry::{DeviceRegistry, DeviceRegistryError, OsDeviceRegistry},
     native_api::{
-        verify_directory_device, verify_directory_root, NativeApiError, NativeEnrollmentApi,
-        ReqwestNativeEnrollmentApi,
+        verify_directory_device, verify_directory_root, verify_root_identity_directory,
+        NativeApiError, NativeEnrollmentApi, ReqwestNativeEnrollmentApi,
     },
     session_store::{
         OsSessionCredentialStore, SessionCredentialError, SessionCredentialStore, StoredSession,
@@ -137,6 +138,7 @@ impl ProductionDesktopBackend {
             return self.bootstrap_first_device(session, user_id, device_id, store);
         }
 
+        self.reconcile_pending_rotation(session, store.as_ref())?;
         let root = load_root_identity(store.as_ref(), &StoreKey::root_identity())
             .map_err(|error| map_keystore_error(&error))?;
         let state =
@@ -168,6 +170,7 @@ impl ProductionDesktopBackend {
             &directory,
         )
         .map_err(map_native_api_error)?;
+        self.ensure_authenticated_rotation_sequence(session, user_id, &root, store.as_ref())?;
         self.flush_pending_keypackages(session, device_id, store.as_ref())
     }
 
@@ -205,6 +208,7 @@ impl ProductionDesktopBackend {
             &directory,
         )
         .map_err(map_native_api_error)?;
+        self.ensure_authenticated_rotation_sequence(session, user_id, &root, store.as_ref())?;
         Ok(())
     }
 
@@ -225,6 +229,56 @@ impl ProductionDesktopBackend {
         clear_pending_keypackage_upload(store).map_err(|error| map_keystore_error(&error))
     }
 
+    fn reconcile_pending_rotation(
+        &self,
+        session: &StoredSession,
+        store: &dyn LocalKeyStore,
+    ) -> Result<Option<RotateRootIdentityResponse>, DesktopCommandBackendError> {
+        let pending = match load_pending_root_identity_rotation(store) {
+            Ok(pending) => pending,
+            Err(KeyStoreError::NotFound) => return Ok(None),
+            Err(error) => return Err(map_keystore_error(&error)),
+        };
+        let response = self
+            .api
+            .rotate_root_identity(&session.access_token, pending.wire_request())
+            .map_err(map_native_api_error)?;
+        pending
+            .finish(&response, store)
+            .map_err(|error| map_keystore_error(&error))?;
+        Ok(Some(response))
+    }
+
+    fn ensure_authenticated_rotation_sequence(
+        &self,
+        session: &StoredSession,
+        user_id: UserId,
+        root: &RootIdentityKey,
+        store: &dyn LocalKeyStore,
+    ) -> Result<u64, DesktopCommandBackendError> {
+        let stored_sequence = match load_root_identity_rotation_sequence(store) {
+            Ok(sequence) => Some(sequence),
+            Err(KeyStoreError::NotFound) => None,
+            Err(error) => return Err(map_keystore_error(&error)),
+        };
+        let directory = self
+            .api
+            .root_identity(&session.access_token, user_id)
+            .map_err(map_native_api_error)?;
+        let sequence = verify_root_identity_directory(
+            user_id,
+            &root.public_key_bytes(),
+            stored_sequence,
+            &directory,
+        )
+        .map_err(map_native_api_error)?;
+        if stored_sequence.is_none() {
+            persist_root_identity_rotation_sequence(store, sequence)
+                .map_err(|error| map_keystore_error(&error))?;
+        }
+        Ok(sequence)
+    }
+
     fn settings_snapshot(
         &self,
         session: &StoredSession,
@@ -233,6 +287,12 @@ impl ProductionDesktopBackend {
         let root = load_root_identity(active.store.as_ref(), &StoreKey::root_identity())
             .map_err(|error| map_keystore_error(&error))?;
         let root_public = root.public_key_bytes();
+        let rotation_sequence = self.ensure_authenticated_rotation_sequence(
+            session,
+            active.user_id,
+            &root,
+            active.store.as_ref(),
+        )?;
         let directory = self
             .api
             .list_devices(&session.access_token, active.user_id)
@@ -285,7 +345,7 @@ impl ProductionDesktopBackend {
         {
             return Err(DesktopCommandBackendError::Rejected);
         }
-        EncryptionSettingsSnapshot::new(&root_public, 0, devices, false)
+        EncryptionSettingsSnapshot::new(&root_public, rotation_sequence, devices, false)
             .map_err(|_| DesktopCommandBackendError::Rejected)
     }
 }
@@ -396,14 +456,70 @@ impl DesktopCommandBackend for ProductionDesktopBackend {
         if user_id != active.user_id {
             return Err(DesktopCommandBackendError::Rejected);
         }
+        self.flush_pending_keypackages(&session, active.device_id, active.store.as_ref())?;
         self.settings_snapshot(&session, active)
     }
 
     fn rotate_root_identity(
         &self,
-        _request: RotateIdentityCommandRequest,
+        request: RotateIdentityCommandRequest,
     ) -> Result<RotateRootIdentityResponse, DesktopCommandBackendError> {
-        Err(DesktopCommandBackendError::Unavailable)
+        request
+            .validate()
+            .map_err(|_| DesktopCommandBackendError::Rejected)?;
+        let session = self.load_valid_session()?;
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+        let active = active
+            .as_ref()
+            .ok_or(DesktopCommandBackendError::Unavailable)?;
+        let user_id = self
+            .api
+            .current_user(&session.access_token)
+            .map_err(map_native_api_error)?;
+        if user_id != active.user_id {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        if let Some(response) = self.reconcile_pending_rotation(&session, active.store.as_ref())? {
+            let _ =
+                self.flush_pending_keypackages(&session, active.device_id, active.store.as_ref());
+            return Ok(response);
+        }
+        let root = load_root_identity(active.store.as_ref(), &StoreKey::root_identity())
+            .map_err(|error| map_keystore_error(&error))?;
+        let state = load_mls_client_state(active.store.as_ref())
+            .map_err(|error| map_keystore_error(&error))?;
+        if state.device.user_id() != active.user_id
+            || state.device.device_id() != active.device_id
+            || state.device.root_key_public() != &root.public_key_bytes()
+        {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        let sequence = self.ensure_authenticated_rotation_sequence(
+            &session,
+            active.user_id,
+            &root,
+            active.store.as_ref(),
+        )?;
+        let pending = prepare_pending_root_identity_rotation(
+            active.store.as_ref(),
+            active.user_id,
+            active.device_id,
+            sequence,
+            &root,
+        )
+        .map_err(|error| map_keystore_error(&error))?;
+        let response = self
+            .api
+            .rotate_root_identity(&session.access_token, pending.wire_request())
+            .map_err(map_native_api_error)?;
+        pending
+            .finish(&response, active.store.as_ref())
+            .map_err(|error| map_keystore_error(&error))?;
+        let _ = self.flush_pending_keypackages(&session, active.device_id, active.store.as_ref());
+        Ok(response)
     }
 }
 
@@ -655,7 +771,10 @@ mod tests {
 
     use super::*;
     use filament_e2ee::{InMemoryKeyStore, PendingKeyPackageUpload};
-    use filament_protocol::{DeviceInfo, DeviceListResponse};
+    use filament_protocol::{
+        DeviceInfo, DeviceListResponse, RootIdentityDirectoryResponse, RootIdentityRotationEntry,
+        RotateRootIdentityRequest, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    };
 
     #[derive(Default)]
     struct MemorySessionStore {
@@ -755,6 +874,9 @@ mod tests {
     struct MockEnrollmentApi {
         user_id: UserId,
         devices: Mutex<Vec<DeviceInfo>>,
+        rotations: Mutex<Vec<RootIdentityRotationEntry>>,
+        last_rotation: Mutex<Option<(RotateRootIdentityRequest, RotateRootIdentityResponse)>>,
+        lose_rotation_response: AtomicBool,
         uploaded: AtomicUsize,
         reject_upload: AtomicBool,
     }
@@ -764,6 +886,9 @@ mod tests {
             Self {
                 user_id,
                 devices: Mutex::new(Vec::new()),
+                rotations: Mutex::new(Vec::new()),
+                last_rotation: Mutex::new(None),
+                lose_rotation_response: AtomicBool::new(false),
                 uploaded: AtomicUsize::new(0),
                 reject_upload: AtomicBool::new(false),
             }
@@ -773,6 +898,9 @@ mod tests {
             Self {
                 user_id: device.user_id(),
                 devices: Mutex::new(vec![device_info(device)]),
+                rotations: Mutex::new(Vec::new()),
+                last_rotation: Mutex::new(None),
+                lose_rotation_response: AtomicBool::new(false),
                 uploaded: AtomicUsize::new(0),
                 reject_upload: AtomicBool::new(false),
             }
@@ -837,6 +965,88 @@ mod tests {
             self.uploaded
                 .store(pending.packages.len(), Ordering::SeqCst);
             Ok(())
+        }
+
+        fn root_identity(
+            &self,
+            _access_token: &crate::SessionToken,
+            user_id: UserId,
+        ) -> Result<RootIdentityDirectoryResponse, NativeApiError> {
+            if user_id != self.user_id {
+                return Err(NativeApiError::Rejected);
+            }
+            let devices = self.devices.lock().unwrap();
+            let current = devices.first().ok_or(NativeApiError::Rejected)?;
+            let rotations = self.rotations.lock().unwrap().clone();
+            Ok(RootIdentityDirectoryResponse {
+                protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+                user_id: user_id.to_string(),
+                current_root_key_pub: current.root_key_pub.clone(),
+                rotation_sequence: u64::try_from(rotations.len())
+                    .map_err(|_| NativeApiError::Unavailable)?,
+                rotations,
+            })
+        }
+
+        fn rotate_root_identity(
+            &self,
+            _access_token: &crate::SessionToken,
+            request: &RotateRootIdentityRequest,
+        ) -> Result<RotateRootIdentityResponse, NativeApiError> {
+            if let Some((previous_request, response)) = self.last_rotation.lock().unwrap().as_ref()
+            {
+                if previous_request == request {
+                    return Ok(response.clone());
+                }
+            }
+            let mut devices = self.devices.lock().unwrap();
+            let mut rotations = self.rotations.lock().unwrap();
+            let current = devices.first().ok_or(NativeApiError::Rejected)?;
+            let sequence =
+                u64::try_from(rotations.len()).map_err(|_| NativeApiError::Unavailable)?;
+            if request.expected_rotation_sequence != sequence
+                || request.device_id != current.device_id
+            {
+                return Err(NativeApiError::Rejected);
+            }
+            let next_sequence = sequence.checked_add(1).ok_or(NativeApiError::Rejected)?;
+            let previous_root_key_pub = current.root_key_pub.clone();
+            let revoked_device_count = u32::try_from(devices.len().saturating_sub(1))
+                .map_err(|_| NativeApiError::Unavailable)?;
+            let device_id = request.device_id.clone();
+            *devices = vec![DeviceInfo {
+                device_id: device_id.clone(),
+                device_signature_pubkey: request.new_device_signature_pubkey.clone(),
+                root_key_signature: request.new_device_root_signature.clone(),
+                root_key_pub: request.new_root_key_pub.clone(),
+                created_at_unix: 201,
+                tombstoned_at_unix: None,
+            }];
+            rotations.push(RootIdentityRotationEntry {
+                sequence: next_sequence,
+                previous_root_key_pub: previous_root_key_pub.clone(),
+                new_root_key_pub: request.new_root_key_pub.clone(),
+                previous_root_signature: request.previous_root_signature.clone(),
+                new_root_signature: request.new_root_signature.clone(),
+                rotating_device_id: device_id.clone(),
+                rotated_at_unix: 201,
+            });
+            let response = RotateRootIdentityResponse {
+                protocol_version: ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+                user_id: self.user_id.to_string(),
+                device_id,
+                rotation_sequence: next_sequence,
+                previous_root_key_pub,
+                new_root_key_pub: request.new_root_key_pub.clone(),
+                revoked_device_count,
+                deleted_keypackage_count: 0,
+                rotated_at_unix: 201,
+            };
+            *self.last_rotation.lock().unwrap() = Some((request.clone(), response.clone()));
+            if self.lose_rotation_response.swap(false, Ordering::SeqCst) {
+                return Err(NativeApiError::Unavailable);
+            }
+            Ok(response)
         }
     }
 
@@ -951,6 +1161,95 @@ mod tests {
         assert_eq!(
             backend.initialize_e2ee_store(),
             Err(DesktopCommandBackendError::Rejected)
+        );
+    }
+
+    #[test]
+    fn production_backend_rotates_root_without_exposing_replacement_secrets() {
+        let user_id = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (backend, _session_store, _registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        backend.initialize_e2ee_store().unwrap();
+        let previous_root =
+            load_root_identity(local_store.as_ref(), &StoreKey::root_identity()).unwrap();
+
+        let response = backend
+            .rotate_root_identity(RotateIdentityCommandRequest {
+                confirmation: crate::ROTATE_IDENTITY_CONFIRMATION.to_owned(),
+            })
+            .unwrap();
+        assert_eq!(response.rotation_sequence, 1);
+        assert_eq!(
+            response.previous_root_key_pub,
+            previous_root.public_key_bytes()
+        );
+        let replacement_root =
+            load_root_identity(local_store.as_ref(), &StoreKey::root_identity()).unwrap();
+        assert_ne!(
+            replacement_root.public_key_bytes(),
+            previous_root.public_key_bytes()
+        );
+        assert_eq!(
+            replacement_root.public_key_bytes().to_vec(),
+            response.new_root_key_pub
+        );
+        assert_eq!(
+            local_store.exists(&StoreKey::pending_root_identity_rotation()),
+            Ok(false)
+        );
+        assert_eq!(
+            load_root_identity_rotation_sequence(local_store.as_ref()),
+            Ok(1)
+        );
+        assert_eq!(api.uploaded.load(Ordering::SeqCst), DEFAULT_BATCH_SIZE + 1);
+        assert_eq!(
+            backend
+                .read_encryption_settings()
+                .unwrap()
+                .rotation_sequence,
+            1
+        );
+    }
+
+    #[test]
+    fn production_backend_reconciles_a_lost_rotation_response_from_durable_state() {
+        let user_id = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (backend, _session_store, _registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        backend.initialize_e2ee_store().unwrap();
+        let previous_root =
+            load_root_identity(local_store.as_ref(), &StoreKey::root_identity()).unwrap();
+        api.lose_rotation_response.store(true, Ordering::SeqCst);
+
+        let command = RotateIdentityCommandRequest {
+            confirmation: crate::ROTATE_IDENTITY_CONFIRMATION.to_owned(),
+        };
+        assert_eq!(
+            backend.rotate_root_identity(command.clone()),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert_eq!(
+            load_root_identity(local_store.as_ref(), &StoreKey::root_identity())
+                .unwrap()
+                .public_key_bytes(),
+            previous_root.public_key_bytes()
+        );
+        assert_eq!(
+            local_store.exists(&StoreKey::pending_root_identity_rotation()),
+            Ok(true)
+        );
+
+        let response = backend.rotate_root_identity(command).unwrap();
+        assert_eq!(response.rotation_sequence, 1);
+        assert_eq!(
+            local_store.exists(&StoreKey::pending_root_identity_rotation()),
+            Ok(false)
+        );
+        assert_eq!(
+            load_root_identity_rotation_sequence(local_store.as_ref()),
+            Ok(1)
         );
     }
 

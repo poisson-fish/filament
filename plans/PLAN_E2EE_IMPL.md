@@ -7,7 +7,7 @@
 
 ---
 
-## Implementation Status — 2026-07-22
+## Implementation Status — 2026-07-23
 
 The repository is currently implementing **Phase 5 voice/video E2EE**, but
 E2EE messaging and media are not yet production client paths. Plaintext
@@ -270,9 +270,16 @@ OpenMLS provider state, and an exact retryable KeyPackage upload outbox are
 atomically persisted in SQLCipher before certificate publication. Existing
 accounts remain QR-pairing-gated, every returned device certificate is checked
 against the local root, and uncertain uploads retry idempotently after restart.
-Mailbox coordination, encrypted messaging UI, rotation submission, packaged
-network smoke coverage, and non-desktop platform custody evidence remain fail
-closed.
+Mailbox coordination, encrypted messaging UI, packaged network smoke coverage,
+and non-desktop platform custody evidence remain fail closed. Destructive
+root-identity rotation is now production-wired through the
+existing audited command: the native host verifies the complete signed public
+chain against its local pin, persists a bounded replacement root, fresh
+signer/provider checkpoint, and KeyPackage outbox before submission, and
+reconciles exact idempotent retries after response loss or restart. Confirmed
+adoption atomically resets MLS group state for authenticated external-commit
+recovery, advances the durable sequence, and never exposes replacement secrets
+to UI code.
 
 ---
 
