@@ -222,11 +222,14 @@ macOS 15 on architecture-scoped Apple-silicon and x86-64 artifacts, supported
 Windows 11 x86-64 (MSI), Android API 33+ arm64 targeting API 36, and iOS 17+
 device/simulator builds behind the existing feasibility gate. Tauri v2 is the
 selected desktop/mobile adapter so the locally bundled SolidJS application can
-reuse one typed Rust boundary, but runtime scaffolding remains blocked: the
-current Tauri 2.11.5 graph still fails the repository's advisory and license
-policy. No exception, unsafe FFI fallback, or privileged-command expansion was
-added. Media remains disabled on every target until its final packaged probe
-passes.
+reuse one typed Rust boundary. Runtime scaffolding is approved under exact
+license and RustSec exceptions for the current Tauri 2.11.5 graph. The
+maintainer approved those enumerated temporary exceptions on 2026-07-22 after
+confirming that 2.11.5 remains the latest stable release. Patchable `anyhow`,
+`time`, and `quick-xml` findings remain denied, the exception scope expires for
+review on 2027-01-18, and no unsafe FFI fallback or privileged-command
+expansion was added. Media remains disabled on every target until its final
+packaged probe passes.
 
 ---
 

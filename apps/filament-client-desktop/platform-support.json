@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "reviewed_at": "2026-07-22",
   "review_interval_days": 180,
   "support_policy": {
@@ -13,13 +13,16 @@
   "runtime": {
     "ui": "bundled_solidjs",
     "adapter": "tauri_v2_desktop_and_mobile",
-    "status": "supply_chain_blocked",
+    "status": "approved_exact_exceptions_pending_adapter",
     "reviewed_version": "2.11.5",
-    "blockers": [
-      "disallowed_mpl_transitives",
+    "accepted_risks": [
+      "scoped_mpl_transitives",
+      "scoped_llvm_exception_transitive",
       "unmaintained_transitives",
-      "active_rustsec_findings"
+      "glib_0.18.5_unsoundness"
     ],
+    "exception_review_due": "2027-01-18",
+    "patchable_advisories_allowed": false,
     "unsafe_ffi_fallback_allowed": false
   },
   "targets": [

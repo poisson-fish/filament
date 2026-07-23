@@ -68,7 +68,9 @@ struct PackagedRuntime {
     adapter: String,
     status: String,
     reviewed_version: String,
-    blockers: Vec<String>,
+    accepted_risks: Vec<String>,
+    exception_review_due: String,
+    patchable_advisories_allowed: bool,
     unsafe_ffi_fallback_allowed: bool,
 }
 
@@ -194,7 +196,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
     let contract: PlatformSupportContract =
         serde_json::from_str(&raw).expect("platform support contract should be strict JSON");
 
-    assert_eq!(contract.schema_version, 1);
+    assert_eq!(contract.schema_version, 2);
     assert_eq!(contract.reviewed_at, "2026-07-22");
     assert!(contract.review_interval_days <= 180);
     assert_eq!(contract.support_policy.client_release_support_months, 12);
@@ -209,16 +211,22 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
 
     assert_eq!(contract.runtime.ui, "bundled_solidjs");
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
-    assert_eq!(contract.runtime.status, "supply_chain_blocked");
+    assert_eq!(
+        contract.runtime.status,
+        "approved_exact_exceptions_pending_adapter"
+    );
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(
-        contract.runtime.blockers,
+        contract.runtime.accepted_risks,
         [
-            "disallowed_mpl_transitives",
+            "scoped_mpl_transitives",
+            "scoped_llvm_exception_transitive",
             "unmaintained_transitives",
-            "active_rustsec_findings"
+            "glib_0.18.5_unsoundness"
         ]
     );
+    assert_eq!(contract.runtime.exception_review_due, "2027-01-18");
+    assert!(!contract.runtime.patchable_advisories_allowed);
     assert!(!contract.runtime.unsafe_ffi_fallback_allowed);
 
     let targets: BTreeMap<&str, &PackagedTarget> = contract
@@ -271,6 +279,67 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
     for target in targets.values() {
         assert_eq!(target.media, "disabled_until_packaged_probe_passes");
         assert!(!target.webview.is_empty());
+    }
+}
+
+#[test]
+fn tauri_policy_exceptions_are_exact_and_keep_patchable_findings_denied() {
+    let root = repo_root();
+    let policy =
+        fs::read_to_string(root.join("cargo-deny.toml")).expect("cargo deny policy should exist");
+
+    for exact_license_exception in [
+        "cssparser:0.36.0",
+        "cssparser-macros:0.6.1",
+        "dtoa-short:0.3.5",
+        "option-ext:0.2.0",
+        "selectors:0.36.1",
+        "target-lexicon:0.12.16",
+    ] {
+        assert_eq!(
+            policy.matches(exact_license_exception).count(),
+            1,
+            "Tauri license exception must be exact and unique: {exact_license_exception}"
+        );
+    }
+
+    for accepted_advisory in [
+        "RUSTSEC-2024-0370",
+        "RUSTSEC-2024-0411",
+        "RUSTSEC-2024-0412",
+        "RUSTSEC-2024-0413",
+        "RUSTSEC-2024-0414",
+        "RUSTSEC-2024-0415",
+        "RUSTSEC-2024-0416",
+        "RUSTSEC-2024-0417",
+        "RUSTSEC-2024-0418",
+        "RUSTSEC-2024-0419",
+        "RUSTSEC-2024-0420",
+        "RUSTSEC-2024-0429",
+        "RUSTSEC-2024-0436",
+        "RUSTSEC-2025-0075",
+        "RUSTSEC-2025-0080",
+        "RUSTSEC-2025-0081",
+        "RUSTSEC-2025-0098",
+        "RUSTSEC-2025-0100",
+    ] {
+        assert_eq!(
+            policy.matches(accepted_advisory).count(),
+            1,
+            "Tauri advisory exception must be explicit: {accepted_advisory}"
+        );
+    }
+
+    for patchable_advisory in [
+        "RUSTSEC-2026-0009",
+        "RUSTSEC-2026-0190",
+        "RUSTSEC-2026-0194",
+        "RUSTSEC-2026-0195",
+    ] {
+        assert!(
+            !policy.contains(patchable_advisory),
+            "patchable Tauri advisory must remain denied: {patchable_advisory}"
+        );
     }
 }
 

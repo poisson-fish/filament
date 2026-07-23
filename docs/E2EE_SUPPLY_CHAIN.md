@@ -78,6 +78,30 @@ resolved as follows:
   gates. Cargo-vet exemptions record dependency intake, not a completed source
   audit; formal media-stack review remains a Phase 7 gate.
 
+### Tauri 2.11.5 packaged-runtime exceptions
+
+Tauri 2.11.5 was confirmed as the latest stable upstream and crates.io release
+on 2026-07-22. The maintainer approved an exact temporary exception set so
+Phase 5.5 packaged-client work can proceed while upstream remains on GTK3 and
+the current `tauri-utils` graph:
+
+- MPL-2.0 is accepted only for `cssparser 0.36.0`,
+  `cssparser-macros 0.6.1`, `dtoa-short 0.3.5`, `option-ext 0.2.0`, and
+  `selectors 0.36.1`. `target-lexicon 0.12.16` receives an exact
+  `Apache-2.0 WITH LLVM-exception` exception.
+- RustSec maintenance exceptions cover only the GTK3 0.18 binding family,
+  `proc-macro-error`, `paste`, and five `rust-unic` packages. The GLib 0.18.5
+  unsoundness advisory is also accepted because Tauri's GTK3 line cannot use
+  the fixed GLib series; Filament does not call the affected iterator API.
+- The patchable `anyhow`, `time`, and `quick-xml` advisories visible in
+  Tauri's published-package lock are not ignored. Filament's resolved lock
+  must select fixed compatible releases before packaging.
+
+The exception versions and advisory IDs are enforced in `cargo-deny.toml` and
+desktop hardening tests. They expire for review on 2027-01-18 and are reviewed
+earlier when any new Tauri release is published. This is an explicit risk
+acceptance, not evidence that the affected packages were repaired or audited.
+
 The Git patch is temporary. It must be removed in favor of crates.io packages
 when OpenMLS publishes a release containing the same dependency fix.
 

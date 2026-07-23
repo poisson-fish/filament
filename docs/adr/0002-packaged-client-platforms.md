@@ -1,6 +1,6 @@
 # ADR 0002: Packaged Client Targets and Host Runtime
 
-- **Status:** Accepted for Phase 5.5 implementation
+- **Status:** Accepted with exact Tauri 2.11.5 exceptions
 - **Date:** 2026-07-22
 - **Deciders:** Filament maintainers
 - **Supersedes:** The mobile FFI direction in ADR 0001
@@ -18,19 +18,40 @@ destinations.
 
 The repository already has a seven-command capability-oriented desktop host,
 but it intentionally has no Tauri runtime dependency. Tauri 2.11.5 remains the
-current crates.io release as of this decision. Its reviewed graph fails the
-repository policy because it contains unmaintained packages, active RustSec
-findings, and MPL-2.0 packages outside the three exact HPKE exceptions. The
-runtime cannot be added by weakening `cargo-deny.toml` or ignoring advisories.
+latest crates.io and signed upstream release as of this decision. Its reviewed
+graph contains unmaintained packages, one GLib unsoundness advisory, MPL-2.0
+packages outside the three HPKE exceptions, and one LLVM-exception license.
+On 2026-07-22 the maintainer explicitly accepted those exact temporary risks
+so packaged-client work can proceed.
 
 ## Decision
 
 Use one locally bundled SolidJS application and Tauri v2 host architecture for
 desktop and mobile. Tauri mobile is selected over a separate Swift/Kotlin FFI
 layer so Filament keeps one typed command boundary and does not introduce a
-project-owned foreign-memory ABI. Runtime scaffolding begins only after a
-Tauri release and resolved lockfile pass `cargo audit`, `cargo deny`, and
-`cargo vet`; no dependency exception is pre-approved by this ADR.
+project-owned foreign-memory ABI. Tauri is pinned to 2.11.5 and its resolved
+lockfile must pass `cargo audit`, `cargo deny`, and `cargo vet` under the exact
+exceptions below. Patchable findings are not accepted.
+
+### Exact temporary exception scope
+
+The license exceptions cover only `cssparser 0.36.0`,
+`cssparser-macros 0.6.1`, `dtoa-short 0.3.5`, `option-ext 0.2.0`,
+`selectors 0.36.1`, and `target-lexicon 0.12.16`. MPL source-availability
+notices are required for distributed packages.
+
+RustSec exceptions cover the unmaintained GTK3 binding family
+(`RUSTSEC-2024-0411` through `RUSTSEC-2024-0420`), GLib 0.18.5 iterator
+unsoundness (`RUSTSEC-2024-0429`), unmaintained `proc-macro-error` and `paste`,
+and the five unmaintained `rust-unic` packages selected by `urlpattern`.
+Filament does not call the affected `glib::VariantStrIter` API. This narrows
+exposure but does not repair the transitive unsound implementation.
+
+The exceptions do not cover the patchable `anyhow`, `time`, or `quick-xml`
+advisories present in Tauri's published-package lock. Filament must resolve
+fixed compatible releases and continues to fail CI if those IDs appear.
+Exceptions expire for review on 2027-01-18 and must be reconsidered for every
+Tauri upgrade, whichever occurs first.
 
 The existing seven-command manifest is not implicitly expanded. Production
 messaging needs additional capability operations, but their command/event
@@ -86,10 +107,11 @@ compatibility.
 
 ## Rejected alternatives
 
-### Add Tauri 2.11.5 with policy exceptions
+### Broad or version-range Tauri exceptions
 
-Rejected. This would weaken explicit advisory and license gates in order to
-package the client, contrary to the Phase 5.5 plan and project directives.
+Rejected. The maintainer approval applies only to enumerated crate versions
+and advisory IDs. It does not generally allow MPL, LLVM exceptions,
+unmaintained dependencies, unsoundness, or future Tauri graphs.
 
 ### Separate Swift/Kotlin FFI shells
 
@@ -109,12 +131,12 @@ the same package-level security evidence as the initial matrix.
 
 ## Consequences
 
-The target and artifact matrix is now stable enough to build CI and packaging
-contracts, but installable Tauri apps remain supply-chain blocked. Work that
-does not require the runtime can continue: local-bundle integrity checks,
-typed backend design, target-specific configuration, signing placeholders,
-artifact inspection, and packaged smoke-test harnesses. The next privileged
-command expansion must be reviewed before implementation.
+The target and artifact matrix is stable enough to build CI and packaging
+contracts, and the exact Tauri 2.11.5 graph is approved for adapter work.
+Every resulting artifact still requires local-bundle integrity checks,
+target-specific signing, advisory/license/vet checks, and packaged smoke-test
+evidence. The next privileged command expansion must be reviewed before
+implementation.
 
 ## Authoritative baseline references
 

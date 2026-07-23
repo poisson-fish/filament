@@ -67,10 +67,10 @@ material to any command.
 - Exercise each real OS credential backend on signed macOS, Windows, and Linux
   packages; headless CI uses a deterministic provider and does not claim this
   platform smoke coverage.
-- Add the thin Tauri runtime adapter only after its dependency graph passes the
-  existing advisory and license policy. Tauri 2.11.5 was evaluated on
-  2026-07-21 and rejected because it pulled unmaintained GTK3 bindings, an
-  unsound GLib advisory, and disallowed MPL-2.0 transitives.
+- Add the thin Tauri runtime adapter using only the exact Tauri 2.11.5
+  exceptions approved on 2026-07-22 and recorded in ADR 0002. Patchable
+  findings remain denied, and the temporary GTK3/GLib/MPL exception set must
+  be reviewed on every Tauri release and no later than 2027-01-18.
 - Re-run the audit whenever a Tauri command, serialization type, key-storage
   backend, crash reporter, or E2EE logging path changes.
 - Phase 4 must review the 64 MiB/4,096-record foundation limits and add the
