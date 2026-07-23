@@ -143,8 +143,16 @@ evidence. CI now regenerates the Android project from the locked Tauri CLI,
 pins API 36, build-tools 36.0.0, NDK 27.2.12479018, Java 21, and the arm64
 Rust target, verifies the API 33 floor/API 36 target and cleartext denial, and
 produces integrity-checked local `.apk` and `.aab` paths. Release credentials
-remain external. The next privileged command expansion must be reviewed
-before implementation.
+remain external. CI also regenerates the iOS Xcode project under full Xcode,
+locks the iOS 17 deployment floor, builds the Apple-silicon simulator target,
+and emits integrity evidence for its unsigned `.app`. Device-release evidence
+requires both the signed `.app` and `.ipa`; the verifier does not let simulator
+evidence satisfy that requirement. The development host has only
+`/Library/Developer/CommandLineTools`, and `xcrun --sdk iphoneos` cannot locate
+an SDK, so local generation is toolchain-blocked rather than evidence that iOS
+is infeasible. Signed device packaging remains gated on externally supplied
+Apple Developer credentials and owner review. The next privileged command
+expansion must be reviewed before implementation.
 
 ## Authoritative baseline references
 

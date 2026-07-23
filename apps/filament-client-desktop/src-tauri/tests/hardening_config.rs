@@ -135,6 +135,8 @@ struct DesktopBundle {
     #[serde(rename = "createUpdaterArtifacts")]
     create_updater_artifacts: bool,
     android: AndroidBundle,
+    #[serde(rename = "iOS")]
+    ios: IosBundle,
     resources: BTreeMap<String, String>,
 }
 
@@ -142,6 +144,12 @@ struct DesktopBundle {
 struct AndroidBundle {
     #[serde(rename = "minSdkVersion")]
     min_sdk_version: u8,
+}
+
+#[derive(Debug, Deserialize)]
+struct IosBundle {
+    #[serde(rename = "minimumSystemVersion")]
+    minimum_system_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -254,7 +262,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
     assert_eq!(
         contract.runtime.status,
-        "desktop_android_packages_ci_gated_fail_closed"
+        "desktop_android_ios_simulator_packages_ci_gated_fail_closed"
     );
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(
@@ -410,6 +418,7 @@ fn tauri_config_enforces_hardening_controls() {
     assert!(!csp_has_forbidden_tokens(&config.app.security.csp));
     assert!(!config.bundle.create_updater_artifacts);
     assert_eq!(config.bundle.android.min_sdk_version, 33);
+    assert_eq!(config.bundle.ios.minimum_system_version, "17.0");
     assert_eq!(
         config
             .bundle
@@ -528,6 +537,7 @@ fn packaged_artifact_gates_cover_the_reviewed_initial_matrix() {
         "packaged-client-macos:",
         "packaged-client-windows:",
         "packaged-client-android:",
+        "packaged-client-ios:",
     ] {
         assert!(
             workflow.contains(required_job),
@@ -546,14 +556,28 @@ fn packaged_artifact_gates_cover_the_reviewed_initial_matrix() {
         "hdiutil create",
         "--bundles msi",
         "--target aarch64 --apk --aab --ci",
+        "--target aarch64-sim --debug --ci --no-sign",
     ] {
         assert!(
             workflow.contains(required_bundle),
             "CI should retain package format gate {required_bundle}"
         );
     }
-    assert_eq!(workflow.matches("run verify:package --").count(), 4);
-    assert_eq!(workflow.matches("SHA256SUMS").count(), 8);
+    for required_ios_control in [
+        "aarch64-apple-ios-sim",
+        "xcrun --sdk iphoneos --show-sdk-path",
+        "xcrun --sdk iphonesimulator --show-sdk-path",
+        "IPHONEOS_DEPLOYMENT_TARGET = 17.0",
+        "--platform ios",
+        "--architecture aarch64_simulator",
+    ] {
+        assert!(
+            workflow.contains(required_ios_control),
+            "CI should retain iOS gate {required_ios_control}"
+        );
+    }
+    assert_eq!(workflow.matches("run verify:package --").count(), 5);
+    assert_eq!(workflow.matches("SHA256SUMS").count(), 10);
 }
 
 #[test]

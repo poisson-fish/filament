@@ -244,9 +244,16 @@ Android gate now pins API 36, build-tools 36.0.0, NDK 27.2.12479018, Java 21,
 and the arm64 Rust target; regenerates the mobile project from the locked CLI;
 verifies the API 33 floor, API 36 target, and cleartext denial; and produces
 integrity-checked local `.apk` and `.aab` paths without repository signing
-secrets. Local Android generation remains blocked on the development host's
-absent toolchain, and iOS generation on absent full Xcode and the iPhone SDK.
-Both implementation paths remain selected.
+secrets. The iOS gate now uses full Xcode in macOS 15 CI, regenerates the
+locked Tauri project, enforces the iOS 17 floor and exact bundle identifier,
+builds an unsigned Apple-silicon simulator `.app`, and emits the same bounded
+local-bundle and artifact-integrity evidence. Device release evidence requires
+both a signed `.app` and `.ipa`, so simulator evidence cannot satisfy the
+release gate. Local Android generation remains blocked on the development
+host's absent toolchain, while local iOS generation is blocked by command-line
+tools without an iPhone SDK. Both implementation paths remain selected;
+signed iOS device packaging awaits external Apple credentials and owner
+review.
 
 ---
 

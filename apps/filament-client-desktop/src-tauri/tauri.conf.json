@@ -40,6 +40,9 @@
     "android": {
       "minSdkVersion": 33
     },
+    "iOS": {
+      "minimumSystemVersion": "17.0"
+    },
     "resources": {
       "../../../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
     }

@@ -36,6 +36,22 @@ const PLATFORM_FORMATS = Object.freeze({
     Object.freeze({ directory: "apk", kind: "apk", suffix: ".apk", type: "file" }),
     Object.freeze({ directory: "bundle", kind: "aab", suffix: ".aab", type: "file" }),
   ]),
+  ios: Object.freeze([
+    Object.freeze({
+      architectures: Object.freeze(["aarch64", "aarch64_simulator"]),
+      directory: ".",
+      kind: "app",
+      suffix: ".app",
+      type: "directory",
+    }),
+    Object.freeze({
+      architectures: Object.freeze(["aarch64"]),
+      directory: ".",
+      kind: "ipa",
+      suffix: ".ipa",
+      type: "file",
+    }),
+  ]),
 });
 
 const FORBIDDEN_WEB_SUFFIXES = Object.freeze([
@@ -236,7 +252,7 @@ async function verifyWebBundle(webDist) {
   };
 }
 
-async function directoryArtifactRecord(bundleRoot, artifact, kind) {
+async function directoryArtifactRecord(bundleRoot, artifact, kind, platform) {
   const files = await regularFiles(artifact);
   if (files.length === 0) {
     fail(`artifact directory is empty: ${portableRelative(bundleRoot, artifact)}`);
@@ -244,11 +260,31 @@ async function directoryArtifactRecord(bundleRoot, artifact, kind) {
   const relativeArtifact = portableRelative(bundleRoot, artifact);
   if (kind === "app") {
     const relativeFiles = files.map((filename) => portableRelative(artifact, filename));
-    if (!relativeFiles.includes("Contents/Resources/THIRD_PARTY_NOTICES.txt")) {
-      fail("macOS app is missing THIRD_PARTY_NOTICES.txt");
-    }
-    if (!relativeFiles.some((filename) => filename.startsWith("Contents/MacOS/"))) {
-      fail("macOS app is missing its native executable");
+    if (platform === "macos") {
+      if (!relativeFiles.includes("Contents/Resources/THIRD_PARTY_NOTICES.txt")) {
+        fail("macOS app is missing THIRD_PARTY_NOTICES.txt");
+      }
+      if (!relativeFiles.some((filename) => filename.startsWith("Contents/MacOS/"))) {
+        fail("macOS app is missing its native executable");
+      }
+    } else if (platform === "ios") {
+      if (!relativeFiles.some((filename) => filename.endsWith("THIRD_PARTY_NOTICES.txt"))) {
+        fail("iOS app is missing THIRD_PARTY_NOTICES.txt");
+      }
+      const topLevelFiles = files.filter(
+        (filename) => !portableRelative(artifact, filename).includes("/"),
+      );
+      let hasExecutable = false;
+      for (const filename of topLevelFiles) {
+        const info = await stat(filename);
+        if ((info.mode & 0o111) !== 0) {
+          hasExecutable = true;
+          break;
+        }
+      }
+      if (!hasExecutable) {
+        fail("iOS app is missing its native executable");
+      }
     }
   }
 
@@ -287,17 +323,22 @@ async function fileArtifactRecord(bundleRoot, artifact, kind) {
   };
 }
 
-async function verifyArtifacts(platform, bundleRoot) {
-  const expected = PLATFORM_FORMATS[platform];
-  if (!expected) {
+async function verifyArtifacts(platform, architecture, bundleRoot) {
+  const platformFormats = PLATFORM_FORMATS[platform];
+  if (!platformFormats) {
     fail(`unsupported platform ${platform}`);
   }
+  const expected = platformFormats.filter(
+    (format) => !format.architectures || format.architectures.includes(architecture),
+  );
   const { files, directories } = await regularFiles(bundleRoot, { includeDirectories: true });
   const records = [];
   for (const format of expected) {
     const candidates = (format.type === "file" ? files : directories).filter((candidate) => {
       const relative = portableRelative(bundleRoot, candidate);
-      return relative.startsWith(`${format.directory}/`) && candidate.endsWith(format.suffix);
+      const inDirectory =
+        format.directory === "." || relative.startsWith(`${format.directory}/`);
+      return inDirectory && candidate.endsWith(format.suffix);
     });
     if (candidates.length !== 1) {
       fail(`expected exactly one ${format.kind} artifact, found ${candidates.length}`);
@@ -312,7 +353,7 @@ async function verifyArtifacts(platform, bundleRoot) {
     records.push(
       format.type === "file"
         ? await fileArtifactRecord(bundleRoot, candidates[0], format.kind)
-        : await directoryArtifactRecord(bundleRoot, candidates[0], format.kind),
+        : await directoryArtifactRecord(bundleRoot, candidates[0], format.kind, platform),
     );
   }
   return records;
@@ -346,6 +387,9 @@ async function verifyPackagingContracts(platform, architecture) {
   if (platform === "android" && tauriConfig?.bundle?.android?.minSdkVersion !== 33) {
     fail("Android minimum SDK must remain API 33");
   }
+  if (platform === "ios" && tauriConfig?.bundle?.iOS?.minimumSystemVersion !== "17.0") {
+    fail("iOS minimum system version must remain 17.0");
+  }
   return {
     remoteApplicationCodeAllowed: support.support_policy.remote_application_code_allowed,
     updateArtifactsEnabled: tauriConfig.bundle.createUpdaterArtifacts,
@@ -362,7 +406,7 @@ export async function verifyPackage(options) {
   const manifestPath = path.resolve(invocationRoot, options.manifestPath);
   const checksumsPath = path.resolve(invocationRoot, options.checksumsPath);
   const contracts = await verifyPackagingContracts(options.platform, options.architecture);
-  const artifacts = await verifyArtifacts(options.platform, bundleRoot);
+  const artifacts = await verifyArtifacts(options.platform, options.architecture, bundleRoot);
   const webBundle = await verifyWebBundle(webDist);
   const manifest = {
     schema_version: 1,

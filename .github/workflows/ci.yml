@@ -497,3 +497,99 @@ jobs:
             target/package-evidence/android-aarch64/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
+
+  packaged-client-ios:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          targets: aarch64-apple-ios-sim
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Verify full Xcode and iOS SDKs
+        run: |
+          test "$(uname -m)" = "arm64"
+          test -d /Applications/Xcode.app
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-path
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
+
+      - name: Generate pinned iOS project
+        working-directory: apps/filament-client-desktop
+        run: npm run ios:init -- --ci --skip-targets-install
+
+      - name: Verify generated iOS platform contract
+        working-directory: apps/filament-client-desktop
+        run: |
+          PROJECT_FILE="$(find src-tauri/gen/apple -path '*.xcodeproj/project.pbxproj' -type f -print)"
+          test -n "$PROJECT_FILE"
+          test "$(printf '%s\n' "$PROJECT_FILE" | wc -l | tr -d ' ')" = "1"
+          rg --fixed-strings 'IPHONEOS_DEPLOYMENT_TARGET = 17.0' "$PROJECT_FILE"
+          rg --fixed-strings 'PRODUCT_BUNDLE_IDENTIFIER = com.filament.desktop' "$PROJECT_FILE"
+
+      - name: Build unsigned local iOS simulator app
+        working-directory: apps/filament-client-desktop
+        run: npm run ios:build -- --target aarch64-sim --debug --ci --no-sign
+
+      - name: Verify iOS simulator architecture and metadata
+        shell: bash
+        run: |
+          APP_ROOT="apps/filament-client-desktop/src-tauri/gen/apple/build"
+          APP_COUNT="$(find "$APP_ROOT" -type d -name '*.app' -prune | wc -l | tr -d ' ')"
+          test "$APP_COUNT" = "1"
+          APP_PATH="$(find "$APP_ROOT" -type d -name '*.app' -prune -print)"
+          PLIST_PATH="$APP_PATH/Info.plist"
+          test -f "$PLIST_PATH"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST_PATH")" = "com.filament.desktop"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST_PATH")" = "17.0"
+          EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST_PATH")"
+          test -x "$APP_PATH/$EXECUTABLE_NAME"
+          test "$(lipo -archs "$APP_PATH/$EXECUTABLE_NAME")" = "arm64"
+
+      - name: Verify iOS package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform ios
+          --architecture aarch64_simulator
+          --bundle-root apps/filament-client-desktop/src-tauri/gen/apple/build
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/ios-aarch64-simulator/manifest.json
+          --checksums target/package-evidence/ios-aarch64-simulator/SHA256SUMS
+
+      - name: Upload verified iOS simulator artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-ios-aarch64-simulator-smoke
+          path: |
+            apps/filament-client-desktop/src-tauri/gen/apple/build/**/*.app
+            target/package-evidence/ios-aarch64-simulator/manifest.json
+            target/package-evidence/ios-aarch64-simulator/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7

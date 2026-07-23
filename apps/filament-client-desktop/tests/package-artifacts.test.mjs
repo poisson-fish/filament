@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -124,6 +124,55 @@ test("accepts exact Android APK and AAB formats for the reviewed arm64 target", 
   const checksums = await readFile(options.checksumsPath, "utf8");
   assert.match(checksums, /^[a-f0-9]{64}  apk\/.+\.apk$/mu);
   assert.match(checksums, /^[a-f0-9]{64}  bundle\/.+\.aab$/mu);
+});
+
+test("accepts an unsigned iOS simulator app without requiring a device IPA", async () => {
+  const options = await fixture();
+  const app = path.join(options.bundleRoot, "aarch64-sim", "Filament.app");
+  await mkdir(app, { recursive: true });
+  await writeFile(path.join(app, "Filament"), "iOS simulator executable");
+  await chmod(path.join(app, "Filament"), 0o700);
+  await writeFile(path.join(app, "Info.plist"), "fixture plist");
+  await writeFile(path.join(app, "THIRD_PARTY_NOTICES.txt"), "notices");
+
+  const manifest = await verifyPackage({
+    ...options,
+    platform: "ios",
+    architecture: "aarch64_simulator",
+  });
+
+  assert.deepEqual(
+    manifest.artifacts.map((artifact) => artifact.kind),
+    ["app"],
+  );
+  const checksums = await readFile(options.checksumsPath, "utf8");
+  assert.match(checksums, /^[a-f0-9]{64}  aarch64-sim\/Filament\.app\/$/mu);
+});
+
+test("requires both an iOS device app and IPA for signed release evidence", async () => {
+  const options = await fixture();
+  const app = path.join(options.bundleRoot, "arm64", "Filament.app");
+  await mkdir(app, { recursive: true });
+  await writeFile(path.join(app, "Filament"), "iOS device executable");
+  await chmod(path.join(app, "Filament"), 0o700);
+  await writeFile(path.join(app, "Info.plist"), "fixture plist");
+  await writeFile(path.join(app, "THIRD_PARTY_NOTICES.txt"), "notices");
+
+  await assert.rejects(
+    verifyPackage({ ...options, platform: "ios", architecture: "aarch64" }),
+    /expected exactly one ipa artifact, found 0/u,
+  );
+
+  await writeFile(path.join(options.bundleRoot, "arm64", "Filament.ipa"), "p".repeat(32));
+  const manifest = await verifyPackage({
+    ...options,
+    platform: "ios",
+    architecture: "aarch64",
+  });
+  assert.deepEqual(
+    manifest.artifacts.map((artifact) => artifact.kind),
+    ["app", "ipa"],
+  );
 });
 
 test("rejects a remote application script before writing evidence", async () => {
