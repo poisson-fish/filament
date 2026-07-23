@@ -11,6 +11,7 @@ pub(crate) mod v18_e2ee_group_membership;
 pub(crate) mod v19_e2ee_attachment_mailbox;
 pub(crate) mod v1_hierarchical_permissions;
 pub(crate) mod v20_e2ee_commit_idempotency;
+pub(crate) mod v21_e2ee_message_idempotency;
 pub(crate) mod v2_attachment_schema;
 pub(crate) mod v3_social_graph_schema;
 pub(crate) mod v4_moderation_audit_schema;

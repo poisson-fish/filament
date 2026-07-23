@@ -542,6 +542,65 @@ fn commit_request_sha256(payload: &PostCommitRequest) -> Result<[u8; 32], AuthFa
     Ok(Sha256::digest(encoded).into())
 }
 
+fn message_request_sha256(payload: &PostMessageRequest) -> Result<[u8; 32], AuthFailure> {
+    let encoded = serde_json::to_vec(payload).map_err(|_| AuthFailure::InvalidRequest)?;
+    Ok(Sha256::digest(encoded).into())
+}
+
+async fn existing_message_receipt(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    group_id: GroupId,
+    sender_device_id: DeviceId,
+    payload: &PostMessageRequest,
+) -> Result<Option<PostMessageResponse>, AuthFailure> {
+    let ciphertext_sha256: [u8; 32] = Sha256::digest(&payload.message_blob).into();
+    let row = sqlx::query(
+        "SELECT request_sha256, message_id, created_at_unix, expires_at_unix
+         FROM e2ee_message_receipts
+         WHERE group_id = $1 AND sender_device_id = $2 AND ciphertext_sha256 = $3
+         FOR UPDATE",
+    )
+    .bind(group_id.to_string())
+    .bind(sender_device_id.to_string())
+    .bind(ciphertext_sha256.to_vec())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let expires_at_unix: i64 = row
+        .try_get("expires_at_unix")
+        .map_err(|_| AuthFailure::Internal)?;
+    if expires_at_unix <= now_unix() {
+        sqlx::query(
+            "DELETE FROM e2ee_message_receipts
+             WHERE group_id = $1 AND sender_device_id = $2 AND ciphertext_sha256 = $3",
+        )
+        .bind(group_id.to_string())
+        .bind(sender_device_id.to_string())
+        .bind(ciphertext_sha256.to_vec())
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        return Ok(None);
+    }
+    let stored_request: Vec<u8> = row
+        .try_get("request_sha256")
+        .map_err(|_| AuthFailure::Internal)?;
+    if stored_request.as_slice() != message_request_sha256(payload)?.as_slice() {
+        return Err(AuthFailure::InvalidRequest);
+    }
+    Ok(Some(PostMessageResponse {
+        message_id: row
+            .try_get("message_id")
+            .map_err(|_| AuthFailure::Internal)?,
+        created_at_unix: row
+            .try_get("created_at_unix")
+            .map_err(|_| AuthFailure::Internal)?,
+    }))
+}
+
 async fn commit_receipt_matches(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     group_id: GroupId,
@@ -4464,10 +4523,21 @@ pub(crate) async fn post_group_message(
     let ttl = i64::try_from(requested_ttl.unwrap_or(configured_ttl))
         .map_err(|_| AuthFailure::Internal)?;
     let expires_at = now.checked_add(ttl).ok_or(AuthFailure::Internal)?;
+    let receipt_ttl = i64::try_from(configured_ttl).map_err(|_| AuthFailure::Internal)?;
+    let receipt_expires_at = now.checked_add(receipt_ttl).ok_or(AuthFailure::Internal)?;
     let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
     require_active_owned_device(&mut transaction, auth.user_id, sender_device_id).await?;
     let group = lock_group_for_member(&mut transaction, group_id, auth.user_id).await?;
     require_current_group_leaf(&mut transaction, group_id, auth.user_id, sender_device_id).await?;
+    if let Some(response) =
+        existing_message_receipt(&mut transaction, group_id, sender_device_id, &payload).await?
+    {
+        transaction
+            .commit()
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        return Ok(Json(response));
+    }
     if group.current_epoch != payload.epoch {
         return Err(AuthFailure::EpochConflict);
     }
@@ -4503,6 +4573,22 @@ pub(crate) async fn post_group_message(
     .bind(&payload.message_blob)
     .bind(now)
     .bind(expires_at)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    sqlx::query(
+        "INSERT INTO e2ee_message_receipts
+            (group_id, sender_device_id, ciphertext_sha256, request_sha256,
+             message_id, created_at_unix, expires_at_unix)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(group_id.to_string())
+    .bind(sender_device_id.to_string())
+    .bind(Sha256::digest(&payload.message_blob).to_vec())
+    .bind(message_request_sha256(&payload)?.to_vec())
+    .bind(&message_id)
+    .bind(now)
+    .bind(receipt_expires_at)
     .execute(&mut *transaction)
     .await
     .map_err(|_| AuthFailure::Internal)?;
@@ -4695,6 +4781,43 @@ mod tests {
                 validate_delivery_audience_counts(members, capable_members, devices),
                 Err(AuthFailure::E2eeCapabilityRequired)
             ));
+        }
+    }
+
+    #[test]
+    fn message_retry_receipt_covers_every_request_field() {
+        let base = PostMessageRequest {
+            epoch: 7,
+            suite_id: 3,
+            sender_device_id: DeviceId::new().to_string(),
+            retention_secs: Some(filament_protocol::E2eeRetentionSeconds::new(60).unwrap()),
+            message_blob: vec![0xA5; 512],
+        };
+        let expected = message_request_sha256(&base).unwrap();
+        let variants = [
+            PostMessageRequest {
+                epoch: 8,
+                ..base.clone()
+            },
+            PostMessageRequest {
+                suite_id: 2,
+                ..base.clone()
+            },
+            PostMessageRequest {
+                sender_device_id: DeviceId::new().to_string(),
+                ..base.clone()
+            },
+            PostMessageRequest {
+                retention_secs: None,
+                ..base.clone()
+            },
+            PostMessageRequest {
+                message_blob: vec![0x5A; 512],
+                ..base.clone()
+            },
+        ];
+        for variant in variants {
+            assert_ne!(message_request_sha256(&variant).unwrap(), expected);
         }
     }
 }

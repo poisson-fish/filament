@@ -955,6 +955,38 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .await;
     assert_eq!(message.status(), StatusCode::OK);
     let message: PostMessageResponse = parse_json(message).await;
+    let exact_retry = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &message_request,
+    )
+    .await;
+    assert_eq!(exact_retry.status(), StatusCode::OK);
+    let exact_retry: PostMessageResponse = parse_json(exact_retry).await;
+    assert_eq!(exact_retry, message);
+    let altered_replay = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostMessageRequest {
+            retention_secs: None,
+            ..message_request.clone()
+        },
+    )
+    .await;
+    assert_eq!(altered_replay.status(), StatusCode::BAD_REQUEST);
+    let stored_message_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_messages WHERE group_id = $1")
+            .bind(group_id.to_string())
+            .fetch_one(&audit_pool)
+            .await
+            .expect("exact retry must not duplicate ciphertext");
+    assert_eq!(stored_message_count, 1);
     let stored_message: (Vec<u8>, String, i64, i64) = sqlx::query_as(
         "SELECT ciphertext_blob, crypto_mode, created_at_unix, expires_at_unix
          FROM e2ee_messages WHERE message_id = $1",
@@ -1059,13 +1091,31 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
             .expect("message deletion should be observable");
     assert_eq!(deleted_after_all_acks, 0);
 
-    let expiring = send_json(
+    let retry_after_ciphertext_deletion = send_json(
         &app,
         "POST",
         &format!("/e2ee/groups/{group_id}/messages"),
         Some(&alice_auth.access_token),
         "203.0.113.181",
         &message_request,
+    )
+    .await;
+    assert_eq!(retry_after_ciphertext_deletion.status(), StatusCode::OK);
+    let retry_after_ciphertext_deletion: PostMessageResponse =
+        parse_json(retry_after_ciphertext_deletion).await;
+    assert_eq!(retry_after_ciphertext_deletion, message);
+
+    let expiring_request = PostMessageRequest {
+        message_blob: vec![0xCD; 512],
+        ..message_request.clone()
+    };
+    let expiring = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &expiring_request,
     )
     .await;
     assert_eq!(expiring.status(), StatusCode::OK);

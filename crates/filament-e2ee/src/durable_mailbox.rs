@@ -7,14 +7,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use filament_core::{DeviceId, GroupId, ProposalId, UserId};
+use filament_core::{CiphersuiteId, DeviceId, GroupId, ProposalId, UserId};
 use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeMessagesRequest, AckE2eeProposalsRequest,
     E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxResponse,
     E2eeRetentionSeconds, MlsMembershipChange, PostCommitRequest, PostCommitResponse,
-    MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
-    MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES,
-    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_PROPOSAL_BYTES,
+    PostMessageRequest, PostMessageResponse, MAX_E2EE_COMMIT_ACK_BATCH_SIZE,
+    MAX_E2EE_MESSAGE_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE,
+    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE,
+    MAX_PROPOSAL_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -25,16 +26,18 @@ use crate::{
     commit_mailbox::validate_page as validate_commit_page, persistence::encode_mls_client_state,
     process_commit_mailbox, process_group_commit_mailbox, process_message_mailbox,
     AuthenticatedMembershipChange, AuthenticatedMembershipChangeKind, ConversationAudience,
-    ConversationError, DecryptedApplicationMessage, EncryptedGroupCommit,
+    ConversationError, DecryptedApplicationMessage, EncryptedChatEvent, EncryptedGroupCommit,
     ExternalCommitRecoveryInfo, ExternalGroupProposal, ExternalProposalAction, KeyStoreError,
     LocalKeyStore, MlsClientState, MlsConversation, PendingCommitRebase,
     PendingExternalCommitRecovery, PendingGroupCommit, PinnedUserIdentity, RejectedMailboxCommit,
-    RejectedMailboxMessage, StoreKey, MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
+    RejectedMailboxMessage, StoreKey, VersionedApplicationEvent, MAX_APPLICATION_PLAINTEXT_BYTES,
+    MAX_STORE_VALUE_BYTES,
 };
 
 const HISTORY_RECORD_VERSION: u16 = 2;
 const RETENTION_POLICY_VERSION: u16 = 1;
 const OUTBOUND_COMMIT_RECORD_VERSION: u16 = 1;
+const OUTBOUND_MESSAGE_RECORD_VERSION: u16 = 1;
 const MAX_LOCAL_HISTORY_RECORD_BYTES: usize = (MAX_APPLICATION_PLAINTEXT_BYTES * 4) + 2_048;
 const MAX_UNIX_TIMESTAMP: i64 = 253_402_300_799;
 
@@ -75,6 +78,9 @@ pub enum DurableMailboxError {
     /// A winning commit made the pending policy intent unsafe to retry.
     #[error("the outbound MLS commit intent was invalidated by the accepted epoch")]
     InvalidatedOutboundCommit,
+    /// An encrypted application message must be resolved before the group epoch changes.
+    #[error("an outbound MLS message is already pending")]
+    PendingOutboundMessage,
     /// The requested group has no local MLS state.
     #[error("MLS conversation is not available locally")]
     ConversationNotFound,
@@ -203,6 +209,24 @@ struct OutboundCommitRecord {
     request: PostCommitRequest,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OutboundMessageRecord {
+    version: u16,
+    accepted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response: Option<PostMessageResponse>,
+    request: PostMessageRequest,
+    generation: u64,
+    plaintext: Vec<u8>,
+}
+
+impl Drop for OutboundMessageRecord {
+    fn drop(&mut self) {
+        self.plaintext.zeroize();
+    }
+}
+
 impl DurableMlsClient {
     /// Restore a fully validated native runtime from encrypted storage.
     ///
@@ -300,6 +324,7 @@ impl DurableMlsClient {
     ) -> Result<PendingExternalCommitRecovery, DurableMailboxError> {
         if store.exists(&message_ack_key(recovery.group_id)?)?
             || store.exists(&commit_ack_key(recovery.group_id)?)?
+            || store.exists(&outbound_message_key(recovery.group_id)?)?
         {
             return Err(DurableMailboxError::PendingAcknowledgment);
         }
@@ -328,6 +353,7 @@ impl DurableMlsClient {
     ) -> Result<PendingExternalCommitRecovery, DurableMailboxError> {
         if store.exists(&message_ack_key(recovery.group_id)?)?
             || store.exists(&commit_ack_key(recovery.group_id)?)?
+            || store.exists(&outbound_message_key(recovery.group_id)?)?
         {
             return Err(DurableMailboxError::PendingAcknowledgment);
         }
@@ -410,6 +436,9 @@ impl DurableMlsClient {
         validate_proposal_page(&page)?;
         if store.exists(&proposal_ack_key(group_id)?)? {
             return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+        if store.exists(&outbound_message_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingOutboundMessage);
         }
         if store.exists(&outbound_commit_key(group_id)?)? {
             return Err(DurableMailboxError::PendingOutboundCommit);
@@ -631,6 +660,9 @@ impl DurableMlsClient {
         page: E2eeCommitMailboxResponse,
     ) -> Result<DurableOutboundCommitRebase, DurableMailboxError> {
         validate_commit_page(&page)?;
+        if store.exists(&outbound_message_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingOutboundMessage);
+        }
         if store.exists(&commit_ack_key(group_id)?)? {
             return Err(DurableMailboxError::PendingAcknowledgment);
         }
@@ -721,6 +753,176 @@ impl DurableMlsClient {
             already_satisfied: accepted,
             invalidated,
         })
+    }
+
+    /// Encrypt and atomically checkpoint one exact retry-safe chat event.
+    ///
+    /// The advanced MLS sender ratchet, authenticated plaintext, and opaque
+    /// transport request are committed in one encrypted-store transaction
+    /// before network submission. Only the exact durable ciphertext may be
+    /// retried after response loss.
+    ///
+    /// # Errors
+    /// Rejects unknown groups, pending acknowledgments/commits/messages,
+    /// retention-policy mismatches, invalid events, and uncertain writes.
+    pub fn prepare_outbound_message(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        group_id: GroupId,
+        event: &crate::VersionedApplicationEvent,
+    ) -> Result<PostMessageRequest, DurableMailboxError> {
+        if store.exists(&outbound_message_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingOutboundMessage);
+        }
+        if store.exists(&message_ack_key(group_id)?)?
+            || store.exists(&commit_ack_key(group_id)?)?
+            || store.exists(&proposal_ack_key(group_id)?)?
+        {
+            return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+        if store.exists(&outbound_commit_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingOutboundCommit);
+        }
+        if event.retention_secs != load_disappearing_timer(store, group_id)? {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+
+        let plaintext = Zeroizing::new(event.encode()?);
+        let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
+        let Some(position) = state
+            .conversations
+            .iter()
+            .position(|conversation| conversation.group_id() == group_id)
+        else {
+            self.state = Some(state);
+            return Err(DurableMailboxError::ConversationNotFound);
+        };
+        let generation = state.conversations[position]
+            .persistence_metadata()
+            .outbound_generation;
+        let encrypted = match state.conversations[position]
+            .encrypt_application_message(&state.device, &plaintext)
+        {
+            Ok(encrypted) => encrypted,
+            Err(error) => {
+                self.state = Some(state);
+                return Err(error.into());
+            }
+        };
+        let request = PostMessageRequest {
+            epoch: encrypted.epoch,
+            suite_id: encrypted.suite.as_u16(),
+            sender_device_id: encrypted.sender_device_id.to_string(),
+            retention_secs: event.retention_secs,
+            message_blob: encrypted.message_blob,
+        };
+        let record = OutboundMessageRecord {
+            version: OUTBOUND_MESSAGE_RECORD_VERSION,
+            accepted: false,
+            response: None,
+            request: request.clone(),
+            generation,
+            plaintext: plaintext.to_vec(),
+        };
+        if let Err(error) = store.store_batch(vec![
+            (StoreKey::mls_client_state(), encode_state(&state)?),
+            (outbound_message_key(group_id)?, encode_json(&record)?),
+        ]) {
+            return Err(error.into());
+        }
+        self.state = Some(state);
+        Ok(request)
+    }
+
+    /// Return the exact durable message request that must be retried.
+    ///
+    /// An accepted marker left after local-history persistence is reconciled
+    /// and removed only after the authenticated history record is verified.
+    ///
+    /// # Errors
+    /// Rejects corrupt, cross-device/group, or checkpoint-mismatched outboxes.
+    pub fn pending_outbound_message(
+        &self,
+        store: &dyn LocalKeyStore,
+        group_id: GroupId,
+    ) -> Result<Option<PostMessageRequest>, DurableMailboxError> {
+        let Some(record) = load_outbound_message_record(store, group_id)? else {
+            return Ok(None);
+        };
+        let state = self
+            .state
+            .as_ref()
+            .ok_or(DurableMailboxError::Unavailable)?;
+        validate_outbound_message_record(state, group_id, &record)?;
+        if let Some(response) = &record.response {
+            validate_outbound_message_history(store, state, group_id, &record, response)?;
+            let removed = store.remove_batch(&[outbound_message_key(group_id)?])?;
+            if removed != 1 {
+                return Err(KeyStoreError::InvalidValue.into());
+            }
+            return Ok(None);
+        }
+        Ok(Some(record.request.clone()))
+    }
+
+    /// Persist the sender's authenticated local history after exact acceptance.
+    ///
+    /// History, a response-bearing accepted marker, and any authenticated
+    /// disappearing-timer update are stored atomically. A crash before marker
+    /// cleanup is reconciled by [`Self::pending_outbound_message`].
+    ///
+    /// # Errors
+    /// Rejects substituted requests/responses, invalid timestamps/IDs, and
+    /// checkpoint mismatches without clearing the durable retry request.
+    pub fn confirm_outbound_message(
+        &self,
+        store: &dyn LocalKeyStore,
+        group_id: GroupId,
+        submitted: &PostMessageRequest,
+        response: &PostMessageResponse,
+    ) -> Result<(), DurableMailboxError> {
+        let mut record = load_outbound_message_record(store, group_id)?
+            .ok_or(DurableMailboxError::PendingOutboundMessage)?;
+        if record.accepted || record.response.is_some() || &record.request != submitted {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        let state = self
+            .state
+            .as_ref()
+            .ok_or(DurableMailboxError::Unavailable)?;
+        validate_outbound_message_record(state, group_id, &record)?;
+        validate_message_response(response)?;
+        let stored = outbound_stored_message(
+            group_id,
+            state.device.user_id(),
+            state.device.device_id(),
+            &record,
+            response,
+        )?;
+        let history = history_storage_entry(&stored)?;
+        record.accepted = true;
+        record.response = Some(response.clone());
+        let mut entries = vec![
+            history,
+            (outbound_message_key(group_id)?, encode_json(&record)?),
+        ];
+        if let EncryptedChatEvent::SetDisappearingTimer { retention_secs } =
+            VersionedApplicationEvent::decode(&record.plaintext)?.event
+        {
+            entries.push((
+                retention_policy_key(group_id)?,
+                encode_json(&RetentionPolicyRecord {
+                    version: RETENTION_POLICY_VERSION,
+                    retention_secs,
+                })?,
+            ));
+        }
+        store.store_batch(entries)?;
+        let removed = store.remove_batch(&[outbound_message_key(group_id)?])?;
+        if removed != 1 {
+            return Err(KeyStoreError::InvalidValue.into());
+        }
+        Ok(())
     }
 
     /// Process one bounded message page and atomically persist its effects.
@@ -832,6 +1034,9 @@ impl DurableMlsClient {
         if store.exists(&commit_ack_key(group_id)?)? {
             return Err(DurableMailboxError::PendingAcknowledgment);
         }
+        if store.exists(&outbound_message_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingOutboundMessage);
+        }
         let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
         let existing_position = state
             .conversations
@@ -891,6 +1096,9 @@ impl DurableMlsClient {
     ) -> Result<DurableCommitMailboxBatch, DurableMailboxError> {
         if store.exists(&commit_ack_key(group_id)?)? {
             return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+        if store.exists(&outbound_message_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingOutboundMessage);
         }
         let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
         let existing_position = state
@@ -1380,6 +1588,10 @@ fn outbound_commit_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
     StoreKey::new(format!("mailbox:outbound_commit:{group_id}"))
 }
 
+fn outbound_message_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
+    StoreKey::new(format!("mailbox:outbound_message:{group_id}"))
+}
+
 fn retention_policy_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
     StoreKey::new(format!("settings:disappearing:{group_id}"))
 }
@@ -1399,6 +1611,132 @@ fn load_outbound_commit_record(
         return Err(KeyStoreError::InvalidValue);
     }
     Ok(Some(record))
+}
+
+fn load_outbound_message_record(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+) -> Result<Option<OutboundMessageRecord>, KeyStoreError> {
+    let key = outbound_message_key(group_id)?;
+    if !store.exists(&key)? {
+        return Ok(None);
+    }
+    let encoded = store.load(&key)?;
+    let record: OutboundMessageRecord =
+        serde_json::from_slice(&encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    if record.version != OUTBOUND_MESSAGE_RECORD_VERSION
+        || record.accepted != record.response.is_some()
+        || record.plaintext.is_empty()
+        || record.plaintext.len() > MAX_APPLICATION_PLAINTEXT_BYTES
+    {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    if let Some(response) = &record.response {
+        validate_message_response(response).map_err(|_| KeyStoreError::InvalidValue)?;
+    }
+    Ok(Some(record))
+}
+
+fn validate_outbound_message_record(
+    state: &MlsClientState,
+    group_id: GroupId,
+    record: &OutboundMessageRecord,
+) -> Result<(), DurableMailboxError> {
+    let request = &record.request;
+    if request.sender_device_id != state.device.device_id().to_string()
+        || request.suite_id != CiphersuiteId::baseline().as_u16()
+        || !matches!(request.message_blob.len(), 512 | 1_024 | 4_096 | 16_384)
+    {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    let conversation = state
+        .conversations
+        .iter()
+        .find(|conversation| conversation.group_id() == group_id)
+        .ok_or(DurableMailboxError::ConversationNotFound)?;
+    let metadata = conversation.persistence_metadata();
+    if metadata.epoch != request.epoch
+        || metadata.own_device_id != state.device.device_id()
+        || record.generation.checked_add(1) != Some(metadata.outbound_generation)
+    {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    let event = VersionedApplicationEvent::decode(&record.plaintext)?;
+    if event.retention_secs != request.retention_secs || event.encode()? != record.plaintext {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    Ok(())
+}
+
+fn validate_message_response(response: &PostMessageResponse) -> Result<(), DurableMailboxError> {
+    validate_ulid(&response.message_id).map_err(DurableMailboxError::KeyStore)?;
+    if !(0..=MAX_UNIX_TIMESTAMP).contains(&response.created_at_unix) {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    Ok(())
+}
+
+fn outbound_stored_message(
+    group_id: GroupId,
+    sender_user_id: UserId,
+    sender_device_id: DeviceId,
+    record: &OutboundMessageRecord,
+    response: &PostMessageResponse,
+) -> Result<StoredMailboxMessage, DurableMailboxError> {
+    let expires_at_unix = record
+        .request
+        .retention_secs
+        .map(|duration| {
+            response
+                .created_at_unix
+                .checked_add(
+                    i64::try_from(duration.as_u64())
+                        .map_err(|_| ConversationError::MetadataMismatch)?,
+                )
+                .filter(|expires_at| *expires_at <= MAX_UNIX_TIMESTAMP)
+                .ok_or(ConversationError::MetadataMismatch)
+        })
+        .transpose()?;
+    Ok(StoredMailboxMessage {
+        message_id: response.message_id.clone(),
+        group_id,
+        created_at_unix: response.created_at_unix,
+        expires_at_unix,
+        message: DecryptedApplicationMessage {
+            sender_user_id,
+            sender_device_id,
+            generation: record.generation,
+            plaintext: record.plaintext.clone(),
+        },
+    })
+}
+
+fn validate_outbound_message_history(
+    store: &dyn LocalKeyStore,
+    state: &MlsClientState,
+    group_id: GroupId,
+    record: &OutboundMessageRecord,
+    response: &PostMessageResponse,
+) -> Result<(), DurableMailboxError> {
+    let stored = load_stored_message_at(store, group_id, &response.message_id, 0)?;
+    let expected = outbound_stored_message(
+        group_id,
+        state.device.user_id(),
+        state.device.device_id(),
+        record,
+        response,
+    )?;
+    if stored != expected {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    if let EncryptedChatEvent::SetDisappearingTimer { retention_secs } =
+        VersionedApplicationEvent::decode(&record.plaintext)?.event
+    {
+        if load_disappearing_timer(store, group_id)? != retention_secs {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_outbound_commit_request(
@@ -1631,10 +1969,13 @@ fn validate_ulid(value: &str) -> Result<(), KeyStoreError> {
 
 #[cfg(test)]
 mod tests {
-    use filament_core::{ConversationCrypto, DeviceId, GroupId, ProposalId, UserId};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use filament_core::{CiphersuiteId, ConversationCrypto, DeviceId, GroupId, ProposalId, UserId};
     use filament_protocol::{
         E2eeCommitMailboxEntry, E2eeMailboxMessage, E2eeProposalMailboxEntry,
         E2eeProposalMailboxResponse, GroupInfoResponse, MlsMembershipChange, PostCommitResponse,
+        PostMessageResponse,
     };
 
     use super::*;
@@ -1678,6 +2019,246 @@ mod tests {
             bob_group,
             group_id,
         }
+    }
+
+    #[test]
+    fn outbound_message_checkpoint_retry_and_local_history_are_one_durable_flow() {
+        let JoinedFixture {
+            alice,
+            alice_group,
+            bob,
+            mut bob_group,
+            group_id,
+        } = joined_fixture();
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &alice, &[&alice_group]).unwrap();
+        let event = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: None,
+            event: EncryptedChatEvent::Message {
+                message_id: EncryptedMessageId::new(),
+                body: ChatMessageBody::try_from(String::from("durable hello")).unwrap(),
+                reply: None,
+            },
+        };
+
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let request = runtime
+            .prepare_outbound_message(&store, group_id, &event)
+            .unwrap();
+        assert_eq!(request.retention_secs, None);
+        assert_eq!(request.sender_device_id, alice.device_id().to_string());
+        drop(runtime);
+
+        let restarted = DurableMlsClient::load(&store).unwrap();
+        assert_eq!(
+            restarted
+                .pending_outbound_message(&store, group_id)
+                .unwrap(),
+            Some(request.clone())
+        );
+        let decrypted = bob_group
+            .decrypt_application_message(
+                &bob,
+                &crate::EncryptedApplicationMessage {
+                    crypto: ConversationCrypto::MlsV1,
+                    group_id,
+                    epoch: request.epoch,
+                    suite: CiphersuiteId::try_from(request.suite_id).unwrap(),
+                    sender_device_id: DeviceId::try_from(request.sender_device_id.clone()).unwrap(),
+                    message_blob: request.message_blob.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(decrypted.authenticated_message.generation, 0);
+        assert_eq!(
+            VersionedApplicationEvent::decode(&decrypted.authenticated_message.plaintext).unwrap(),
+            event
+        );
+
+        let response = PostMessageResponse {
+            message_id: Ulid::new().to_string(),
+            created_at_unix: 100,
+        };
+        restarted
+            .confirm_outbound_message(&store, group_id, &request, &response)
+            .unwrap();
+        assert_eq!(
+            restarted
+                .pending_outbound_message(&store, group_id)
+                .unwrap(),
+            None
+        );
+        let stored = load_stored_message_at(&store, group_id, &response.message_id, 100).unwrap();
+        assert_eq!(stored.message.sender_user_id, alice.user_id());
+        assert_eq!(stored.message.sender_device_id, alice.device_id());
+        assert_eq!(stored.message.generation, 0);
+        assert_eq!(
+            VersionedApplicationEvent::decode(&stored.message.plaintext).unwrap(),
+            event
+        );
+    }
+
+    #[test]
+    fn outbound_message_rejects_substitution_and_updates_authenticated_timer() {
+        let JoinedFixture {
+            alice,
+            alice_group,
+            group_id,
+            ..
+        } = joined_fixture();
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &alice, &[&alice_group]).unwrap();
+        let timer = E2eeRetentionSeconds::new(60).unwrap();
+        let event = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: None,
+            event: EncryptedChatEvent::SetDisappearingTimer {
+                retention_secs: Some(timer),
+            },
+        };
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let request = runtime
+            .prepare_outbound_message(&store, group_id, &event)
+            .unwrap();
+        let substituted = PostMessageResponse {
+            message_id: String::from("not-a-ulid"),
+            created_at_unix: 100,
+        };
+        assert!(matches!(
+            runtime.confirm_outbound_message(&store, group_id, &request, &substituted),
+            Err(DurableMailboxError::KeyStore(
+                KeyStoreError::InvalidIdentifier
+            ))
+        ));
+        assert_eq!(
+            runtime.pending_outbound_message(&store, group_id).unwrap(),
+            Some(request.clone())
+        );
+
+        let response = PostMessageResponse {
+            message_id: Ulid::new().to_string(),
+            created_at_unix: 100,
+        };
+        runtime
+            .confirm_outbound_message(&store, group_id, &request, &response)
+            .unwrap();
+        assert_eq!(
+            load_disappearing_timer(&store, group_id).unwrap(),
+            Some(timer)
+        );
+
+        let wrong_policy_event = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: None,
+            event: EncryptedChatEvent::Message {
+                message_id: EncryptedMessageId::new(),
+                body: ChatMessageBody::try_from(String::from("must inherit timer")).unwrap(),
+                reply: None,
+            },
+        };
+        assert!(matches!(
+            runtime.prepare_outbound_message(&store, group_id, &wrong_policy_event),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
+            ))
+        ));
+    }
+
+    struct RejectFirstRemoveStore {
+        inner: InMemoryKeyStore,
+        reject_remove: AtomicBool,
+    }
+
+    impl LocalKeyStore for RejectFirstRemoveStore {
+        fn store(&self, key: StoreKey, value: Vec<u8>) -> Result<(), KeyStoreError> {
+            self.inner.store(key, value)
+        }
+
+        fn store_batch(&self, entries: Vec<(StoreKey, Vec<u8>)>) -> Result<(), KeyStoreError> {
+            self.inner.store_batch(entries)
+        }
+
+        fn load(&self, key: &StoreKey) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
+            self.inner.load(key)
+        }
+
+        fn remove(&self, key: &StoreKey) -> Result<(), KeyStoreError> {
+            self.inner.remove(key)
+        }
+
+        fn remove_batch(&self, keys: &[StoreKey]) -> Result<usize, KeyStoreError> {
+            if self.reject_remove.swap(false, Ordering::SeqCst) {
+                Err(KeyStoreError::BackendError)
+            } else {
+                self.inner.remove_batch(keys)
+            }
+        }
+
+        fn exists(&self, key: &StoreKey) -> Result<bool, KeyStoreError> {
+            self.inner.exists(key)
+        }
+
+        fn list_keys(&self) -> Result<Vec<StoreKey>, KeyStoreError> {
+            self.inner.list_keys()
+        }
+    }
+
+    #[test]
+    fn accepted_outbound_message_marker_closes_history_cleanup_crash_window() {
+        let JoinedFixture {
+            alice,
+            alice_group,
+            group_id,
+            ..
+        } = joined_fixture();
+        let store = RejectFirstRemoveStore {
+            inner: InMemoryKeyStore::new(),
+            reject_remove: AtomicBool::new(true),
+        };
+        persist_mls_client_state(&store.inner, &alice, &[&alice_group]).unwrap();
+        let event = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: None,
+            event: EncryptedChatEvent::Message {
+                message_id: EncryptedMessageId::new(),
+                body: ChatMessageBody::try_from(String::from("accepted marker")).unwrap(),
+                reply: None,
+            },
+        };
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let request = runtime
+            .prepare_outbound_message(&store, group_id, &event)
+            .unwrap();
+        let response = PostMessageResponse {
+            message_id: Ulid::new().to_string(),
+            created_at_unix: 100,
+        };
+        assert!(matches!(
+            runtime.confirm_outbound_message(&store, group_id, &request, &response),
+            Err(DurableMailboxError::KeyStore(KeyStoreError::BackendError))
+        ));
+        assert_eq!(
+            VersionedApplicationEvent::decode(
+                &load_stored_message_at(&store, group_id, &response.message_id, 100)
+                    .unwrap()
+                    .message
+                    .plaintext
+            )
+            .unwrap(),
+            event
+        );
+
+        let restarted = DurableMlsClient::load(&store).unwrap();
+        assert_eq!(
+            restarted
+                .pending_outbound_message(&store, group_id)
+                .unwrap(),
+            None
+        );
+        assert!(!store
+            .exists(&outbound_message_key(group_id).unwrap())
+            .unwrap());
     }
 
     fn message_entry(

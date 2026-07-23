@@ -321,6 +321,17 @@ and atomically checkpoint the winner, its acknowledgment, and either a fresh
 rebased Remove request or a durable invalidation marker. Only the strict
 `epoch_conflict` response enters this bounded retry path; hostile or unrelated
 conflicts remain fail closed.
+Outbound encrypted application messages now use the same restart-safe native
+boundary. The MLS sender-ratchet checkpoint, exact opaque request, authenticated
+event plaintext, generation, and disappearing-message routing hint are stored
+atomically in SQLCipher before submission. A fixed-size Delivery Service
+receipt returns the original message ID only for a field-equivalent ciphertext
+retry, survives transient mailbox deletion, rejects altered replay metadata,
+and expires through bounded garbage collection. The packaged host retries that
+durable request before processing later group epoch work and commits the
+sender's authenticated local-history row only after the exact response is
+confirmed. The existing seven-command IPC surface is unchanged; conversation
+provisioning and the encrypted composer/presentation UI remain fail closed.
 
 ---
 

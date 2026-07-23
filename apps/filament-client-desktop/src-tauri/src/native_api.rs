@@ -15,11 +15,11 @@ use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
     AckE2eeProposalsRequest, AckE2eeProposalsResponse, DeviceListResponse,
     E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxResponse, KeyPackageEntry,
-    PostCommitRequest, PostCommitResponse, PublishDeviceCertificateRequest,
-    PublishDeviceCertificateResponse, RootIdentityDirectoryResponse, RotateRootIdentityRequest,
-    RotateRootIdentityResponse, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
-    MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_SIZE,
-    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
+    PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
+    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse,
+    RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
+    UploadKeyPackagesRequest, UploadKeyPackagesResponse, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE,
+    MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
     ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use reqwest::{
@@ -132,6 +132,13 @@ pub(crate) trait NativeEnrollmentApi: Send + Sync + 'static {
         group_id: GroupId,
         request: &PostCommitRequest,
     ) -> Result<PostCommitResponse, NativeApiError>;
+
+    fn post_message(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &PostMessageRequest,
+    ) -> Result<PostMessageResponse, NativeApiError>;
 }
 
 pub(crate) struct ReqwestNativeEnrollmentApi {
@@ -453,6 +460,20 @@ impl NativeEnrollmentApi for ReqwestNativeEnrollmentApi {
         self.send_commit(
             access_token,
             &format!("/e2ee/groups/{group_id}/commits"),
+            request,
+        )
+    }
+
+    fn post_message(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &PostMessageRequest,
+    ) -> Result<PostMessageResponse, NativeApiError> {
+        self.send_json(
+            access_token,
+            reqwest::Method::POST,
+            &format!("/e2ee/groups/{group_id}/messages"),
             request,
         )
     }
