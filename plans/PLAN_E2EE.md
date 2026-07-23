@@ -1,4 +1,4 @@
-# PLAN_E2EE.md (v2.1 — MLS baseline)
+# PLAN_E2EE.md (v2.2 — MLS baseline)
 
 ## Objective
 Design a security-first end-to-end encryption (E2EE) roadmap for Filament DMs, group DMs, guild encrypted channels, and calls, built on a single MLS (RFC 9420) stack via OpenMLS, and designed against a hostile server operator with full archive capability. Compatible with:
@@ -122,13 +122,13 @@ Cryptographic parameters:
   - revisit only as an explicitly disclosed degraded trust tier (Open Decisions)
 
 ## Client Architecture (Packaged Clients)
-The unified SolidJS frontend is retained across web, desktop, and (later) mobile. E2EE changes where code and keys live, not the UI stack.
+The unified SolidJS frontend is retained across web, desktop, and mobile. E2EE changes where code and keys live, not the UI stack.
 
 - Desktop (Tauri + SolidJS):
   - UI assets are bundled inside the signed package and served from the local application protocol. Remote-loading the hosted web UI into the shell is prohibited: a webview pointed at server-delivered code is a browser with extra steps and inherits the web trust model wholesale.
   - Crypto core placement: OpenMLS and all key/state operations run in the Rust host process — not as WASM inside the webview. The webview communicates with the core over a narrow, typed IPC surface: commands and ciphertext in, plaintext and verified state out.
   - Key material never enters the JS heap. This shrinks the blast radius of any webview compromise (XSS, renderer bug, content-safety bypass) from "steal keys" to "read plaintext currently on screen."
-- Mobile (aligns with main-plan Phase 9):
+- Mobile (secure packaged-chat foundation in E2EE Phase 5.5; broader product work remains in main-plan Phase 9):
   - same shared Rust core over FFI (Swift/Kotlin bindings); platform keystores for custody; the same narrow-boundary discipline between UI and core.
 - Device-bound keys:
   - decryption capability follows paired, certified devices — never account credentials. Account login in a non-capable client (e.g. the web app) confers nothing.
@@ -324,6 +324,14 @@ Exit criteria:
 - SFU relays encrypted media only; decryption exclusively at endpoints; join/leave rekey verified.
 - Insertable-streams verification matrix complete (WebView2 / WKWebView / WebKitGTK); native media path exercised on any platform lacking webview support.
 
+### Phase 5.5: Packaged Cross-Platform Clients
+- Ship locally bundled, installable clients for Linux, macOS, Windows, and Android; target iOS when its toolchain, signing, secure-storage, and native-core integration gates can be met without weakening the security model.
+- Reuse the shared Rust E2EE core behind narrow typed adapters, with device-bound platform keystores, authenticated networking, encrypted local state, and no remotely loaded application code.
+- Calls remain disabled independently on any target until that target's Phase 5 media path and final packaged-client probes pass; messaging must never fall back to plaintext.
+Exit criteria:
+- Linux, macOS, Windows, and Android artifacts install and complete the packaged E2EE messaging smoke suite; iOS does the same or has a documented, owner-reviewed feasibility blocker and retained implementation path.
+- Every shipping target passes asset-origin/navigation, IPC/FFI key-isolation, secure-storage, hostile-server, artifact-integrity, and upgrade/downgrade tests.
+
 ### Phase 6: Guild Encrypted Channels
 - `channel_type = encrypted` with permissioned Add/Remove commit flows reconciling channel authorization to group membership.
 - Large-group performance work (tree operations at 10^3–10^4 leaves); capability gating; moderation-limits documentation.
@@ -380,6 +388,11 @@ Cross-system:
 - Define wire contracts for device/KeyPackage/group endpoints and `mls_*` gateway events before coding.
 - Engineering spike: OpenMLS 2-member group round trip (create, add, message, remove, external-commit recovery) in a Rust CLI harness against a fixture Delivery Service.
 - Engineering spike: verify insertable-streams / `RTCRtpScriptTransform` availability in WKWebView and WebKitGTK (early; informs the Phase 5 media path and whether a native WebRTC fallback is needed per platform).
+
+## Appendix: Revision Notes (v2.2)
+- Added Phase 5.5 to make production packaged clients an explicit prerequisite for guild-channel work instead of leaving launcher, platform storage, native-core integration, and artifact verification implicit.
+- Set Linux, macOS, Windows, and Android as initial required targets. iOS is an explicit target with a documented feasibility gate; its absence cannot be silently treated as completion.
+- Kept media capability fail-closed and independently gated per platform so packaging cannot introduce an unencrypted call fallback.
 
 ## Appendix: Revision Notes (v2.1)
 Clarified and added, from client-architecture review:

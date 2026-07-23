@@ -1,6 +1,6 @@
 # PLAN_E2EE_IMPL.md — Subagent-Based Implementation Plan
 
-**Design source:** [`PLAN_E2EE.md`](PLAN_E2EE.md) (v2.1 — MLS baseline)
+**Design source:** [`PLAN_E2EE.md`](PLAN_E2EE.md) (v2.2 — MLS baseline)
 **Security contracts:** [`docs/SECURITY.md`](../docs/SECURITY.md) §"End-to-End Encryption (MLS) Baseline", [`docs/THREAT_MODEL.md`](../docs/THREAT_MODEL.md) §"E2EE Threats"
 **Project guidelines:** [`AGENTS.md`](../AGENTS.md)
 **Baseline:** `PLAN.md` Phases 0–8 complete (auth, gateway, Postgres, Tantivy search, roles/permissions, LiveKit voice/video, desktop hardening, deploy/ops).
@@ -912,11 +912,119 @@ SQLCipher/OpenSSL and libwebrtc/BoringSSL collision blocker.
 
 - If webview lacks insertable-streams and the native WebRTC fallback requires a non-Rust media path → stop and ask (AGENTS.md §9: "Introducing a non-Rust SFU alternative")
 
+### Integration Points for Phase 5.5
+
+- Native MLS and media boundaries → Phase 5.5 wires production client hosts without exposing key material to UI code
+- Per-platform media verification → Phase 5.5 enables calls only on targets that pass the packaged-client probes
+- SQLCipher/OpenSSL and libwebrtc/BoringSSL collision → Phase 5.5 must resolve the link safely or ship messaging with calls disabled on the affected target
+
+---
+
+## Phase 5.5 — Packaged Cross-Platform Clients
+
+**PLAN_E2EE.md reference:** §"Rollout Phases → Phase 5.5", §"Client Architecture (Packaged Clients)", §"Supply Chain and Build Integrity"
+
+### Goal
+
+Turn the hardened client libraries and configuration into installable,
+production-wired clients. Linux, macOS, Windows, and Android are required
+initial targets. iOS is also an initial target when its build toolchain,
+signing, platform keystore, and shared-Rust-core integration can satisfy every
+security gate; otherwise the phase must record a concrete owner-reviewed
+blocker and preserve a tested implementation path instead of weakening a
+control or silently dropping the target.
+
+The packaged clients bundle the SolidJS application locally, keep MLS and key
+operations in the native Rust core, and treat the authenticated Filament
+server as hostile input. Messaging is the minimum shippable capability. Calls
+are enabled independently per platform only after the Phase 5 media path and
+the final packaged artifact pass; an unsupported or blocked media path remains
+disabled and never falls back to unencrypted media.
+
+### Target Matrix
+
+| Target | Initial requirement | Packaging baseline |
+|--------|---------------------|--------------------|
+| Linux | Required | Select and document supported distributions/architectures and produce at least one installable, integrity-verifiable package format |
+| macOS | Required | Produce a universal or explicitly architecture-scoped `.app` package with signing/notarization configuration and local development packaging |
+| Windows | Required | Produce an installable signed-package path with a pinned WebView2 support baseline |
+| Android | Required | Produce signed development and release-package paths using Android Keystore-backed device custody |
+| iOS | Feasibility-gated target | Produce a signed device/simulator package when all gates pass; otherwise document the exact blocker, evidence, owner decision, and next implementation step |
+
+Minimum OS versions, CPU architectures, package formats, and support lifetime
+must be selected and recorded before implementation. Missing release-signing
+credentials may block publishing but must not block reproducible local package
+validation; no signing secret may be committed.
+
+### Deliverables
+
+1. **Runtime and adapter architecture**:
+   - Desktop hosts use the approved Tauri + SolidJS architecture only after the selected dependency graph passes advisory, license, and source-policy gates; do not add exceptions for the currently blocked Tauri graph
+   - Android and iOS reuse the shared Rust core through a narrow typed mobile adapter; select Tauri mobile or Swift/Kotlin FFI only after a documented security and maintenance comparison
+   - Review the existing seven-command desktop manifest against the production messaging flows before adding IPC; any new privileged Tauri API remains a stop-and-ask decision
+   - Native session identity, credential-store access, filesystem paths, MLS state, and raw key material cannot be supplied by UI code
+
+2. **Production backend wiring**:
+   - Inject authenticated session, bounded REST/gateway transports, platform storage, MLS state, and mailbox coordination into each native host
+   - Pin server-origin policy, cap every IPC/FFI and network payload, use bounded queues/timeouts, and return typed redacted errors
+   - Support login/session rotation, device enrollment, encrypted DM/group messaging, attachment handling, history restore, local search, and encryption settings without exposing key material
+   - Keep plaintext and `mls_v1` paths explicitly separated; an E2EE failure cannot retry or resend through plaintext APIs
+
+3. **Local application bundle**:
+   - Build and embed versioned SolidJS assets in every package; remote scripts, remote navigation, dynamic code updates, and server-hosted application bundles are prohibited
+   - Preserve strict CSP, safe-token Markdown rendering, sanitized links, and hostile-server validation on every platform webview
+   - Add an offline launch test proving the UI originates exclusively from the signed local bundle
+
+4. **Platform key custody and encrypted storage**:
+   - macOS/iOS: Keychain-backed custody; Windows: Credential Manager or stronger platform-backed custody; Linux: Secret Service with a documented fail-closed unavailable state; Android: Android Keystore-backed custody
+   - Use SQLCipher or an equivalently reviewed encrypted local store with private paths, bounded records/database size, secure deletion behavior, and no plaintext fallback
+   - Exercise install, upgrade, logout, device removal, and uninstall/reinstall semantics without orphaning accessible secrets or silently reusing an uncertified device identity
+
+5. **Build, package, and release plumbing**:
+   - Add reproducible developer build commands and CI jobs for every required target, with pinned toolchains and lockfiles
+   - Produce checksummed/SBOM-attached artifacts and configure platform signing without storing signing credentials in the repository
+   - macOS notarization, Windows signing, Android app signing, and iOS signing/TestFlight distribution are release gates where applicable
+   - Keep automatic updates disabled until Phase 7's signed manifest and downgrade-protection work is complete
+
+6. **Per-platform media capability gate**:
+   - Run the final packaged-client Phase 5 probes on each target rather than relying only on diagnostic hosts
+   - Resolve the SQLCipher/OpenSSL and libwebrtc/BoringSSL duplicate-symbol collision without unsafe linker tricks or a storage downgrade; until resolved on a target, ship messaging with calls visibly unavailable
+   - Verify capture permissions, background/lifecycle handling, device changes, and fail-closed teardown before enabling voice or video on that platform
+
+7. **Tests and evidence**:
+   - Install/launch and upgrade smoke tests on Linux, macOS, Windows, and Android; the same for iOS when feasible
+   - End-to-end encrypted message send/receive, offline mailbox recovery, restart persistence, attachment round-trip, device pairing/removal, and no-plaintext-fallback tests from packaged artifacts
+   - Negative IPC/FFI tests proving malformed or oversized UI input cannot select paths, identities, credentials, key material, or arbitrary network destinations
+   - Hostile-server tests for malformed gateway/REST data, downgrade hints, oversized payloads, remote-navigation attempts, and remote-code injection
+   - Secret-scanning, dependency audit/deny, SBOM, artifact-content, CSP/navigation, and key-isolation checks in CI
+
+### Exit Criteria
+
+- [ ] Linux package installs, launches offline from bundled assets, and passes the packaged E2EE messaging smoke suite
+- [ ] macOS package installs, launches offline from bundled assets, and passes the packaged E2EE messaging smoke suite
+- [ ] Windows package installs, launches offline from bundled assets, and passes the packaged E2EE messaging smoke suite
+- [ ] Android package installs, launches offline from bundled assets, and passes the packaged E2EE messaging smoke suite
+- [ ] iOS package passes the same suite, or an evidence-backed feasibility blocker and next implementation step are reviewed and recorded by the owner
+- [ ] Production session, network, MLS, encrypted-store, mailbox, and settings backends are wired without exposing key material to UI code
+- [ ] Every shipping target uses platform-backed key custody and has no plaintext storage, messaging, or media fallback
+- [ ] Remote application code/navigation is blocked and offline bundled-asset launch is verified on every target
+- [ ] Required artifact, dependency, signing-configuration, and platform security gates pass
+- [ ] Calls are enabled only for platforms whose final packaged-client media probes pass; disabled targets present a typed unavailable state
+- [ ] All quality gates pass
+
+### Stop-and-Ask Triggers
+
+- Adding or expanding a privileged Tauri command/API → stop and ask (AGENTS.md §9)
+- Adding a new cryptography dependency, changing the encrypted-store construction, or replacing platform key custody → stop and ask
+- Any packaging workaround that relaxes advisory/license gates, CSP/navigation policy, sandboxing, code-signing integrity, payload limits, or plaintext-fallback policy → stop and ask
+- A mobile approach that requires `unsafe` Rust or a non-Rust media/SFU alternative → stop and ask (AGENTS.md §9)
+- Declaring iOS infeasible or removing any required target from the matrix → stop and ask with concrete evidence
+
 ### Integration Points for Phase 6
 
-- MLS exporter secret derivation → Phase 6 reuses for guild encrypted channel calls
-- SFrame integration patterns → Phase 6 reuses for large-group media
-- Rekey on membership changes → Phase 6 reuses for guild channel role-loss eviction
+- Packaged E2EE messaging clients → Phase 6 can enforce capability gating against real supported devices
+- Shared native-core adapters → Phase 6 exposes authenticated encrypted-channel membership state consistently across targets
+- Per-platform media gates → Phase 6 enables encrypted-channel calls only where packaged Phase 5 verification passed
 
 ---
 
@@ -1129,9 +1237,10 @@ Phase 0 (Design Lock)
             └→ Phase 3 (Group DM E2EE)
                  └→ Phase 4 (Attachments, History, Search)
                       └→ Phase 5 (Voice/Video E2EE)
-                           └→ Phase 6 (Guild Encrypted Channels)
-                                └→ Phase 7 (Hardening and GA)
-                                     └→ Phase 8 (Key Transparency and PQ)
+                           └→ Phase 5.5 (Packaged Cross-Platform Clients)
+                                └→ Phase 6 (Guild Encrypted Channels)
+                                     └→ Phase 7 (Hardening and GA)
+                                          └→ Phase 8 (Key Transparency and PQ)
 ```
 
 Each phase strictly depends on the previous. No phase may begin until the prior phase's commit has landed and quality gates have passed.
@@ -1199,6 +1308,8 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 | Bundled assets enforcement (no remote-loaded UI) | 1 |
 | Local encrypted store (SQLCipher) | 1 (foundation), 4 (full) |
 | SFrame media encryption in Rust host | 5 |
+| Production desktop/mobile adapters and installable packages | 5.5 |
+| Platform keystore integration and packaged-client security probes | 5.5 |
 | Signed update manifests with downgrade protection | 7 |
 
 ### AGENTS.md Stop-and-Ask Triggers by Phase
@@ -1208,6 +1319,8 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 | Adding new cryptography dependency | 0, 8 |
 | Changing protocol event compatibility | 0, 2, 8 |
 | Introducing non-Rust SFU alternative | 5 |
+| Adding or expanding privileged client APIs | 5.5 |
+| Relaxing packaged-client security or dropping a required target | 5.5 |
 | Relaxing limits/timeouts/rate limits | 6 |
 | Adding new privileged Tauri APIs | 1 |
 | Adding `unsafe` Rust | any |
