@@ -966,6 +966,25 @@ impl MlsConversation {
         device: &MlsDevice,
         accepted_commit: &EncryptedGroupCommit,
     ) -> Result<PendingCommitRebase, ConversationError> {
+        self.rebase_pending_commit_with_membership(device, accepted_commit)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Rebase a rejected local commit and return the winning commit's
+    /// authenticated membership effect.
+    ///
+    /// This is the native Delivery Service coordination boundary: callers can
+    /// compare untrusted mailbox routing metadata with the MLS-authenticated
+    /// transition before acknowledging the winner or retrying the intent.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::rebase_pending_commit`].
+    pub fn rebase_pending_commit_with_membership(
+        &mut self,
+        device: &MlsDevice,
+        accepted_commit: &EncryptedGroupCommit,
+    ) -> Result<(PendingCommitRebase, Option<AuthenticatedMembershipChange>), ConversationError>
+    {
         self.ensure_device(device)?;
         if !self.active {
             return Err(ConversationError::NotActive);
@@ -981,18 +1000,32 @@ impl MlsConversation {
         }
 
         let intent = self.pending_commit_intent()?;
+        let before = membership_snapshot(&self.group, &self.pinned_roots)?;
         let protocol_message = self.validate_incoming_commit(accepted_commit)?;
         let staged_commit =
             self.stage_incoming_commit(device, accepted_commit, protocol_message)?;
+        let actor = before
+            .iter()
+            .find(|(_, device_id)| *device_id == accepted_commit.committer_device_id)
+            .copied()
+            .ok_or(ConversationError::MetadataMismatch)?;
         self.group
             .clear_pending_commit(device.provider().storage())
             .map_err(|_| ConversationError::CryptoError)?;
         self.merge_staged_incoming_commit(device, *staged_commit)?;
+        let after = membership_snapshot(&self.group, &self.pinned_roots)?;
+        let membership_change = authenticated_membership_change(
+            accepted_commit.epoch,
+            actor.0,
+            actor.1,
+            &before,
+            &after,
+        );
         if !self.active {
-            return Ok(PendingCommitRebase::Invalidated);
+            return Ok((PendingCommitRebase::Invalidated, membership_change));
         }
 
-        match intent {
+        let outcome = match intent {
             PendingCommitIntent::SelfUpdate => self
                 .create_self_update(device)
                 .map(PendingCommitRebase::Rebased),
@@ -1009,9 +1042,8 @@ impl MlsConversation {
                         || counts.per_user.get(&target.user_id).copied().unwrap_or(0)
                             >= MAX_MLS_DEVICES_PER_USER
                     {
-                        return Ok(PendingCommitRebase::Invalidated);
-                    }
-                    if self.pinned_roots.contains_key(&target.user_id) {
+                        Ok(PendingCommitRebase::Invalidated)
+                    } else if self.pinned_roots.contains_key(&target.user_id) {
                         self.create_add_device(device, target, &keypackage_blob)
                             .map(PendingCommitRebase::Rebased)
                     } else {
@@ -1022,22 +1054,24 @@ impl MlsConversation {
             }
             PendingCommitIntent::RemoveDevice { target_device_id } => {
                 let members = verified_members(&self.group, &self.pinned_roots)?;
-                let Some((_, target)) = members
+                if let Some((_, target)) = members
                     .iter()
                     .find(|(_, member)| member.device_id == target_device_id)
-                else {
-                    return Ok(PendingCommitRebase::AlreadySatisfied);
-                };
-                if members
-                    .iter()
-                    .filter(|(_, member)| member.user_id == target.user_id)
-                    .count()
-                    <= 1
                 {
-                    return Ok(PendingCommitRebase::Invalidated);
+                    if members
+                        .iter()
+                        .filter(|(_, member)| member.user_id == target.user_id)
+                        .count()
+                        <= 1
+                    {
+                        Ok(PendingCommitRebase::Invalidated)
+                    } else {
+                        self.create_remove_device(device, target_device_id)
+                            .map(PendingCommitRebase::Rebased)
+                    }
+                } else {
+                    Ok(PendingCommitRebase::AlreadySatisfied)
                 }
-                self.create_remove_device(device, target_device_id)
-                    .map(PendingCommitRebase::Rebased)
             }
             PendingCommitIntent::RemoveParticipant { target_user_id } => {
                 if !self.pinned_roots.contains_key(&target_user_id) {
@@ -1049,7 +1083,8 @@ impl MlsConversation {
                         .map(PendingCommitRebase::Rebased)
                 }
             }
-        }
+        }?;
+        Ok((outcome, membership_change))
     }
 
     /// Stage a post-compromise self-update for Delivery Service ordering.

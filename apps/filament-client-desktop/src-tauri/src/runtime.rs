@@ -52,6 +52,7 @@ use crate::{
 pub const MAX_TAURI_IPC_REQUEST_BYTES: usize = 16 * 1024;
 const MAX_MAILBOX_GROUPS_PER_SYNC: usize = 8;
 const MAX_MAILBOX_PAGES_PER_GROUP: usize = 4;
+const MAX_OUTBOUND_COMMIT_ATTEMPTS: usize = 4;
 
 struct ProductionDesktopBackend {
     session_store: Arc<dyn SessionCredentialStore>,
@@ -480,6 +481,7 @@ impl ProductionDesktopBackend {
         active: &mut ActiveE2eeState,
         group_id: filament_core::GroupId,
     ) -> Result<(), DesktopCommandBackendError> {
+        self.flush_commit_acknowledgment(session, active, group_id)?;
         self.flush_outbound_commit(session, active, group_id)?;
         self.flush_proposal_acknowledgment(session, active, group_id)?;
         for _ in 0..MAX_MAILBOX_PAGES_PER_GROUP {
@@ -492,15 +494,8 @@ impl ProductionDesktopBackend {
                 .mailbox
                 .process_proposal_mailbox(active.store.as_ref(), group_id, page)
                 .map_err(map_durable_mailbox_error)?;
-            if let Some(request) = batch.outbound_commit.as_ref() {
-                let response = self
-                    .api
-                    .post_commit(&session.access_token, group_id, request)
-                    .map_err(map_native_api_error)?;
-                active
-                    .mailbox
-                    .confirm_outbound_commit(active.store.as_ref(), group_id, request, &response)
-                    .map_err(map_durable_mailbox_error)?;
+            if batch.outbound_commit.is_some() {
+                self.flush_outbound_commit(session, active, group_id)?;
             }
             if let Some(acknowledgment) = batch.acknowledgment.as_ref() {
                 self.api
@@ -525,19 +520,60 @@ impl ProductionDesktopBackend {
         active: &mut ActiveE2eeState,
         group_id: filament_core::GroupId,
     ) -> Result<(), DesktopCommandBackendError> {
-        if let Some(request) = active
-            .mailbox
-            .pending_outbound_commit(active.store.as_ref(), group_id)
-            .map_err(map_durable_mailbox_error)?
-        {
-            let response = self
+        for _ in 0..MAX_OUTBOUND_COMMIT_ATTEMPTS {
+            let Some(request) = active
+                .mailbox
+                .pending_outbound_commit(active.store.as_ref(), group_id)
+                .map_err(map_durable_mailbox_error)?
+            else {
+                return Ok(());
+            };
+            match self
                 .api
                 .post_commit(&session.access_token, group_id, &request)
-                .map_err(map_native_api_error)?;
-            active
-                .mailbox
-                .confirm_outbound_commit(active.store.as_ref(), group_id, &request, &response)
-                .map_err(map_durable_mailbox_error)?;
+            {
+                Ok(response) => {
+                    active
+                        .mailbox
+                        .confirm_outbound_commit(
+                            active.store.as_ref(),
+                            group_id,
+                            &request,
+                            &response,
+                        )
+                        .map_err(map_durable_mailbox_error)?;
+                    return Ok(());
+                }
+                Err(NativeApiError::EpochConflict) => {
+                    self.rebase_outbound_commit(session, active, group_id)?;
+                }
+                Err(error) => return Err(map_native_api_error(error)),
+            }
+        }
+        Err(DesktopCommandBackendError::Rejected)
+    }
+
+    fn rebase_outbound_commit(
+        &self,
+        session: &StoredSession,
+        active: &mut ActiveE2eeState,
+        group_id: filament_core::GroupId,
+    ) -> Result<(), DesktopCommandBackendError> {
+        let page = self
+            .api
+            .commit_mailbox(&session.access_token, group_id, active.device_id)
+            .map_err(map_native_api_error)?;
+        let rebased = active
+            .mailbox
+            .rebase_outbound_commit(active.store.as_ref(), group_id, page)
+            .map_err(map_durable_mailbox_error)?;
+        self.api
+            .acknowledge_commits(&session.access_token, group_id, &rebased.acknowledgment)
+            .map_err(map_native_api_error)?;
+        confirm_commit_acknowledgment(active.store.as_ref(), group_id, &rebased.acknowledgment)
+            .map_err(|error| map_keystore_error(&error))?;
+        if rebased.invalidated {
+            return Err(DesktopCommandBackendError::Rejected);
         }
         Ok(())
     }
@@ -855,7 +891,9 @@ const fn map_device_registry_error(error: DeviceRegistryError) -> DesktopCommand
 const fn map_native_api_error(error: NativeApiError) -> DesktopCommandBackendError {
     match error {
         NativeApiError::Unavailable => DesktopCommandBackendError::Unavailable,
-        NativeApiError::Rejected => DesktopCommandBackendError::Rejected,
+        NativeApiError::Rejected | NativeApiError::EpochConflict => {
+            DesktopCommandBackendError::Rejected
+        }
     }
 }
 
@@ -878,6 +916,7 @@ fn map_durable_mailbox_error(error: DurableMailboxError) -> DesktopCommandBacken
         DurableMailboxError::KeyStore(error) => map_keystore_error(&error),
         DurableMailboxError::PendingAcknowledgment
         | DurableMailboxError::PendingOutboundCommit
+        | DurableMailboxError::InvalidatedOutboundCommit
         | DurableMailboxError::ConversationNotFound
         | DurableMailboxError::Conversation(_) => DesktopCommandBackendError::Rejected,
     }
@@ -1051,7 +1090,7 @@ mod tests {
     };
     use filament_protocol::{
         AckE2eeCommitsRequest, AckE2eeMessagesRequest, AckE2eeProposalsRequest, DeviceInfo,
-        DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse,
+        DeviceListResponse, E2eeCommitMailboxEntry, E2eeCommitMailboxResponse, E2eeMailboxResponse,
         E2eeProposalMailboxEntry, E2eeProposalMailboxResponse, PostCommitRequest,
         PostCommitResponse, RootIdentityDirectoryResponse, RootIdentityRotationEntry,
         RotateRootIdentityRequest, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
@@ -1163,6 +1202,9 @@ mod tests {
         message_mailboxes: Mutex<HashMap<filament_core::GroupId, E2eeMailboxResponse>>,
         lose_message_ack_response: AtomicBool,
         message_ack_attempts: AtomicUsize,
+        commit_mailboxes: Mutex<HashMap<filament_core::GroupId, E2eeCommitMailboxResponse>>,
+        lose_commit_ack_response: AtomicBool,
+        commit_ack_attempts: AtomicUsize,
         proposal_mailboxes: Mutex<HashMap<filament_core::GroupId, E2eeProposalMailboxResponse>>,
         proposal_ack_attempts: AtomicUsize,
         accepted_commits:
@@ -1184,6 +1226,9 @@ mod tests {
                 message_mailboxes: Mutex::new(HashMap::new()),
                 lose_message_ack_response: AtomicBool::new(false),
                 message_ack_attempts: AtomicUsize::new(0),
+                commit_mailboxes: Mutex::new(HashMap::new()),
+                lose_commit_ack_response: AtomicBool::new(false),
+                commit_ack_attempts: AtomicUsize::new(0),
                 proposal_mailboxes: Mutex::new(HashMap::new()),
                 proposal_ack_attempts: AtomicUsize::new(0),
                 accepted_commits: Mutex::new(HashMap::new()),
@@ -1204,6 +1249,9 @@ mod tests {
                 message_mailboxes: Mutex::new(HashMap::new()),
                 lose_message_ack_response: AtomicBool::new(false),
                 message_ack_attempts: AtomicUsize::new(0),
+                commit_mailboxes: Mutex::new(HashMap::new()),
+                lose_commit_ack_response: AtomicBool::new(false),
+                commit_ack_attempts: AtomicUsize::new(0),
                 proposal_mailboxes: Mutex::new(HashMap::new()),
                 proposal_ack_attempts: AtomicUsize::new(0),
                 accepted_commits: Mutex::new(HashMap::new()),
@@ -1399,21 +1447,38 @@ mod tests {
         fn commit_mailbox(
             &self,
             _access_token: &crate::SessionToken,
-            _group_id: filament_core::GroupId,
+            group_id: filament_core::GroupId,
             _device_id: DeviceId,
         ) -> Result<E2eeCommitMailboxResponse, NativeApiError> {
-            Ok(E2eeCommitMailboxResponse {
-                commits: Vec::new(),
-                next_after_epoch: None,
-            })
+            Ok(self
+                .commit_mailboxes
+                .lock()
+                .unwrap()
+                .get(&group_id)
+                .cloned()
+                .unwrap_or(E2eeCommitMailboxResponse {
+                    commits: Vec::new(),
+                    next_after_epoch: None,
+                }))
         }
 
         fn acknowledge_commits(
             &self,
             _access_token: &crate::SessionToken,
-            _group_id: filament_core::GroupId,
-            _request: &AckE2eeCommitsRequest,
+            group_id: filament_core::GroupId,
+            request: &AckE2eeCommitsRequest,
         ) -> Result<(), NativeApiError> {
+            self.commit_ack_attempts.fetch_add(1, Ordering::SeqCst);
+            if self.lose_commit_ack_response.swap(false, Ordering::SeqCst) {
+                return Err(NativeApiError::Unavailable);
+            }
+            let mut mailboxes = self.commit_mailboxes.lock().unwrap();
+            let page = mailboxes
+                .get_mut(&group_id)
+                .ok_or(NativeApiError::Rejected)?;
+            page.commits
+                .retain(|commit| !request.epochs.contains(&commit.epoch));
+            page.next_after_epoch = page.commits.last().map(|commit| commit.epoch);
             Ok(())
         }
 
@@ -1463,11 +1528,21 @@ mod tests {
         ) -> Result<PostCommitResponse, NativeApiError> {
             self.commit_attempts.fetch_add(1, Ordering::SeqCst);
             let mut accepted = self.accepted_commits.lock().unwrap();
-            let response = if let Some((previous, response)) = accepted.get(&group_id) {
-                if previous != request {
+            let response = if let Some((previous, response)) = accepted.get(&group_id).cloned() {
+                if previous == *request {
+                    response
+                } else if request.prior_epoch < response.epoch {
+                    return Err(NativeApiError::EpochConflict);
+                } else if request.prior_epoch == response.epoch {
+                    let response = PostCommitResponse {
+                        accepted: true,
+                        epoch: request.epoch,
+                    };
+                    accepted.insert(group_id, (request.clone(), response.clone()));
+                    response
+                } else {
                     return Err(NativeApiError::Rejected);
                 }
-                response.clone()
             } else {
                 let response = PostCommitResponse {
                     accepted: true,
@@ -1785,6 +1860,160 @@ mod tests {
             .is_none());
         let restored = load_mls_client_state(local_store.as_ref()).unwrap();
         assert_eq!(restored.conversations[0].epoch(), 2);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn production_proposal_commit_authenticates_winner_and_rebases_epoch_conflict() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let charlie_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let charlie = MlsDevice::generate(UserId::new(), DeviceId::new(), &charlie_root).unwrap();
+        let alice_pin =
+            filament_e2ee::PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = filament_e2ee::PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let charlie_pin =
+            filament_e2ee::PinnedUserIdentity::new(charlie.user_id(), *charlie.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let charlie_package = generate_key_package_batch(&charlie, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let delivery =
+            DeliveryServiceSigner::from_seed([0x52; DELIVERY_SERVICE_SEED_BYTES]).unwrap();
+        let group_id = filament_core::GroupId::new();
+        let (mut group, initial) =
+            filament_e2ee::MlsConversation::create_group_with_delivery_service(
+                group_id,
+                &alice,
+                &[(bob_pin, bob_package), (charlie_pin, charlie_package)],
+                delivery.identity(),
+            )
+            .unwrap();
+        group.accept_pending_commit(&alice).unwrap();
+        let mut bob_group =
+            filament_e2ee::MlsConversation::join_group_from_welcome_with_delivery_service(
+                group_id,
+                &bob,
+                &[alice_pin, charlie_pin],
+                initial.welcome_blob.as_deref().unwrap(),
+                delivery.identity(),
+            )
+            .unwrap();
+        let proposal = delivery.sign_remove(group_id, group.epoch(), 2).unwrap();
+        let proposal_id = filament_core::ProposalId::new().to_string();
+
+        let winner = bob_group.create_self_update(&bob).unwrap();
+        bob_group.accept_pending_commit(&bob).unwrap();
+        let winner_request = PostCommitRequest {
+            epoch: winner.epoch,
+            prior_epoch: winner.prior_epoch,
+            committer_device_id: winner.committer_device_id.to_string(),
+            commit_blob: winner.commit_blob.clone(),
+            welcome_blob: None,
+            welcome_device_id: None,
+            group_info_blob: winner.group_info_blob.clone(),
+            membership_change: None,
+        };
+
+        let api = Arc::new(MockEnrollmentApi::with_device(&alice));
+        api.proposal_mailboxes.lock().unwrap().insert(
+            group_id,
+            E2eeProposalMailboxResponse {
+                proposals: vec![E2eeProposalMailboxEntry {
+                    proposal_id: proposal_id.clone(),
+                    epoch: proposal.epoch,
+                    proposer_device_id: None,
+                    external_sender_index: Some(0),
+                    proposal_blob: proposal.proposal_blob,
+                    created_at_unix: 10,
+                    expires_at_unix: 1_000,
+                    reconciliation_deadline_unix: Some(500),
+                }],
+                next_after_proposal_id: Some(proposal_id),
+            },
+        );
+        api.commit_mailboxes.lock().unwrap().insert(
+            group_id,
+            E2eeCommitMailboxResponse {
+                commits: vec![E2eeCommitMailboxEntry {
+                    epoch: winner.epoch,
+                    prior_epoch: winner.prior_epoch,
+                    committer_device_id: winner.committer_device_id.to_string(),
+                    commit_blob: winner.commit_blob,
+                    welcome_blob: None,
+                    membership_change: None,
+                    created_at_unix: 11,
+                    expires_at_unix: 1_000,
+                }],
+                next_after_epoch: Some(winner.epoch),
+            },
+        );
+        api.accepted_commits.lock().unwrap().insert(
+            group_id,
+            (
+                winner_request,
+                PostCommitResponse {
+                    accepted: true,
+                    epoch: winner.epoch,
+                },
+            ),
+        );
+        api.lose_commit_ack_response.store(true, Ordering::SeqCst);
+        let (backend, _session_store, registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        registry.bind(alice.user_id(), alice.device_id()).unwrap();
+        filament_e2ee::persist_root_identity(
+            local_store.as_ref(),
+            StoreKey::root_identity(),
+            &alice_root,
+        )
+        .unwrap();
+        filament_e2ee::persist_mls_client_state(local_store.as_ref(), &alice, &[&group]).unwrap();
+
+        assert_eq!(
+            backend.initialize_e2ee_store(),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert_eq!(api.commit_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(api.commit_ack_attempts.load(Ordering::SeqCst), 1);
+        assert!(
+            pending_commit_acknowledgment(local_store.as_ref(), group_id, alice.device_id())
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(api.proposal_ack_attempts.load(Ordering::SeqCst), 0);
+
+        assert_eq!(backend.initialize_e2ee_store(), Ok(store_status()));
+        assert_eq!(api.commit_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(api.commit_ack_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(api.proposal_ack_attempts.load(Ordering::SeqCst), 1);
+        let accepted = api.accepted_commits.lock().unwrap();
+        let (rebased_request, response) = accepted.get(&group_id).unwrap();
+        assert_eq!(rebased_request.prior_epoch, winner.epoch);
+        assert_eq!(response.epoch, winner.epoch + 1);
+        assert!(matches!(
+            rebased_request.membership_change,
+            Some(filament_protocol::MlsMembershipChange::Remove { .. })
+        ));
+        drop(accepted);
+
+        let restored = load_mls_client_state(local_store.as_ref()).unwrap();
+        assert_eq!(restored.conversations[0].epoch(), winner.epoch + 1);
+        let routes = DurableMlsClient::from_state(restored)
+            .mailbox_routes()
+            .unwrap();
+        assert!(!routes[0]
+            .participants
+            .iter()
+            .any(|participant| participant.user_id == charlie.user_id()));
+        assert!(
+            pending_proposal_acknowledgment(local_store.as_ref(), group_id, alice.device_id())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

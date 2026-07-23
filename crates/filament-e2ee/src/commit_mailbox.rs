@@ -291,7 +291,7 @@ fn process_entry(
     Ok(true)
 }
 
-fn validate_page(page: &E2eeCommitMailboxResponse) -> Result<(), ConversationError> {
+pub(crate) fn validate_page(page: &E2eeCommitMailboxResponse) -> Result<(), ConversationError> {
     if page.commits.len() > MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE {
         return Err(ConversationError::InvalidMailboxPage);
     }

@@ -39,6 +39,7 @@ const NATIVE_API_TIMEOUT: Duration = Duration::from_secs(7);
 const MAX_NATIVE_API_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_NATIVE_API_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_NATIVE_MAILBOX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_NATIVE_ERROR_RESPONSE_BYTES: usize = 256;
 const MAX_PROFILE_MARKDOWN_BYTES: usize = 2_000;
 const MAX_PROFILE_MARKDOWN_TOKENS: usize = 4_096;
 
@@ -46,6 +47,7 @@ const MAX_PROFILE_MARKDOWN_TOKENS: usize = 4_096;
 pub(crate) enum NativeApiError {
     Unavailable,
     Rejected,
+    EpochConflict,
 }
 
 pub(crate) trait NativeEnrollmentApi: Send + Sync + 'static {
@@ -208,6 +210,30 @@ impl ReqwestNativeEnrollmentApi {
             .body(encoded)
             .send()
             .map_err(|_| NativeApiError::Unavailable)?;
+        decode_response(response)
+    }
+
+    fn send_commit(
+        &self,
+        access_token: &SessionToken,
+        path: &str,
+        request: &PostCommitRequest,
+    ) -> Result<PostCommitResponse, NativeApiError> {
+        let encoded = serde_json::to_vec(request).map_err(|_| NativeApiError::Rejected)?;
+        if encoded.is_empty() || encoded.len() > MAX_NATIVE_API_REQUEST_BYTES {
+            return Err(NativeApiError::Rejected);
+        }
+        let response = self
+            .client
+            .post(self.origin.endpoint(path)?)
+            .header(AUTHORIZATION, bearer_value(access_token)?)
+            .header(CONTENT_TYPE, "application/json")
+            .body(encoded)
+            .send()
+            .map_err(|_| NativeApiError::Unavailable)?;
+        if response.status() == StatusCode::CONFLICT {
+            return Err(decode_commit_conflict(response));
+        }
         decode_response(response)
     }
 }
@@ -424,9 +450,8 @@ impl NativeEnrollmentApi for ReqwestNativeEnrollmentApi {
         group_id: GroupId,
         request: &PostCommitRequest,
     ) -> Result<PostCommitResponse, NativeApiError> {
-        self.send_json(
+        self.send_commit(
             access_token,
-            reqwest::Method::POST,
             &format!("/e2ee/groups/{group_id}/commits"),
             request,
         )
@@ -488,6 +513,12 @@ struct NativeMeResponse {
     banner_version: i64,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeErrorResponse {
+    error: String,
+}
+
 impl NativeMeResponse {
     fn validate(self) -> Result<UserId, NativeApiError> {
         if Username::try_from(self.username).is_err()
@@ -538,6 +569,41 @@ fn decode_response_with_limit<T: DeserializeOwned>(
         .read_to_end(&mut bytes)
         .map_err(|_| NativeApiError::Unavailable)?;
     decode_json_bytes_with_limit(&bytes, response_limit)
+}
+
+fn decode_commit_conflict(mut response: Response) -> NativeApiError {
+    if response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|length| length > MAX_NATIVE_ERROR_RESPONSE_BYTES)
+    {
+        return NativeApiError::Rejected;
+    }
+    let Ok(limit) = u64::try_from(MAX_NATIVE_ERROR_RESPONSE_BYTES.saturating_add(1)) else {
+        return NativeApiError::Unavailable;
+    };
+    let mut bytes = Vec::new();
+    if response
+        .by_ref()
+        .take(limit)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return NativeApiError::Unavailable;
+    }
+    classify_commit_conflict(&bytes)
+}
+
+fn classify_commit_conflict(bytes: &[u8]) -> NativeApiError {
+    if bytes.is_empty() || bytes.len() > MAX_NATIVE_ERROR_RESPONSE_BYTES {
+        return NativeApiError::Rejected;
+    }
+    match serde_json::from_slice::<NativeErrorResponse>(bytes) {
+        Ok(response) if response.error == "epoch_conflict" => NativeApiError::EpochConflict,
+        _ => NativeApiError::Rejected,
+    }
 }
 
 #[cfg(test)]
@@ -831,6 +897,26 @@ mod tests {
         assert_eq!(
             validate_acknowledgment_counts(0, 2, 1),
             Err(NativeApiError::Rejected)
+        );
+    }
+
+    #[test]
+    fn only_the_exact_bounded_epoch_conflict_is_recoverable() {
+        assert_eq!(
+            classify_commit_conflict(br#"{"error":"epoch_conflict"}"#),
+            NativeApiError::EpochConflict
+        );
+        for rejected in [
+            br#"{"error":"e2ee_membership_reconciliation_pending"}"#.as_slice(),
+            br#"{"error":"epoch_conflict","winner":"injected"}"#.as_slice(),
+            br#"{"error":1}"#.as_slice(),
+            b"".as_slice(),
+        ] {
+            assert_eq!(classify_commit_conflict(rejected), NativeApiError::Rejected);
+        }
+        assert_eq!(
+            classify_commit_conflict(&vec![b'A'; MAX_NATIVE_ERROR_RESPONSE_BYTES + 1]),
+            NativeApiError::Rejected
         );
     }
 

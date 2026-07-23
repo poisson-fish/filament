@@ -315,7 +315,12 @@ acknowledgments, and retries accepted commits idempotently after response loss
 or restart. Proposal work uses the same bounded rotating group selection and
 per-group iteration cap as the other mailboxes and precedes commit/message
 reads, while targeted devices retain authenticated proposals until the peer
-commit arrives. Epoch-conflict winner rebase remains fail closed.
+commit arrives. Proposal-derived epoch conflicts now fetch the bounded commit
+mailbox, authenticate the exact winning MLS transition and its routing delta,
+and atomically checkpoint the winner, its acknowledgment, and either a fresh
+rebased Remove request or a durable invalidation marker. Only the strict
+`epoch_conflict` response enters this bounded retry path; hostile or unrelated
+conflicts remain fail closed.
 
 ---
 

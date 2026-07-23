@@ -22,12 +22,14 @@ use ulid::Ulid;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    persistence::encode_mls_client_state, process_commit_mailbox, process_group_commit_mailbox,
-    process_message_mailbox, ConversationAudience, ConversationError, DecryptedApplicationMessage,
+    commit_mailbox::validate_page as validate_commit_page, persistence::encode_mls_client_state,
+    process_commit_mailbox, process_group_commit_mailbox, process_message_mailbox,
+    AuthenticatedMembershipChange, AuthenticatedMembershipChangeKind, ConversationAudience,
+    ConversationError, DecryptedApplicationMessage, EncryptedGroupCommit,
     ExternalCommitRecoveryInfo, ExternalGroupProposal, ExternalProposalAction, KeyStoreError,
-    LocalKeyStore, MlsClientState, MlsConversation, PendingExternalCommitRecovery,
-    PinnedUserIdentity, RejectedMailboxCommit, RejectedMailboxMessage, StoreKey,
-    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
+    LocalKeyStore, MlsClientState, MlsConversation, PendingCommitRebase,
+    PendingExternalCommitRecovery, PendingGroupCommit, PinnedUserIdentity, RejectedMailboxCommit,
+    RejectedMailboxMessage, StoreKey, MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
 };
 
 const HISTORY_RECORD_VERSION: u16 = 2;
@@ -70,6 +72,9 @@ pub enum DurableMailboxError {
     /// An acceptance-gated local commit must be resolved before another proposal.
     #[error("an outbound MLS commit is already pending")]
     PendingOutboundCommit,
+    /// A winning commit made the pending policy intent unsafe to retry.
+    #[error("the outbound MLS commit intent was invalidated by the accepted epoch")]
+    InvalidatedOutboundCommit,
     /// The requested group has no local MLS state.
     #[error("MLS conversation is not available locally")]
     ConversationNotFound,
@@ -113,6 +118,18 @@ pub struct DurableProposalMailboxBatch {
     pub outbound_commit: Option<PostCommitRequest>,
     /// Whether this device authenticated its own removal and awaits a peer commit.
     pub awaiting_peer_commit: bool,
+}
+
+/// Durable result of authenticating the commit that won an epoch conflict.
+pub struct DurableOutboundCommitRebase {
+    /// Exact acknowledgment for the authenticated winning epoch.
+    pub acknowledgment: AckE2eeCommitsRequest,
+    /// Fresh acceptance-gated commit request, when the policy intent remains valid.
+    pub outbound_commit: Option<PostCommitRequest>,
+    /// Whether the winner itself already satisfied the pending intent.
+    pub already_satisfied: bool,
+    /// Whether the winner made the pending intent unsafe to retry.
+    pub invalidated: bool,
 }
 
 /// Public routing metadata required by the native mailbox transport.
@@ -181,6 +198,8 @@ struct RetentionPolicyRecord {
 struct OutboundCommitRecord {
     version: u16,
     accepted: bool,
+    #[serde(default)]
+    invalidated: bool,
     request: PostCommitRequest,
 }
 
@@ -240,7 +259,7 @@ impl DurableMlsClient {
                     .collect::<Vec<_>>();
                 let valid_audience = match metadata.audience {
                     ConversationAudience::DirectMessage => participants.len() == 1,
-                    ConversationAudience::GroupDm => (2..=99).contains(&participants.len()),
+                    ConversationAudience::GroupDm => (1..=99).contains(&participants.len()),
                 };
                 if own_pin_count != 1 || !valid_audience {
                     return Err(ConversationError::MetadataMismatch.into());
@@ -468,6 +487,7 @@ impl DurableMlsClient {
                 encode_json(&OutboundCommitRecord {
                     version: OUTBOUND_COMMIT_RECORD_VERSION,
                     accepted: false,
+                    invalidated: false,
                     request: request.clone(),
                 })?,
             ));
@@ -504,6 +524,9 @@ impl DurableMlsClient {
             .as_ref()
             .ok_or(DurableMailboxError::Unavailable)?;
         validate_outbound_commit_request(state.device.device_id(), &record.request)?;
+        if record.invalidated {
+            return Err(DurableMailboxError::InvalidatedOutboundCommit);
+        }
         let conversation = state
             .conversations
             .iter()
@@ -572,6 +595,7 @@ impl DurableMlsClient {
         let accepted = OutboundCommitRecord {
             version: OUTBOUND_COMMIT_RECORD_VERSION,
             accepted: true,
+            invalidated: false,
             request: submitted.clone(),
         };
         if let Err(error) = store.store_batch(vec![
@@ -586,6 +610,117 @@ impl DurableMlsClient {
             return Err(KeyStoreError::InvalidValue.into());
         }
         Ok(())
+    }
+
+    /// Authenticate the commit that won a Delivery Service epoch conflict and
+    /// durably rebase the pending policy intent.
+    ///
+    /// Only the first commit in the bounded mailbox page is consumed. Its MLS
+    /// transition must match the server's untrusted membership routing hint.
+    /// The winning checkpoint, commit acknowledgment, and replacement
+    /// outbound request are stored atomically before any network action may
+    /// continue.
+    ///
+    /// # Errors
+    /// Rejects missing or non-competing winners, routing mismatches, unsafe
+    /// rebases, corrupt outboxes, and any uncertain encrypted-store write.
+    pub fn rebase_outbound_commit(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        group_id: GroupId,
+        page: E2eeCommitMailboxResponse,
+    ) -> Result<DurableOutboundCommitRebase, DurableMailboxError> {
+        validate_commit_page(&page)?;
+        if store.exists(&commit_ack_key(group_id)?)? {
+            return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+        let record = load_outbound_commit_record(store, group_id)?
+            .ok_or(DurableMailboxError::PendingOutboundCommit)?;
+        if record.accepted || record.invalidated {
+            return Err(DurableMailboxError::PendingOutboundCommit);
+        }
+        let entry = page
+            .commits
+            .into_iter()
+            .next()
+            .ok_or(ConversationError::InvalidMailboxPage)?;
+        if entry.prior_epoch != record.request.prior_epoch
+            || entry.epoch != record.request.epoch
+            || entry.welcome_blob.is_some()
+        {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+
+        let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
+        let committer_device_id = DeviceId::try_from(entry.committer_device_id.clone())
+            .map_err(|_| ConversationError::MetadataMismatch)?;
+        if committer_device_id == state.device.device_id() {
+            self.state = Some(state);
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        let Some(position) = state
+            .conversations
+            .iter()
+            .position(|conversation| conversation.group_id() == group_id)
+        else {
+            self.state = Some(state);
+            return Err(DurableMailboxError::ConversationNotFound);
+        };
+        let winner = EncryptedGroupCommit {
+            group_id,
+            prior_epoch: entry.prior_epoch,
+            epoch: entry.epoch,
+            committer_device_id,
+            commit_blob: entry.commit_blob.clone(),
+        };
+        let (outcome, membership_change) = state.conversations[position]
+            .rebase_pending_commit_with_membership(&state.device, &winner)?;
+        if validate_winner_membership_routing(
+            entry.membership_change.as_ref(),
+            membership_change.as_ref(),
+        )
+        .is_err()
+        {
+            // MLS state has already consumed the winner. Do not expose that
+            // uncheckpointed state after hostile routing metadata; reload the
+            // last complete encrypted checkpoint before retrying.
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+
+        let acknowledgment = AckE2eeCommitsRequest {
+            device_id: state.device.device_id().to_string(),
+            epochs: vec![entry.epoch],
+        };
+        let (outbound_commit, accepted, invalidated) = match outcome {
+            PendingCommitRebase::Rebased(pending) => {
+                let request =
+                    rebased_remove_request(&pending, record.request.membership_change.clone())?;
+                validate_outbound_commit_request(state.device.device_id(), &request)?;
+                (Some(request), false, false)
+            }
+            PendingCommitRebase::AlreadySatisfied => (None, true, false),
+            PendingCommitRebase::Invalidated => (None, false, true),
+        };
+        let replacement = OutboundCommitRecord {
+            version: OUTBOUND_COMMIT_RECORD_VERSION,
+            accepted,
+            invalidated,
+            request: outbound_commit.clone().unwrap_or(record.request),
+        };
+        if let Err(error) = store.store_batch(vec![
+            (StoreKey::mls_client_state(), encode_state(&state)?),
+            (commit_ack_key(group_id)?, encode_json(&acknowledgment)?),
+            (outbound_commit_key(group_id)?, encode_json(&replacement)?),
+        ]) {
+            return Err(error.into());
+        }
+        self.state = Some(state);
+        Ok(DurableOutboundCommitRebase {
+            acknowledgment,
+            outbound_commit,
+            already_satisfied: accepted,
+            invalidated,
+        })
     }
 
     /// Process one bounded message page and atomically persist its effects.
@@ -1295,6 +1430,74 @@ fn validate_outbound_commit_request(
     Ok(())
 }
 
+fn rebased_remove_request(
+    pending: &PendingGroupCommit,
+    membership_change: Option<MlsMembershipChange>,
+) -> Result<PostCommitRequest, DurableMailboxError> {
+    if pending.welcome_blob.is_some()
+        || !matches!(membership_change, Some(MlsMembershipChange::Remove { .. }))
+    {
+        return Err(ConversationError::UnexpectedMembership.into());
+    }
+    Ok(PostCommitRequest {
+        epoch: pending.epoch,
+        prior_epoch: pending.prior_epoch,
+        committer_device_id: pending.committer_device_id.to_string(),
+        commit_blob: pending.commit_blob.clone(),
+        welcome_blob: None,
+        welcome_device_id: None,
+        group_info_blob: pending.group_info_blob.clone(),
+        membership_change,
+    })
+}
+
+fn validate_winner_membership_routing(
+    routing: Option<&MlsMembershipChange>,
+    authenticated: Option<&AuthenticatedMembershipChange>,
+) -> Result<(), ConversationError> {
+    match (routing, authenticated) {
+        (None, None) => Ok(()),
+        (Some(MlsMembershipChange::Add { leaf }), Some(change))
+            if change.kind == AuthenticatedMembershipChangeKind::Added =>
+        {
+            let user_id = UserId::try_from(leaf.user_id.clone())
+                .map_err(|_| ConversationError::MetadataMismatch)?;
+            let device_id = DeviceId::try_from(leaf.device_id.clone())
+                .map_err(|_| ConversationError::MetadataMismatch)?;
+            if change.target_user_id == user_id && change.target_device_ids == [device_id] {
+                Ok(())
+            } else {
+                Err(ConversationError::MetadataMismatch)
+            }
+        }
+        (Some(MlsMembershipChange::Remove { leaves }), Some(change))
+            if change.kind == AuthenticatedMembershipChangeKind::Removed && !leaves.is_empty() =>
+        {
+            let mut routed_devices = HashSet::with_capacity(leaves.len());
+            for leaf in leaves {
+                let user_id = UserId::try_from(leaf.user_id.clone())
+                    .map_err(|_| ConversationError::MetadataMismatch)?;
+                let device_id = DeviceId::try_from(leaf.device_id.clone())
+                    .map_err(|_| ConversationError::MetadataMismatch)?;
+                if user_id != change.target_user_id || !routed_devices.insert(device_id) {
+                    return Err(ConversationError::MetadataMismatch);
+                }
+            }
+            let authenticated_devices = change
+                .target_device_ids
+                .iter()
+                .copied()
+                .collect::<HashSet<_>>();
+            if routed_devices == authenticated_devices {
+                Ok(())
+            } else {
+                Err(ConversationError::MetadataMismatch)
+            }
+        }
+        _ => Err(ConversationError::MetadataMismatch),
+    }
+}
+
 fn validate_proposal_page(page: &E2eeProposalMailboxResponse) -> Result<(), DurableMailboxError> {
     if page.proposals.len() > MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE {
         return Err(ConversationError::InvalidMailboxPage.into());
@@ -1495,6 +1698,8 @@ mod tests {
 
     struct ProposalFixture {
         alice: MlsDevice,
+        bob: MlsDevice,
+        bob_group: MlsConversation,
         charlie: MlsDevice,
         group_id: GroupId,
         page: E2eeProposalMailboxResponse,
@@ -1515,10 +1720,11 @@ mod tests {
             .unwrap()
             .remove(0)
             .blob;
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
         let delivery =
             DeliveryServiceSigner::from_seed([0x31; DELIVERY_SERVICE_SEED_BYTES]).unwrap();
         let group_id = GroupId::new();
-        let (mut group, _) = MlsConversation::create_group_with_delivery_service(
+        let (mut group, initial) = MlsConversation::create_group_with_delivery_service(
             group_id,
             &alice,
             &[(bob_pin, bob_package), (charlie_pin, charlie_package)],
@@ -1526,6 +1732,14 @@ mod tests {
         )
         .unwrap();
         group.accept_pending_commit(&alice).unwrap();
+        let bob_group = MlsConversation::join_group_from_welcome_with_delivery_service(
+            group_id,
+            &bob,
+            &[alice_pin, charlie_pin],
+            initial.welcome_blob.as_deref().unwrap(),
+            delivery.identity(),
+        )
+        .unwrap();
         let proposal = delivery.sign_remove(group_id, group.epoch(), 2).unwrap();
         let proposal_id = ProposalId::new().to_string();
         let page = E2eeProposalMailboxResponse {
@@ -1545,6 +1759,8 @@ mod tests {
         persist_mls_client_state(&store, &alice, &[&group]).unwrap();
         ProposalFixture {
             alice,
+            bob,
+            bob_group,
             charlie,
             group_id,
             page,
@@ -1560,6 +1776,7 @@ mod tests {
             group_id,
             page,
             store,
+            ..
         } = external_remove_proposal_fixture();
         let proposal_id = page.proposals[0].proposal_id.clone();
         let mut runtime = DurableMlsClient::load(&store).unwrap();
@@ -1675,6 +1892,7 @@ mod tests {
                     encode_json(&OutboundCommitRecord {
                         version: OUTBOUND_COMMIT_RECORD_VERSION,
                         accepted: true,
+                        invalidated: false,
                         request,
                     })
                     .unwrap(),
@@ -1696,6 +1914,147 @@ mod tests {
                 .device
                 .device_id(),
             alice.device_id()
+        );
+    }
+
+    #[test]
+    fn proposal_commit_rebases_durably_on_authenticated_epoch_winner() {
+        let ProposalFixture {
+            alice,
+            bob,
+            mut bob_group,
+            charlie,
+            group_id,
+            page,
+            store,
+        } = external_remove_proposal_fixture();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let rejected = runtime
+            .process_proposal_mailbox(&store, group_id, page)
+            .unwrap()
+            .outbound_commit
+            .unwrap();
+
+        let winner = bob_group.create_self_update(&bob).unwrap();
+        assert_eq!(winner.epoch, rejected.epoch);
+        bob_group.accept_pending_commit(&bob).unwrap();
+        let winner_page = E2eeCommitMailboxResponse {
+            commits: vec![E2eeCommitMailboxEntry {
+                epoch: winner.epoch,
+                prior_epoch: winner.prior_epoch,
+                committer_device_id: winner.committer_device_id.to_string(),
+                commit_blob: winner.commit_blob,
+                welcome_blob: None,
+                membership_change: None,
+                created_at_unix: 101,
+                expires_at_unix: 201,
+            }],
+            next_after_epoch: Some(winner.epoch),
+        };
+        let rebased = runtime
+            .rebase_outbound_commit(&store, group_id, winner_page)
+            .unwrap();
+        assert_eq!(rebased.acknowledgment.epochs, vec![winner.epoch]);
+        assert!(!rebased.already_satisfied);
+        assert!(!rebased.invalidated);
+        let replacement = rebased.outbound_commit.unwrap();
+        assert_eq!(replacement.prior_epoch, winner.epoch);
+        assert_eq!(replacement.epoch, winner.epoch + 1);
+        assert_ne!(replacement.commit_blob, rejected.commit_blob);
+        let Some(MlsMembershipChange::Remove { leaves }) = &replacement.membership_change else {
+            panic!("rebased policy intent must remain an exact Remove");
+        };
+        assert_eq!(leaves[0].device_id, charlie.device_id().to_string());
+
+        assert_eq!(
+            pending_commit_acknowledgment(&store, group_id, alice.device_id())
+                .unwrap()
+                .unwrap(),
+            rebased.acknowledgment
+        );
+        confirm_commit_acknowledgment(&store, group_id, &rebased.acknowledgment).unwrap();
+
+        let mut restarted = DurableMlsClient::load(&store).unwrap();
+        assert_eq!(
+            restarted.pending_outbound_commit(&store, group_id).unwrap(),
+            Some(replacement.clone())
+        );
+        restarted
+            .confirm_outbound_commit(
+                &store,
+                group_id,
+                &replacement,
+                &PostCommitResponse {
+                    accepted: true,
+                    epoch: replacement.epoch,
+                },
+            )
+            .unwrap();
+        let proposal_ack = pending_proposal_acknowledgment(&store, group_id, alice.device_id())
+            .unwrap()
+            .unwrap();
+        confirm_proposal_acknowledgment(&store, group_id, &proposal_ack).unwrap();
+
+        let restored = crate::load_mls_client_state(&store).unwrap();
+        assert_eq!(restored.conversations[0].epoch(), replacement.epoch);
+        assert!(!restored.conversations[0]
+            .has_verified_member_device(charlie.device_id())
+            .unwrap());
+    }
+
+    #[test]
+    fn epoch_winner_routing_mismatch_shuts_down_until_checkpoint_reload() {
+        let ProposalFixture {
+            alice,
+            bob,
+            mut bob_group,
+            group_id,
+            page,
+            store,
+            ..
+        } = external_remove_proposal_fixture();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let rejected = runtime
+            .process_proposal_mailbox(&store, group_id, page)
+            .unwrap()
+            .outbound_commit
+            .unwrap();
+        let winner = bob_group.create_self_update(&bob).unwrap();
+        bob_group.accept_pending_commit(&bob).unwrap();
+        let hostile_page = E2eeCommitMailboxResponse {
+            commits: vec![E2eeCommitMailboxEntry {
+                epoch: winner.epoch,
+                prior_epoch: winner.prior_epoch,
+                committer_device_id: winner.committer_device_id.to_string(),
+                commit_blob: winner.commit_blob,
+                welcome_blob: None,
+                membership_change: rejected.membership_change.clone(),
+                created_at_unix: 101,
+                expires_at_unix: 201,
+            }],
+            next_after_epoch: Some(winner.epoch),
+        };
+
+        assert!(matches!(
+            runtime.rebase_outbound_commit(&store, group_id, hostile_page),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
+            ))
+        ));
+        assert!(!runtime.is_ready());
+        runtime.reload(&store).unwrap();
+        assert_eq!(
+            runtime.pending_outbound_commit(&store, group_id).unwrap(),
+            Some(rejected)
+        );
+        assert_eq!(
+            crate::load_mls_client_state(&store).unwrap().conversations[0].epoch(),
+            1
+        );
+        assert!(
+            pending_commit_acknowledgment(&store, group_id, alice.device_id())
+                .unwrap()
+                .is_none()
         );
     }
 
