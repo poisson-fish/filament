@@ -57,14 +57,20 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   fingerprint/device snapshot, and enforces the exact destructive
   confirmation before invoking rotation.
 - On initialization and authenticated settings refresh, the host drains a
-  bounded rotating set of locally authenticated DM/group-DM commit and message
-  mailboxes. It submits any prior durable acknowledgment before another read,
-  commits MLS state/history/outboxes atomically in SQLCipher, and clears an
-  outbox only after an idempotent server response. Rejected MLS data stops that
-  group without exposing plaintext or adding IPC.
+  bounded rotating set of locally authenticated DM/group-DM proposal, commit,
+  message, and attachment mailboxes. It submits any prior durable
+  acknowledgment before another read, commits MLS state/history/outboxes
+  atomically in SQLCipher, and clears an outbox only after an idempotent server
+  response. Rejected MLS data stops that group without exposing plaintext or
+  adding IPC.
+- Native attachment preparation now encrypts and chunks one exact-bucket
+  upload per group into SQLCipher before submission. Response loss retries the
+  identical opaque bytes, while the private descriptor remains native-only
+  until it can be authenticated inside durable MLS message history.
 - Conversation provisioning, encrypted conversation send/presentation UI,
-  proposal and attachment coordination, pairing UI, packaged end-to-end smoke
-  coverage, and mobile platform custody evidence remain fail closed.
+  encrypted attachment composition/presentation UI, pairing UI, packaged
+  end-to-end smoke coverage, and mobile platform custody evidence remain fail
+  closed.
 - Calls and automatic updates remain disabled.
 
 ## Developer commands

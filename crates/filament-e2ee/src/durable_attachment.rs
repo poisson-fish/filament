@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use filament_core::{DeviceId, GroupId};
 use filament_protocol::{
-    AckE2eeAttachmentsRequest, E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS,
+    AckE2eeAttachmentsRequest, PutE2eeAttachmentResponse, E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS,
     MAX_E2EE_ATTACHMENT_ACK_BATCH_SIZE,
 };
 use serde::{Deserialize, Serialize};
@@ -23,17 +23,20 @@ use crate::{
     decrypt_attachment, durable_mailbox::parse_history_key, AttachmentContent,
     AttachmentDescriptor, AttachmentError, AttachmentId, EncryptedAttachment, EncryptedChatEvent,
     KeyStoreError, LocalKeyStore, StoreKey, VersionedApplicationEvent, MAX_ATTACHMENT_BYTES,
-    MAX_ATTACHMENT_FILENAME_BYTES, MAX_ATTACHMENT_MIME_BYTES, MAX_STORE_BATCH_ENTRIES,
-    MAX_STORE_VALUE_BYTES,
+    MAX_ATTACHMENT_FILENAME_BYTES, MAX_ATTACHMENT_MIME_BYTES, MAX_ENCRYPTED_ATTACHMENT_BYTES,
+    MAX_STORE_BATCH_ENTRIES, MAX_STORE_VALUE_BYTES,
 };
 
 const ATTACHMENT_MANIFEST_VERSION: u16 = 1;
 const ATTACHMENT_ACK_VERSION: u16 = 1;
+const ATTACHMENT_UPLOAD_VERSION: u16 = 1;
 const MAX_UNIX_TIMESTAMP: i64 = 253_402_300_799;
 /// Maximum descriptors returned in one bounded native download scan.
 pub const MAX_PENDING_ATTACHMENT_DOWNLOADS: usize = 32;
 const ATTACHMENT_CHUNK_BYTES: usize = 1024 * 1024;
 const MAX_ATTACHMENT_CHUNKS: usize = MAX_ATTACHMENT_BYTES.div_ceil(ATTACHMENT_CHUNK_BYTES);
+const MAX_ATTACHMENT_UPLOAD_CHUNKS: usize =
+    MAX_ENCRYPTED_ATTACHMENT_BYTES.div_ceil(ATTACHMENT_CHUNK_BYTES);
 
 /// Fail-closed errors at the authenticated attachment persistence boundary.
 #[derive(Debug, Error)]
@@ -41,6 +44,9 @@ pub enum DurableAttachmentError {
     /// A prior verified attachment acknowledgment must be resolved first.
     #[error("an attachment acknowledgment is already pending")]
     PendingAcknowledgment,
+    /// One exact encrypted upload must be confirmed before preparing another.
+    #[error("an attachment upload is already pending")]
+    PendingUpload,
     /// Authenticated history or stored attachment metadata was inconsistent.
     #[error("authenticated attachment metadata is invalid")]
     InvalidMetadata,
@@ -66,6 +72,23 @@ pub struct PendingAttachmentDownload {
     pub expires_at_unix: Option<i64>,
     /// Private descriptor containing the independent attachment content key.
     pub descriptor: AttachmentDescriptor,
+}
+
+/// One server-confirmed upload whose private descriptor remains native-only.
+///
+/// The descriptor must be authenticated inside an MLS application event before
+/// the upload record is removed. Retaining it here closes the crash window
+/// between opaque upload acceptance and durable message preparation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfirmedAttachmentUpload {
+    /// MLS group that owns the opaque upload.
+    pub group_id: GroupId,
+    /// Active local device that created the upload.
+    pub device_id: DeviceId,
+    /// Private descriptor to carry only inside MLS ciphertext.
+    pub descriptor: AttachmentDescriptor,
+    /// Exact Delivery Service acceptance response.
+    pub response: PutE2eeAttachmentResponse,
 }
 
 impl core::fmt::Debug for PendingAttachmentDownload {
@@ -103,6 +126,255 @@ struct StoredAttachmentManifest {
 struct AttachmentAckRecord {
     version: u16,
     request: AckE2eeAttachmentsRequest,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttachmentUploadRecord {
+    version: u16,
+    group_id: String,
+    device_id: String,
+    descriptor: AttachmentDescriptor,
+    ciphertext_bytes: u64,
+    ciphertext_sha256: [u8; 32],
+    chunk_count: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response: Option<PutE2eeAttachmentResponse>,
+}
+
+/// Encrypt and atomically persist one exact opaque attachment upload.
+///
+/// Only one upload may be staged per group. The private descriptor and every
+/// exact-bucket ciphertext chunk become durable in the same encrypted-store
+/// transaction before a network request can be made.
+///
+/// # Errors
+/// Rejects invalid attachment input, an existing group upload, impossible
+/// transport sizes, or encrypted-store failures.
+pub fn prepare_attachment_upload(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    device_id: DeviceId,
+    filename: impl Into<String>,
+    plaintext: &[u8],
+) -> Result<AttachmentDescriptor, DurableAttachmentError> {
+    let manifest_key = attachment_upload_manifest_key(group_id)?;
+    if store.exists(&manifest_key)? {
+        return Err(DurableAttachmentError::PendingUpload);
+    }
+    let (descriptor, encrypted) = crate::encrypt_attachment(filename, plaintext)?;
+    let chunk_count = encrypted.ciphertext.len().div_ceil(ATTACHMENT_CHUNK_BYTES);
+    if !E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS.contains(&encrypted.ciphertext.len())
+        || chunk_count == 0
+        || chunk_count > MAX_ATTACHMENT_UPLOAD_CHUNKS
+        || chunk_count
+            .checked_add(1)
+            .is_none_or(|entries| entries > MAX_STORE_BATCH_ENTRIES)
+    {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    let record = AttachmentUploadRecord {
+        version: ATTACHMENT_UPLOAD_VERSION,
+        group_id: group_id.to_string(),
+        device_id: device_id.to_string(),
+        descriptor: descriptor.clone(),
+        ciphertext_bytes: u64::try_from(encrypted.ciphertext.len())
+            .map_err(|_| DurableAttachmentError::InvalidMetadata)?,
+        ciphertext_sha256: Sha256::digest(&encrypted.ciphertext).into(),
+        chunk_count: u16::try_from(chunk_count)
+            .map_err(|_| DurableAttachmentError::InvalidMetadata)?,
+        response: None,
+    };
+    let mut entries = Vec::with_capacity(chunk_count + 1);
+    entries.push((
+        manifest_key,
+        encode_json(&record).map_err(DurableAttachmentError::KeyStore)?,
+    ));
+    for (index, chunk) in encrypted
+        .ciphertext
+        .chunks(ATTACHMENT_CHUNK_BYTES)
+        .enumerate()
+    {
+        entries.push((
+            attachment_upload_chunk_key(group_id, index)?,
+            chunk.to_vec(),
+        ));
+    }
+    store.store_batch(entries)?;
+    Ok(descriptor)
+}
+
+/// Reconstruct the exact durable ciphertext that must be uploaded or retried.
+///
+/// A confirmed upload returns `None`; its descriptor remains available through
+/// [`confirmed_attachment_upload`] until the authenticated message is durable.
+///
+/// # Errors
+/// Rejects corrupt, torn, substituted, or cross-device upload records.
+pub fn pending_attachment_upload(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    device_id: DeviceId,
+) -> Result<Option<EncryptedAttachment>, DurableAttachmentError> {
+    let Some(record) = load_attachment_upload_record(store, group_id)? else {
+        return Ok(None);
+    };
+    validate_attachment_upload_record(&record, group_id, device_id)?;
+    if record.response.is_some() {
+        return Ok(None);
+    }
+    let ciphertext = load_attachment_upload_ciphertext(store, group_id, &record)?;
+    Ok(Some(EncryptedAttachment {
+        attachment_id: record.descriptor.attachment_id,
+        ciphertext,
+    }))
+}
+
+/// Mark an exact durable upload as accepted while retaining its descriptor.
+///
+/// The ciphertext chunks intentionally remain until the descriptor has been
+/// committed inside authenticated local message history. This permits strict
+/// reconciliation and avoids a secret-loss window after server acceptance.
+///
+/// # Errors
+/// Rejects substituted ciphertext/responses, expired acceptance, corrupt local
+/// records, duplicate confirmation, or encrypted-store failures.
+pub fn confirm_attachment_upload(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    device_id: DeviceId,
+    submitted: &EncryptedAttachment,
+    response: &PutE2eeAttachmentResponse,
+    now_unix: i64,
+) -> Result<(), DurableAttachmentError> {
+    if !(0..=MAX_UNIX_TIMESTAMP).contains(&now_unix) {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    let mut record = load_attachment_upload_record(store, group_id)?
+        .ok_or(DurableAttachmentError::InvalidMetadata)?;
+    validate_attachment_upload_record(&record, group_id, device_id)?;
+    if record.response.is_some()
+        || submitted.attachment_id != record.descriptor.attachment_id
+        || submitted.ciphertext.len()
+            != usize::try_from(record.ciphertext_bytes)
+                .map_err(|_| DurableAttachmentError::InvalidMetadata)?
+        || Sha256::digest(&submitted.ciphertext).as_slice() != record.ciphertext_sha256
+        || response.attachment_id != record.descriptor.attachment_id.to_string()
+        || response.ciphertext_bytes != record.ciphertext_bytes
+        || response.expires_at_unix <= now_unix
+        || response.expires_at_unix > MAX_UNIX_TIMESTAMP
+    {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    let stored_ciphertext = load_attachment_upload_ciphertext(store, group_id, &record)?;
+    if stored_ciphertext != submitted.ciphertext {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    record.response = Some(response.clone());
+    store.store(
+        attachment_upload_manifest_key(group_id)?,
+        encode_json(&record).map_err(DurableAttachmentError::KeyStore)?,
+    )?;
+    Ok(())
+}
+
+/// Load a server-confirmed private descriptor for native MLS composition.
+///
+/// # Errors
+/// Rejects corrupt, cross-device, expired, or unconfirmed records.
+pub fn confirmed_attachment_upload(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    device_id: DeviceId,
+    now_unix: i64,
+) -> Result<Option<ConfirmedAttachmentUpload>, DurableAttachmentError> {
+    if !(0..=MAX_UNIX_TIMESTAMP).contains(&now_unix) {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    let Some(record) = load_attachment_upload_record(store, group_id)? else {
+        return Ok(None);
+    };
+    validate_attachment_upload_record(&record, group_id, device_id)?;
+    let Some(response) = record.response else {
+        return Ok(None);
+    };
+    if response.expires_at_unix <= now_unix {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    Ok(Some(ConfirmedAttachmentUpload {
+        group_id,
+        device_id,
+        descriptor: record.descriptor,
+        response,
+    }))
+}
+
+/// Remove an accepted upload only after its descriptor is durable in an
+/// authenticated outbound message.
+///
+/// # Errors
+/// Rejects an unconfirmed/substituted upload, torn chunk state, or storage
+/// failures.
+pub fn remove_confirmed_attachment_upload(
+    store: &dyn LocalKeyStore,
+    confirmed: &ConfirmedAttachmentUpload,
+) -> Result<(), DurableAttachmentError> {
+    let record = load_attachment_upload_record(store, confirmed.group_id)?
+        .ok_or(DurableAttachmentError::InvalidMetadata)?;
+    validate_attachment_upload_record(&record, confirmed.group_id, confirmed.device_id)?;
+    if record.response.as_ref() != Some(&confirmed.response)
+        || record.descriptor != confirmed.descriptor
+    {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    let _ = load_attachment_upload_ciphertext(store, confirmed.group_id, &record)?;
+    let mut keys = Vec::with_capacity(usize::from(record.chunk_count) + 1);
+    keys.push(attachment_upload_manifest_key(confirmed.group_id)?);
+    for index in 0..usize::from(record.chunk_count) {
+        keys.push(attachment_upload_chunk_key(confirmed.group_id, index)?);
+    }
+    if store.remove_batch(&keys)? != keys.len() {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    Ok(())
+}
+
+/// Hard-delete a confirmed upload after its Delivery Service lifetime ends.
+///
+/// Unconfirmed uploads are retained for exact retry. A confirmed upload is
+/// removed only when its authenticated server expiry is reached.
+///
+/// # Errors
+/// Rejects invalid clocks, corrupt/torn records, or storage failures.
+pub fn purge_expired_attachment_upload(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    device_id: DeviceId,
+    now_unix: i64,
+) -> Result<bool, DurableAttachmentError> {
+    if !(0..=MAX_UNIX_TIMESTAMP).contains(&now_unix) {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    let Some(record) = load_attachment_upload_record(store, group_id)? else {
+        return Ok(false);
+    };
+    validate_attachment_upload_record(&record, group_id, device_id)?;
+    let Some(response) = record.response.clone() else {
+        return Ok(false);
+    };
+    if response.expires_at_unix > now_unix {
+        return Ok(false);
+    }
+    remove_confirmed_attachment_upload(
+        store,
+        &ConfirmedAttachmentUpload {
+            group_id,
+            device_id,
+            descriptor: record.descriptor,
+            response,
+        },
+    )?;
+    Ok(true)
 }
 
 /// Discover missing attachment blobs referenced by MLS-authenticated history.
@@ -541,6 +813,95 @@ fn encode_json<T: Serialize>(value: &T) -> Result<Vec<u8>, KeyStoreError> {
     Ok(encoded)
 }
 
+fn load_attachment_upload_record(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+) -> Result<Option<AttachmentUploadRecord>, DurableAttachmentError> {
+    let key = attachment_upload_manifest_key(group_id)?;
+    if !store.exists(&key)? {
+        return Ok(None);
+    }
+    let encoded = store.load(&key)?;
+    serde_json::from_slice(&encoded)
+        .map(Some)
+        .map_err(|_| DurableAttachmentError::InvalidMetadata)
+}
+
+fn validate_attachment_upload_record(
+    record: &AttachmentUploadRecord,
+    group_id: GroupId,
+    device_id: DeviceId,
+) -> Result<(), DurableAttachmentError> {
+    record
+        .descriptor
+        .validate()
+        .map_err(|_| DurableAttachmentError::InvalidMetadata)?;
+    let ciphertext_bytes = usize::try_from(record.ciphertext_bytes)
+        .map_err(|_| DurableAttachmentError::InvalidMetadata)?;
+    let expected_chunks = ciphertext_bytes.div_ceil(ATTACHMENT_CHUNK_BYTES);
+    if record.version != ATTACHMENT_UPLOAD_VERSION
+        || record.group_id != group_id.to_string()
+        || record.device_id != device_id.to_string()
+        || GroupId::try_from(record.group_id.clone()).is_err()
+        || DeviceId::try_from(record.device_id.clone()).is_err()
+        || !E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS.contains(&ciphertext_bytes)
+        || expected_chunks == 0
+        || expected_chunks > MAX_ATTACHMENT_UPLOAD_CHUNKS
+        || usize::from(record.chunk_count) != expected_chunks
+        || record.response.as_ref().is_some_and(|response| {
+            response.attachment_id != record.descriptor.attachment_id.to_string()
+                || response.ciphertext_bytes != record.ciphertext_bytes
+                || !(1..=MAX_UNIX_TIMESTAMP).contains(&response.expires_at_unix)
+        })
+    {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    Ok(())
+}
+
+fn load_attachment_upload_ciphertext(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    record: &AttachmentUploadRecord,
+) -> Result<Vec<u8>, DurableAttachmentError> {
+    let expected_size = usize::try_from(record.ciphertext_bytes)
+        .map_err(|_| DurableAttachmentError::InvalidMetadata)?;
+    let chunk_count = usize::from(record.chunk_count);
+    let mut ciphertext = Vec::with_capacity(expected_size);
+    for index in 0..chunk_count {
+        let chunk = store.load(&attachment_upload_chunk_key(group_id, index)?)?;
+        if chunk.is_empty()
+            || chunk.len() > ATTACHMENT_CHUNK_BYTES
+            || (index + 1 < chunk_count && chunk.len() != ATTACHMENT_CHUNK_BYTES)
+        {
+            return Err(DurableAttachmentError::InvalidMetadata);
+        }
+        ciphertext.extend_from_slice(&chunk);
+    }
+    if chunk_count < MAX_ATTACHMENT_UPLOAD_CHUNKS
+        && store.exists(&attachment_upload_chunk_key(group_id, chunk_count)?)?
+    {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    if ciphertext.len() != expected_size
+        || Sha256::digest(&ciphertext).as_slice() != record.ciphertext_sha256
+    {
+        return Err(DurableAttachmentError::InvalidMetadata);
+    }
+    Ok(ciphertext)
+}
+
+fn attachment_upload_manifest_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
+    StoreKey::new(format!("attachment-upload:{group_id}:manifest:v1"))
+}
+
+fn attachment_upload_chunk_key(group_id: GroupId, index: usize) -> Result<StoreKey, KeyStoreError> {
+    if index >= MAX_ATTACHMENT_UPLOAD_CHUNKS {
+        return Err(KeyStoreError::InvalidIdentifier);
+    }
+    StoreKey::new(format!("attachment-upload:{group_id}:chunk:{index}"))
+}
+
 fn attachment_manifest_key(
     group_id: GroupId,
     attachment_id: AttachmentId,
@@ -649,6 +1010,120 @@ mod tests {
         let (key, encoded) = crate::durable_mailbox::history_storage_entry(&stored).unwrap();
         store.store(key, encoded).unwrap();
         (message_id, file)
+    }
+
+    #[test]
+    fn outbound_upload_is_exact_retryable_and_retains_descriptor_until_message_durable() {
+        let store = InMemoryKeyStore::new();
+        let group_id = GroupId::new();
+        let device_id = DeviceId::new();
+        let descriptor =
+            prepare_attachment_upload(&store, group_id, device_id, "proof.png", PNG).unwrap();
+        let pending = pending_attachment_upload(&store, group_id, device_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.attachment_id, descriptor.attachment_id);
+        assert!(E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS.contains(&pending.ciphertext.len()));
+
+        let restarted = pending_attachment_upload(&store, group_id, device_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restarted, pending);
+        let response = PutE2eeAttachmentResponse {
+            attachment_id: descriptor.attachment_id.to_string(),
+            ciphertext_bytes: u64::try_from(pending.ciphertext.len()).unwrap(),
+            expires_at_unix: 500,
+        };
+        confirm_attachment_upload(&store, group_id, device_id, &pending, &response, 100).unwrap();
+        assert!(pending_attachment_upload(&store, group_id, device_id)
+            .unwrap()
+            .is_none());
+
+        let confirmed = confirmed_attachment_upload(&store, group_id, device_id, 200)
+            .unwrap()
+            .unwrap();
+        assert_eq!(confirmed.descriptor, descriptor);
+        assert_eq!(confirmed.response, response);
+        assert!(store
+            .list_keys()
+            .unwrap()
+            .iter()
+            .any(|key| key.as_str().starts_with("attachment-upload:")));
+
+        remove_confirmed_attachment_upload(&store, &confirmed).unwrap();
+        assert!(
+            confirmed_attachment_upload(&store, group_id, device_id, 200)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!store
+            .list_keys()
+            .unwrap()
+            .iter()
+            .any(|key| key.as_str().starts_with("attachment-upload:")));
+    }
+
+    #[test]
+    fn outbound_upload_rejects_substitution_and_torn_ciphertext() {
+        let store = InMemoryKeyStore::new();
+        let group_id = GroupId::new();
+        let device_id = DeviceId::new();
+        let descriptor =
+            prepare_attachment_upload(&store, group_id, device_id, "proof.png", PNG).unwrap();
+        assert!(matches!(
+            prepare_attachment_upload(&store, group_id, device_id, "other.png", PNG),
+            Err(DurableAttachmentError::PendingUpload)
+        ));
+        let mut pending = pending_attachment_upload(&store, group_id, device_id)
+            .unwrap()
+            .unwrap();
+        let response = PutE2eeAttachmentResponse {
+            attachment_id: descriptor.attachment_id.to_string(),
+            ciphertext_bytes: u64::try_from(pending.ciphertext.len()).unwrap(),
+            expires_at_unix: 500,
+        };
+        pending.ciphertext[0] ^= 1;
+        assert!(matches!(
+            confirm_attachment_upload(&store, group_id, device_id, &pending, &response, 100),
+            Err(DurableAttachmentError::InvalidMetadata)
+        ));
+        assert!(pending_attachment_upload(&store, group_id, device_id)
+            .unwrap()
+            .is_some());
+
+        store
+            .remove(&attachment_upload_chunk_key(group_id, 0).unwrap())
+            .unwrap();
+        assert!(matches!(
+            pending_attachment_upload(&store, group_id, device_id),
+            Err(DurableAttachmentError::KeyStore(KeyStoreError::NotFound))
+        ));
+    }
+
+    #[test]
+    fn confirmed_outbound_upload_is_hard_deleted_at_server_expiry() {
+        let store = InMemoryKeyStore::new();
+        let group_id = GroupId::new();
+        let device_id = DeviceId::new();
+        let descriptor =
+            prepare_attachment_upload(&store, group_id, device_id, "proof.png", PNG).unwrap();
+        let pending = pending_attachment_upload(&store, group_id, device_id)
+            .unwrap()
+            .unwrap();
+        let response = PutE2eeAttachmentResponse {
+            attachment_id: descriptor.attachment_id.to_string(),
+            ciphertext_bytes: u64::try_from(pending.ciphertext.len()).unwrap(),
+            expires_at_unix: 150,
+        };
+        confirm_attachment_upload(&store, group_id, device_id, &pending, &response, 100).unwrap();
+
+        assert!(!purge_expired_attachment_upload(&store, group_id, device_id, 149).unwrap());
+        assert!(purge_expired_attachment_upload(&store, group_id, device_id, 150).unwrap());
+        assert!(store
+            .list_keys()
+            .unwrap()
+            .iter()
+            .all(|key| !key.as_str().starts_with("attachment-upload:")));
     }
 
     #[test]

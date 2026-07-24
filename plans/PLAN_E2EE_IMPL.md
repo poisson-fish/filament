@@ -7,7 +7,7 @@
 
 ---
 
-## Implementation Status — 2026-07-23
+## Implementation Status — 2026-07-24
 
 The repository is currently implementing **Phase 5 voice/video E2EE**, but
 E2EE messaging and media are not yet production client paths. Plaintext
@@ -351,9 +351,13 @@ Lost acknowledgment responses retry after restart, expired content is
 hard-deleted in bounded transactions, and hostile response types, lengths,
 descriptor substitutions, or torn local records fail closed. The full
 32 MiB transport range fits the 4 MiB local-record cap without expanding the
-seven-command IPC manifest. Outbound attachment upload preparation and
-encrypted attachment presentation remain disabled pending the privileged
-surface review.
+seven-command IPC manifest. Outbound attachment preparation now encrypts and
+atomically chunks one exact upload per group into SQLCipher before submission.
+The packaged host retries identical opaque bytes after response loss, validates
+the exact server acceptance, and retains the private descriptor until it can be
+authenticated inside durable MLS message history; expired accepted uploads are
+hard-deleted. Attachment composition and presentation remain unavailable to
+the webview pending the privileged-surface review.
 
 ---
 

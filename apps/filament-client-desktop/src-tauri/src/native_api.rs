@@ -18,7 +18,7 @@ use filament_protocol::{
     DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse,
     E2eeProposalMailboxResponse, KeyPackageEntry, MlsConversationProvisionResponse,
     PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
-    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse,
+    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse, PutE2eeAttachmentResponse,
     RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
     UploadKeyPackagesRequest, UploadKeyPackagesResponse, E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS,
     MAX_E2EE_ATTACHMENT_BYTES, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_SIZE,
@@ -114,6 +114,14 @@ pub(crate) trait NativeEnrollmentApi: Send + Sync + 'static {
         attachment_id: AttachmentId,
         device_id: DeviceId,
     ) -> Result<EncryptedAttachment, NativeApiError>;
+
+    fn put_attachment(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        device_id: DeviceId,
+        attachment: EncryptedAttachment,
+    ) -> Result<PutE2eeAttachmentResponse, NativeApiError>;
 
     fn acknowledge_attachments(
         &self,
@@ -447,6 +455,39 @@ impl NativeEnrollmentApi for ReqwestNativeEnrollmentApi {
             attachment_id,
             ciphertext,
         })
+    }
+
+    fn put_attachment(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        device_id: DeviceId,
+        attachment: EncryptedAttachment,
+    ) -> Result<PutE2eeAttachmentResponse, NativeApiError> {
+        if !E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS.contains(&attachment.ciphertext.len()) {
+            return Err(NativeApiError::Rejected);
+        }
+        let attachment_id = attachment.attachment_id;
+        let ciphertext_bytes =
+            u64::try_from(attachment.ciphertext.len()).map_err(|_| NativeApiError::Rejected)?;
+        let response = self
+            .client
+            .put(self.origin.endpoint_with_query(
+                &format!("/e2ee/groups/{group_id}/attachments/{attachment_id}"),
+                &[("device_id", device_id.to_string())],
+            )?)
+            .header(AUTHORIZATION, bearer_value(access_token)?)
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(attachment.ciphertext)
+            .send()
+            .map_err(|_| NativeApiError::Unavailable)?;
+        let response: PutE2eeAttachmentResponse = decode_response(response)?;
+        if response.attachment_id != attachment_id.to_string()
+            || response.ciphertext_bytes != ciphertext_bytes
+        {
+            return Err(NativeApiError::Rejected);
+        }
+        Ok(response)
     }
 
     fn acknowledge_attachments(
