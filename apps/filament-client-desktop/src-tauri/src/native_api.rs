@@ -8,24 +8,26 @@ use std::{collections::HashSet, io::Read as _, time::Duration};
 
 use filament_core::{DeviceCertificate, DeviceId, GroupId, UserId, Username};
 use filament_e2ee::{
-    verify_root_identity_rotation_chain, verify_root_identity_rotation_proof, MlsDevice,
-    PendingKeyPackageUpload, RootIdentityRotationProof,
+    verify_root_identity_rotation_chain, verify_root_identity_rotation_proof, AttachmentId,
+    EncryptedAttachment, MlsDevice, PendingKeyPackageUpload, RootIdentityRotationProof,
 };
 use filament_protocol::{
-    AckE2eeCommitsRequest, AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
+    AckE2eeAttachmentsRequest, AckE2eeAttachmentsResponse, AckE2eeCommitsRequest,
+    AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
     AckE2eeProposalsRequest, AckE2eeProposalsResponse, CreateMlsConversationRequest,
     DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse,
     E2eeProposalMailboxResponse, KeyPackageEntry, MlsConversationProvisionResponse,
     PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
     PublishDeviceCertificateRequest, PublishDeviceCertificateResponse,
     RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
-    UploadKeyPackagesRequest, UploadKeyPackagesResponse, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE,
-    MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
+    UploadKeyPackagesRequest, UploadKeyPackagesResponse, E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS,
+    MAX_E2EE_ATTACHMENT_BYTES, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_SIZE,
+    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
     ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use reqwest::{
     blocking::{Client, Response},
-    header::{HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
+    header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
     redirect::Policy,
     StatusCode,
 };
@@ -103,6 +105,21 @@ pub(crate) trait NativeEnrollmentApi: Send + Sync + 'static {
         access_token: &SessionToken,
         group_id: GroupId,
         request: &AckE2eeMessagesRequest,
+    ) -> Result<(), NativeApiError>;
+
+    fn get_attachment(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        attachment_id: AttachmentId,
+        device_id: DeviceId,
+    ) -> Result<EncryptedAttachment, NativeApiError>;
+
+    fn acknowledge_attachments(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &AckE2eeAttachmentsRequest,
     ) -> Result<(), NativeApiError>;
 
     fn commit_mailbox(
@@ -384,6 +401,65 @@ impl NativeEnrollmentApi for ReqwestNativeEnrollmentApi {
             access_token,
             reqwest::Method::POST,
             &format!("/e2ee/groups/{group_id}/messages/ack"),
+            request,
+        )?;
+        validate_acknowledgment_counts(
+            response.acknowledged_count,
+            response.deleted_count,
+            requested,
+        )
+    }
+
+    fn get_attachment(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        attachment_id: AttachmentId,
+        device_id: DeviceId,
+    ) -> Result<EncryptedAttachment, NativeApiError> {
+        let mut response = self
+            .client
+            .get(self.origin.endpoint_with_query(
+                &format!("/e2ee/groups/{group_id}/attachments/{attachment_id}"),
+                &[("device_id", device_id.to_string())],
+            )?)
+            .header(AUTHORIZATION, bearer_value(access_token)?)
+            .send()
+            .map_err(|_| NativeApiError::Unavailable)?;
+        if !response.status().is_success() {
+            return Err(map_status(response.status()));
+        }
+        let expected_length = validate_attachment_response_headers(response.headers())?;
+        let limit = u64::try_from(MAX_E2EE_ATTACHMENT_BYTES.saturating_add(1))
+            .map_err(|_| NativeApiError::Unavailable)?;
+        let mut ciphertext = Vec::with_capacity(expected_length);
+        response
+            .by_ref()
+            .take(limit)
+            .read_to_end(&mut ciphertext)
+            .map_err(|_| NativeApiError::Unavailable)?;
+        if ciphertext.len() != expected_length
+            || !E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS.contains(&ciphertext.len())
+        {
+            return Err(NativeApiError::Rejected);
+        }
+        Ok(EncryptedAttachment {
+            attachment_id,
+            ciphertext,
+        })
+    }
+
+    fn acknowledge_attachments(
+        &self,
+        access_token: &SessionToken,
+        group_id: GroupId,
+        request: &AckE2eeAttachmentsRequest,
+    ) -> Result<(), NativeApiError> {
+        let requested = request.attachment_ids.len();
+        let response: AckE2eeAttachmentsResponse = self.send_json(
+            access_token,
+            reqwest::Method::POST,
+            &format!("/e2ee/groups/{group_id}/attachments/ack"),
             request,
         )?;
         validate_acknowledgment_counts(
@@ -697,6 +773,24 @@ fn validate_acknowledgment_counts(
     }
 }
 
+fn validate_attachment_response_headers(headers: &HeaderMap) -> Result<usize, NativeApiError> {
+    let content_type = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(NativeApiError::Rejected)?;
+    let content_length = headers
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or(NativeApiError::Rejected)?;
+    if content_type != "application/octet-stream"
+        || !E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS.contains(&content_length)
+    {
+        return Err(NativeApiError::Rejected);
+    }
+    Ok(content_length)
+}
+
 pub(crate) fn verify_directory_device(
     user_id: UserId,
     device_id: DeviceId,
@@ -937,6 +1031,37 @@ mod tests {
         );
         assert_eq!(
             validate_acknowledgment_counts(0, 2, 1),
+            Err(NativeApiError::Rejected)
+        );
+    }
+
+    #[test]
+    fn attachment_response_requires_exact_binary_type_and_padding_bucket() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        headers.insert(CONTENT_LENGTH, HeaderValue::from_static("65536"));
+        assert_eq!(validate_attachment_response_headers(&headers), Ok(65_536));
+
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html"));
+        assert_eq!(
+            validate_attachment_response_headers(&headers),
+            Err(NativeApiError::Rejected)
+        );
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        headers.insert(CONTENT_LENGTH, HeaderValue::from_static("65535"));
+        assert_eq!(
+            validate_attachment_response_headers(&headers),
+            Err(NativeApiError::Rejected)
+        );
+        headers.remove(CONTENT_LENGTH);
+        assert_eq!(
+            validate_attachment_response_headers(&headers),
             Err(NativeApiError::Rejected)
         );
     }

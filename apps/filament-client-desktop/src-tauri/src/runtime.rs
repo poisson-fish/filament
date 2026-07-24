@@ -14,15 +14,18 @@ use std::{
 
 use filament_core::{DeviceId, UserId};
 use filament_e2ee::{
-    clear_pending_keypackage_upload, confirm_commit_acknowledgment, confirm_message_acknowledgment,
-    confirm_proposal_acknowledgment, generate_key_package_batch, generate_last_resort_key_package,
-    load_mls_client_state, load_pending_keypackage_upload, load_pending_root_identity_rotation,
-    load_root_identity, load_root_identity_rotation_sequence, pending_commit_acknowledgment,
-    pending_message_acknowledgment, pending_proposal_acknowledgment,
+    clear_pending_keypackage_upload, confirm_attachment_acknowledgment,
+    confirm_commit_acknowledgment, confirm_message_acknowledgment, confirm_proposal_acknowledgment,
+    generate_key_package_batch, generate_last_resort_key_package, load_mls_client_state,
+    load_pending_keypackage_upload, load_pending_root_identity_rotation, load_root_identity,
+    load_root_identity_rotation_sequence, pending_attachment_acknowledgment,
+    pending_attachment_downloads, pending_commit_acknowledgment, pending_message_acknowledgment,
+    pending_proposal_acknowledgment, persist_downloaded_attachment,
     persist_initial_device_bootstrap, persist_root_identity_rotation_sequence,
-    prepare_pending_root_identity_rotation, ConversationAudience, DurableMailboxError,
-    DurableMlsClient, KeyStoreError, LocalKeyStore, LocalStoreId, MailboxConversationRoute,
-    MlsDevice, RootIdentityKey, StoreKey, DEFAULT_BATCH_SIZE,
+    prepare_pending_root_identity_rotation, purge_expired_attachments, purge_expired_messages,
+    ConversationAudience, DurableAttachmentError, DurableMailboxError, DurableMlsClient,
+    KeyStoreError, LocalKeyStore, LocalStoreId, MailboxConversationRoute, MlsDevice,
+    RootIdentityKey, StoreKey, DEFAULT_BATCH_SIZE,
 };
 use filament_protocol::{
     RotateRootIdentityResponse, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_SIZE,
@@ -53,6 +56,7 @@ pub const MAX_TAURI_IPC_REQUEST_BYTES: usize = 16 * 1024;
 const MAX_MAILBOX_GROUPS_PER_SYNC: usize = 8;
 const MAX_MAILBOX_PAGES_PER_GROUP: usize = 4;
 const MAX_OUTBOUND_COMMIT_ATTEMPTS: usize = 4;
+const MAX_ATTACHMENT_DOWNLOADS_PER_GROUP: usize = 4;
 
 struct ProductionDesktopBackend {
     session_store: Arc<dyn SessionCredentialStore>,
@@ -365,6 +369,11 @@ impl ProductionDesktopBackend {
         active: &mut ActiveE2eeState,
     ) -> Result<(), DesktopCommandBackendError> {
         self.flush_pending_conversation_provision(session, active)?;
+        let now_unix = (self.clock)()?;
+        purge_expired_messages(active.store.as_ref(), now_unix)
+            .map_err(|error| map_keystore_error(&error))?;
+        purge_expired_attachments(active.store.as_ref(), now_unix)
+            .map_err(|error| map_durable_attachment_error(&error))?;
         let routes = active
             .mailbox
             .mailbox_routes()
@@ -413,6 +422,7 @@ impl ProductionDesktopBackend {
     ) -> Result<(), DesktopCommandBackendError> {
         self.flush_outbound_message(session, active, route.group_id)?;
         self.synchronize_proposals(session, active, route.group_id)?;
+        self.synchronize_attachments(session, active, route.group_id)?;
 
         self.flush_commit_acknowledgment(session, active, route.group_id)?;
         for _ in 0..MAX_MAILBOX_PAGES_PER_GROUP {
@@ -489,12 +499,53 @@ impl ProductionDesktopBackend {
                 )
                 .map_err(|error| map_keystore_error(&error))?;
             }
+            self.synchronize_attachments(session, active, route.group_id)?;
             if !batch.rejected_messages.is_empty() {
                 return Err(DesktopCommandBackendError::Rejected);
             }
             if page_len < MAX_E2EE_MAILBOX_PAGE_SIZE {
                 break;
             }
+        }
+        Ok(())
+    }
+
+    fn synchronize_attachments(
+        &self,
+        session: &StoredSession,
+        active: &ActiveE2eeState,
+        group_id: filament_core::GroupId,
+    ) -> Result<(), DesktopCommandBackendError> {
+        self.flush_attachment_acknowledgment(session, active, group_id)?;
+        let now_unix = (self.clock)()?;
+        for _ in 0..MAX_ATTACHMENT_DOWNLOADS_PER_GROUP {
+            let mut pending =
+                pending_attachment_downloads(active.store.as_ref(), group_id, now_unix, 1)
+                    .map_err(|error| map_durable_attachment_error(&error))?;
+            let Some(pending) = pending.pop() else {
+                return Ok(());
+            };
+            let encrypted = self
+                .api
+                .get_attachment(
+                    &session.access_token,
+                    group_id,
+                    pending.descriptor.attachment_id,
+                    active.device_id,
+                )
+                .map_err(map_native_api_error)?;
+            let acknowledgment = persist_downloaded_attachment(
+                active.store.as_ref(),
+                active.device_id,
+                &pending,
+                &encrypted,
+            )
+            .map_err(|error| map_durable_attachment_error(&error))?;
+            self.api
+                .acknowledge_attachments(&session.access_token, group_id, &acknowledgment)
+                .map_err(map_native_api_error)?;
+            confirm_attachment_acknowledgment(active.store.as_ref(), group_id, &acknowledgment)
+                .map_err(|error| map_durable_attachment_error(&error))?;
         }
         Ok(())
     }
@@ -678,6 +729,25 @@ impl ProductionDesktopBackend {
                 .map_err(map_native_api_error)?;
             confirm_commit_acknowledgment(active.store.as_ref(), group_id, &acknowledgment)
                 .map_err(|error| map_keystore_error(&error))?;
+        }
+        Ok(())
+    }
+
+    fn flush_attachment_acknowledgment(
+        &self,
+        session: &StoredSession,
+        active: &ActiveE2eeState,
+        group_id: filament_core::GroupId,
+    ) -> Result<(), DesktopCommandBackendError> {
+        if let Some(acknowledgment) =
+            pending_attachment_acknowledgment(active.store.as_ref(), group_id, active.device_id)
+                .map_err(|error| map_durable_attachment_error(&error))?
+        {
+            self.api
+                .acknowledge_attachments(&session.access_token, group_id, &acknowledgment)
+                .map_err(map_native_api_error)?;
+            confirm_attachment_acknowledgment(active.store.as_ref(), group_id, &acknowledgment)
+                .map_err(|error| map_durable_attachment_error(&error))?;
         }
         Ok(())
     }
@@ -972,6 +1042,20 @@ fn map_durable_mailbox_error(error: DurableMailboxError) -> DesktopCommandBacken
     }
 }
 
+const fn map_durable_attachment_error(
+    error: &DurableAttachmentError,
+) -> DesktopCommandBackendError {
+    match error {
+        DurableAttachmentError::KeyStore(
+            KeyStoreError::BackendError | KeyStoreError::KeyUnavailable,
+        ) => DesktopCommandBackendError::Unavailable,
+        DurableAttachmentError::PendingAcknowledgment
+        | DurableAttachmentError::InvalidMetadata
+        | DurableAttachmentError::Attachment(_)
+        | DurableAttachmentError::KeyStore(_) => DesktopCommandBackendError::Rejected,
+    }
+}
+
 fn system_time_unix() -> Result<i64, DesktopCommandBackendError> {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1135,16 +1219,16 @@ mod tests {
 
     use super::*;
     use filament_e2ee::{
-        DeliveryServiceSigner, InMemoryKeyStore, PendingKeyPackageUpload,
-        DELIVERY_SERVICE_SEED_BYTES,
+        AttachmentId, DeliveryServiceSigner, EncryptedAttachment, InMemoryKeyStore,
+        PendingKeyPackageUpload, DELIVERY_SERVICE_SEED_BYTES,
     };
     use filament_protocol::{
-        AckE2eeCommitsRequest, AckE2eeMessagesRequest, AckE2eeProposalsRequest,
-        CreateMlsConversationRequest, DeviceInfo, DeviceListResponse, E2eeCommitMailboxEntry,
-        E2eeCommitMailboxResponse, E2eeMailboxResponse, E2eeProposalMailboxEntry,
-        E2eeProposalMailboxResponse, MlsConversationProvisionResponse, PostCommitRequest,
-        PostCommitResponse, PostMessageRequest, PostMessageResponse, RootIdentityDirectoryResponse,
-        RootIdentityRotationEntry, RotateRootIdentityRequest,
+        AckE2eeAttachmentsRequest, AckE2eeCommitsRequest, AckE2eeMessagesRequest,
+        AckE2eeProposalsRequest, CreateMlsConversationRequest, DeviceInfo, DeviceListResponse,
+        E2eeCommitMailboxEntry, E2eeCommitMailboxResponse, E2eeMailboxResponse,
+        E2eeProposalMailboxEntry, E2eeProposalMailboxResponse, MlsConversationProvisionResponse,
+        PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
+        RootIdentityDirectoryResponse, RootIdentityRotationEntry, RotateRootIdentityRequest,
         ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
     };
 
@@ -1258,6 +1342,9 @@ mod tests {
             Mutex<HashMap<filament_core::GroupId, (PostMessageRequest, PostMessageResponse)>>,
         lose_message_response: AtomicBool,
         message_attempts: AtomicUsize,
+        attachments: Mutex<HashMap<(filament_core::GroupId, AttachmentId), EncryptedAttachment>>,
+        lose_attachment_ack_response: AtomicBool,
+        attachment_ack_attempts: AtomicUsize,
         commit_mailboxes: Mutex<HashMap<filament_core::GroupId, E2eeCommitMailboxResponse>>,
         lose_commit_ack_response: AtomicBool,
         commit_ack_attempts: AtomicUsize,
@@ -1296,6 +1383,9 @@ mod tests {
                 accepted_messages: Mutex::new(HashMap::new()),
                 lose_message_response: AtomicBool::new(false),
                 message_attempts: AtomicUsize::new(0),
+                attachments: Mutex::new(HashMap::new()),
+                lose_attachment_ack_response: AtomicBool::new(false),
+                attachment_ack_attempts: AtomicUsize::new(0),
                 commit_mailboxes: Mutex::new(HashMap::new()),
                 lose_commit_ack_response: AtomicBool::new(false),
                 commit_ack_attempts: AtomicUsize::new(0),
@@ -1325,6 +1415,9 @@ mod tests {
                 accepted_messages: Mutex::new(HashMap::new()),
                 lose_message_response: AtomicBool::new(false),
                 message_attempts: AtomicUsize::new(0),
+                attachments: Mutex::new(HashMap::new()),
+                lose_attachment_ack_response: AtomicBool::new(false),
+                attachment_ack_attempts: AtomicUsize::new(0),
                 commit_mailboxes: Mutex::new(HashMap::new()),
                 lose_commit_ack_response: AtomicBool::new(false),
                 commit_ack_attempts: AtomicUsize::new(0),
@@ -1554,6 +1647,42 @@ mod tests {
                 .messages
                 .last()
                 .map(|message| message.message_id.clone());
+            Ok(())
+        }
+
+        fn get_attachment(
+            &self,
+            _access_token: &crate::SessionToken,
+            group_id: filament_core::GroupId,
+            attachment_id: AttachmentId,
+            _device_id: DeviceId,
+        ) -> Result<EncryptedAttachment, NativeApiError> {
+            self.attachments
+                .lock()
+                .unwrap()
+                .get(&(group_id, attachment_id))
+                .cloned()
+                .ok_or(NativeApiError::Rejected)
+        }
+
+        fn acknowledge_attachments(
+            &self,
+            _access_token: &crate::SessionToken,
+            _group_id: filament_core::GroupId,
+            request: &AckE2eeAttachmentsRequest,
+        ) -> Result<(), NativeApiError> {
+            self.attachment_ack_attempts.fetch_add(1, Ordering::SeqCst);
+            if request.attachment_ids.len() != 1
+                || AttachmentId::try_from(request.attachment_ids[0].clone()).is_err()
+            {
+                return Err(NativeApiError::Rejected);
+            }
+            if self
+                .lose_attachment_ack_response
+                .swap(false, Ordering::SeqCst)
+            {
+                return Err(NativeApiError::Unavailable);
+            }
             Ok(())
         }
 
@@ -1979,6 +2108,119 @@ mod tests {
             .unwrap()
             .messages
             .is_empty());
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn production_attachment_download_is_verified_and_acknowledged_after_durable_storage() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin =
+            filament_e2ee::PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = filament_e2ee::PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let key_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = filament_core::GroupId::new();
+        let (mut alice_group, pending_commit) = filament_e2ee::MlsConversation::create_two_member(
+            group_id,
+            &alice,
+            bob_pin,
+            &key_package,
+        )
+        .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let bob_group = filament_e2ee::MlsConversation::join_from_welcome(
+            group_id,
+            &bob,
+            alice_pin,
+            pending_commit.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let plaintext = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDRnative attachment";
+        let (descriptor, attachment) =
+            filament_e2ee::encrypt_attachment("proof.png", plaintext).unwrap();
+        let event = filament_e2ee::VersionedApplicationEvent {
+            event_id: filament_e2ee::ApplicationEventId::new(),
+            retention_secs: None,
+            event: filament_e2ee::EncryptedChatEvent::Attachments {
+                message_id: filament_e2ee::EncryptedMessageId::new(),
+                body: None,
+                attachments: filament_e2ee::AttachmentSet::try_from(vec![
+                    filament_e2ee::EncryptedAttachmentReference {
+                        file: descriptor.clone(),
+                        thumbnail: None,
+                    },
+                ])
+                .unwrap(),
+            },
+        };
+        let encrypted_message = alice_group.encrypt_chat_event(&alice, &event).unwrap();
+        let message_id = filament_e2ee::EncryptedMessageId::new().to_string();
+        let api = Arc::new(MockEnrollmentApi::with_device(&bob));
+        api.message_mailboxes.lock().unwrap().insert(
+            group_id,
+            E2eeMailboxResponse {
+                messages: vec![filament_protocol::E2eeMailboxMessage {
+                    message_id: message_id.clone(),
+                    crypto: encrypted_message.crypto.as_str().to_owned(),
+                    epoch: encrypted_message.epoch,
+                    suite_id: encrypted_message.suite.as_u16(),
+                    sender_device_id: encrypted_message.sender_device_id.to_string(),
+                    message_blob: encrypted_message.message_blob,
+                    created_at_unix: 10,
+                    expires_at_unix: 1_000,
+                }],
+                next_after_message_id: Some(message_id.clone()),
+            },
+        );
+        api.attachments
+            .lock()
+            .unwrap()
+            .insert((group_id, attachment.attachment_id), attachment);
+        api.lose_attachment_ack_response
+            .store(true, Ordering::SeqCst);
+        let (backend, _session_store, registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        registry.bind(bob.user_id(), bob.device_id()).unwrap();
+        filament_e2ee::persist_root_identity(
+            local_store.as_ref(),
+            StoreKey::root_identity(),
+            &bob_root,
+        )
+        .unwrap();
+        filament_e2ee::persist_mls_client_state(local_store.as_ref(), &bob, &[&bob_group]).unwrap();
+
+        assert_eq!(
+            backend.initialize_e2ee_store(),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        let acknowledgment =
+            pending_attachment_acknowledgment(local_store.as_ref(), group_id, bob.device_id())
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            acknowledgment.attachment_ids,
+            vec![descriptor.attachment_id.to_string()]
+        );
+        let loaded = filament_e2ee::load_downloaded_attachment(
+            local_store.as_ref(),
+            group_id,
+            &message_id,
+            &descriptor,
+            100,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(loaded.bytes.as_slice(), plaintext);
+
+        assert_eq!(backend.initialize_e2ee_store(), Ok(store_status()));
+        assert_eq!(api.attachment_ack_attempts.load(Ordering::SeqCst), 2);
+        assert!(
+            pending_attachment_acknowledgment(local_store.as_ref(), group_id, bob.device_id())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

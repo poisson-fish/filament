@@ -342,6 +342,18 @@ across restart. The existing seven-command IPC surface is unchanged:
 KeyPackage claim/directory selection and conversation initiation are not
 exposed to the webview pending explicit privileged-surface review, and the
 encrypted composer/presentation UI remains fail closed.
+Inbound encrypted attachments now follow the same production native boundary.
+The host discovers private descriptors only in MLS-authenticated SQLCipher
+history, downloads exact-bucket opaque blobs from the pinned HTTPS authority,
+verifies AEAD, padding, hash, and sniffed MIME, and atomically persists
+bounded plaintext chunks with a verified-decryption acknowledgment outbox.
+Lost acknowledgment responses retry after restart, expired content is
+hard-deleted in bounded transactions, and hostile response types, lengths,
+descriptor substitutions, or torn local records fail closed. The full
+32 MiB transport range fits the 4 MiB local-record cap without expanding the
+seven-command IPC manifest. Outbound attachment upload preparation and
+encrypted attachment presentation remain disabled pending the privileged
+surface review.
 
 ---
 

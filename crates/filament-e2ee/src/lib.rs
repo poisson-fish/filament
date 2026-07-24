@@ -32,6 +32,7 @@ pub mod backup;
 pub mod commit_mailbox;
 pub mod conversation;
 pub mod delivery_service;
+pub mod durable_attachment;
 pub mod durable_mailbox;
 pub mod error;
 pub mod history_sync;
@@ -79,6 +80,12 @@ pub use conversation::{
     MAX_MLS_GROUP_USERS,
 };
 pub use delivery_service::{DeliveryServiceSigner, DELIVERY_SERVICE_SEED_BYTES};
+pub use durable_attachment::{
+    confirm_attachment_acknowledgment, load_downloaded_attachment,
+    pending_attachment_acknowledgment, pending_attachment_downloads, persist_downloaded_attachment,
+    purge_expired_attachments, DurableAttachmentError, PendingAttachmentDownload,
+    MAX_PENDING_ATTACHMENT_DOWNLOADS,
+};
 pub use durable_mailbox::{
     confirm_commit_acknowledgment, confirm_message_acknowledgment, confirm_proposal_acknowledgment,
     load_disappearing_timer, load_stored_message, load_stored_message_at,
