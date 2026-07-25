@@ -27,8 +27,10 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     commit_mailbox::validate_page as validate_commit_page, persistence::encode_mls_client_state,
     process_commit_mailbox, process_group_commit_mailbox, process_message_mailbox,
-    AuthenticatedMembershipChange, AuthenticatedMembershipChangeKind, ConversationAudience,
-    ConversationError, DecryptedApplicationMessage, EncryptedChatEvent, EncryptedGroupCommit,
+    ApplicationEventId, AttachmentSet, AuthenticatedMembershipChange,
+    AuthenticatedMembershipChangeKind, ConfirmedAttachmentUpload, ConversationAudience,
+    ConversationError, DecryptedApplicationMessage, DurableAttachmentError,
+    EncryptedAttachmentReference, EncryptedChatEvent, EncryptedGroupCommit, EncryptedMessageId,
     ExternalCommitRecoveryInfo, ExternalGroupProposal, ExternalProposalAction, KeyStoreError,
     LocalKeyStore, MlsClientState, MlsConversation, PendingCommitRebase,
     PendingExternalCommitRecovery, PendingGroupCommit, PinnedUserIdentity, RejectedMailboxCommit,
@@ -1081,6 +1083,70 @@ impl DurableMlsClient {
         }
         self.state = Some(state);
         Ok(request)
+    }
+
+    /// Authenticate one confirmed native upload inside a retry-safe MLS event.
+    ///
+    /// The private descriptor comes only from the encrypted native upload
+    /// record. The host cannot substitute a path, object ID, content key, or
+    /// retention policy. Upload cleanup remains gated on accepted authenticated
+    /// local history through `finalize_confirmed_attachment_upload`.
+    ///
+    /// # Errors
+    /// Rejects cross-group/device records, invalid descriptors, or any ordinary
+    /// outbound-message durability error.
+    pub fn prepare_confirmed_attachment_message(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        confirmed: &ConfirmedAttachmentUpload,
+        now_unix: i64,
+    ) -> Result<PostMessageRequest, DurableMailboxError> {
+        let persisted = crate::confirmed_attachment_upload(
+            store,
+            confirmed.group_id,
+            confirmed.device_id,
+            now_unix,
+        )
+        .map_err(|error| match error {
+            DurableAttachmentError::KeyStore(error) => DurableMailboxError::KeyStore(error),
+            DurableAttachmentError::PendingAcknowledgment
+            | DurableAttachmentError::PendingUpload
+            | DurableAttachmentError::InvalidMetadata
+            | DurableAttachmentError::Attachment(_) => {
+                DurableMailboxError::Conversation(ConversationError::MetadataMismatch)
+            }
+        })?
+        .ok_or(ConversationError::MetadataMismatch)?;
+        if &persisted != confirmed {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        let state = self
+            .state
+            .as_ref()
+            .ok_or(DurableMailboxError::Unavailable)?;
+        if state.device.device_id() != confirmed.device_id
+            || !state
+                .conversations
+                .iter()
+                .any(|conversation| conversation.group_id() == confirmed.group_id)
+            || confirmed.response.attachment_id != confirmed.descriptor.attachment_id.to_string()
+        {
+            return Err(ConversationError::MetadataMismatch.into());
+        }
+        let attachments = AttachmentSet::try_from(vec![EncryptedAttachmentReference {
+            file: confirmed.descriptor.clone(),
+            thumbnail: None,
+        }])?;
+        let event = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: load_disappearing_timer(store, confirmed.group_id)?,
+            event: EncryptedChatEvent::Attachments {
+                message_id: EncryptedMessageId::new(),
+                body: None,
+                attachments,
+            },
+        };
+        self.prepare_outbound_message(store, confirmed.group_id, &event)
     }
 
     /// Return the exact durable message request that must be retried.

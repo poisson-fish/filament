@@ -65,8 +65,10 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   adding IPC.
 - Native attachment preparation now encrypts and chunks one exact-bucket
   upload per group into SQLCipher before submission. Response loss retries the
-  identical opaque bytes, while the private descriptor remains native-only
-  until it can be authenticated inside durable MLS message history.
+  identical opaque bytes. After upload acceptance, the host authenticates the
+  private descriptor inside a retry-safe MLS attachment event and removes the
+  upload record only after exact local authenticated history proves message
+  acceptance.
 - Conversation provisioning, encrypted conversation send/presentation UI,
   encrypted attachment composition/presentation UI, pairing UI, packaged
   end-to-end smoke coverage, and mobile platform custody evidence remain fail

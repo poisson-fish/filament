@@ -82,11 +82,11 @@ pub use conversation::{
 pub use delivery_service::{DeliveryServiceSigner, DELIVERY_SERVICE_SEED_BYTES};
 pub use durable_attachment::{
     confirm_attachment_acknowledgment, confirm_attachment_upload, confirmed_attachment_upload,
-    load_downloaded_attachment, pending_attachment_acknowledgment, pending_attachment_downloads,
-    pending_attachment_upload, persist_downloaded_attachment, prepare_attachment_upload,
-    purge_expired_attachment_upload, purge_expired_attachments, remove_confirmed_attachment_upload,
-    ConfirmedAttachmentUpload, DurableAttachmentError, PendingAttachmentDownload,
-    MAX_PENDING_ATTACHMENT_DOWNLOADS,
+    finalize_confirmed_attachment_upload, load_downloaded_attachment,
+    pending_attachment_acknowledgment, pending_attachment_downloads, pending_attachment_upload,
+    persist_downloaded_attachment, prepare_attachment_upload, purge_expired_attachment_upload,
+    purge_expired_attachments, ConfirmedAttachmentUpload, DurableAttachmentError,
+    PendingAttachmentDownload, MAX_PENDING_ATTACHMENT_DOWNLOADS,
 };
 pub use durable_mailbox::{
     confirm_commit_acknowledgment, confirm_message_acknowledgment, confirm_proposal_acknowledgment,

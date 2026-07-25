@@ -310,15 +310,15 @@ pub fn confirmed_attachment_upload(
 }
 
 /// Remove an accepted upload only after its descriptor is durable in an
-/// authenticated outbound message.
+/// authenticated outbound message authored by this device.
 ///
 /// # Errors
-/// Rejects an unconfirmed/substituted upload, torn chunk state, or storage
-/// failures.
-pub fn remove_confirmed_attachment_upload(
+/// Rejects an unconfirmed/substituted upload, conflicting authenticated
+/// descriptor reuse, torn chunk state, or storage failures.
+pub fn finalize_confirmed_attachment_upload(
     store: &dyn LocalKeyStore,
     confirmed: &ConfirmedAttachmentUpload,
-) -> Result<(), DurableAttachmentError> {
+) -> Result<bool, DurableAttachmentError> {
     let record = load_attachment_upload_record(store, confirmed.group_id)?
         .ok_or(DurableAttachmentError::InvalidMetadata)?;
     validate_attachment_upload_record(&record, confirmed.group_id, confirmed.device_id)?;
@@ -327,7 +327,56 @@ pub fn remove_confirmed_attachment_upload(
     {
         return Err(DurableAttachmentError::InvalidMetadata);
     }
-    let _ = load_attachment_upload_ciphertext(store, confirmed.group_id, &record)?;
+    let mut durable_reference = false;
+    for key in store.list_keys()? {
+        let Some((history_group_id, message_id)) = parse_history_key(&key)? else {
+            continue;
+        };
+        if history_group_id != confirmed.group_id {
+            continue;
+        }
+        let stored = match crate::load_stored_message_at(store, confirmed.group_id, &message_id, 0)
+        {
+            Ok(stored) => stored,
+            Err(KeyStoreError::NotFound) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        let Ok(event) = VersionedApplicationEvent::decode(&stored.message.plaintext) else {
+            continue;
+        };
+        let EncryptedChatEvent::Attachments { attachments, .. } = event.event else {
+            continue;
+        };
+        for descriptor in attachments.as_slice().iter().flat_map(|reference| {
+            core::iter::once(&reference.file).chain(reference.thumbnail.as_ref())
+        }) {
+            if descriptor.attachment_id != confirmed.descriptor.attachment_id {
+                continue;
+            }
+            if descriptor != &confirmed.descriptor {
+                return Err(DurableAttachmentError::InvalidMetadata);
+            }
+            if stored.message.sender_device_id == confirmed.device_id {
+                if stored.created_at_unix >= confirmed.response.expires_at_unix {
+                    return Err(DurableAttachmentError::InvalidMetadata);
+                }
+                durable_reference = true;
+            }
+        }
+    }
+    if !durable_reference {
+        return Ok(false);
+    }
+    remove_attachment_upload_record(store, confirmed, &record)?;
+    Ok(true)
+}
+
+fn remove_attachment_upload_record(
+    store: &dyn LocalKeyStore,
+    confirmed: &ConfirmedAttachmentUpload,
+    record: &AttachmentUploadRecord,
+) -> Result<(), DurableAttachmentError> {
+    let _ = load_attachment_upload_ciphertext(store, confirmed.group_id, record)?;
     let mut keys = Vec::with_capacity(usize::from(record.chunk_count) + 1);
     keys.push(attachment_upload_manifest_key(confirmed.group_id)?);
     for index in 0..usize::from(record.chunk_count) {
@@ -365,15 +414,13 @@ pub fn purge_expired_attachment_upload(
     if response.expires_at_unix > now_unix {
         return Ok(false);
     }
-    remove_confirmed_attachment_upload(
-        store,
-        &ConfirmedAttachmentUpload {
-            group_id,
-            device_id,
-            descriptor: record.descriptor,
-            response,
-        },
-    )?;
+    let confirmed = ConfirmedAttachmentUpload {
+        group_id,
+        device_id,
+        descriptor: record.descriptor.clone(),
+        response,
+    };
+    remove_attachment_upload_record(store, &confirmed, &record)?;
     Ok(true)
 }
 
@@ -1050,7 +1097,9 @@ mod tests {
             .iter()
             .any(|key| key.as_str().starts_with("attachment-upload:")));
 
-        remove_confirmed_attachment_upload(&store, &confirmed).unwrap();
+        assert!(!finalize_confirmed_attachment_upload(&store, &confirmed).unwrap());
+        stored_attachment_message(&store, group_id, device_id, descriptor, None, None);
+        assert!(finalize_confirmed_attachment_upload(&store, &confirmed).unwrap());
         assert!(
             confirmed_attachment_upload(&store, group_id, device_id, 200)
                 .unwrap()
@@ -1124,6 +1173,40 @@ mod tests {
             .unwrap()
             .iter()
             .all(|key| !key.as_str().starts_with("attachment-upload:")));
+    }
+
+    #[test]
+    fn outbound_upload_cleanup_rejects_substituted_authenticated_descriptor() {
+        let store = InMemoryKeyStore::new();
+        let group_id = GroupId::new();
+        let device_id = DeviceId::new();
+        let descriptor =
+            prepare_attachment_upload(&store, group_id, device_id, "proof.png", PNG).unwrap();
+        let pending = pending_attachment_upload(&store, group_id, device_id)
+            .unwrap()
+            .unwrap();
+        let response = PutE2eeAttachmentResponse {
+            attachment_id: descriptor.attachment_id.to_string(),
+            ciphertext_bytes: u64::try_from(pending.ciphertext.len()).unwrap(),
+            expires_at_unix: 500,
+        };
+        confirm_attachment_upload(&store, group_id, device_id, &pending, &response, 100).unwrap();
+        let confirmed = confirmed_attachment_upload(&store, group_id, device_id, 100)
+            .unwrap()
+            .unwrap();
+
+        let (mut substituted, _) = encrypt_attachment("other.png", PNG).unwrap();
+        substituted.attachment_id = descriptor.attachment_id;
+        stored_attachment_message(&store, group_id, device_id, substituted, None, None);
+        assert!(matches!(
+            finalize_confirmed_attachment_upload(&store, &confirmed),
+            Err(DurableAttachmentError::InvalidMetadata)
+        ));
+        assert!(
+            confirmed_attachment_upload(&store, group_id, device_id, 100)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

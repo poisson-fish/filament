@@ -354,10 +354,13 @@ descriptor substitutions, or torn local records fail closed. The full
 seven-command IPC manifest. Outbound attachment preparation now encrypts and
 atomically chunks one exact upload per group into SQLCipher before submission.
 The packaged host retries identical opaque bytes after response loss, validates
-the exact server acceptance, and retains the private descriptor until it can be
-authenticated inside durable MLS message history; expired accepted uploads are
-hard-deleted. Attachment composition and presentation remain unavailable to
-the webview pending the privileged-surface review.
+the exact server acceptance, authenticates the private descriptor inside a
+retry-safe MLS attachment event, and removes the upload record only after exact
+local authenticated history proves message acceptance. Upload and message
+response loss both survive restart without ciphertext substitution or duplicate
+composition; expired accepted uploads are hard-deleted. Attachment composition
+and presentation remain unavailable to the webview pending the
+privileged-surface review.
 
 ---
 
