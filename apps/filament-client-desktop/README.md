@@ -63,11 +63,17 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   atomically in SQLCipher, and clears an outbox only after an idempotent server
   response. Rejected MLS data stops that group without exposing plaintext or
   adding IPC.
-- After native initialization, a native-only scheduler runs the same bounded
-  coordinator every 15 seconds. It skips a pass when another native operation
-  owns the state lock, exponentially backs failed passes off to five minutes,
-  and stops with the host. The scheduler has no IPC, identity, destination, or
-  key-material input.
+- After native initialization, a native WSS listener authenticates with a
+  sensitive bearer header against the compile-time server authority.
+  User-bound `ready` is required before strict `mls_message`, `mls_commit`,
+  `mls_welcome`, or `mls_proposal` events can enqueue an immediate group
+  mailbox drain. Wakeups are coalesced in a 128-group queue; event fields
+  remain untrusted routing hints.
+- A native-only 15-second scheduler remains as offline/missed-event
+  reconciliation. It skips contended passes and exponentially backs failed
+  passes off to five minutes. Gateway reconnects cap at 30 seconds, session
+  replacement/logout interrupts the old connection, and no listener input can
+  select an identity, destination, path, or key.
 - Native attachment preparation now encrypts and chunks one exact-bucket
   upload per group into SQLCipher before submission. Response loss retries the
   identical opaque bytes. After upload acceptance, the host authenticates the

@@ -8,9 +8,12 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, TryLockError, Weak},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Condvar, Mutex, TryLockError, Weak,
+    },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use filament_core::{DeviceId, UserId};
@@ -42,6 +45,10 @@ use crate::{
         verify_directory_device, verify_directory_root, verify_root_identity_directory,
         NativeApiError, NativeEnrollmentApi, ReqwestNativeEnrollmentApi,
     },
+    native_gateway::{
+        decode_gateway_wake, GatewayWake, GatewayWakeQueue, NativeGatewayConnector,
+        NativeGatewayFrame, TungsteniteNativeGatewayConnector,
+    },
     session_store::{
         OsSessionCredentialStore, SessionCredentialError, SessionCredentialStore, StoredSession,
         StoredSessionMetadata,
@@ -61,6 +68,10 @@ const MAX_OUTBOUND_COMMIT_ATTEMPTS: usize = 4;
 const MAX_ATTACHMENT_DOWNLOADS_PER_GROUP: usize = 4;
 const BACKGROUND_SYNC_INTERVAL: Duration = Duration::from_secs(15);
 const BACKGROUND_SYNC_MAX_BACKOFF: Duration = Duration::from_secs(5 * 60);
+const GATEWAY_RECONNECT_INITIAL: Duration = Duration::from_secs(1);
+const GATEWAY_RECONNECT_MAX: Duration = Duration::from_secs(30);
+const GATEWAY_READY_TIMEOUT: Duration = Duration::from_secs(7);
+const GATEWAY_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BackgroundSyncOutcome {
@@ -74,6 +85,9 @@ struct ProductionDesktopBackend {
     device_registry: Arc<dyn DeviceRegistry>,
     api: Arc<dyn NativeEnrollmentApi>,
     store_factory: Arc<dyn NativeStoreFactory>,
+    gateway: Arc<dyn NativeGatewayConnector>,
+    gateway_wakes: Arc<GatewayWakeQueue>,
+    gateway_lifecycle: Arc<GatewayLifecycle>,
     clock: Arc<Clock>,
     active: Mutex<Option<ActiveE2eeState>>,
 }
@@ -93,6 +107,12 @@ impl ProductionDesktopBackend {
                 ReqwestNativeEnrollmentApi::from_build_config().map_err(map_native_api_error)?,
             ),
             store_factory: Arc::new(DesktopStoreFactory { app_data_root }),
+            gateway: Arc::new(
+                TungsteniteNativeGatewayConnector::from_build_config()
+                    .map_err(|_| DesktopCommandBackendError::Unavailable)?,
+            ),
+            gateway_wakes: Arc::new(GatewayWakeQueue::new()),
+            gateway_lifecycle: Arc::new(GatewayLifecycle::new()),
             clock: Arc::new(system_time_unix),
             active: Mutex::new(None),
         })
@@ -104,6 +124,7 @@ impl ProductionDesktopBackend {
         device_registry: Arc<dyn DeviceRegistry>,
         api: Arc<dyn NativeEnrollmentApi>,
         store_factory: Arc<dyn NativeStoreFactory>,
+        gateway: Arc<dyn NativeGatewayConnector>,
         clock: impl Fn() -> Result<i64, DesktopCommandBackendError> + Send + Sync + 'static,
     ) -> Self {
         Self {
@@ -111,6 +132,9 @@ impl ProductionDesktopBackend {
             device_registry,
             api,
             store_factory,
+            gateway,
+            gateway_wakes: Arc::new(GatewayWakeQueue::new()),
+            gateway_lifecycle: Arc::new(GatewayLifecycle::new()),
             clock: Arc::new(clock),
             active: Mutex::new(None),
         }
@@ -394,6 +418,55 @@ impl ProductionDesktopBackend {
         self.synchronize_mailboxes(&session, active)?;
         self.flush_pending_keypackages(&session, active.device_id, active.store.as_ref())?;
         Ok(BackgroundSyncOutcome::Synchronized)
+    }
+
+    fn synchronize_active_group_once(
+        &self,
+        group_id: filament_core::GroupId,
+    ) -> Result<BackgroundSyncOutcome, DesktopCommandBackendError> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+        let Some(active) = active.as_mut() else {
+            return Ok(BackgroundSyncOutcome::Idle);
+        };
+        let session = self.load_valid_session()?;
+        let user_id = self
+            .api
+            .current_user(&session.access_token)
+            .map_err(map_native_api_error)?;
+        if user_id != active.user_id {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        let route = active
+            .mailbox
+            .mailbox_routes()
+            .map_err(map_durable_mailbox_error)?
+            .into_iter()
+            .find(|route| route.group_id == group_id);
+        let Some(route) = route else {
+            return Ok(BackgroundSyncOutcome::Idle);
+        };
+        self.synchronize_group_mailboxes(&session, active, &route)?;
+        Ok(BackgroundSyncOutcome::Synchronized)
+    }
+
+    fn gateway_session_snapshot(
+        &self,
+    ) -> Result<Option<(StoredSession, UserId)>, DesktopCommandBackendError> {
+        let user_id = {
+            let active = self
+                .active
+                .lock()
+                .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+            let Some(active) = active.as_ref() else {
+                return Ok(None);
+            };
+            active.user_id
+        };
+        self.load_valid_session()
+            .map(|session| Some((session, user_id)))
     }
 
     fn synchronize_mailboxes(
@@ -863,6 +936,7 @@ impl DesktopCommandBackend for ProductionDesktopBackend {
             .active
             .lock()
             .map_err(|_| DesktopCommandBackendError::Unavailable)? = None;
+        self.gateway_lifecycle.advance();
         let metadata = self
             .session_store
             .store(&request)
@@ -871,12 +945,12 @@ impl DesktopCommandBackend for ProductionDesktopBackend {
     }
 
     fn clear_session(&self) -> Result<(), DesktopCommandBackendError> {
-        let result = self.session_store.clear().map_err(map_session_error);
         *self
             .active
             .lock()
             .map_err(|_| DesktopCommandBackendError::Unavailable)? = None;
-        result
+        self.gateway_lifecycle.advance();
+        self.session_store.clear().map_err(map_session_error)
     }
 
     fn read_session_metadata(&self) -> Result<SessionMetadata, DesktopCommandBackendError> {
@@ -931,6 +1005,7 @@ impl DesktopCommandBackend for ProductionDesktopBackend {
         };
         self.synchronize_mailboxes(&session, &mut initialized)?;
         *active = Some(initialized);
+        self.gateway_lifecycle.advance();
         Ok(store_status())
     }
 
@@ -1177,24 +1252,183 @@ fn background_sync_delay(previous: Duration, succeeded: bool) -> Duration {
     }
 }
 
-fn spawn_background_sync(backend: &Arc<ProductionDesktopBackend>) -> Result<(), std::io::Error> {
-    let backend = Arc::downgrade(backend);
-    thread::Builder::new()
-        .name(String::from("filament-e2ee-sync"))
-        .spawn(move || background_sync_loop(&backend))
-        .map(drop)
+struct GatewayLifecycle {
+    revision: AtomicU64,
+    lock: Mutex<()>,
+    changed: Condvar,
 }
 
-fn background_sync_loop(backend: &Weak<ProductionDesktopBackend>) {
-    let mut delay = BACKGROUND_SYNC_INTERVAL;
-    loop {
-        thread::sleep(delay);
-        let Some(backend) = backend.upgrade() else {
+impl GatewayLifecycle {
+    const fn new() -> Self {
+        Self {
+            revision: AtomicU64::new(0),
+            lock: Mutex::new(()),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn current(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
+    }
+
+    fn advance(&self) {
+        self.revision.fetch_add(1, Ordering::AcqRel);
+        self.changed.notify_all();
+    }
+
+    fn wait_while_current(&self, revision: u64, timeout: Duration) {
+        let Ok(lock) = self.lock.lock() else {
             return;
         };
-        let succeeded = backend.synchronize_active_once().is_ok();
+        let _ = self
+            .changed
+            .wait_timeout_while(lock, timeout, |()| self.current() == revision);
+    }
+}
+
+fn spawn_native_sync(backend: &Arc<ProductionDesktopBackend>) -> Result<(), std::io::Error> {
+    let backend = Arc::downgrade(backend);
+    thread::Builder::new()
+        .name(String::from("filament-e2ee-coordinator"))
+        .spawn({
+            let backend = backend.clone();
+            move || native_sync_coordinator_loop(&backend)
+        })?;
+    thread::Builder::new()
+        .name(String::from("filament-e2ee-gateway"))
+        .spawn(move || native_gateway_listener_loop(&backend))?;
+    Ok(())
+}
+
+fn native_sync_coordinator_loop(backend_weak: &Weak<ProductionDesktopBackend>) {
+    let mut delay = BACKGROUND_SYNC_INTERVAL;
+    let mut fallback_deadline = Instant::now() + delay;
+    loop {
+        let Some(backend) = backend_weak.upgrade() else {
+            return;
+        };
+        let wakes = Arc::clone(&backend.gateway_wakes);
         drop(backend);
-        delay = background_sync_delay(delay, succeeded);
+        let wait = fallback_deadline.saturating_duration_since(Instant::now());
+        match wakes.take(wait) {
+            Ok(Some(group_id)) => {
+                let Some(backend) = backend_weak.upgrade() else {
+                    return;
+                };
+                let _ = backend.synchronize_active_group_once(group_id);
+            }
+            Ok(None) => {
+                let Some(backend) = backend_weak.upgrade() else {
+                    return;
+                };
+                let succeeded = backend.synchronize_active_once().is_ok();
+                delay = background_sync_delay(delay, succeeded);
+                fallback_deadline = Instant::now() + delay;
+            }
+            Err(_) => return,
+        }
+        if Instant::now() >= fallback_deadline {
+            let Some(backend) = backend_weak.upgrade() else {
+                return;
+            };
+            let succeeded = backend.synchronize_active_once().is_ok();
+            delay = background_sync_delay(delay, succeeded);
+            fallback_deadline = Instant::now() + delay;
+        }
+    }
+}
+
+fn native_gateway_listener_loop(backend_weak: &Weak<ProductionDesktopBackend>) {
+    let mut reconnect_delay = GATEWAY_RECONNECT_INITIAL;
+    loop {
+        let Some(backend) = backend_weak.upgrade() else {
+            return;
+        };
+        let revision = backend.gateway_lifecycle.current();
+        let lifecycle = Arc::clone(&backend.gateway_lifecycle);
+        let connector = Arc::clone(&backend.gateway);
+        let snapshot = backend.gateway_session_snapshot();
+        drop(backend);
+
+        let Ok(Some((session, expected_user_id))) = snapshot else {
+            lifecycle.wait_while_current(revision, GATEWAY_RECONNECT_INITIAL);
+            reconnect_delay = GATEWAY_RECONNECT_INITIAL;
+            continue;
+        };
+        let expires_at_unix = session.expires_at_unix;
+        let connection = connector.connect(&session.access_token);
+        drop(session);
+        let result = connection.and_then(|mut connection| {
+            drive_gateway_connection(
+                backend_weak,
+                revision,
+                expected_user_id,
+                expires_at_unix,
+                connection.as_mut(),
+            )
+        });
+        if result.is_ok() {
+            reconnect_delay = GATEWAY_RECONNECT_INITIAL;
+        } else {
+            reconnect_delay = (reconnect_delay * 2).min(GATEWAY_RECONNECT_MAX);
+        }
+        lifecycle.wait_while_current(revision, reconnect_delay);
+    }
+}
+
+fn drive_gateway_connection(
+    backend: &Weak<ProductionDesktopBackend>,
+    revision: u64,
+    expected_user_id: UserId,
+    expires_at_unix: i64,
+    connection: &mut dyn crate::native_gateway::NativeGatewayConnection,
+) -> Result<(), crate::native_gateway::NativeGatewayError> {
+    let started = Instant::now();
+    let mut last_activity = started;
+    let mut ready = false;
+    loop {
+        let Some(current) = backend.upgrade() else {
+            return Ok(());
+        };
+        if current.gateway_lifecycle.current() != revision {
+            return Ok(());
+        }
+        if (current.clock)().map_err(|_| crate::native_gateway::NativeGatewayError::Unavailable)?
+            >= expires_at_unix
+        {
+            return Ok(());
+        }
+        let wakes = Arc::clone(&current.gateway_wakes);
+        drop(current);
+
+        match connection.read_frame()? {
+            NativeGatewayFrame::Text(payload) => {
+                last_activity = Instant::now();
+                match decode_gateway_wake(&payload)? {
+                    GatewayWake::Ready(user_id) if !ready && user_id == expected_user_id => {
+                        ready = true;
+                    }
+                    GatewayWake::Group(group_id) if ready => {
+                        wakes.enqueue(group_id)?;
+                    }
+                    GatewayWake::Ignore if ready => {}
+                    GatewayWake::Ready(_) | GatewayWake::Group(_) | GatewayWake::Ignore => {
+                        return Err(crate::native_gateway::NativeGatewayError::Rejected);
+                    }
+                }
+            }
+            NativeGatewayFrame::Activity => last_activity = Instant::now(),
+            NativeGatewayFrame::Timeout => {}
+            NativeGatewayFrame::Closed => {
+                return Err(crate::native_gateway::NativeGatewayError::Unavailable);
+            }
+        }
+        let now = Instant::now();
+        if (!ready && now.duration_since(started) >= GATEWAY_READY_TIMEOUT)
+            || now.duration_since(last_activity) >= GATEWAY_IDLE_TIMEOUT
+        {
+            return Err(crate::native_gateway::NativeGatewayError::Unavailable);
+        }
     }
 }
 
@@ -1299,7 +1533,7 @@ pub fn run() {
                 ProductionDesktopBackend::new(app_data_root)
                     .map_err(|_| std::io::Error::other("native backend initialization failed"))?,
             );
-            spawn_background_sync(&backend)
+            spawn_native_sync(&backend)
                 .map_err(|_| std::io::Error::other("native sync initialization failed"))?;
             app.manage(RuntimeState {
                 host: Arc::new(DesktopCommandHost::new(backend)),
@@ -1364,10 +1598,11 @@ mod tests {
         AckE2eeAttachmentsRequest, AckE2eeCommitsRequest, AckE2eeMessagesRequest,
         AckE2eeProposalsRequest, CreateMlsConversationRequest, DeviceInfo, DeviceListResponse,
         E2eeCommitMailboxEntry, E2eeCommitMailboxResponse, E2eeMailboxResponse,
-        E2eeProposalMailboxEntry, E2eeProposalMailboxResponse, MlsConversationProvisionResponse,
-        PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
-        PutE2eeAttachmentResponse, RootIdentityDirectoryResponse, RootIdentityRotationEntry,
-        RotateRootIdentityRequest, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+        E2eeProposalMailboxEntry, E2eeProposalMailboxResponse, Envelope, EventType,
+        MlsConversationProvisionResponse, MlsMessageEvent, PostCommitRequest, PostCommitResponse,
+        PostMessageRequest, PostMessageResponse, PutE2eeAttachmentResponse,
+        RootIdentityDirectoryResponse, RootIdentityRotationEntry, RotateRootIdentityRequest,
+        PROTOCOL_VERSION, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
     };
 
     #[derive(Default)]
@@ -2007,6 +2242,66 @@ mod tests {
         }
     }
 
+    struct UnavailableGatewayConnector;
+
+    impl NativeGatewayConnector for UnavailableGatewayConnector {
+        fn connect(
+            &self,
+            _access_token: &crate::SessionToken,
+        ) -> Result<
+            Box<dyn crate::native_gateway::NativeGatewayConnection>,
+            crate::native_gateway::NativeGatewayError,
+        > {
+            Err(crate::native_gateway::NativeGatewayError::Unavailable)
+        }
+    }
+
+    struct ScriptedGatewayConnector {
+        frames: Mutex<Option<std::collections::VecDeque<NativeGatewayFrame>>>,
+    }
+
+    impl ScriptedGatewayConnector {
+        fn new(frames: Vec<NativeGatewayFrame>) -> Self {
+            Self {
+                frames: Mutex::new(Some(frames.into())),
+            }
+        }
+    }
+
+    impl NativeGatewayConnector for ScriptedGatewayConnector {
+        fn connect(
+            &self,
+            _access_token: &crate::SessionToken,
+        ) -> Result<
+            Box<dyn crate::native_gateway::NativeGatewayConnection>,
+            crate::native_gateway::NativeGatewayError,
+        > {
+            let frames = self
+                .frames
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or(crate::native_gateway::NativeGatewayError::Unavailable)?;
+            Ok(Box::new(ScriptedGatewayConnection { frames }))
+        }
+    }
+
+    struct ScriptedGatewayConnection {
+        frames: std::collections::VecDeque<NativeGatewayFrame>,
+    }
+
+    impl crate::native_gateway::NativeGatewayConnection for ScriptedGatewayConnection {
+        fn read_frame(
+            &mut self,
+        ) -> Result<NativeGatewayFrame, crate::native_gateway::NativeGatewayError> {
+            if let Some(frame) = self.frames.pop_front() {
+                return Ok(frame);
+            }
+            thread::sleep(Duration::from_millis(10));
+            Ok(NativeGatewayFrame::Timeout)
+        }
+    }
+
     fn device_info(device: &MlsDevice) -> DeviceInfo {
         DeviceInfo {
             device_id: device.device_id().to_string(),
@@ -2026,6 +2321,18 @@ mod tests {
         Arc<MemoryDeviceRegistry>,
         Arc<InMemoryKeyStore>,
     ) {
+        backend_fixture_with_gateway(api, Arc::new(UnavailableGatewayConnector))
+    }
+
+    fn backend_fixture_with_gateway(
+        api: Arc<MockEnrollmentApi>,
+        gateway: Arc<dyn NativeGatewayConnector>,
+    ) -> (
+        ProductionDesktopBackend,
+        Arc<MemorySessionStore>,
+        Arc<MemoryDeviceRegistry>,
+        Arc<InMemoryKeyStore>,
+    ) {
         let session_store = Arc::new(MemorySessionStore::default());
         let registry = Arc::new(MemoryDeviceRegistry::default());
         let local_store = Arc::new(InMemoryKeyStore::new());
@@ -2036,6 +2343,7 @@ mod tests {
             Arc::new(MemoryStoreFactory {
                 store: local_store.clone(),
             }),
+            gateway,
             || Ok(100),
         );
         (backend, session_store, registry, local_store)
@@ -2096,6 +2404,37 @@ mod tests {
             backend.synchronize_active_once(),
             Ok(BackgroundSyncOutcome::Busy)
         );
+    }
+
+    #[test]
+    fn native_gateway_rejects_wrong_ready_identity_before_any_wake() {
+        let expected_user = UserId::new();
+        let wrong_user = UserId::new();
+        let ready = serde_json::to_vec(&Envelope {
+            v: PROTOCOL_VERSION,
+            t: EventType::try_from(String::from("ready")).unwrap(),
+            d: serde_json::json!({ "user_id": wrong_user.to_string() }),
+        })
+        .unwrap();
+        let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        let backend = Arc::new(backend);
+        let weak = Arc::downgrade(&backend);
+        let mut connection = ScriptedGatewayConnection {
+            frames: vec![NativeGatewayFrame::Text(ready)].into(),
+        };
+
+        assert_eq!(
+            drive_gateway_connection(
+                &weak,
+                backend.gateway_lifecycle.current(),
+                expected_user,
+                500,
+                &mut connection,
+            ),
+            Err(crate::native_gateway::NativeGatewayError::Rejected)
+        );
+        assert_eq!(backend.gateway_wakes.take(Duration::ZERO), Ok(None));
     }
 
     #[test]
@@ -2312,6 +2651,123 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        assert!(api
+            .message_mailboxes
+            .lock()
+            .unwrap()
+            .get(&group_id)
+            .unwrap()
+            .messages
+            .is_empty());
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn native_gateway_message_wake_drains_the_durable_mailbox_without_poll_delay() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin =
+            filament_e2ee::PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = filament_e2ee::PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let key_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let group_id = filament_core::GroupId::new();
+        let conversation_id = filament_core::ConversationId::new();
+        let (mut alice_group, pending) = filament_e2ee::MlsConversation::create_two_member(
+            group_id,
+            &alice,
+            bob_pin,
+            &key_package,
+        )
+        .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let bob_group = filament_e2ee::MlsConversation::join_from_welcome(
+            group_id,
+            &bob,
+            alice_pin,
+            pending.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+        let encrypted = alice_group
+            .encrypt_application_message(&alice, b"gateway wake")
+            .unwrap();
+        let message_id = filament_e2ee::EncryptedMessageId::new().to_string();
+        let ready = serde_json::to_vec(&Envelope {
+            v: PROTOCOL_VERSION,
+            t: EventType::try_from(String::from("ready")).unwrap(),
+            d: serde_json::json!({ "user_id": bob.user_id().to_string() }),
+        })
+        .unwrap();
+        let wake = serde_json::to_vec(&Envelope {
+            v: PROTOCOL_VERSION,
+            t: EventType::try_from(String::from("mls_message")).unwrap(),
+            d: MlsMessageEvent {
+                group_id: group_id.to_string(),
+                conversation_id: conversation_id.to_string(),
+                message_id: message_id.clone(),
+                epoch: encrypted.epoch,
+                suite_id: encrypted.suite.as_u16(),
+                sender_device_id: alice.device_id().to_string(),
+                created_at_unix: 10,
+            },
+        })
+        .unwrap();
+        let gateway = Arc::new(ScriptedGatewayConnector::new(vec![
+            NativeGatewayFrame::Text(ready),
+            NativeGatewayFrame::Text(wake),
+        ]));
+        let api = Arc::new(MockEnrollmentApi::with_device(&bob));
+        let (backend, _session_store, registry, local_store) =
+            backend_fixture_with_gateway(api.clone(), gateway);
+        backend.store_session(valid_session()).unwrap();
+        registry.bind(bob.user_id(), bob.device_id()).unwrap();
+        filament_e2ee::persist_root_identity(
+            local_store.as_ref(),
+            StoreKey::root_identity(),
+            &bob_root,
+        )
+        .unwrap();
+        filament_e2ee::persist_mls_client_state(local_store.as_ref(), &bob, &[&bob_group]).unwrap();
+        assert_eq!(backend.initialize_e2ee_store(), Ok(store_status()));
+
+        api.message_mailboxes.lock().unwrap().insert(
+            group_id,
+            E2eeMailboxResponse {
+                messages: vec![filament_protocol::E2eeMailboxMessage {
+                    message_id: message_id.clone(),
+                    crypto: encrypted.crypto.as_str().to_owned(),
+                    epoch: encrypted.epoch,
+                    suite_id: encrypted.suite.as_u16(),
+                    sender_device_id: encrypted.sender_device_id.to_string(),
+                    message_blob: encrypted.message_blob,
+                    created_at_unix: 10,
+                    expires_at_unix: 1_000,
+                }],
+                next_after_message_id: Some(message_id.clone()),
+            },
+        );
+        let backend = Arc::new(backend);
+        spawn_native_sync(&backend).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let stored = loop {
+            if let Ok(stored) = filament_e2ee::load_stored_message_at(
+                local_store.as_ref(),
+                group_id,
+                &message_id,
+                100,
+            ) {
+                break stored;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "gateway wake did not drain before the polling fallback"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(stored.message.plaintext, b"gateway wake");
+        assert_eq!(api.message_ack_attempts.load(Ordering::SeqCst), 1);
         assert!(api
             .message_mailboxes
             .lock()

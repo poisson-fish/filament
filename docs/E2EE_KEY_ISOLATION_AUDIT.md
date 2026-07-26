@@ -119,8 +119,12 @@ IDs; neither value can be selected by the webview.
 - `apps/filament-client-desktop/src-tauri/src/native_api.rs`: pinned HTTPS
   origin policy, bounded strict DTO handling, sensitive authorization headers,
   ghost-device/root-replacement rejection, and fixed mailbox/ack transports.
+- `apps/filament-client-desktop/src-tauri/src/native_gateway.rs`: pinned WSS
+  derivation, bearer-header authentication, strict bounded wake decoding,
+  coalesced group queue, and redacted connector diagnostics.
 - `apps/filament-client-desktop/src-tauri/src/runtime.rs`: bounded native
-  commit-before-message coordination and lost-response acknowledgment retry.
+  realtime wake/periodic reconciliation, commit-before-message coordination,
+  and lost-response acknowledgment retry.
 - `apps/filament-client-web/src/lib/native-client.ts`: exact native command
   requests, strict public-response decoding, and fixed redacted error mapping.
 - `apps/filament-client-web/src/features/app-shell/controllers/native-encryption-controller.ts`:

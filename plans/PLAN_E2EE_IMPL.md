@@ -367,6 +367,15 @@ initialization without depending on settings-panel reads. A native-only
 exponential retry backoff, and stops when the host is dropped. It adds no IPC
 surface and cannot accept identities, destinations, paths, or key material
 from UI code.
+The packaged host now also connects a native WSS listener to the same
+compile-time authority using bearer-header authentication. It requires an
+exact user-bound `ready`, enforces 64 KiB frame/message limits, strictly
+validates MLS routing events, and coalesces them into a bounded group-wake
+queue. Known-group proposal, commit, Welcome, and message notifications drain
+the durable mailbox immediately; the timer remains reconciliation for missed
+events and offline recovery. Connection/TLS/handshake, read, ready, idle, and
+reconnect deadlines are bounded; session replacement or logout invalidates the
+old listener. No gateway data is trusted as ciphertext or membership state.
 
 ---
 
@@ -1117,6 +1126,10 @@ validation; no signing secret may be committed.
 
 2. **Production backend wiring**:
    - Inject authenticated session, bounded REST/gateway transports, platform storage, MLS state, and mailbox coordination into each native host
+   - Connect native WSS with bearer-header authentication to the compile-time pinned authority; never put access tokens in gateway URLs
+   - Require exact user-bound `ready`, 64 KiB frame/message caps, bounded idle/handshake timeouts, and capped reconnect backoff that is interrupted by session replacement or logout
+   - Treat `mls_message`, `mls_commit`, `mls_welcome`, and `mls_proposal` only as strictly decoded, coalesced wake signals for immediate durable-mailbox drains; retain periodic reconciliation for missed/offline events
+   - Bound distinct pending group wakes, disconnect on overflow or hostile frames, and ignore well-formed unknown event types for forward compatibility
    - Pin server-origin policy, cap every IPC/FFI and network payload, use bounded queues/timeouts, and return typed redacted errors
    - Support login/session rotation, device enrollment, encrypted DM/group messaging, attachment handling, history restore, local search, and encryption settings without exposing key material
    - Keep plaintext and `mls_v1` paths explicitly separated; an E2EE failure cannot retry or resend through plaintext APIs
@@ -1147,6 +1160,7 @@ validation; no signing secret may be committed.
    - End-to-end encrypted message send/receive, offline mailbox recovery, restart persistence, attachment round-trip, device pairing/removal, and no-plaintext-fallback tests from packaged artifacts
    - Negative IPC/FFI tests proving malformed or oversized UI input cannot select paths, identities, credentials, key material, or arbitrary network destinations
    - Hostile-server tests for malformed gateway/REST data, downgrade hints, oversized payloads, remote-navigation attempts, and remote-code injection
+   - Realtime tests for wrong/missing `ready`, malformed/binary/oversized frames, wake-flood coalescing/overflow, reconnect/session rotation, immediate mailbox drain, and periodic offline recovery
    - Secret-scanning, dependency audit/deny, SBOM, artifact-content, CSP/navigation, and key-isolation checks in CI
 
 ### Exit Criteria

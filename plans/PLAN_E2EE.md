@@ -327,6 +327,7 @@ Exit criteria:
 ### Phase 5.5: Packaged Cross-Platform Clients
 - Ship locally bundled, installable clients for Linux, macOS, Windows, and Android; target iOS when its toolchain, signing, secure-storage, and native-core integration gates can be met without weakening the security model.
 - Reuse the shared Rust E2EE core behind narrow typed adapters, with device-bound platform keystores, authenticated networking, encrypted local state, and no remotely loaded application code.
+- Native clients use bounded authenticated WSS events only as coalesced wake signals for immediate durable-mailbox drains; periodic mailbox reconciliation remains for missed events and offline recovery.
 - Calls remain disabled independently on any target until that target's Phase 5 media path and final packaged-client probes pass; messaging must never fall back to plaintext.
 Exit criteria:
 - Linux, macOS, Windows, and Android artifacts install and complete the packaged E2EE messaging smoke suite; iOS does the same or has a documented, owner-reviewed feasibility blocker and retained implementation path.

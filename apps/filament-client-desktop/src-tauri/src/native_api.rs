@@ -186,9 +186,7 @@ impl core::fmt::Debug for ReqwestNativeEnrollmentApi {
 
 impl ReqwestNativeEnrollmentApi {
     pub(crate) fn from_build_config() -> Result<Self, NativeApiError> {
-        let configured =
-            option_env!("FILAMENT_NATIVE_API_ORIGIN").unwrap_or(DEFAULT_NATIVE_API_ORIGIN);
-        let origin = NativeApiOrigin::parse(configured)?;
+        let origin = NativeApiOrigin::from_build_config()?;
         let client = Client::builder()
             .https_only(true)
             .redirect(Policy::none())
@@ -617,10 +615,16 @@ impl NativeEnrollmentApi for ReqwestNativeEnrollmentApi {
 }
 
 #[derive(Clone)]
-struct NativeApiOrigin(Url);
+pub(crate) struct NativeApiOrigin(Url);
 
 impl NativeApiOrigin {
-    fn parse(value: &str) -> Result<Self, NativeApiError> {
+    pub(crate) fn from_build_config() -> Result<Self, NativeApiError> {
+        let configured =
+            option_env!("FILAMENT_NATIVE_API_ORIGIN").unwrap_or(DEFAULT_NATIVE_API_ORIGIN);
+        Self::parse(configured)
+    }
+
+    pub(crate) fn parse(value: &str) -> Result<Self, NativeApiError> {
         let parsed = Url::parse(value).map_err(|_| NativeApiError::Rejected)?;
         if parsed.scheme() != "https"
             || parsed.host_str().is_none()
@@ -633,6 +637,14 @@ impl NativeApiOrigin {
             return Err(NativeApiError::Rejected);
         }
         Ok(Self(parsed))
+    }
+
+    pub(crate) fn gateway_endpoint(&self) -> Result<Url, NativeApiError> {
+        let mut endpoint = self.endpoint("/gateway/ws")?;
+        endpoint
+            .set_scheme("wss")
+            .map_err(|()| NativeApiError::Rejected)?;
+        Ok(endpoint)
     }
 
     fn endpoint(&self, path: &str) -> Result<Url, NativeApiError> {
@@ -1035,6 +1047,10 @@ mod tests {
         assert_eq!(
             origin.endpoint("/auth/me").unwrap().as_str(),
             "https://chat.example:8443/auth/me"
+        );
+        assert_eq!(
+            origin.gateway_endpoint().unwrap().as_str(),
+            "wss://chat.example:8443/gateway/ws"
         );
         for invalid in [
             "http://chat.example",
