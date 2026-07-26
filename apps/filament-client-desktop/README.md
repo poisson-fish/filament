@@ -63,6 +63,11 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   atomically in SQLCipher, and clears an outbox only after an idempotent server
   response. Rejected MLS data stops that group without exposing plaintext or
   adding IPC.
+- After native initialization, a native-only scheduler runs the same bounded
+  coordinator every 15 seconds. It skips a pass when another native operation
+  owns the state lock, exponentially backs failed passes off to five minutes,
+  and stops with the host. The scheduler has no IPC, identity, destination, or
+  key-material input.
 - Native attachment preparation now encrypts and chunks one exact-bucket
   upload per group into SQLCipher before submission. Response loss retries the
   identical opaque bytes. After upload acceptance, the host authenticates the

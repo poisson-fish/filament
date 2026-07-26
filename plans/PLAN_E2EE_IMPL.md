@@ -7,7 +7,7 @@
 
 ---
 
-## Implementation Status — 2026-07-24
+## Implementation Status — 2026-07-26
 
 The repository is currently implementing **Phase 5 voice/video E2EE**, but
 E2EE messaging and media are not yet production client paths. Plaintext
@@ -361,6 +361,12 @@ response loss both survive restart without ciphertext substitution or duplicate
 composition; expired accepted uploads are hard-deleted. Attachment composition
 and presentation remain unavailable to the webview pending the
 privileged-surface review.
+The packaged host now continues its bounded durable coordinator after native
+initialization without depending on settings-panel reads. A native-only
+15-second scheduler skips contended passes, applies a five-minute capped
+exponential retry backoff, and stops when the host is dropped. It adds no IPC
+surface and cannot accept identities, destinations, paths, or key material
+from UI code.
 
 ---
 

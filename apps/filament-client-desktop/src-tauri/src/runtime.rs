@@ -8,8 +8,9 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex, TryLockError, Weak},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use filament_core::{DeviceId, UserId};
@@ -58,6 +59,15 @@ const MAX_MAILBOX_GROUPS_PER_SYNC: usize = 8;
 const MAX_MAILBOX_PAGES_PER_GROUP: usize = 4;
 const MAX_OUTBOUND_COMMIT_ATTEMPTS: usize = 4;
 const MAX_ATTACHMENT_DOWNLOADS_PER_GROUP: usize = 4;
+const BACKGROUND_SYNC_INTERVAL: Duration = Duration::from_secs(15);
+const BACKGROUND_SYNC_MAX_BACKOFF: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackgroundSyncOutcome {
+    Idle,
+    Busy,
+    Synchronized,
+}
 
 struct ProductionDesktopBackend {
     session_store: Arc<dyn SessionCredentialStore>,
@@ -362,6 +372,28 @@ impl ProductionDesktopBackend {
         }
         EncryptionSettingsSnapshot::new(&root_public, rotation_sequence, devices, false)
             .map_err(|_| DesktopCommandBackendError::Rejected)
+    }
+
+    fn synchronize_active_once(&self) -> Result<BackgroundSyncOutcome, DesktopCommandBackendError> {
+        let mut active = match self.active.try_lock() {
+            Ok(active) => active,
+            Err(TryLockError::WouldBlock) => return Ok(BackgroundSyncOutcome::Busy),
+            Err(TryLockError::Poisoned(_)) => return Err(DesktopCommandBackendError::Unavailable),
+        };
+        let Some(active) = active.as_mut() else {
+            return Ok(BackgroundSyncOutcome::Idle);
+        };
+        let session = self.load_valid_session()?;
+        let user_id = self
+            .api
+            .current_user(&session.access_token)
+            .map_err(map_native_api_error)?;
+        if user_id != active.user_id {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        self.synchronize_mailboxes(&session, active)?;
+        self.flush_pending_keypackages(&session, active.device_id, active.store.as_ref())?;
+        Ok(BackgroundSyncOutcome::Synchronized)
     }
 
     fn synchronize_mailboxes(
@@ -1134,6 +1166,38 @@ fn system_time_unix() -> Result<i64, DesktopCommandBackendError> {
     i64::try_from(seconds).map_err(|_| DesktopCommandBackendError::Unavailable)
 }
 
+fn background_sync_delay(previous: Duration, succeeded: bool) -> Duration {
+    if succeeded {
+        BACKGROUND_SYNC_INTERVAL
+    } else {
+        previous
+            .checked_mul(2)
+            .unwrap_or(BACKGROUND_SYNC_MAX_BACKOFF)
+            .min(BACKGROUND_SYNC_MAX_BACKOFF)
+    }
+}
+
+fn spawn_background_sync(backend: &Arc<ProductionDesktopBackend>) -> Result<(), std::io::Error> {
+    let backend = Arc::downgrade(backend);
+    thread::Builder::new()
+        .name(String::from("filament-e2ee-sync"))
+        .spawn(move || background_sync_loop(&backend))
+        .map(drop)
+}
+
+fn background_sync_loop(backend: &Weak<ProductionDesktopBackend>) {
+    let mut delay = BACKGROUND_SYNC_INTERVAL;
+    loop {
+        thread::sleep(delay);
+        let Some(backend) = backend.upgrade() else {
+            return;
+        };
+        let succeeded = backend.synchronize_active_once().is_ok();
+        drop(backend);
+        delay = background_sync_delay(delay, succeeded);
+    }
+}
+
 struct RuntimeState {
     host: Arc<DesktopCommandHost>,
 }
@@ -1231,10 +1295,14 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|_| std::io::Error::other("native app-data path is unavailable"))?;
             prepare_app_data_root(&app_data_root)?;
-            let backend = ProductionDesktopBackend::new(app_data_root)
-                .map_err(|_| std::io::Error::other("native backend initialization failed"))?;
+            let backend = Arc::new(
+                ProductionDesktopBackend::new(app_data_root)
+                    .map_err(|_| std::io::Error::other("native backend initialization failed"))?,
+            );
+            spawn_background_sync(&backend)
+                .map_err(|_| std::io::Error::other("native sync initialization failed"))?;
             app.manage(RuntimeState {
-                host: Arc::new(DesktopCommandHost::new(Arc::new(backend))),
+                host: Arc::new(DesktopCommandHost::new(backend)),
             });
             Ok(())
         })
@@ -1999,6 +2067,38 @@ mod tests {
     }
 
     #[test]
+    fn background_sync_backoff_is_bounded_and_resets_after_success() {
+        assert_eq!(
+            background_sync_delay(BACKGROUND_SYNC_INTERVAL, false),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            background_sync_delay(BACKGROUND_SYNC_MAX_BACKOFF, false),
+            BACKGROUND_SYNC_MAX_BACKOFF
+        );
+        assert_eq!(
+            background_sync_delay(BACKGROUND_SYNC_MAX_BACKOFF, true),
+            BACKGROUND_SYNC_INTERVAL
+        );
+    }
+
+    #[test]
+    fn background_sync_is_idle_before_native_initialization_and_skips_busy_state() {
+        let api = Arc::new(MockEnrollmentApi::fresh(UserId::new()));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        assert_eq!(
+            backend.synchronize_active_once(),
+            Ok(BackgroundSyncOutcome::Idle)
+        );
+
+        let _active = backend.active.lock().unwrap();
+        assert_eq!(
+            backend.synchronize_active_once(),
+            Ok(BackgroundSyncOutcome::Busy)
+        );
+    }
+
+    #[test]
     fn production_backend_enrolls_fresh_device_and_exposes_public_settings() {
         let user_id = UserId::new();
         let api = Arc::new(MockEnrollmentApi::fresh(user_id));
@@ -2354,7 +2454,6 @@ mod tests {
         alice_group.accept_pending_commit(&alice).unwrap();
 
         let api = Arc::new(MockEnrollmentApi::with_device(&alice));
-        api.lose_message_response.store(true, Ordering::SeqCst);
         let (backend, _session_store, registry, local_store) = backend_fixture(api.clone());
         backend.store_session(valid_session()).unwrap();
         registry.bind(alice.user_id(), alice.device_id()).unwrap();
@@ -2366,6 +2465,7 @@ mod tests {
         .unwrap();
         filament_e2ee::persist_mls_client_state(local_store.as_ref(), &alice, &[&alice_group])
             .unwrap();
+        assert_eq!(backend.initialize_e2ee_store(), Ok(store_status()));
         let event = filament_e2ee::VersionedApplicationEvent {
             event_id: filament_e2ee::ApplicationEventId::new(),
             retention_secs: None,
@@ -2376,13 +2476,19 @@ mod tests {
                 reply: None,
             },
         };
-        let mut durable = DurableMlsClient::load(local_store.as_ref()).unwrap();
-        let request = durable
-            .prepare_outbound_message(local_store.as_ref(), group_id, &event)
-            .unwrap();
+        let request = {
+            let mut active = backend.active.lock().unwrap();
+            active
+                .as_mut()
+                .unwrap()
+                .mailbox
+                .prepare_outbound_message(local_store.as_ref(), group_id, &event)
+                .unwrap()
+        };
 
+        api.lose_message_response.store(true, Ordering::SeqCst);
         assert_eq!(
-            backend.initialize_e2ee_store(),
+            backend.synchronize_active_once(),
             Err(DesktopCommandBackendError::Unavailable)
         );
         assert_eq!(api.message_attempts.load(Ordering::SeqCst), 1);
@@ -2394,7 +2500,10 @@ mod tests {
             Some(request)
         );
 
-        assert_eq!(backend.initialize_e2ee_store(), Ok(store_status()));
+        assert_eq!(
+            backend.synchronize_active_once(),
+            Ok(BackgroundSyncOutcome::Synchronized)
+        );
         assert_eq!(api.message_attempts.load(Ordering::SeqCst), 2);
         let response = api
             .accepted_messages
