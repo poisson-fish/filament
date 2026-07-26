@@ -376,6 +376,9 @@ the durable mailbox immediately; the timer remains reconciliation for missed
 events and offline recovery. Connection/TLS/handshake, read, ready, idle, and
 reconnect deadlines are bounded; session replacement or logout invalidates the
 old listener. No gateway data is trusted as ciphertext or membership state.
+This is the Phase 5.5 realtime mailbox-wake slice recorded in detail below;
+commit `f2746acb` implements it on top of the periodic reconciliation baseline
+from `d07264ae`.
 
 ---
 
@@ -1162,6 +1165,85 @@ validation; no signing secret may be committed.
    - Hostile-server tests for malformed gateway/REST data, downgrade hints, oversized payloads, remote-navigation attempts, and remote-code injection
    - Realtime tests for wrong/missing `ready`, malformed/binary/oversized frames, wake-flood coalescing/overflow, reconnect/session rotation, immediate mailbox drain, and periodic offline recovery
    - Secret-scanning, dependency audit/deny, SBOM, artifact-content, CSP/navigation, and key-isolation checks in CI
+
+### Implemented Slice — Native Realtime Durable-Mailbox Wakeup
+
+**Status:** Implemented on 2026-07-26 in `f2746acb`, following the
+timer-only reconciliation baseline in `d07264ae`.
+
+**Problem and decision:** A 15-second receive delay is not an acceptable normal
+DM path. The native Rust host therefore owns an authenticated WebSocket
+listener and uses MLS gateway notifications to wake the existing durable
+mailbox coordinator immediately. The gateway remains best-effort and
+non-authoritative: it can be delayed, duplicated, omitted, reordered, or
+malicious. REST mailbox reads, MLS authentication, atomic SQLCipher
+checkpointing, and post-persistence acknowledgments remain the receive
+protocol and source of truth. The 15-second full scan is retained only for
+offline recovery, missed events, and reconciliation.
+
+**Implemented architecture and limits:**
+
+- Derive exactly `wss://<compile-time-authority>/gateway/ws` from the pinned
+  HTTPS origin, disable redirects by connecting directly, and authenticate
+  with a sensitive bearer header. Access tokens never enter the URL.
+- Start the listener only for a valid session with initialized native E2EE
+  state. Require the first accepted event to be an exact user-bound `ready`;
+  session replacement, logout, host teardown, or token expiry invalidates the
+  connection.
+- Treat strictly decoded `mls_message`, `mls_commit`, `mls_welcome`, and
+  `mls_proposal` events only as group-routing hints. A wake can select only a
+  group already present in the authenticated local mailbox checkpoint; it
+  cannot create a conversation, choose an identity, mutate membership, supply
+  ciphertext, or bypass MLS verification.
+- Coalesce duplicate group wakes in a native-only queue capped at 128 distinct
+  groups. Disconnect and reconcile after overflow or hostile known-event
+  payloads. Ignore only well-formed unknown event types for forward-compatible
+  additive rollout.
+- Cap WebSocket frames and messages at 64 KiB, reject binary/raw frames, bound
+  DNS use to four resolved addresses, bound connection/TLS/handshake and
+  `ready` waits to seven seconds, use one-second socket wakeups, close after 45
+  seconds without activity, and cap reconnect backoff from one to 30 seconds.
+- Serialize immediate drains and full reconciliation through the existing
+  native MLS coordinator. Immediate work reads the exact known-group route
+  from authenticated local state; the periodic scan remains 15 seconds after
+  success and retains its five-minute capped failure backoff.
+- Keep the existing seven-command Tauri IPC manifest unchanged. The listener,
+  tokens, routing hints, mailbox coordinator, plaintext, and MLS state do not
+  cross into the webview.
+
+**Current evidence:**
+
+- Strict decoder coverage accepts canonical MLS wakes, rejects malformed and
+  oversized known events, and preserves forward compatibility for unknown
+  event types.
+- Queue coverage proves duplicate coalescing and fail-closed behavior at the
+  128-group bound; connector diagnostics prove origin redaction.
+- Runtime coverage rejects a `ready` event for the wrong authenticated user
+  before any wake is accepted.
+- A two-member MLS runtime test inserts ciphertext after initialization,
+  delivers `ready` plus `mls_message`, and proves decryption, durable local
+  persistence, server acknowledgment, and mailbox removal within a two-second
+  bound rather than waiting for the 15-second fallback.
+- Workspace formatting, warnings-as-errors Clippy, all workspace tests,
+  `cargo audit`, and `cargo deny` passed for the implementation commit. Audit
+  retained only the repository's already tracked unmaintained transitive
+  warnings; no vulnerability or new license/source exception was introduced.
+
+**Explicit boundary and follow-up work:**
+
+- Realtime wakeup currently covers established/known MLS conversations. A
+  first-contact Welcome for an unknown group has no authenticated local
+  conversation route or peer-root pin and must not create state from an
+  untrusted gateway hint. First-contact discovery/initiation remains behind
+  the planned privileged-surface and identity-binding review.
+- Add transport-level tests for missing `ready`, binary and oversized frames,
+  idle close, reconnect, wake overflow, token expiry, and session
+  replacement/logout interruption.
+- Add a real-server packaged smoke test proving bearer-header WSS
+  authentication, immediate established-DM receive, disconnect/offline
+  reconciliation, and no plaintext fallback.
+- Reuse this native listener/coordinator contract in Android and any feasible
+  iOS host; do not move gateway or mailbox processing into JavaScript.
 
 ### Exit Criteria
 
