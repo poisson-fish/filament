@@ -384,6 +384,19 @@ scheduling, wake overflow, token expiry, and session replacement/logout
 interruption. The first failed reconnect now waits the documented one second
 before the exponential schedule advances, rather than skipping directly to
 two seconds.
+The PostgreSQL/Axum integration smoke now binds the real gateway on a loopback
+socket, authenticates the established-DM recipient with a bearer header and no
+URL token, observes a ciphertext-free `mls_message` wake, then fetches and
+OpenMLS-authenticates the durable mailbox record. After disconnecting the
+gateway it sends a second message and proves the same MLS state recovers it
+through the durable REST mailbox without any plaintext-table write. The same
+regression now proves that a certified device which was never added as an MLS
+leaf receives no commit, proposal, message, or attachment delivery. This is
+real server/native-core integration evidence, not yet an installed packaged
+artifact smoke. Repeated schema bootstrap also remains safe after a group DM
+churns down to two members: the legacy two-user-DM backfill now ignores either
+conversation-ID or canonical-user-pair conflicts instead of failing server
+startup.
 
 ---
 
@@ -1236,6 +1249,13 @@ offline recovery, missed events, and reconciliation.
   delivers `ready` plus `mls_message`, and proves decryption, durable local
   persistence, server acknowledgment, and mailbox removal within a two-second
   bound rather than waiting for the 15-second fallback.
+- A PostgreSQL-backed real-server smoke connects with bearer-header WSS
+  authentication and no URL token, observes an immediate ciphertext-free wake,
+  authenticates/decrypts the corresponding mailbox record with OpenMLS, then
+  disconnects and recovers a second message through the durable mailbox. Both
+  ciphertexts are acknowledged and deleted, no matching plaintext enters the
+  ordinary message table, and a certified non-leaf device receives no MLS
+  mailbox or attachment fanout.
 - Workspace formatting, warnings-as-errors Clippy, all workspace tests,
   `cargo audit`, and `cargo deny` passed for the implementation commit. Audit
   retained only the repository's already tracked unmaintained transitive
@@ -1248,9 +1268,10 @@ offline recovery, missed events, and reconciliation.
   conversation route or peer-root pin and must not create state from an
   untrusted gateway hint. First-contact discovery/initiation remains behind
   the planned privileged-surface and identity-binding review.
-- Add a real-server packaged smoke test proving bearer-header WSS
-  authentication, immediate established-DM receive, disconnect/offline
-  reconciliation, and no plaintext fallback.
+- Promote the real-server/native-core smoke into an installed-package test that
+  drives the production Reqwest/Tungstenite host boundary and local UI on each
+  supported desktop target. The current integration fixture does not claim
+  packaged-artifact or platform-credential evidence.
 - Reuse this native listener/coordinator contract in Android and any feasible
   iOS host; do not move gateway or mailbox processing into JavaScript.
 

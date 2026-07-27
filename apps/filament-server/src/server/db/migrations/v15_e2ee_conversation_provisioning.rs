@@ -57,7 +57,7 @@ const BACKFILL_E2EE_DM_PAIRS_SQL: &str =
      WHERE c.conversation_crypto = 'mls_v1'
      GROUP BY c.conversation_id
      HAVING COUNT(*) = 2
-     ON CONFLICT (conversation_id) DO NOTHING";
+     ON CONFLICT DO NOTHING";
 
 const CREATE_NO_DOWNGRADE_FUNCTION_SQL: &str =
     "CREATE OR REPLACE FUNCTION filament_reject_e2ee_conversation_downgrade()
@@ -122,6 +122,7 @@ mod tests {
         assert!(CREATE_PAIR_VALIDATION_FUNCTION_SQL.contains("conversation_crypto = 'mls_v1'"));
         assert!(CREATE_PAIR_VALIDATION_FUNCTION_SQL.contains(") <> 2"));
         assert!(BACKFILL_E2EE_DM_PAIRS_SQL.contains("HAVING COUNT(*) = 2"));
+        assert!(BACKFILL_E2EE_DM_PAIRS_SQL.contains("ON CONFLICT DO NOTHING"));
     }
 
     #[test]

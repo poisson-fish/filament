@@ -147,6 +147,11 @@ IDs; neither value can be selected by the webview.
 - Exercise authenticated first-device publication and KeyPackage upload
   against packaged clients and the PostgreSQL server; unit tests use a hostile
   in-process transport fixture and do not claim packaged-network evidence.
+- Promote the PostgreSQL/Axum established-DM smoke into the installed desktop
+  packages. The current regression proves bearer-header gateway
+  authentication, immediate and offline durable-mailbox OpenMLS decryption,
+  non-leaf fanout exclusion, and no plaintext-table write, but it does not
+  exercise platform credentials or the production packaged host process.
 - The exact Tauri 2.11.5 exceptions approved on 2026-07-22 and recorded in ADR
   0002 remain temporary. Patchable findings remain denied, and the
   GTK3/GLib/MPL exception set must be reviewed on every Tauri release and no

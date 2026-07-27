@@ -87,6 +87,12 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   encrypted attachment composition/presentation UI, pairing UI, packaged
   end-to-end smoke coverage, and mobile platform custody evidence remain fail
   closed.
+- The PostgreSQL-backed server integration suite now exercises a real
+  loopback gateway with bearer-header authentication, an immediate
+  established-DM wake and OpenMLS mailbox decryption, then disconnect/offline
+  durable-mailbox recovery. It also proves no matching plaintext-table write
+  and no fanout to a certified device outside the MLS leaf map. This does not
+  yet launch or certify an installed desktop package.
 - Calls and automatic updates remain disabled.
 
 ## Developer commands
@@ -187,6 +193,8 @@ and `THIRD_PARTY_NOTICES.txt`.
 This is host/session/bootstrap-scaffold evidence, not the Phase 5.5 messaging
 exit suite.
 The same probe is now required for Debian, AppImage, macOS disk-image, and MSI
-CI artifacts. Production E2EE messaging, upgrade semantics, and mobile
-platform custody smoke coverage remains fail-closed work; Android and iOS
-simulator launch tests are intentionally deferred.
+CI artifacts. The real-server/native-core messaging regression is not
+packaged-artifact evidence until the installed application drives that same
+flow through its production host boundary. Production E2EE messaging, upgrade
+semantics, and mobile platform custody smoke coverage remains fail-closed work;
+Android and iOS simulator launch tests are intentionally deferred.

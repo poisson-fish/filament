@@ -5,9 +5,9 @@ use filament_core::{ConversationId, DeviceId, GroupId, UserId};
 use filament_e2ee::{
     create_pairing_transfer, create_root_identity_rotation_proof, decrypt_attachment,
     encrypt_attachment, generate_key_package_batch, generate_last_resort_key_package,
-    verify_root_identity_rotation_proof, EncryptedAttachment, MlsConversation, MlsDevice,
-    PairingReceiver, PairingTransfer, PinnedUserIdentity, RootIdentityKey,
-    RootIdentityRotationProof, ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS,
+    process_message_mailbox, verify_root_identity_rotation_proof, EncryptedAttachment,
+    MlsConversation, MlsDevice, PairingReceiver, PairingTransfer, PinnedUserIdentity,
+    RootIdentityKey, RootIdentityRotationProof, ScannedPairingOffer, DEFAULT_PAIRING_TTL_SECS,
 };
 use filament_protocol::{
     AckE2eeAttachmentsRequest, AckE2eeAttachmentsResponse, AckE2eeCommitsRequest,
@@ -231,8 +231,10 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     assert_eq!(bob_second_initial_commits.status(), StatusCode::OK);
     let bob_second_initial_commits: E2eeCommitMailboxResponse =
         parse_json(bob_second_initial_commits).await;
-    assert_eq!(bob_second_initial_commits.commits.len(), 1);
-    assert!(bob_second_initial_commits.commits[0].welcome_blob.is_none());
+    assert!(
+        bob_second_initial_commits.commits.is_empty(),
+        "an active certified device that is not an MLS leaf must not receive commits"
+    );
     let conflicting_create = send_json(
         &app,
         "POST",
@@ -252,13 +254,236 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     alice_conversation
         .accept_pending_commit(&alice_device)
         .expect("Alice should merge the accepted commit");
-    let _bob_conversation = MlsConversation::join_from_welcome(
+    let mut bob_conversation = MlsConversation::join_from_welcome(
         group_id,
         &bob_device,
         PinnedUserIdentity::new(alice_user_id, alice_root.public_key_bytes()),
         &create_request.welcome_blob,
     )
     .expect("Bob should join the provisioned group from its Welcome");
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("native gateway smoke listener should bind");
+    let gateway_address = listener
+        .local_addr()
+        .expect("native gateway smoke address should be available");
+    let gateway_app = app.clone();
+    let gateway_server = tokio::spawn(async move {
+        axum::serve(listener, gateway_app)
+            .await
+            .expect("native gateway smoke server should run");
+    });
+    let gateway_url = format!("ws://{gateway_address}/gateway/ws");
+    let mut gateway_request = gateway_url
+        .into_client_request()
+        .expect("native gateway smoke request should build");
+    gateway_request.headers_mut().insert(
+        "authorization",
+        format!("Bearer {}", bob_auth.access_token)
+            .parse()
+            .expect("bearer token should parse as a header value"),
+    );
+    gateway_request.headers_mut().insert(
+        "x-forwarded-for",
+        "203.0.113.182"
+            .parse()
+            .expect("fixture IP should parse as a header value"),
+    );
+    let (mut gateway, _) = connect_async(gateway_request)
+        .await
+        .expect("native bearer-header gateway should connect");
+    let ready = next_gateway_event(&mut gateway, "ready").await;
+    assert_eq!(ready["d"]["user_id"], bob_user_id.to_string());
+
+    let online_plaintext = b"native real-server immediate receive";
+    let online_encrypted = alice_conversation
+        .encrypt_application_message(&alice_device, online_plaintext)
+        .expect("online smoke message should encrypt");
+    let online_request = PostMessageRequest {
+        epoch: online_encrypted.epoch,
+        suite_id: online_encrypted.suite.as_u16(),
+        sender_device_id: online_encrypted.sender_device_id.to_string(),
+        retention_secs: None,
+        message_blob: online_encrypted.message_blob,
+    };
+    let online_message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &online_request,
+    )
+    .await;
+    assert_eq!(online_message.status(), StatusCode::OK);
+    let online_message: PostMessageResponse = parse_json(online_message).await;
+    let online_wake = next_gateway_event(&mut gateway, "mls_message").await;
+    assert_eq!(online_wake["d"]["group_id"], group_id.to_string());
+    assert_eq!(
+        online_wake["d"]["conversation_id"],
+        conversation_id.to_string()
+    );
+    assert_eq!(online_wake["d"]["message_id"], online_message.message_id);
+    assert_eq!(
+        online_wake["d"]["sender_device_id"],
+        alice_device_id.to_string()
+    );
+    assert_eq!(online_wake["d"]["epoch"], online_request.epoch);
+    assert_eq!(online_wake["d"]["suite_id"], online_request.suite_id);
+    assert!(
+        online_wake["d"].get("message_blob").is_none(),
+        "gateway wake must not carry ciphertext"
+    );
+
+    let online_mailbox = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/mailbox?device_id={bob_device_id}"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("online mailbox request should build");
+    let online_mailbox = app
+        .clone()
+        .oneshot(online_mailbox)
+        .await
+        .expect("online mailbox request should execute");
+    assert_eq!(online_mailbox.status(), StatusCode::OK);
+    let online_mailbox: E2eeMailboxResponse = parse_json(online_mailbox).await;
+    let online_batch = process_message_mailbox(&mut bob_conversation, &bob_device, online_mailbox)
+        .expect("online mailbox should authenticate and decrypt");
+    assert!(online_batch.rejected_messages.is_empty());
+    assert_eq!(online_batch.ready_messages.len(), 1);
+    assert_eq!(
+        online_batch.ready_messages[0].plaintext.as_slice(),
+        online_plaintext
+    );
+    let online_ack = online_batch
+        .pending_acknowledgment
+        .expect("authenticated online message should be acknowledged");
+    assert_eq!(
+        online_ack.message_ids,
+        vec![online_message.message_id.clone()]
+    );
+    let online_ack_response = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages/ack"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &online_ack,
+    )
+    .await;
+    assert_eq!(online_ack_response.status(), StatusCode::OK);
+    let online_deleted: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_messages WHERE message_id = $1")
+            .bind(&online_message.message_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("online smoke deletion should be queryable");
+    assert_eq!(online_deleted, 0);
+
+    gateway
+        .close(None)
+        .await
+        .expect("native gateway should close cleanly");
+    gateway_server.abort();
+
+    let offline_plaintext = b"native real-server offline reconciliation";
+    let offline_encrypted = alice_conversation
+        .encrypt_application_message(&alice_device, offline_plaintext)
+        .expect("offline smoke message should encrypt");
+    let offline_request = PostMessageRequest {
+        epoch: offline_encrypted.epoch,
+        suite_id: offline_encrypted.suite.as_u16(),
+        sender_device_id: offline_encrypted.sender_device_id.to_string(),
+        retention_secs: None,
+        message_blob: offline_encrypted.message_blob,
+    };
+    let offline_message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &offline_request,
+    )
+    .await;
+    assert_eq!(offline_message.status(), StatusCode::OK);
+    let offline_message: PostMessageResponse = parse_json(offline_message).await;
+    let offline_mailbox = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/mailbox?device_id={bob_device_id}"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("offline mailbox request should build");
+    let offline_mailbox = app
+        .clone()
+        .oneshot(offline_mailbox)
+        .await
+        .expect("offline mailbox request should execute");
+    assert_eq!(offline_mailbox.status(), StatusCode::OK);
+    let offline_mailbox: E2eeMailboxResponse = parse_json(offline_mailbox).await;
+    let offline_batch =
+        process_message_mailbox(&mut bob_conversation, &bob_device, offline_mailbox)
+            .expect("offline mailbox should authenticate and decrypt");
+    assert!(offline_batch.rejected_messages.is_empty());
+    assert_eq!(offline_batch.ready_messages.len(), 1);
+    assert_eq!(
+        offline_batch.ready_messages[0].plaintext.as_slice(),
+        offline_plaintext
+    );
+    let offline_ack = offline_batch
+        .pending_acknowledgment
+        .expect("authenticated offline message should be acknowledged");
+    assert_eq!(
+        offline_ack.message_ids,
+        vec![offline_message.message_id.clone()]
+    );
+    let offline_ack_response = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/messages/ack"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &offline_ack,
+    )
+    .await;
+    assert_eq!(offline_ack_response.status(), StatusCode::OK);
+    let offline_deleted: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_messages WHERE message_id = $1")
+            .bind(&offline_message.message_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("offline smoke deletion should be queryable");
+    assert_eq!(offline_deleted, 0);
+
+    let plaintext_fallback_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE content = ANY($1::TEXT[])")
+            .bind(vec![
+                String::from_utf8(online_plaintext.to_vec()).expect("fixture should be UTF-8"),
+                String::from_utf8(offline_plaintext.to_vec()).expect("fixture should be UTF-8"),
+            ])
+            .fetch_one(&audit_pool)
+            .await
+            .expect("plaintext fallback absence should be queryable");
+    assert_eq!(
+        plaintext_fallback_rows, 0,
+        "native E2EE smoke messages must never enter the plaintext message table"
+    );
+    let smoke_conversation_crypto: String = sqlx::query_scalar(
+        "SELECT conversation_crypto FROM e2ee_conversations WHERE conversation_id = $1",
+    )
+    .bind(conversation_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("smoke conversation crypto mode should be queryable");
+    assert_eq!(smoke_conversation_crypto, "mls_v1");
 
     let (charlie_auth, charlie_user_id) = register_and_login(&app, "203.0.113.183").await;
     let capability_request = CreateMlsConversationRequest {
@@ -760,31 +985,58 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     assert_eq!(stored_proposal.0, proposal_blob);
     assert!(stored_proposal.2 > stored_proposal.1);
 
-    for device_id in [bob_device_id, bob_second_device_id] {
-        let mailbox = Request::builder()
-            .method("GET")
-            .uri(format!(
-                "/e2ee/groups/{group_id}/proposals?device_id={device_id}&limit=20"
-            ))
-            .header("authorization", format!("Bearer {}", bob_auth.access_token))
-            .header("x-forwarded-for", "203.0.113.182")
-            .body(Body::empty())
-            .expect("proposal mailbox request should build");
-        let mailbox = app
-            .clone()
-            .oneshot(mailbox)
+    let bob_proposal_mailbox = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/proposals?device_id={bob_device_id}&limit=20"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("proposal mailbox request should build");
+    let bob_proposal_mailbox = app
+        .clone()
+        .oneshot(bob_proposal_mailbox)
+        .await
+        .expect("proposal mailbox request should execute");
+    assert_eq!(bob_proposal_mailbox.status(), StatusCode::OK);
+    let bob_proposal_mailbox: E2eeProposalMailboxResponse = parse_json(bob_proposal_mailbox).await;
+    assert_eq!(bob_proposal_mailbox.proposals.len(), 1);
+    assert_eq!(
+        bob_proposal_mailbox.proposals[0].proposal_id,
+        proposal.proposal_id
+    );
+    assert_eq!(
+        bob_proposal_mailbox.proposals[0].proposal_blob,
+        proposal_blob
+    );
+    assert_eq!(
+        bob_proposal_mailbox.next_after_proposal_id.as_deref(),
+        Some(proposal.proposal_id.as_str())
+    );
+
+    let non_leaf_proposal_mailbox = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/proposals?device_id={bob_second_device_id}"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("non-leaf proposal mailbox request should build");
+    let non_leaf_proposal_mailbox = app
+        .clone()
+        .oneshot(non_leaf_proposal_mailbox)
+        .await
+        .expect("non-leaf proposal mailbox request should execute");
+    assert_eq!(non_leaf_proposal_mailbox.status(), StatusCode::OK);
+    assert!(
+        parse_json::<E2eeProposalMailboxResponse>(non_leaf_proposal_mailbox)
             .await
-            .expect("proposal mailbox request should execute");
-        assert_eq!(mailbox.status(), StatusCode::OK);
-        let mailbox: E2eeProposalMailboxResponse = parse_json(mailbox).await;
-        assert_eq!(mailbox.proposals.len(), 1);
-        assert_eq!(mailbox.proposals[0].proposal_id, proposal.proposal_id);
-        assert_eq!(mailbox.proposals[0].proposal_blob, proposal_blob);
-        assert_eq!(
-            mailbox.next_after_proposal_id.as_deref(),
-            Some(proposal.proposal_id.as_str())
-        );
-    }
+            .proposals
+            .is_empty(),
+        "a certified non-leaf device must not receive MLS proposals"
+    );
 
     let proposer_mailbox = Request::builder()
         .method("GET")
@@ -848,24 +1100,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     assert_eq!(first_proposal_ack.status(), StatusCode::OK);
     let first_proposal_ack: AckE2eeProposalsResponse = parse_json(first_proposal_ack).await;
     assert_eq!(first_proposal_ack.acknowledged_count, 1);
-    assert_eq!(first_proposal_ack.deleted_count, 0);
-
-    let final_proposal_ack = send_json(
-        &app,
-        "POST",
-        &format!("/e2ee/groups/{group_id}/proposals/ack"),
-        Some(&bob_auth.access_token),
-        "203.0.113.182",
-        &AckE2eeProposalsRequest {
-            device_id: bob_second_device_id.to_string(),
-            proposal_ids: vec![proposal.proposal_id.clone()],
-        },
-    )
-    .await;
-    assert_eq!(final_proposal_ack.status(), StatusCode::OK);
-    let final_proposal_ack: AckE2eeProposalsResponse = parse_json(final_proposal_ack).await;
-    assert_eq!(final_proposal_ack.acknowledged_count, 1);
-    assert_eq!(final_proposal_ack.deleted_count, 1);
+    assert_eq!(first_proposal_ack.deleted_count, 1);
     let remaining_proposals: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_proposals WHERE proposal_id = $1")
             .bind(&proposal.proposal_id)
@@ -910,24 +1145,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     assert_eq!(first_commit_ack.status(), StatusCode::OK);
     let first_commit_ack: AckE2eeCommitsResponse = parse_json(first_commit_ack).await;
     assert_eq!(first_commit_ack.acknowledged_count, 2);
-    assert_eq!(first_commit_ack.deleted_count, 0);
-
-    let final_commit_ack = send_json(
-        &app,
-        "POST",
-        &format!("/e2ee/groups/{group_id}/commits/ack"),
-        Some(&bob_auth.access_token),
-        "203.0.113.182",
-        &AckE2eeCommitsRequest {
-            device_id: bob_second_device_id.to_string(),
-            epochs: vec![1, 2],
-        },
-    )
-    .await;
-    assert_eq!(final_commit_ack.status(), StatusCode::OK);
-    let final_commit_ack: AckE2eeCommitsResponse = parse_json(final_commit_ack).await;
-    assert_eq!(final_commit_ack.acknowledged_count, 2);
-    assert_eq!(final_commit_ack.deleted_count, 2);
+    assert_eq!(first_commit_ack.deleted_count, 2);
     let remaining_commits: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_commits WHERE group_id = $1")
             .bind(group_id.to_string())
@@ -999,28 +1217,49 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     assert_eq!(stored_message.1, "mls_v1");
     assert_eq!(stored_message.3, stored_message.2 + 60);
 
-    for device_id in [bob_device_id, bob_second_device_id] {
-        let mailbox = Request::builder()
-            .method("GET")
-            .uri(format!(
-                "/e2ee/groups/{group_id}/mailbox?device_id={device_id}&limit=20"
-            ))
-            .header("authorization", format!("Bearer {}", bob_auth.access_token))
-            .header("x-forwarded-for", "203.0.113.182")
-            .body(Body::empty())
-            .expect("mailbox request should build");
-        let mailbox = app
-            .clone()
-            .oneshot(mailbox)
+    let bob_mailbox = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/mailbox?device_id={bob_device_id}&limit=20"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("mailbox request should build");
+    let bob_mailbox = app
+        .clone()
+        .oneshot(bob_mailbox)
+        .await
+        .expect("mailbox request should execute");
+    assert_eq!(bob_mailbox.status(), StatusCode::OK);
+    let bob_mailbox: E2eeMailboxResponse = parse_json(bob_mailbox).await;
+    assert_eq!(bob_mailbox.messages.len(), 1);
+    assert_eq!(bob_mailbox.messages[0].message_id, message.message_id);
+    assert_eq!(bob_mailbox.messages[0].crypto, "mls_v1");
+    assert_eq!(bob_mailbox.messages[0].message_blob, message_blob);
+
+    let non_leaf_mailbox = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/mailbox?device_id={bob_second_device_id}"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("non-leaf message mailbox request should build");
+    let non_leaf_mailbox = app
+        .clone()
+        .oneshot(non_leaf_mailbox)
+        .await
+        .expect("non-leaf message mailbox request should execute");
+    assert_eq!(non_leaf_mailbox.status(), StatusCode::OK);
+    assert!(
+        parse_json::<E2eeMailboxResponse>(non_leaf_mailbox)
             .await
-            .expect("mailbox request should execute");
-        assert_eq!(mailbox.status(), StatusCode::OK);
-        let mailbox: E2eeMailboxResponse = parse_json(mailbox).await;
-        assert_eq!(mailbox.messages.len(), 1);
-        assert_eq!(mailbox.messages[0].message_id, message.message_id);
-        assert_eq!(mailbox.messages[0].crypto, "mls_v1");
-        assert_eq!(mailbox.messages[0].message_blob, message_blob);
-    }
+            .messages
+            .is_empty(),
+        "a certified non-leaf device must not receive MLS application ciphertext"
+    );
 
     let sender_mailbox = Request::builder()
         .method("GET")
@@ -1058,31 +1297,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     assert_eq!(first_ack.status(), StatusCode::OK);
     let first_ack: AckE2eeMessagesResponse = parse_json(first_ack).await;
     assert_eq!(first_ack.acknowledged_count, 1);
-    assert_eq!(first_ack.deleted_count, 0);
-    let retained_after_first_ack: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_messages WHERE message_id = $1")
-            .bind(&message.message_id)
-            .fetch_one(&audit_pool)
-            .await
-            .expect("message should remain for the second device");
-    assert_eq!(retained_after_first_ack, 1);
-
-    let final_ack = send_json(
-        &app,
-        "POST",
-        &format!("/e2ee/groups/{group_id}/messages/ack"),
-        Some(&bob_auth.access_token),
-        "203.0.113.182",
-        &AckE2eeMessagesRequest {
-            device_id: bob_second_device_id.to_string(),
-            message_ids: vec![message.message_id.clone()],
-        },
-    )
-    .await;
-    assert_eq!(final_ack.status(), StatusCode::OK);
-    let final_ack: AckE2eeMessagesResponse = parse_json(final_ack).await;
-    assert_eq!(final_ack.acknowledged_count, 1);
-    assert_eq!(final_ack.deleted_count, 1);
+    assert_eq!(first_ack.deleted_count, 1);
     let deleted_after_all_acks: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_messages WHERE message_id = $1")
             .bind(&message.message_id)
@@ -1352,7 +1567,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         "e2ee_attachment_conflict"
     );
 
-    let stored_attachment: (Vec<u8>, i64, String, String) = sqlx::query_as(
+    let stored_attachment: (Vec<u8>, i32, String, String) = sqlx::query_as(
         "SELECT ciphertext_blob, octet_length(ciphertext_blob), owner_user_id, group_id
          FROM e2ee_attachment_blobs WHERE attachment_id = $1",
     )
@@ -1402,63 +1617,72 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .fetch_all(&audit_pool)
     .await
     .expect("pending attachment devices should be queryable");
-    assert_eq!(pending_devices.len(), 2);
-    assert!(pending_devices.contains(&bob_device_id.to_string()));
-    assert!(pending_devices.contains(&bob_second_device_id.to_string()));
+    assert_eq!(pending_devices, vec![bob_device_id.to_string()]);
 
-    for (index, device_id) in [bob_device_id, bob_second_device_id]
-        .into_iter()
-        .enumerate()
-    {
-        let download = Request::builder()
-            .method("GET")
-            .uri(format!(
-                "/e2ee/groups/{group_id}/attachments/{attachment_id}?device_id={device_id}"
-            ))
-            .header("authorization", format!("Bearer {}", bob_auth.access_token))
-            .header("x-forwarded-for", "203.0.113.182")
-            .body(Body::empty())
-            .expect("attachment download should build");
-        let download = app
-            .clone()
-            .oneshot(download)
-            .await
-            .expect("attachment download should execute");
-        assert_eq!(download.status(), StatusCode::OK);
-        assert_eq!(
-            download.headers()["content-type"],
-            "application/octet-stream"
-        );
-        assert_eq!(download.headers()["cache-control"], "private, no-store");
-        let downloaded_bytes = axum::body::to_bytes(download.into_body(), 65_536)
-            .await
-            .expect("attachment body should be bounded and readable")
-            .to_vec();
-        let downloaded = EncryptedAttachment {
-            attachment_id: descriptor.attachment_id,
-            ciphertext: downloaded_bytes,
-        };
-        let content = decrypt_attachment(&descriptor, &downloaded)
-            .expect("recipient should authenticate and decrypt attachment");
-        assert_eq!(content.bytes.as_slice(), attachment_plaintext);
+    let non_leaf_download = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/attachments/{attachment_id}?device_id={bob_second_device_id}"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("non-leaf attachment download should build");
+    let non_leaf_download = app
+        .clone()
+        .oneshot(non_leaf_download)
+        .await
+        .expect("non-leaf attachment download should execute");
+    assert_eq!(non_leaf_download.status(), StatusCode::NOT_FOUND);
 
-        let ack = send_json(
-            &app,
-            "POST",
-            &format!("/e2ee/groups/{group_id}/attachments/ack"),
-            Some(&bob_auth.access_token),
-            "203.0.113.182",
-            &AckE2eeAttachmentsRequest {
-                device_id: device_id.to_string(),
-                attachment_ids: vec![attachment_id.clone()],
-            },
-        )
-        .await;
-        assert_eq!(ack.status(), StatusCode::OK);
-        let ack: AckE2eeAttachmentsResponse = parse_json(ack).await;
-        assert_eq!(ack.acknowledged_count, 1);
-        assert_eq!(ack.deleted_count, u32::from(index == 1));
-    }
+    let download = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/e2ee/groups/{group_id}/attachments/{attachment_id}?device_id={bob_device_id}"
+        ))
+        .header("authorization", format!("Bearer {}", bob_auth.access_token))
+        .header("x-forwarded-for", "203.0.113.182")
+        .body(Body::empty())
+        .expect("attachment download should build");
+    let download = app
+        .clone()
+        .oneshot(download)
+        .await
+        .expect("attachment download should execute");
+    assert_eq!(download.status(), StatusCode::OK);
+    assert_eq!(
+        download.headers()["content-type"],
+        "application/octet-stream"
+    );
+    assert_eq!(download.headers()["cache-control"], "private, no-store");
+    let downloaded_bytes = axum::body::to_bytes(download.into_body(), 65_536)
+        .await
+        .expect("attachment body should be bounded and readable")
+        .to_vec();
+    let downloaded = EncryptedAttachment {
+        attachment_id: descriptor.attachment_id,
+        ciphertext: downloaded_bytes,
+    };
+    let content = decrypt_attachment(&descriptor, &downloaded)
+        .expect("recipient should authenticate and decrypt attachment");
+    assert_eq!(content.bytes.as_slice(), attachment_plaintext);
+
+    let ack = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{group_id}/attachments/ack"),
+        Some(&bob_auth.access_token),
+        "203.0.113.182",
+        &AckE2eeAttachmentsRequest {
+            device_id: bob_device_id.to_string(),
+            attachment_ids: vec![attachment_id.clone()],
+        },
+    )
+    .await;
+    assert_eq!(ack.status(), StatusCode::OK);
+    let ack: AckE2eeAttachmentsResponse = parse_json(ack).await;
+    assert_eq!(ack.acknowledged_count, 1);
+    assert_eq!(ack.deleted_count, 1);
     let deleted_after_all_device_ack: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_attachment_blobs WHERE attachment_id = $1")
             .bind(&attachment_id)
