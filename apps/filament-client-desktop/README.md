@@ -68,12 +68,15 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   User-bound `ready` is required before strict `mls_message`, `mls_commit`,
   `mls_welcome`, or `mls_proposal` events can enqueue an immediate group
   mailbox drain. Wakeups are coalesced in a 128-group queue; event fields
-  remain untrusted routing hints.
+  remain untrusted routing hints. The transport rejects binary and oversized
+  frames, missing or repeated readiness, idle connections, and distinct wake
+  overflow.
 - A native-only 15-second scheduler remains as offline/missed-event
   reconciliation. It skips contended passes and exponentially backs failed
-  passes off to five minutes. Gateway reconnects cap at 30 seconds, session
-  replacement/logout interrupts the old connection, and no listener input can
-  select an identity, destination, path, or key.
+  passes off to five minutes. Gateway reconnects begin after one second and
+  cap at 30 seconds; token expiry, session replacement, and logout interrupt
+  the old connection. No listener input can select an identity, destination,
+  path, or key.
 - Native attachment preparation now encrypts and chunks one exact-bucket
   upload per group into SQLCipher before submission. Response loss retries the
   identical opaque bytes. After upload acceptance, the host authenticates the

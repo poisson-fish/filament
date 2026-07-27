@@ -150,31 +150,37 @@ struct TungsteniteGatewayConnection {
 
 impl NativeGatewayConnection for TungsteniteGatewayConnection {
     fn read_frame(&mut self) -> Result<NativeGatewayFrame, NativeGatewayError> {
-        match self.socket.read() {
-            Ok(Message::Text(payload)) => {
-                if payload.len() > MAX_EVENT_BYTES {
-                    return Err(NativeGatewayError::Rejected);
-                }
-                Ok(NativeGatewayFrame::Text(payload.as_bytes().to_vec()))
+        classify_gateway_read(self.socket.read())
+    }
+}
+
+fn classify_gateway_read(
+    result: Result<Message, tungstenite::Error>,
+) -> Result<NativeGatewayFrame, NativeGatewayError> {
+    match result {
+        Ok(Message::Text(payload)) => {
+            if payload.len() > MAX_EVENT_BYTES {
+                return Err(NativeGatewayError::Rejected);
             }
-            Ok(Message::Ping(_) | Message::Pong(_)) => Ok(NativeGatewayFrame::Activity),
-            Ok(Message::Close(_)) => Ok(NativeGatewayFrame::Closed),
-            Ok(Message::Binary(_) | Message::Frame(_))
-            | Err(
-                tungstenite::Error::Capacity(_)
-                | tungstenite::Error::Protocol(_)
-                | tungstenite::Error::Utf8(_),
-            ) => Err(NativeGatewayError::Rejected),
-            Err(tungstenite::Error::Io(error))
-                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-            {
-                Ok(NativeGatewayFrame::Timeout)
-            }
-            Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
-                Ok(NativeGatewayFrame::Closed)
-            }
-            Err(_) => Err(NativeGatewayError::Unavailable),
+            Ok(NativeGatewayFrame::Text(payload.as_bytes().to_vec()))
         }
+        Ok(Message::Ping(_) | Message::Pong(_)) => Ok(NativeGatewayFrame::Activity),
+        Ok(Message::Close(_)) => Ok(NativeGatewayFrame::Closed),
+        Ok(Message::Binary(_) | Message::Frame(_))
+        | Err(
+            tungstenite::Error::Capacity(_)
+            | tungstenite::Error::Protocol(_)
+            | tungstenite::Error::Utf8(_),
+        ) => Err(NativeGatewayError::Rejected),
+        Err(tungstenite::Error::Io(error))
+            if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+        {
+            Ok(NativeGatewayFrame::Timeout)
+        }
+        Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
+            Ok(NativeGatewayFrame::Closed)
+        }
+        Err(_) => Err(NativeGatewayError::Unavailable),
     }
 }
 
@@ -448,6 +454,22 @@ mod tests {
         assert_eq!(
             format!("{connector:?}"),
             "TungsteniteNativeGatewayConnector(<origin redacted>)"
+        );
+    }
+
+    #[test]
+    fn gateway_transport_rejects_binary_and_oversized_text_frames() {
+        assert_eq!(
+            classify_gateway_read(Ok(Message::Binary(vec![0_u8; 4].into()))),
+            Err(NativeGatewayError::Rejected)
+        );
+        assert_eq!(
+            classify_gateway_read(Ok(Message::Text("x".repeat(MAX_EVENT_BYTES + 1).into()))),
+            Err(NativeGatewayError::Rejected)
+        );
+        assert_eq!(
+            classify_gateway_read(Ok(Message::Ping(Vec::new().into()))),
+            Ok(NativeGatewayFrame::Activity)
         );
     }
 }

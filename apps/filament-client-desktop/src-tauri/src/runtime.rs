@@ -73,6 +73,17 @@ const GATEWAY_RECONNECT_MAX: Duration = Duration::from_secs(30);
 const GATEWAY_READY_TIMEOUT: Duration = Duration::from_secs(7);
 const GATEWAY_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
 
+#[derive(Clone, Copy)]
+struct GatewayConnectionPolicy {
+    ready_timeout: Duration,
+    idle_timeout: Duration,
+}
+
+const PRODUCTION_GATEWAY_CONNECTION_POLICY: GatewayConnectionPolicy = GatewayConnectionPolicy {
+    ready_timeout: GATEWAY_READY_TIMEOUT,
+    idle_timeout: GATEWAY_IDLE_TIMEOUT,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BackgroundSyncOutcome {
     Idle,
@@ -1252,6 +1263,18 @@ fn background_sync_delay(previous: Duration, succeeded: bool) -> Duration {
     }
 }
 
+fn gateway_reconnect_schedule(previous: Duration, succeeded: bool) -> (Duration, Duration) {
+    let next = if succeeded {
+        GATEWAY_RECONNECT_INITIAL
+    } else {
+        previous
+            .checked_mul(2)
+            .unwrap_or(GATEWAY_RECONNECT_MAX)
+            .min(GATEWAY_RECONNECT_MAX)
+    };
+    (previous, next)
+}
+
 struct GatewayLifecycle {
     revision: AtomicU64,
     lock: Mutex<()>,
@@ -1367,12 +1390,9 @@ fn native_gateway_listener_loop(backend_weak: &Weak<ProductionDesktopBackend>) {
                 connection.as_mut(),
             )
         });
-        if result.is_ok() {
-            reconnect_delay = GATEWAY_RECONNECT_INITIAL;
-        } else {
-            reconnect_delay = (reconnect_delay * 2).min(GATEWAY_RECONNECT_MAX);
-        }
-        lifecycle.wait_while_current(revision, reconnect_delay);
+        let (wait, next_delay) = gateway_reconnect_schedule(reconnect_delay, result.is_ok());
+        reconnect_delay = next_delay;
+        lifecycle.wait_while_current(revision, wait);
     }
 }
 
@@ -1382,6 +1402,24 @@ fn drive_gateway_connection(
     expected_user_id: UserId,
     expires_at_unix: i64,
     connection: &mut dyn crate::native_gateway::NativeGatewayConnection,
+) -> Result<(), crate::native_gateway::NativeGatewayError> {
+    drive_gateway_connection_with_policy(
+        backend,
+        revision,
+        expected_user_id,
+        expires_at_unix,
+        connection,
+        PRODUCTION_GATEWAY_CONNECTION_POLICY,
+    )
+}
+
+fn drive_gateway_connection_with_policy(
+    backend: &Weak<ProductionDesktopBackend>,
+    revision: u64,
+    expected_user_id: UserId,
+    expires_at_unix: i64,
+    connection: &mut dyn crate::native_gateway::NativeGatewayConnection,
+    policy: GatewayConnectionPolicy,
 ) -> Result<(), crate::native_gateway::NativeGatewayError> {
     let started = Instant::now();
     let mut last_activity = started;
@@ -1424,8 +1462,8 @@ fn drive_gateway_connection(
             }
         }
         let now = Instant::now();
-        if (!ready && now.duration_since(started) >= GATEWAY_READY_TIMEOUT)
-            || now.duration_since(last_activity) >= GATEWAY_IDLE_TIMEOUT
+        if (!ready && now.duration_since(started) >= policy.ready_timeout)
+            || now.duration_since(last_activity) >= policy.idle_timeout
         {
             return Err(crate::native_gateway::NativeGatewayError::Unavailable);
         }
@@ -2302,6 +2340,20 @@ mod tests {
         }
     }
 
+    struct CountingTimeoutGatewayConnection {
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl crate::native_gateway::NativeGatewayConnection for CountingTimeoutGatewayConnection {
+        fn read_frame(
+            &mut self,
+        ) -> Result<NativeGatewayFrame, crate::native_gateway::NativeGatewayError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(2));
+            Ok(NativeGatewayFrame::Timeout)
+        }
+    }
+
     fn device_info(device: &MlsDevice) -> DeviceInfo {
         DeviceInfo {
             device_id: device.device_id().to_string(),
@@ -2361,6 +2413,34 @@ mod tests {
         .unwrap()
     }
 
+    fn gateway_ready_payload(user_id: UserId) -> Vec<u8> {
+        serde_json::to_vec(&Envelope {
+            v: PROTOCOL_VERSION,
+            t: EventType::try_from(String::from("ready")).unwrap(),
+            d: serde_json::json!({ "user_id": user_id.to_string() }),
+        })
+        .unwrap()
+    }
+
+    fn gateway_message_payload(group_id: filament_core::GroupId) -> Vec<u8> {
+        serde_json::to_vec(&Envelope {
+            v: PROTOCOL_VERSION,
+            t: EventType::try_from(String::from("mls_message")).unwrap(),
+            d: MlsMessageEvent {
+                group_id: group_id.to_string(),
+                conversation_id: filament_core::ConversationId::new().to_string(),
+                message_id: filament_e2ee::EncryptedMessageId::new().to_string(),
+                epoch: 1,
+                suite_id:
+                    filament_core::CiphersuiteId::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_ED25519
+                        .as_u16(),
+                sender_device_id: DeviceId::new().to_string(),
+                created_at_unix: 100,
+            },
+        })
+        .unwrap()
+    }
+
     #[test]
     fn ipc_request_limit_is_inclusive_and_rejects_raw_oversize() {
         assert!(invoke_body_within_limit(&InvokeBody::Raw(vec![
@@ -2391,6 +2471,22 @@ mod tests {
     }
 
     #[test]
+    fn gateway_reconnect_starts_at_one_second_and_caps_exponential_backoff() {
+        assert_eq!(
+            gateway_reconnect_schedule(GATEWAY_RECONNECT_INITIAL, false),
+            (Duration::from_secs(1), Duration::from_secs(2))
+        );
+        assert_eq!(
+            gateway_reconnect_schedule(GATEWAY_RECONNECT_MAX, false),
+            (GATEWAY_RECONNECT_MAX, GATEWAY_RECONNECT_MAX)
+        );
+        assert_eq!(
+            gateway_reconnect_schedule(Duration::from_secs(8), true),
+            (Duration::from_secs(8), GATEWAY_RECONNECT_INITIAL)
+        );
+    }
+
+    #[test]
     fn background_sync_is_idle_before_native_initialization_and_skips_busy_state() {
         let api = Arc::new(MockEnrollmentApi::fresh(UserId::new()));
         let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
@@ -2410,12 +2506,7 @@ mod tests {
     fn native_gateway_rejects_wrong_ready_identity_before_any_wake() {
         let expected_user = UserId::new();
         let wrong_user = UserId::new();
-        let ready = serde_json::to_vec(&Envelope {
-            v: PROTOCOL_VERSION,
-            t: EventType::try_from(String::from("ready")).unwrap(),
-            d: serde_json::json!({ "user_id": wrong_user.to_string() }),
-        })
-        .unwrap();
+        let ready = gateway_ready_payload(wrong_user);
         let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
         let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
         let backend = Arc::new(backend);
@@ -2435,6 +2526,171 @@ mod tests {
             Err(crate::native_gateway::NativeGatewayError::Rejected)
         );
         assert_eq!(backend.gateway_wakes.take(Duration::ZERO), Ok(None));
+    }
+
+    #[test]
+    fn native_gateway_requires_ready_before_the_bounded_deadline() {
+        let expected_user = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        let backend = Arc::new(backend);
+        let weak = Arc::downgrade(&backend);
+        let mut connection = ScriptedGatewayConnection {
+            frames: std::collections::VecDeque::new(),
+        };
+
+        assert_eq!(
+            drive_gateway_connection_with_policy(
+                &weak,
+                backend.gateway_lifecycle.current(),
+                expected_user,
+                500,
+                &mut connection,
+                GatewayConnectionPolicy {
+                    ready_timeout: Duration::from_millis(1),
+                    idle_timeout: Duration::from_secs(1),
+                },
+            ),
+            Err(crate::native_gateway::NativeGatewayError::Unavailable)
+        );
+        assert_eq!(backend.gateway_wakes.take(Duration::ZERO), Ok(None));
+    }
+
+    #[test]
+    fn native_gateway_closes_an_idle_ready_connection() {
+        let expected_user = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        let backend = Arc::new(backend);
+        let weak = Arc::downgrade(&backend);
+        let mut connection = ScriptedGatewayConnection {
+            frames: vec![NativeGatewayFrame::Text(gateway_ready_payload(
+                expected_user,
+            ))]
+            .into(),
+        };
+
+        assert_eq!(
+            drive_gateway_connection_with_policy(
+                &weak,
+                backend.gateway_lifecycle.current(),
+                expected_user,
+                500,
+                &mut connection,
+                GatewayConnectionPolicy {
+                    ready_timeout: Duration::from_secs(1),
+                    idle_timeout: Duration::from_millis(1),
+                },
+            ),
+            Err(crate::native_gateway::NativeGatewayError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn native_gateway_disconnects_when_distinct_wakes_overflow() {
+        let expected_user = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        for _ in 0..crate::native_gateway::MAX_GATEWAY_WAKE_GROUPS {
+            backend
+                .gateway_wakes
+                .enqueue(filament_core::GroupId::new())
+                .unwrap();
+        }
+        let overflow_group = filament_core::GroupId::new();
+        let mut connection = ScriptedGatewayConnection {
+            frames: vec![
+                NativeGatewayFrame::Text(gateway_ready_payload(expected_user)),
+                NativeGatewayFrame::Text(gateway_message_payload(overflow_group)),
+            ]
+            .into(),
+        };
+        let backend = Arc::new(backend);
+
+        assert_eq!(
+            drive_gateway_connection(
+                &Arc::downgrade(&backend),
+                backend.gateway_lifecycle.current(),
+                expected_user,
+                500,
+                &mut connection,
+            ),
+            Err(crate::native_gateway::NativeGatewayError::Rejected)
+        );
+    }
+
+    #[test]
+    fn native_gateway_stops_before_reading_after_token_expiry() {
+        let expected_user = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        let backend = Arc::new(backend);
+        let mut connection = ScriptedGatewayConnection {
+            frames: vec![NativeGatewayFrame::Text(gateway_ready_payload(
+                expected_user,
+            ))]
+            .into(),
+        };
+
+        assert_eq!(
+            drive_gateway_connection(
+                &Arc::downgrade(&backend),
+                backend.gateway_lifecycle.current(),
+                expected_user,
+                100,
+                &mut connection,
+            ),
+            Ok(())
+        );
+        assert_eq!(connection.frames.len(), 1);
+    }
+
+    #[test]
+    fn native_gateway_session_replacement_interrupts_the_old_connection() {
+        let expected_user = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        let backend = Arc::new(backend);
+        let revision = backend.gateway_lifecycle.current();
+        let weak = Arc::downgrade(&backend);
+        let reads = Arc::new(AtomicUsize::new(0));
+        let connection_reads = Arc::clone(&reads);
+        let join = thread::spawn(move || {
+            let mut connection = CountingTimeoutGatewayConnection {
+                reads: connection_reads,
+            };
+            drive_gateway_connection(&weak, revision, expected_user, 500, &mut connection)
+        });
+        while reads.load(Ordering::SeqCst) == 0 {
+            thread::yield_now();
+        }
+
+        backend.store_session(valid_session()).unwrap();
+        assert_eq!(join.join().unwrap(), Ok(()));
+    }
+
+    #[test]
+    fn native_gateway_logout_interrupts_the_old_connection() {
+        let expected_user = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        let backend = Arc::new(backend);
+        let revision = backend.gateway_lifecycle.current();
+        let weak = Arc::downgrade(&backend);
+        let reads = Arc::new(AtomicUsize::new(0));
+        let connection_reads = Arc::clone(&reads);
+        let join = thread::spawn(move || {
+            let mut connection = CountingTimeoutGatewayConnection {
+                reads: connection_reads,
+            };
+            drive_gateway_connection(&weak, revision, expected_user, 500, &mut connection)
+        });
+        while reads.load(Ordering::SeqCst) == 0 {
+            thread::yield_now();
+        }
+
+        backend.clear_session().unwrap();
+        assert_eq!(join.join().unwrap(), Ok(()));
     }
 
     #[test]

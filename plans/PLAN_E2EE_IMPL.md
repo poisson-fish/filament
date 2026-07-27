@@ -378,7 +378,12 @@ reconnect deadlines are bounded; session replacement or logout invalidates the
 old listener. No gateway data is trusted as ciphertext or membership state.
 This is the Phase 5.5 realtime mailbox-wake slice recorded in detail below;
 commit `f2746acb` implements it on top of the periodic reconciliation baseline
-from `d07264ae`.
+from `d07264ae`. Follow-up transport hardening now directly covers missing
+readiness, binary and oversized frames, idle close, bounded reconnect
+scheduling, wake overflow, token expiry, and session replacement/logout
+interruption. The first failed reconnect now waits the documented one second
+before the exponential schedule advances, rather than skipping directly to
+two seconds.
 
 ---
 
@@ -1169,7 +1174,8 @@ validation; no signing secret may be committed.
 ### Implemented Slice — Native Realtime Durable-Mailbox Wakeup
 
 **Status:** Implemented on 2026-07-26 in `f2746acb`, following the
-timer-only reconciliation baseline in `d07264ae`.
+timer-only reconciliation baseline in `d07264ae`; transport lifecycle coverage
+was completed in the following Phase 5.5 hardening increment.
 
 **Problem and decision:** A 15-second receive delay is not an acceptable normal
 DM path. The native Rust host therefore owns an authenticated WebSocket
@@ -1220,6 +1226,12 @@ offline recovery, missed events, and reconciliation.
   128-group bound; connector diagnostics prove origin redaction.
 - Runtime coverage rejects a `ready` event for the wrong authenticated user
   before any wake is accepted.
+- Transport/runtime coverage rejects binary and oversized text frames, closes
+  connections that omit `ready` or become idle, disconnects on 128-group wake
+  overflow, and stops before reading after access-token expiry.
+- Lifecycle coverage proves session replacement and logout interrupt an old
+  listener. Reconnect scheduling starts at one second, doubles only after that
+  wait, caps at 30 seconds, and resets after a clean lifecycle transition.
 - A two-member MLS runtime test inserts ciphertext after initialization,
   delivers `ready` plus `mls_message`, and proves decryption, durable local
   persistence, server acknowledgment, and mailbox removal within a two-second
@@ -1236,9 +1248,6 @@ offline recovery, missed events, and reconciliation.
   conversation route or peer-root pin and must not create state from an
   untrusted gateway hint. First-contact discovery/initiation remains behind
   the planned privileged-surface and identity-binding review.
-- Add transport-level tests for missing `ready`, binary and oversized frames,
-  idle close, reconnect, wake overflow, token expiry, and session
-  replacement/logout interruption.
 - Add a real-server packaged smoke test proving bearer-header WSS
   authentication, immediate established-DM receive, disconnect/offline
   reconciliation, and no plaintext fallback.

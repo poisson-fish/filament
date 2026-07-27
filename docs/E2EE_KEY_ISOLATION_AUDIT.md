@@ -121,10 +121,12 @@ IDs; neither value can be selected by the webview.
   ghost-device/root-replacement rejection, and fixed mailbox/ack transports.
 - `apps/filament-client-desktop/src-tauri/src/native_gateway.rs`: pinned WSS
   derivation, bearer-header authentication, strict bounded wake decoding,
-  coalesced group queue, and redacted connector diagnostics.
+  fail-closed binary/oversized frame classification, coalesced group queue,
+  and redacted connector diagnostics.
 - `apps/filament-client-desktop/src-tauri/src/runtime.rs`: bounded native
-  realtime wake/periodic reconciliation, commit-before-message coordination,
-  and lost-response acknowledgment retry.
+  realtime wake/periodic reconciliation, readiness/idle/session lifecycle
+  enforcement, commit-before-message coordination, and lost-response
+  acknowledgment retry.
 - `apps/filament-client-web/src/lib/native-client.ts`: exact native command
   requests, strict public-response decoding, and fixed redacted error mapping.
 - `apps/filament-client-web/src/features/app-shell/controllers/native-encryption-controller.ts`:
