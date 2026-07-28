@@ -2346,6 +2346,39 @@ async fn postgres_e2ee_directory_verifies_identity_and_atomically_claims_once() 
         .expect("claim against removed device should execute");
     assert_eq!(claim_removed.status(), StatusCode::NOT_FOUND);
 
+    let final_remove_request = Request::builder()
+        .method("DELETE")
+        .uri(format!("/e2ee/devices/{paired_device_id}"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", ip)
+        .body(Body::empty())
+        .expect("final-device remove request should build");
+    let final_remove_response = app
+        .clone()
+        .oneshot(final_remove_request)
+        .await
+        .expect("final-device remove should execute");
+    assert_eq!(final_remove_response.status(), StatusCode::OK);
+    let final_device_removed = next_gateway_event(&mut gateway, "device_list_update").await;
+    assert_eq!(final_device_removed["d"]["user_id"], user_id.to_string());
+    assert_eq!(final_device_removed["d"]["device_count"], 0);
+
+    let list_after_final_remove = Request::builder()
+        .method("GET")
+        .uri(format!("/e2ee/users/{user_id}/devices"))
+        .header("authorization", format!("Bearer {}", auth.access_token))
+        .header("x-forwarded-for", ip)
+        .body(Body::empty())
+        .expect("final empty-list request should build");
+    let listed_after_final_remove = app
+        .clone()
+        .oneshot(list_after_final_remove)
+        .await
+        .expect("final empty list should execute");
+    assert_eq!(listed_after_final_remove.status(), StatusCode::OK);
+    let listed_after_final_remove: DeviceListResponse = parse_json(listed_after_final_remove).await;
+    assert!(listed_after_final_remove.devices.is_empty());
+
     let successful_claim_audits: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM e2ee_audit_log
          WHERE action = 'keypackage_claim' AND user_id = $1",

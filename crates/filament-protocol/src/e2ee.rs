@@ -1426,7 +1426,8 @@ pub struct MlsMembershipChangeEvent {
 pub struct DeviceListUpdateEvent {
     /// The user whose device list changed (ULID string).
     pub user_id: String,
-    /// The device count after the change.
+    /// The active device count after the change. Zero represents an empty
+    /// directory after the account's final device is removed.
     pub device_count: u32,
     /// Unix timestamp (seconds) when the change was recorded.
     pub created_at_unix: i64,

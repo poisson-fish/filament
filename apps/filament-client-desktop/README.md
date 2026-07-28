@@ -82,7 +82,8 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   certificate against the locally pinned root. Authenticated removal,
   replacement, or account mismatch clears the in-memory MLS capability and
   interrupts the gateway without deleting encrypted local state. Temporary
-  network failure retains the active state, and the periodic pass repeats the
+  network failure retains the active state, a zero-device update remains a
+  valid final-device revocation signal, and the periodic pass repeats the
   verification when an event was missed.
 - A low-pool wake can replenish only the exact active certified device and
   generates at most ten ordinary single-use KeyPackages. The complete

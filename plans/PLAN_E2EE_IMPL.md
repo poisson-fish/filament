@@ -404,10 +404,11 @@ Strict owner-bound `device_list_update` wakes now share that native queue and
 trigger immediate public-directory revalidation of the active certificate
 against the locally pinned root. Authenticated device removal, certificate
 replacement, or account mismatch clears volatile MLS capability and interrupts
-the gateway while preserving SQLCipher state. Cross-user hints disconnect,
-temporary directory outages retain active state, and the periodic coordinator
-performs the same check so a missed wake cannot leave a revoked device active
-indefinitely.
+the gateway while preserving SQLCipher state. The legitimate zero-device event
+emitted after final-device removal is accepted and schedules the same immediate
+revocation check. Cross-user hints disconnect, temporary directory outages
+retain active state, and the periodic coordinator performs the same check so a
+missed wake cannot leave a revoked device active indefinitely.
 The PostgreSQL/Axum integration smoke now binds the real gateway on a loopback
 socket, authenticates the established-DM recipient with a bearer header and no
 URL token, observes a ciphertext-free `mls_message` wake, then fetches and

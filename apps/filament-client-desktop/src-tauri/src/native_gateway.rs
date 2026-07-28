@@ -281,9 +281,7 @@ fn validate_device_directory_wake(
 ) -> Result<DeviceDirectoryWake, NativeGatewayError> {
     let device_count =
         usize::try_from(event.device_count).map_err(|_| NativeGatewayError::Rejected)?;
-    if !valid_unix_timestamp(event.created_at_unix)
-        || !(1..=MAX_DEVICE_LIST_SIZE).contains(&device_count)
-    {
+    if !valid_unix_timestamp(event.created_at_unix) || device_count > MAX_DEVICE_LIST_SIZE {
         return Err(NativeGatewayError::Rejected);
     }
     let user_id = UserId::try_from(event.user_id).map_err(|_| NativeGatewayError::Rejected)?;
@@ -613,32 +611,29 @@ mod tests {
     #[test]
     fn device_directory_wakes_are_typed_and_bounded() {
         let user_id = UserId::new();
-        let payload = serde_json::to_vec(&Envelope {
-            v: PROTOCOL_VERSION,
-            t: EventType::try_from(String::from("device_list_update")).unwrap(),
-            d: DeviceListUpdateEvent {
-                user_id: user_id.to_string(),
-                device_count: 2,
-                created_at_unix: 100,
-            },
-        })
-        .unwrap();
-        assert_eq!(
-            decode_gateway_wake(&payload),
-            Ok(GatewayWake::DeviceDirectory(DeviceDirectoryWake {
-                user_id
-            }))
-        );
+        for device_count in [0, 2] {
+            let payload = serde_json::to_vec(&Envelope {
+                v: PROTOCOL_VERSION,
+                t: EventType::try_from(String::from("device_list_update")).unwrap(),
+                d: DeviceListUpdateEvent {
+                    user_id: user_id.to_string(),
+                    device_count,
+                    created_at_unix: 100,
+                },
+            })
+            .unwrap();
+            assert_eq!(
+                decode_gateway_wake(&payload),
+                Ok(GatewayWake::DeviceDirectory(DeviceDirectoryWake {
+                    user_id
+                }))
+            );
+        }
 
         for invalid in [
             DeviceListUpdateEvent {
                 user_id: String::from("bad"),
                 device_count: 2,
-                created_at_unix: 100,
-            },
-            DeviceListUpdateEvent {
-                user_id: user_id.to_string(),
-                device_count: 0,
                 created_at_unix: 100,
             },
             DeviceListUpdateEvent {

@@ -85,11 +85,14 @@ mod tests {
     #[test]
     fn device_list_update_uses_typed_contract() {
         let user_id = UserId::new();
-        let payload =
-            parse_payload(&try_device_list_update(user_id, 2, 10).expect("event should serialize"));
-        assert_eq!(payload["user_id"], Value::from(user_id.to_string()));
-        assert_eq!(payload["device_count"], Value::from(2));
-        assert_eq!(payload["created_at_unix"], Value::from(10));
+        for device_count in [0, 2] {
+            let payload = parse_payload(
+                &try_device_list_update(user_id, device_count, 10).expect("event should serialize"),
+            );
+            assert_eq!(payload["user_id"], Value::from(user_id.to_string()));
+            assert_eq!(payload["device_count"], Value::from(device_count));
+            assert_eq!(payload["created_at_unix"], Value::from(10));
+        }
     }
 
     #[test]

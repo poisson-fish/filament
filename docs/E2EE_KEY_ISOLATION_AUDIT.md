@@ -73,8 +73,9 @@ replacements always invalidate the old gateway lifecycle.
 10. Strict owner-bound `device_list_update` wakes trigger a native directory
     read and re-verify the active certificate against the local root. Removal,
     certificate replacement, or account mismatch clears only in-memory MLS
-    capability and interrupts the gateway. The periodic pass provides the same
-    check after missed events; transient network failure retains state.
+    capability and interrupts the gateway. A zero-device event is accepted as
+    the legitimate final-device removal shape. The periodic pass provides the
+    same check after missed events; transient network failure retains state.
 11. The bundled SolidJS client invokes only the generated seven-command ACL.
    Session adoption follows successful native custody, settings decode only
    exact public fields, and root rotation accepts only the fixed typed

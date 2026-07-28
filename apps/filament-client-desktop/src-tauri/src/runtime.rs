@@ -2653,13 +2653,13 @@ mod tests {
         .unwrap()
     }
 
-    fn gateway_device_directory_payload(user_id: UserId) -> Vec<u8> {
+    fn gateway_device_directory_payload(user_id: UserId, device_count: u32) -> Vec<u8> {
         serde_json::to_vec(&Envelope {
             v: PROTOCOL_VERSION,
             t: EventType::try_from(String::from("device_list_update")).unwrap(),
             d: DeviceListUpdateEvent {
                 user_id: user_id.to_string(),
-                device_count: 1,
+                device_count,
                 created_at_unix: 100,
             },
         })
@@ -2888,7 +2888,7 @@ mod tests {
         let mut connection = ScriptedGatewayConnection {
             frames: vec![
                 NativeGatewayFrame::Text(gateway_ready_payload(expected_user)),
-                NativeGatewayFrame::Text(gateway_device_directory_payload(expected_user)),
+                NativeGatewayFrame::Text(gateway_device_directory_payload(expected_user, 1)),
                 NativeGatewayFrame::Closed,
             ]
             .into(),
@@ -2915,7 +2915,7 @@ mod tests {
         let mut hostile = ScriptedGatewayConnection {
             frames: vec![
                 NativeGatewayFrame::Text(gateway_ready_payload(expected_user)),
-                NativeGatewayFrame::Text(gateway_device_directory_payload(UserId::new())),
+                NativeGatewayFrame::Text(gateway_device_directory_payload(UserId::new(), 1)),
             ]
             .into(),
         };
@@ -3165,6 +3165,52 @@ mod tests {
 
         assert_eq!(
             backend.revalidate_active_directory_once(DeviceDirectoryWake { user_id }),
+            Err(DesktopCommandBackendError::Rejected)
+        );
+        assert_eq!(
+            backend.read_e2ee_store_status(),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert!(backend.gateway_lifecycle.current() > revision);
+        assert_eq!(local_store.exists(&StoreKey::mls_client_state()), Ok(true));
+        assert_eq!(local_store.exists(&StoreKey::root_identity()), Ok(true));
+    }
+
+    #[test]
+    fn final_device_removal_wake_is_queued_and_clears_volatile_capability() {
+        let user_id = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (backend, _session_store, _registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        backend.initialize_e2ee_store().unwrap();
+        let backend = Arc::new(backend);
+        let revision = backend.gateway_lifecycle.current();
+        api.devices.lock().unwrap().clear();
+        let mut connection = ScriptedGatewayConnection {
+            frames: vec![
+                NativeGatewayFrame::Text(gateway_ready_payload(user_id)),
+                NativeGatewayFrame::Text(gateway_device_directory_payload(user_id, 0)),
+                NativeGatewayFrame::Closed,
+            ]
+            .into(),
+        };
+
+        assert_eq!(
+            drive_gateway_connection(
+                &Arc::downgrade(&backend),
+                revision,
+                user_id,
+                500,
+                &mut connection,
+            ),
+            Err(crate::native_gateway::NativeGatewayError::Unavailable)
+        );
+        let wake = match backend.gateway_wakes.take(Duration::ZERO) {
+            Ok(Some(GatewayWork::DeviceDirectory(wake))) => wake,
+            other => panic!("expected final-device directory wake, got {other:?}"),
+        };
+        assert_eq!(
+            backend.revalidate_active_directory_once(wake),
             Err(DesktopCommandBackendError::Rejected)
         );
         assert_eq!(
