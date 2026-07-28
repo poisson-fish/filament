@@ -46,8 +46,8 @@ use crate::{
         NativeApiError, NativeEnrollmentApi, ReqwestNativeEnrollmentApi,
     },
     native_gateway::{
-        decode_gateway_wake, GatewayWake, GatewayWakeQueue, NativeGatewayConnector,
-        NativeGatewayFrame, TungsteniteNativeGatewayConnector,
+        decode_gateway_wake, GatewayWake, GatewayWakeQueue, GatewayWork, KeyPackageLowWake,
+        NativeGatewayConnector, NativeGatewayFrame, TungsteniteNativeGatewayConnector,
     },
     session_store::{
         OsSessionCredentialStore, SessionCredentialError, SessionCredentialStore, StoredSession,
@@ -460,6 +460,53 @@ impl ProductionDesktopBackend {
             return Ok(BackgroundSyncOutcome::Idle);
         };
         self.synchronize_group_mailboxes(&session, active, &route)?;
+        Ok(BackgroundSyncOutcome::Synchronized)
+    }
+
+    fn replenish_active_keypackages_once(
+        &self,
+        wake: KeyPackageLowWake,
+    ) -> Result<BackgroundSyncOutcome, DesktopCommandBackendError> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+        let Some(active) = active.as_mut() else {
+            return Ok(BackgroundSyncOutcome::Idle);
+        };
+        if wake.device_id != active.device_id {
+            return Ok(BackgroundSyncOutcome::Idle);
+        }
+        let session = self.load_valid_session()?;
+        let user_id = self
+            .api
+            .current_user(&session.access_token)
+            .map_err(map_native_api_error)?;
+        if user_id != active.user_id {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+
+        match load_pending_keypackage_upload(active.store.as_ref()) {
+            Ok(_) => {
+                self.flush_pending_keypackages(&session, active.device_id, active.store.as_ref())?;
+                return Ok(BackgroundSyncOutcome::Synchronized);
+            }
+            Err(KeyStoreError::NotFound) => {}
+            Err(error) => return Err(map_keystore_error(&error)),
+        }
+
+        let missing = wake
+            .water_mark
+            .checked_sub(wake.remaining_count)
+            .and_then(|count| usize::try_from(count).ok())
+            .map(|count| count.min(DEFAULT_BATCH_SIZE))
+            .filter(|count| *count > 0)
+            .ok_or(DesktopCommandBackendError::Rejected)?;
+        active
+            .mailbox
+            .prepare_keypackage_replenishment(active.store.as_ref(), missing)
+            .map_err(map_durable_mailbox_error)?;
+        self.flush_pending_keypackages(&session, active.device_id, active.store.as_ref())?;
         Ok(BackgroundSyncOutcome::Synchronized)
     }
 
@@ -1334,11 +1381,17 @@ fn native_sync_coordinator_loop(backend_weak: &Weak<ProductionDesktopBackend>) {
         drop(backend);
         let wait = fallback_deadline.saturating_duration_since(Instant::now());
         match wakes.take(wait) {
-            Ok(Some(group_id)) => {
+            Ok(Some(GatewayWork::Group(group_id))) => {
                 let Some(backend) = backend_weak.upgrade() else {
                     return;
                 };
                 let _ = backend.synchronize_active_group_once(group_id);
+            }
+            Ok(Some(GatewayWork::KeyPackages(wake))) => {
+                let Some(backend) = backend_weak.upgrade() else {
+                    return;
+                };
+                let _ = backend.replenish_active_keypackages_once(wake);
             }
             Ok(None) => {
                 let Some(backend) = backend_weak.upgrade() else {
@@ -1449,8 +1502,14 @@ fn drive_gateway_connection_with_policy(
                     GatewayWake::Group(group_id) if ready => {
                         wakes.enqueue(group_id)?;
                     }
+                    GatewayWake::KeyPackages(wake) if ready => {
+                        wakes.enqueue_keypackages(wake)?;
+                    }
                     GatewayWake::Ignore if ready => {}
-                    GatewayWake::Ready(_) | GatewayWake::Group(_) | GatewayWake::Ignore => {
+                    GatewayWake::Ready(_)
+                    | GatewayWake::Group(_)
+                    | GatewayWake::KeyPackages(_)
+                    | GatewayWake::Ignore => {
                         return Err(crate::native_gateway::NativeGatewayError::Rejected);
                     }
                 }
@@ -1637,8 +1696,8 @@ mod tests {
         AckE2eeProposalsRequest, CreateMlsConversationRequest, DeviceInfo, DeviceListResponse,
         E2eeCommitMailboxEntry, E2eeCommitMailboxResponse, E2eeMailboxResponse,
         E2eeProposalMailboxEntry, E2eeProposalMailboxResponse, Envelope, EventType,
-        MlsConversationProvisionResponse, MlsMessageEvent, PostCommitRequest, PostCommitResponse,
-        PostMessageRequest, PostMessageResponse, PutE2eeAttachmentResponse,
+        KeyPackageLowEvent, MlsConversationProvisionResponse, MlsMessageEvent, PostCommitRequest,
+        PostCommitResponse, PostMessageRequest, PostMessageResponse, PutE2eeAttachmentResponse,
         RootIdentityDirectoryResponse, RootIdentityRotationEntry, RotateRootIdentityRequest,
         PROTOCOL_VERSION, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
     };
@@ -2441,6 +2500,20 @@ mod tests {
         .unwrap()
     }
 
+    fn gateway_keypackage_low_payload(device_id: DeviceId) -> Vec<u8> {
+        serde_json::to_vec(&Envelope {
+            v: PROTOCOL_VERSION,
+            t: EventType::try_from(String::from("keypackage_low")).unwrap(),
+            d: KeyPackageLowEvent {
+                device_id: device_id.to_string(),
+                remaining_count: 3,
+                water_mark: 10,
+                created_at_unix: 100,
+            },
+        })
+        .unwrap()
+    }
+
     #[test]
     fn ipc_request_limit_is_inclusive_and_rejects_raw_oversize() {
         assert!(invoke_body_within_limit(&InvokeBody::Raw(vec![
@@ -2616,6 +2689,42 @@ mod tests {
                 &mut connection,
             ),
             Err(crate::native_gateway::NativeGatewayError::Rejected)
+        );
+    }
+
+    #[test]
+    fn native_gateway_queues_keypackage_work_only_after_ready() {
+        let expected_user = UserId::new();
+        let device_id = DeviceId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        let mut connection = ScriptedGatewayConnection {
+            frames: vec![
+                NativeGatewayFrame::Text(gateway_ready_payload(expected_user)),
+                NativeGatewayFrame::Text(gateway_keypackage_low_payload(device_id)),
+                NativeGatewayFrame::Closed,
+            ]
+            .into(),
+        };
+        let backend = Arc::new(backend);
+
+        assert_eq!(
+            drive_gateway_connection(
+                &Arc::downgrade(&backend),
+                backend.gateway_lifecycle.current(),
+                expected_user,
+                500,
+                &mut connection,
+            ),
+            Err(crate::native_gateway::NativeGatewayError::Unavailable)
+        );
+        assert_eq!(
+            backend.gateway_wakes.take(Duration::ZERO),
+            Ok(Some(GatewayWork::KeyPackages(KeyPackageLowWake {
+                device_id,
+                remaining_count: 3,
+                water_mark: 10,
+            })))
         );
     }
 
@@ -3647,6 +3756,66 @@ mod tests {
             pending_proposal_acknowledgment(local_store.as_ref(), group_id, alice.device_id())
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn production_backend_replenishes_only_its_low_keypackage_pool_durably() {
+        let user_id = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (backend, _session_store, registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        backend.initialize_e2ee_store().unwrap();
+        let device_id = registry.device_for(user_id).unwrap().unwrap();
+
+        assert_eq!(
+            backend.replenish_active_keypackages_once(KeyPackageLowWake {
+                device_id: DeviceId::new(),
+                remaining_count: 3,
+                water_mark: 10,
+            }),
+            Ok(BackgroundSyncOutcome::Idle)
+        );
+        assert_eq!(api.uploaded.load(Ordering::SeqCst), DEFAULT_BATCH_SIZE + 1);
+
+        assert_eq!(
+            backend.replenish_active_keypackages_once(KeyPackageLowWake {
+                device_id,
+                remaining_count: 3,
+                water_mark: 10,
+            }),
+            Ok(BackgroundSyncOutcome::Synchronized)
+        );
+        assert_eq!(api.uploaded.load(Ordering::SeqCst), 7);
+        assert_eq!(
+            local_store.exists(&StoreKey::pending_keypackage_upload()),
+            Ok(false)
+        );
+        assert!(load_mls_client_state(local_store.as_ref()).is_ok());
+
+        api.reject_upload.store(true, Ordering::SeqCst);
+        assert_eq!(
+            backend.replenish_active_keypackages_once(KeyPackageLowWake {
+                device_id,
+                remaining_count: 9,
+                water_mark: 10,
+            }),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert_eq!(
+            local_store.exists(&StoreKey::pending_keypackage_upload()),
+            Ok(true)
+        );
+
+        api.reject_upload.store(false, Ordering::SeqCst);
+        assert_eq!(
+            backend.synchronize_active_once(),
+            Ok(BackgroundSyncOutcome::Synchronized)
+        );
+        assert_eq!(api.uploaded.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            local_store.exists(&StoreKey::pending_keypackage_upload()),
+            Ok(false)
         );
     }
 

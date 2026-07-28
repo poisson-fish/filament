@@ -25,7 +25,8 @@ use ulid::Ulid;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    commit_mailbox::validate_page as validate_commit_page, persistence::encode_mls_client_state,
+    commit_mailbox::validate_page as validate_commit_page,
+    persistence::{encode_mls_client_state, encode_pending_keypackages},
     process_commit_mailbox, process_group_commit_mailbox, process_message_mailbox,
     ApplicationEventId, AttachmentSet, AuthenticatedMembershipChange,
     AuthenticatedMembershipChangeKind, ConfirmedAttachmentUpload, ConversationAudience,
@@ -33,9 +34,9 @@ use crate::{
     EncryptedAttachmentReference, EncryptedChatEvent, EncryptedGroupCommit, EncryptedMessageId,
     ExternalCommitRecoveryInfo, ExternalGroupProposal, ExternalProposalAction, KeyStoreError,
     LocalKeyStore, MlsClientState, MlsConversation, PendingCommitRebase,
-    PendingExternalCommitRecovery, PendingGroupCommit, PinnedUserIdentity, RejectedMailboxCommit,
-    RejectedMailboxMessage, StoreKey, VersionedApplicationEvent, MAX_APPLICATION_PLAINTEXT_BYTES,
-    MAX_STORE_VALUE_BYTES,
+    PendingExternalCommitRecovery, PendingGroupCommit, PendingKeyPackageUpload, PinnedUserIdentity,
+    RejectedMailboxCommit, RejectedMailboxMessage, StoreKey, VersionedApplicationEvent,
+    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
 };
 
 const HISTORY_RECORD_VERSION: u16 = 2;
@@ -327,6 +328,46 @@ impl DurableMlsClient {
         self.state = None;
         self.state = Some(crate::load_mls_client_state(store)?);
         Ok(())
+    }
+
+    /// Generate ordinary single-use KeyPackages and atomically checkpoint
+    /// their private provider state with an exact retryable upload outbox.
+    ///
+    /// Replenishment never creates another last-resort package because a
+    /// low-pool notification does not prove whether the device's existing
+    /// fallback remains unclaimed. Callers must confirm or retry the returned
+    /// public upload before preparing another batch.
+    ///
+    /// # Errors
+    /// Rejects zero or oversized batches, an existing upload outbox, or an
+    /// unavailable runtime. Any uncertain persistence write shuts the runtime
+    /// down until [`Self::reload`] restores the last complete checkpoint.
+    pub fn prepare_keypackage_replenishment(
+        &mut self,
+        store: &dyn LocalKeyStore,
+        count: usize,
+    ) -> Result<PendingKeyPackageUpload, DurableMailboxError> {
+        if count == 0 || count > crate::DEFAULT_BATCH_SIZE {
+            return Err(KeyStoreError::LimitExceeded.into());
+        }
+        if store.exists(&StoreKey::pending_keypackage_upload())? {
+            return Err(DurableMailboxError::PendingAcknowledgment);
+        }
+
+        let state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
+        let Ok(packages) = crate::generate_key_package_batch(&state.device, count) else {
+            return Err(ConversationError::CryptoError.into());
+        };
+        let checkpoint = encode_state(&state)?;
+        let pending = encode_pending_keypackages(&packages)?;
+        if let Err(error) = store.store_batch(vec![
+            (StoreKey::mls_client_state(), checkpoint),
+            (StoreKey::pending_keypackage_upload(), pending.to_vec()),
+        ]) {
+            return Err(error.into());
+        }
+        self.state = Some(state);
+        crate::load_pending_keypackage_upload(store).map_err(Into::into)
     }
 
     /// Stage a new two-user MLS conversation behind a durable retry outbox.
@@ -2464,6 +2505,59 @@ mod tests {
             bob_group,
             group_id,
         }
+    }
+
+    #[test]
+    fn keypackage_replenishment_checkpoints_private_state_and_exact_outbox() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let alice_pin = PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let store = InMemoryKeyStore::new();
+        persist_mls_client_state(&store, &alice, &[]).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+
+        let pending = runtime.prepare_keypackage_replenishment(&store, 2).unwrap();
+        assert_eq!(pending.packages.len(), 2);
+        assert!(pending
+            .packages
+            .iter()
+            .all(|package| !package.is_last_resort));
+        assert_eq!(
+            runtime.prepare_keypackage_replenishment(&store, 1),
+            Err(DurableMailboxError::PendingAcknowledgment)
+        );
+        assert!(runtime.is_ready());
+        drop(runtime);
+
+        let restored_pending = crate::load_pending_keypackage_upload(&store).unwrap();
+        assert_eq!(restored_pending, pending);
+        let mut restarted = DurableMlsClient::load(&store).unwrap();
+        let group_id = GroupId::new();
+        let (mut bob_group, welcome) = MlsConversation::create_two_member(
+            group_id,
+            &bob,
+            alice_pin,
+            &restored_pending.packages[0].blob,
+        )
+        .unwrap();
+        bob_group.accept_pending_commit(&bob).unwrap();
+        MlsConversation::join_from_welcome(
+            group_id,
+            &restarted.state.as_ref().unwrap().device,
+            bob_pin,
+            welcome.welcome_blob.as_deref().unwrap(),
+        )
+        .unwrap();
+
+        crate::clear_pending_keypackage_upload(&store).unwrap();
+        assert_eq!(
+            restarted.prepare_keypackage_replenishment(&store, 0),
+            Err(DurableMailboxError::KeyStore(KeyStoreError::LimitExceeded))
+        );
+        assert!(restarted.is_ready());
     }
 
     #[test]

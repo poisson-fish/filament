@@ -15,8 +15,8 @@ use std::{
 use filament_core::{CiphersuiteId, ConversationId, DeviceId, GroupId, ProposalId, UserId};
 use filament_e2ee::EncryptedMessageId;
 use filament_protocol::{
-    parse_envelope, MlsCommitEvent, MlsMessageEvent, MlsProposalEvent, MlsWelcomeEvent,
-    MAX_EVENT_BYTES,
+    parse_envelope, KeyPackageLowEvent, MlsCommitEvent, MlsMessageEvent, MlsProposalEvent,
+    MlsWelcomeEvent, MAX_EVENT_BYTES, MAX_KEYPACKAGE_POOL_SIZE,
 };
 use serde::Deserialize;
 use tungstenite::{
@@ -201,7 +201,21 @@ fn configure_socket_timeouts(
 pub(crate) enum GatewayWake {
     Ready(UserId),
     Group(GroupId),
+    KeyPackages(KeyPackageLowWake),
     Ignore,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KeyPackageLowWake {
+    pub(crate) device_id: DeviceId,
+    pub(crate) remaining_count: u32,
+    pub(crate) water_mark: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GatewayWork {
+    Group(GroupId),
+    KeyPackages(KeyPackageLowWake),
 }
 
 #[derive(Deserialize)]
@@ -239,6 +253,11 @@ pub(crate) fn decode_gateway_wake(payload: &[u8]) -> Result<GatewayWake, NativeG
             let event: MlsProposalEvent =
                 serde_json::from_value(envelope.d).map_err(|_| NativeGatewayError::Rejected)?;
             validate_proposal_wake(event).map(GatewayWake::Group)
+        }
+        "keypackage_low" => {
+            let event: KeyPackageLowEvent =
+                serde_json::from_value(envelope.d).map_err(|_| NativeGatewayError::Rejected)?;
+            validate_keypackage_low_wake(event).map(GatewayWake::KeyPackages)
         }
         _ => Ok(GatewayWake::Ignore),
     }
@@ -300,6 +319,27 @@ fn validate_proposal_wake(event: MlsProposalEvent) -> Result<GroupId, NativeGate
     Ok(group_id)
 }
 
+fn validate_keypackage_low_wake(
+    event: KeyPackageLowEvent,
+) -> Result<KeyPackageLowWake, NativeGatewayError> {
+    let device_id =
+        DeviceId::try_from(event.device_id).map_err(|_| NativeGatewayError::Rejected)?;
+    let max_pool =
+        u32::try_from(MAX_KEYPACKAGE_POOL_SIZE).map_err(|_| NativeGatewayError::Rejected)?;
+    if event.water_mark == 0
+        || event.water_mark > max_pool
+        || event.remaining_count >= event.water_mark
+        || !valid_unix_timestamp(event.created_at_unix)
+    {
+        return Err(NativeGatewayError::Rejected);
+    }
+    Ok(KeyPackageLowWake {
+        device_id,
+        remaining_count: event.remaining_count,
+        water_mark: event.water_mark,
+    })
+}
+
 fn parse_common_wake(
     group_id: &str,
     conversation_id: &str,
@@ -318,8 +358,9 @@ const fn valid_unix_timestamp(timestamp: i64) -> bool {
 }
 
 struct GatewayWakeState {
-    groups: VecDeque<GroupId>,
-    unique: HashSet<GroupId>,
+    work: VecDeque<GatewayWork>,
+    unique_groups: HashSet<GroupId>,
+    unique_keypackage_devices: HashSet<DeviceId>,
 }
 
 pub(crate) struct GatewayWakeQueue {
@@ -331,46 +372,80 @@ impl GatewayWakeQueue {
     pub(crate) fn new() -> Self {
         Self {
             state: Mutex::new(GatewayWakeState {
-                groups: VecDeque::new(),
-                unique: HashSet::new(),
+                work: VecDeque::new(),
+                unique_groups: HashSet::new(),
+                unique_keypackage_devices: HashSet::new(),
             }),
             changed: Condvar::new(),
         }
     }
 
     pub(crate) fn enqueue(&self, group_id: GroupId) -> Result<bool, NativeGatewayError> {
+        self.enqueue_work(GatewayWork::Group(group_id))
+    }
+
+    pub(crate) fn enqueue_keypackages(
+        &self,
+        wake: KeyPackageLowWake,
+    ) -> Result<bool, NativeGatewayError> {
+        self.enqueue_work(GatewayWork::KeyPackages(wake))
+    }
+
+    fn enqueue_work(&self, work: GatewayWork) -> Result<bool, NativeGatewayError> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| NativeGatewayError::Unavailable)?;
-        if state.unique.contains(&group_id) {
+        let duplicate = match work {
+            GatewayWork::Group(group_id) => state.unique_groups.contains(&group_id),
+            GatewayWork::KeyPackages(wake) => {
+                state.unique_keypackage_devices.contains(&wake.device_id)
+            }
+        };
+        if duplicate {
             return Ok(false);
         }
-        if state.groups.len() >= MAX_GATEWAY_WAKE_GROUPS {
+        if state.work.len() >= MAX_GATEWAY_WAKE_GROUPS {
             return Err(NativeGatewayError::Rejected);
         }
-        state.groups.push_back(group_id);
-        state.unique.insert(group_id);
+        match work {
+            GatewayWork::Group(group_id) => {
+                state.unique_groups.insert(group_id);
+            }
+            GatewayWork::KeyPackages(wake) => {
+                state.unique_keypackage_devices.insert(wake.device_id);
+            }
+        }
+        state.work.push_back(work);
         self.changed.notify_one();
         Ok(true)
     }
 
-    pub(crate) fn take(&self, timeout: Duration) -> Result<Option<GroupId>, NativeGatewayError> {
+    pub(crate) fn take(
+        &self,
+        timeout: Duration,
+    ) -> Result<Option<GatewayWork>, NativeGatewayError> {
         let state = self
             .state
             .lock()
             .map_err(|_| NativeGatewayError::Unavailable)?;
         let (mut state, _) = self
             .changed
-            .wait_timeout_while(state, timeout, |state| state.groups.is_empty())
+            .wait_timeout_while(state, timeout, |state| state.work.is_empty())
             .map_err(|_| NativeGatewayError::Unavailable)?;
-        let Some(group_id) = state.groups.pop_front() else {
+        let Some(work) = state.work.pop_front() else {
             return Ok(None);
         };
-        if !state.unique.remove(&group_id) {
+        let removed = match work {
+            GatewayWork::Group(group_id) => state.unique_groups.remove(&group_id),
+            GatewayWork::KeyPackages(wake) => {
+                state.unique_keypackage_devices.remove(&wake.device_id)
+            }
+        };
+        if !removed {
             return Err(NativeGatewayError::Rejected);
         }
-        Ok(Some(group_id))
+        Ok(Some(work))
     }
 }
 
@@ -385,7 +460,9 @@ const fn map_native_api_error(error: NativeApiError) -> NativeGatewayError {
 mod tests {
     use filament_core::{ConversationId, DeviceId, GroupId, UserId};
     use filament_e2ee::{EncryptedMessageId, MlsDevice, RootIdentityKey};
-    use filament_protocol::{Envelope, EventType, MlsMessageEvent, PROTOCOL_VERSION};
+    use filament_protocol::{
+        Envelope, EventType, KeyPackageLowEvent, MlsMessageEvent, PROTOCOL_VERSION,
+    };
 
     use super::*;
 
@@ -431,21 +508,91 @@ mod tests {
     }
 
     #[test]
+    fn keypackage_low_wakes_are_typed_and_bounded() {
+        let device_id = DeviceId::new();
+        let payload = serde_json::to_vec(&Envelope {
+            v: PROTOCOL_VERSION,
+            t: EventType::try_from(String::from("keypackage_low")).unwrap(),
+            d: KeyPackageLowEvent {
+                device_id: device_id.to_string(),
+                remaining_count: 3,
+                water_mark: 10,
+                created_at_unix: 100,
+            },
+        })
+        .unwrap();
+        let wake = KeyPackageLowWake {
+            device_id,
+            remaining_count: 3,
+            water_mark: 10,
+        };
+        assert_eq!(
+            decode_gateway_wake(&payload),
+            Ok(GatewayWake::KeyPackages(wake))
+        );
+
+        for invalid in [
+            KeyPackageLowEvent {
+                device_id: String::from("bad"),
+                remaining_count: 3,
+                water_mark: 10,
+                created_at_unix: 100,
+            },
+            KeyPackageLowEvent {
+                device_id: device_id.to_string(),
+                remaining_count: 10,
+                water_mark: 10,
+                created_at_unix: 100,
+            },
+            KeyPackageLowEvent {
+                device_id: device_id.to_string(),
+                remaining_count: 0,
+                water_mark: 0,
+                created_at_unix: 100,
+            },
+        ] {
+            let payload = serde_json::to_vec(&Envelope {
+                v: PROTOCOL_VERSION,
+                t: EventType::try_from(String::from("keypackage_low")).unwrap(),
+                d: invalid,
+            })
+            .unwrap();
+            assert_eq!(
+                decode_gateway_wake(&payload),
+                Err(NativeGatewayError::Rejected)
+            );
+        }
+    }
+
+    #[test]
     fn wake_queue_coalesces_groups_and_rejects_distinct_overflow() {
         let queue = GatewayWakeQueue::new();
         let first = GroupId::new();
         assert_eq!(queue.enqueue(first), Ok(true));
         assert_eq!(queue.enqueue(first), Ok(false));
-        for _ in 1..MAX_GATEWAY_WAKE_GROUPS {
+        let keypackage_wake = KeyPackageLowWake {
+            device_id: DeviceId::new(),
+            remaining_count: 3,
+            water_mark: 10,
+        };
+        assert_eq!(queue.enqueue_keypackages(keypackage_wake), Ok(true));
+        assert_eq!(queue.enqueue_keypackages(keypackage_wake), Ok(false));
+        for _ in 2..MAX_GATEWAY_WAKE_GROUPS {
             assert_eq!(queue.enqueue(GroupId::new()), Ok(true));
         }
         assert_eq!(
             queue.enqueue(GroupId::new()),
             Err(NativeGatewayError::Rejected)
         );
-        assert_eq!(queue.take(Duration::ZERO), Ok(Some(first)));
+        assert_eq!(
+            queue.take(Duration::ZERO),
+            Ok(Some(GatewayWork::Group(first)))
+        );
+        assert_eq!(
+            queue.take(Duration::ZERO),
+            Ok(Some(GatewayWork::KeyPackages(keypackage_wake)))
+        );
     }
-
     #[test]
     fn gateway_connector_debug_never_exposes_the_origin() {
         let connector = TungsteniteNativeGatewayConnector {

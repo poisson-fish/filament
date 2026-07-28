@@ -384,6 +384,15 @@ scheduling, wake overflow, token expiry, and session replacement/logout
 interruption. The first failed reconnect now waits the documented one second
 before the exponential schedule advances, rather than skipping directly to
 two seconds.
+The native listener now also consumes strict `keypackage_low` wakes for the
+exact active certified device. Group mailbox and KeyPackage work share the
+same 128-item coalescing bound. A wake can generate only the bounded difference
+to the advertised water mark, capped at ten ordinary single-use packages; it
+cannot select another local identity or infer that a replacement last-resort
+package is safe. The complete OpenMLS provider checkpoint and exact upload
+outbox commit atomically in SQLCipher before submission, and response loss
+retries the same public packages through initialization or periodic native
+coordination without adding IPC.
 The PostgreSQL/Axum integration smoke now binds the real gateway on a loopback
 socket, authenticates the established-DM recipient with a bearer header and no
 URL token, observes a ciphertext-free `mls_message` wake, then fetches and
@@ -1213,11 +1222,13 @@ offline recovery, missed events, and reconciliation.
   `mls_proposal` events only as group-routing hints. A wake can select only a
   group already present in the authenticated local mailbox checkpoint; it
   cannot create a conversation, choose an identity, mutate membership, supply
-  ciphertext, or bypass MLS verification.
-- Coalesce duplicate group wakes in a native-only queue capped at 128 distinct
-  groups. Disconnect and reconcile after overflow or hostile known-event
-  payloads. Ignore only well-formed unknown event types for forward-compatible
-  additive rollout.
+  ciphertext, or bypass MLS verification. A strict `keypackage_low` event may
+  select only the exact active device for bounded ordinary-package
+  replenishment.
+- Coalesce duplicate group and per-device KeyPackage work in one native-only
+  queue capped at 128 distinct items. Disconnect and reconcile after overflow
+  or hostile known-event payloads. Ignore only well-formed unknown event types
+  for forward-compatible additive rollout.
 - Cap WebSocket frames and messages at 64 KiB, reject binary/raw frames, bound
   DNS use to four resolved addresses, bound connection/TLS/handshake and
   `ready` waits to seven seconds, use one-second socket wakeups, close after 45
@@ -1236,7 +1247,12 @@ offline recovery, missed events, and reconciliation.
   oversized known events, and preserves forward compatibility for unknown
   event types.
 - Queue coverage proves duplicate coalescing and fail-closed behavior at the
-  128-group bound; connector diagnostics prove origin redaction.
+  shared 128-item group/KeyPackage bound; connector diagnostics prove origin
+  redaction.
+- KeyPackage coverage proves strict low-water decoding, exact-device
+  filtering, a ten-package generation cap, atomic provider/outbox
+  persistence, ordinary-only replenishment, and response-loss recovery through
+  the periodic native coordinator.
 - Runtime coverage rejects a `ready` event for the wrong authenticated user
   before any wake is accepted.
 - Transport/runtime coverage rejects binary and oversized text frames, closes

@@ -585,7 +585,13 @@ pub fn persist_initial_device_bootstrap(
     device: &MlsDevice,
     packages: &[GeneratedKeyPackage],
 ) -> Result<(), KeyStoreError> {
-    if device.root_key_public() != &root_identity.public_key_bytes() {
+    if device.root_key_public() != &root_identity.public_key_bytes()
+        || packages
+            .iter()
+            .filter(|package| package.is_last_resort)
+            .count()
+            != 1
+    {
         return Err(KeyStoreError::InvalidValue);
     }
     let expected_credential = device.credential_with_key();
@@ -769,7 +775,9 @@ fn validate_keypackage_upload_for_device(
 ///
 /// # Errors
 /// Returns [`KeyStoreError`] if the record is missing, corrupt, oversized, or
-/// violates the single last-resort package invariant.
+/// violates the at-most-one last-resort package invariant. Initial bootstrap
+/// separately requires exactly one fallback; ordinary replenishment carries
+/// none because a low-water event cannot prove fallback exhaustion.
 pub fn load_pending_keypackage_upload(
     store: &dyn LocalKeyStore,
 ) -> Result<PendingKeyPackageUpload, KeyStoreError> {
@@ -805,7 +813,7 @@ pub fn clear_pending_keypackage_upload(store: &dyn LocalKeyStore) -> Result<(), 
     Ok(())
 }
 
-fn encode_pending_keypackages(
+pub(crate) fn encode_pending_keypackages(
     packages: &[GeneratedKeyPackage],
 ) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
     let mut persisted = PersistedPendingKeyPackageUpload {
@@ -851,7 +859,7 @@ fn validate_persisted_pending_keypackages(
             .iter()
             .filter(|package| package.is_last_resort)
             .count()
-            != 1
+            > 1
     {
         return Err(KeyStoreError::InvalidValue);
     }
@@ -1236,6 +1244,10 @@ mod tests {
         let duplicate_packages = vec![packages[1].clone(), packages[1].clone()];
         assert_eq!(
             persist_initial_device_bootstrap(&store, &root, &device, &duplicate_packages),
+            Err(KeyStoreError::InvalidValue)
+        );
+        assert_eq!(
+            persist_initial_device_bootstrap(&store, &root, &device, &packages[..1]),
             Err(KeyStoreError::InvalidValue)
         );
         assert!(store.list_keys().unwrap().is_empty());

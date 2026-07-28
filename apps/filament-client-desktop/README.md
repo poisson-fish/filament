@@ -66,11 +66,17 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
 - After native initialization, a native WSS listener authenticates with a
   sensitive bearer header against the compile-time server authority.
   User-bound `ready` is required before strict `mls_message`, `mls_commit`,
-  `mls_welcome`, or `mls_proposal` events can enqueue an immediate group
-  mailbox drain. Wakeups are coalesced in a 128-group queue; event fields
-  remain untrusted routing hints. The transport rejects binary and oversized
-  frames, missing or repeated readiness, idle connections, and distinct wake
-  overflow.
+  `mls_welcome`, `mls_proposal`, or `keypackage_low` events can enqueue native
+  work. Group mailbox drains and per-device KeyPackage replenishments share
+  one 128-item queue; event fields remain untrusted routing hints. The
+  transport rejects binary and oversized frames, missing or repeated
+  readiness, idle connections, and distinct wake overflow.
+- A low-pool wake can replenish only the exact active certified device and
+  generates at most ten ordinary single-use KeyPackages. The complete
+  OpenMLS provider checkpoint and exact upload outbox commit atomically in
+  SQLCipher before network submission. Response loss retries identical public
+  packages after restart; no replacement fallback package is inferred from
+  the untrusted event.
 - A native-only 15-second scheduler remains as offline/missed-event
   reconciliation. It skips contended passes and exponentially backs failed
   passes off to five minutes. Gateway reconnects begin after one second and

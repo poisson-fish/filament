@@ -58,7 +58,12 @@ IDs; neither value can be selected by the webview.
    native coordinator. MLS state, authenticated history, and an acknowledgment
    outbox commit atomically; a lost response leaves the outbox for exact retry
    before any later page. No group, device, root pin, or plaintext enters IPC.
-9. The bundled SolidJS client invokes only the generated seven-command ACL.
+9. Strict `keypackage_low` wakes can select only the exact active certified
+   device. At most ten ordinary single-use packages are generated, and their
+   private OpenMLS provider state commits atomically with the exact upload
+   outbox before submission. Lost responses retry from SQLCipher without
+   exposing package private material or adding an IPC command.
+10. The bundled SolidJS client invokes only the generated seven-command ACL.
    Session adoption follows successful native custody, settings decode only
    exact public fields, and root rotation accepts only the fixed typed
    confirmation. Native failures map to closed codes without reflecting host
@@ -88,6 +93,10 @@ IDs; neither value can be selected by the webview.
   root before settings or readiness is exposed. Every returned rotation chain
   is checked for exact length, continuity, dual signatures, monotonic sequence,
   and the local pin.
+- KeyPackage-low routing validates the typed event, exact active device, pool
+  bounds, and authenticated session before generation. Group and KeyPackage
+  work share one 128-item coalescing queue, and ordinary replenishment is
+  capped at ten packages.
 - Replacement root and device secrets remain inside zeroizing native values
   and SQLCipher records. Lost rotation responses leave a durable candidate;
   they cannot cause generation of a second replacement identity.
