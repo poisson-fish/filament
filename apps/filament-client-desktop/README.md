@@ -30,6 +30,12 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   session in memory only and deletes any legacy `sessionStorage` credential
   record at startup; browser builds retain their existing tab-scoped session
   behavior.
+- Before any mobile session or database-key entry is opened, the shared host
+  explicitly installs the reviewed native credential backend: local Protected
+  Data/Keychain storage on iOS and SharedPreferences encrypted by an
+  Android-Keystore key on Android. The compatibility `keyring` wrapper does not
+  select a mobile store by itself. Missing platform context or store
+  initialization aborts native startup; no file or plaintext fallback exists.
 - A rotated session preserves an initialized SQLCipher/MLS runtime only after
   the replacement access token resolves to the exact same authenticated user.
   Cross-user or temporarily unverifiable replacements adopt the new credential
@@ -108,7 +114,7 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   acceptance.
 - Conversation provisioning, encrypted conversation send/presentation UI,
   encrypted attachment composition/presentation UI, pairing UI, packaged
-  end-to-end smoke coverage, and mobile platform custody evidence remain fail
+  end-to-end smoke coverage, and on-device mobile custody evidence remain fail
   closed.
 - The PostgreSQL-backed server integration suite now exercises a real
   loopback gateway with bearer-header authentication, an immediate

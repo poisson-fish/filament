@@ -246,7 +246,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
         serde_json::from_str(&raw).expect("platform support contract should be strict JSON");
 
     assert_eq!(contract.schema_version, 2);
-    assert_eq!(contract.reviewed_at, "2026-07-23");
+    assert_eq!(contract.reviewed_at, "2026-07-28");
     assert!(contract.review_interval_days <= 180);
     assert_eq!(contract.support_policy.client_release_support_months, 12);
     assert!(contract.support_policy.minimum_os_change_notice_days >= 180);
@@ -262,7 +262,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
     assert_eq!(
         contract.runtime.status,
-        "desktop_ui_native_session_settings_durable_mls_mailbox_root_rotation_fresh_device_enrollment_sqlcipher_install_offline_launch_mobile_packages_ci_gated_fail_closed"
+        "desktop_ui_native_session_settings_durable_mls_mailbox_root_rotation_fresh_device_enrollment_sqlcipher_install_offline_launch_mobile_native_key_custody_packages_ci_gated_fail_closed"
     );
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(
@@ -492,6 +492,55 @@ fn tauri_config_enforces_hardening_controls() {
         .expect("server Dockerfile should exist");
     assert!(server_dockerfile
         .contains("COPY THIRD_PARTY_NOTICES.txt /usr/share/doc/filament/THIRD_PARTY_NOTICES.txt"));
+}
+
+#[test]
+fn mobile_platform_key_custody_is_native_and_fail_closed() {
+    let tauri_root = repo_root().join("apps/filament-client-desktop/src-tauri");
+    let cargo_manifest = fs::read_to_string(tauri_root.join("Cargo.toml"))
+        .expect("packaged-client Cargo manifest should exist");
+    for mobile_custody_dependency in [
+        "[target.'cfg(target_os = \"android\")'.dependencies]",
+        "android-native-keyring-store = \"1.0.0\"",
+        "[target.'cfg(target_os = \"ios\")'.dependencies]",
+        "apple-native-keyring-store = { version = \"1.0.1\", features = [\"protected\"] }",
+    ] {
+        assert!(
+            cargo_manifest.contains(mobile_custody_dependency),
+            "mobile key custody must retain {mobile_custody_dependency}"
+        );
+    }
+
+    let runtime = fs::read_to_string(tauri_root.join("src/runtime.rs"))
+        .expect("packaged runtime source should exist");
+    assert!(runtime.contains("initialize_platform_credential_store()"));
+    assert!(runtime.contains("platform credential store is unavailable"));
+
+    let mobile_store = fs::read_to_string(tauri_root.join("src/platform_credential_store.rs"))
+        .expect("mobile credential-store policy should exist");
+    for native_store in [
+        "android_native_keyring_store::Store::new()",
+        "apple_native_keyring_store::protected::Store::new()",
+        "keyring_core::set_default_store(store)",
+    ] {
+        assert!(
+            mobile_store.contains(native_store),
+            "mobile credential-store policy must retain {native_store}"
+        );
+    }
+
+    let vet_policy = fs::read_to_string(repo_root().join("supply-chain/config.toml"))
+        .expect("cargo-vet policy should exist");
+    for exact_inventory in [
+        "[[exemptions.android-native-keyring-store]]\nversion = \"1.0.0\"",
+        "[[exemptions.ndk-context]]\nversion = \"0.1.1\"",
+        "Pending formal source audit and on-device evidence.",
+    ] {
+        assert!(
+            vet_policy.contains(exact_inventory),
+            "mobile custody inventory must retain {exact_inventory}"
+        );
+    }
 }
 
 #[test]

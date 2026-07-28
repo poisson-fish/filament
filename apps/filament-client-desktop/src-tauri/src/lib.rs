@@ -20,6 +20,7 @@ use zeroize::{Zeroize as _, Zeroizing};
 mod device_registry;
 mod native_api;
 mod native_gateway;
+mod platform_credential_store;
 mod runtime;
 mod session_store;
 mod tauri_host;

@@ -50,6 +50,7 @@ use crate::{
         KeyPackageLowWake, NativeGatewayConnector, NativeGatewayFrame,
         TungsteniteNativeGatewayConnector,
     },
+    platform_credential_store::initialize_platform_credential_store,
     session_store::{
         OsSessionCredentialStore, SessionCredentialError, SessionCredentialStore, StoredSession,
         StoredSessionMetadata,
@@ -1735,6 +1736,11 @@ fn invoke_body_within_limit(body: &InvokeBody) -> bool {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            initialize_platform_credential_store()
+                .map_err(|_| std::io::Error::other("platform credential store is unavailable"))?;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            initialize_platform_credential_store();
             let app_data_root = app
                 .path()
                 .app_data_dir()

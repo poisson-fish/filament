@@ -30,6 +30,14 @@ tungstenite = { version = "0.28", default-features = false, features = ["handsha
 url = "2"
 zeroize = "1"
 
+[target.'cfg(target_os = "android")'.dependencies]
+android-native-keyring-store = "1.0.0"
+keyring-core = "1.0.0"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+apple-native-keyring-store = { version = "1.0.1", features = ["protected"] }
+keyring-core = "1.0.0"
+
 [build-dependencies]
 tauri-build = { version = "=2.6.3", features = [] }
 

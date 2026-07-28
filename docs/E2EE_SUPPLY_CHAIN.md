@@ -13,7 +13,7 @@ enforced in CI.
 
 The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9420 MLS implementation in pure Rust.
 
-### Direct Dependencies (added in Phase 1)
+### Direct Dependencies
 
 | Crate | Version | License | Purpose |
 |---|---|---|---|
@@ -23,6 +23,9 @@ The primary new cryptographic dependency is **OpenMLS** (MIT licensed), an RFC 9
 | `openmls_traits` | 0.5.0 + pinned upstream fix | MIT | Direct access to the approved provider traits used by device pairing |
 | `rusqlite` | 0.39.0 | MIT | Rust SQLCipher bindings for the device-local encrypted store |
 | `keyring` | 4.1.5 | MIT/Apache-2.0 | Cross-platform Keychain, Credential Manager, and Secret Service access |
+| `keyring-core` | 1.0.0 | MIT/Apache-2.0 | Fixed native credential-store selection on mobile targets |
+| `apple-native-keyring-store` | 1.0.1 | MIT/Apache-2.0 | Local Protected Data/Keychain custody on iOS |
+| `android-native-keyring-store` | 1.0.0 | MIT/Apache-2.0 | SharedPreferences vault encrypted by Android Keystore |
 | `libwebrtc` | 0.3.42 | Apache-2.0 | Optional LiveKit native WebRTC/frame-cryptor bridge for Phase 5 media E2EE |
 
 ### Key Transitive Dependencies
@@ -77,6 +80,12 @@ resolved as follows:
   media cipher. The new package set passes the advisory and license/source
   gates. Cargo-vet exemptions record dependency intake, not a completed source
   audit; formal media-stack review remains a Phase 7 gate.
+- Phase 5.5 pins `android-native-keyring-store 1.0.0` and its
+  `ndk-context 0.1.1` bridge only on Android, while the already inventoried
+  `apple-native-keyring-store 1.0.1` enables its Protected Data backend only on
+  iOS. All are MIT/Apache-2.0 and pass advisory, license, and source-policy
+  gates. Their exact cargo-vet exemptions record dependency intake; formal
+  source audit and on-device custody evidence remain release gates.
 
 ### Tauri 2.11.5 packaged-runtime exceptions
 

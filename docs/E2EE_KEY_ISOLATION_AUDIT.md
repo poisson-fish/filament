@@ -27,6 +27,12 @@ After the native write succeeds, the packaged webview retains the active pair
 in JavaScript memory only. It never serializes the pair into WebView
 `sessionStorage`, and startup deletes a legacy record left by an older build.
 Ordinary browser builds retain their tab-scoped session behavior.
+The shared mobile host now explicitly installs iOS local Protected Data or
+Android SharedPreferences encrypted through Android Keystore before creating
+either session or database-key entries. This closes the all-in-one `keyring`
+compatibility layer's unsupported mobile default-store path. Failure to obtain
+the native store aborts runtime startup; on-device custody evidence remains a
+Phase 5.5 release gate.
 Authenticated identity discovery uses one compile-time HTTPS authority with
 redirects disabled and 256 KiB request/response caps. A separate bounded
 native credential record maps authenticated account IDs to host-created device

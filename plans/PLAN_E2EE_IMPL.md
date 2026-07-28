@@ -425,6 +425,16 @@ artifact smoke. Repeated schema bootstrap also remains safe after a group DM
 churns down to two members: the legacy two-user-DM backfill now ignores either
 conversation-ID or canonical-user-pair conflicts instead of failing server
 startup.
+The shared mobile runtime now closes a previously hidden custody gap in the
+cross-platform `keyring` compatibility layer, which intentionally selects no
+default store on iOS or Android. Before any native session or SQLCipher key
+entry can open, iOS installs the local Protected Data/Keychain backend and
+Android installs a SharedPreferences vault encrypted by Android Keystore.
+Platform initialization failure aborts startup without a file or plaintext
+fallback. Target-specific dependency/feature and source-policy tests protect
+the selection; the existing mobile package builds provide cross-target linkage
+coverage. Simulator/device launch, persistence, logout, and reinstall evidence
+remain required before mobile custody can satisfy the Phase 5.5 exit gate.
 
 ---
 

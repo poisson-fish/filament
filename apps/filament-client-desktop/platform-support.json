@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "reviewed_at": "2026-07-23",
+  "reviewed_at": "2026-07-28",
   "review_interval_days": 180,
   "support_policy": {
     "client_release_support_months": 12,
@@ -13,7 +13,7 @@
   "runtime": {
     "ui": "bundled_solidjs",
     "adapter": "tauri_v2_desktop_and_mobile",
-    "status": "desktop_ui_native_session_settings_durable_mls_mailbox_root_rotation_fresh_device_enrollment_sqlcipher_install_offline_launch_mobile_packages_ci_gated_fail_closed",
+    "status": "desktop_ui_native_session_settings_durable_mls_mailbox_root_rotation_fresh_device_enrollment_sqlcipher_install_offline_launch_mobile_native_key_custody_packages_ci_gated_fail_closed",
     "reviewed_version": "2.11.5",
     "accepted_risks": [
       "scoped_mpl_transitives",
