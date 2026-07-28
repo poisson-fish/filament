@@ -7,7 +7,7 @@
 
 ---
 
-## Implementation Status — 2026-07-26
+## Implementation Status — 2026-07-28
 
 The repository is currently implementing **Phase 5 voice/video E2EE**, but
 E2EE messaging and media are not yet production client paths. Plaintext
@@ -294,6 +294,13 @@ clears it independently of remote teardown, encrypted-store initialization
 feeds only a strictly decoded public settings snapshot to the UI, and
 destructive root rotation requires the exact typed confirmation. No privileged
 command was added; encrypted conversation send/presentation remains disabled.
+Native session rotation now preserves an initialized SQLCipher/MLS runtime only
+after the replacement access token authenticates as the exact same user.
+Cross-user or temporarily unverifiable replacements clear in-memory E2EE state
+after credential adoption, hostile/rejected identity responses retain the
+previous credential and state, and every accepted replacement interrupts the
+old gateway listener. Refresh-token rotation remains owned by the existing UI
+auth flow so native and webview code cannot race a single-use refresh token.
 The Delivery Service now persists a fixed SHA-256 receipt covering every
 commit request field and recognizes only exact field-equivalent retries
 of the accepted epoch. The receipt survives transient commit-mailbox deletion

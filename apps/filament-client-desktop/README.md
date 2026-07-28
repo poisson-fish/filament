@@ -27,6 +27,12 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   the platform credential service under fixed native identifiers. Logout
   deletes that record idempotently; malformed stored records fail closed and
   token buffers are zeroized on drop.
+- A rotated session preserves an initialized SQLCipher/MLS runtime only after
+  the replacement access token resolves to the exact same authenticated user.
+  Cross-user or temporarily unverifiable replacements adopt the new credential
+  pair but clear the in-memory E2EE state; rejected identity responses leave
+  the prior credential and state untouched. Every accepted replacement
+  interrupts the old gateway listener so it reconnects with the new bearer.
 - The locally bundled SolidJS client calls only the audited native command
   manifest through the exact, zero-transitive-dependency Tauri JavaScript API
   package.

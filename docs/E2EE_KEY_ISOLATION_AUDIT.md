@@ -27,6 +27,13 @@ Authenticated identity discovery uses one compile-time HTTPS authority with
 redirects disabled and 256 KiB request/response caps. A separate bounded
 native credential record maps authenticated account IDs to host-created device
 IDs; neither value can be selected by the webview.
+When the existing session command receives a rotated token pair, the native
+host resolves the replacement access token through that pinned authority while
+holding the active-runtime boundary. Only an exact same-user result preserves
+the initialized SQLCipher/MLS state. A cross-user or unavailable lookup clears
+that in-memory state after the new pair is stored, while a hostile/rejected
+identity response leaves the old pair and state unchanged. Accepted
+replacements always invalidate the old gateway lifecycle.
 
 ## Native Data Flow
 
@@ -82,7 +89,8 @@ IDs; neither value can be selected by the webview.
   databases, oversized values, and invalid record identifiers are rejected.
 - Debug and error output omits credential accounts, paths, values, and keys.
 - Session writes cannot select a credential service/account or create a
-  mismatched access/refresh pair; logout deletion is idempotent.
+  mismatched access/refresh pair; same-user rotation is authenticated before
+  retaining native E2EE state, and logout deletion is idempotent.
 - The native REST origin cannot be supplied over IPC, redirects are disabled,
   bearer headers are marked sensitive, and hostile/oversized response fields
   cannot select an account, device, path, or credential identifier.
@@ -134,7 +142,8 @@ IDs; neither value can be selected by the webview.
   and redacted connector diagnostics.
 - `apps/filament-client-desktop/src-tauri/src/runtime.rs`: bounded native
   realtime wake/periodic reconciliation, readiness/idle/session lifecycle
-  enforcement, commit-before-message coordination, and lost-response
+  enforcement, same-user session-rotation continuity, cross-user state
+  clearing, commit-before-message coordination, and lost-response
   acknowledgment retry.
 - `apps/filament-client-web/src/lib/native-client.ts`: exact native command
   requests, strict public-response decoding, and fixed redacted error mapping.

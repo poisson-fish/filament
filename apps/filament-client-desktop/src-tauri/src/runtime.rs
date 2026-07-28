@@ -990,15 +990,30 @@ impl DesktopCommandBackend for ProductionDesktopBackend {
         &self,
         request: ValidatedStoreSessionRequest,
     ) -> Result<SessionMetadata, DesktopCommandBackendError> {
-        *self
+        let mut active = self
             .active
             .lock()
-            .map_err(|_| DesktopCommandBackendError::Unavailable)? = None;
-        self.gateway_lifecycle.advance();
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+        let preserve_active = if let Some(current) = active.as_ref() {
+            match self.api.current_user(&request.access_token) {
+                Ok(user_id) => user_id == current.user_id,
+                Err(NativeApiError::Unavailable) => false,
+                Err(NativeApiError::Rejected | NativeApiError::EpochConflict) => {
+                    return Err(DesktopCommandBackendError::Rejected);
+                }
+            }
+        } else {
+            false
+        };
         let metadata = self
             .session_store
             .store(&request)
             .map_err(map_session_error)?;
+        if !preserve_active {
+            *active = None;
+        }
+        drop(active);
+        self.gateway_lifecycle.advance();
         Ok(session_metadata(Some(metadata)))
     }
 
@@ -1799,6 +1814,8 @@ mod tests {
 
     struct MockEnrollmentApi {
         user_id: UserId,
+        current_user_override: Mutex<Option<UserId>>,
+        current_user_error: Mutex<Option<NativeApiError>>,
         devices: Mutex<Vec<DeviceInfo>>,
         rotations: Mutex<Vec<RootIdentityRotationEntry>>,
         last_rotation: Mutex<Option<(RotateRootIdentityRequest, RotateRootIdentityResponse)>>,
@@ -1843,6 +1860,8 @@ mod tests {
         fn fresh(user_id: UserId) -> Self {
             Self {
                 user_id,
+                current_user_override: Mutex::new(None),
+                current_user_error: Mutex::new(None),
                 devices: Mutex::new(Vec::new()),
                 rotations: Mutex::new(Vec::new()),
                 last_rotation: Mutex::new(None),
@@ -1877,6 +1896,8 @@ mod tests {
         fn with_device(device: &MlsDevice) -> Self {
             Self {
                 user_id: device.user_id(),
+                current_user_override: Mutex::new(None),
+                current_user_error: Mutex::new(None),
                 devices: Mutex::new(vec![device_info(device)]),
                 rotations: Mutex::new(Vec::new()),
                 last_rotation: Mutex::new(None),
@@ -1914,7 +1935,14 @@ mod tests {
             &self,
             _access_token: &crate::SessionToken,
         ) -> Result<UserId, NativeApiError> {
-            Ok(self.user_id)
+            if let Some(error) = *self.current_user_error.lock().unwrap() {
+                return Err(error);
+            }
+            Ok(self
+                .current_user_override
+                .lock()
+                .unwrap()
+                .unwrap_or(self.user_id))
         }
 
         fn list_devices(
@@ -2472,6 +2500,18 @@ mod tests {
         .unwrap()
     }
 
+    fn replacement_session() -> ValidatedStoreSessionRequest {
+        ValidatedStoreSessionRequest::try_from_dto(
+            StoreSessionRequest {
+                access_token: "C".repeat(64),
+                refresh_token: "D".repeat(64),
+                expires_at_unix: 800,
+            },
+            100,
+        )
+        .unwrap()
+    }
+
     fn gateway_ready_payload(user_id: UserId) -> Vec<u8> {
         serde_json::to_vec(&Envelope {
             v: PROTOCOL_VERSION,
@@ -2854,6 +2894,98 @@ mod tests {
         assert_eq!(
             backend.initialize_e2ee_store(),
             Err(DesktopCommandBackendError::Rejected)
+        );
+    }
+
+    #[test]
+    fn same_user_session_rotation_preserves_native_state_and_restarts_gateway() {
+        let user_id = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (backend, session_store, _registry, _local_store) = backend_fixture(api);
+        backend.store_session(valid_session()).unwrap();
+        backend.initialize_e2ee_store().unwrap();
+        let revision = backend.gateway_lifecycle.current();
+
+        assert_eq!(
+            backend.store_session(replacement_session()),
+            Ok(SessionMetadata {
+                stored: true,
+                expires_at_unix: Some(800),
+            })
+        );
+        assert_eq!(backend.read_e2ee_store_status(), Ok(store_status()));
+        assert!(backend.gateway_lifecycle.current() > revision);
+        assert_eq!(
+            session_store.session.lock().unwrap().as_ref(),
+            Some(&("C".repeat(64), "D".repeat(64), 800))
+        );
+    }
+
+    #[test]
+    fn cross_user_session_replacement_clears_native_state() {
+        let user_id = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (backend, session_store, _registry, _local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        backend.initialize_e2ee_store().unwrap();
+        *api.current_user_override.lock().unwrap() = Some(UserId::new());
+
+        assert!(backend.store_session(replacement_session()).is_ok());
+        assert_eq!(
+            backend.read_e2ee_store_status(),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert_eq!(
+            session_store.session.lock().unwrap().as_ref(),
+            Some(&("C".repeat(64), "D".repeat(64), 800))
+        );
+    }
+
+    #[test]
+    fn rejected_or_unverifiable_session_replacement_fails_closed() {
+        let user_id = UserId::new();
+        let rejected_api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (rejected_backend, rejected_store, _registry, _local_store) =
+            backend_fixture(rejected_api.clone());
+        rejected_backend.store_session(valid_session()).unwrap();
+        rejected_backend.initialize_e2ee_store().unwrap();
+        let rejected_revision = rejected_backend.gateway_lifecycle.current();
+        *rejected_api.current_user_error.lock().unwrap() = Some(NativeApiError::Rejected);
+
+        assert_eq!(
+            rejected_backend.store_session(replacement_session()),
+            Err(DesktopCommandBackendError::Rejected)
+        );
+        assert_eq!(
+            rejected_backend.read_e2ee_store_status(),
+            Ok(store_status())
+        );
+        assert_eq!(
+            rejected_store.session.lock().unwrap().as_ref(),
+            Some(&("A".repeat(64), "B".repeat(64), 500))
+        );
+        assert_eq!(
+            rejected_backend.gateway_lifecycle.current(),
+            rejected_revision
+        );
+
+        let unavailable_api = Arc::new(MockEnrollmentApi::fresh(UserId::new()));
+        let (unavailable_backend, unavailable_store, _registry, _local_store) =
+            backend_fixture(unavailable_api.clone());
+        unavailable_backend.store_session(valid_session()).unwrap();
+        unavailable_backend.initialize_e2ee_store().unwrap();
+        *unavailable_api.current_user_error.lock().unwrap() = Some(NativeApiError::Unavailable);
+
+        assert!(unavailable_backend
+            .store_session(replacement_session())
+            .is_ok());
+        assert_eq!(
+            unavailable_backend.read_e2ee_store_status(),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert_eq!(
+            unavailable_store.session.lock().unwrap().as_ref(),
+            Some(&("C".repeat(64), "D".repeat(64), 800))
         );
     }
 
