@@ -26,7 +26,10 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
 - The runtime stores one versioned, bounded access/refresh session record in
   the platform credential service under fixed native identifiers. Logout
   deletes that record idempotently; malformed stored records fail closed and
-  token buffers are zeroized on drop.
+  token buffers are zeroized on drop. The packaged webview keeps its active
+  session in memory only and deletes any legacy `sessionStorage` credential
+  record at startup; browser builds retain their existing tab-scoped session
+  behavior.
 - A rotated session preserves an initialized SQLCipher/MLS runtime only after
   the replacement access token resolves to the exact same authenticated user.
   Cross-user or temporarily unverifiable replacements adopt the new credential

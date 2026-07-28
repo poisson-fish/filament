@@ -23,6 +23,10 @@ versioned credential record under fixed native service/account identifiers.
 The record is capped at 12 KiB, revalidated on load, rejects unknown fields and
 versions, and uses zeroizing native buffers. Session metadata exposes only
 presence and access-token expiry; tokens cannot be read back through IPC.
+After the native write succeeds, the packaged webview retains the active pair
+in JavaScript memory only. It never serializes the pair into WebView
+`sessionStorage`, and startup deletes a legacy record left by an older build.
+Ordinary browser builds retain their tab-scoped session behavior.
 Authenticated identity discovery uses one compile-time HTTPS authority with
 redirects disabled and 256 KiB request/response caps. A separate bounded
 native credential record maps authenticated account IDs to host-created device
@@ -96,7 +100,8 @@ replacements always invalidate the old gateway lifecycle.
 - Debug and error output omits credential accounts, paths, values, and keys.
 - Session writes cannot select a credential service/account or create a
   mismatched access/refresh pair; same-user rotation is authenticated before
-  retaining native E2EE state, and logout deletion is idempotent.
+  retaining native E2EE state, logout deletion is idempotent, and packaged
+  webviews do not persist a duplicate plaintext session record.
 - The native REST origin cannot be supplied over IPC, redirects are disabled,
   bearer headers are marked sensitive, and hostile/oversized response fields
   cannot select an account, device, path, or credential identifier.
@@ -156,6 +161,8 @@ replacements always invalidate the old gateway lifecycle.
   coordination, and lost-response acknowledgment retry.
 - `apps/filament-client-web/src/lib/native-client.ts`: exact native command
   requests, strict public-response decoding, and fixed redacted error mapping.
+- `apps/filament-client-web/src/lib/session.ts`: browser-only tab persistence,
+  packaged-runtime memory-only sessions, and legacy WebView record deletion.
 - `apps/filament-client-web/src/features/app-shell/controllers/native-encryption-controller.ts`:
   fail-closed custody/store initialization and settings/rotation state.
 - `apps/filament-client-desktop/src-tauri/src/device_registry.rs`: fixed,

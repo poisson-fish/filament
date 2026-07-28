@@ -262,7 +262,10 @@ review. The packaged runtime now injects native session custody through the
 existing audited commands: it stores one strict, versioned access/refresh
 record in the platform credential service, caps the record at 12 KiB,
 revalidates it on load, zeroizes token buffers, and deletes it idempotently on
-logout. Credential identifiers remain native-only. The host now discovers the
+logout. Credential identifiers remain native-only. The packaged WebView keeps
+the active pair in memory only, removes legacy `sessionStorage` credentials at
+startup, and never persists a duplicate plaintext session record. Browser
+builds retain their tab-scoped session behavior. The host now discovers the
 authenticated user through one compile-time HTTPS authority with redirects
 disabled and 256 KiB body caps. Accounts with an empty certified-device
 directory can enroll their first native device: the root identity, complete
