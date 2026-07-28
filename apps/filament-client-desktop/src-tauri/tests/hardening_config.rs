@@ -262,7 +262,7 @@ fn packaged_platform_contract_is_explicit_and_fail_closed() {
     assert_eq!(contract.runtime.adapter, "tauri_v2_desktop_and_mobile");
     assert_eq!(
         contract.runtime.status,
-        "desktop_ui_native_session_settings_durable_mls_mailbox_root_rotation_fresh_device_enrollment_sqlcipher_install_offline_launch_mobile_native_key_custody_packages_ci_gated_fail_closed"
+        "desktop_ui_native_session_settings_durable_mls_mailbox_root_rotation_fresh_device_enrollment_sqlcipher_install_offline_launch_mobile_native_key_custody_simulator_install_offline_launch_packages_ci_gated_fail_closed"
     );
     assert_eq!(contract.runtime.reviewed_version, "2.11.5");
     assert_eq!(
@@ -554,8 +554,7 @@ fn packaged_artifact_gates_cover_the_reviewed_initial_matrix() {
     assert_eq!(
         package["scripts"]["test:package-policy"],
         serde_json::Value::String(
-            "node --test tests/package-artifacts.test.mjs tests/desktop-package-smoke.test.mjs"
-                .to_owned()
+            "node --test tests/package-artifacts.test.mjs tests/desktop-package-smoke.test.mjs tests/mobile-package-smoke.test.mjs".to_owned()
         )
     );
     assert_eq!(
@@ -629,6 +628,56 @@ fn packaged_artifact_gates_cover_the_reviewed_initial_matrix() {
     }
     assert_eq!(workflow.matches("run verify:package --").count(), 5);
     assert_eq!(workflow.matches("SHA256SUMS").count(), 10);
+}
+
+#[test]
+fn mobile_package_offline_launch_gate_is_bounded_and_redacted() {
+    let root = repo_root();
+    let desktop_root = root.join("apps/filament-client-desktop");
+    let package_raw = fs::read_to_string(desktop_root.join("package.json"))
+        .expect("packaged-client npm manifest should exist");
+    let package: serde_json::Value =
+        serde_json::from_str(&package_raw).expect("packaged-client npm manifest should parse");
+    assert_eq!(
+        package["scripts"]["smoke:mobile"],
+        serde_json::Value::String("node tools/smoke-mobile-package.mjs".to_owned())
+    );
+
+    let smoke = fs::read_to_string(desktop_root.join("tools/smoke-mobile-package.mjs"))
+        .expect("mobile package smoke verifier should exist");
+    for required_control in [
+        "MAX_CAPTURE_BYTES",
+        "MAX_OBSERVATION_MS",
+        "cmd\", \"connectivity\", \"airplane-mode\", \"enable",
+        "uninstall_reinstall_launch: true",
+        "native_startup_fail_closed: true",
+        "offline_bundle_launch: true",
+        "platform credential store is unavailable",
+    ] {
+        assert!(
+            smoke.contains(required_control),
+            "mobile smoke verifier should retain {required_control}"
+        );
+    }
+
+    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .expect("CI workflow should exist");
+    for required_mobile_smoke in [
+        "system-images;android-$ANDROID_API_LEVEL;google_apis;x86_64",
+        "x86_64-linux-android",
+        "Start pinned Android API 36 simulator",
+        "Install and launch Android package offline",
+        "Install and launch iOS package offline",
+        "run smoke:mobile --",
+        "simulator-launch.json",
+        "FILAMENT_NATIVE_API_ORIGIN: https://127.0.0.1:9",
+    ] {
+        assert!(
+            workflow.contains(required_mobile_smoke),
+            "CI should retain mobile offline launch gate {required_mobile_smoke}"
+        );
+    }
+    assert_eq!(workflow.matches("run smoke:mobile --").count(), 2);
 }
 
 #[test]

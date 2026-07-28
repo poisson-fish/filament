@@ -433,8 +433,18 @@ Android installs a SharedPreferences vault encrypted by Android Keystore.
 Platform initialization failure aborts startup without a file or plaintext
 fallback. Target-specific dependency/feature and source-policy tests protect
 the selection; the existing mobile package builds provide cross-target linkage
-coverage. Simulator/device launch, persistence, logout, and reinstall evidence
-remain required before mobile custody can satisfy the Phase 5.5 exit gate.
+coverage. The CI packages now also cross an installed-runtime boundary:
+Android API 36 x86-64 and an available iOS 17+ Apple-silicon simulator install
+the locally bundled application, perform bounded initial and restart launches,
+then uninstall, reinstall, and launch again. Android verifies airplane mode;
+both builds pin the native authority to a dead loopback HTTPS endpoint and
+emit path-, process-, and device-identifier-free evidence. Because native
+credential-store selection occurs before the Tauri backend opens, every launch
+also exercises fail-closed mobile custody initialization. This does not yet
+exercise authenticated credential persistence or logout, does not replace the
+required arm64 Android artifact gate or signed iOS device evidence, and is not
+the packaged E2EE messaging smoke suite. Those lifecycle, device, and messaging
+gates remain required before Phase 5.5 can complete.
 
 ---
 
@@ -1307,6 +1317,13 @@ offline recovery, missed events, and reconciliation.
   ciphertexts are acknowledged and deleted, no matching plaintext enters the
   ordinary message table, and a certified non-leaf device receives no MLS
   mailbox or attachment fanout.
+- The Android API 36 and iOS simulator package jobs install the actual mobile
+  apps, launch and restart them under a bounded observer, uninstall/reinstall,
+  and require another clean launch. Android runs with verified airplane mode;
+  both builds use a dead loopback HTTPS authority. The redacted evidence omits
+  device identifiers, paths, and process output, and startup necessarily
+  initializes the selected native mobile credential backend before any
+  session or SQLCipher entry can open.
 - Workspace formatting, warnings-as-errors Clippy, all workspace tests,
   `cargo audit`, and `cargo deny` passed for the implementation commit. Audit
   retained only the repository's already tracked unmaintained transitive
@@ -1325,6 +1342,10 @@ offline recovery, missed events, and reconciliation.
   packaged-artifact or platform-credential evidence.
 - Reuse this native listener/coordinator contract in Android and any feasible
   iOS host; do not move gateway or mailbox processing into JavaScript.
+- Extend the installed mobile smoke with authenticated credential persistence
+  and logout assertions, then run the same custody lifecycle on physical
+  Android/iOS devices. Simulator startup/reinstall evidence alone does not
+  satisfy platform custody or packaged messaging exit criteria.
 
 ### Exit Criteria
 

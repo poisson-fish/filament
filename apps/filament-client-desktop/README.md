@@ -36,6 +36,15 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   Android-Keystore key on Android. The compatibility `keyring` wrapper does not
   select a mobile store by itself. Missing platform context or store
   initialization aborts native startup; no file or plaintext fallback exists.
+- CI installs the x86-64 Android simulator build on the pinned API 36 runtime
+  and the Apple-silicon iOS app on an available iOS simulator. Each installed
+  app must launch, restart, survive uninstall/reinstall as a fresh package, and
+  remain alive through a bounded observation with the native API compiled to a
+  dead loopback HTTPS authority. Android additionally enables and verifies
+  airplane mode. Evidence contains no simulator ID, process output, credential
+  identifier, or filesystem path. This exercises mobile native-host and
+  credential-backend initialization; it does not yet claim authenticated
+  credential persistence or logout semantics.
 - A rotated session preserves an initialized SQLCipher/MLS runtime only after
   the replacement access token resolves to the exact same authenticated user.
   Cross-user or temporarily unverifiable replacements adopt the new credential
@@ -114,8 +123,8 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   acceptance.
 - Conversation provisioning, encrypted conversation send/presentation UI,
   encrypted attachment composition/presentation UI, pairing UI, packaged
-  end-to-end smoke coverage, and on-device mobile custody evidence remain fail
-  closed.
+  end-to-end smoke coverage, authenticated mobile custody lifecycle evidence,
+  and physical-device evidence remain fail closed.
 - The PostgreSQL-backed server integration suite now exercises a real
   loopback gateway with bearer-header authentication, an immediate
   established-DM wake and OpenMLS mailbox decryption, then disconnect/offline
@@ -187,6 +196,8 @@ locked CLI, verifies the iOS 17 deployment floor and exact application
 identifier, and builds an unsigned Apple-silicon simulator `.app`. The shared
 artifact verifier requires both `.app` and `.ipa` for `aarch64` device-release
 evidence, so simulator success cannot be mistaken for a signed device package.
+The built simulator app is installed, launched twice, uninstalled, reinstalled,
+and launched again through `simctl` before redacted evidence is retained.
 
 Device and App Store builds require an Apple Developer team and credentials
 outside the repository. Supply `APPLE_DEVELOPMENT_TEAM` plus either the App
@@ -225,5 +236,7 @@ The same probe is now required for Debian, AppImage, macOS disk-image, and MSI
 CI artifacts. The real-server/native-core messaging regression is not
 packaged-artifact evidence until the installed application drives that same
 flow through its production host boundary. Production E2EE messaging, upgrade
-semantics, and mobile platform custody smoke coverage remains fail-closed work;
-Android and iOS simulator launch tests are intentionally deferred.
+semantics, authenticated mobile credential persistence/logout, and
+physical-device custody evidence remain fail-closed work. Android and iOS
+simulator install/restart/reinstall launch paths are now CI gates, but they are
+not the packaged E2EE messaging exit suite.

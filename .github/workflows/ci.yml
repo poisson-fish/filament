@@ -508,7 +508,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.93.0
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -538,6 +538,8 @@ jobs:
             "platforms;android-$ANDROID_API_LEVEL" \
             "build-tools;$ANDROID_BUILD_TOOLS_VERSION" \
             "platform-tools" \
+            "emulator" \
+            "system-images;android-$ANDROID_API_LEVEL;google_apis;x86_64" \
             "ndk;$ANDROID_NDK_VERSION"
           test -d "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
           echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
@@ -565,9 +567,11 @@ jobs:
 
       - name: Build local Android arm64 packages
         working-directory: apps/filament-client-desktop
+        env:
+          FILAMENT_NATIVE_API_ORIGIN: https://127.0.0.1:9
         run: npm run android:build -- --target aarch64 --apk --aab --ci
 
-      - name: Verify Android artifacts contain only arm64 native code
+      - name: Stage and verify Android arm64 artifacts
         shell: bash
         run: |
           shopt -s globstar nullglob
@@ -587,26 +591,74 @@ jobs:
             echo "AAB contains a non-arm64 native library" >&2
             exit 1
           fi
+          STAGE_ROOT="target/package-artifacts/android-aarch64"
+          mkdir -p "$STAGE_ROOT/apk" "$STAGE_ROOT/aab"
+          cp "${APK_FILES[0]}" "$STAGE_ROOT/apk/$(basename "${APK_FILES[0]}")"
+          cp "${AAB_FILES[0]}" "$STAGE_ROOT/aab/$(basename "${AAB_FILES[0]}")"
 
       - name: Verify Android package contents and checksums
         run: >-
           npm --prefix apps/filament-client-desktop run verify:package --
           --platform android
           --architecture aarch64
-          --bundle-root apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs
+          --bundle-root target/package-artifacts/android-aarch64
           --web-dist apps/filament-client-web/dist
           --manifest target/package-evidence/android-aarch64/manifest.json
           --checksums target/package-evidence/android-aarch64/SHA256SUMS
+
+      - name: Start pinned Android API 36 simulator
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod 0666 /dev/kvm
+          AVD_MANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          printf 'no\n' | "$AVD_MANAGER" create avd \
+            --force \
+            --name filament-api36-smoke \
+            --package "system-images;android-$ANDROID_API_LEVEL;google_apis;x86_64"
+          nohup "$ANDROID_HOME/emulator/emulator" \
+            -avd filament-api36-smoke \
+            -port 5554 \
+            -no-window \
+            -no-audio \
+            -no-boot-anim \
+            -no-snapshot \
+            -wipe-data \
+            -gpu swiftshader_indirect \
+            >"$RUNNER_TEMP/filament-android-emulator.log" 2>&1 &
+          adb -s emulator-5554 wait-for-device
+          timeout 300 bash -c \
+            'until test "$(adb -s emulator-5554 shell getprop sys.boot_completed | tr -d "\r")" = "1"; do sleep 2; done'
+
+      - name: Build Android simulator smoke package
+        working-directory: apps/filament-client-desktop
+        env:
+          FILAMENT_NATIVE_API_ORIGIN: https://127.0.0.1:9
+        run: npm run android:build -- --target x86_64 --apk --debug --ci
+
+      - name: Install and launch Android package offline
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          APK_FILES=(apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*debug*.apk)
+          test "${#APK_FILES[@]}" -eq 1
+          npm --prefix apps/filament-client-desktop run smoke:mobile -- \
+            --platform android \
+            --package "${APK_FILES[0]}" \
+            --device emulator-5554 \
+            --evidence "$GITHUB_WORKSPACE/target/package-evidence/android-aarch64/simulator-launch.json"
+          adb -s emulator-5554 emu kill
 
       - name: Upload verified Android package artifacts
         uses: actions/upload-artifact@v4
         with:
           name: filament-android-aarch64-smoke
           path: |
-            apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*.apk
-            apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*.aab
+            target/package-artifacts/android-aarch64/**/*.apk
+            target/package-artifacts/android-aarch64/**/*.aab
             target/package-evidence/android-aarch64/manifest.json
             target/package-evidence/android-aarch64/SHA256SUMS
+            target/package-evidence/android-aarch64/simulator-launch.json
           if-no-files-found: error
           retention-days: 7
 
@@ -668,6 +720,8 @@ jobs:
 
       - name: Build unsigned local iOS simulator app
         working-directory: apps/filament-client-desktop
+        env:
+          FILAMENT_NATIVE_API_ORIGIN: https://127.0.0.1:9
         run: npm run ios:build -- --target aarch64-sim --debug --ci --no-sign
 
       - name: Verify iOS simulator architecture and metadata
@@ -695,6 +749,26 @@ jobs:
           --manifest target/package-evidence/ios-aarch64-simulator/manifest.json
           --checksums target/package-evidence/ios-aarch64-simulator/SHA256SUMS
 
+      - name: Install and launch iOS package offline
+        shell: bash
+        run: |
+          APP_ROOT="apps/filament-client-desktop/src-tauri/gen/apple/build"
+          APP_PATH="$(find "$APP_ROOT" -type d -name '*.app' -prune -print)"
+          test -n "$APP_PATH"
+          test "$(printf '%s\n' "$APP_PATH" | wc -l | tr -d ' ')" = "1"
+          IOS_SMOKE_DEVICE="$(
+            xcrun simctl list devices available --json |
+              jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.isAvailable)][0].udid'
+          )"
+          test -n "$IOS_SMOKE_DEVICE"
+          xcrun simctl boot "$IOS_SMOKE_DEVICE" || true
+          npm --prefix apps/filament-client-desktop run smoke:mobile -- \
+            --platform ios \
+            --package "$APP_PATH" \
+            --device "$IOS_SMOKE_DEVICE" \
+            --evidence "$GITHUB_WORKSPACE/target/package-evidence/ios-aarch64-simulator/simulator-launch.json"
+          xcrun simctl shutdown "$IOS_SMOKE_DEVICE"
+
       - name: Upload verified iOS simulator artifact
         uses: actions/upload-artifact@v4
         with:
@@ -703,5 +777,6 @@ jobs:
             apps/filament-client-desktop/src-tauri/gen/apple/build/**/*.app
             target/package-evidence/ios-aarch64-simulator/manifest.json
             target/package-evidence/ios-aarch64-simulator/SHA256SUMS
+            target/package-evidence/ios-aarch64-simulator/simulator-launch.json
           if-no-files-found: error
           retention-days: 7
