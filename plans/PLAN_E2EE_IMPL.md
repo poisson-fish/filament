@@ -392,14 +392,22 @@ interruption. The first failed reconnect now waits the documented one second
 before the exponential schedule advances, rather than skipping directly to
 two seconds.
 The native listener now also consumes strict `keypackage_low` wakes for the
-exact active certified device. Group mailbox and KeyPackage work share the
-same 128-item coalescing bound. A wake can generate only the bounded difference
-to the advertised water mark, capped at ten ordinary single-use packages; it
-cannot select another local identity or infer that a replacement last-resort
-package is safe. The complete OpenMLS provider checkpoint and exact upload
-outbox commit atomically in SQLCipher before submission, and response loss
-retries the same public packages through initialization or periodic native
-coordination without adding IPC.
+exact active certified device. Group mailbox, directory, and KeyPackage work
+share the same 128-item coalescing bound. A wake can generate only the bounded
+difference to the advertised water mark, capped at ten ordinary single-use
+packages; it cannot select another local identity or infer that a replacement
+last-resort package is safe. The complete OpenMLS provider checkpoint and
+exact upload outbox commit atomically in SQLCipher before submission, and
+response loss retries the same public packages through initialization or
+periodic native coordination without adding IPC.
+Strict owner-bound `device_list_update` wakes now share that native queue and
+trigger immediate public-directory revalidation of the active certificate
+against the locally pinned root. Authenticated device removal, certificate
+replacement, or account mismatch clears volatile MLS capability and interrupts
+the gateway while preserving SQLCipher state. Cross-user hints disconnect,
+temporary directory outages retain active state, and the periodic coordinator
+performs the same check so a missed wake cannot leave a revoked device active
+indefinitely.
 The PostgreSQL/Axum integration smoke now binds the real gateway on a loopback
 socket, authenticates the established-DM recipient with a bearer header and no
 URL token, observes a ciphertext-free `mls_message` wake, then fetches and
@@ -1231,11 +1239,12 @@ offline recovery, missed events, and reconciliation.
   cannot create a conversation, choose an identity, mutate membership, supply
   ciphertext, or bypass MLS verification. A strict `keypackage_low` event may
   select only the exact active device for bounded ordinary-package
-  replenishment.
-- Coalesce duplicate group and per-device KeyPackage work in one native-only
-  queue capped at 128 distinct items. Disconnect and reconcile after overflow
-  or hostile known-event payloads. Ignore only well-formed unknown event types
-  for forward-compatible additive rollout.
+  replenishment. A strict owner-bound `device_list_update` event may request
+  only public-directory revalidation of the already active device.
+- Coalesce duplicate group, owner-directory, and per-device KeyPackage work in
+  one native-only queue capped at 128 distinct items. Disconnect and reconcile
+  after overflow or hostile known-event payloads. Ignore only well-formed
+  unknown event types for forward-compatible additive rollout.
 - Cap WebSocket frames and messages at 64 KiB, reject binary/raw frames, bound
   DNS use to four resolved addresses, bound connection/TLS/handshake and
   `ready` waits to seven seconds, use one-second socket wakeups, close after 45
@@ -1254,8 +1263,13 @@ offline recovery, missed events, and reconciliation.
   oversized known events, and preserves forward compatibility for unknown
   event types.
 - Queue coverage proves duplicate coalescing and fail-closed behavior at the
-  shared 128-item group/KeyPackage bound; connector diagnostics prove origin
-  redaction.
+  shared 128-item group/directory/KeyPackage bound; connector diagnostics prove
+  origin redaction.
+- Directory coverage rejects cross-user and malformed hints, immediately
+  disables volatile MLS capability after authenticated device removal or
+  replacement, preserves encrypted state, retains active state during
+  temporary network outages, and catches missed events in periodic
+  reconciliation.
 - KeyPackage coverage proves strict low-water decoding, exact-device
   filtering, a ten-package generation cap, atomic provider/outbox
   persistence, ordinary-only replenishment, and response-loss recovery through

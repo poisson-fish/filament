@@ -72,11 +72,18 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
 - After native initialization, a native WSS listener authenticates with a
   sensitive bearer header against the compile-time server authority.
   User-bound `ready` is required before strict `mls_message`, `mls_commit`,
-  `mls_welcome`, `mls_proposal`, or `keypackage_low` events can enqueue native
-  work. Group mailbox drains and per-device KeyPackage replenishments share
-  one 128-item queue; event fields remain untrusted routing hints. The
-  transport rejects binary and oversized frames, missing or repeated
-  readiness, idle connections, and distinct wake overflow.
+  `mls_welcome`, `mls_proposal`, `device_list_update`, or `keypackage_low`
+  events can enqueue native work. Group mailbox drains, owner-directory
+  revalidation, and per-device KeyPackage replenishments share one 128-item
+  queue; event fields remain untrusted routing hints. The transport rejects
+  binary and oversized frames, missing or repeated readiness, cross-user
+  directory hints, idle connections, and distinct wake overflow.
+- Owner-directory wakes immediately re-fetch and verify the active device
+  certificate against the locally pinned root. Authenticated removal,
+  replacement, or account mismatch clears the in-memory MLS capability and
+  interrupts the gateway without deleting encrypted local state. Temporary
+  network failure retains the active state, and the periodic pass repeats the
+  verification when an event was missed.
 - A low-pool wake can replenish only the exact active certified device and
   generates at most ten ordinary single-use KeyPackages. The complete
   OpenMLS provider checkpoint and exact upload outbox commit atomically in

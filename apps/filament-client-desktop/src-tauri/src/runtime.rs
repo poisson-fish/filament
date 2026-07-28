@@ -46,8 +46,9 @@ use crate::{
         NativeApiError, NativeEnrollmentApi, ReqwestNativeEnrollmentApi,
     },
     native_gateway::{
-        decode_gateway_wake, GatewayWake, GatewayWakeQueue, GatewayWork, KeyPackageLowWake,
-        NativeGatewayConnector, NativeGatewayFrame, TungsteniteNativeGatewayConnector,
+        decode_gateway_wake, DeviceDirectoryWake, GatewayWake, GatewayWakeQueue, GatewayWork,
+        KeyPackageLowWake, NativeGatewayConnector, NativeGatewayFrame,
+        TungsteniteNativeGatewayConnector,
     },
     session_store::{
         OsSessionCredentialStore, SessionCredentialError, SessionCredentialStore, StoredSession,
@@ -409,16 +410,11 @@ impl ProductionDesktopBackend {
             .map_err(|_| DesktopCommandBackendError::Rejected)
     }
 
-    fn synchronize_active_once(&self) -> Result<BackgroundSyncOutcome, DesktopCommandBackendError> {
-        let mut active = match self.active.try_lock() {
-            Ok(active) => active,
-            Err(TryLockError::WouldBlock) => return Ok(BackgroundSyncOutcome::Busy),
-            Err(TryLockError::Poisoned(_)) => return Err(DesktopCommandBackendError::Unavailable),
-        };
-        let Some(active) = active.as_mut() else {
-            return Ok(BackgroundSyncOutcome::Idle);
-        };
-        let session = self.load_valid_session()?;
+    fn verify_active_device(
+        &self,
+        session: &StoredSession,
+        active: &ActiveE2eeState,
+    ) -> Result<(), DesktopCommandBackendError> {
         let user_id = self
             .api
             .current_user(&session.access_token)
@@ -426,8 +422,99 @@ impl ProductionDesktopBackend {
         if user_id != active.user_id {
             return Err(DesktopCommandBackendError::Rejected);
         }
+        let root = load_root_identity(active.store.as_ref(), &StoreKey::root_identity())
+            .map_err(|error| map_keystore_error(&error))?;
+        let state = load_mls_client_state(active.store.as_ref())
+            .map_err(|error| map_keystore_error(&error))?;
+        if state.device.user_id() != active.user_id
+            || state.device.device_id() != active.device_id
+            || state.device.root_key_public() != &root.public_key_bytes()
+        {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        let directory = self
+            .api
+            .list_devices(&session.access_token, active.user_id)
+            .map_err(map_native_api_error)?;
+        verify_directory_device(
+            active.user_id,
+            active.device_id,
+            state.device.certificate(),
+            state.device.root_key_public(),
+            &directory,
+        )
+        .map_err(map_native_api_error)?;
+        Ok(())
+    }
+
+    fn clear_active_after_rejection(
+        &self,
+        active: &mut Option<ActiveE2eeState>,
+        result: Result<(), DesktopCommandBackendError>,
+    ) -> Result<(), DesktopCommandBackendError> {
+        if result == Err(DesktopCommandBackendError::Rejected) {
+            *active = None;
+            self.gateway_lifecycle.advance();
+        }
+        result
+    }
+
+    fn synchronize_active_once(&self) -> Result<BackgroundSyncOutcome, DesktopCommandBackendError> {
+        let mut active = match self.active.try_lock() {
+            Ok(active) => active,
+            Err(TryLockError::WouldBlock) => return Ok(BackgroundSyncOutcome::Busy),
+            Err(TryLockError::Poisoned(_)) => return Err(DesktopCommandBackendError::Unavailable),
+        };
+        if active.is_none() {
+            return Ok(BackgroundSyncOutcome::Idle);
+        }
+        let session = match self.load_valid_session() {
+            Ok(session) => session,
+            Err(error) => {
+                return self
+                    .clear_active_after_rejection(&mut active, Err(error))
+                    .map(|()| BackgroundSyncOutcome::Idle);
+            }
+        };
+        let validation = self.verify_active_device(
+            &session,
+            active
+                .as_ref()
+                .ok_or(DesktopCommandBackendError::Unavailable)?,
+        );
+        self.clear_active_after_rejection(&mut active, validation)?;
+        let active = active
+            .as_mut()
+            .ok_or(DesktopCommandBackendError::Unavailable)?;
         self.synchronize_mailboxes(&session, active)?;
         self.flush_pending_keypackages(&session, active.device_id, active.store.as_ref())?;
+        Ok(BackgroundSyncOutcome::Synchronized)
+    }
+
+    fn revalidate_active_directory_once(
+        &self,
+        wake: DeviceDirectoryWake,
+    ) -> Result<BackgroundSyncOutcome, DesktopCommandBackendError> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| DesktopCommandBackendError::Unavailable)?;
+        let Some(current) = active.as_ref() else {
+            return Ok(BackgroundSyncOutcome::Idle);
+        };
+        if wake.user_id != current.user_id {
+            return Err(DesktopCommandBackendError::Rejected);
+        }
+        let session = match self.load_valid_session() {
+            Ok(session) => session,
+            Err(error) => {
+                return self
+                    .clear_active_after_rejection(&mut active, Err(error))
+                    .map(|()| BackgroundSyncOutcome::Idle);
+            }
+        };
+        let validation = self.verify_active_device(&session, current);
+        self.clear_active_after_rejection(&mut active, validation)?;
         Ok(BackgroundSyncOutcome::Synchronized)
     }
 
@@ -1402,6 +1489,12 @@ fn native_sync_coordinator_loop(backend_weak: &Weak<ProductionDesktopBackend>) {
                 };
                 let _ = backend.synchronize_active_group_once(group_id);
             }
+            Ok(Some(GatewayWork::DeviceDirectory(wake))) => {
+                let Some(backend) = backend_weak.upgrade() else {
+                    return;
+                };
+                let _ = backend.revalidate_active_directory_once(wake);
+            }
             Ok(Some(GatewayWork::KeyPackages(wake))) => {
                 let Some(backend) = backend_weak.upgrade() else {
                     return;
@@ -1517,12 +1610,18 @@ fn drive_gateway_connection_with_policy(
                     GatewayWake::Group(group_id) if ready => {
                         wakes.enqueue(group_id)?;
                     }
+                    GatewayWake::DeviceDirectory(wake)
+                        if ready && wake.user_id == expected_user_id =>
+                    {
+                        wakes.enqueue_device_directory(wake)?;
+                    }
                     GatewayWake::KeyPackages(wake) if ready => {
                         wakes.enqueue_keypackages(wake)?;
                     }
                     GatewayWake::Ignore if ready => {}
                     GatewayWake::Ready(_)
                     | GatewayWake::Group(_)
+                    | GatewayWake::DeviceDirectory(_)
                     | GatewayWake::KeyPackages(_)
                     | GatewayWake::Ignore => {
                         return Err(crate::native_gateway::NativeGatewayError::Rejected);
@@ -1709,12 +1808,12 @@ mod tests {
     use filament_protocol::{
         AckE2eeAttachmentsRequest, AckE2eeCommitsRequest, AckE2eeMessagesRequest,
         AckE2eeProposalsRequest, CreateMlsConversationRequest, DeviceInfo, DeviceListResponse,
-        E2eeCommitMailboxEntry, E2eeCommitMailboxResponse, E2eeMailboxResponse,
-        E2eeProposalMailboxEntry, E2eeProposalMailboxResponse, Envelope, EventType,
-        KeyPackageLowEvent, MlsConversationProvisionResponse, MlsMessageEvent, PostCommitRequest,
-        PostCommitResponse, PostMessageRequest, PostMessageResponse, PutE2eeAttachmentResponse,
-        RootIdentityDirectoryResponse, RootIdentityRotationEntry, RotateRootIdentityRequest,
-        PROTOCOL_VERSION, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+        DeviceListUpdateEvent, E2eeCommitMailboxEntry, E2eeCommitMailboxResponse,
+        E2eeMailboxResponse, E2eeProposalMailboxEntry, E2eeProposalMailboxResponse, Envelope,
+        EventType, KeyPackageLowEvent, MlsConversationProvisionResponse, MlsMessageEvent,
+        PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
+        PutE2eeAttachmentResponse, RootIdentityDirectoryResponse, RootIdentityRotationEntry,
+        RotateRootIdentityRequest, PROTOCOL_VERSION, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
     };
 
     #[derive(Default)]
@@ -2554,6 +2653,19 @@ mod tests {
         .unwrap()
     }
 
+    fn gateway_device_directory_payload(user_id: UserId) -> Vec<u8> {
+        serde_json::to_vec(&Envelope {
+            v: PROTOCOL_VERSION,
+            t: EventType::try_from(String::from("device_list_update")).unwrap(),
+            d: DeviceListUpdateEvent {
+                user_id: user_id.to_string(),
+                device_count: 1,
+                created_at_unix: 100,
+            },
+        })
+        .unwrap()
+    }
+
     #[test]
     fn ipc_request_limit_is_inclusive_and_rejects_raw_oversize() {
         assert!(invoke_body_within_limit(&InvokeBody::Raw(vec![
@@ -2704,7 +2816,7 @@ mod tests {
         let expected_user = UserId::new();
         let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
         let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
-        for _ in 0..crate::native_gateway::MAX_GATEWAY_WAKE_GROUPS {
+        for _ in 0..crate::native_gateway::MAX_GATEWAY_WAKE_ITEMS {
             backend
                 .gateway_wakes
                 .enqueue(filament_core::GroupId::new())
@@ -2766,6 +2878,58 @@ mod tests {
                 water_mark: 10,
             })))
         );
+    }
+
+    #[test]
+    fn native_gateway_queues_only_the_authenticated_users_directory_wake() {
+        let expected_user = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(expected_user));
+        let (backend, _session_store, _registry, _local_store) = backend_fixture(api);
+        let mut connection = ScriptedGatewayConnection {
+            frames: vec![
+                NativeGatewayFrame::Text(gateway_ready_payload(expected_user)),
+                NativeGatewayFrame::Text(gateway_device_directory_payload(expected_user)),
+                NativeGatewayFrame::Closed,
+            ]
+            .into(),
+        };
+        let backend = Arc::new(backend);
+
+        assert_eq!(
+            drive_gateway_connection(
+                &Arc::downgrade(&backend),
+                backend.gateway_lifecycle.current(),
+                expected_user,
+                500,
+                &mut connection,
+            ),
+            Err(crate::native_gateway::NativeGatewayError::Unavailable)
+        );
+        assert_eq!(
+            backend.gateway_wakes.take(Duration::ZERO),
+            Ok(Some(GatewayWork::DeviceDirectory(DeviceDirectoryWake {
+                user_id: expected_user,
+            })))
+        );
+
+        let mut hostile = ScriptedGatewayConnection {
+            frames: vec![
+                NativeGatewayFrame::Text(gateway_ready_payload(expected_user)),
+                NativeGatewayFrame::Text(gateway_device_directory_payload(UserId::new())),
+            ]
+            .into(),
+        };
+        assert_eq!(
+            drive_gateway_connection(
+                &Arc::downgrade(&backend),
+                backend.gateway_lifecycle.current(),
+                expected_user,
+                500,
+                &mut hostile,
+            ),
+            Err(crate::native_gateway::NativeGatewayError::Rejected)
+        );
+        assert_eq!(backend.gateway_wakes.take(Duration::ZERO), Ok(None));
     }
 
     #[test]
@@ -2986,6 +3150,67 @@ mod tests {
         assert_eq!(
             unavailable_store.session.lock().unwrap().as_ref(),
             Some(&("C".repeat(64), "D".repeat(64), 800))
+        );
+    }
+
+    #[test]
+    fn device_directory_revocation_clears_only_in_memory_capability() {
+        let user_id = UserId::new();
+        let api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (backend, _session_store, _registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        backend.initialize_e2ee_store().unwrap();
+        let revision = backend.gateway_lifecycle.current();
+        api.devices.lock().unwrap().clear();
+
+        assert_eq!(
+            backend.revalidate_active_directory_once(DeviceDirectoryWake { user_id }),
+            Err(DesktopCommandBackendError::Rejected)
+        );
+        assert_eq!(
+            backend.read_e2ee_store_status(),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert!(backend.gateway_lifecycle.current() > revision);
+        assert_eq!(local_store.exists(&StoreKey::mls_client_state()), Ok(true));
+        assert_eq!(local_store.exists(&StoreKey::root_identity()), Ok(true));
+    }
+
+    #[test]
+    fn periodic_reconciliation_catches_missed_revocation_but_retains_state_on_outage() {
+        let user_id = UserId::new();
+        let unavailable_api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (unavailable_backend, _session_store, _registry, _local_store) =
+            backend_fixture(unavailable_api.clone());
+        unavailable_backend.store_session(valid_session()).unwrap();
+        unavailable_backend.initialize_e2ee_store().unwrap();
+        let revision = unavailable_backend.gateway_lifecycle.current();
+        *unavailable_api.current_user_error.lock().unwrap() = Some(NativeApiError::Unavailable);
+
+        assert_eq!(
+            unavailable_backend.revalidate_active_directory_once(DeviceDirectoryWake { user_id }),
+            Err(DesktopCommandBackendError::Unavailable)
+        );
+        assert_eq!(
+            unavailable_backend.read_e2ee_store_status(),
+            Ok(store_status())
+        );
+        assert_eq!(unavailable_backend.gateway_lifecycle.current(), revision);
+
+        let revoked_api = Arc::new(MockEnrollmentApi::fresh(user_id));
+        let (revoked_backend, _session_store, _registry, _local_store) =
+            backend_fixture(revoked_api.clone());
+        revoked_backend.store_session(valid_session()).unwrap();
+        revoked_backend.initialize_e2ee_store().unwrap();
+        revoked_api.devices.lock().unwrap().clear();
+
+        assert_eq!(
+            revoked_backend.synchronize_active_once(),
+            Err(DesktopCommandBackendError::Rejected)
+        );
+        assert_eq!(
+            revoked_backend.read_e2ee_store_status(),
+            Err(DesktopCommandBackendError::Unavailable)
         );
     }
 

@@ -70,7 +70,12 @@ replacements always invalidate the old gateway lifecycle.
    private OpenMLS provider state commits atomically with the exact upload
    outbox before submission. Lost responses retry from SQLCipher without
    exposing package private material or adding an IPC command.
-10. The bundled SolidJS client invokes only the generated seven-command ACL.
+10. Strict owner-bound `device_list_update` wakes trigger a native directory
+    read and re-verify the active certificate against the local root. Removal,
+    certificate replacement, or account mismatch clears only in-memory MLS
+    capability and interrupts the gateway. The periodic pass provides the same
+    check after missed events; transient network failure retains state.
+11. The bundled SolidJS client invokes only the generated seven-command ACL.
    Session adoption follows successful native custody, settings decode only
    exact public fields, and root rotation accepts only the fixed typed
    confirmation. Native failures map to closed codes without reflecting host
@@ -101,10 +106,13 @@ replacements always invalidate the old gateway lifecycle.
   root before settings or readiness is exposed. Every returned rotation chain
   is checked for exact length, continuity, dual signatures, monotonic sequence,
   and the local pin.
-- KeyPackage-low routing validates the typed event, exact active device, pool
-  bounds, and authenticated session before generation. Group and KeyPackage
-  work share one 128-item coalescing queue, and ordinary replenishment is
-  capped at ten packages.
+- Device-directory and KeyPackage-low routing validate typed events, exact
+  owner/device binding, bounds, and authenticated session before native work.
+  Group, directory, and KeyPackage work share one 128-item coalescing queue,
+  and ordinary replenishment is capped at ten packages.
+- The active device certificate is periodically rechecked against the pinned
+  root. Confirmed revocation clears volatile MLS capability while preserving
+  the encrypted store; an unavailable directory does not erase state.
 - Replacement root and device secrets remain inside zeroizing native values
   and SQLCipher records. Lost rotation responses leave a durable candidate;
   they cannot cause generation of a second replacement identity.
@@ -138,13 +146,13 @@ replacements always invalidate the old gateway lifecycle.
   ghost-device/root-replacement rejection, and fixed mailbox/ack transports.
 - `apps/filament-client-desktop/src-tauri/src/native_gateway.rs`: pinned WSS
   derivation, bearer-header authentication, strict bounded wake decoding,
-  fail-closed binary/oversized frame classification, coalesced group queue,
-  and redacted connector diagnostics.
+  fail-closed binary/oversized frame classification, coalesced group,
+  directory, and KeyPackage work, and redacted connector diagnostics.
 - `apps/filament-client-desktop/src-tauri/src/runtime.rs`: bounded native
   realtime wake/periodic reconciliation, readiness/idle/session lifecycle
   enforcement, same-user session-rotation continuity, cross-user state
-  clearing, commit-before-message coordination, and lost-response
-  acknowledgment retry.
+  clearing, active-device revocation handling, commit-before-message
+  coordination, and lost-response acknowledgment retry.
 - `apps/filament-client-web/src/lib/native-client.ts`: exact native command
   requests, strict public-response decoding, and fixed redacted error mapping.
 - `apps/filament-client-web/src/features/app-shell/controllers/native-encryption-controller.ts`:
