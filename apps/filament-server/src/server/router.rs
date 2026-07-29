@@ -39,12 +39,13 @@ use super::{
         auth::{login, logout, lookup_users, me, refresh, register},
         e2ee::{
             ack_group_attachments, ack_group_commits, ack_group_messages, ack_group_proposals,
-            claim_keypackage, create_mls_conversation, create_mls_group_conversation,
-            get_delivery_service_identity, get_group_attachment, get_group_commit_mailbox,
-            get_group_info, get_group_mailbox, get_group_proposal_mailbox, get_root_identity,
-            list_user_devices, post_group_commit, post_group_message, post_group_proposal,
-            publish_device_certificate, put_group_attachment, remove_device, rotate_root_identity,
-            upgrade_mls_conversation, upload_keypackages,
+            claim_keypackage, create_mls_conversation, create_mls_encrypted_channel,
+            create_mls_group_conversation, get_delivery_service_identity, get_group_attachment,
+            get_group_commit_mailbox, get_group_info, get_group_mailbox,
+            get_group_proposal_mailbox, get_root_identity, list_user_devices, post_group_commit,
+            post_group_message, post_group_proposal, publish_device_certificate,
+            put_group_attachment, remove_device, rotate_root_identity, upgrade_mls_conversation,
+            upload_keypackages,
         },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
@@ -198,6 +199,7 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ("POST", "/e2ee/identity/rotate"),
     ("GET", "/e2ee/delivery-service/identity"),
     ("POST", "/e2ee/conversations"),
+    ("POST", "/guilds/{guild_id}/e2ee/channels"),
     ("POST", "/e2ee/conversations/{conversation_id}/upgrade"),
     ("GET", "/e2ee/groups/{group_id}/info"),
     ("GET", "/e2ee/groups/{group_id}/mailbox"),
@@ -595,6 +597,10 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route("/e2ee/keypackages", post(upload_keypackages))
         .route("/e2ee/keypackages/claim", post(claim_keypackage))
         .route("/e2ee/conversations", post(create_mls_conversation))
+        .route(
+            "/guilds/{guild_id}/e2ee/channels",
+            post(create_mls_encrypted_channel),
+        )
         .route(
             "/e2ee/group-conversations",
             post(create_mls_group_conversation),

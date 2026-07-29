@@ -13,15 +13,17 @@ use filament_protocol::{
     AckE2eeAttachmentsRequest, AckE2eeAttachmentsResponse, AckE2eeCommitsRequest,
     AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
     AckE2eeProposalsRequest, AckE2eeProposalsResponse, ClaimKeyPackageRequest,
-    ClaimKeyPackageResponse, CreateMlsConversationRequest, CreateMlsGroupConversationRequest,
-    DeviceListResponse, E2eeCommitMailboxResponse, E2eeMailboxResponse,
-    E2eeProposalMailboxResponse, E2eeRetentionSeconds, GroupInfoResponse, KeyPackageEntry,
-    MlsConversationProvisionResponse, MlsGroupInvite, MlsLeafRouting, MlsMembershipChange,
-    PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
-    PostProposalRequest, PostProposalResponse, PublishDeviceCertificateRequest,
-    PutE2eeAttachmentResponse, RemoveDeviceResponse, RootIdentityDirectoryResponse,
-    RotateRootIdentityRequest, RotateRootIdentityResponse, UpgradeMlsConversationRequest,
-    UploadKeyPackagesRequest, UploadKeyPackagesResponse, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    ClaimKeyPackageResponse, CreateMlsConversationRequest, CreateMlsEncryptedChannelRequest,
+    CreateMlsGroupConversationRequest, DeviceListResponse, E2eeCommitMailboxResponse,
+    E2eeMailboxResponse, E2eeProposalMailboxResponse, E2eeRetentionSeconds, GroupInfoResponse,
+    KeyPackageEntry, MlsConversationProvisionResponse, MlsEncryptedChannelKind,
+    MlsEncryptedChannelProvisionResponse, MlsEncryptedChannelType, MlsGroupInvite, MlsLeafRouting,
+    MlsMembershipChange, PostCommitRequest, PostCommitResponse, PostMessageRequest,
+    PostMessageResponse, PostProposalRequest, PostProposalResponse,
+    PublishDeviceCertificateRequest, PutE2eeAttachmentResponse, RemoveDeviceResponse,
+    RootIdentityDirectoryResponse, RotateRootIdentityRequest, RotateRootIdentityResponse,
+    UpgradeMlsConversationRequest, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
+    ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use filament_server::{build_router_with_db_bootstrap, AppConfig};
 use futures_util::StreamExt;
@@ -576,6 +578,136 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         parse_json::<MlsConversationProvisionResponse>(provisioned_group_retry).await,
         provisioned_group
     );
+
+    let encrypted_workspace = send_json(
+        &app,
+        "POST",
+        "/guilds",
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"name": "Phase 6 Atomic Channel"}),
+    )
+    .await;
+    assert_eq!(encrypted_workspace.status(), StatusCode::OK);
+    let encrypted_workspace: serde_json::Value = parse_json(encrypted_workspace).await;
+    let encrypted_workspace_id = encrypted_workspace["guild_id"]
+        .as_str()
+        .expect("created workspace should include an ID");
+    for member_id in [bob_user_id, charlie_user_id] {
+        let member = send_json(
+            &app,
+            "POST",
+            &format!("/guilds/{encrypted_workspace_id}/members/{member_id}"),
+            Some(&alice_auth.access_token),
+            "203.0.113.181",
+            &json!({}),
+        )
+        .await;
+        assert_eq!(member.status(), StatusCode::OK);
+    }
+    let policy = send_json(
+        &app,
+        "PATCH",
+        &format!("/guilds/{encrypted_workspace_id}"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"encrypted_channel_policy": "require_moderator_membership"}),
+    )
+    .await;
+    assert_eq!(policy.status(), StatusCode::OK);
+
+    let encrypted_channel_request = CreateMlsEncryptedChannelRequest {
+        channel_id: Ulid::new().to_string(),
+        channel_name: String::from("sealed-team"),
+        conversation_id: ConversationId::new().to_string(),
+        group_id: GroupId::new().to_string(),
+        suite_id: 3,
+        committer_device_id: alice_device_id.to_string(),
+        invitees: vec![
+            MlsGroupInvite {
+                user_id: bob_user_id.to_string(),
+                welcome_device_id: bob_device_id.to_string(),
+                leaf_index: 1,
+            },
+            MlsGroupInvite {
+                user_id: charlie_user_id.to_string(),
+                welcome_device_id: charlie_device_id.to_string(),
+                leaf_index: 2,
+            },
+        ],
+        commit_blob: vec![0x71; 256],
+        welcome_blob: vec![0x72; 192],
+        group_info_blob: vec![0x73; 128],
+    };
+    let encrypted_channel = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/e2ee/channels"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &encrypted_channel_request,
+    )
+    .await;
+    assert_eq!(encrypted_channel.status(), StatusCode::OK);
+    let encrypted_channel: MlsEncryptedChannelProvisionResponse =
+        parse_json(encrypted_channel).await;
+    assert_eq!(
+        encrypted_channel.channel_id,
+        encrypted_channel_request.channel_id
+    );
+    assert_eq!(
+        encrypted_channel.channel_type,
+        MlsEncryptedChannelType::Encrypted
+    );
+    assert_eq!(encrypted_channel.kind, MlsEncryptedChannelKind::Text);
+    assert_eq!(encrypted_channel.crypto, "mls_v1");
+    assert_eq!(encrypted_channel.epoch, 1);
+
+    let encrypted_channel_retry = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/e2ee/channels"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &encrypted_channel_request,
+    )
+    .await;
+    assert_eq!(encrypted_channel_retry.status(), StatusCode::OK);
+    assert_eq!(
+        parse_json::<MlsEncryptedChannelProvisionResponse>(encrypted_channel_retry).await,
+        encrypted_channel
+    );
+
+    let mut altered_channel_retry = encrypted_channel_request.clone();
+    altered_channel_retry.channel_name = String::from("substituted");
+    let altered_channel_retry = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/e2ee/channels"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &altered_channel_retry,
+    )
+    .await;
+    assert_eq!(altered_channel_retry.status(), StatusCode::CONFLICT);
+    let altered_channel_retry: serde_json::Value = parse_json(altered_channel_retry).await;
+    assert_eq!(
+        altered_channel_retry["error"],
+        serde_json::Value::from("e2ee_conversation_conflict")
+    );
+
+    let channel_binding: (String, String, String) = sqlx::query_as(
+        "SELECT guild_id, conversation_id, group_id
+         FROM e2ee_channel_groups
+         WHERE channel_id = $1",
+    )
+    .bind(&encrypted_channel.channel_id)
+    .fetch_one(&audit_pool)
+    .await
+    .expect("encrypted channel should have one durable MLS binding");
+    assert_eq!(channel_binding.0, encrypted_workspace_id);
+    assert_eq!(channel_binding.1, encrypted_channel_request.conversation_id);
+    assert_eq!(channel_binding.2, encrypted_channel_request.group_id);
 
     // Seed the server-side routing view for a three-user group. MLS interiors
     // remain opaque here; this exercises only bounded Delivery Service fanout.

@@ -264,8 +264,28 @@ This section locks response semantics and limits for upcoming directory-join/aud
     `409 encrypted_channel_policy_disabled` while workspace policy is
     `disabled`; enabled policies then fail with
     `409 e2ee_channel_provisioning_required` because encrypted creation must
-    use the future atomic MLS provisioning route
+    use the atomic MLS provisioning route
   - Response `200`: `{ "channel_id": "...", "name": "...", "kind": "text"|"voice", "channel_type": "plaintext"|"encrypted" }`
+- `POST /guilds/{guild_id}/e2ee/channels`
+  - Auth required; requires effective `manage_channel_overrides` permission and
+    an enabled encrypted-channel workspace policy
+  - Request: `{ "channel_id", "channel_name", "conversation_id", "group_id", "suite_id", "committer_device_id", "invitees": [{ "user_id", "welcome_device_id", "leaf_index" }], "commit_blob", "welcome_blob", "group_info_blob" }`
+  - The initial Phase 6 path provisions text channels for the exact current
+    workspace audience only. The committer plus 1–99 invitees must equal all
+    2–100 active workspace members; leaf indices are contiguous from one.
+  - Every member must already have effective `create_message` permission and
+    the routed device must be active, owned, and root-certified. A capability
+    gap returns `409 e2ee_capability_required`; no channel or partial MLS state
+    is created.
+  - Channel metadata, `mls_v1` conversation membership, group, epoch-1 commit,
+    shared Welcome recipients, leaf routing, GroupInfo, and the immutable
+    channel/group binding commit in one transaction while membership and role
+    authorization are locked.
+  - Response: `{ "channel_id", "channel_name", "kind": "text", "channel_type": "encrypted", "conversation_id", "group_id", "crypto": "mls_v1", "epoch": 1, "suite_id", "provisioned_at_unix" }`
+  - Exact retries are idempotent. Identifier, audience, leaf-map, metadata, or
+    opaque bootstrap conflicts fail with `409 e2ee_conversation_conflict`.
+    Narrow permission-overwrite audiences remain unavailable until Phase 6
+    membership reconciliation is transactional.
 - `GET /guilds/{guild_id}/channels`
   - Auth required; requester must be a guild member
   - Returns channels in that guild where requester has effective `create_message` permission
@@ -672,6 +692,10 @@ Atomically provisions a new 3–100-user MLS group DM.
   conflicts fail with `e2ee_conversation_conflict`.
 - Provisioning requires the operator-configured Delivery Service identity;
   clients fetch and pin it at external-sender index zero in the MLS Group Context.
+
+Workspace encrypted channels reuse this opaque MLS bootstrap through
+`POST /guilds/{guild_id}/e2ee/channels`; see "Guilds and Channels" above for
+the stricter atomic audience and authorization rules.
 
 ### `GET /e2ee/groups/{group_id}/info`
 Returns the latest opaque `GroupInfo` for an authenticated member of an

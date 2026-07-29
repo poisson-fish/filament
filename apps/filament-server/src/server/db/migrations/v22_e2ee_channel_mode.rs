@@ -97,7 +97,7 @@ const CREATE_PLAINTEXT_ATTACHMENT_TRIGGER_SQL: &str = "DO $$
 /// Install the immutable Phase 6 channel confidentiality boundary.
 ///
 /// Existing channels are explicitly backfilled as plaintext. Encrypted
-/// channels must be inserted with their final mode by the future atomic MLS
+/// channels must be inserted with their final mode by the dedicated atomic MLS
 /// provisioning path, and ordinary message/attachment tables cannot accept
 /// rows for them even if a handler regresses.
 pub(crate) async fn apply_e2ee_channel_mode_schema(

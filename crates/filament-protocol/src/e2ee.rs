@@ -481,6 +481,22 @@ where
     Ok(value)
 }
 
+fn deserialize_encrypted_channel_invitees<'de, D>(
+    deserializer: D,
+) -> Result<Vec<MlsGroupInvite>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<MlsGroupInvite>::deserialize(deserializer)?;
+    if value.is_empty() || value.len() >= MAX_MLS_GROUP_USERS {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"between 1 and 99 encrypted-channel invitees",
+        ));
+    }
+    Ok(value)
+}
+
 fn deserialize_removed_leaves<'de, D>(deserializer: D) -> Result<Vec<MlsLeafRouting>, D::Error>
 where
     D: Deserializer<'de>,
@@ -805,6 +821,32 @@ pub struct CreateMlsGroupConversationRequest {
     pub group_info_blob: Vec<u8>,
 }
 
+/// Atomic bootstrap for a workspace-wide encrypted text channel.
+///
+/// `channel_id`, `conversation_id`, and `group_id` are client-generated
+/// canonical ULIDs so an uncertain submission can be retried exactly. The
+/// server requires the committer plus `invitees` to equal the complete current
+/// workspace membership and commits the channel metadata and MLS state in one
+/// database transaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateMlsEncryptedChannelRequest {
+    pub channel_id: String,
+    pub channel_name: String,
+    pub conversation_id: String,
+    pub group_id: String,
+    pub suite_id: u16,
+    pub committer_device_id: String,
+    #[serde(deserialize_with = "deserialize_encrypted_channel_invitees")]
+    pub invitees: Vec<MlsGroupInvite>,
+    #[serde(deserialize_with = "deserialize_commit_blob")]
+    pub commit_blob: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_bounded_welcome_blob")]
+    pub welcome_blob: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_group_info_blob")]
+    pub group_info_blob: Vec<u8>,
+}
+
 /// Server routing view for one root-certified MLS leaf.
 ///
 /// Native clients authenticate the same mapping from MLS credentials before
@@ -870,6 +912,39 @@ pub struct MlsConversationProvisionResponse {
     /// Accepted ciphersuite identifier.
     pub suite_id: u16,
     /// Unix timestamp when provisioning committed.
+    pub provisioned_at_unix: i64,
+}
+
+/// Presentation kind supported by the initial MLS workspace-channel path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MlsEncryptedChannelKind {
+    Text,
+}
+
+/// Immutable confidentiality mode for an MLS workspace channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MlsEncryptedChannelType {
+    Encrypted,
+}
+
+/// Result of atomically provisioning an encrypted workspace text channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MlsEncryptedChannelProvisionResponse {
+    pub channel_id: String,
+    pub channel_name: String,
+    /// Presentation kind. Always `text` in the initial Phase 6 path.
+    pub kind: MlsEncryptedChannelKind,
+    /// Confidentiality mode. Always `encrypted`.
+    pub channel_type: MlsEncryptedChannelType,
+    pub conversation_id: String,
+    pub group_id: String,
+    #[serde(deserialize_with = "deserialize_mls_v1_mode")]
+    pub crypto: String,
+    pub epoch: u64,
+    pub suite_id: u16,
     pub provisioned_at_unix: i64,
 }
 
@@ -1762,6 +1837,85 @@ mod tests {
             &serde_json::to_string(&oversized_remove).unwrap()
         )
         .is_err());
+    }
+
+    #[test]
+    fn encrypted_channel_provisioning_contract_is_strict_and_bounded() {
+        let invite = MlsGroupInvite {
+            user_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            welcome_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+            leaf_index: 1,
+        };
+        let request = CreateMlsEncryptedChannelRequest {
+            channel_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+            channel_name: String::from("sealed"),
+            conversation_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
+            group_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+            suite_id: 3,
+            committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
+            invitees: vec![invite],
+            commit_blob: vec![1],
+            welcome_blob: vec![2],
+            group_info_blob: vec![3],
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            serde_json::from_str::<CreateMlsEncryptedChannelRequest>(&json).unwrap(),
+            request
+        );
+
+        let mut missing_invitees = request.clone();
+        missing_invitees.invitees.clear();
+        assert!(serde_json::from_value::<CreateMlsEncryptedChannelRequest>(
+            serde_json::to_value(missing_invitees).unwrap()
+        )
+        .is_err());
+
+        let mut too_many_invitees = request.clone();
+        too_many_invitees.invitees = (0..MAX_MLS_GROUP_USERS)
+            .map(|leaf_index| MlsGroupInvite {
+                user_id: format!("{leaf_index:026}"),
+                welcome_device_id: format!("{:026}", leaf_index + 1),
+                leaf_index: u32::try_from(leaf_index + 1).unwrap(),
+            })
+            .collect();
+        assert!(serde_json::from_value::<CreateMlsEncryptedChannelRequest>(
+            serde_json::to_value(too_many_invitees).unwrap()
+        )
+        .is_err());
+
+        let mut unknown_field = serde_json::to_value(request).unwrap();
+        unknown_field["plaintext_fallback"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<CreateMlsEncryptedChannelRequest>(unknown_field).is_err());
+    }
+
+    #[test]
+    fn encrypted_channel_provision_response_rejects_other_modes() {
+        let valid = r#"{
+            "channel_id":"c",
+            "channel_name":"sealed",
+            "kind":"text",
+            "channel_type":"encrypted",
+            "conversation_id":"v",
+            "group_id":"g",
+            "crypto":"mls_v1",
+            "epoch":1,
+            "suite_id":3,
+            "provisioned_at_unix":1
+        }"#;
+        assert!(serde_json::from_str::<MlsEncryptedChannelProvisionResponse>(valid).is_ok());
+        let invalid_crypto = valid.replace("\"mls_v1\"", "\"plaintext\"");
+        assert!(
+            serde_json::from_str::<MlsEncryptedChannelProvisionResponse>(&invalid_crypto).is_err()
+        );
+        let invalid_kind = valid.replace("\"text\"", "\"voice\"");
+        assert!(
+            serde_json::from_str::<MlsEncryptedChannelProvisionResponse>(&invalid_kind).is_err()
+        );
+        let invalid_type = valid.replace("\"encrypted\"", "\"plaintext\"");
+        assert!(
+            serde_json::from_str::<MlsEncryptedChannelProvisionResponse>(&invalid_type).is_err()
+        );
     }
 
     #[test]

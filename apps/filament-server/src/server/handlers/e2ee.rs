@@ -13,7 +13,8 @@ use axum::{
     Json,
 };
 use filament_core::{
-    CiphersuiteId, ConversationCrypto, ConversationId, DeviceId, GroupId, ProposalId, UserId,
+    ChannelKind, ChannelName, ChannelType, CiphersuiteId, ConversationCrypto, ConversationId,
+    DeviceId, EncryptedChannelPolicy, GroupId, Permission, PermissionSet, ProposalId, UserId,
 };
 use filament_e2ee::{
     verify_device_certificate, verify_root_identity_rotation_proof, AttachmentId,
@@ -23,26 +24,27 @@ use filament_protocol::{
     AckE2eeAttachmentsRequest, AckE2eeAttachmentsResponse, AckE2eeCommitsRequest,
     AckE2eeCommitsResponse, AckE2eeMessagesRequest, AckE2eeMessagesResponse,
     AckE2eeProposalsRequest, AckE2eeProposalsResponse, ClaimKeyPackageRequest,
-    ClaimKeyPackageResponse, CreateMlsConversationRequest, CreateMlsGroupConversationRequest,
-    DeliveryServiceIdentityResponse, DeviceInfo, DeviceListResponse, E2eeCommitMailboxEntry,
-    E2eeCommitMailboxQuery, E2eeCommitMailboxResponse, E2eeMailboxMessage, E2eeMailboxQuery,
-    E2eeMailboxResponse, E2eeProposalMailboxEntry, E2eeProposalMailboxQuery,
-    E2eeProposalMailboxResponse, GetE2eeAttachmentQuery, GroupInfoResponse, MlsCommitEvent,
-    MlsConversationProvisionResponse, MlsLeafRouting, MlsMembershipChange,
-    MlsMembershipChangeEvent, MlsMessageEvent, MlsProposalEvent, MlsWelcomeEvent,
-    PostCommitRequest, PostCommitResponse, PostMessageRequest, PostMessageResponse,
-    PostProposalRequest, PostProposalResponse, PublishDeviceCertificateRequest,
-    PublishDeviceCertificateResponse, PutE2eeAttachmentQuery, PutE2eeAttachmentResponse,
-    RemoveDeviceResponse, RootIdentityDirectoryResponse, RootIdentityRotationEntry,
-    RotateRootIdentityRequest, RotateRootIdentityResponse, UpgradeMlsConversationRequest,
-    UploadKeyPackagesRequest, UploadKeyPackagesResponse, DELIVERY_SERVICE_EXTERNAL_SENDER_INDEX,
-    DELIVERY_SERVICE_IDENTITY_PROTOCOL_VERSION, E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS,
-    MAX_E2EE_ATTACHMENT_ACK_BATCH_SIZE, MAX_E2EE_COMMIT_ACK_BATCH_SIZE,
-    MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE,
-    MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
-    MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES,
-    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_ROOT_IDENTITY_ROTATIONS,
-    ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
+    ClaimKeyPackageResponse, CreateMlsConversationRequest, CreateMlsEncryptedChannelRequest,
+    CreateMlsGroupConversationRequest, DeliveryServiceIdentityResponse, DeviceInfo,
+    DeviceListResponse, E2eeCommitMailboxEntry, E2eeCommitMailboxQuery, E2eeCommitMailboxResponse,
+    E2eeMailboxMessage, E2eeMailboxQuery, E2eeMailboxResponse, E2eeProposalMailboxEntry,
+    E2eeProposalMailboxQuery, E2eeProposalMailboxResponse, GetE2eeAttachmentQuery,
+    GroupInfoResponse, MlsCommitEvent, MlsConversationProvisionResponse, MlsEncryptedChannelKind,
+    MlsEncryptedChannelProvisionResponse, MlsEncryptedChannelType, MlsLeafRouting,
+    MlsMembershipChange, MlsMembershipChangeEvent, MlsMessageEvent, MlsProposalEvent,
+    MlsWelcomeEvent, PostCommitRequest, PostCommitResponse, PostMessageRequest,
+    PostMessageResponse, PostProposalRequest, PostProposalResponse,
+    PublishDeviceCertificateRequest, PublishDeviceCertificateResponse, PutE2eeAttachmentQuery,
+    PutE2eeAttachmentResponse, RemoveDeviceResponse, RootIdentityDirectoryResponse,
+    RootIdentityRotationEntry, RotateRootIdentityRequest, RotateRootIdentityResponse,
+    UpgradeMlsConversationRequest, UploadKeyPackagesRequest, UploadKeyPackagesResponse,
+    DELIVERY_SERVICE_EXTERNAL_SENDER_INDEX, DELIVERY_SERVICE_IDENTITY_PROTOCOL_VERSION,
+    E2EE_ATTACHMENT_CIPHERTEXT_BUCKETS, MAX_E2EE_ATTACHMENT_ACK_BATCH_SIZE,
+    MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_COMMIT_MAILBOX_PAGE_BLOB_BYTES,
+    MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_BLOB_BYTES,
+    MAX_E2EE_MAILBOX_PAGE_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE,
+    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE,
+    MAX_ROOT_IDENTITY_ROTATIONS, ROOT_IDENTITY_ROTATION_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -55,10 +57,16 @@ use crate::server::{
         extract_client_ip, now_unix, E2eeTransportRoute,
     },
     core::AppState,
+    db::{
+        channel_kind_to_i16, channel_type_to_i16, encrypted_channel_policy_from_i16,
+        permission_set_to_i64,
+    },
+    domain::guild_permission_snapshot,
     errors::AuthFailure,
     gateway_events,
-    metrics::record_gateway_event_serialize_error,
-    realtime::broadcast_user_event,
+    metrics::{record_gateway_event_dropped, record_gateway_event_serialize_error},
+    realtime::{broadcast_guild_event, broadcast_user_event},
+    types::{ChannelResponse, GuildPath},
 };
 
 const KEYPACKAGE_LOW_WATER_MARK: u32 = 10;
@@ -705,6 +713,18 @@ async fn require_active_owned_device(
     .await
     .map_err(|_| AuthFailure::Internal)?;
     owned.map(|_| ()).ok_or(AuthFailure::NotFound)
+}
+
+async fn require_channel_capable_device(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+    device_id: DeviceId,
+) -> Result<(), AuthFailure> {
+    match require_active_owned_device(transaction, user_id, device_id).await {
+        Ok(()) => Ok(()),
+        Err(AuthFailure::NotFound) => Err(AuthFailure::E2eeCapabilityRequired),
+        Err(error) => Err(error),
+    }
 }
 
 async fn require_current_group_leaf(
@@ -2709,6 +2729,530 @@ pub(crate) async fn create_mls_group_conversation(
     )
     .await;
     Ok(Json(MlsConversationProvisionResponse {
+        conversation_id: conversation_id.to_string(),
+        group_id: group_id.to_string(),
+        crypto: String::from("mls_v1"),
+        epoch: INITIAL_MLS_EPOCH,
+        suite_id: payload.suite_id,
+        provisioned_at_unix: now,
+    }))
+}
+
+/// Atomically create a workspace-wide encrypted text channel and its MLS group.
+///
+/// The initial Phase 6 path deliberately accepts only the exact current
+/// workspace audience. Permission-overwrite audiences remain blocked until
+/// their authorization changes can be reconciled with MLS membership.
+#[allow(clippy::too_many_lines)]
+pub(crate) async fn create_mls_encrypted_channel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    connect_info: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(path): Path<GuildPath>,
+    Json(payload): Json<CreateMlsEncryptedChannelRequest>,
+) -> Result<Json<MlsEncryptedChannelProvisionResponse>, AuthFailure> {
+    let client_ip = extract_client_ip(
+        &state,
+        &headers,
+        connect_info.as_ref().map(|value| value.0 .0.ip()),
+    );
+    let auth = authenticate(&state, &headers).await?;
+    if state.e2ee_delivery_service.is_none() {
+        return Err(AuthFailure::E2eeCapabilityRequired);
+    }
+    let (_, actor_permissions) =
+        guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
+    if !actor_permissions.contains(Permission::ManageChannelOverrides) {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    for value in [
+        &payload.channel_id,
+        &payload.conversation_id,
+        &payload.group_id,
+        &payload.committer_device_id,
+    ] {
+        parse_canonical_ulid(value)?;
+    }
+    let channel_name = ChannelName::try_from(payload.channel_name.clone())
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let conversation_id = ConversationId::try_from(payload.conversation_id.clone())
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    let group_id =
+        GroupId::try_from(payload.group_id.clone()).map_err(|_| AuthFailure::InvalidRequest)?;
+    let committer_device_id = DeviceId::try_from(payload.committer_device_id.clone())
+        .map_err(|_| AuthFailure::InvalidRequest)?;
+    CiphersuiteId::try_from(payload.suite_id).map_err(|_| AuthFailure::InvalidRequest)?;
+
+    let mut invitees = Vec::with_capacity(payload.invitees.len());
+    let mut user_ids = HashSet::with_capacity(payload.invitees.len() + 1);
+    let mut device_ids = HashSet::with_capacity(payload.invitees.len() + 1);
+    user_ids.insert(auth.user_id);
+    device_ids.insert(committer_device_id);
+    for (offset, invitee) in payload.invitees.iter().enumerate() {
+        parse_canonical_ulid(&invitee.user_id)?;
+        parse_canonical_ulid(&invitee.welcome_device_id)?;
+        let expected_leaf_index =
+            u32::try_from(offset + 1).map_err(|_| AuthFailure::InvalidRequest)?;
+        if invitee.leaf_index != expected_leaf_index {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        let user_id =
+            UserId::try_from(invitee.user_id.clone()).map_err(|_| AuthFailure::InvalidRequest)?;
+        let device_id = DeviceId::try_from(invitee.welcome_device_id.clone())
+            .map_err(|_| AuthFailure::InvalidRequest)?;
+        if !user_ids.insert(user_id) || !device_ids.insert(device_id) {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        invitees.push((user_id, device_id, invitee.leaf_index));
+    }
+    enforce_e2ee_transport_rate_limit(
+        &state,
+        client_ip,
+        auth.user_id,
+        committer_device_id,
+        group_id,
+        E2eeTransportRoute::Provision,
+    )
+    .await?;
+
+    let pool = state.db_pool.as_ref().ok_or(AuthFailure::Internal)?;
+    let now = now_unix();
+    let ttl = i64::try_from(state.runtime.e2ee_mailbox_ttl.as_secs())
+        .map_err(|_| AuthFailure::Internal)?;
+    let expires_at = now.checked_add(ttl).ok_or(AuthFailure::Internal)?;
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+
+    // Freeze workspace membership and role authorization while the initial MLS
+    // audience and immutable channel binding are committed.
+    sqlx::query(
+        "LOCK TABLE guilds, guild_members, guild_roles, guild_role_members, guild_bans
+         IN SHARE MODE",
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let policy_raw = sqlx::query_scalar::<_, i16>(
+        "SELECT encrypted_channel_policy
+         FROM guilds
+         WHERE guild_id = $1
+         FOR SHARE",
+    )
+    .bind(&path.guild_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    .ok_or(AuthFailure::NotFound)?;
+    let policy = encrypted_channel_policy_from_i16(policy_raw).ok_or(AuthFailure::Internal)?;
+    if policy == EncryptedChannelPolicy::Disabled {
+        return Err(AuthFailure::E2eeChannelPolicyDisabled);
+    }
+
+    let mut manage_channels = PermissionSet::empty();
+    manage_channels.insert(Permission::ManageChannelOverrides);
+    let manage_channels_mask = permission_set_to_i64(manage_channels)?;
+    let actor_still_authorized = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM guild_role_members grm
+             JOIN guild_roles gr
+               ON gr.guild_id = grm.guild_id AND gr.role_id = grm.role_id
+             WHERE grm.guild_id = $1
+               AND grm.user_id = $2
+               AND (gr.permissions_allow_mask & $3) <> 0
+         )",
+    )
+    .bind(&path.guild_id)
+    .bind(auth.user_id.to_string())
+    .bind(manage_channels_mask)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if !actor_still_authorized {
+        return Err(AuthFailure::Forbidden);
+    }
+
+    let member_rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT gm.user_id
+         FROM guild_members gm
+         WHERE gm.guild_id = $1
+           AND NOT EXISTS (
+               SELECT 1 FROM guild_bans gb
+               WHERE gb.guild_id = gm.guild_id AND gb.user_id = gm.user_id
+           )
+         ORDER BY gm.user_id
+         FOR SHARE OF gm",
+    )
+    .bind(&path.guild_id)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let total_members =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM guild_members WHERE guild_id = $1")
+            .bind(&path.guild_id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+    if usize::try_from(total_members).ok() != Some(member_rows.len())
+        || !(2..=MAX_MLS_GROUP_USERS).contains(&member_rows.len())
+    {
+        return Err(AuthFailure::E2eeCapabilityRequired);
+    }
+
+    let mut create_message = PermissionSet::empty();
+    create_message.insert(Permission::CreateMessage);
+    let create_message_mask = permission_set_to_i64(create_message)?;
+    let unauthorized_members = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM guild_members gm
+         WHERE gm.guild_id = $1
+           AND NOT EXISTS (
+               SELECT 1
+               FROM guild_role_members grm
+               JOIN guild_roles gr
+                 ON gr.guild_id = grm.guild_id AND gr.role_id = grm.role_id
+               WHERE grm.guild_id = gm.guild_id
+                 AND grm.user_id = gm.user_id
+                 AND (gr.permissions_allow_mask & $2) <> 0
+           )",
+    )
+    .bind(&path.guild_id)
+    .bind(create_message_mask)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if unauthorized_members != 0 {
+        return Err(AuthFailure::E2eeCapabilityRequired);
+    }
+
+    let expected_users = member_rows
+        .iter()
+        .map(|(user_id,)| user_id.as_str())
+        .collect::<HashSet<_>>();
+    let supplied_users = user_ids
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect::<HashSet<_>>();
+    if expected_users
+        != supplied_users
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>()
+    {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    require_channel_capable_device(&mut transaction, auth.user_id, committer_device_id).await?;
+    for (user_id, device_id, _) in &invitees {
+        require_channel_capable_device(&mut transaction, *user_id, *device_id).await?;
+    }
+
+    let lock_key = format!(
+        "encrypted-channel-provision:{}:{}:{}:{}",
+        path.guild_id, payload.channel_id, conversation_id, group_id
+    );
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(lock_key)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    let existing = sqlx::query(
+        "SELECT c.channel_id, c.name, c.kind, c.channel_type,
+                cg.guild_id, cg.conversation_id, cg.group_id, cg.provisioned_at_unix,
+                g.suite_id, g.group_info_blob, k.committer_device_id,
+                k.commit_blob, k.welcome_blob
+         FROM e2ee_channel_groups cg
+         JOIN channels c ON c.channel_id = cg.channel_id
+         JOIN e2ee_groups g ON g.group_id = cg.group_id
+         JOIN e2ee_commits k ON k.group_id = g.group_id AND k.epoch = 1
+         WHERE cg.channel_id = $1 OR cg.conversation_id = $2 OR cg.group_id = $3
+         FOR UPDATE OF cg",
+    )
+    .bind(&payload.channel_id)
+    .bind(conversation_id.to_string())
+    .bind(group_id.to_string())
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if let Some(existing) = existing {
+        let existing_group: String = existing
+            .try_get("group_id")
+            .map_err(|_| AuthFailure::Internal)?;
+        let leaves: Vec<(i32, String, String)> = sqlx::query_as(
+            "SELECT leaf_index, user_id, device_id
+             FROM e2ee_group_leaves
+             WHERE group_id = $1
+             ORDER BY leaf_index",
+        )
+        .bind(&existing_group)
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let expected_leaves = std::iter::once((
+            0_i32,
+            auth.user_id.to_string(),
+            committer_device_id.to_string(),
+        ))
+        .chain(invitees.iter().map(|(user_id, device_id, leaf_index)| {
+            (
+                i32::try_from(*leaf_index).unwrap_or(i32::MAX),
+                user_id.to_string(),
+                device_id.to_string(),
+            )
+        }))
+        .collect::<Vec<_>>();
+        let exact_retry = existing
+            .try_get::<String, _>("channel_id")
+            .is_ok_and(|value| value == payload.channel_id)
+            && existing
+                .try_get::<String, _>("name")
+                .is_ok_and(|value| value == channel_name.as_str())
+            && existing
+                .try_get::<i16, _>("kind")
+                .is_ok_and(|value| value == channel_kind_to_i16(ChannelKind::Text))
+            && existing
+                .try_get::<i16, _>("channel_type")
+                .is_ok_and(|value| value == channel_type_to_i16(ChannelType::Encrypted))
+            && existing
+                .try_get::<String, _>("guild_id")
+                .is_ok_and(|value| value == path.guild_id)
+            && existing
+                .try_get::<String, _>("conversation_id")
+                .is_ok_and(|value| value == conversation_id.to_string())
+            && existing_group == group_id.to_string()
+            && existing
+                .try_get::<i32, _>("suite_id")
+                .is_ok_and(|value| value == i32::from(payload.suite_id))
+            && existing
+                .try_get::<String, _>("committer_device_id")
+                .is_ok_and(|value| value == committer_device_id.to_string())
+            && existing
+                .try_get::<Vec<u8>, _>("commit_blob")
+                .is_ok_and(|value| value == payload.commit_blob)
+            && existing
+                .try_get::<Option<Vec<u8>>, _>("welcome_blob")
+                .is_ok_and(|value| value.as_deref() == Some(payload.welcome_blob.as_slice()))
+            && existing
+                .try_get::<Option<Vec<u8>>, _>("group_info_blob")
+                .is_ok_and(|value| value.as_deref() == Some(payload.group_info_blob.as_slice()))
+            && leaves == expected_leaves;
+        if !exact_retry {
+            return Err(AuthFailure::E2eeConversationConflict);
+        }
+        let provisioned_at_unix = existing
+            .try_get("provisioned_at_unix")
+            .map_err(|_| AuthFailure::Internal)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+        return Ok(Json(MlsEncryptedChannelProvisionResponse {
+            channel_id: payload.channel_id,
+            channel_name: channel_name.as_str().to_owned(),
+            kind: MlsEncryptedChannelKind::Text,
+            channel_type: MlsEncryptedChannelType::Encrypted,
+            conversation_id: conversation_id.to_string(),
+            group_id: group_id.to_string(),
+            crypto: String::from("mls_v1"),
+            epoch: INITIAL_MLS_EPOCH,
+            suite_id: payload.suite_id,
+            provisioned_at_unix,
+        }));
+    }
+
+    let collision_count = sqlx::query_scalar::<_, i64>(
+        "SELECT
+            (SELECT COUNT(*) FROM channels WHERE channel_id = $1) +
+            (SELECT COUNT(*) FROM e2ee_conversations WHERE conversation_id = $2) +
+            (SELECT COUNT(*) FROM e2ee_groups WHERE group_id = $3)",
+    )
+    .bind(&payload.channel_id)
+    .bind(conversation_id.to_string())
+    .bind(group_id.to_string())
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if collision_count != 0 {
+        return Err(AuthFailure::E2eeConversationConflict);
+    }
+
+    sqlx::query(
+        "INSERT INTO channels
+            (channel_id, guild_id, name, kind, channel_type, created_at_unix)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(&payload.channel_id)
+    .bind(&path.guild_id)
+    .bind(channel_name.as_str())
+    .bind(channel_kind_to_i16(ChannelKind::Text))
+    .bind(channel_type_to_i16(ChannelType::Encrypted))
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+    sqlx::query(
+        "INSERT INTO e2ee_conversations
+            (conversation_id, conversation_crypto, created_by, created_at_unix)
+         VALUES ($1, 'mls_v1', $2, $3)",
+    )
+    .bind(conversation_id.to_string())
+    .bind(auth.user_id.to_string())
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+    for user_id in std::iter::once(auth.user_id).chain(invitees.iter().map(|value| value.0)) {
+        sqlx::query(
+            "INSERT INTO e2ee_conversation_members
+                (conversation_id, user_id, joined_at_unix)
+             VALUES ($1, $2, $3)",
+        )
+        .bind(conversation_id.to_string())
+        .bind(user_id.to_string())
+        .bind(now)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| map_provision_write_error(&error))?;
+    }
+    sqlx::query(
+        "INSERT INTO e2ee_groups
+            (group_id, conversation_id, current_epoch, suite_id, group_info_blob, created_at_unix)
+         VALUES ($1, $2, 1, $3, $4, $5)",
+    )
+    .bind(group_id.to_string())
+    .bind(conversation_id.to_string())
+    .bind(i32::from(payload.suite_id))
+    .bind(&payload.group_info_blob)
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+    sqlx::query(
+        "INSERT INTO e2ee_commits
+            (group_id, epoch, prior_epoch, committer_device_id, commit_blob,
+             welcome_blob, welcome_device_id, created_at_unix, expires_at_unix)
+         VALUES ($1, 1, 0, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(group_id.to_string())
+    .bind(committer_device_id.to_string())
+    .bind(&payload.commit_blob)
+    .bind(&payload.welcome_blob)
+    .bind(invitees[0].1.to_string())
+    .bind(now)
+    .bind(expires_at)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+    insert_group_leaf(
+        &mut transaction,
+        group_id,
+        &MlsLeafRouting {
+            leaf_index: 0,
+            user_id: auth.user_id.to_string(),
+            device_id: committer_device_id.to_string(),
+        },
+        INITIAL_MLS_EPOCH,
+    )
+    .await?;
+    let mut welcome_devices = Vec::with_capacity(invitees.len());
+    for (user_id, device_id, leaf_index) in &invitees {
+        insert_group_leaf(
+            &mut transaction,
+            group_id,
+            &MlsLeafRouting {
+                leaf_index: *leaf_index,
+                user_id: user_id.to_string(),
+                device_id: device_id.to_string(),
+            },
+            INITIAL_MLS_EPOCH,
+        )
+        .await?;
+        welcome_devices.push(*device_id);
+    }
+    insert_welcome_recipients(
+        &mut transaction,
+        group_id,
+        INITIAL_MLS_EPOCH,
+        &welcome_devices,
+    )
+    .await?;
+    snapshot_commit_deliveries(
+        &mut transaction,
+        &conversation_id.to_string(),
+        group_id,
+        INITIAL_MLS_EPOCH,
+        committer_device_id,
+        now,
+    )
+    .await?;
+    sqlx::query(
+        "INSERT INTO e2ee_channel_groups
+            (channel_id, guild_id, conversation_id, group_id, provisioned_at_unix)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(&payload.channel_id)
+    .bind(&path.guild_id)
+    .bind(conversation_id.to_string())
+    .bind(group_id.to_string())
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| map_provision_write_error(&error))?;
+
+    let member_ids = std::iter::once(auth.user_id)
+        .chain(invitees.iter().map(|value| value.0))
+        .collect::<Vec<_>>();
+    let welcome_user_ids = invitees.iter().map(|value| value.0).collect::<Vec<_>>();
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+
+    emit_mls_commit_notifications(
+        &state,
+        &member_ids,
+        MlsCommitEvent {
+            group_id: group_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            epoch: INITIAL_MLS_EPOCH,
+            prior_epoch: 0,
+            committer_device_id: committer_device_id.to_string(),
+            created_at_unix: now,
+        },
+        payload.suite_id,
+        &welcome_user_ids,
+    )
+    .await;
+    let channel = ChannelResponse {
+        channel_id: payload.channel_id.clone(),
+        name: channel_name.as_str().to_owned(),
+        kind: ChannelKind::Text,
+        channel_type: ChannelType::Encrypted,
+    };
+    match gateway_events::try_channel_create(&path.guild_id, &channel) {
+        Ok(event) => broadcast_guild_event(&state, &path.guild_id, &event).await,
+        Err(error) => {
+            tracing::warn!(
+                event = "gateway.channel_create.serialize_failed",
+                event_type = gateway_events::CHANNEL_CREATE_EVENT,
+                guild_id = %path.guild_id,
+                channel_id = %payload.channel_id,
+                error = %error,
+            );
+            record_gateway_event_dropped(
+                "guild",
+                gateway_events::CHANNEL_CREATE_EVENT,
+                "serialize_error",
+            );
+        }
+    }
+
+    Ok(Json(MlsEncryptedChannelProvisionResponse {
+        channel_id: payload.channel_id,
+        channel_name: channel_name.as_str().to_owned(),
+        kind: MlsEncryptedChannelKind::Text,
+        channel_type: MlsEncryptedChannelType::Encrypted,
         conversation_id: conversation_id.to_string(),
         group_id: group_id.to_string(),
         crypto: String::from("mls_v1"),

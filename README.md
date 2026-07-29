@@ -77,7 +77,7 @@ Design principles:
 - Media:
   - Channel presentation kinds: `text` and `voice`; immutable confidentiality
     modes: `plaintext` and `encrypted`, with a default-disabled typed workspace
-    policy (Phase 6 provisioning remains gated)
+    policy and atomic MLS provisioning for bounded workspace-wide text channels
   - LiveKit integration for voice/video/screen share
   - Short-lived, scoped, permission-limited media tokens
   - Explicit RTC UX states and troubleshooting for reconnect, permission denial, and token/session expiry

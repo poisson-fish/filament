@@ -462,9 +462,16 @@ a strict `disabled | require_moderator_membership | unrestricted` domain/API/
 gateway value backed by v23. Existing and new workspaces default to disabled;
 authorized updates are blocked while any encrypted channel exists until the
 membership reconciliation transaction is implemented. Disabled policy rejects
-encrypted-channel requests before the atomic-provisioning boundary. Atomic
-guild-channel MLS provisioning, capability checks, reconciliation, and
-large-group performance work remain.
+encrypted-channel requests before the atomic-provisioning boundary. The v24
+atomic provisioning increment now creates a bounded workspace-wide encrypted
+text channel, its exact current authorized membership, epoch-1 commit, shared
+Welcome recipients, leaf routing, GroupInfo, and immutable channel/group
+binding in one transaction. It freezes membership and role authorization,
+requires every 2–100-member participant to have post permission and an active
+certified device, supports exact idempotent retries, and emits the existing
+ciphertext-free channel and MLS routing notifications only after commit.
+Narrow permission-overwrite audiences, ongoing membership reconciliation, and
+large-group performance work remain fail closed.
 
 ---
 
@@ -1405,7 +1412,7 @@ offline recovery, missed events, and reconciliation.
 
 Add `channel_type = encrypted` for guild channels with permissioned Add/Remove commit flows that reconcile channel authorization to MLS group membership. Large-group performance work for 10³–10⁴ leaves.
 
-### Implemented Increment — Immutable Channel Confidentiality Boundary
+### Implemented Increments — Confidentiality Boundary and Atomic Bootstrap
 
 The first Phase 6 increment establishes the mode boundary without exposing a
 half-provisioned encrypted channel:
@@ -1433,10 +1440,21 @@ half-provisioned encrypted channel:
   encrypted channel exists until membership reconciliation can be atomic.
   Guild create/list/update responses and `workspace_update` events carry the
   policy. The ordinary encrypted-channel request distinguishes a disabled
-  policy from the still-pending atomic provisioning path.
+  policy from the dedicated atomic provisioning path.
+- `POST /guilds/{guild_id}/e2ee/channels` atomically binds the client-generated
+  channel, conversation, group, initial commit, shared Welcome recipients,
+  GroupInfo, and exact leaf routing. The v24 binding is immutable and repeats
+  the encrypted-mode, enabled-policy, exact-audience, and per-member-leaf
+  checks at the database boundary.
+- The initial safe audience is the exact current workspace membership, bounded
+  to 2–100 users by the already-tested group core. Membership and role tables
+  are frozen during provisioning; every member must have post permission and
+  one active certified routed device. Exact retries return the original
+  result, while altered IDs, metadata, audience, or bootstrap blobs conflict.
 
-This increment intentionally does not claim encrypted-channel creation,
-membership reconciliation, capability gating, or large-group readiness.
+This increment intentionally does not claim permission-overwrite audiences,
+ongoing membership reconciliation, the 5,000-leaf target, or large-group
+readiness.
 
 ### Deliverables
 
