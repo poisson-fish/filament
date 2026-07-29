@@ -479,10 +479,16 @@ reconciliation-pending error without a plaintext fallback. Role/permission
 loss now crosses the same boundary: role definition, role assignment, legacy
 member-role, and channel-overwrite mutations are evaluated against the exact
 effective `CreateMessage` layers and atomically queue signed Removes for every
-newly unauthorized leaf. A deferred v26 database guard rejects direct
-permission changes without each exact pending proposal. Authenticated member
-Add flows, permission restoration/rejoin, narrower initial audiences, and
-large-group performance work remain fail closed or unavailable.
+newly unauthorized leaf. The v26 database guard rejects direct
+permission changes without each exact pending proposal. Existing workspace
+members whose eviction completed can now be re-added after permission
+restoration through the ordinary acceptance-gated member-authored MLS Add
+commit. The server requires both committer and target authorization, exact
+active device ownership, and a recipient-bound Welcome; v27 database triggers
+independently enforce the same leaf boundary, including atomic bootstrap
+leaves staged before the channel binding. Structural workspace joins, narrower
+initial audiences, and large-group performance work remain fail closed or
+unavailable.
 
 ---
 
@@ -1478,10 +1484,19 @@ half-provisioned encrypted channel:
   Remove for each newly unauthorized leaf in the same transaction, with a
   fail-closed 1,000-leaf mutation cap; direct SQL permission loss without those
   proposals is rejected.
+- Member-authored Add commits for a channel-backed group require the
+  authenticated committer and target to have effective posting authorization,
+  and the recipient-bound Welcome must target the new user's exact active
+  certified device. This restores a previously evicted existing member only
+  after permission restoration and the normal server-acceptance boundary.
+- Migration v27 rejects direct unauthorized, tombstoned, or cross-user leaf
+  insertion. It also validates the initial leaves staged before the immutable
+  channel/group mapping is inserted, closing the database-ordering gap during
+  atomic provisioning.
 
-This increment intentionally does not claim permission restoration or
-authenticated re-Add, narrower initial permission-overwrite audiences, the
-5,000-leaf target, or large-group readiness.
+This increment intentionally does not claim structural workspace joins,
+narrower initial permission-overwrite audiences, the 5,000-leaf target, or
+large-group readiness.
 
 ### Deliverables
 

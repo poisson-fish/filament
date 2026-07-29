@@ -748,6 +748,59 @@ async fn require_current_group_leaf(
     present.map(|_| ()).ok_or(AuthFailure::NotFound)
 }
 
+async fn require_encrypted_channel_add_authorization(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    group_id: GroupId,
+    committer_user_id: UserId,
+    change: &MlsMembershipChange,
+    welcome_device_id: Option<DeviceId>,
+) -> Result<(), AuthFailure> {
+    let MlsMembershipChange::Add { leaf } = change else {
+        return Ok(());
+    };
+    let Some((guild_id, channel_id)) = sqlx::query_as::<_, (String, String)>(
+        "SELECT guild_id, channel_id
+         FROM e2ee_channel_groups
+         WHERE group_id = $1
+         FOR SHARE",
+    )
+    .bind(group_id.to_string())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?
+    else {
+        return Ok(());
+    };
+
+    parse_canonical_ulid(&leaf.user_id)?;
+    parse_canonical_ulid(&leaf.device_id)?;
+    let target_user_id =
+        UserId::try_from(leaf.user_id.clone()).map_err(|_| AuthFailure::InvalidRequest)?;
+    let target_device_id =
+        DeviceId::try_from(leaf.device_id.clone()).map_err(|_| AuthFailure::InvalidRequest)?;
+    if welcome_device_id != Some(target_device_id) {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    let (committer_authorized, target_authorized): (bool, bool) = sqlx::query_as(
+        "SELECT
+             filament_e2ee_channel_user_can_post($1, $2, $3),
+             filament_e2ee_channel_user_can_post($1, $2, $4)",
+    )
+    .bind(&guild_id)
+    .bind(&channel_id)
+    .bind(committer_user_id.to_string())
+    .bind(target_user_id.to_string())
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if !committer_authorized || !target_authorized {
+        return Err(AuthFailure::Forbidden);
+    }
+    require_channel_capable_device(transaction, target_user_id, target_device_id).await?;
+    Ok(())
+}
+
 async fn active_device_owner(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     device_id: DeviceId,
@@ -4959,6 +5012,16 @@ pub(crate) async fn post_group_commit(
         if !satisfies_policy {
             return Err(AuthFailure::E2eeMembershipReconciliationPending);
         }
+    }
+    if let Some(change) = &payload.membership_change {
+        require_encrypted_channel_add_authorization(
+            &mut transaction,
+            group_id,
+            auth.user_id,
+            change,
+            welcome_device_id,
+        )
+        .await?;
     }
     let member_ids_before =
         conversation_member_ids(&mut transaction, &group.conversation_id).await?;

@@ -755,6 +755,16 @@ Atomically orders one opaque MLS commit for an authenticated conversation member
   bind them to the exact new active certified leaf. Remove deltas must exactly
   match current routing leaves, retain at least two users, and cannot carry a
   Welcome. Clients treat the delta as untrusted until MLS authentication.
+- For a workspace encrypted-channel group, Add commits are accepted only when
+  both the authenticated committer and target user currently have effective
+  `create_message` authorization for the bound channel. The target must remain
+  a workspace member and the Welcome device must be that user's exact active,
+  root-certified device. This permits acceptance-gated re-Add after a completed
+  permission-loss eviction and later permission restoration; unauthorized
+  targets receive `403 forbidden`. Database triggers independently enforce the
+  same authorization and device-ownership boundary. Adding a new workspace
+  member remains unavailable until structural membership and every encrypted
+  channel Add can commit atomically.
 - A recovery external commit is accepted by peers only when OpenMLS
   authenticates a `NewMemberCommit` whose update-path credential chains to one
   of the two pinned roots and matches the routed committer device. Its proposal

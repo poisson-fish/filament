@@ -17,6 +17,7 @@ pub(crate) mod v23_e2ee_channel_policy;
 pub(crate) mod v24_e2ee_channel_groups;
 pub(crate) mod v25_e2ee_channel_membership;
 pub(crate) mod v26_e2ee_channel_authorization;
+pub(crate) mod v27_e2ee_channel_adds;
 pub(crate) mod v2_attachment_schema;
 pub(crate) mod v3_social_graph_schema;
 pub(crate) mod v4_moderation_audit_schema;

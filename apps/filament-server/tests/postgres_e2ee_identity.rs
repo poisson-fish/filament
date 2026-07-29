@@ -727,6 +727,168 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         Some("e2ee_channel_member_remove_requires_reconciliation")
     );
 
+    let initial_role_loss = send_json(
+        &app,
+        "POST",
+        &format!(
+            "/guilds/{encrypted_workspace_id}/channels/{}/permission-overrides/member/{charlie_user_id}",
+            encrypted_channel.channel_id
+        ),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"allow": [], "deny": ["create_message"]}),
+    )
+    .await;
+    assert_eq!(initial_role_loss.status(), StatusCode::OK);
+
+    let initial_charlie_removal = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/commits", encrypted_channel.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostCommitRequest {
+            epoch: 2,
+            prior_epoch: 1,
+            committer_device_id: alice_device_id.to_string(),
+            commit_blob: vec![0x79; 256],
+            welcome_blob: None,
+            welcome_device_id: None,
+            group_info_blob: Some(vec![0x7A; 128]),
+            membership_change: Some(MlsMembershipChange::Remove {
+                leaves: vec![MlsLeafRouting {
+                    leaf_index: 2,
+                    user_id: charlie_user_id.to_string(),
+                    device_id: charlie_device_id.to_string(),
+                }],
+            }),
+        },
+    )
+    .await;
+    assert_eq!(initial_charlie_removal.status(), StatusCode::OK);
+
+    let unauthorized_readd = PostCommitRequest {
+        epoch: 3,
+        prior_epoch: 2,
+        committer_device_id: alice_device_id.to_string(),
+        commit_blob: vec![0x7B; 256],
+        welcome_blob: Some(vec![0x7C; 256]),
+        welcome_device_id: Some(charlie_device_id.to_string()),
+        group_info_blob: Some(vec![0x7D; 128]),
+        membership_change: Some(MlsMembershipChange::Add {
+            leaf: MlsLeafRouting {
+                leaf_index: 2,
+                user_id: charlie_user_id.to_string(),
+                device_id: charlie_device_id.to_string(),
+            },
+        }),
+    };
+    let unauthorized_readd_response = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/commits", encrypted_channel.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &unauthorized_readd,
+    )
+    .await;
+    assert_eq!(unauthorized_readd_response.status(), StatusCode::FORBIDDEN);
+
+    let direct_unauthorized_readd = sqlx::query(
+        "INSERT INTO e2ee_group_leaves
+            (group_id, leaf_index, user_id, device_id, added_epoch)
+         VALUES ($1, 2, $2, $3, 3)",
+    )
+    .bind(&encrypted_channel.group_id)
+    .bind(charlie_user_id.to_string())
+    .bind(charlie_device_id.to_string())
+    .execute(&audit_pool)
+    .await
+    .expect_err("direct unauthorized encrypted-channel Add must fail closed");
+    assert_eq!(
+        direct_unauthorized_readd
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::constraint),
+        Some("e2ee_channel_leaf_requires_authorized_device")
+    );
+
+    let restore_permission = send_json(
+        &app,
+        "POST",
+        &format!(
+            "/guilds/{encrypted_workspace_id}/channels/{}/permission-overrides/member/{charlie_user_id}",
+            encrypted_channel.channel_id
+        ),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"allow": [], "deny": []}),
+    )
+    .await;
+    assert_eq!(restore_permission.status(), StatusCode::OK);
+
+    let direct_mismatched_device = sqlx::query(
+        "INSERT INTO e2ee_group_leaves
+            (group_id, leaf_index, user_id, device_id, added_epoch)
+         VALUES ($1, 2, $2, $3, 3)",
+    )
+    .bind(&encrypted_channel.group_id)
+    .bind(charlie_user_id.to_string())
+    .bind(bob_device_id.to_string())
+    .execute(&audit_pool)
+    .await
+    .expect_err("encrypted-channel Add must bind a device to its exact owner");
+    assert_eq!(
+        direct_mismatched_device
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::constraint),
+        Some("e2ee_channel_leaf_requires_authorized_device")
+    );
+
+    let authorized_readd = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/commits", encrypted_channel.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &unauthorized_readd,
+    )
+    .await;
+    assert_eq!(authorized_readd.status(), StatusCode::OK);
+    assert_eq!(
+        parse_json::<PostCommitResponse>(authorized_readd).await,
+        PostCommitResponse {
+            accepted: true,
+            epoch: 3
+        }
+    );
+    let authorized_readd_retry = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/commits", encrypted_channel.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &unauthorized_readd,
+    )
+    .await;
+    assert_eq!(authorized_readd_retry.status(), StatusCode::OK);
+    let restored_leaf: (String, String, i64) = sqlx::query_as(
+        "SELECT user_id, device_id, added_epoch
+         FROM e2ee_group_leaves
+         WHERE group_id = $1 AND leaf_index = 2",
+    )
+    .bind(&encrypted_channel.group_id)
+    .fetch_one(&audit_pool)
+    .await
+    .expect("authorized MLS Add should restore the exact routed leaf");
+    assert_eq!(
+        restored_leaf,
+        (
+            charlie_user_id.to_string(),
+            charlie_device_id.to_string(),
+            3
+        )
+    );
+
     let kick_bob = send_json(
         &app,
         "POST",
@@ -775,7 +937,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         Some(&alice_auth.access_token),
         "203.0.113.181",
         &PostMessageRequest {
-            epoch: 1,
+            epoch: 3,
             suite_id: 3,
             sender_device_id: alice_device_id.to_string(),
             retention_secs: None,
@@ -797,8 +959,8 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         Some(&alice_auth.access_token),
         "203.0.113.181",
         &PostCommitRequest {
-            epoch: 2,
-            prior_epoch: 1,
+            epoch: 4,
+            prior_epoch: 3,
             committer_device_id: alice_device_id.to_string(),
             commit_blob: vec![0x82; 256],
             welcome_blob: None,
@@ -819,7 +981,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         parse_json::<PostCommitResponse>(channel_remove_commit).await,
         PostCommitResponse {
             accepted: true,
-            epoch: 2
+            epoch: 4
         }
     );
     let completed_epoch: Option<i64> = sqlx::query_scalar(
@@ -832,7 +994,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .fetch_one(&audit_pool)
     .await
     .expect("completed channel reconciliation should remain auditable");
-    assert_eq!(completed_epoch, Some(2));
+    assert_eq!(completed_epoch, Some(4));
 
     let resumed_channel_message = send_json(
         &app,
@@ -841,7 +1003,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         Some(&alice_auth.access_token),
         "203.0.113.181",
         &PostMessageRequest {
-            epoch: 2,
+            epoch: 4,
             suite_id: 3,
             sender_device_id: alice_device_id.to_string(),
             retention_secs: None,
@@ -868,9 +1030,10 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     );
 
     let unreconciled_permission_loss = sqlx::query(
-        "INSERT INTO channel_permission_overrides
-            (guild_id, channel_id, target_kind, target_id, allow_mask, deny_mask)
-         VALUES ($1, $2, 1, $3, 0, 256)",
+        "UPDATE channel_permission_overrides
+         SET allow_mask = 0, deny_mask = 256
+         WHERE guild_id = $1 AND channel_id = $2
+           AND target_kind = 1 AND target_id = $3",
     )
     .bind(encrypted_workspace_id)
     .bind(&encrypted_channel.channel_id)
@@ -902,7 +1065,8 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         "SELECT r.leaf_index, r.completed_epoch, p.external_sender_index
          FROM e2ee_membership_reconciliations r
          JOIN e2ee_proposals p ON p.reconciliation_id = r.reconciliation_id
-         WHERE r.group_id = $1 AND r.target_user_id = $2",
+         WHERE r.group_id = $1 AND r.target_user_id = $2
+           AND r.completed_epoch IS NULL",
     )
     .bind(&encrypted_channel.group_id)
     .bind(charlie_user_id.to_string())
@@ -925,7 +1089,8 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         "SELECT r.leaf_index, r.completed_epoch, p.external_sender_index
          FROM e2ee_membership_reconciliations r
          JOIN e2ee_proposals p ON p.reconciliation_id = r.reconciliation_id
-         WHERE r.group_id = $1 AND r.target_user_id = $2",
+         WHERE r.group_id = $1 AND r.target_user_id = $2
+           AND r.completed_epoch IS NULL",
     )
     .bind(&encrypted_channel.group_id)
     .bind(charlie_user_id.to_string())
