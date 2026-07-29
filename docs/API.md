@@ -322,6 +322,10 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Response `204 No Content`
 - `POST /guilds/{guild_id}/roles/{role_id}/members/{user_id}`
   - Auth required; requires `manage_roles`
+  - Under `require_moderator_membership`, assigning the system moderator role
+    requires that user to already have an MLS leaf in every encrypted channel.
+    Promote only after the authenticated channel Add completes; otherwise the
+    request returns `409 e2ee_membership_reconciliation_pending`.
   - Response `200`: `{ "accepted": true }`
 - `DELETE /guilds/{guild_id}/roles/{role_id}/members/{user_id}`
   - Auth required; requires `manage_roles`
@@ -335,6 +339,14 @@ a member-authored commit applies them, encrypted sends return `409
 e2ee_membership_reconciliation_pending`. A permission change never falls back
 to plaintext, and direct database mutations without the exact pending
 reconciliations are rejected.
+
+Under `require_moderator_membership`, the visible system moderator roster is a
+database-enforced channel invariant. Permission changes cannot make a
+moderator ineligible for an encrypted channel, and an MLS commit cannot remove
+that moderator's final leaf while the role remains assigned. These operations
+return `409 e2ee_membership_reconciliation_pending`; kicking, banning, or
+unassigning the moderator role removes the policy requirement through the
+normal authenticated structural path.
 
 ### Messages
 
@@ -741,6 +753,10 @@ Atomically orders one opaque MLS commit for an authenticated conversation member
   must already be a structural workspace member, and the exact added device
   must be active, certified, owned by that user, and bound to the Welcome.
   Structural workspace membership alone never creates an MLS leaf.
+- Under `require_moderator_membership`, a Remove cannot evict the final leaf of
+  a user who still holds the system moderator role. The role must first be
+  removed, or the user must leave the workspace through the normal
+  reconciliation path.
 - Commits must advance exactly one epoch. A row lock makes the first valid
   commit for an epoch the sole winner; competitors receive
   `409 { "error": "epoch_conflict" }` and must rebase client-side.

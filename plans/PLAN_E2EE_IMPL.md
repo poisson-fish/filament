@@ -491,8 +491,13 @@ active device ownership, and a recipient-bound Welcome; v27 database triggers
 independently enforce the same leaf boundary, including atomic bootstrap
 leaves staged before the channel binding. Migration v28 separates structural
 workspace joins from cryptographic channel membership while retaining the
-exact signed-Remove guard for structural departures. Narrower initial audiences
-and large-group performance work remain fail closed or unavailable.
+exact signed-Remove guard for structural departures. Migration v29 enforces
+`require_moderator_membership` as a visible cryptographic roster invariant:
+moderator promotion requires prior membership in every encrypted channel,
+permission mutations cannot make a moderator ineligible, and member-authored
+commits cannot remove the moderator's final leaf while the role remains
+assigned. Narrower initial audiences and large-group performance work remain
+fail closed or unavailable.
 
 ---
 
@@ -1499,6 +1504,12 @@ half-provisioned encrypted channel:
 - Migration v28 permits structural workspace joins without changing encrypted
   conversation membership or leaf routing. The database continues to require
   exact signed Remove reconciliation for structural departures.
+- Migration v29 enforces `require_moderator_membership` across hierarchical and
+  legacy role mutations, channel overrides, and MLS leaf changes. A newly
+  joined member must complete the ordinary authenticated MLS Add before
+  promotion to the system moderator role. While the role remains assigned,
+  permission changes cannot make the moderator ineligible and commits cannot
+  remove the user's final channel leaf.
 
 This increment intentionally does not claim narrower initial
 permission-overwrite audiences, the 5,000-leaf target, or large-group

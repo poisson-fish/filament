@@ -65,6 +65,18 @@ use crate::server::{
     },
 };
 
+fn map_guild_transaction_error(error: &sqlx::Error) -> AuthFailure {
+    if error
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::constraint)
+        == Some("e2ee_moderator_membership_required")
+    {
+        AuthFailure::E2eeMembershipReconciliationPending
+    } else {
+        AuthFailure::Internal
+    }
+}
+
 pub(crate) async fn create_guild(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -123,7 +135,9 @@ pub(crate) async fn create_guild(
         seed_hierarchical_permissions_for_new_guild(&mut tx, &guild_id, &creator_user_id)
             .await
             .map_err(|_| AuthFailure::Internal)?;
-        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+        tx.commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
 
         return Ok(Json(GuildResponse {
             guild_id,
@@ -337,7 +351,9 @@ pub(crate) async fn update_guild(
         if update.rows_affected() == 0 {
             return Err(AuthFailure::NotFound);
         }
-        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+        tx.commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
 
         GuildResponse {
             guild_id: path.guild_id.clone(),
@@ -1810,7 +1826,7 @@ pub(crate) async fn update_guild_role(
         transaction
             .commit()
             .await
-            .map_err(|_| AuthFailure::Internal)?;
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut role_maps = state.membership_store.guild_roles().write().await;
         let role = role_maps
@@ -1967,7 +1983,7 @@ pub(crate) async fn delete_guild_role(
         transaction
             .commit()
             .await
-            .map_err(|_| AuthFailure::Internal)?;
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut role_maps = state.membership_store.guild_roles().write().await;
         let roles = role_maps
@@ -2083,7 +2099,9 @@ pub(crate) async fn reorder_guild_roles(
             .await
             .map_err(|_| AuthFailure::Internal)?;
         }
-        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+        tx.commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut role_maps = state.membership_store.guild_roles().write().await;
         let roles = role_maps
@@ -2268,7 +2286,7 @@ pub(crate) async fn assign_guild_role(
         transaction
             .commit()
             .await
-            .map_err(|_| AuthFailure::Internal)?;
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
@@ -2414,7 +2432,7 @@ pub(crate) async fn unassign_guild_role(
         transaction
             .commit()
             .await
-            .map_err(|_| AuthFailure::Internal)?;
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         if is_workspace_owner_role(&role)
             && workspace_owner_count_in_memory(&state, &path.guild_id).await? <= 1
@@ -2828,7 +2846,9 @@ pub(crate) async fn upsert_guild_ip_bans_by_user(
                 .map_err(|_| AuthFailure::Internal)?;
                 created_ids.push(ban_id);
             }
-            tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+            tx.commit()
+                .await
+                .map_err(|error| map_guild_transaction_error(&error))?;
             created_ids
         }
     } else {
@@ -3884,7 +3904,7 @@ pub(crate) async fn update_member_role(
         transaction
             .commit()
             .await
-            .map_err(|_| AuthFailure::Internal)?;
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
@@ -4052,7 +4072,7 @@ pub(crate) async fn set_channel_role_override(
         transaction
             .commit()
             .await
-            .map_err(|_| AuthFailure::Internal)?;
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
@@ -4185,7 +4205,7 @@ async fn apply_channel_permission_override(
         transaction
             .commit()
             .await
-            .map_err(|_| AuthFailure::Internal)?;
+            .map_err(|error| map_guild_transaction_error(&error))?;
         return Ok(pending);
     }
     let mut overrides_map = state
@@ -4370,7 +4390,7 @@ async fn remove_guild_member_db(
     transaction
         .commit()
         .await
-        .map_err(|_| AuthFailure::Internal)?;
+        .map_err(|error| map_guild_transaction_error(&error))?;
     Ok(pending)
 }
 
@@ -4507,7 +4527,9 @@ async fn persist_member_ban(
         .execute(&mut *tx)
         .await
         .map_err(|_| AuthFailure::Internal)?;
-        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+        tx.commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;

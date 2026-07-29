@@ -1045,6 +1045,52 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .expect("workspace rejoin must not grant encrypted conversation membership");
     assert_eq!(implicit_conversation_membership, 0);
 
+    let moderator_role_id: String = sqlx::query_scalar(
+        "SELECT role_id
+         FROM guild_roles
+         WHERE guild_id = $1 AND system_key = 'moderator'",
+    )
+    .bind(encrypted_workspace_id)
+    .fetch_one(&audit_pool)
+    .await
+    .expect("workspace moderator role should exist");
+    let premature_moderator_promotion = send_json(
+        &app,
+        "POST",
+        &format!(
+            "/guilds/{encrypted_workspace_id}/roles/{moderator_role_id}/members/{bob_user_id}"
+        ),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({}),
+    )
+    .await;
+    assert_eq!(premature_moderator_promotion.status(), StatusCode::CONFLICT);
+    let premature_moderator_promotion: serde_json::Value =
+        parse_json(premature_moderator_promotion).await;
+    assert_eq!(
+        premature_moderator_promotion["error"],
+        serde_json::Value::from("e2ee_membership_reconciliation_pending")
+    );
+
+    let direct_moderator_promotion = sqlx::query(
+        "INSERT INTO guild_role_members
+            (guild_id, role_id, user_id, assigned_at_unix)
+         VALUES ($1, $2, $3, 1)",
+    )
+    .bind(encrypted_workspace_id)
+    .bind(&moderator_role_id)
+    .bind(bob_user_id.to_string())
+    .execute(&audit_pool)
+    .await
+    .expect_err("moderator promotion before the MLS Add must fail closed");
+    assert_eq!(
+        direct_moderator_promotion
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::constraint),
+        Some("e2ee_moderator_membership_required")
+    );
+
     let pre_add_channel_message = send_json(
         &app,
         "POST",
@@ -1129,6 +1175,80 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     )
     .await;
     assert_eq!(post_add_channel_message.status(), StatusCode::OK);
+
+    let moderator_promotion = send_json(
+        &app,
+        "POST",
+        &format!(
+            "/guilds/{encrypted_workspace_id}/roles/{moderator_role_id}/members/{bob_user_id}"
+        ),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({}),
+    )
+    .await;
+    assert_eq!(moderator_promotion.status(), StatusCode::OK);
+
+    let moderator_permission_loss = send_json(
+        &app,
+        "POST",
+        &format!(
+            "/guilds/{encrypted_workspace_id}/channels/{}/permission-overrides/member/{bob_user_id}",
+            encrypted_channel.channel_id
+        ),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"allow": [], "deny": ["create_message"]}),
+    )
+    .await;
+    assert_eq!(moderator_permission_loss.status(), StatusCode::CONFLICT);
+    let moderator_permission_loss: serde_json::Value = parse_json(moderator_permission_loss).await;
+    assert_eq!(
+        moderator_permission_loss["error"],
+        serde_json::Value::from("e2ee_membership_reconciliation_pending")
+    );
+
+    let moderator_remove = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/commits", encrypted_channel.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostCommitRequest {
+            epoch: 6,
+            prior_epoch: 5,
+            committer_device_id: alice_device_id.to_string(),
+            commit_blob: vec![0x8A; 256],
+            welcome_blob: None,
+            welcome_device_id: None,
+            group_info_blob: Some(vec![0x8B; 128]),
+            membership_change: Some(MlsMembershipChange::Remove {
+                leaves: vec![MlsLeafRouting {
+                    leaf_index: 1,
+                    user_id: bob_user_id.to_string(),
+                    device_id: bob_device_id.to_string(),
+                }],
+            }),
+        },
+    )
+    .await;
+    assert_eq!(moderator_remove.status(), StatusCode::CONFLICT);
+    let moderator_remove: serde_json::Value = parse_json(moderator_remove).await;
+    assert_eq!(
+        moderator_remove["error"],
+        serde_json::Value::from("e2ee_membership_reconciliation_pending")
+    );
+    let retained_moderator_leaf: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM e2ee_group_leaves
+         WHERE group_id = $1 AND user_id = $2",
+    )
+    .bind(&encrypted_channel.group_id)
+    .bind(bob_user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("moderator leaf should remain queryable");
+    assert_eq!(retained_moderator_leaf, 1);
 
     let unreconciled_permission_loss = sqlx::query(
         "UPDATE channel_permission_overrides

@@ -24,6 +24,7 @@ use self::migrations::v25_e2ee_channel_membership::apply_e2ee_channel_membership
 use self::migrations::v26_e2ee_channel_authorization::apply_e2ee_channel_authorization_schema;
 use self::migrations::v27_e2ee_channel_adds::apply_e2ee_channel_add_schema;
 use self::migrations::v28_e2ee_channel_workspace_joins::apply_e2ee_channel_workspace_join_schema;
+use self::migrations::v29_e2ee_channel_moderators::apply_e2ee_channel_moderator_schema;
 use self::migrations::v2_attachment_schema::apply_attachment_schema;
 use self::migrations::v3_social_graph_schema::apply_social_graph_schema;
 use self::migrations::v4_moderation_audit_schema::apply_moderation_audit_schema;
@@ -86,6 +87,7 @@ pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure
             apply_e2ee_channel_authorization_schema(&mut tx).await?;
             apply_e2ee_channel_add_schema(&mut tx).await?;
             apply_e2ee_channel_workspace_join_schema(&mut tx).await?;
+            apply_e2ee_channel_moderator_schema(&mut tx).await?;
 
             tx.commit().await?;
 

@@ -997,6 +997,18 @@ fn map_provision_write_error(error: &sqlx::Error) -> AuthFailure {
     }
 }
 
+fn map_e2ee_transaction_error(error: &sqlx::Error) -> AuthFailure {
+    if error
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::constraint)
+        == Some("e2ee_moderator_membership_required")
+    {
+        AuthFailure::E2eeMembershipReconciliationPending
+    } else {
+        AuthFailure::Internal
+    }
+}
+
 async fn insert_initial_group_and_commit(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     provision: &InitialProvision<'_>,
@@ -5148,7 +5160,7 @@ pub(crate) async fn post_group_commit(
     transaction
         .commit()
         .await
-        .map_err(|_| AuthFailure::Internal)?;
+        .map_err(|error| map_e2ee_transaction_error(&error))?;
 
     emit_mls_commit_notifications(
         &state,
