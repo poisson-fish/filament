@@ -885,6 +885,7 @@ mod tests {
             GuildRecord {
                 name: String::from("encrypted"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: UserId::new(),
                 default_join_role_id: None,
                 members: HashMap::new(),
@@ -919,6 +920,7 @@ mod tests {
             GuildRecord {
                 name: String::from("phase7"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: guild_creator,
                 default_join_role_id: None,
                 members: HashMap::new(),
@@ -948,6 +950,7 @@ mod tests {
             GuildRecord {
                 name: String::from("matrix"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: guild_creator,
                 default_join_role_id: None,
                 members: HashMap::from([(actor_user_id, Role::Member)]),
@@ -1043,6 +1046,7 @@ mod tests {
             GuildRecord {
                 name: String::from("owner-bypass"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: guild_creator,
                 default_join_role_id: None,
                 members: HashMap::from([(owner_user_id, Role::Owner)]),

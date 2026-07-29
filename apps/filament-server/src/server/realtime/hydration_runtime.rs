@@ -376,6 +376,7 @@ mod tests {
         GuildRecord {
             name: String::from("guild"),
             visibility: GuildVisibility::Private,
+            encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
             created_by_user_id: author,
             default_join_role_id: None,
             members: HashMap::from([(author, Role::Owner)]),

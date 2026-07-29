@@ -198,6 +198,7 @@ pub(crate) struct CreateGuildRequest {
 pub(crate) struct UpdateGuildRequest {
     pub(crate) name: Option<String>,
     pub(crate) visibility: Option<GuildVisibility>,
+    pub(crate) encrypted_channel_policy: Option<filament_core::EncryptedChannelPolicy>,
 }
 
 #[derive(Debug, Serialize)]
@@ -205,6 +206,7 @@ pub(crate) struct GuildResponse {
     pub(crate) guild_id: String,
     pub(crate) name: String,
     pub(crate) visibility: GuildVisibility,
+    pub(crate) encrypted_channel_policy: filament_core::EncryptedChannelPolicy,
 }
 
 #[derive(Debug, Serialize)]

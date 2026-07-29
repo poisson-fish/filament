@@ -5,6 +5,7 @@ import {
 import {
   type ChannelId,
   type ChannelRecord,
+  type EncryptedChannelPolicy,
   type GuildId,
   type GuildName,
   type GuildVisibility,
@@ -104,6 +105,7 @@ export interface WorkspaceUpdatePayload {
   updatedFields: {
     name?: GuildName;
     visibility?: GuildVisibility;
+    encryptedChannelPolicy?: EncryptedChannelPolicy;
   };
   updatedAtUnix: number;
 }

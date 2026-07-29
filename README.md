@@ -76,7 +76,8 @@ Design principles:
   - Rebuild/reconcile flows from Postgres
 - Media:
   - Channel presentation kinds: `text` and `voice`; immutable confidentiality
-    modes: `plaintext` and `encrypted` (Phase 6 provisioning remains gated)
+    modes: `plaintext` and `encrypted`, with a default-disabled typed workspace
+    policy (Phase 6 provisioning remains gated)
   - LiveKit integration for voice/video/screen share
   - Short-lived, scoped, permission-limited media tokens
   - Explicit RTC UX states and troubleshooting for reconnect, permission denial, and token/session expiry

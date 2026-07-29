@@ -13,6 +13,7 @@ pub(crate) mod v1_hierarchical_permissions;
 pub(crate) mod v20_e2ee_commit_idempotency;
 pub(crate) mod v21_e2ee_message_idempotency;
 pub(crate) mod v22_e2ee_channel_mode;
+pub(crate) mod v23_e2ee_channel_policy;
 pub(crate) mod v2_attachment_schema;
 pub(crate) mod v3_social_graph_schema;
 pub(crate) mod v4_moderation_audit_schema;

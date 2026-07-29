@@ -38,6 +38,8 @@ struct WorkspaceUpdateFieldsPayload<'a> {
     name: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     visibility: Option<GuildVisibility>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encrypted_channel_policy: Option<filament_core::EncryptedChannelPolicy>,
 }
 
 #[derive(Serialize)]
@@ -221,6 +223,7 @@ pub(crate) fn try_workspace_update(
     guild_id: &str,
     name: Option<&str>,
     visibility: Option<GuildVisibility>,
+    encrypted_channel_policy: Option<filament_core::EncryptedChannelPolicy>,
     updated_at_unix: i64,
     actor_user_id: Option<UserId>,
 ) -> anyhow::Result<GatewayEvent> {
@@ -228,7 +231,11 @@ pub(crate) fn try_workspace_update(
         WORKSPACE_UPDATE_EVENT,
         WorkspaceUpdatePayload {
             guild_id,
-            updated_fields: WorkspaceUpdateFieldsPayload { name, visibility },
+            updated_fields: WorkspaceUpdateFieldsPayload {
+                name,
+                visibility,
+                encrypted_channel_policy,
+            },
             updated_at_unix,
             actor_user_id: actor_user_id.map(|id| id.to_string()),
         },
@@ -567,6 +574,7 @@ mod tests {
                 "guild-1",
                 Some("Guild Prime"),
                 Some(GuildVisibility::Public),
+                Some(filament_core::EncryptedChannelPolicy::RequireModeratorMembership),
                 123,
                 None,
             )
@@ -579,6 +587,10 @@ mod tests {
         assert_eq!(
             payload["updated_fields"]["visibility"],
             Value::from("public")
+        );
+        assert_eq!(
+            payload["updated_fields"]["encrypted_channel_policy"],
+            Value::from("require_moderator_membership")
         );
     }
 

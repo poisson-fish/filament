@@ -235,7 +235,10 @@ All events use the versioned envelope:
 - Visibility: authorized guild members
 - Minimum payload:
   - `guild_id`
-  - `updated_fields` (`name`, `visibility`, and future safe workspace settings)
+  - `updated_fields` (one or more of `name`, `visibility`, or
+    `encrypted_channel_policy`)
+  - `encrypted_channel_policy`, when present, is exactly `disabled`,
+    `require_moderator_membership`, or `unrestricted`
   - `updated_at_unix`
 - Optional:
   - `actor_user_id`

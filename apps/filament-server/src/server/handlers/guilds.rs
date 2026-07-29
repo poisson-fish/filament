@@ -11,7 +11,8 @@ use axum::{
 };
 use filament_core::{
     can_assign_role_legacy, can_moderate_member_legacy, has_permission_legacy, ChannelKind,
-    ChannelName, ChannelPermissionOverwrite, ChannelType, GuildName, Permission, Role, UserId,
+    ChannelName, ChannelPermissionOverwrite, ChannelType, EncryptedChannelPolicy, GuildName,
+    Permission, Role, UserId,
 };
 use sqlx::Row;
 use ulid::Ulid;
@@ -23,6 +24,7 @@ use crate::server::{
     core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
     db::{
         channel_kind_from_i16, channel_kind_to_i16, channel_type_from_i16, channel_type_to_i16,
+        encrypted_channel_policy_from_i16, encrypted_channel_policy_to_i16,
         permission_set_from_list, permission_set_to_i64, role_to_i16,
         seed_hierarchical_permissions_for_new_guild, visibility_from_i16, visibility_to_i16,
     },
@@ -123,6 +125,7 @@ pub(crate) async fn create_guild(
             guild_id,
             name: name.as_str().to_owned(),
             visibility,
+            encrypted_channel_policy: EncryptedChannelPolicy::Disabled,
         }));
     }
 
@@ -149,6 +152,7 @@ pub(crate) async fn create_guild(
         GuildRecord {
             name: name.as_str().to_owned(),
             visibility,
+            encrypted_channel_policy: EncryptedChannelPolicy::Disabled,
             created_by_user_id: auth.user_id,
             default_join_role_id: None,
             members,
@@ -161,6 +165,7 @@ pub(crate) async fn create_guild(
         guild_id,
         name: name.as_str().to_owned(),
         visibility,
+        encrypted_channel_policy: EncryptedChannelPolicy::Disabled,
     }))
 }
 
@@ -174,7 +179,7 @@ pub(crate) async fn list_guilds(
 
     if let Some(pool) = &state.db_pool {
         let rows = sqlx::query(
-            "SELECT g.guild_id, g.name, g.visibility
+            "SELECT g.guild_id, g.name, g.visibility, g.encrypted_channel_policy
              FROM guild_members gm
              JOIN guilds g ON g.guild_id = gm.guild_id
              LEFT JOIN guild_bans gb ON gb.guild_id = gm.guild_id AND gb.user_id = gm.user_id
@@ -195,10 +200,16 @@ pub(crate) async fn list_guilds(
                 .try_get("visibility")
                 .map_err(|_| AuthFailure::Internal)?;
             let visibility = visibility_from_i16(visibility_raw).ok_or(AuthFailure::Internal)?;
+            let policy_raw: i16 = row
+                .try_get("encrypted_channel_policy")
+                .map_err(|_| AuthFailure::Internal)?;
+            let encrypted_channel_policy =
+                encrypted_channel_policy_from_i16(policy_raw).ok_or(AuthFailure::Internal)?;
             guilds.push(GuildResponse {
                 guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
                 name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
                 visibility,
+                encrypted_channel_policy,
             });
         }
         return Ok(Json(GuildListResponse { guilds }));
@@ -218,6 +229,7 @@ pub(crate) async fn list_guilds(
                 guild_id: guild_id.clone(),
                 name: guild.name.clone(),
                 visibility: guild.visibility,
+                encrypted_channel_policy: guild.encrypted_channel_policy,
             })
         })
         .collect::<Vec<_>>();
@@ -245,20 +257,28 @@ pub(crate) async fn update_guild(
         .transpose()
         .map_err(|_| AuthFailure::InvalidRequest)?;
     let visibility = payload.visibility;
-    if name.is_none() && visibility.is_none() {
+    let encrypted_channel_policy = payload.encrypted_channel_policy;
+    if name.is_none() && visibility.is_none() && encrypted_channel_policy.is_none() {
         return Err(AuthFailure::InvalidRequest);
     }
 
     let mut changed_name: Option<String> = None;
     let mut changed_visibility: Option<GuildVisibility> = None;
+    let mut changed_encrypted_channel_policy: Option<EncryptedChannelPolicy> = None;
     let updated_at_unix = now_unix();
     let response = if let Some(pool) = &state.db_pool {
-        let current = sqlx::query("SELECT name, visibility FROM guilds WHERE guild_id = $1")
-            .bind(&path.guild_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|_| AuthFailure::Internal)?
-            .ok_or(AuthFailure::NotFound)?;
+        let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+        let current = sqlx::query(
+            "SELECT name, visibility, encrypted_channel_policy
+             FROM guilds
+             WHERE guild_id = $1
+             FOR UPDATE",
+        )
+        .bind(&path.guild_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .ok_or(AuthFailure::NotFound)?;
 
         let current_name: String = current.try_get("name").map_err(|_| AuthFailure::Internal)?;
         let current_visibility_raw: i16 = current
@@ -266,35 +286,60 @@ pub(crate) async fn update_guild(
             .map_err(|_| AuthFailure::Internal)?;
         let current_visibility =
             visibility_from_i16(current_visibility_raw).ok_or(AuthFailure::Internal)?;
+        let current_policy_raw: i16 = current
+            .try_get("encrypted_channel_policy")
+            .map_err(|_| AuthFailure::Internal)?;
+        let current_policy =
+            encrypted_channel_policy_from_i16(current_policy_raw).ok_or(AuthFailure::Internal)?;
 
         let next_name = name.clone().unwrap_or(current_name.clone());
         let next_visibility = visibility.unwrap_or(current_visibility);
+        let next_policy = encrypted_channel_policy.unwrap_or(current_policy);
         if next_name != current_name {
             changed_name = Some(next_name.clone());
         }
         if next_visibility != current_visibility {
             changed_visibility = Some(next_visibility);
         }
+        if next_policy != current_policy {
+            let encrypted_channel_exists = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (
+                    SELECT 1 FROM channels
+                    WHERE guild_id = $1 AND channel_type = 1
+                 )",
+            )
+            .bind(&path.guild_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|_| AuthFailure::Internal)?;
+            if encrypted_channel_exists {
+                return Err(AuthFailure::E2eeMembershipReconciliationPending);
+            }
+            changed_encrypted_channel_policy = Some(next_policy);
+        }
 
         let update = sqlx::query(
             "UPDATE guilds
-             SET name = $2, visibility = $3
+             SET name = $2, visibility = $3, encrypted_channel_policy = $4
              WHERE guild_id = $1",
         )
         .bind(&path.guild_id)
         .bind(&next_name)
         .bind(visibility_to_i16(next_visibility))
-        .execute(pool)
+        .bind(encrypted_channel_policy_to_i16(next_policy))
+        .execute(&mut *tx)
         .await
         .map_err(|_| AuthFailure::Internal)?;
         if update.rows_affected() == 0 {
             return Err(AuthFailure::NotFound);
         }
+        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
 
         GuildResponse {
             guild_id: path.guild_id.clone(),
             name: next_name,
             visibility: next_visibility,
+            encrypted_channel_policy: next_policy,
         }
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
@@ -302,6 +347,15 @@ pub(crate) async fn update_guild(
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
 
+        if encrypted_channel_policy.is_some_and(|next_policy| {
+            next_policy != guild.encrypted_channel_policy
+                && guild
+                    .channels
+                    .values()
+                    .any(|channel| channel.channel_type.is_encrypted())
+        }) {
+            return Err(AuthFailure::E2eeMembershipReconciliationPending);
+        }
         if let Some(next_name) = name {
             if next_name != guild.name {
                 changed_name = Some(next_name.clone());
@@ -314,19 +368,30 @@ pub(crate) async fn update_guild(
                 guild.visibility = next_visibility;
             }
         }
+        if let Some(next_policy) = encrypted_channel_policy {
+            if next_policy != guild.encrypted_channel_policy {
+                changed_encrypted_channel_policy = Some(next_policy);
+                guild.encrypted_channel_policy = next_policy;
+            }
+        }
 
         GuildResponse {
             guild_id: path.guild_id.clone(),
             name: guild.name.clone(),
             visibility: guild.visibility,
+            encrypted_channel_policy: guild.encrypted_channel_policy,
         }
     };
 
-    if changed_name.is_some() || changed_visibility.is_some() {
+    if changed_name.is_some()
+        || changed_visibility.is_some()
+        || changed_encrypted_channel_policy.is_some()
+    {
         let event = match gateway_events::try_workspace_update(
             &path.guild_id,
             changed_name.as_deref(),
             changed_visibility,
+            changed_encrypted_channel_policy,
             updated_at_unix,
             Some(auth.user_id),
         ) {
@@ -3333,6 +3398,32 @@ pub(crate) async fn list_guild_channels(
     Ok(Json(ChannelListResponse { channels }))
 }
 
+async fn encrypted_channel_policy_for_guild(
+    state: &AppState,
+    guild_id: &str,
+) -> Result<EncryptedChannelPolicy, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let raw = sqlx::query_scalar::<_, i16>(
+            "SELECT encrypted_channel_policy FROM guilds WHERE guild_id = $1",
+        )
+        .bind(guild_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .ok_or(AuthFailure::NotFound)?;
+        return encrypted_channel_policy_from_i16(raw).ok_or(AuthFailure::Internal);
+    }
+
+    state
+        .membership_store
+        .guilds()
+        .read()
+        .await
+        .get(guild_id)
+        .map(|guild| guild.encrypted_channel_policy)
+        .ok_or(AuthFailure::NotFound)
+}
+
 pub(crate) async fn create_channel(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -3363,6 +3454,10 @@ pub(crate) async fn create_channel(
         return Err(AuthFailure::Forbidden);
     }
     if channel_type == ChannelType::Encrypted {
+        let policy = encrypted_channel_policy_for_guild(&state, &path.guild_id).await?;
+        if !policy.allows_encrypted_channels() {
+            return Err(AuthFailure::E2eeChannelPolicyDisabled);
+        }
         // Encrypted-channel creation must atomically bind the channel,
         // authorized audience, initial MLS commit, Welcome recipients, and
         // GroupInfo. The ordinary CRUD route cannot safely create that state.
@@ -4544,6 +4639,7 @@ mod tests {
             GuildRecord {
                 name: String::from("default-role-test"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: user_id,
                 default_join_role_id: Some(role_id.clone()),
                 members: HashMap::from([(user_id, Role::Member)]),

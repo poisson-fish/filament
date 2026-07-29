@@ -25,6 +25,8 @@ pub enum DomainError {
     InvalidChannelKind,
     #[error("channel type is invalid")]
     InvalidChannelType,
+    #[error("encrypted channel policy is invalid")]
+    InvalidEncryptedChannelPolicy,
     #[error("username is invalid")]
     InvalidUsername,
     #[error("user id is invalid")]
@@ -266,6 +268,54 @@ impl TryFrom<String> for ChannelType {
             "plaintext" => Ok(Self::Plaintext),
             "encrypted" => Ok(Self::Encrypted),
             _ => Err(DomainError::InvalidChannelType),
+        }
+    }
+}
+
+/// Workspace policy controlling whether encrypted guild channels may be
+/// provisioned and whether visible moderator membership is required.
+///
+/// The default is deliberately fail-closed: existing workspaces remain
+/// plaintext-only until an authorized operator explicitly enables a policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EncryptedChannelPolicy {
+    #[default]
+    Disabled,
+    RequireModeratorMembership,
+    Unrestricted,
+}
+
+impl EncryptedChannelPolicy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::RequireModeratorMembership => "require_moderator_membership",
+            Self::Unrestricted => "unrestricted",
+        }
+    }
+
+    #[must_use]
+    pub const fn allows_encrypted_channels(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    #[must_use]
+    pub const fn requires_moderator_membership(self) -> bool {
+        matches!(self, Self::RequireModeratorMembership)
+    }
+}
+
+impl TryFrom<String> for EncryptedChannelPolicy {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "disabled" => Ok(Self::Disabled),
+            "require_moderator_membership" => Ok(Self::RequireModeratorMembership),
+            "unrestricted" => Ok(Self::Unrestricted),
+            _ => Err(DomainError::InvalidEncryptedChannelPolicy),
         }
     }
 }
@@ -936,8 +986,8 @@ mod tests {
         apply_channel_overwrite_legacy, base_permissions_legacy, can_assign_role_legacy,
         can_moderate_member_legacy, has_permission_legacy, project_name, role_rank,
         tokenize_markdown, ChannelKind, ChannelName, ChannelPermissionOverwrite, ChannelType,
-        DomainError, GuildName, LiveKitIdentity, LiveKitRoomName, MarkdownToken, Permission,
-        PermissionSet, ProfileAbout, Role, UserId, Username,
+        DomainError, EncryptedChannelPolicy, GuildName, LiveKitIdentity, LiveKitRoomName,
+        MarkdownToken, Permission, PermissionSet, ProfileAbout, Role, UserId, Username,
     };
 
     #[test]
@@ -1002,6 +1052,30 @@ mod tests {
             DomainError::InvalidChannelType
         );
         assert!(serde_json::from_str::<ChannelType>("\"ENCRYPTED\"").is_err());
+    }
+
+    #[test]
+    fn encrypted_channel_policy_is_strict_and_defaults_disabled() {
+        assert_eq!(
+            EncryptedChannelPolicy::default(),
+            EncryptedChannelPolicy::Disabled
+        );
+        assert!(!EncryptedChannelPolicy::Disabled.allows_encrypted_channels());
+        assert!(EncryptedChannelPolicy::Unrestricted.allows_encrypted_channels());
+        assert!(EncryptedChannelPolicy::RequireModeratorMembership.requires_moderator_membership());
+        assert_eq!(
+            EncryptedChannelPolicy::RequireModeratorMembership.as_str(),
+            "require_moderator_membership"
+        );
+        assert_eq!(
+            EncryptedChannelPolicy::try_from(String::from("unrestricted")).unwrap(),
+            EncryptedChannelPolicy::Unrestricted
+        );
+        assert_eq!(
+            EncryptedChannelPolicy::try_from(String::from("enabled")).unwrap_err(),
+            DomainError::InvalidEncryptedChannelPolicy
+        );
+        assert!(serde_json::from_str::<EncryptedChannelPolicy>("\"require_moderator\"").is_err());
     }
 
     #[test]

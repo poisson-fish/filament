@@ -32,6 +32,7 @@ async fn gateway_broadcasts_message_to_subscribed_connection() {
     let mut guild = GuildRecord {
         name: String::from("Gateway Test"),
         visibility: GuildVisibility::Private,
+        encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
         created_by_user_id: user_id,
         default_join_role_id: None,
         members: HashMap::new(),

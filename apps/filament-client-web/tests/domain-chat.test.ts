@@ -100,6 +100,7 @@ describe("chat domain invariants", () => {
     expect(workspace.channels[0]?.name).toBe("incident-room");
     expect(workspace.channels[0]?.kind).toBe("voice");
     expect(workspace.visibility).toBe("public");
+    expect(workspace.encryptedChannelPolicy).toBe("disabled");
   });
 
   it("defaults cached workspace visibility to private when omitted", () => {
@@ -109,8 +110,28 @@ describe("chat domain invariants", () => {
       channels: [{ channelId: "01ARZ3NDEKTSV4RRFFQ69G5FAV", name: "incident-room" }],
     });
     expect(workspace.visibility).toBe("private");
+    expect(workspace.encryptedChannelPolicy).toBe("disabled");
     expect(workspace.channels[0]?.kind).toBe("text");
     expect(workspace.channels[0]?.channelType).toBe("plaintext");
+  });
+
+  it("preserves strict encrypted channel workspace policy", () => {
+    const workspace = workspaceFromStorage({
+      guildId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      guildName: "Security",
+      visibility: "private",
+      encryptedChannelPolicy: "require_moderator_membership",
+      channels: [],
+    });
+    expect(workspace.encryptedChannelPolicy).toBe("require_moderator_membership");
+    expect(() =>
+      workspaceFromStorage({
+        guildId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        guildName: "Security",
+        encryptedChannelPolicy: "enabled",
+        channels: [],
+      }),
+    ).toThrow();
   });
 
   it("preserves encrypted channel type in the bounded workspace cache", () => {

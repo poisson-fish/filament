@@ -1,6 +1,6 @@
 mod migrations;
 
-use filament_core::{ChannelKind, Permission, PermissionSet, Role};
+use filament_core::{ChannelKind, EncryptedChannelPolicy, Permission, PermissionSet, Role};
 
 use self::migrations::v10_role_color_schema::apply_role_color_schema;
 use self::migrations::v11_profile_banner_schema::apply_profile_banner_schema;
@@ -18,6 +18,7 @@ pub(crate) use self::migrations::v1_hierarchical_permissions::seed_hierarchical_
 use self::migrations::v20_e2ee_commit_idempotency::apply_e2ee_commit_idempotency_schema;
 use self::migrations::v21_e2ee_message_idempotency::apply_e2ee_message_idempotency_schema;
 use self::migrations::v22_e2ee_channel_mode::apply_e2ee_channel_mode_schema;
+use self::migrations::v23_e2ee_channel_policy::apply_e2ee_channel_policy_schema;
 use self::migrations::v2_attachment_schema::apply_attachment_schema;
 use self::migrations::v3_social_graph_schema::apply_social_graph_schema;
 use self::migrations::v4_moderation_audit_schema::apply_moderation_audit_schema;
@@ -74,6 +75,7 @@ pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure
             apply_e2ee_commit_idempotency_schema(&mut tx).await?;
             apply_e2ee_message_idempotency_schema(&mut tx).await?;
             apply_e2ee_channel_mode_schema(&mut tx).await?;
+            apply_e2ee_channel_policy_schema(&mut tx).await?;
 
             tx.commit().await?;
 
@@ -116,6 +118,25 @@ pub(crate) fn visibility_from_i16(value: i16) -> Option<GuildVisibility> {
     match value {
         0 => Some(GuildVisibility::Private),
         1 => Some(GuildVisibility::Public),
+        _ => None,
+    }
+}
+
+pub(crate) const fn encrypted_channel_policy_to_i16(policy: EncryptedChannelPolicy) -> i16 {
+    match policy {
+        EncryptedChannelPolicy::Disabled => 0,
+        EncryptedChannelPolicy::RequireModeratorMembership => 1,
+        EncryptedChannelPolicy::Unrestricted => 2,
+    }
+}
+
+pub(crate) const fn encrypted_channel_policy_from_i16(
+    value: i16,
+) -> Option<EncryptedChannelPolicy> {
+    match value {
+        0 => Some(EncryptedChannelPolicy::Disabled),
+        1 => Some(EncryptedChannelPolicy::RequireModeratorMembership),
+        2 => Some(EncryptedChannelPolicy::Unrestricted),
         _ => None,
     }
 }
@@ -186,7 +207,11 @@ pub(crate) fn permission_list_from_set(value: PermissionSet) -> Vec<Permission> 
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_db_schema;
+    use filament_core::EncryptedChannelPolicy;
+
+    use super::{
+        encrypted_channel_policy_from_i16, encrypted_channel_policy_to_i16, ensure_db_schema,
+    };
     use crate::server::core::{AppConfig, AppState};
 
     #[tokio::test]
@@ -198,5 +223,21 @@ mod tests {
         ensure_db_schema(&state)
             .await
             .expect("schema init should be idempotent");
+    }
+
+    #[test]
+    fn encrypted_channel_policy_database_mapping_is_exact() {
+        for policy in [
+            EncryptedChannelPolicy::Disabled,
+            EncryptedChannelPolicy::RequireModeratorMembership,
+            EncryptedChannelPolicy::Unrestricted,
+        ] {
+            assert_eq!(
+                encrypted_channel_policy_from_i16(encrypted_channel_policy_to_i16(policy)),
+                Some(policy)
+            );
+        }
+        assert_eq!(encrypted_channel_policy_from_i16(-1), None);
+        assert_eq!(encrypted_channel_policy_from_i16(3), None);
     }
 }

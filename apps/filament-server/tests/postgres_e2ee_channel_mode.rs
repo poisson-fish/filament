@@ -119,6 +119,37 @@ async fn encrypted_channel_mode_is_immutable_and_blocks_plaintext_storage() {
     let guild_id = guild["guild_id"]
         .as_str()
         .expect("created guild should include guild_id");
+    assert_eq!(guild["encrypted_channel_policy"], Value::from("disabled"));
+
+    let rejected = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{guild_id}/channels"),
+        Some(&auth.access_token),
+        json!({"name": "sealed", "kind": "text", "channel_type": "encrypted"}),
+    )
+    .await;
+    assert_eq!(rejected.status(), StatusCode::CONFLICT);
+    let rejected: Value = parse_json(rejected).await;
+    assert_eq!(
+        rejected["error"],
+        Value::from("encrypted_channel_policy_disabled")
+    );
+
+    let enable_policy = send_json(
+        &app,
+        "PATCH",
+        &format!("/guilds/{guild_id}"),
+        Some(&auth.access_token),
+        json!({"encrypted_channel_policy": "require_moderator_membership"}),
+    )
+    .await;
+    assert_eq!(enable_policy.status(), StatusCode::OK);
+    let enable_policy: Value = parse_json(enable_policy).await;
+    assert_eq!(
+        enable_policy["encrypted_channel_policy"],
+        Value::from("require_moderator_membership")
+    );
 
     let rejected = send_json(
         &app,
@@ -174,6 +205,32 @@ async fn encrypted_channel_mode_is_immutable_and_blocks_plaintext_storage() {
     .execute(&pool)
     .await
     .expect("future atomic provisioning may insert the final encrypted mode");
+
+    let policy_change = send_json(
+        &app,
+        "PATCH",
+        &format!("/guilds/{guild_id}"),
+        Some(&auth.access_token),
+        json!({"encrypted_channel_policy": "unrestricted"}),
+    )
+    .await;
+    assert_eq!(policy_change.status(), StatusCode::CONFLICT);
+    let policy_change: Value = parse_json(policy_change).await;
+    assert_eq!(
+        policy_change["error"],
+        Value::from("e2ee_membership_reconciliation_pending")
+    );
+
+    let policy_bypass =
+        sqlx::query("UPDATE guilds SET encrypted_channel_policy = 2 WHERE guild_id = $1")
+            .bind(guild_id)
+            .execute(&pool)
+            .await
+            .expect_err("database must block policy transitions without reconciliation");
+    assert_eq!(
+        constraint_name(&policy_bypass),
+        Some("encrypted_channel_policy_requires_reconciliation")
+    );
 
     let plaintext_message = send_json(
         &app,

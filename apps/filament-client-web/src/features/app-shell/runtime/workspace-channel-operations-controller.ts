@@ -102,6 +102,7 @@ export function createWorkspaceChannelOperationsController(
         guildId: guild.guildId,
         guildName: guild.name,
         visibility: guild.visibility,
+        encryptedChannelPolicy: guild.encryptedChannelPolicy ?? "disabled",
         channels: [channel],
       };
       options.setWorkspaces((existing) => [...existing, createdWorkspace]);

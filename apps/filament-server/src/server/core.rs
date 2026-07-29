@@ -792,6 +792,7 @@ pub(crate) enum GuildVisibility {
 pub(crate) struct GuildRecord {
     pub(crate) name: String,
     pub(crate) visibility: GuildVisibility,
+    pub(crate) encrypted_channel_policy: filament_core::EncryptedChannelPolicy,
     pub(crate) created_by_user_id: UserId,
     pub(crate) default_join_role_id: Option<String>,
     pub(crate) members: HashMap<UserId, Role>,
@@ -1144,6 +1145,7 @@ mod tests {
             GuildRecord {
                 name: String::from("guild"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: UserId::new(),
                 default_join_role_id: None,
                 members: HashMap::new(),

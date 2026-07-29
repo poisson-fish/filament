@@ -99,6 +99,7 @@ describe("gateway additive field compatibility", () => {
         updatedFields: {
           name: "Filament Workspace",
           visibility: undefined,
+          encryptedChannelPolicy: undefined,
         },
         updatedAtUnix: 1710000001,
       },

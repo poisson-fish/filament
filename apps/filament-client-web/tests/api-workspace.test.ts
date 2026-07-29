@@ -160,6 +160,7 @@ describe("api-workspace", () => {
       guild_id: guildId,
       name: guildName,
       visibility: guildVisibility,
+      encrypted_channel_policy: "require_moderator_membership",
     }));
 
     const api = createWorkspaceApi({
@@ -168,13 +169,26 @@ describe("api-workspace", () => {
     });
 
     await expect(
-      api.updateGuild(session, guildId, { name: guildName, visibility: guildVisibility }),
-    ).resolves.toMatchObject({ guildId, name: guildName, visibility: guildVisibility });
+      api.updateGuild(session, guildId, {
+        name: guildName,
+        visibility: guildVisibility,
+        encryptedChannelPolicy: "require_moderator_membership",
+      }),
+    ).resolves.toMatchObject({
+      guildId,
+      name: guildName,
+      visibility: guildVisibility,
+      encryptedChannelPolicy: "require_moderator_membership",
+    });
     expect(requestJson).toHaveBeenCalledWith({
       method: "PATCH",
       path: `/guilds/${guildId}`,
       accessToken: session.accessToken,
-      body: { name: guildName, visibility: guildVisibility },
+      body: {
+        name: guildName,
+        visibility: guildVisibility,
+        encrypted_channel_policy: "require_moderator_membership",
+      },
     });
   });
 

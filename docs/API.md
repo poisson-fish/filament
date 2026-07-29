@@ -231,19 +231,23 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Request: `{ "name": "...", "visibility"?: "private"|"public" }` (`visibility` defaults to `private`)
   - `name`: 1..64 visible chars/spaces
   - Enforces per-user creator cap configured by server (`FILAMENT_MAX_CREATED_GUILDS_PER_USER`)
-  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }`
+  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public", "encrypted_channel_policy": "disabled"|"require_moderator_membership"|"unrestricted" }`
+  - `encrypted_channel_policy` always starts as `disabled`
   - When limit is reached: `403 {"error":"guild_creation_limit_reached"}`
 - `GET /guilds`
   - Auth required
   - Returns only guilds where requester is an active member (banned guilds are excluded)
   - Response `200`:
-    - `{ "guilds": [{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }] }`
+    - `{ "guilds": [{ "guild_id": "...", "name": "...", "visibility": "private"|"public", "encrypted_channel_policy": "disabled"|"require_moderator_membership"|"unrestricted" }] }`
 - `PATCH /guilds/{guild_id}`
   - Auth required
   - Requires effective `manage_roles` permission in the workspace
-  - Request: `{ "name"?: "...", "visibility"?: "private"|"public" }`
+  - Request: `{ "name"?: "...", "visibility"?: "private"|"public", "encrypted_channel_policy"?: "disabled"|"require_moderator_membership"|"unrestricted" }`
   - At least one field is required
-  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }`
+  - Policy changes require effective `manage_roles`; while an encrypted channel
+    exists they fail closed with `409 e2ee_membership_reconciliation_pending`
+    until authenticated membership reconciliation is implemented
+  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public", "encrypted_channel_policy": "disabled"|"require_moderator_membership"|"unrestricted" }`
 - `GET /guilds/public?q=<query>&limit=<n>`
   - Auth required
   - Returns only guilds marked `public`
@@ -256,9 +260,11 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Request: `{ "name": "...", "kind"?: "text"|"voice", "channel_type"?: "plaintext"|"encrypted" }`
   - `kind` defaults to `text`; `channel_type` defaults to `plaintext`
   - `name`: 1..64 visible chars/spaces
-  - Ordinary CRUD currently rejects `channel_type = encrypted` with
-    `409 e2ee_channel_provisioning_required`; encrypted creation must use the
-    future atomic MLS provisioning route
+  - Ordinary CRUD rejects `channel_type = encrypted` with
+    `409 encrypted_channel_policy_disabled` while workspace policy is
+    `disabled`; enabled policies then fail with
+    `409 e2ee_channel_provisioning_required` because encrypted creation must
+    use the future atomic MLS provisioning route
   - Response `200`: `{ "channel_id": "...", "name": "...", "kind": "text"|"voice", "channel_type": "plaintext"|"encrypted" }`
 - `GET /guilds/{guild_id}/channels`
   - Auth required; requester must be a guild member

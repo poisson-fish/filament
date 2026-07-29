@@ -1,7 +1,9 @@
 import {
+  encryptedChannelPolicyFromInput,
   guildIdFromInput,
   guildNameFromInput,
   guildVisibilityFromInput,
+  type EncryptedChannelPolicy,
   type GuildId,
   type GuildName,
   type GuildVisibility,
@@ -43,6 +45,7 @@ function parseWorkspaceUpdatePayload(payload: unknown): WorkspaceUpdatePayload |
   const updatedFieldsDto = value.updated_fields as Record<string, unknown>;
   let name: GuildName | undefined;
   let visibility: GuildVisibility | undefined;
+  let encryptedChannelPolicy: EncryptedChannelPolicy | undefined;
   if (typeof updatedFieldsDto.name !== "undefined") {
     if (typeof updatedFieldsDto.name !== "string") {
       return null;
@@ -63,7 +66,23 @@ function parseWorkspaceUpdatePayload(payload: unknown): WorkspaceUpdatePayload |
       return null;
     }
   }
-  if (typeof name === "undefined" && typeof visibility === "undefined") {
+  if (typeof updatedFieldsDto.encrypted_channel_policy !== "undefined") {
+    if (typeof updatedFieldsDto.encrypted_channel_policy !== "string") {
+      return null;
+    }
+    try {
+      encryptedChannelPolicy = encryptedChannelPolicyFromInput(
+        updatedFieldsDto.encrypted_channel_policy,
+      );
+    } catch {
+      return null;
+    }
+  }
+  if (
+    typeof name === "undefined" &&
+    typeof visibility === "undefined" &&
+    typeof encryptedChannelPolicy === "undefined"
+  ) {
     return null;
   }
 
@@ -72,6 +91,7 @@ function parseWorkspaceUpdatePayload(payload: unknown): WorkspaceUpdatePayload |
     updatedFields: {
       name,
       visibility,
+      encryptedChannelPolicy,
     },
     updatedAtUnix: value.updated_at_unix,
   };

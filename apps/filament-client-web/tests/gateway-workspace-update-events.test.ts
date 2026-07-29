@@ -27,10 +27,33 @@ describe("decodeWorkspaceUpdateGatewayEvent", () => {
         updatedFields: {
           name: "Filament Workspace",
           visibility: undefined,
+          encryptedChannelPolicy: undefined,
         },
         updatedAtUnix: 1710000001,
       },
     });
+  });
+
+  it("strictly decodes encrypted channel policy updates", () => {
+    const result = decodeWorkspaceUpdateGatewayEvent("workspace_update", {
+      guild_id: DEFAULT_GUILD_ID,
+      updated_fields: {
+        encrypted_channel_policy: "require_moderator_membership",
+      },
+      updated_at_unix: 1710000002,
+    });
+
+    expect(result?.payload.updatedFields.encryptedChannelPolicy).toBe(
+      "require_moderator_membership",
+    );
+
+    expect(
+      decodeWorkspaceUpdateGatewayEvent("workspace_update", {
+        guild_id: DEFAULT_GUILD_ID,
+        updated_fields: { encrypted_channel_policy: "enabled" },
+        updated_at_unix: 1710000002,
+      }),
+    ).toBeNull();
   });
 
   it("fails closed when updated_fields has no valid deltas", () => {

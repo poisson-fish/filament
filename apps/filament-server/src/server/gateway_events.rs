@@ -348,6 +348,7 @@ mod tests {
                 "g",
                 Some("Guild Prime"),
                 Some(crate::server::core::GuildVisibility::Public),
+                Some(filament_core::EncryptedChannelPolicy::Unrestricted),
                 13,
                 Some(user_id),
             )
@@ -360,6 +361,10 @@ mod tests {
         assert_eq!(
             workspace_update_payload["updated_fields"]["visibility"],
             Value::from("public")
+        );
+        assert_eq!(
+            workspace_update_payload["updated_fields"]["encrypted_channel_policy"],
+            Value::from("unrestricted")
         );
 
         let workspace_member_add_payload = parse_event(

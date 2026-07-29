@@ -457,8 +457,13 @@ commit, Welcome recipients, and GroupInfo can be committed atomically.
 Plaintext REST/gateway ingestion paths return a typed E2EE-required error for
 an encrypted channel. The web-only client retains the classification but
 excludes encrypted channels from selection, history, composer, attachment,
-search, and voice paths without a plaintext fallback. Workspace policy,
-atomic guild-channel MLS provisioning, capability checks, reconciliation, and
+search, and voice paths without a plaintext fallback. Workspace policy is now
+a strict `disabled | require_moderator_membership | unrestricted` domain/API/
+gateway value backed by v23. Existing and new workspaces default to disabled;
+authorized updates are blocked while any encrypted channel exists until the
+membership reconciliation transaction is implemented. Disabled policy rejects
+encrypted-channel requests before the atomic-provisioning boundary. Atomic
+guild-channel MLS provisioning, capability checks, reconciliation, and
 large-group performance work remain.
 
 ---
@@ -1414,16 +1419,24 @@ half-provisioned encrypted channel:
 - Channel list/create responses and `channel_create` gateway events carry the
   mode. Omitted create input remains plaintext for compatibility. Requesting
   encrypted creation through ordinary CRUD returns
-  `e2ee_channel_provisioning_required`; the future endpoint must atomically
-  bind channel metadata and the initial authenticated MLS state.
+  `encrypted_channel_policy_disabled` until explicitly enabled, then
+  `e2ee_channel_provisioning_required`; the future endpoint must atomically bind
+  channel metadata and the initial authenticated MLS state.
 - Ordinary message creation/history/edit/delete/reaction, attachment upload,
   unencrypted LiveKit token issuance, and channel-scoped server search fail
   closed with `encrypted_channel_requires_e2ee`. The browser-only client
   preserves the field in its bounded cache but never selects an encrypted
   channel or routes it into plaintext messaging/media controls.
+- `EncryptedChannelPolicy` is a strict workspace setting with the three
+  planned values. Migration v23 defaults every workspace to `disabled`,
+  bounds the stored representation, and forbids policy transitions once an
+  encrypted channel exists until membership reconciliation can be atomic.
+  Guild create/list/update responses and `workspace_update` events carry the
+  policy. The ordinary encrypted-channel request distinguishes a disabled
+  policy from the still-pending atomic provisioning path.
 
 This increment intentionally does not claim encrypted-channel creation,
-membership reconciliation, workspace policy, or large-group readiness.
+membership reconciliation, capability gating, or large-group readiness.
 
 ### Deliverables
 
@@ -1657,6 +1670,7 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 | `v16_e2ee_commit_mailbox` | 2 | recipient-bound Welcomes and pending per-device commit deliveries |
 | `v19_e2ee_attachment_mailbox` | 4 | `e2ee_attachment_blobs`, `e2ee_attachment_deliveries` |
 | `v22_e2ee_channel_mode` | 6 | immutable channel mode and plaintext-storage barriers |
+| `v23_e2ee_channel_policy` | 6 | fail-closed workspace encrypted-channel policy |
 | future guild-channel membership migration (number TBD) | 6 | `e2ee_channel_membership`, `e2ee_channel_reconciliation` |
 | future KT migration (number TBD) | 8 | `e2ee_kt_entries`, `e2ee_kt_checkpoints` |
 

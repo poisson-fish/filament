@@ -27,6 +27,10 @@ export type LivekitUrl = string & { readonly __brand: "livekit_url" };
 export type LivekitRoom = string & { readonly __brand: "livekit_room" };
 export type LivekitIdentity = string & { readonly __brand: "livekit_identity" };
 export type GuildVisibility = "private" | "public";
+export type EncryptedChannelPolicy =
+  | "disabled"
+  | "require_moderator_membership"
+  | "unrestricted";
 export type ChannelKindName = "text" | "voice";
 export type ChannelTypeName = "plaintext" | "encrypted";
 export type RoleName = "owner" | "moderator" | "member";
@@ -543,6 +547,17 @@ export function guildVisibilityFromInput(input: string): GuildVisibility {
   return input;
 }
 
+export function encryptedChannelPolicyFromInput(input: string): EncryptedChannelPolicy {
+  if (
+    input !== "disabled" &&
+    input !== "require_moderator_membership" &&
+    input !== "unrestricted"
+  ) {
+    throw new DomainValidationError("Invalid encrypted channel policy.");
+  }
+  return input;
+}
+
 export function permissionFromInput(input: string): PermissionName {
   if (
     input !== "manage_roles" &&
@@ -606,6 +621,8 @@ export interface GuildRecord {
   guildId: GuildId;
   name: GuildName;
   visibility: GuildVisibility;
+  /** Omitted only by pre-Phase-6 servers, which permitted no encrypted channels. */
+  encryptedChannelPolicy?: EncryptedChannelPolicy;
 }
 
 export interface ChannelRecord {
@@ -739,11 +756,17 @@ export function markdownTokensFromResponse(dto: unknown): MarkdownToken[] {
 
 export function guildFromResponse(dto: unknown): GuildRecord {
   const data = requireObject(dto, "guild");
-  return {
+  const guild: GuildRecord = {
     guildId: guildIdFromInput(requireString(data.guild_id, "guild_id")),
     name: guildNameFromInput(requireString(data.name, "name")),
     visibility: guildVisibilityFromInput(requireString(data.visibility, "visibility", 16)),
   };
+  if (typeof data.encrypted_channel_policy !== "undefined") {
+    guild.encryptedChannelPolicy = encryptedChannelPolicyFromInput(
+      requireString(data.encrypted_channel_policy, "encrypted_channel_policy", 32),
+    );
+  }
+  return guild;
 }
 
 export function channelFromResponse(dto: unknown): ChannelRecord {
@@ -1399,6 +1422,8 @@ export interface WorkspaceRecord {
   guildId: GuildId;
   guildName: GuildName;
   visibility: GuildVisibility;
+  /** Absent cached values are equivalent to the fail-closed disabled policy. */
+  encryptedChannelPolicy?: EncryptedChannelPolicy;
   channels: ChannelRecord[];
 }
 
@@ -1415,6 +1440,12 @@ export function workspaceFromStorage(dto: unknown): WorkspaceRecord {
       typeof data.visibility === "string"
         ? guildVisibilityFromInput(requireString(data.visibility, "visibility", 16))
         : "private",
+    encryptedChannelPolicy:
+      typeof data.encryptedChannelPolicy === "string"
+        ? encryptedChannelPolicyFromInput(
+            requireString(data.encryptedChannelPolicy, "encryptedChannelPolicy", 32),
+          )
+        : "disabled",
     channels: channelsDto.map((channel) => {
       const channelObj = requireObject(channel, "channel cache");
       const kindValue = channelObj.kind;

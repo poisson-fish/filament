@@ -338,6 +338,7 @@ mod tests {
         let mut guild = GuildRecord {
             name: String::from("Guild"),
             visibility: GuildVisibility::Private,
+            encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
             created_by_user_id: UserId::new(),
             default_join_role_id: None,
             members: HashMap::new(),
@@ -374,6 +375,7 @@ mod tests {
         let mut guild = GuildRecord {
             name: String::from("Guild"),
             visibility: GuildVisibility::Private,
+            encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
             created_by_user_id: UserId::new(),
             default_join_role_id: None,
             members: HashMap::new(),
