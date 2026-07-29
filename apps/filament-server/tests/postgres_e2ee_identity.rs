@@ -867,6 +867,50 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         serde_json::Value::from("e2ee_membership_reconciliation_pending")
     );
 
+    let unreconciled_permission_loss = sqlx::query(
+        "INSERT INTO channel_permission_overrides
+            (guild_id, channel_id, target_kind, target_id, allow_mask, deny_mask)
+         VALUES ($1, $2, 1, $3, 0, 256)",
+    )
+    .bind(encrypted_workspace_id)
+    .bind(&encrypted_channel.channel_id)
+    .bind(charlie_user_id.to_string())
+    .execute(&audit_pool)
+    .await
+    .expect_err("direct encrypted-channel permission loss must fail closed");
+    assert_eq!(
+        unreconciled_permission_loss
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::constraint),
+        Some("e2ee_channel_permission_loss_requires_reconciliation")
+    );
+
+    let role_loss = send_json(
+        &app,
+        "POST",
+        &format!(
+            "/guilds/{encrypted_workspace_id}/channels/{}/permission-overrides/member/{charlie_user_id}",
+            encrypted_channel.channel_id
+        ),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"allow": [], "deny": ["create_message"]}),
+    )
+    .await;
+    assert_eq!(role_loss.status(), StatusCode::OK);
+    let role_loss_reconciliation: (i32, Option<i64>, i32) = sqlx::query_as(
+        "SELECT r.leaf_index, r.completed_epoch, p.external_sender_index
+         FROM e2ee_membership_reconciliations r
+         JOIN e2ee_proposals p ON p.reconciliation_id = r.reconciliation_id
+         WHERE r.group_id = $1 AND r.target_user_id = $2",
+    )
+    .bind(&encrypted_channel.group_id)
+    .bind(charlie_user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("role loss must atomically queue a signed encrypted-channel removal");
+    assert_eq!(role_loss_reconciliation, (2, None, 0));
+
     let ban_charlie = send_json(
         &app,
         "POST",
@@ -887,7 +931,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .bind(charlie_user_id.to_string())
     .fetch_one(&audit_pool)
     .await
-    .expect("ban must atomically queue a signed encrypted-channel removal");
+    .expect("ban must preserve the exact pending encrypted-channel removal");
     assert_eq!(pending_ban_removal, (2, None, 0));
 
     // Seed the server-side routing view for a three-user group. MLS interiors

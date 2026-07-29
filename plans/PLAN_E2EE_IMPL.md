@@ -476,8 +476,13 @@ Pending removals block all encrypted sends until a member-authored commit
 cryptographically evicts the target, while database triggers reject bypass
 deletions and unreconciled member additions. New joins return the typed
 reconciliation-pending error without a plaintext fallback. Role/permission
-loss, authenticated member Add flows, narrow permission-overwrite audiences,
-and large-group performance work remain fail closed or unavailable.
+loss now crosses the same boundary: role definition, role assignment, legacy
+member-role, and channel-overwrite mutations are evaluated against the exact
+effective `CreateMessage` layers and atomically queue signed Removes for every
+newly unauthorized leaf. A deferred v26 database guard rejects direct
+permission changes without each exact pending proposal. Authenticated member
+Add flows, permission restoration/rejoin, narrower initial audiences, and
+large-group performance work remain fail closed or unavailable.
 
 ---
 
@@ -1467,10 +1472,16 @@ half-provisioned encrypted channel:
   exists. The REST and public-directory join paths return the typed
   reconciliation-pending conflict; member Adds remain unavailable until a
   client-authenticated MLS Add flow exists.
+- Migration v26 defines the exact layered encrypted-channel posting
+  authorization check and deferred guards for role, assignment, and channel
+  override mutations. Every Postgres mutation path queues a signed external
+  Remove for each newly unauthorized leaf in the same transaction, with a
+  fail-closed 1,000-leaf mutation cap; direct SQL permission loss without those
+  proposals is rejected.
 
-This increment intentionally does not claim permission-overwrite audiences,
-role/permission-loss reconciliation, the 5,000-leaf target, or large-group
-readiness.
+This increment intentionally does not claim permission restoration or
+authenticated re-Add, narrower initial permission-overwrite audiences, the
+5,000-leaf target, or large-group readiness.
 
 ### Deliverables
 
@@ -1705,7 +1716,7 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 | `v19_e2ee_attachment_mailbox` | 4 | `e2ee_attachment_blobs`, `e2ee_attachment_deliveries` |
 | `v22_e2ee_channel_mode` | 6 | immutable channel mode and plaintext-storage barriers |
 | `v23_e2ee_channel_policy` | 6 | fail-closed workspace encrypted-channel policy |
-| future guild-channel membership migration (number TBD) | 6 | `e2ee_channel_membership`, `e2ee_channel_reconciliation` |
+| `v24_e2ee_channel_groups`–`v26_e2ee_channel_authorization` | 6 | encrypted channel binding, membership reconciliation, and permission-loss guards |
 | future KT migration (number TBD) | 8 | `e2ee_kt_entries`, `e2ee_kt_checkpoints` |
 
 ### Gateway Events (new)

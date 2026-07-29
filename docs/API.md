@@ -327,6 +327,15 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Auth required; requires `manage_roles`
   - Response `200`: `{ "accepted": true }`
 
+For an encrypted channel, any role definition, assignment, legacy member-role,
+or channel permission override that removes effective `create_message`
+authorization atomically queues signed MLS Remove proposals for the affected
+leaves, capped at 1,000 leaves per mutation. Larger changes fail closed. Until
+a member-authored commit applies them, encrypted sends return `409
+e2ee_membership_reconciliation_pending`. A permission change never falls back
+to plaintext, and direct database mutations without the exact pending
+reconciliations are rejected.
+
 ### Messages
 
 All ordinary message, reaction, attachment, channel-scoped search, and

@@ -73,6 +73,7 @@ const KEYPACKAGE_LOW_WATER_MARK: u32 = 10;
 const E2EE_MESSAGE_PADDING_BUCKETS: [usize; 4] = [512, 1_024, 4_096, 16_384];
 const DEFAULT_E2EE_MAILBOX_PAGE_SIZE: usize = 20;
 const INITIAL_MLS_EPOCH: u64 = 1;
+const MAX_E2EE_CHANNEL_AUTHORIZATION_REMOVALS_PER_MUTATION: usize = 1_000;
 
 type CertificateFields = ([u8; 32], [u8; 64], [u8; 32]);
 type RotationFields = ([u8; 32], [u8; 64], [u8; 64], [u8; 32], [u8; 64]);
@@ -1193,6 +1194,7 @@ async fn queue_policy_removals(
     user_id: UserId,
     device_id: Option<DeviceId>,
     encrypted_channel_guild_id: Option<&str>,
+    encrypted_channel_group_id: Option<&str>,
     now: i64,
 ) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
     let leaves = sqlx::query(
@@ -1204,12 +1206,14 @@ async fn queue_policy_removals(
          WHERE l.user_id = $1
            AND ($2::TEXT IS NULL OR l.device_id = $2)
            AND ($3::TEXT IS NULL OR cg.guild_id = $3)
+           AND ($4::TEXT IS NULL OR cg.group_id = $4)
          ORDER BY l.group_id
          FOR UPDATE OF g",
     )
     .bind(user_id.to_string())
     .bind(device_id.map(|value| value.to_string()))
     .bind(encrypted_channel_guild_id)
+    .bind(encrypted_channel_group_id)
     .fetch_all(&mut **transaction)
     .await
     .map_err(|_| AuthFailure::Internal)?;
@@ -1335,7 +1339,16 @@ async fn queue_policy_removals_for_device(
     device_id: DeviceId,
     now: i64,
 ) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
-    queue_policy_removals(state, transaction, user_id, Some(device_id), None, now).await
+    queue_policy_removals(
+        state,
+        transaction,
+        user_id,
+        Some(device_id),
+        None,
+        None,
+        now,
+    )
+    .await
 }
 
 /// Queue one signed external Remove proposal per leaf that an expelled
@@ -1351,7 +1364,67 @@ pub(crate) async fn queue_encrypted_channel_member_removals(
     user_id: UserId,
     now: i64,
 ) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
-    queue_policy_removals(state, transaction, user_id, None, Some(guild_id), now).await
+    queue_policy_removals(state, transaction, user_id, None, Some(guild_id), None, now).await
+}
+
+/// Queue signed removals for every current encrypted-channel leaf whose user
+/// no longer has effective `CreateMessage` authorization.
+///
+/// This must run after the permission mutation and before the surrounding
+/// transaction commits. The deferred database guard independently verifies
+/// that no unauthorized leaf can survive without its exact pending proposal.
+pub(crate) async fn queue_encrypted_channel_authorization_removals(
+    state: &AppState,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    guild_id: &str,
+    now: i64,
+) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
+    let fetch_limit = MAX_E2EE_CHANNEL_AUTHORIZATION_REMOVALS_PER_MUTATION
+        .checked_add(1)
+        .ok_or(AuthFailure::Internal)?;
+    let rows = sqlx::query(
+        "SELECT cg.group_id, l.user_id, l.device_id, l.leaf_index
+         FROM e2ee_channel_groups cg
+         JOIN e2ee_group_leaves l ON l.group_id = cg.group_id
+         WHERE cg.guild_id = $1
+           AND NOT filament_e2ee_channel_user_can_post(
+               cg.guild_id, cg.channel_id, l.user_id
+           )
+         ORDER BY cg.group_id, l.user_id, l.device_id, l.leaf_index
+         LIMIT $2",
+    )
+    .bind(guild_id)
+    .bind(i64::try_from(fetch_limit).map_err(|_| AuthFailure::Internal)?)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if rows.len() > MAX_E2EE_CHANNEL_AUTHORIZATION_REMOVALS_PER_MUTATION {
+        return Err(AuthFailure::QuotaExceeded);
+    }
+
+    let mut pending = Vec::new();
+    let mut queued_users = HashSet::new();
+    for row in rows {
+        let group_id: String = row.try_get("group_id").map_err(|_| AuthFailure::Internal)?;
+        let user_id: String = row.try_get("user_id").map_err(|_| AuthFailure::Internal)?;
+        if !queued_users.insert((group_id.clone(), user_id.clone())) {
+            continue;
+        }
+        let user_id = UserId::try_from(user_id).map_err(|_| AuthFailure::Internal)?;
+        pending.extend(
+            queue_policy_removals(
+                state,
+                transaction,
+                user_id,
+                None,
+                None,
+                Some(&group_id),
+                now,
+            )
+            .await?,
+        );
+    }
+    Ok(pending)
 }
 
 pub(crate) async fn emit_policy_proposals(state: &AppState, pending: Vec<PendingPolicyProposal>) {
