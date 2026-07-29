@@ -244,9 +244,14 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Requires effective `manage_roles` permission in the workspace
   - Request: `{ "name"?: "...", "visibility"?: "private"|"public", "encrypted_channel_policy"?: "disabled"|"require_moderator_membership"|"unrestricted" }`
   - At least one field is required
-  - Policy changes require effective `manage_roles`; while an encrypted channel
-    exists they fail closed with `409 e2ee_membership_reconciliation_pending`
-    until authenticated membership reconciliation is implemented
+  - Policy changes require effective `manage_roles`
+  - With existing encrypted channels,
+    `require_moderator_membership -> unrestricted` is permitted because it
+    does not alter the MLS audience. Tightening to
+    `require_moderator_membership` succeeds only after every moderator is an
+    authorized MLS member of every encrypted channel. `disabled` remains
+    forbidden while an immutable encrypted channel exists. Unsafe transitions
+    return `409 e2ee_membership_reconciliation_pending`
   - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public", "encrypted_channel_policy": "disabled"|"require_moderator_membership"|"unrestricted" }`
 - `GET /guilds/public?q=<query>&limit=<n>`
   - Auth required

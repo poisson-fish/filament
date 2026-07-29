@@ -9,7 +9,8 @@
 
 ## Implementation Status — 2026-07-28
 
-The repository is currently implementing **Phase 5 voice/video E2EE**, but
+The repository is currently implementing **Phase 6 guild encrypted channels**.
+Simulator/device-only Phase 5.5 evidence is deferred per maintainer direction.
 E2EE messaging and media are not yet production client paths. Plaintext
 conversations remain the only production message path.
 
@@ -460,9 +461,12 @@ excludes encrypted channels from selection, history, composer, attachment,
 search, and voice paths without a plaintext fallback. Workspace policy is now
 a strict `disabled | require_moderator_membership | unrestricted` domain/API/
 gateway value backed by v23. Existing and new workspaces default to disabled;
-authorized updates are blocked while any encrypted channel exists until the
-membership reconciliation transaction is implemented. Disabled policy rejects
-encrypted-channel requests before the atomic-provisioning boundary. The v24
+Migration v31 replaces the initial blanket policy-transition freeze: relaxing
+to `unrestricted` is allowed without changing membership, tightening to
+`require_moderator_membership` requires every moderator to already be an
+authorized MLS member of every encrypted channel, and disabling remains
+forbidden while any immutable encrypted channel exists. Disabled policy
+rejects encrypted-channel requests before the atomic-provisioning boundary. The v24
 atomic provisioning increment now creates a bounded encrypted
 text channel, its exact current authorized membership, epoch-1 commit, shared
 Welcome recipients, leaf routing, GroupInfo, and immutable channel/group
@@ -1523,6 +1527,13 @@ half-provisioned encrypted channel:
   authorized members and injected unauthorized members; invalid targets,
   uncertified devices, and moderator exclusions fail closed without partial
   state.
+- Migration v31 replaces the temporary blanket workspace-policy freeze with a
+  database-enforced transition state machine. Relaxing
+  `require_moderator_membership` to `unrestricted` preserves the current MLS
+  audience. Tightening succeeds only after every moderator is both authorized
+  and visibly present in every encrypted channel. `disabled` remains forbidden
+  while immutable encrypted channels exist, and direct SQL bypasses fail with
+  the same typed reconciliation boundary.
 
 This increment intentionally does not claim the 5,000-leaf target or
 large-group readiness.

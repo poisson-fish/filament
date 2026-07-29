@@ -66,14 +66,15 @@ use crate::server::{
 };
 
 fn map_guild_transaction_error(error: &sqlx::Error) -> AuthFailure {
-    if error
+    let constraint = error
         .as_database_error()
-        .and_then(sqlx::error::DatabaseError::constraint)
-        == Some("e2ee_moderator_membership_required")
-    {
-        AuthFailure::E2eeMembershipReconciliationPending
-    } else {
-        AuthFailure::Internal
+        .and_then(sqlx::error::DatabaseError::constraint);
+    match constraint {
+        Some(
+            "e2ee_moderator_membership_required"
+            | "encrypted_channel_policy_requires_reconciliation",
+        ) => AuthFailure::E2eeMembershipReconciliationPending,
+        _ => AuthFailure::Internal,
     }
 }
 
@@ -320,19 +321,6 @@ pub(crate) async fn update_guild(
             changed_visibility = Some(next_visibility);
         }
         if next_policy != current_policy {
-            let encrypted_channel_exists = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS (
-                    SELECT 1 FROM channels
-                    WHERE guild_id = $1 AND channel_type = 1
-                 )",
-            )
-            .bind(&path.guild_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|_| AuthFailure::Internal)?;
-            if encrypted_channel_exists {
-                return Err(AuthFailure::E2eeMembershipReconciliationPending);
-            }
             changed_encrypted_channel_policy = Some(next_policy);
         }
 
@@ -347,7 +335,7 @@ pub(crate) async fn update_guild(
         .bind(encrypted_channel_policy_to_i16(next_policy))
         .execute(&mut *tx)
         .await
-        .map_err(|_| AuthFailure::Internal)?;
+        .map_err(|error| map_guild_transaction_error(&error))?;
         if update.rows_affected() == 0 {
             return Err(AuthFailure::NotFound);
         }
@@ -369,6 +357,7 @@ pub(crate) async fn update_guild(
 
         if encrypted_channel_policy.is_some_and(|next_policy| {
             next_policy != guild.encrypted_channel_policy
+                && next_policy != EncryptedChannelPolicy::Unrestricted
                 && guild
                     .channels
                     .values()

@@ -88,7 +88,7 @@ async fn encrypted_channel_mode_is_immutable_and_blocks_plaintext_storage() {
         json!({"username": username, "password": "CorrectHorseBatteryStaple!42"}),
     )
     .await;
-    assert_eq!(register.status(), StatusCode::CREATED);
+    assert_eq!(register.status(), StatusCode::OK);
     let login = send_json(
         &app,
         "POST",
@@ -214,22 +214,37 @@ async fn encrypted_channel_mode_is_immutable_and_blocks_plaintext_storage() {
         json!({"encrypted_channel_policy": "unrestricted"}),
     )
     .await;
-    assert_eq!(policy_change.status(), StatusCode::CONFLICT);
+    assert_eq!(policy_change.status(), StatusCode::OK);
     let policy_change: Value = parse_json(policy_change).await;
     assert_eq!(
-        policy_change["error"],
-        Value::from("e2ee_membership_reconciliation_pending")
+        policy_change["encrypted_channel_policy"],
+        Value::from("unrestricted")
     );
 
-    let policy_bypass =
-        sqlx::query("UPDATE guilds SET encrypted_channel_policy = 2 WHERE guild_id = $1")
+    let disabled_policy_bypass =
+        sqlx::query("UPDATE guilds SET encrypted_channel_policy = 0 WHERE guild_id = $1")
             .bind(guild_id)
             .execute(&pool)
             .await
-            .expect_err("database must block policy transitions without reconciliation");
+            .expect_err("database must block disabling policy while encrypted channels exist");
     assert_eq!(
-        constraint_name(&policy_bypass),
+        constraint_name(&disabled_policy_bypass),
         Some("encrypted_channel_policy_requires_reconciliation")
+    );
+
+    let incomplete_tightening = send_json(
+        &app,
+        "PATCH",
+        &format!("/guilds/{guild_id}"),
+        Some(&auth.access_token),
+        json!({"encrypted_channel_policy": "require_moderator_membership"}),
+    )
+    .await;
+    assert_eq!(incomplete_tightening.status(), StatusCode::CONFLICT);
+    let incomplete_tightening: Value = parse_json(incomplete_tightening).await;
+    assert_eq!(
+        incomplete_tightening["error"],
+        Value::from("e2ee_membership_reconciliation_pending")
     );
 
     let plaintext_message = send_json(

@@ -1264,6 +1264,104 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .await;
     assert_eq!(join_web_only_member.status(), StatusCode::OK);
 
+    let relaxed_policy = send_json(
+        &app,
+        "PATCH",
+        &format!("/guilds/{encrypted_workspace_id}"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"encrypted_channel_policy": "unrestricted"}),
+    )
+    .await;
+    assert_eq!(relaxed_policy.status(), StatusCode::OK);
+    let relaxed_policy: serde_json::Value = parse_json(relaxed_policy).await;
+    assert_eq!(
+        relaxed_policy["encrypted_channel_policy"],
+        serde_json::Value::from("unrestricted")
+    );
+
+    let unrestricted_moderator_promotion = send_json(
+        &app,
+        "POST",
+        &format!(
+            "/guilds/{encrypted_workspace_id}/roles/{moderator_role_id}/members/{web_only_user_id}"
+        ),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({}),
+    )
+    .await;
+    assert_eq!(unrestricted_moderator_promotion.status(), StatusCode::OK);
+
+    let unsafe_policy_tightening = send_json(
+        &app,
+        "PATCH",
+        &format!("/guilds/{encrypted_workspace_id}"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"encrypted_channel_policy": "require_moderator_membership"}),
+    )
+    .await;
+    assert_eq!(unsafe_policy_tightening.status(), StatusCode::CONFLICT);
+    let unsafe_policy_tightening: serde_json::Value = parse_json(unsafe_policy_tightening).await;
+    assert_eq!(
+        unsafe_policy_tightening["error"],
+        serde_json::Value::from("e2ee_membership_reconciliation_pending")
+    );
+    let retained_unrestricted_policy: i16 =
+        sqlx::query_scalar("SELECT encrypted_channel_policy FROM guilds WHERE guild_id = $1")
+            .bind(encrypted_workspace_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("failed tightening must retain the unrestricted policy");
+    assert_eq!(retained_unrestricted_policy, 2);
+
+    let unrestricted_moderator_removal = send_json(
+        &app,
+        "DELETE",
+        &format!(
+            "/guilds/{encrypted_workspace_id}/roles/{moderator_role_id}/members/{web_only_user_id}"
+        ),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({}),
+    )
+    .await;
+    assert_eq!(unrestricted_moderator_removal.status(), StatusCode::OK);
+
+    let reconciled_policy_tightening = send_json(
+        &app,
+        "PATCH",
+        &format!("/guilds/{encrypted_workspace_id}"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"encrypted_channel_policy": "require_moderator_membership"}),
+    )
+    .await;
+    assert_eq!(reconciled_policy_tightening.status(), StatusCode::OK);
+    let reconciled_policy_tightening: serde_json::Value =
+        parse_json(reconciled_policy_tightening).await;
+    assert_eq!(
+        reconciled_policy_tightening["encrypted_channel_policy"],
+        serde_json::Value::from("require_moderator_membership")
+    );
+
+    let disabled_policy = send_json(
+        &app,
+        "PATCH",
+        &format!("/guilds/{encrypted_workspace_id}"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({"encrypted_channel_policy": "disabled"}),
+    )
+    .await;
+    assert_eq!(disabled_policy.status(), StatusCode::CONFLICT);
+    let disabled_policy: serde_json::Value = parse_json(disabled_policy).await;
+    assert_eq!(
+        disabled_policy["error"],
+        serde_json::Value::from("e2ee_membership_reconciliation_pending")
+    );
+
     let unsupported_channel_request = CreateMlsEncryptedChannelRequest {
         channel_id: Ulid::new().to_string(),
         channel_name: String::from("unsupported-audience"),
