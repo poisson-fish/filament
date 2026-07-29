@@ -30,10 +30,10 @@ use filament_protocol::{
     E2eeMailboxMessage, E2eeMailboxQuery, E2eeMailboxResponse, E2eeProposalMailboxEntry,
     E2eeProposalMailboxQuery, E2eeProposalMailboxResponse, GetE2eeAttachmentQuery,
     GroupInfoResponse, MlsCommitEvent, MlsConversationProvisionResponse, MlsEncryptedChannelKind,
-    MlsEncryptedChannelProvisionResponse, MlsEncryptedChannelType, MlsLeafRouting,
-    MlsMembershipChange, MlsMembershipChangeEvent, MlsMessageEvent, MlsProposalEvent,
-    MlsWelcomeEvent, PostCommitRequest, PostCommitResponse, PostMessageRequest,
-    PostMessageResponse, PostProposalRequest, PostProposalResponse,
+    MlsEncryptedChannelPermissionTargetKind, MlsEncryptedChannelProvisionResponse,
+    MlsEncryptedChannelType, MlsLeafRouting, MlsMembershipChange, MlsMembershipChangeEvent,
+    MlsMessageEvent, MlsProposalEvent, MlsWelcomeEvent, PostCommitRequest, PostCommitResponse,
+    PostMessageRequest, PostMessageResponse, PostProposalRequest, PostProposalResponse,
     PublishDeviceCertificateRequest, PublishDeviceCertificateResponse, PutE2eeAttachmentQuery,
     PutE2eeAttachmentResponse, RemoveDeviceResponse, RootIdentityDirectoryResponse,
     RootIdentityRotationEntry, RotateRootIdentityRequest, RotateRootIdentityResponse,
@@ -59,7 +59,7 @@ use crate::server::{
     core::AppState,
     db::{
         channel_kind_to_i16, channel_type_to_i16, encrypted_channel_policy_from_i16,
-        permission_set_to_i64,
+        permission_set_from_list, permission_set_to_i64,
     },
     domain::guild_permission_snapshot,
     errors::AuthFailure,
@@ -2914,11 +2914,13 @@ pub(crate) async fn create_mls_group_conversation(
     }))
 }
 
-/// Atomically create a workspace-wide encrypted text channel and its MLS group.
+/// Atomically create an authorized-audience encrypted text channel and its MLS
+/// group.
 ///
-/// The initial Phase 6 path deliberately accepts only the exact current
-/// workspace audience. Permission-overwrite audiences remain blocked until
-/// their authorization changes can be reconciled with MLS membership.
+/// Initial permission overwrites, channel metadata, the exact effective
+/// `CreateMessage` audience, and the initial MLS state commit together. The
+/// transaction fails closed if any authorized user is omitted or any
+/// unauthorized user is injected.
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn create_mls_encrypted_channel(
     State(state): State<AppState>,
@@ -2981,6 +2983,32 @@ pub(crate) async fn create_mls_encrypted_channel(
             return Err(AuthFailure::InvalidRequest);
         }
         invitees.push((user_id, device_id, invitee.leaf_index));
+    }
+    let mut permission_overrides = Vec::with_capacity(payload.permission_overrides.len());
+    for overwrite in &payload.permission_overrides {
+        parse_canonical_ulid(&overwrite.target_id)?;
+        let allow = permission_set_from_list(&overwrite.allow);
+        let deny = permission_set_from_list(&overwrite.deny);
+        if allow.bits() & deny.bits() != 0 {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        let target_kind = match overwrite.target_kind {
+            MlsEncryptedChannelPermissionTargetKind::Role => 0_i16,
+            MlsEncryptedChannelPermissionTargetKind::Member => 1_i16,
+        };
+        permission_overrides.push((
+            target_kind,
+            overwrite.target_id.clone(),
+            permission_set_to_i64(allow)?,
+            permission_set_to_i64(deny)?,
+        ));
+    }
+    permission_overrides.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
+    if permission_overrides
+        .windows(2)
+        .any(|pair| pair[0].0 == pair[1].0 && pair[0].1 == pair[1].1)
+    {
+        return Err(AuthFailure::InvalidRequest);
     }
     enforce_e2ee_transport_rate_limit(
         &state,
@@ -3048,81 +3076,6 @@ pub(crate) async fn create_mls_encrypted_channel(
         return Err(AuthFailure::Forbidden);
     }
 
-    let member_rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT gm.user_id
-         FROM guild_members gm
-         WHERE gm.guild_id = $1
-           AND NOT EXISTS (
-               SELECT 1 FROM guild_bans gb
-               WHERE gb.guild_id = gm.guild_id AND gb.user_id = gm.user_id
-           )
-         ORDER BY gm.user_id
-         FOR SHARE OF gm",
-    )
-    .bind(&path.guild_id)
-    .fetch_all(&mut *transaction)
-    .await
-    .map_err(|_| AuthFailure::Internal)?;
-    let total_members =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM guild_members WHERE guild_id = $1")
-            .bind(&path.guild_id)
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(|_| AuthFailure::Internal)?;
-    if usize::try_from(total_members).ok() != Some(member_rows.len())
-        || !(2..=MAX_MLS_GROUP_USERS).contains(&member_rows.len())
-    {
-        return Err(AuthFailure::E2eeCapabilityRequired);
-    }
-
-    let mut create_message = PermissionSet::empty();
-    create_message.insert(Permission::CreateMessage);
-    let create_message_mask = permission_set_to_i64(create_message)?;
-    let unauthorized_members = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*)
-         FROM guild_members gm
-         WHERE gm.guild_id = $1
-           AND NOT EXISTS (
-               SELECT 1
-               FROM guild_role_members grm
-               JOIN guild_roles gr
-                 ON gr.guild_id = grm.guild_id AND gr.role_id = grm.role_id
-               WHERE grm.guild_id = gm.guild_id
-                 AND grm.user_id = gm.user_id
-                 AND (gr.permissions_allow_mask & $2) <> 0
-           )",
-    )
-    .bind(&path.guild_id)
-    .bind(create_message_mask)
-    .fetch_one(&mut *transaction)
-    .await
-    .map_err(|_| AuthFailure::Internal)?;
-    if unauthorized_members != 0 {
-        return Err(AuthFailure::E2eeCapabilityRequired);
-    }
-
-    let expected_users = member_rows
-        .iter()
-        .map(|(user_id,)| user_id.as_str())
-        .collect::<HashSet<_>>();
-    let supplied_users = user_ids
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect::<HashSet<_>>();
-    if expected_users
-        != supplied_users
-            .iter()
-            .map(String::as_str)
-            .collect::<HashSet<_>>()
-    {
-        return Err(AuthFailure::InvalidRequest);
-    }
-
-    require_channel_capable_device(&mut transaction, auth.user_id, committer_device_id).await?;
-    for (user_id, device_id, _) in &invitees {
-        require_channel_capable_device(&mut transaction, *user_id, *device_id).await?;
-    }
-
     let lock_key = format!(
         "encrypted-channel-provision:{}:{}:{}:{}",
         path.guild_id, payload.channel_id, conversation_id, group_id
@@ -3162,6 +3115,17 @@ pub(crate) async fn create_mls_encrypted_channel(
              ORDER BY leaf_index",
         )
         .bind(&existing_group)
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        let persisted_permission_overrides: Vec<(i16, String, i64, i64)> = sqlx::query_as(
+            "SELECT target_kind, target_id, allow_mask, deny_mask
+             FROM channel_permission_overrides
+             WHERE guild_id = $1 AND channel_id = $2
+             ORDER BY target_kind, target_id",
+        )
+        .bind(&path.guild_id)
+        .bind(&payload.channel_id)
         .fetch_all(&mut *transaction)
         .await
         .map_err(|_| AuthFailure::Internal)?;
@@ -3212,7 +3176,8 @@ pub(crate) async fn create_mls_encrypted_channel(
             && existing
                 .try_get::<Option<Vec<u8>>, _>("group_info_blob")
                 .is_ok_and(|value| value.as_deref() == Some(payload.group_info_blob.as_slice()))
-            && leaves == expected_leaves;
+            && leaves == expected_leaves
+            && persisted_permission_overrides == permission_overrides;
         if !exact_retry {
             return Err(AuthFailure::E2eeConversationConflict);
         }
@@ -3267,6 +3232,120 @@ pub(crate) async fn create_mls_encrypted_channel(
     .execute(&mut *transaction)
     .await
     .map_err(|error| map_provision_write_error(&error))?;
+    for (target_kind, target_id, allow_mask, deny_mask) in &permission_overrides {
+        let target_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT CASE
+                 WHEN $3 = 0 THEN EXISTS (
+                     SELECT 1 FROM guild_roles
+                     WHERE guild_id = $1 AND role_id = $2
+                 )
+                 WHEN $3 = 1 THEN EXISTS (
+                     SELECT 1 FROM guild_members
+                     WHERE guild_id = $1 AND user_id = $2
+                 )
+                 ELSE FALSE
+             END",
+        )
+        .bind(&path.guild_id)
+        .bind(target_id)
+        .bind(*target_kind)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        if !target_exists {
+            return Err(AuthFailure::InvalidRequest);
+        }
+        sqlx::query(
+            "INSERT INTO channel_permission_overrides
+                (guild_id, channel_id, target_kind, target_id, allow_mask, deny_mask)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(&path.guild_id)
+        .bind(&payload.channel_id)
+        .bind(*target_kind)
+        .bind(target_id)
+        .bind(*allow_mask)
+        .bind(*deny_mask)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| map_provision_write_error(&error))?;
+    }
+
+    if policy == EncryptedChannelPolicy::RequireModeratorMembership {
+        let unauthorized_moderator_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (
+                 SELECT 1
+                 FROM guild_members gm
+                 WHERE gm.guild_id = $1
+                   AND (
+                       gm.role = 1
+                       OR EXISTS (
+                           SELECT 1
+                           FROM guild_role_members grm
+                           JOIN guild_roles gr
+                             ON gr.guild_id = grm.guild_id
+                            AND gr.role_id = grm.role_id
+                           WHERE grm.guild_id = gm.guild_id
+                             AND grm.user_id = gm.user_id
+                             AND gr.system_key = 'moderator'
+                       )
+                   )
+                   AND NOT filament_e2ee_channel_user_can_post($1, $2, gm.user_id)
+             )",
+        )
+        .bind(&path.guild_id)
+        .bind(&payload.channel_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+        if unauthorized_moderator_exists {
+            return Err(AuthFailure::E2eeCapabilityRequired);
+        }
+    }
+
+    let member_rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT gm.user_id
+         FROM guild_members gm
+         WHERE gm.guild_id = $1
+           AND NOT EXISTS (
+               SELECT 1 FROM guild_bans gb
+               WHERE gb.guild_id = gm.guild_id AND gb.user_id = gm.user_id
+           )
+           AND filament_e2ee_channel_user_can_post($1, $2, gm.user_id)
+         ORDER BY gm.user_id
+         FOR SHARE OF gm",
+    )
+    .bind(&path.guild_id)
+    .bind(&payload.channel_id)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if !(2..=MAX_MLS_GROUP_USERS).contains(&member_rows.len()) {
+        return Err(AuthFailure::E2eeCapabilityRequired);
+    }
+
+    let expected_users = member_rows
+        .iter()
+        .map(|(user_id,)| user_id.as_str())
+        .collect::<HashSet<_>>();
+    let supplied_users = user_ids
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect::<HashSet<_>>();
+    if expected_users
+        != supplied_users
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>()
+    {
+        return Err(AuthFailure::InvalidRequest);
+    }
+
+    require_channel_capable_device(&mut transaction, auth.user_id, committer_device_id).await?;
+    for (user_id, device_id, _) in &invitees {
+        require_channel_capable_device(&mut transaction, *user_id, *device_id).await?;
+    }
+
     sqlx::query(
         "INSERT INTO e2ee_conversations
             (conversation_id, conversation_crypto, created_by, created_at_unix)

@@ -269,23 +269,26 @@ This section locks response semantics and limits for upcoming directory-join/aud
 - `POST /guilds/{guild_id}/e2ee/channels`
   - Auth required; requires effective `manage_channel_overrides` permission and
     an enabled encrypted-channel workspace policy
-  - Request: `{ "channel_id", "channel_name", "conversation_id", "group_id", "suite_id", "committer_device_id", "invitees": [{ "user_id", "welcome_device_id", "leaf_index" }], "commit_blob", "welcome_blob", "group_info_blob" }`
-  - The initial Phase 6 path provisions text channels for the exact current
-    workspace audience only. The committer plus 1–99 invitees must equal all
-    2–100 active workspace members; leaf indices are contiguous from one.
-  - Every member must already have effective `create_message` permission and
-    the routed device must be active, owned, and root-certified. A capability
-    gap returns `409 e2ee_capability_required`; no channel or partial MLS state
-    is created.
-  - Channel metadata, `mls_v1` conversation membership, group, epoch-1 commit,
-    shared Welcome recipients, leaf routing, GroupInfo, and the immutable
-    channel/group binding commit in one transaction while membership and role
-    authorization are locked.
+  - Request: `{ "channel_id", "channel_name", "conversation_id", "group_id", "suite_id", "committer_device_id", "invitees": [{ "user_id", "welcome_device_id", "leaf_index" }], "permission_overrides"?: [{ "target_kind": "role"|"member", "target_id", "allow": [Permission...], "deny": [Permission...] }], "commit_blob", "welcome_blob", "group_info_blob" }`
+  - At most 164 unique, disjoint role/member permission overwrites may be
+    supplied. They are installed atomically before the audience is evaluated;
+    nonexistent targets and overlapping allow/deny entries are rejected.
+  - The committer plus 1–99 invitees must equal the exact 2–100-user audience
+    with effective `create_message` permission after those overwrites. Leaf
+    indices are contiguous from one. Omitted authorized users and injected
+    unauthorized users are rejected independently by the handler and database.
+  - Every routed device must be active, owned, and root-certified. A capability
+    gap returns `409 e2ee_capability_required`; no channel, overwrite, or
+    partial MLS state is created. Under `require_moderator_membership`, every
+    current moderator must remain in the visible authorized audience.
+  - Channel metadata, initial permission overwrites, `mls_v1` conversation
+    membership, group, epoch-1 commit, shared Welcome recipients, leaf routing,
+    GroupInfo, and the immutable channel/group binding commit in one
+    transaction while membership and role authorization are locked.
   - Response: `{ "channel_id", "channel_name", "kind": "text", "channel_type": "encrypted", "conversation_id", "group_id", "crypto": "mls_v1", "epoch": 1, "suite_id", "provisioned_at_unix" }`
-  - Exact retries are idempotent. Identifier, audience, leaf-map, metadata, or
-    opaque bootstrap conflicts fail with `409 e2ee_conversation_conflict`.
-    Narrow permission-overwrite audiences remain unavailable until Phase 6
-    membership reconciliation is transactional.
+  - Exact retries are idempotent. Identifier, audience, leaf-map, metadata,
+    permission-overwrite, or opaque bootstrap conflicts fail with
+    `409 e2ee_conversation_conflict`.
 - `GET /guilds/{guild_id}/channels`
   - Auth required; requester must be a guild member
   - Returns channels in that guild where requester has effective `create_message` permission

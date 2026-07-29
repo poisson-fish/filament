@@ -1,7 +1,7 @@
 use std::{env, time::Duration};
 
 use axum::{body::Body, http::Request, http::StatusCode, response::Response};
-use filament_core::{ConversationId, DeviceId, GroupId, UserId};
+use filament_core::{ConversationId, DeviceId, GroupId, Permission, UserId};
 use filament_e2ee::{
     create_pairing_transfer, create_root_identity_rotation_proof, decrypt_attachment,
     encrypt_attachment, generate_key_package_batch, generate_last_resort_key_package,
@@ -17,6 +17,7 @@ use filament_protocol::{
     CreateMlsGroupConversationRequest, DeviceListResponse, E2eeCommitMailboxResponse,
     E2eeMailboxResponse, E2eeProposalMailboxResponse, E2eeRetentionSeconds, GroupInfoResponse,
     KeyPackageEntry, MlsConversationProvisionResponse, MlsEncryptedChannelKind,
+    MlsEncryptedChannelPermissionOverride, MlsEncryptedChannelPermissionTargetKind,
     MlsEncryptedChannelProvisionResponse, MlsEncryptedChannelType, MlsGroupInvite, MlsLeafRouting,
     MlsMembershipChange, PostCommitRequest, PostCommitResponse, PostMessageRequest,
     PostMessageResponse, PostProposalRequest, PostProposalResponse,
@@ -635,6 +636,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
                 leaf_index: 2,
             },
         ],
+        permission_overrides: Vec::new(),
         commit_blob: vec![0x71; 256],
         welcome_blob: vec![0x72; 192],
         group_info_blob: vec![0x73; 128],
@@ -1249,6 +1251,174 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .await
     .expect("moderator leaf should remain queryable");
     assert_eq!(retained_moderator_leaf, 1);
+
+    let (_web_only_auth, web_only_user_id) = register_and_login(&app, "203.0.113.184").await;
+    let join_web_only_member = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/members/{web_only_user_id}"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({}),
+    )
+    .await;
+    assert_eq!(join_web_only_member.status(), StatusCode::OK);
+
+    let unsupported_channel_request = CreateMlsEncryptedChannelRequest {
+        channel_id: Ulid::new().to_string(),
+        channel_name: String::from("unsupported-audience"),
+        conversation_id: ConversationId::new().to_string(),
+        group_id: GroupId::new().to_string(),
+        suite_id: 3,
+        committer_device_id: alice_device_id.to_string(),
+        invitees: vec![
+            MlsGroupInvite {
+                user_id: bob_user_id.to_string(),
+                welcome_device_id: bob_device_id.to_string(),
+                leaf_index: 1,
+            },
+            MlsGroupInvite {
+                user_id: charlie_user_id.to_string(),
+                welcome_device_id: charlie_device_id.to_string(),
+                leaf_index: 2,
+            },
+            MlsGroupInvite {
+                user_id: web_only_user_id.to_string(),
+                welcome_device_id: DeviceId::new().to_string(),
+                leaf_index: 3,
+            },
+        ],
+        permission_overrides: Vec::new(),
+        commit_blob: vec![0x8C; 256],
+        welcome_blob: vec![0x8D; 192],
+        group_info_blob: vec![0x8E; 128],
+    };
+    let unsupported_channel = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/e2ee/channels"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &unsupported_channel_request,
+    )
+    .await;
+    assert_eq!(unsupported_channel.status(), StatusCode::CONFLICT);
+    let unsupported_channel: serde_json::Value = parse_json(unsupported_channel).await;
+    assert_eq!(
+        unsupported_channel["error"],
+        serde_json::Value::from("e2ee_capability_required")
+    );
+    let rolled_back_channel: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE channel_id = $1")
+            .bind(&unsupported_channel_request.channel_id)
+            .fetch_one(&audit_pool)
+            .await
+            .expect("failed capability gate should leave no channel row");
+    assert_eq!(rolled_back_channel, 0);
+
+    let private_channel_request = CreateMlsEncryptedChannelRequest {
+        channel_id: Ulid::new().to_string(),
+        channel_name: String::from("moderators-only"),
+        conversation_id: ConversationId::new().to_string(),
+        group_id: GroupId::new().to_string(),
+        suite_id: 3,
+        committer_device_id: alice_device_id.to_string(),
+        invitees: vec![MlsGroupInvite {
+            user_id: bob_user_id.to_string(),
+            welcome_device_id: bob_device_id.to_string(),
+            leaf_index: 1,
+        }],
+        permission_overrides: vec![
+            MlsEncryptedChannelPermissionOverride {
+                target_kind: MlsEncryptedChannelPermissionTargetKind::Member,
+                target_id: charlie_user_id.to_string(),
+                allow: Vec::new(),
+                deny: vec![Permission::CreateMessage],
+            },
+            MlsEncryptedChannelPermissionOverride {
+                target_kind: MlsEncryptedChannelPermissionTargetKind::Member,
+                target_id: web_only_user_id.to_string(),
+                allow: Vec::new(),
+                deny: vec![Permission::CreateMessage],
+            },
+        ],
+        commit_blob: vec![0x8F; 256],
+        welcome_blob: vec![0x90; 192],
+        group_info_blob: vec![0x91; 128],
+    };
+    let private_channel = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/e2ee/channels"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &private_channel_request,
+    )
+    .await;
+    if private_channel.status() != StatusCode::OK {
+        let status = private_channel.status();
+        let error: serde_json::Value = parse_json(private_channel).await;
+        panic!("authorized-audience channel provisioning failed with {status}: {error}");
+    }
+    let private_channel: MlsEncryptedChannelProvisionResponse = parse_json(private_channel).await;
+    let private_members: Vec<String> = sqlx::query_scalar(
+        "SELECT user_id
+         FROM e2ee_conversation_members
+         WHERE conversation_id = $1
+         ORDER BY user_id",
+    )
+    .bind(&private_channel.conversation_id)
+    .fetch_all(&audit_pool)
+    .await
+    .expect("private encrypted-channel members should be queryable");
+    let mut expected_private_members = vec![alice_user_id.to_string(), bob_user_id.to_string()];
+    expected_private_members.sort();
+    assert_eq!(private_members, expected_private_members);
+    let excluded_leaf_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM e2ee_group_leaves
+         WHERE group_id = $1 AND user_id = $2",
+    )
+    .bind(&private_channel.group_id)
+    .bind(charlie_user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("excluded encrypted-channel leaves should be countable");
+    assert_eq!(excluded_leaf_count, 0);
+
+    let private_channel_retry = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/e2ee/channels"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &private_channel_request,
+    )
+    .await;
+    assert_eq!(private_channel_retry.status(), StatusCode::OK);
+    assert_eq!(
+        parse_json::<MlsEncryptedChannelProvisionResponse>(private_channel_retry).await,
+        private_channel
+    );
+
+    let mut substituted_private_channel = private_channel_request.clone();
+    substituted_private_channel.permission_overrides[0].deny = vec![Permission::DeleteMessage];
+    let substituted_private_channel = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/e2ee/channels"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &substituted_private_channel,
+    )
+    .await;
+    assert_eq!(substituted_private_channel.status(), StatusCode::CONFLICT);
+    let substituted_private_channel: serde_json::Value =
+        parse_json(substituted_private_channel).await;
+    assert_eq!(
+        substituted_private_channel["error"],
+        serde_json::Value::from("e2ee_conversation_conflict")
+    );
 
     let unreconciled_permission_loss = sqlx::query(
         "UPDATE channel_permission_overrides

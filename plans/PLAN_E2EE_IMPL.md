@@ -463,7 +463,7 @@ gateway value backed by v23. Existing and new workspaces default to disabled;
 authorized updates are blocked while any encrypted channel exists until the
 membership reconciliation transaction is implemented. Disabled policy rejects
 encrypted-channel requests before the atomic-provisioning boundary. The v24
-atomic provisioning increment now creates a bounded workspace-wide encrypted
+atomic provisioning increment now creates a bounded encrypted
 text channel, its exact current authorized membership, epoch-1 commit, shared
 Welcome recipients, leaf routing, GroupInfo, and immutable channel/group
 binding in one transaction. It freezes membership and role authorization,
@@ -496,8 +496,12 @@ exact signed-Remove guard for structural departures. Migration v29 enforces
 moderator promotion requires prior membership in every encrypted channel,
 permission mutations cannot make a moderator ineligible, and member-authored
 commits cannot remove the moderator's final leaf while the role remains
-assigned. Narrower initial audiences and large-group performance work remain
-fail closed or unavailable.
+assigned. Migration v30 and the provisioning contract now install a bounded
+set of initial role/member permission overwrites in the same transaction and
+require the MLS roster to equal the exact effective posting audience.
+Unauthorized injections, authorized omissions, invalid targets, capability
+gaps, and moderator exclusions fail closed without partial channel state.
+Large-group performance work remains unavailable.
 
 ---
 
@@ -1472,11 +1476,13 @@ half-provisioned encrypted channel:
   GroupInfo, and exact leaf routing. The v24 binding is immutable and repeats
   the encrypted-mode, enabled-policy, exact-audience, and per-member-leaf
   checks at the database boundary.
-- The initial safe audience is the exact current workspace membership, bounded
-  to 2–100 users by the already-tested group core. Membership and role tables
-  are frozen during provisioning; every member must have post permission and
-  one active certified routed device. Exact retries return the original
-  result, while altered IDs, metadata, audience, or bootstrap blobs conflict.
+- The initial safe audience is the exact effective posting authorization,
+  bounded to 2–100 users by the already-tested group core. Up to 164 unique
+  role/member permission overwrites commit atomically with the channel before
+  that audience is evaluated. Membership and role tables are frozen during
+  provisioning; every included member needs one active certified routed
+  device. Exact retries return the original result, while altered IDs,
+  metadata, audience, overrides, or bootstrap blobs conflict.
 - Kick and ban queue the existing pinned-Delivery-Service external Remove
   proposal for every target leaf in the workspace's encrypted channels in the
   same transaction as structural membership removal. The existing bounded
@@ -1510,10 +1516,16 @@ half-provisioned encrypted channel:
   promotion to the system moderator role. While the role remains assigned,
   permission changes cannot make the moderator ineligible and commits cannot
   remove the user's final channel leaf.
+- The provisioning request can carry at most 164 unique role/member permission
+  overwrites. They commit with the channel before authorization is evaluated,
+  and the committer plus invitees must equal the exact 2–100-user effective
+  `CreateMessage` audience. Migration v30 independently rejects both omitted
+  authorized members and injected unauthorized members; invalid targets,
+  uncertified devices, and moderator exclusions fail closed without partial
+  state.
 
-This increment intentionally does not claim narrower initial
-permission-overwrite audiences, the 5,000-leaf target, or large-group
-readiness.
+This increment intentionally does not claim the 5,000-leaf target or
+large-group readiness.
 
 ### Deliverables
 

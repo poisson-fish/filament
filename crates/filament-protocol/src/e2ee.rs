@@ -16,6 +16,9 @@
 // lint avoids noise without hiding real issues.
 #![allow(clippy::doc_markdown)]
 
+use std::collections::HashSet;
+
+use filament_core::Permission;
 use serde::{de, Deserialize, Deserializer, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -97,6 +100,13 @@ pub const MAX_MLS_GROUP_USERS: usize = 100;
 
 /// Maximum certified device leaves in one group DM.
 pub const MAX_MLS_GROUP_LEAVES: usize = 200;
+
+/// Maximum role/member permission overwrites accepted during one encrypted
+/// channel bootstrap.
+///
+/// A workspace has at most 64 roles and the initial encrypted audience has at
+/// most 100 users, so no valid bootstrap needs more entries.
+pub const MAX_E2EE_CHANNEL_PERMISSION_OVERRIDES: usize = 164;
 
 /// Maximum leaves removed by one participant-removal commit.
 pub const MAX_MLS_REMOVED_LEAVES: usize = 100;
@@ -497,6 +507,49 @@ where
     Ok(value)
 }
 
+fn deserialize_encrypted_channel_permission_overrides<'de, D>(
+    deserializer: D,
+) -> Result<Vec<MlsEncryptedChannelPermissionOverride>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Vec::<MlsEncryptedChannelPermissionOverride>::deserialize(deserializer)?;
+    if value.len() > MAX_E2EE_CHANNEL_PERMISSION_OVERRIDES {
+        return Err(de::Error::invalid_length(
+            value.len(),
+            &"at most 164 encrypted-channel permission overrides",
+        ));
+    }
+    let mut targets = HashSet::with_capacity(value.len());
+    for overwrite in &value {
+        if overwrite.target_id.len() != 26
+            || !overwrite.target_id.is_ascii()
+            || !targets.insert((overwrite.target_kind, overwrite.target_id.as_str()))
+        {
+            return Err(de::Error::custom(
+                "permission override targets must be unique canonical identifiers",
+            ));
+        }
+        let mut permissions = HashSet::with_capacity(overwrite.allow.len());
+        if overwrite.allow.len() > 12
+            || overwrite.deny.len() > 12
+            || overwrite
+                .allow
+                .iter()
+                .any(|permission| !permissions.insert(*permission))
+            || overwrite
+                .deny
+                .iter()
+                .any(|permission| !permissions.insert(*permission))
+        {
+            return Err(de::Error::custom(
+                "permission override allow and deny lists must be unique and disjoint",
+            ));
+        }
+    }
+    Ok(value)
+}
+
 fn deserialize_removed_leaves<'de, D>(deserializer: D) -> Result<Vec<MlsLeafRouting>, D::Error>
 where
     D: Deserializer<'de>,
@@ -821,13 +874,32 @@ pub struct CreateMlsGroupConversationRequest {
     pub group_info_blob: Vec<u8>,
 }
 
-/// Atomic bootstrap for a workspace-wide encrypted text channel.
+/// Permission-overwrite target used by encrypted-channel bootstrap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MlsEncryptedChannelPermissionTargetKind {
+    Role,
+    Member,
+}
+
+/// One bounded permission overwrite installed in the same transaction as the
+/// encrypted channel and its initial MLS audience.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MlsEncryptedChannelPermissionOverride {
+    pub target_kind: MlsEncryptedChannelPermissionTargetKind,
+    pub target_id: String,
+    pub allow: Vec<Permission>,
+    pub deny: Vec<Permission>,
+}
+
+/// Atomic bootstrap for an authorized-audience encrypted text channel.
 ///
 /// `channel_id`, `conversation_id`, and `group_id` are client-generated
 /// canonical ULIDs so an uncertain submission can be retried exactly. The
-/// server requires the committer plus `invitees` to equal the complete current
-/// workspace membership and commits the channel metadata and MLS state in one
-/// database transaction.
+/// server installs the bounded permission overwrites first, requires the
+/// committer plus `invitees` to equal the exact current authorized audience,
+/// and commits the channel metadata and MLS state in one database transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateMlsEncryptedChannelRequest {
@@ -839,6 +911,11 @@ pub struct CreateMlsEncryptedChannelRequest {
     pub committer_device_id: String,
     #[serde(deserialize_with = "deserialize_encrypted_channel_invitees")]
     pub invitees: Vec<MlsGroupInvite>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_encrypted_channel_permission_overrides"
+    )]
+    pub permission_overrides: Vec<MlsEncryptedChannelPermissionOverride>,
     #[serde(deserialize_with = "deserialize_commit_blob")]
     pub commit_blob: Vec<u8>,
     #[serde(deserialize_with = "deserialize_bounded_welcome_blob")]
@@ -1854,6 +1931,12 @@ mod tests {
             suite_id: 3,
             committer_device_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
             invitees: vec![invite],
+            permission_overrides: vec![MlsEncryptedChannelPermissionOverride {
+                target_kind: MlsEncryptedChannelPermissionTargetKind::Member,
+                target_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FB1"),
+                allow: vec![Permission::CreateMessage],
+                deny: Vec::new(),
+            }],
             commit_blob: vec![1],
             welcome_blob: vec![2],
             group_info_blob: vec![3],
@@ -1887,6 +1970,73 @@ mod tests {
         let mut unknown_field = serde_json::to_value(request).unwrap();
         unknown_field["plaintext_fallback"] = serde_json::Value::Bool(true);
         assert!(serde_json::from_value::<CreateMlsEncryptedChannelRequest>(unknown_field).is_err());
+    }
+
+    #[test]
+    fn encrypted_channel_permission_overrides_are_bounded_and_unambiguous() {
+        let base = MlsEncryptedChannelPermissionOverride {
+            target_kind: MlsEncryptedChannelPermissionTargetKind::Member,
+            target_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            allow: vec![Permission::CreateMessage],
+            deny: Vec::new(),
+        };
+        let decode = |overrides| {
+            serde_json::from_value::<CreateMlsEncryptedChannelRequest>(serde_json::json!({
+                "channel_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                "channel_name": "sealed",
+                "conversation_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+                "group_id": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+                "suite_id": 3,
+                "committer_device_id": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+                "invitees": [{
+                    "user_id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                    "welcome_device_id": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+                    "leaf_index": 1
+                }],
+                "permission_overrides": overrides,
+                "commit_blob": [1],
+                "welcome_blob": [2],
+                "group_info_blob": [3]
+            }))
+        };
+
+        assert!(decode(vec![base.clone()]).is_ok());
+        assert!(decode(vec![base.clone(), base.clone()]).is_err());
+
+        let mut overlapping = base;
+        overlapping.deny.push(Permission::CreateMessage);
+        assert!(decode(vec![overlapping]).is_err());
+
+        let too_many = (0..=MAX_E2EE_CHANNEL_PERMISSION_OVERRIDES)
+            .map(|index| MlsEncryptedChannelPermissionOverride {
+                target_kind: MlsEncryptedChannelPermissionTargetKind::Member,
+                target_id: format!("{index:026}"),
+                allow: Vec::new(),
+                deny: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        assert!(decode(too_many).is_err());
+
+        let without_overrides = serde_json::json!({
+            "channel_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "channel_name": "sealed",
+            "conversation_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+            "group_id": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+            "suite_id": 3,
+            "committer_device_id": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+            "invitees": [{
+                "user_id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                "welcome_device_id": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+                "leaf_index": 1
+            }],
+            "commit_blob": [1],
+            "welcome_blob": [2],
+            "group_info_blob": [3]
+        });
+        assert!(
+            serde_json::from_value::<CreateMlsEncryptedChannelRequest>(without_overrides)
+                .is_ok_and(|request| request.permission_overrides.is_empty())
+        );
     }
 
     #[test]
