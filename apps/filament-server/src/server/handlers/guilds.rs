@@ -40,6 +40,9 @@ use crate::server::{
     },
     errors::AuthFailure,
     gateway_events,
+    handlers::e2ee::{
+        emit_policy_proposals, queue_encrypted_channel_member_removals, PendingPolicyProposal,
+    },
     metrics::record_gateway_event_dropped,
     permissions::{
         DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, MAX_GUILD_ROLES, MAX_MEMBER_ROLE_ASSIGNMENTS,
@@ -3087,6 +3090,46 @@ async fn assign_default_join_role_in_memory(
     Ok(())
 }
 
+async fn reject_unreconciled_encrypted_channel_join(
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+) -> Result<(), AuthFailure> {
+    let has_encrypted_channel: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM e2ee_channel_groups WHERE guild_id = $1
+         )",
+    )
+    .bind(guild_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if has_encrypted_channel {
+        return Err(AuthFailure::E2eeMembershipReconciliationPending);
+    }
+    Ok(())
+}
+
+async fn reject_unreconciled_encrypted_channel_member_add(
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+    user_id: UserId,
+) -> Result<(), AuthFailure> {
+    let already_member: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM guild_members WHERE guild_id = $1 AND user_id = $2
+         )",
+    )
+    .bind(guild_id)
+    .bind(user_id.to_string())
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    if already_member {
+        return Ok(());
+    }
+    reject_unreconciled_encrypted_channel_join(pool, guild_id).await
+}
+
 async fn resolve_directory_join_outcome_db(
     state: &AppState,
     pool: &sqlx::PgPool,
@@ -3147,6 +3190,7 @@ async fn resolve_directory_join_outcome_db(
     if outcome != DirectoryJoinOutcome::Accepted {
         return Ok(outcome);
     }
+    reject_unreconciled_encrypted_channel_join(pool, guild_id).await?;
 
     let insert = sqlx::query(
         "INSERT INTO guild_members (guild_id, user_id, role)
@@ -3557,6 +3601,8 @@ pub(crate) async fn add_member(
         if banned.is_some() {
             return Err(AuthFailure::Forbidden);
         }
+        reject_unreconciled_encrypted_channel_member_add(pool, &path.guild_id, target_user_id)
+            .await?;
 
         let insert = sqlx::query(
             "INSERT INTO guild_members (guild_id, user_id, role)
@@ -4181,6 +4227,44 @@ async fn remove_member_from_voice_channels(
     }
 }
 
+async fn remove_guild_member_db(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+    target_user_id: UserId,
+    removed_at_unix: i64,
+) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    let pending = queue_encrypted_channel_member_removals(
+        state,
+        &mut transaction,
+        guild_id,
+        target_user_id,
+        removed_at_unix,
+    )
+    .await?;
+    let deleted = sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+        .bind(guild_id)
+        .bind(target_user_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    if deleted.rows_affected() == 0 {
+        return Err(AuthFailure::NotFound);
+    }
+    sqlx::query("DELETE FROM guild_role_members WHERE guild_id = $1 AND user_id = $2")
+        .bind(guild_id)
+        .bind(target_user_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    Ok(pending)
+}
+
 pub(crate) async fn kick_member(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -4197,25 +4281,17 @@ pub(crate) async fn kick_member(
         return Err(AuthFailure::Forbidden);
     }
 
+    let removed_at_unix = now_unix();
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
-        let deleted = sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
-            .bind(&path.guild_id)
-            .bind(target_user_id.to_string())
-            .execute(pool)
-            .await
-            .map_err(|_| AuthFailure::Internal)?;
-        if deleted.rows_affected() == 0 {
-            return Err(AuthFailure::NotFound);
-        }
-        sqlx::query(
-            "DELETE FROM guild_role_members
-             WHERE guild_id = $1 AND user_id = $2",
+        pending_policy_proposals = remove_guild_member_db(
+            &state,
+            pool,
+            &path.guild_id,
+            target_user_id,
+            removed_at_unix,
         )
-        .bind(&path.guild_id)
-        .bind(target_user_id.to_string())
-        .execute(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
+        .await?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
@@ -4235,7 +4311,7 @@ pub(crate) async fn kick_member(
         }
     }
 
-    let removed_at_unix = now_unix();
+    emit_policy_proposals(&state, pending_policy_proposals).await;
     let event = match gateway_events::try_workspace_member_remove(
         &path.guild_id,
         target_user_id,
@@ -4283,9 +4359,18 @@ async fn persist_member_ban(
     target_user_id: UserId,
     banned_by_user_id: UserId,
     banned_at_unix: i64,
-) -> Result<(), AuthFailure> {
+) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
         let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+        pending_policy_proposals = queue_encrypted_channel_member_removals(
+            state,
+            &mut tx,
+            guild_id,
+            target_user_id,
+            banned_at_unix,
+        )
+        .await?;
         sqlx::query(
             "INSERT INTO guild_bans (guild_id, user_id, banned_by_user_id, created_at_unix)
              VALUES ($1, $2, $3, $4)
@@ -4330,7 +4415,7 @@ async fn persist_member_ban(
         }
     }
 
-    Ok(())
+    Ok(pending_policy_proposals)
 }
 
 pub(crate) async fn ban_member(
@@ -4351,7 +4436,7 @@ pub(crate) async fn ban_member(
     }
 
     let banned_at_unix = now_unix();
-    persist_member_ban(
+    let pending_policy_proposals = persist_member_ban(
         &state,
         &path.guild_id,
         target_user_id,
@@ -4359,6 +4444,7 @@ pub(crate) async fn ban_member(
         banned_at_unix,
     )
     .await?;
+    emit_policy_proposals(&state, pending_policy_proposals).await;
     let ban_event = match gateway_events::try_workspace_member_ban(
         &path.guild_id,
         target_user_id,

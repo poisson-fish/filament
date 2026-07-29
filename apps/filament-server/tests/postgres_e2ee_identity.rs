@@ -648,7 +648,11 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         &encrypted_channel_request,
     )
     .await;
-    assert_eq!(encrypted_channel.status(), StatusCode::OK);
+    if encrypted_channel.status() != StatusCode::OK {
+        let status = encrypted_channel.status();
+        let error: serde_json::Value = parse_json(encrypted_channel).await;
+        panic!("encrypted channel provisioning failed with {status}: {error}");
+    }
     let encrypted_channel: MlsEncryptedChannelProvisionResponse =
         parse_json(encrypted_channel).await;
     assert_eq!(
@@ -708,6 +712,183 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     assert_eq!(channel_binding.0, encrypted_workspace_id);
     assert_eq!(channel_binding.1, encrypted_channel_request.conversation_id);
     assert_eq!(channel_binding.2, encrypted_channel_request.group_id);
+
+    let unreconciled_delete =
+        sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+            .bind(encrypted_workspace_id)
+            .bind(charlie_user_id.to_string())
+            .execute(&audit_pool)
+            .await
+            .expect_err("direct encrypted-channel membership removal must fail closed");
+    assert_eq!(
+        unreconciled_delete
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::constraint),
+        Some("e2ee_channel_member_remove_requires_reconciliation")
+    );
+
+    let kick_bob = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/members/{bob_user_id}/kick"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({}),
+    )
+    .await;
+    assert_eq!(kick_bob.status(), StatusCode::OK);
+    let pending_channel_removal: (String, String, i32, i64, i64, Option<i64>) = sqlx::query_as(
+        "SELECT r.group_id, r.target_device_id, r.leaf_index,
+                    r.requested_at_unix, r.deadline_unix, r.completed_epoch
+             FROM e2ee_membership_reconciliations r
+             WHERE r.group_id = $1 AND r.target_user_id = $2",
+    )
+    .bind(&encrypted_channel.group_id)
+    .bind(bob_user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("kick must atomically queue encrypted-channel reconciliation");
+    assert_eq!(pending_channel_removal.0, encrypted_channel.group_id);
+    assert_eq!(pending_channel_removal.1, bob_device_id.to_string());
+    assert_eq!(pending_channel_removal.2, 1);
+    assert!(pending_channel_removal.4 > pending_channel_removal.3);
+    assert_eq!(pending_channel_removal.5, None);
+    let external_remove_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM e2ee_proposals p
+         JOIN e2ee_membership_reconciliations r
+           ON r.reconciliation_id = p.reconciliation_id
+         WHERE r.group_id = $1 AND r.target_user_id = $2
+           AND p.external_sender_index = 0",
+    )
+    .bind(&encrypted_channel.group_id)
+    .bind(bob_user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("signed policy proposal should be queryable");
+    assert_eq!(external_remove_count, 1);
+
+    let blocked_channel_message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/messages", encrypted_channel.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostMessageRequest {
+            epoch: 1,
+            suite_id: 3,
+            sender_device_id: alice_device_id.to_string(),
+            retention_secs: None,
+            message_blob: vec![0x81; 512],
+        },
+    )
+    .await;
+    assert_eq!(blocked_channel_message.status(), StatusCode::CONFLICT);
+    let blocked_channel_message: serde_json::Value = parse_json(blocked_channel_message).await;
+    assert_eq!(
+        blocked_channel_message["error"],
+        serde_json::Value::from("e2ee_membership_reconciliation_pending")
+    );
+
+    let channel_remove_commit = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/commits", encrypted_channel.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostCommitRequest {
+            epoch: 2,
+            prior_epoch: 1,
+            committer_device_id: alice_device_id.to_string(),
+            commit_blob: vec![0x82; 256],
+            welcome_blob: None,
+            welcome_device_id: None,
+            group_info_blob: Some(vec![0x83; 128]),
+            membership_change: Some(MlsMembershipChange::Remove {
+                leaves: vec![MlsLeafRouting {
+                    leaf_index: 1,
+                    user_id: bob_user_id.to_string(),
+                    device_id: bob_device_id.to_string(),
+                }],
+            }),
+        },
+    )
+    .await;
+    assert_eq!(channel_remove_commit.status(), StatusCode::OK);
+    assert_eq!(
+        parse_json::<PostCommitResponse>(channel_remove_commit).await,
+        PostCommitResponse {
+            accepted: true,
+            epoch: 2
+        }
+    );
+    let completed_epoch: Option<i64> = sqlx::query_scalar(
+        "SELECT completed_epoch
+         FROM e2ee_membership_reconciliations
+         WHERE group_id = $1 AND target_user_id = $2",
+    )
+    .bind(&encrypted_channel.group_id)
+    .bind(bob_user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("completed channel reconciliation should remain auditable");
+    assert_eq!(completed_epoch, Some(2));
+
+    let resumed_channel_message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/messages", encrypted_channel.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostMessageRequest {
+            epoch: 2,
+            suite_id: 3,
+            sender_device_id: alice_device_id.to_string(),
+            retention_secs: None,
+            message_blob: vec![0x84; 512],
+        },
+    )
+    .await;
+    assert_eq!(resumed_channel_message.status(), StatusCode::OK);
+
+    let blocked_rejoin = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/members/{bob_user_id}"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({}),
+    )
+    .await;
+    assert_eq!(blocked_rejoin.status(), StatusCode::CONFLICT);
+    let blocked_rejoin: serde_json::Value = parse_json(blocked_rejoin).await;
+    assert_eq!(
+        blocked_rejoin["error"],
+        serde_json::Value::from("e2ee_membership_reconciliation_pending")
+    );
+
+    let ban_charlie = send_json(
+        &app,
+        "POST",
+        &format!("/guilds/{encrypted_workspace_id}/members/{charlie_user_id}/ban"),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &json!({}),
+    )
+    .await;
+    assert_eq!(ban_charlie.status(), StatusCode::OK);
+    let pending_ban_removal: (i32, Option<i64>, i32) = sqlx::query_as(
+        "SELECT r.leaf_index, r.completed_epoch, p.external_sender_index
+         FROM e2ee_membership_reconciliations r
+         JOIN e2ee_proposals p ON p.reconciliation_id = r.reconciliation_id
+         WHERE r.group_id = $1 AND r.target_user_id = $2",
+    )
+    .bind(&encrypted_channel.group_id)
+    .bind(charlie_user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("ban must atomically queue a signed encrypted-channel removal");
+    assert_eq!(pending_ban_removal, (2, None, 0));
 
     // Seed the server-side routing view for a three-user group. MLS interiors
     // remain opaque here; this exercises only bounded Delivery Service fanout.

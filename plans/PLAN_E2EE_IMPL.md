@@ -470,8 +470,14 @@ binding in one transaction. It freezes membership and role authorization,
 requires every 2–100-member participant to have post permission and an active
 certified device, supports exact idempotent retries, and emits the existing
 ciphertext-free channel and MLS routing notifications only after commit.
-Narrow permission-overwrite audiences, ongoing membership reconciliation, and
-large-group performance work remain fail closed.
+Workspace kick and ban now atomically queue one signed external Remove proposal
+per affected encrypted-channel leaf with the structural membership change.
+Pending removals block all encrypted sends until a member-authored commit
+cryptographically evicts the target, while database triggers reject bypass
+deletions and unreconciled member additions. New joins return the typed
+reconciliation-pending error without a plaintext fallback. Role/permission
+loss, authenticated member Add flows, narrow permission-overwrite audiences,
+and large-group performance work remain fail closed or unavailable.
 
 ---
 
@@ -1451,9 +1457,19 @@ half-provisioned encrypted channel:
   are frozen during provisioning; every member must have post permission and
   one active certified routed device. Exact retries return the original
   result, while altered IDs, metadata, audience, or bootstrap blobs conflict.
+- Kick and ban queue the existing pinned-Delivery-Service external Remove
+  proposal for every target leaf in the workspace's encrypted channels in the
+  same transaction as structural membership removal. The existing bounded
+  reconciliation deadline blocks encrypted sends until a member-authored
+  commit applies the removal.
+- Migration v25 rejects direct member deletion without the exact pending signed
+  reconciliation and rejects new workspace members while an encrypted channel
+  exists. The REST and public-directory join paths return the typed
+  reconciliation-pending conflict; member Adds remain unavailable until a
+  client-authenticated MLS Add flow exists.
 
 This increment intentionally does not claim permission-overwrite audiences,
-ongoing membership reconciliation, the 5,000-leaf target, or large-group
+role/permission-loss reconciliation, the 5,000-leaf target, or large-group
 readiness.
 
 ### Deliverables

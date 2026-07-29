@@ -309,6 +309,15 @@ pub(crate) async fn seed_hierarchical_permissions_for_new_guild(
     creator_user_id: &str,
 ) -> Result<(), sqlx::Error> {
     let role_ids = ensure_seed_roles_for_guild(tx, guild_id).await?;
+    sqlx::query(
+        "UPDATE guilds
+         SET default_join_role_id = $2
+         WHERE guild_id = $1 AND default_join_role_id IS NULL",
+    )
+    .bind(guild_id)
+    .bind(&role_ids.member_role_id)
+    .execute(&mut **tx)
+    .await?;
     backfill_role_assignments_for_guild(tx, guild_id, Some(creator_user_id), &role_ids).await?;
     Ok(())
 }

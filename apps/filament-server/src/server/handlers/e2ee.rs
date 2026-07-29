@@ -1181,29 +1181,35 @@ async fn apply_membership_change(
     }
 }
 
-struct PendingPolicyProposal {
+pub(crate) struct PendingPolicyProposal {
     member_ids: Vec<UserId>,
     event: MlsProposalEvent,
 }
 
 #[allow(clippy::too_many_lines)]
-async fn queue_policy_removals_for_device(
+async fn queue_policy_removals(
     state: &AppState,
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: UserId,
-    device_id: DeviceId,
+    device_id: Option<DeviceId>,
+    encrypted_channel_guild_id: Option<&str>,
     now: i64,
 ) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
     let leaves = sqlx::query(
-        "SELECT l.group_id, l.leaf_index, g.current_epoch, g.conversation_id
+        "SELECT l.group_id, l.leaf_index, l.device_id,
+                g.current_epoch, g.conversation_id
          FROM e2ee_group_leaves l
          JOIN e2ee_groups g ON g.group_id = l.group_id
-         WHERE l.user_id = $1 AND l.device_id = $2
+         LEFT JOIN e2ee_channel_groups cg ON cg.group_id = l.group_id
+         WHERE l.user_id = $1
+           AND ($2::TEXT IS NULL OR l.device_id = $2)
+           AND ($3::TEXT IS NULL OR cg.guild_id = $3)
          ORDER BY l.group_id
          FOR UPDATE OF g",
     )
     .bind(user_id.to_string())
-    .bind(device_id.to_string())
+    .bind(device_id.map(|value| value.to_string()))
+    .bind(encrypted_channel_guild_id)
     .fetch_all(&mut **transaction)
     .await
     .map_err(|_| AuthFailure::Internal)?;
@@ -1235,6 +1241,10 @@ async fn queue_policy_removals_for_device(
             .try_get("leaf_index")
             .map_err(|_| AuthFailure::Internal)?;
         let leaf_index = u32::try_from(leaf_index).map_err(|_| AuthFailure::Internal)?;
+        let device_id: String = row
+            .try_get("device_id")
+            .map_err(|_| AuthFailure::Internal)?;
+        let device_id = DeviceId::try_from(device_id).map_err(|_| AuthFailure::Internal)?;
         let epoch: i64 = row
             .try_get("current_epoch")
             .map_err(|_| AuthFailure::Internal)?;
@@ -1248,7 +1258,9 @@ async fn queue_policy_removals_for_device(
                 (reconciliation_id, group_id, target_user_id, target_device_id,
                  leaf_index, requested_at_unix, deadline_unix)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (group_id, target_device_id, leaf_index) DO NOTHING",
+             ON CONFLICT (group_id, target_device_id, leaf_index)
+                 WHERE completed_epoch IS NULL
+             DO NOTHING",
         )
         .bind(&reconciliation_id)
         .bind(group_id.to_string())
@@ -1316,7 +1328,33 @@ async fn queue_policy_removals_for_device(
     Ok(pending)
 }
 
-async fn emit_policy_proposals(state: &AppState, pending: Vec<PendingPolicyProposal>) {
+async fn queue_policy_removals_for_device(
+    state: &AppState,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: UserId,
+    device_id: DeviceId,
+    now: i64,
+) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
+    queue_policy_removals(state, transaction, user_id, Some(device_id), None, now).await
+}
+
+/// Queue one signed external Remove proposal per leaf that an expelled
+/// workspace member still holds in the workspace's encrypted channels.
+///
+/// The caller must commit these proposals in the same transaction as the
+/// workspace membership removal so routing is blocked without an
+/// authorization/MLS race.
+pub(crate) async fn queue_encrypted_channel_member_removals(
+    state: &AppState,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    guild_id: &str,
+    user_id: UserId,
+    now: i64,
+) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
+    queue_policy_removals(state, transaction, user_id, None, Some(guild_id), now).await
+}
+
+pub(crate) async fn emit_policy_proposals(state: &AppState, pending: Vec<PendingPolicyProposal>) {
     for proposal in pending {
         match gateway_events::try_mls_proposal(proposal.event) {
             Ok(event) => broadcast_conversation_event(state, &proposal.member_ids, &event).await,

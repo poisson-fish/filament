@@ -431,6 +431,9 @@ unencrypted LiveKit-token routes reject encrypted channels with
 - `POST /guilds/{guild_id}/members/{user_id}`
   - Add member as `member`
   - Requires `manage_roles`
+  - If the workspace has an encrypted channel, a new member is rejected with
+    `409 e2ee_membership_reconciliation_pending` until an authenticated MLS Add
+    flow is available; existing-member retries remain idempotent
   - Response `200`: `{ "accepted": true }`
 - `PATCH /guilds/{guild_id}/members/{user_id}`
   - Request: `{ "role": "owner|moderator|member" }`
@@ -438,9 +441,14 @@ unencrypted LiveKit-token routes reject encrypted channels with
   - Response `200`: `{ "accepted": true }`
 - `POST /guilds/{guild_id}/members/{user_id}/kick`
   - Requires moderation privileges (`ban_member` + hierarchy)
+  - For every encrypted-channel leaf owned by the member, the membership
+    deletion and a signed Delivery Service Remove proposal commit atomically.
+    Encrypted sends remain blocked until a member-authored commit applies every
+    required removal.
   - Response `200`: `{ "accepted": true }`
 - `POST /guilds/{guild_id}/members/{user_id}/ban`
   - Requires moderation privileges (`ban_member` + hierarchy)
+  - Uses the same atomic encrypted-channel Remove reconciliation as kick
   - Response `200`: `{ "accepted": true }`
 
 ### Channel Role Overrides
