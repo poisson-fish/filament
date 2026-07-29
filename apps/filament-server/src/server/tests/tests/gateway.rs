@@ -44,6 +44,7 @@ async fn gateway_broadcasts_message_to_subscribed_connection() {
         ChannelRecord {
             name: String::from("gateway-room"),
             kind: ChannelKind::Text,
+            channel_type: filament_core::ChannelType::Plaintext,
             messages: Vec::new(),
             role_overrides: HashMap::new(),
         },

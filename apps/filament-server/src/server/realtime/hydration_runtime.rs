@@ -386,6 +386,7 @@ mod tests {
                     ChannelRecord {
                         name: String::from("general"),
                         kind: ChannelKind::Text,
+                        channel_type: filament_core::ChannelType::Plaintext,
                         messages: vec![MessageRecord {
                             id: String::from("m1"),
                             author_id: author,
@@ -403,6 +404,7 @@ mod tests {
                     ChannelRecord {
                         name: String::from("random"),
                         kind: ChannelKind::Text,
+                        channel_type: filament_core::ChannelType::Plaintext,
                         messages: vec![MessageRecord {
                             id: String::from("m2"),
                             author_id: author,

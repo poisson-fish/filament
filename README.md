@@ -75,7 +75,8 @@ Design principles:
   - Tantivy-backed query with bounded complexity and result caps
   - Rebuild/reconcile flows from Postgres
 - Media:
-  - Channel kinds: `text` and `voice` (`voice` is the RTC-capable channel kind)
+  - Channel presentation kinds: `text` and `voice`; immutable confidentiality
+    modes: `plaintext` and `encrypted` (Phase 6 provisioning remains gated)
   - LiveKit integration for voice/video/screen share
   - Short-lived, scoped, permission-limited media tokens
   - Explicit RTC UX states and troubleshooting for reconnect, permission denial, and token/session expiry

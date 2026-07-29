@@ -16,8 +16,8 @@ use crate::server::{
         attach_message_media, attach_message_reactions, attachment_map_for_messages_db,
         attachment_map_for_messages_in_memory, attachments_for_message_in_memory,
         channel_permission_snapshot, enforce_guild_ip_ban_for_request,
-        reaction_map_for_messages_db, reaction_summaries_from_users, user_can_write_channel,
-        validate_reaction_emoji, write_audit_log,
+        reaction_map_for_messages_db, reaction_summaries_from_users, require_plaintext_channel,
+        user_can_write_channel, validate_reaction_emoji, write_audit_log,
     },
     errors::AuthFailure,
     gateway_events,
@@ -228,6 +228,7 @@ pub(crate) async fn get_messages(
     if limit == 0 || limit > MAX_HISTORY_LIMIT {
         return Err(AuthFailure::InvalidRequest);
     }
+    require_plaintext_channel(&state, &path.guild_id, &path.channel_id).await?;
     let (_, permissions) =
         channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
     if !permissions.contains(Permission::CreateMessage) {
@@ -381,6 +382,7 @@ pub(crate) async fn edit_message(
         "messages.edit",
     )
     .await?;
+    require_plaintext_channel(&state, &path.guild_id, &path.channel_id).await?;
     validate_message_content(&payload.content)?;
     let markdown_tokens = tokenize_markdown(&payload.content);
     let (_, permissions) =
@@ -533,6 +535,7 @@ pub(crate) async fn delete_message(
         "messages.delete",
     )
     .await?;
+    require_plaintext_channel(&state, &path.guild_id, &path.channel_id).await?;
     let (_, permissions) =
         channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;
 
@@ -689,6 +692,7 @@ pub(crate) async fn add_reaction(
         "messages.reactions.add",
     )
     .await?;
+    require_plaintext_channel(&state, &path.guild_id, &path.channel_id).await?;
     validate_reaction_emoji(&path.emoji)?;
     if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
         return Err(AuthFailure::Forbidden);
@@ -801,6 +805,7 @@ pub(crate) async fn remove_reaction(
         "messages.reactions.remove",
     )
     .await?;
+    require_plaintext_channel(&state, &path.guild_id, &path.channel_id).await?;
     validate_reaction_emoji(&path.emoji)?;
     if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
         return Err(AuthFailure::Forbidden);

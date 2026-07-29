@@ -217,6 +217,7 @@ mod tests {
             ChannelRecord {
                 name: String::from("voice"),
                 kind: ChannelKind::Voice,
+                channel_type: filament_core::ChannelType::Plaintext,
                 messages: Vec::new(),
                 role_overrides,
             },

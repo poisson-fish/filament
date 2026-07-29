@@ -253,14 +253,18 @@ This section locks response semantics and limits for upcoming directory-join/aud
     - `{ "guilds": [{ "guild_id": "...", "name": "...", "visibility": "public" }] }`
 - `POST /guilds/{guild_id}/channels`
   - Auth required; role must be `owner` or `moderator`
-  - Request: `{ "name": "...", "kind"?: "text"|"voice" }` (`kind` defaults to `text`)
+  - Request: `{ "name": "...", "kind"?: "text"|"voice", "channel_type"?: "plaintext"|"encrypted" }`
+  - `kind` defaults to `text`; `channel_type` defaults to `plaintext`
   - `name`: 1..64 visible chars/spaces
-  - Response `200`: `{ "channel_id": "...", "name": "...", "kind": "text"|"voice" }`
+  - Ordinary CRUD currently rejects `channel_type = encrypted` with
+    `409 e2ee_channel_provisioning_required`; encrypted creation must use the
+    future atomic MLS provisioning route
+  - Response `200`: `{ "channel_id": "...", "name": "...", "kind": "text"|"voice", "channel_type": "plaintext"|"encrypted" }`
 - `GET /guilds/{guild_id}/channels`
   - Auth required; requester must be a guild member
   - Returns channels in that guild where requester has effective `create_message` permission
   - Response `200`:
-    - `{ "channels": [{ "channel_id": "...", "name": "...", "kind": "text"|"voice" }] }`
+    - `{ "channels": [{ "channel_id": "...", "name": "...", "kind": "text"|"voice", "channel_type": "plaintext"|"encrypted" }] }`
 - `GET /guilds/{guild_id}/channels/{channel_id}/permissions/self`
   - Auth required
   - Least-visibility gate: requires effective `create_message` permission in the channel
@@ -298,6 +302,11 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Response `200`: `{ "accepted": true }`
 
 ### Messages
+
+All ordinary message, reaction, attachment, channel-scoped search, and
+unencrypted LiveKit-token routes reject encrypted channels with
+`409 encrypted_channel_requires_e2ee`; there is no plaintext fallback.
+
 - `POST /guilds/{guild_id}/channels/{channel_id}/messages`
   - Auth required, `create_message` permission
   - Request: `{ "content": "...", "attachment_ids": ["<attachment_id>", ...] }`

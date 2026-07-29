@@ -228,15 +228,23 @@ export function createAppShellSelectors(
   const activeChannel = createMemo(
     () =>
       activeWorkspace()?.channels.find(
-        (channel) => channel.channelId === options.activeChannelId(),
+        (channel) =>
+          channel.channelId === options.activeChannelId() &&
+          (channel.channelType ?? "plaintext") === "plaintext",
       ) ?? null,
   );
 
   const activeTextChannels = createMemo(() =>
-    (activeWorkspace()?.channels ?? []).filter((channel) => channel.kind === "text"),
+    (activeWorkspace()?.channels ?? []).filter(
+      (channel) =>
+        channel.kind === "text" && (channel.channelType ?? "plaintext") === "plaintext",
+    ),
   );
   const activeVoiceChannels = createMemo(() =>
-    (activeWorkspace()?.channels ?? []).filter((channel) => channel.kind === "voice"),
+    (activeWorkspace()?.channels ?? []).filter(
+      (channel) =>
+        channel.kind === "voice" && (channel.channelType ?? "plaintext") === "plaintext",
+    ),
   );
   const isActiveVoiceChannel = createMemo(() => activeChannel()?.kind === "voice");
 

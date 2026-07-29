@@ -73,8 +73,14 @@ export function resolveWorkspaceSelection(
 
   const selectedChannel =
     (selectedChannelId &&
-      selectedWorkspace.channels.find((channel) => channel.channelId === selectedChannelId)) ??
-    selectedWorkspace.channels[0] ??
+      selectedWorkspace.channels.find(
+        (channel) =>
+          channel.channelId === selectedChannelId &&
+          (channel.channelType ?? "plaintext") === "plaintext",
+      )) ??
+    selectedWorkspace.channels.find(
+      (channel) => (channel.channelType ?? "plaintext") === "plaintext",
+    ) ??
     null;
 
   return {

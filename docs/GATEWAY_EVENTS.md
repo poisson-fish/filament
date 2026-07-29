@@ -107,7 +107,9 @@ All events use the versioned envelope:
 - Visibility: authorized guild members
 - Minimum payload:
   - `guild_id`
-  - `channel` (`channel_id`, `name`, `kind`)
+  - `channel` (`channel_id`, `name`, `kind`, `channel_type`)
+- `channel_type` is `plaintext` or `encrypted`; current servers always emit it.
+  Pre-Phase-6 servers omitted it and could only create plaintext channels.
 - Optional:
   - `actor_user_id`
 

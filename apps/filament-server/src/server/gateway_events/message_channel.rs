@@ -61,6 +61,7 @@ struct ChannelCreateChannelPayload<'a> {
     channel_id: &'a str,
     name: &'a str,
     kind: filament_core::ChannelKind,
+    channel_type: filament_core::ChannelType,
 }
 
 pub(crate) fn try_message_create(message: &MessageResponse) -> anyhow::Result<GatewayEvent> {
@@ -166,6 +167,7 @@ pub(crate) fn try_channel_create(
                 channel_id: channel.channel_id.as_str(),
                 name: channel.name.as_str(),
                 kind: channel.kind,
+                channel_type: channel.channel_type,
             },
         },
     )
@@ -194,7 +196,7 @@ fn try_build_message_reaction_event(
 
 #[cfg(test)]
 mod tests {
-    use filament_core::{ChannelKind, MarkdownToken, UserId};
+    use filament_core::{ChannelKind, ChannelType, MarkdownToken, UserId};
     use serde_json::Value;
 
     use super::*;
@@ -309,6 +311,7 @@ mod tests {
             channel_id: String::from("channel-1"),
             name: String::from("general"),
             kind: ChannelKind::Text,
+            channel_type: ChannelType::Plaintext,
         };
 
         let payload = parse_payload(
@@ -316,6 +319,7 @@ mod tests {
         );
         assert_eq!(payload["guild_id"], Value::from("guild-1"));
         assert_eq!(payload["channel"]["name"], Value::from("general"));
+        assert_eq!(payload["channel"]["channel_type"], Value::from("plaintext"));
     }
 
     #[test]
@@ -324,6 +328,7 @@ mod tests {
             channel_id: String::from("channel-1"),
             name: String::from("general"),
             kind: ChannelKind::Text,
+            channel_type: ChannelType::Plaintext,
         };
         let Err(error) = try_build_channel_create_event(
             "channel create",
@@ -333,6 +338,7 @@ mod tests {
                     channel_id: channel.channel_id.as_str(),
                     name: channel.name.as_str(),
                     kind: channel.kind,
+                    channel_type: channel.channel_type,
                 },
             },
         ) else {

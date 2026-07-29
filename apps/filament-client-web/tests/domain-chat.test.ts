@@ -4,6 +4,7 @@ import {
   auditCursorFromInput,
   channelFromResponse,
   channelKindFromInput,
+  channelTypeFromInput,
   channelPermissionSnapshotFromResponse,
   directoryJoinErrorCodeFromInput,
   directoryJoinResultFromResponse,
@@ -109,6 +110,24 @@ describe("chat domain invariants", () => {
     });
     expect(workspace.visibility).toBe("private");
     expect(workspace.channels[0]?.kind).toBe("text");
+    expect(workspace.channels[0]?.channelType).toBe("plaintext");
+  });
+
+  it("preserves encrypted channel type in the bounded workspace cache", () => {
+    const workspace = workspaceFromStorage({
+      guildId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      guildName: "Security",
+      visibility: "private",
+      channels: [
+        {
+          channelId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          name: "sealed-room",
+          kind: "text",
+          channelType: "encrypted",
+        },
+      ],
+    });
+    expect(workspace.channels[0]?.channelType).toBe("encrypted");
   });
 
   it("validates channel kind parsing", () => {
@@ -126,6 +145,34 @@ describe("chat domain invariants", () => {
       channelFromResponse({
         channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
         name: "incident-room",
+      }),
+    ).toThrow();
+  });
+
+  it("strictly surfaces encrypted channel type while preserving old plaintext caches", () => {
+    expect(channelTypeFromInput("encrypted")).toBe("encrypted");
+    expect(() => channelTypeFromInput("mls_v1")).toThrow();
+    expect(
+      channelFromResponse({
+        channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        name: "sealed-room",
+        kind: "text",
+        channel_type: "encrypted",
+      }).channelType,
+    ).toBe("encrypted");
+    expect(
+      channelFromResponse({
+        channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        name: "legacy-room",
+        kind: "text",
+      }).channelType,
+    ).toBeUndefined();
+    expect(() =>
+      channelFromResponse({
+        channel_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        name: "hostile-room",
+        kind: "text",
+        channel_type: "unknown",
       }),
     ).toThrow();
   });

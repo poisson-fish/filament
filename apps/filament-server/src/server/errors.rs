@@ -23,6 +23,8 @@ pub(crate) enum AuthFailure {
     PayloadTooLarge,
     QuotaExceeded,
     E2eeCapabilityRequired,
+    E2eeChannelProvisioningRequired,
+    E2eeEncryptedChannelRequired,
     E2eeConversationConflict,
     E2eeAttachmentConflict,
     EpochConflict,
@@ -55,6 +57,8 @@ impl IntoResponse for AuthFailure {
             | Self::PayloadTooLarge
             | Self::QuotaExceeded
             | Self::E2eeCapabilityRequired
+            | Self::E2eeChannelProvisioningRequired
+            | Self::E2eeEncryptedChannelRequired
             | Self::E2eeConversationConflict
             | Self::E2eeAttachmentConflict
             | Self::EpochConflict
@@ -147,6 +151,20 @@ impl IntoResponse for AuthFailure {
                 StatusCode::CONFLICT,
                 Json(AuthError {
                     error: "e2ee_capability_required",
+                }),
+            )
+                .into_response(),
+            Self::E2eeChannelProvisioningRequired => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "e2ee_channel_provisioning_required",
+                }),
+            )
+                .into_response(),
+            Self::E2eeEncryptedChannelRequired => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "encrypted_channel_requires_e2ee",
                 }),
             )
                 .into_response(),

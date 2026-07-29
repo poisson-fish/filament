@@ -11,7 +11,7 @@ use axum::{
 };
 use filament_core::{
     can_assign_role_legacy, can_moderate_member_legacy, has_permission_legacy, ChannelKind,
-    ChannelName, ChannelPermissionOverwrite, GuildName, Permission, Role, UserId,
+    ChannelName, ChannelPermissionOverwrite, ChannelType, GuildName, Permission, Role, UserId,
 };
 use sqlx::Row;
 use ulid::Ulid;
@@ -22,9 +22,9 @@ use crate::server::{
     },
     core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
     db::{
-        channel_kind_from_i16, channel_kind_to_i16, permission_set_from_list,
-        permission_set_to_i64, role_to_i16, seed_hierarchical_permissions_for_new_guild,
-        visibility_from_i16, visibility_to_i16,
+        channel_kind_from_i16, channel_kind_to_i16, channel_type_from_i16, channel_type_to_i16,
+        permission_set_from_list, permission_set_to_i64, role_to_i16,
+        seed_hierarchical_permissions_for_new_guild, visibility_from_i16, visibility_to_i16,
     },
     directory_contract::{
         validate_workspace_role_name, AuditListQuery, AuditListQueryDto, DirectoryContractError,
@@ -3268,7 +3268,7 @@ pub(crate) async fn list_guild_channels(
 
     let channel_candidates = if let Some(pool) = &state.db_pool {
         let rows = sqlx::query(
-            "SELECT channel_id, name, kind
+            "SELECT channel_id, name, kind, channel_type
              FROM channels
              WHERE guild_id = $1
              ORDER BY created_at_unix ASC
@@ -3283,12 +3283,18 @@ pub(crate) async fn list_guild_channels(
         for row in rows {
             let kind_raw: i16 = row.try_get("kind").map_err(|_| AuthFailure::Internal)?;
             let kind = channel_kind_from_i16(kind_raw).ok_or(AuthFailure::Internal)?;
+            let channel_type_raw: i16 = row
+                .try_get("channel_type")
+                .map_err(|_| AuthFailure::Internal)?;
+            let channel_type =
+                channel_type_from_i16(channel_type_raw).ok_or(AuthFailure::Internal)?;
             entries.push(ChannelResponse {
                 channel_id: row
                     .try_get("channel_id")
                     .map_err(|_| AuthFailure::Internal)?,
                 name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
                 kind,
+                channel_type,
             });
         }
         entries
@@ -3302,6 +3308,7 @@ pub(crate) async fn list_guild_channels(
                 channel_id: channel_id.clone(),
                 name: channel.name.clone(),
                 kind: channel.kind,
+                channel_type: channel.channel_type,
             })
             .collect::<Vec<_>>();
         entries.sort_by(|left, right| left.channel_id.cmp(&right.channel_id));
@@ -3349,21 +3356,31 @@ pub(crate) async fn create_channel(
     .await?;
     let name = ChannelName::try_from(payload.name).map_err(|_| AuthFailure::InvalidRequest)?;
     let kind = payload.kind.unwrap_or(ChannelKind::Text);
+    let channel_type = payload.channel_type;
     let (_, actor_permissions) =
         guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
     if !actor_permissions.contains(Permission::ManageChannelOverrides) {
         return Err(AuthFailure::Forbidden);
     }
+    if channel_type == ChannelType::Encrypted {
+        // Encrypted-channel creation must atomically bind the channel,
+        // authorized audience, initial MLS commit, Welcome recipients, and
+        // GroupInfo. The ordinary CRUD route cannot safely create that state.
+        return Err(AuthFailure::E2eeChannelProvisioningRequired);
+    }
 
     let channel_id = Ulid::new().to_string();
     if let Some(pool) = &state.db_pool {
         sqlx::query(
-            "INSERT INTO channels (channel_id, guild_id, name, kind, created_at_unix) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO channels
+                (channel_id, guild_id, name, kind, channel_type, created_at_unix)
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(&channel_id)
         .bind(&path.guild_id)
         .bind(name.as_str())
         .bind(channel_kind_to_i16(kind))
+        .bind(channel_type_to_i16(channel_type))
         .bind(now_unix())
         .execute(pool)
         .await
@@ -3385,6 +3402,7 @@ pub(crate) async fn create_channel(
             ChannelRecord {
                 name: name.as_str().to_owned(),
                 kind,
+                channel_type,
                 messages: Vec::new(),
                 role_overrides: HashMap::new(),
             },
@@ -3395,6 +3413,7 @@ pub(crate) async fn create_channel(
         channel_id,
         name: name.as_str().to_owned(),
         kind,
+        channel_type,
     };
     match gateway_events::try_channel_create(&path.guild_id, &response) {
         Ok(event) => {

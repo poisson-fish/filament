@@ -445,6 +445,21 @@ exercise authenticated credential persistence or logout, does not replace the
 required arm64 Android artifact gate or signed iOS device evidence, and is not
 the packaged E2EE messaging smoke suite. Those lifecycle, device, and messaging
 gates remain required before Phase 5.5 can complete.
+Per maintainer direction, simulator/device-only Phase 5.5 evidence is deferred
+while implementation continues with Phase 6. Phase 6 now has its immutable
+channel-confidentiality foundation. `channel_type = plaintext | encrypted` is
+a typed domain/API/gateway field and a v22 database invariant. Existing rows
+backfill to plaintext; the database rejects mode changes and rejects ordinary
+message or attachment rows for encrypted channels. The ordinary channel CRUD
+route cannot create a half-provisioned encrypted channel and returns a typed
+conflict until channel metadata, authorized membership, the initial MLS
+commit, Welcome recipients, and GroupInfo can be committed atomically.
+Plaintext REST/gateway ingestion paths return a typed E2EE-required error for
+an encrypted channel. The web-only client retains the classification but
+excludes encrypted channels from selection, history, composer, attachment,
+search, and voice paths without a plaintext fallback. Workspace policy,
+atomic guild-channel MLS provisioning, capability checks, reconciliation, and
+large-group performance work remain.
 
 ---
 
@@ -1385,6 +1400,31 @@ offline recovery, missed events, and reconciliation.
 
 Add `channel_type = encrypted` for guild channels with permissioned Add/Remove commit flows that reconcile channel authorization to MLS group membership. Large-group performance work for 10³–10⁴ leaves.
 
+### Implemented Increment — Immutable Channel Confidentiality Boundary
+
+The first Phase 6 increment establishes the mode boundary without exposing a
+half-provisioned encrypted channel:
+
+- `ChannelType` is a strict domain enum serialized as `plaintext` or
+  `encrypted`; it is separate from the text/voice presentation kind.
+- Migration v22 backfills existing channels to plaintext, constrains the
+  stored representation, rejects later mode changes, and installs database
+  triggers that forbid ordinary `messages` or `attachments` rows for an
+  encrypted or cross-guild channel.
+- Channel list/create responses and `channel_create` gateway events carry the
+  mode. Omitted create input remains plaintext for compatibility. Requesting
+  encrypted creation through ordinary CRUD returns
+  `e2ee_channel_provisioning_required`; the future endpoint must atomically
+  bind channel metadata and the initial authenticated MLS state.
+- Ordinary message creation/history/edit/delete/reaction, attachment upload,
+  unencrypted LiveKit token issuance, and channel-scoped server search fail
+  closed with `encrypted_channel_requires_e2ee`. The browser-only client
+  preserves the field in its bounded cache but never selects an encrypted
+  channel or routes it into plaintext messaging/media controls.
+
+This increment intentionally does not claim encrypted-channel creation,
+membership reconciliation, workspace policy, or large-group readiness.
+
 ### Deliverables
 
 1. **Encrypted channel type**:
@@ -1616,7 +1656,8 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 | `v15_e2ee_conversation_provisioning` | 2 | canonical encrypted DM pairs and downgrade prevention |
 | `v16_e2ee_commit_mailbox` | 2 | recipient-bound Welcomes and pending per-device commit deliveries |
 | `v19_e2ee_attachment_mailbox` | 4 | `e2ee_attachment_blobs`, `e2ee_attachment_deliveries` |
-| future guild-channel migration (number TBD) | 6 | `e2ee_channel_membership`, `e2ee_channel_reconciliation` |
+| `v22_e2ee_channel_mode` | 6 | immutable channel mode and plaintext-storage barriers |
+| future guild-channel membership migration (number TBD) | 6 | `e2ee_channel_membership`, `e2ee_channel_reconciliation` |
 | future KT migration (number TBD) | 8 | `e2ee_kt_entries`, `e2ee_kt_checkpoints` |
 
 ### Gateway Events (new)

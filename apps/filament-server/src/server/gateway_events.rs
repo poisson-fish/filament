@@ -115,7 +115,7 @@ pub(crate) use workspace::{
 };
 #[cfg(test)]
 mod tests {
-    use filament_core::{ChannelKind, MarkdownToken, Permission, Role, UserId};
+    use filament_core::{ChannelKind, ChannelType, MarkdownToken, Permission, Role, UserId};
     use serde_json::Value;
 
     use super::*;
@@ -168,6 +168,7 @@ mod tests {
             channel_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
             name: String::from("general"),
             kind: ChannelKind::Text,
+            channel_type: ChannelType::Plaintext,
         };
 
         let ready_event = try_ready(user_id).expect("ready event should serialize");

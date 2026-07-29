@@ -27,8 +27,8 @@ use crate::server::{
     core::{AppState, AttachmentRecord, MAX_MIME_SNIFF_BYTES},
     domain::{
         attachment_usage_for_user, channel_permission_snapshot, enforce_guild_ip_ban_for_request,
-        find_attachment, user_can_write_channel, user_role_in_guild, validate_attachment_filename,
-        write_audit_log,
+        find_attachment, require_plaintext_channel, user_can_write_channel, user_role_in_guild,
+        validate_attachment_filename, write_audit_log,
     },
     errors::AuthFailure,
     realtime::{
@@ -64,6 +64,7 @@ pub(crate) async fn upload_attachment(
         "attachments.upload",
     )
     .await?;
+    require_plaintext_channel(&state, &path.guild_id, &path.channel_id).await?;
     if !user_can_write_channel(&state, auth.user_id, &path.guild_id, &path.channel_id).await {
         return Err(AuthFailure::Forbidden);
     }
@@ -343,6 +344,7 @@ pub(crate) async fn issue_voice_token(
         "voice.token.issue",
     )
     .await?;
+    require_plaintext_channel(&state, &path.guild_id, &path.channel_id).await?;
     enforce_media_token_rate_limit(&state, client_ip, auth.user_id, &path).await?;
     let (_, permissions) =
         channel_permission_snapshot(&state, auth.user_id, &path.guild_id, &path.channel_id).await?;

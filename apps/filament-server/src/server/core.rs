@@ -803,6 +803,7 @@ pub(crate) struct GuildRecord {
 pub(crate) struct ChannelRecord {
     pub(crate) name: String,
     pub(crate) kind: ChannelKind,
+    pub(crate) channel_type: filament_core::ChannelType,
     pub(crate) messages: Vec<MessageRecord>,
     pub(crate) role_overrides: HashMap<Role, ChannelPermissionOverwrite>,
 }

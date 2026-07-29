@@ -28,6 +28,7 @@ export type LivekitRoom = string & { readonly __brand: "livekit_room" };
 export type LivekitIdentity = string & { readonly __brand: "livekit_identity" };
 export type GuildVisibility = "private" | "public";
 export type ChannelKindName = "text" | "voice";
+export type ChannelTypeName = "plaintext" | "encrypted";
 export type RoleName = "owner" | "moderator" | "member";
 export type PermissionName =
   | "manage_roles"
@@ -478,6 +479,13 @@ export function channelKindFromInput(input: string): ChannelKindName {
   return input;
 }
 
+export function channelTypeFromInput(input: string): ChannelTypeName {
+  if (input !== "plaintext" && input !== "encrypted") {
+    throw new DomainValidationError("Channel type must be plaintext or encrypted.");
+  }
+  return input;
+}
+
 export function messageContentFromInput(input: string): MessageContent {
   if (input.length > 2000) {
     throw new DomainValidationError("Message content must be 0-2000 characters.");
@@ -604,6 +612,8 @@ export interface ChannelRecord {
   channelId: ChannelId;
   name: ChannelName;
   kind: ChannelKindName;
+  /** Omitted only by pre-Phase-6 cached records, which were necessarily plaintext. */
+  channelType?: ChannelTypeName;
 }
 
 export interface ChannelPermissionSnapshot {
@@ -738,11 +748,20 @@ export function guildFromResponse(dto: unknown): GuildRecord {
 
 export function channelFromResponse(dto: unknown): ChannelRecord {
   const data = requireObject(dto, "channel");
-  return {
+  const rawChannelType = data.channel_type;
+  const channel: ChannelRecord = {
     channelId: channelIdFromInput(requireString(data.channel_id, "channel_id")),
     name: channelNameFromInput(requireString(data.name, "name")),
     kind: channelKindFromInput(requireString(data.kind, "kind", 16)),
   };
+  // Compatibility with pre-Phase-6 servers is plaintext-only. Every current
+  // server response includes this field, and unknown values fail closed.
+  if (typeof rawChannelType !== "undefined") {
+    channel.channelType = channelTypeFromInput(
+      requireString(rawChannelType, "channel_type", 16),
+    );
+  }
+  return channel;
 }
 
 export interface PublicGuildDirectory {
@@ -1399,6 +1418,7 @@ export function workspaceFromStorage(dto: unknown): WorkspaceRecord {
     channels: channelsDto.map((channel) => {
       const channelObj = requireObject(channel, "channel cache");
       const kindValue = channelObj.kind;
+      const channelTypeValue = channelObj.channelType;
       return {
         channelId: channelIdFromInput(requireString(channelObj.channelId, "channelId")),
         name: channelNameFromInput(requireString(channelObj.name, "name")),
@@ -1406,6 +1426,10 @@ export function workspaceFromStorage(dto: unknown): WorkspaceRecord {
           typeof kindValue === "string"
             ? channelKindFromInput(requireString(kindValue, "kind", 16))
             : "text",
+        channelType:
+          typeof channelTypeValue === "string"
+            ? channelTypeFromInput(requireString(channelTypeValue, "channelType", 16))
+            : "plaintext",
       };
     }),
   };

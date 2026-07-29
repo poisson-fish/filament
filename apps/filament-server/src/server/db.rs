@@ -17,6 +17,7 @@ use self::migrations::v1_hierarchical_permissions::backfill_hierarchical_permiss
 pub(crate) use self::migrations::v1_hierarchical_permissions::seed_hierarchical_permissions_for_new_guild;
 use self::migrations::v20_e2ee_commit_idempotency::apply_e2ee_commit_idempotency_schema;
 use self::migrations::v21_e2ee_message_idempotency::apply_e2ee_message_idempotency_schema;
+use self::migrations::v22_e2ee_channel_mode::apply_e2ee_channel_mode_schema;
 use self::migrations::v2_attachment_schema::apply_attachment_schema;
 use self::migrations::v3_social_graph_schema::apply_social_graph_schema;
 use self::migrations::v4_moderation_audit_schema::apply_moderation_audit_schema;
@@ -72,6 +73,7 @@ pub(crate) async fn ensure_db_schema(state: &AppState) -> Result<(), AuthFailure
             apply_e2ee_attachment_mailbox_schema(&mut tx).await?;
             apply_e2ee_commit_idempotency_schema(&mut tx).await?;
             apply_e2ee_message_idempotency_schema(&mut tx).await?;
+            apply_e2ee_channel_mode_schema(&mut tx).await?;
 
             tx.commit().await?;
 
@@ -129,6 +131,21 @@ pub(crate) fn channel_kind_from_i16(value: i16) -> Option<ChannelKind> {
     match value {
         0 => Some(ChannelKind::Text),
         1 => Some(ChannelKind::Voice),
+        _ => None,
+    }
+}
+
+pub(crate) fn channel_type_to_i16(channel_type: filament_core::ChannelType) -> i16 {
+    match channel_type {
+        filament_core::ChannelType::Plaintext => 0,
+        filament_core::ChannelType::Encrypted => 1,
+    }
+}
+
+pub(crate) fn channel_type_from_i16(value: i16) -> Option<filament_core::ChannelType> {
+    match value {
+        0 => Some(filament_core::ChannelType::Plaintext),
+        1 => Some(filament_core::ChannelType::Encrypted),
         _ => None,
     }
 }

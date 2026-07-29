@@ -349,6 +349,7 @@ mod tests {
             ChannelRecord {
                 name: String::from("general"),
                 kind: filament_core::ChannelKind::Text,
+                channel_type: filament_core::ChannelType::Plaintext,
                 messages: Vec::new(),
                 role_overrides: HashMap::new(),
             },
@@ -384,6 +385,7 @@ mod tests {
             ChannelRecord {
                 name: String::from("other"),
                 kind: filament_core::ChannelKind::Text,
+                channel_type: filament_core::ChannelType::Plaintext,
                 messages: Vec::new(),
                 role_overrides: HashMap::new(),
             },

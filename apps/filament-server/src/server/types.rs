@@ -217,6 +217,8 @@ pub(crate) struct GuildListResponse {
 pub(crate) struct CreateChannelRequest {
     pub(crate) name: String,
     pub(crate) kind: Option<ChannelKind>,
+    #[serde(default)]
+    pub(crate) channel_type: filament_core::ChannelType,
 }
 
 #[derive(Debug, Serialize)]
@@ -224,6 +226,7 @@ pub(crate) struct ChannelResponse {
     pub(crate) channel_id: String,
     pub(crate) name: String,
     pub(crate) kind: ChannelKind,
+    pub(crate) channel_type: filament_core::ChannelType,
 }
 
 #[derive(Debug, Serialize)]

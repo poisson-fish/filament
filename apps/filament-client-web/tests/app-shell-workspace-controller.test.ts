@@ -60,6 +60,19 @@ describe("app shell workspace controller", () => {
     expect(selection.channelId).toBe(CHANNEL_A2);
   });
 
+  it("never selects an encrypted channel in the web-only client", () => {
+    const workspaces = workspaceFixture();
+    const encrypted = workspaces[0]?.channels[0];
+    if (!encrypted) {
+      throw new Error("encrypted channel fixture is missing");
+    }
+    encrypted.channelType = "encrypted";
+
+    const selection = resolveWorkspaceSelection(workspaces, GUILD_A, CHANNEL_A1);
+
+    expect(selection.channelId).toBe(CHANNEL_A2);
+  });
+
   it("resets channel permission state only for hard authz channel errors", () => {
     expect(
       shouldResetChannelPermissionsForError(
