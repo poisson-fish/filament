@@ -474,8 +474,11 @@ Workspace kick and ban now atomically queue one signed external Remove proposal
 per affected encrypted-channel leaf with the structural membership change.
 Pending removals block all encrypted sends until a member-authored commit
 cryptographically evicts the target, while database triggers reject bypass
-deletions and unreconciled member additions. New joins return the typed
-reconciliation-pending error without a plaintext fallback. Role/permission
+deletions. Structural workspace joins no longer imply encrypted-channel
+membership or ciphertext routing. An existing channel member must still submit
+an acceptance-gated MLS Add with a recipient-bound Welcome for an exact active
+certified device; pre-Add group transport remains non-enumerating and
+unavailable without a plaintext fallback. Role/permission
 loss now crosses the same boundary: role definition, role assignment, legacy
 member-role, and channel-overwrite mutations are evaluated against the exact
 effective `CreateMessage` layers and atomically queue signed Removes for every
@@ -486,9 +489,10 @@ restoration through the ordinary acceptance-gated member-authored MLS Add
 commit. The server requires both committer and target authorization, exact
 active device ownership, and a recipient-bound Welcome; v27 database triggers
 independently enforce the same leaf boundary, including atomic bootstrap
-leaves staged before the channel binding. Structural workspace joins, narrower
-initial audiences, and large-group performance work remain fail closed or
-unavailable.
+leaves staged before the channel binding. Migration v28 separates structural
+workspace joins from cryptographic channel membership while retaining the
+exact signed-Remove guard for structural departures. Narrower initial audiences
+and large-group performance work remain fail closed or unavailable.
 
 ---
 
@@ -1474,10 +1478,9 @@ half-provisioned encrypted channel:
   reconciliation deadline blocks encrypted sends until a member-authored
   commit applies the removal.
 - Migration v25 rejects direct member deletion without the exact pending signed
-  reconciliation and rejects new workspace members while an encrypted channel
-  exists. The REST and public-directory join paths return the typed
-  reconciliation-pending conflict; member Adds remain unavailable until a
-  client-authenticated MLS Add flow exists.
+  reconciliation. Its temporary member-insert guard is superseded by v28:
+  REST and public-directory workspace joins can proceed, but add no encrypted
+  conversation member or leaf and receive no ciphertext.
 - Migration v26 defines the exact layered encrypted-channel posting
   authorization check and deferred guards for role, assignment, and channel
   override mutations. Every Postgres mutation path queues a signed external
@@ -1487,16 +1490,19 @@ half-provisioned encrypted channel:
 - Member-authored Add commits for a channel-backed group require the
   authenticated committer and target to have effective posting authorization,
   and the recipient-bound Welcome must target the new user's exact active
-  certified device. This restores a previously evicted existing member only
-  after permission restoration and the normal server-acceptance boundary.
+  certified device. This restores a previously evicted member or admits a new
+  structural workspace member only after the normal server-acceptance boundary.
 - Migration v27 rejects direct unauthorized, tombstoned, or cross-user leaf
   insertion. It also validates the initial leaves staged before the immutable
   channel/group mapping is inserted, closing the database-ordering gap during
   atomic provisioning.
+- Migration v28 permits structural workspace joins without changing encrypted
+  conversation membership or leaf routing. The database continues to require
+  exact signed Remove reconciliation for structural departures.
 
-This increment intentionally does not claim structural workspace joins,
-narrower initial permission-overwrite audiences, the 5,000-leaf target, or
-large-group readiness.
+This increment intentionally does not claim narrower initial
+permission-overwrite audiences, the 5,000-leaf target, or large-group
+readiness.
 
 ### Deliverables
 
@@ -1731,7 +1737,7 @@ Each phase strictly depends on the previous. No phase may begin until the prior 
 | `v19_e2ee_attachment_mailbox` | 4 | `e2ee_attachment_blobs`, `e2ee_attachment_deliveries` |
 | `v22_e2ee_channel_mode` | 6 | immutable channel mode and plaintext-storage barriers |
 | `v23_e2ee_channel_policy` | 6 | fail-closed workspace encrypted-channel policy |
-| `v24_e2ee_channel_groups`–`v26_e2ee_channel_authorization` | 6 | encrypted channel binding, membership reconciliation, and permission-loss guards |
+| `v24_e2ee_channel_groups`–`v28_e2ee_channel_workspace_joins` | 6 | encrypted channel binding, membership reconciliation, permission guards, and structural workspace joins |
 | future KT migration (number TBD) | 8 | `e2ee_kt_entries`, `e2ee_kt_checkpoints` |
 
 ### Gateway Events (new)

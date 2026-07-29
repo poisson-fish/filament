@@ -440,9 +440,13 @@ unencrypted LiveKit-token routes reject encrypted channels with
 - `POST /guilds/{guild_id}/members/{user_id}`
   - Add member as `member`
   - Requires `manage_roles`
-  - If the workspace has an encrypted channel, a new member is rejected with
-    `409 e2ee_membership_reconciliation_pending` until an authenticated MLS Add
-    flow is available; existing-member retries remain idempotent
+  - A workspace join does not grant membership in any encrypted channel.
+    Ciphertext routing remains unchanged until an existing encrypted-channel
+    member submits an accepted MLS Add commit with a recipient-bound Welcome
+    for the new member's active certified device.
+  - A joined user without an encrypted-channel leaf receives `404 not_found`
+    from group transport routes; there is no plaintext or metadata fallback.
+    Existing-member retries remain idempotent.
   - Response `200`: `{ "accepted": true }`
 - `PATCH /guilds/{guild_id}/members/{user_id}`
   - Request: `{ "role": "owner|moderator|member" }`
@@ -732,6 +736,11 @@ Atomically orders one opaque MLS commit for an authenticated conversation member
 - Request: `{ "epoch": 1, "prior_epoch": 0, "committer_device_id": "...", "commit_blob": [bytes], "welcome_blob"?: [bytes], "welcome_device_id"?: "...", "group_info_blob"?: [bytes], "membership_change"?: { "kind": "add", "leaf": {...} } | { "kind": "remove", "leaves": [...] } }`
 - Response `200`: `{ "accepted": true, "epoch": 1 }`
 - The committer device must be active and owned by the authenticated user.
+- For a workspace encrypted channel, an Add requires both the committer and
+  target user to retain effective `create_message` authorization. The target
+  must already be a structural workspace member, and the exact added device
+  must be active, certified, owned by that user, and bound to the Welcome.
+  Structural workspace membership alone never creates an MLS leaf.
 - Commits must advance exactly one epoch. A row lock makes the first valid
   commit for an epoch the sole winner; competitors receive
   `409 { "error": "epoch_conflict" }` and must rebase client-side.

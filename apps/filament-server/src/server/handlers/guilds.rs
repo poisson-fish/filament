@@ -3202,46 +3202,6 @@ async fn assign_default_join_role_in_memory(
     Ok(())
 }
 
-async fn reject_unreconciled_encrypted_channel_join(
-    pool: &sqlx::PgPool,
-    guild_id: &str,
-) -> Result<(), AuthFailure> {
-    let has_encrypted_channel: bool = sqlx::query_scalar(
-        "SELECT EXISTS (
-            SELECT 1 FROM e2ee_channel_groups WHERE guild_id = $1
-         )",
-    )
-    .bind(guild_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|_| AuthFailure::Internal)?;
-    if has_encrypted_channel {
-        return Err(AuthFailure::E2eeMembershipReconciliationPending);
-    }
-    Ok(())
-}
-
-async fn reject_unreconciled_encrypted_channel_member_add(
-    pool: &sqlx::PgPool,
-    guild_id: &str,
-    user_id: UserId,
-) -> Result<(), AuthFailure> {
-    let already_member: bool = sqlx::query_scalar(
-        "SELECT EXISTS (
-            SELECT 1 FROM guild_members WHERE guild_id = $1 AND user_id = $2
-         )",
-    )
-    .bind(guild_id)
-    .bind(user_id.to_string())
-    .fetch_one(pool)
-    .await
-    .map_err(|_| AuthFailure::Internal)?;
-    if already_member {
-        return Ok(());
-    }
-    reject_unreconciled_encrypted_channel_join(pool, guild_id).await
-}
-
 async fn resolve_directory_join_outcome_db(
     state: &AppState,
     pool: &sqlx::PgPool,
@@ -3302,8 +3262,6 @@ async fn resolve_directory_join_outcome_db(
     if outcome != DirectoryJoinOutcome::Accepted {
         return Ok(outcome);
     }
-    reject_unreconciled_encrypted_channel_join(pool, guild_id).await?;
-
     let insert = sqlx::query(
         "INSERT INTO guild_members (guild_id, user_id, role)
          VALUES ($1, $2, $3)
@@ -3713,9 +3671,6 @@ pub(crate) async fn add_member(
         if banned.is_some() {
             return Err(AuthFailure::Forbidden);
         }
-        reject_unreconciled_encrypted_channel_member_add(pool, &path.guild_id, target_user_id)
-            .await?;
-
         let insert = sqlx::query(
             "INSERT INTO guild_members (guild_id, user_id, role)
              VALUES ($1, $2, $3)

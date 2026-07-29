@@ -1013,7 +1013,7 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
     .await;
     assert_eq!(resumed_channel_message.status(), StatusCode::OK);
 
-    let blocked_rejoin = send_json(
+    let structural_rejoin = send_json(
         &app,
         "POST",
         &format!("/guilds/{encrypted_workspace_id}/members/{bob_user_id}"),
@@ -1022,12 +1022,113 @@ async fn postgres_e2ee_delivery_orders_commits_and_relays_opaque_mailboxes() {
         &json!({}),
     )
     .await;
-    assert_eq!(blocked_rejoin.status(), StatusCode::CONFLICT);
-    let blocked_rejoin: serde_json::Value = parse_json(blocked_rejoin).await;
+    assert_eq!(structural_rejoin.status(), StatusCode::OK);
+    let implicit_leaf_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM e2ee_group_leaves
+         WHERE group_id = $1 AND user_id = $2",
+    )
+    .bind(&encrypted_channel.group_id)
+    .bind(bob_user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("workspace rejoin must leave encrypted-channel routing unchanged");
+    assert_eq!(implicit_leaf_count, 0);
+    let implicit_conversation_membership: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM e2ee_conversation_members
+         WHERE conversation_id = $1 AND user_id = $2",
+    )
+    .bind(&encrypted_channel.conversation_id)
+    .bind(bob_user_id.to_string())
+    .fetch_one(&audit_pool)
+    .await
+    .expect("workspace rejoin must not grant encrypted conversation membership");
+    assert_eq!(implicit_conversation_membership, 0);
+
+    let pre_add_channel_message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/messages", encrypted_channel.group_id),
+        Some(&bob_auth.access_token),
+        "203.0.113.181",
+        &PostMessageRequest {
+            epoch: 4,
+            suite_id: 3,
+            sender_device_id: bob_device_id.to_string(),
+            retention_secs: None,
+            message_blob: vec![0x85; 512],
+        },
+    )
+    .await;
+    assert_eq!(pre_add_channel_message.status(), StatusCode::NOT_FOUND);
+    let pre_add_channel_message: serde_json::Value = parse_json(pre_add_channel_message).await;
     assert_eq!(
-        blocked_rejoin["error"],
-        serde_json::Value::from("e2ee_membership_reconciliation_pending")
+        pre_add_channel_message["error"],
+        serde_json::Value::from("not_found")
     );
+
+    let channel_rejoin_commit = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/commits", encrypted_channel.group_id),
+        Some(&alice_auth.access_token),
+        "203.0.113.181",
+        &PostCommitRequest {
+            epoch: 5,
+            prior_epoch: 4,
+            committer_device_id: alice_device_id.to_string(),
+            commit_blob: vec![0x86; 256],
+            welcome_blob: Some(vec![0x87; 256]),
+            welcome_device_id: Some(bob_device_id.to_string()),
+            group_info_blob: Some(vec![0x88; 128]),
+            membership_change: Some(MlsMembershipChange::Add {
+                leaf: MlsLeafRouting {
+                    leaf_index: 1,
+                    user_id: bob_user_id.to_string(),
+                    device_id: bob_device_id.to_string(),
+                },
+            }),
+        },
+    )
+    .await;
+    assert_eq!(channel_rejoin_commit.status(), StatusCode::OK);
+    assert_eq!(
+        parse_json::<PostCommitResponse>(channel_rejoin_commit).await,
+        PostCommitResponse {
+            accepted: true,
+            epoch: 5
+        }
+    );
+    let restored_bob_leaf: (String, String, i64) = sqlx::query_as(
+        "SELECT user_id, device_id, added_epoch
+         FROM e2ee_group_leaves
+         WHERE group_id = $1 AND leaf_index = 1",
+    )
+    .bind(&encrypted_channel.group_id)
+    .fetch_one(&audit_pool)
+    .await
+    .expect("authenticated MLS Add must grant the encrypted-channel leaf");
+    assert_eq!(
+        restored_bob_leaf,
+        (bob_user_id.to_string(), bob_device_id.to_string(), 5)
+    );
+
+    let post_add_channel_message = send_json(
+        &app,
+        "POST",
+        &format!("/e2ee/groups/{}/messages", encrypted_channel.group_id),
+        Some(&bob_auth.access_token),
+        "203.0.113.181",
+        &PostMessageRequest {
+            epoch: 5,
+            suite_id: 3,
+            sender_device_id: bob_device_id.to_string(),
+            retention_secs: None,
+            message_blob: vec![0x89; 512],
+        },
+    )
+    .await;
+    assert_eq!(post_add_channel_message.status(), StatusCode::OK);
 
     let unreconciled_permission_loss = sqlx::query(
         "UPDATE channel_permission_overrides
