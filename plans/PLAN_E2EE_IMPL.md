@@ -510,7 +510,15 @@ seconds through a deadline-first v32 partial index and exports pending,
 overdue-age, and scan-saturation gauges. Overdue state emits a change-sensitive
 structured warning while encrypted sends remain blocked until the exact
 authenticated Remove commit completes. Monitoring never performs an unbounded
-table scan or sort.
+table scan or sort. The native durable-mailbox coordinator now requires every
+Delivery Service external Remove to carry its bounded reconciliation deadline,
+then atomically persists that deadline with the MLS-authenticated target leaf,
+checkpoint, acknowledgment, and acceptance-gated commit. A restart-safe typed
+status distinguishes pending from overdue for the future native warning
+surface. Both states keep sends blocked. The status clears only after the local
+commit is accepted or an exact peer Remove commit authenticates and becomes
+durable; targeted devices become cryptographically inactive. Missing
+deadlines, record substitution, and premature completion fail closed.
 Large-group performance work remains unavailable.
 
 ---
@@ -1546,6 +1554,14 @@ half-provisioned encrypted channel:
   change-sensitive structured warnings after a deadline. It never unblocks
   encrypted sends or treats the deadline as permission to bypass the
   authenticated member-authored Remove commit.
+- The native durable-mailbox coordinator binds the advertised reconciliation
+  deadline to the MLS-authenticated external Remove target and persists it
+  atomically with the checkpoint and retry outboxes. Pending and overdue are
+  typed restart-safe states for the future packaged-client warning surface;
+  both block sends, and completion requires either exact server acceptance of
+  the locally staged commit or durable authentication of the matching peer
+  Remove commit. The targeted-device regression proves post-removal sends fail
+  with an inactive MLS state.
 
 This increment intentionally does not claim the 5,000-leaf target or
 large-group readiness.

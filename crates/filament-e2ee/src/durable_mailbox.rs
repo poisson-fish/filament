@@ -12,11 +12,12 @@ use filament_protocol::{
     AckE2eeCommitsRequest, AckE2eeMessagesRequest, AckE2eeProposalsRequest,
     ClaimKeyPackageResponse, CreateMlsConversationRequest, E2eeCommitMailboxResponse,
     E2eeMailboxResponse, E2eeProposalMailboxResponse, E2eeRetentionSeconds,
-    MlsConversationProvisionResponse, MlsMembershipChange, PostCommitRequest, PostCommitResponse,
-    PostMessageRequest, PostMessageResponse, MAX_COMMIT_BYTES, MAX_E2EE_COMMIT_ACK_BATCH_SIZE,
-    MAX_E2EE_MESSAGE_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE,
-    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE,
-    MAX_GROUP_INFO_BYTES, MAX_KEYPACKAGE_BYTES, MAX_PROPOSAL_BYTES, MAX_WELCOME_BYTES,
+    MlsConversationProvisionResponse, MlsLeafRouting, MlsMembershipChange, PostCommitRequest,
+    PostCommitResponse, PostMessageRequest, PostMessageResponse, MAX_COMMIT_BYTES,
+    MAX_E2EE_COMMIT_ACK_BATCH_SIZE, MAX_E2EE_MESSAGE_ACK_BATCH_SIZE,
+    MAX_E2EE_PROPOSAL_ACK_BATCH_SIZE, MAX_E2EE_PROPOSAL_MAILBOX_PAGE_BLOB_BYTES,
+    MAX_E2EE_PROPOSAL_MAILBOX_PAGE_SIZE, MAX_GROUP_INFO_BYTES, MAX_KEYPACKAGE_BYTES,
+    MAX_PROPOSAL_BYTES, MAX_WELCOME_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -36,7 +37,7 @@ use crate::{
     LocalKeyStore, MlsClientState, MlsConversation, PendingCommitRebase,
     PendingExternalCommitRecovery, PendingGroupCommit, PendingKeyPackageUpload, PinnedUserIdentity,
     RejectedMailboxCommit, RejectedMailboxMessage, StoreKey, VersionedApplicationEvent,
-    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_STORE_VALUE_BYTES,
+    MAX_APPLICATION_PLAINTEXT_BYTES, MAX_MLS_GROUP_LEAVES, MAX_STORE_VALUE_BYTES,
 };
 
 const HISTORY_RECORD_VERSION: u16 = 2;
@@ -44,6 +45,7 @@ const RETENTION_POLICY_VERSION: u16 = 1;
 const OUTBOUND_COMMIT_RECORD_VERSION: u16 = 1;
 const OUTBOUND_MESSAGE_RECORD_VERSION: u16 = 1;
 const CONVERSATION_PROVISION_RECORD_VERSION: u16 = 1;
+const POLICY_RECONCILIATION_RECORD_VERSION: u16 = 1;
 const MAX_LOCAL_HISTORY_RECORD_BYTES: usize = (MAX_APPLICATION_PLAINTEXT_BYTES * 4) + 2_048;
 const MAX_UNIX_TIMESTAMP: i64 = 253_402_300_799;
 
@@ -81,6 +83,9 @@ pub enum DurableMailboxError {
     /// An acceptance-gated local commit must be resolved before another proposal.
     #[error("an outbound MLS commit is already pending")]
     PendingOutboundCommit,
+    /// An authenticated policy removal is awaiting an ordered MLS commit.
+    #[error("an MLS policy reconciliation is already pending")]
+    PendingPolicyReconciliation,
     /// A winning commit made the pending policy intent unsafe to retry.
     #[error("the outbound MLS commit intent was invalidated by the accepted epoch")]
     InvalidatedOutboundCommit,
@@ -136,6 +141,42 @@ pub struct DurableProposalMailboxBatch {
     pub outbound_commit: Option<PostCommitRequest>,
     /// Whether this device authenticated its own removal and awaits a peer commit.
     pub awaiting_peer_commit: bool,
+}
+
+/// Restart-safe status for an authenticated policy-triggered MLS removal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyReconciliationStatus {
+    /// Group whose send path remains blocked until the removal is ordered.
+    pub group_id: GroupId,
+    /// Delivery Service proposal authenticated by the MLS external-sender key.
+    pub proposal_id: ProposalId,
+    /// Epoch in which the external Remove proposal was authenticated.
+    pub proposal_epoch: u64,
+    /// Root-certified user whose leaf is being removed.
+    pub target_user_id: UserId,
+    /// Root-certified device whose leaf is being removed.
+    pub target_device_id: DeviceId,
+    /// Authenticated MLS leaf index.
+    pub leaf_index: u32,
+    /// Bounded Delivery Service policy deadline.
+    pub deadline_unix: i64,
+    /// Time remaining before the deadline, or time elapsed after it.
+    pub timing: PolicyReconciliationTiming,
+}
+
+/// Deadline state suitable for a native warning surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyReconciliationTiming {
+    /// The authenticated removal remains pending inside its allowed window.
+    Pending {
+        /// Whole seconds until the deadline.
+        remaining_seconds: u64,
+    },
+    /// The authenticated removal remains pending at or beyond its deadline.
+    Overdue {
+        /// Whole seconds elapsed since the deadline.
+        overdue_seconds: u64,
+    },
 }
 
 /// Durable result of authenticating the commit that won an epoch conflict.
@@ -219,6 +260,23 @@ struct OutboundCommitRecord {
     #[serde(default)]
     invalidated: bool,
     request: PostCommitRequest,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyReconciliationRecord {
+    version: u16,
+    group_id: String,
+    proposal_id: String,
+    proposal_epoch: u64,
+    target_user_id: String,
+    target_device_id: String,
+    leaf_index: u32,
+    created_at_unix: i64,
+    deadline_unix: i64,
+    expires_at_unix: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completed_epoch: Option<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -726,15 +784,7 @@ impl DurableMlsClient {
         page: E2eeProposalMailboxResponse,
     ) -> Result<DurableProposalMailboxBatch, DurableMailboxError> {
         validate_proposal_page(&page)?;
-        if store.exists(&proposal_ack_key(group_id)?)? {
-            return Err(DurableMailboxError::PendingAcknowledgment);
-        }
-        if store.exists(&outbound_message_key(group_id)?)? {
-            return Err(DurableMailboxError::PendingOutboundMessage);
-        }
-        if store.exists(&outbound_commit_key(group_id)?)? {
-            return Err(DurableMailboxError::PendingOutboundCommit);
-        }
+        ensure_proposal_processing_ready(store, group_id)?;
         let Some(entry) = page.proposals.into_iter().next() else {
             return Ok(DurableProposalMailboxBatch {
                 processed_proposal_ids: Vec::new(),
@@ -746,6 +796,9 @@ impl DurableMlsClient {
         if entry.proposer_device_id.is_some() || entry.external_sender_index != Some(0) {
             return Err(ConversationError::UnexpectedMembership.into());
         }
+        let reconciliation_deadline_unix = entry
+            .reconciliation_deadline_unix
+            .ok_or(ConversationError::MetadataMismatch)?;
         let proposal_id = ProposalId::try_from(entry.proposal_id.clone())
             .map_err(|_| ConversationError::InvalidMailboxPage)?;
         let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
@@ -775,32 +828,30 @@ impl DurableMlsClient {
             device_id: state.device.device_id().to_string(),
             proposal_ids: vec![proposal_id.to_string()],
         };
-        let (outbound_commit, awaiting_peer_commit) = match action {
-            ExternalProposalAction::Commit {
-                commit,
-                removed_leaf,
-            } => {
-                let request = PostCommitRequest {
-                    epoch: commit.epoch,
-                    prior_epoch: commit.prior_epoch,
-                    committer_device_id: commit.committer_device_id.to_string(),
-                    commit_blob: commit.commit_blob,
-                    welcome_blob: None,
-                    welcome_device_id: None,
-                    group_info_blob: commit.group_info_blob,
-                    membership_change: Some(MlsMembershipChange::Remove {
-                        leaves: vec![removed_leaf],
-                    }),
-                };
-                validate_outbound_commit_request(state.device.device_id(), &request)?;
-                (Some(request), false)
-            }
-            ExternalProposalAction::AwaitingPeerCommit => (None, true),
+        let (outbound_commit, awaiting_peer_commit, removed_leaf) =
+            proposal_action_outbox(state.device.device_id(), action)?;
+        let reconciliation = PolicyReconciliationRecord {
+            version: POLICY_RECONCILIATION_RECORD_VERSION,
+            group_id: group_id.to_string(),
+            proposal_id: proposal_id.to_string(),
+            proposal_epoch: entry.epoch,
+            target_user_id: removed_leaf.user_id,
+            target_device_id: removed_leaf.device_id,
+            leaf_index: removed_leaf.leaf_index,
+            created_at_unix: entry.created_at_unix,
+            deadline_unix: reconciliation_deadline_unix,
+            expires_at_unix: entry.expires_at_unix,
+            completed_epoch: None,
         };
+        validate_policy_reconciliation_record(&reconciliation, group_id)?;
 
         let mut entries = vec![
             (StoreKey::mls_client_state(), encode_state(&state)?),
             (proposal_ack_key(group_id)?, encode_json(&acknowledgment)?),
+            (
+                policy_reconciliation_key(group_id)?,
+                encode_json(&reconciliation)?,
+            ),
         ];
         if let Some(request) = &outbound_commit {
             entries.push((
@@ -895,6 +946,11 @@ impl DurableMlsClient {
         {
             return Err(ConversationError::MetadataMismatch.into());
         }
+        let mut reconciliation = load_policy_reconciliation_record(store, group_id)?;
+        if let Some(reconciliation) = &mut reconciliation {
+            validate_policy_reconciliation_commit(reconciliation, submitted)?;
+            reconciliation.completed_epoch = Some(submitted.epoch);
+        }
         let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
         validate_outbound_commit_request(state.device.device_id(), submitted)?;
         let Some(position) = state
@@ -919,15 +975,26 @@ impl DurableMlsClient {
             invalidated: false,
             request: submitted.clone(),
         };
-        if let Err(error) = store.store_batch(vec![
+        let mut entries = vec![
             (StoreKey::mls_client_state(), encode_state(&state)?),
             (outbound_commit_key(group_id)?, encode_json(&accepted)?),
-        ]) {
+        ];
+        if let Some(reconciliation) = &reconciliation {
+            entries.push((
+                policy_reconciliation_key(group_id)?,
+                encode_json(reconciliation)?,
+            ));
+        }
+        if let Err(error) = store.store_batch(entries) {
             return Err(error.into());
         }
         self.state = Some(state);
-        let removed = store.remove_batch(&[outbound_commit_key(group_id)?])?;
-        if removed != 1 {
+        let mut cleanup = vec![outbound_commit_key(group_id)?];
+        if reconciliation.is_some() {
+            cleanup.push(policy_reconciliation_key(group_id)?);
+        }
+        let removed = store.remove_batch(&cleanup)?;
+        if removed != cleanup.len() {
             return Err(KeyStoreError::InvalidValue.into());
         }
         Ok(())
@@ -960,6 +1027,7 @@ impl DurableMlsClient {
         }
         let record = load_outbound_commit_record(store, group_id)?
             .ok_or(DurableMailboxError::PendingOutboundCommit)?;
+        let mut reconciliation = load_policy_reconciliation_record(store, group_id)?;
         if record.accepted || record.invalidated {
             return Err(DurableMailboxError::PendingOutboundCommit);
         }
@@ -974,7 +1042,6 @@ impl DurableMlsClient {
         {
             return Err(ConversationError::MetadataMismatch.into());
         }
-
         let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
         let committer_device_id = DeviceId::try_from(entry.committer_device_id.clone())
             .map_err(|_| ConversationError::MetadataMismatch)?;
@@ -1010,6 +1077,10 @@ impl DurableMlsClient {
             // last complete encrypted checkpoint before retrying.
             return Err(ConversationError::MetadataMismatch.into());
         }
+        complete_optional_policy_reconciliation(
+            &mut reconciliation,
+            membership_change.as_ref().map(std::slice::from_ref),
+        )?;
 
         let acknowledgment = AckE2eeCommitsRequest {
             device_id: state.device.device_id().to_string(),
@@ -1031,11 +1102,17 @@ impl DurableMlsClient {
             invalidated,
             request: outbound_commit.clone().unwrap_or(record.request),
         };
-        if let Err(error) = store.store_batch(vec![
+        let mut entries = vec![
             (StoreKey::mls_client_state(), encode_state(&state)?),
             (commit_ack_key(group_id)?, encode_json(&acknowledgment)?),
             (outbound_commit_key(group_id)?, encode_json(&replacement)?),
-        ]) {
+        ];
+        append_completed_policy_reconciliation_entry(
+            &mut entries,
+            group_id,
+            reconciliation.as_ref(),
+        )?;
+        if let Err(error) = store.store_batch(entries) {
             return Err(error.into());
         }
         self.state = Some(state);
@@ -1456,6 +1533,7 @@ impl DurableMlsClient {
         if store.exists(&outbound_message_key(group_id)?)? {
             return Err(DurableMailboxError::PendingOutboundMessage);
         }
+        let mut reconciliation = load_policy_reconciliation_record(store, group_id)?;
         let mut state = self.state.take().ok_or(DurableMailboxError::Unavailable)?;
         let existing_position = state
             .conversations
@@ -1483,13 +1561,23 @@ impl DurableMlsClient {
             insert_conversation(&mut state.conversations, existing_position, conversation);
         }
 
+        complete_optional_policy_reconciliation(
+            &mut reconciliation,
+            Some(&batch.membership_changes),
+        )?;
         if let Some(acknowledgment) = &batch.pending_acknowledgment {
             let checkpoint = encode_state(&state)?;
             let outbox = encode_json(acknowledgment)?;
-            if let Err(error) = store.store_batch(vec![
+            let mut entries = vec![
                 (StoreKey::mls_client_state(), checkpoint),
                 (commit_ack_key(group_id)?, outbox),
-            ]) {
+            ];
+            append_completed_policy_reconciliation_entry(
+                &mut entries,
+                group_id,
+                reconciliation.as_ref(),
+            )?;
+            if let Err(error) = store.store_batch(entries) {
                 return Err(error.into());
             }
         }
@@ -1501,6 +1589,130 @@ impl DurableMlsClient {
             acknowledgment: batch.pending_acknowledgment,
         })
     }
+}
+
+fn proposal_action_outbox(
+    own_device_id: DeviceId,
+    action: ExternalProposalAction,
+) -> Result<(Option<PostCommitRequest>, bool, MlsLeafRouting), DurableMailboxError> {
+    match action {
+        ExternalProposalAction::Commit {
+            commit,
+            removed_leaf,
+        } => {
+            let request = PostCommitRequest {
+                epoch: commit.epoch,
+                prior_epoch: commit.prior_epoch,
+                committer_device_id: commit.committer_device_id.to_string(),
+                commit_blob: commit.commit_blob,
+                welcome_blob: None,
+                welcome_device_id: None,
+                group_info_blob: commit.group_info_blob,
+                membership_change: Some(MlsMembershipChange::Remove {
+                    leaves: vec![removed_leaf.clone()],
+                }),
+            };
+            validate_outbound_commit_request(own_device_id, &request)?;
+            Ok((Some(request), false, removed_leaf))
+        }
+        ExternalProposalAction::AwaitingPeerCommit { removed_leaf } => {
+            Ok((None, true, removed_leaf))
+        }
+    }
+}
+
+fn ensure_proposal_processing_ready(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+) -> Result<(), DurableMailboxError> {
+    if load_policy_reconciliation_record(store, group_id)?
+        .is_some_and(|record| record.completed_epoch.is_none())
+    {
+        return Err(DurableMailboxError::PendingPolicyReconciliation);
+    }
+    if store.exists(&proposal_ack_key(group_id)?)? {
+        return Err(DurableMailboxError::PendingAcknowledgment);
+    }
+    if store.exists(&outbound_message_key(group_id)?)? {
+        return Err(DurableMailboxError::PendingOutboundMessage);
+    }
+    if store.exists(&outbound_commit_key(group_id)?)? {
+        return Err(DurableMailboxError::PendingOutboundCommit);
+    }
+    Ok(())
+}
+
+fn complete_optional_policy_reconciliation(
+    reconciliation: &mut Option<PolicyReconciliationRecord>,
+    changes: Option<&[AuthenticatedMembershipChange]>,
+) -> Result<(), DurableMailboxError> {
+    if let (Some(reconciliation), Some(changes)) = (reconciliation, changes) {
+        complete_policy_reconciliation_from_changes(reconciliation, changes)?;
+    }
+    Ok(())
+}
+
+fn append_completed_policy_reconciliation_entry(
+    entries: &mut Vec<(StoreKey, Vec<u8>)>,
+    group_id: GroupId,
+    reconciliation: Option<&PolicyReconciliationRecord>,
+) -> Result<(), KeyStoreError> {
+    if let Some(reconciliation) = reconciliation.filter(|record| record.completed_epoch.is_some()) {
+        entries.push((
+            policy_reconciliation_key(group_id)?,
+            encode_json(reconciliation)?,
+        ));
+    }
+    Ok(())
+}
+
+/// Load the restart-safe status of an authenticated policy removal.
+///
+/// The deadline is a bounded Delivery Service policy value. The target and
+/// leaf are accepted only after the external Remove authenticates through the
+/// MLS Group Context. A pending record means the native MLS send path remains
+/// blocked regardless of whether the deadline has elapsed.
+///
+/// # Errors
+/// Rejects an invalid clock value or corrupt, non-canonical local state.
+pub fn policy_reconciliation_status(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+    now_unix: i64,
+) -> Result<Option<PolicyReconciliationStatus>, KeyStoreError> {
+    if !(0..=MAX_UNIX_TIMESTAMP).contains(&now_unix) {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let Some(record) = load_policy_reconciliation_record(store, group_id)? else {
+        return Ok(None);
+    };
+    if record.completed_epoch.is_some() {
+        return Ok(None);
+    }
+    let timing = if now_unix < record.deadline_unix {
+        PolicyReconciliationTiming::Pending {
+            remaining_seconds: u64::try_from(record.deadline_unix - now_unix)
+                .map_err(|_| KeyStoreError::InvalidValue)?,
+        }
+    } else {
+        PolicyReconciliationTiming::Overdue {
+            overdue_seconds: u64::try_from(now_unix - record.deadline_unix)
+                .map_err(|_| KeyStoreError::InvalidValue)?,
+        }
+    };
+    Ok(Some(PolicyReconciliationStatus {
+        group_id,
+        proposal_id: ProposalId::try_from(record.proposal_id)
+            .map_err(|_| KeyStoreError::InvalidValue)?,
+        proposal_epoch: record.proposal_epoch,
+        target_user_id: UserId::try_from(record.target_user_id)
+            .map_err(|_| KeyStoreError::InvalidValue)?,
+        target_device_id: DeviceId::try_from(record.target_device_id)
+            .map_err(|_| KeyStoreError::InvalidValue)?,
+        leaf_index: record.leaf_index,
+        deadline_unix: record.deadline_unix,
+        timing,
+    }))
 }
 
 /// Load a restart-safe proposal acknowledgment from the native outbox.
@@ -1596,7 +1808,22 @@ pub fn confirm_commit_acknowledgment(
     group_id: GroupId,
     submitted: &AckE2eeCommitsRequest,
 ) -> Result<(), KeyStoreError> {
-    confirm_ack(store, &commit_ack_key(group_id)?, submitted)
+    let acknowledgment_key = commit_ack_key(group_id)?;
+    let durable = store.load(&acknowledgment_key)?;
+    if durable.as_slice() != encode_json(submitted)?.as_slice() {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    let mut cleanup = vec![acknowledgment_key];
+    if load_policy_reconciliation_record(store, group_id)?
+        .is_some_and(|record| record.completed_epoch.is_some())
+    {
+        cleanup.push(policy_reconciliation_key(group_id)?);
+    }
+    let removed = store.remove_batch(&cleanup)?;
+    if removed != cleanup.len() {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    Ok(())
 }
 
 /// Read one authenticated message from encrypted native history.
@@ -2068,6 +2295,10 @@ fn proposal_ack_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
     StoreKey::new(format!("mailbox:proposal_ack:{group_id}"))
 }
 
+fn policy_reconciliation_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
+    StoreKey::new(format!("mailbox:policy_reconciliation:{group_id}"))
+}
+
 fn outbound_commit_key(group_id: GroupId) -> Result<StoreKey, KeyStoreError> {
     StoreKey::new(format!("mailbox:outbound_commit:{group_id}"))
 }
@@ -2095,6 +2326,91 @@ fn load_outbound_commit_record(
         return Err(KeyStoreError::InvalidValue);
     }
     Ok(Some(record))
+}
+
+fn load_policy_reconciliation_record(
+    store: &dyn LocalKeyStore,
+    group_id: GroupId,
+) -> Result<Option<PolicyReconciliationRecord>, KeyStoreError> {
+    let key = policy_reconciliation_key(group_id)?;
+    if !store.exists(&key)? {
+        return Ok(None);
+    }
+    let encoded = store.load(&key)?;
+    let record: PolicyReconciliationRecord =
+        serde_json::from_slice(&encoded).map_err(|_| KeyStoreError::InvalidValue)?;
+    validate_policy_reconciliation_record(&record, group_id)?;
+    Ok(Some(record))
+}
+
+fn validate_policy_reconciliation_record(
+    record: &PolicyReconciliationRecord,
+    expected_group_id: GroupId,
+) -> Result<(), KeyStoreError> {
+    let max_leaf_index =
+        u32::try_from(MAX_MLS_GROUP_LEAVES).map_err(|_| KeyStoreError::InvalidValue)?;
+    if record.version != POLICY_RECONCILIATION_RECORD_VERSION
+        || record.group_id != expected_group_id.to_string()
+        || ProposalId::try_from(record.proposal_id.clone()).is_err()
+        || record.proposal_epoch == 0
+        || UserId::try_from(record.target_user_id.clone()).is_err()
+        || DeviceId::try_from(record.target_device_id.clone()).is_err()
+        || record.leaf_index >= max_leaf_index
+        || !(0..=MAX_UNIX_TIMESTAMP).contains(&record.created_at_unix)
+        || record.deadline_unix < record.created_at_unix
+        || record.deadline_unix > record.expires_at_unix
+        || record.expires_at_unix > MAX_UNIX_TIMESTAMP
+        || record
+            .completed_epoch
+            .is_some_and(|epoch| epoch <= record.proposal_epoch)
+    {
+        return Err(KeyStoreError::InvalidValue);
+    }
+    Ok(())
+}
+
+fn validate_policy_reconciliation_commit(
+    reconciliation: &PolicyReconciliationRecord,
+    request: &PostCommitRequest,
+) -> Result<(), DurableMailboxError> {
+    let Some(MlsMembershipChange::Remove { leaves }) = &request.membership_change else {
+        return Err(ConversationError::MetadataMismatch.into());
+    };
+    let [removed] = leaves.as_slice() else {
+        return Err(ConversationError::MetadataMismatch.into());
+    };
+    if reconciliation.completed_epoch.is_some()
+        || request.prior_epoch < reconciliation.proposal_epoch
+        || removed.leaf_index != reconciliation.leaf_index
+        || removed.user_id != reconciliation.target_user_id
+        || removed.device_id != reconciliation.target_device_id
+    {
+        return Err(ConversationError::MetadataMismatch.into());
+    }
+    Ok(())
+}
+
+fn complete_policy_reconciliation_from_changes(
+    reconciliation: &mut PolicyReconciliationRecord,
+    changes: &[AuthenticatedMembershipChange],
+) -> Result<(), DurableMailboxError> {
+    if reconciliation.completed_epoch.is_some() {
+        return Ok(());
+    }
+    let target_user_id = UserId::try_from(reconciliation.target_user_id.clone())
+        .map_err(|_| KeyStoreError::InvalidValue)?;
+    let target_device_id = DeviceId::try_from(reconciliation.target_device_id.clone())
+        .map_err(|_| KeyStoreError::InvalidValue)?;
+    let matching = changes.iter().find(|change| {
+        change.kind == AuthenticatedMembershipChangeKind::Removed
+            && change.epoch > reconciliation.proposal_epoch
+            && change.target_user_id == target_user_id
+            && change.target_device_ids.contains(&target_device_id)
+    });
+    if let Some(change) = matching {
+        reconciliation.completed_epoch = Some(change.epoch);
+    }
+    Ok(())
 }
 
 fn load_outbound_message_record(
@@ -3084,6 +3400,7 @@ mod tests {
         bob: MlsDevice,
         bob_group: MlsConversation,
         charlie: MlsDevice,
+        charlie_group: MlsConversation,
         group_id: GroupId,
         page: E2eeProposalMailboxResponse,
         store: InMemoryKeyStore,
@@ -3123,6 +3440,14 @@ mod tests {
             delivery.identity(),
         )
         .unwrap();
+        let charlie_group = MlsConversation::join_group_from_welcome_with_delivery_service(
+            group_id,
+            &charlie,
+            &[alice_pin, bob_pin],
+            initial.welcome_blob.as_deref().unwrap(),
+            delivery.identity(),
+        )
+        .unwrap();
         let proposal = delivery.sign_remove(group_id, group.epoch(), 2).unwrap();
         let proposal_id = ProposalId::new().to_string();
         let page = E2eeProposalMailboxResponse {
@@ -3145,6 +3470,7 @@ mod tests {
             bob,
             bob_group,
             charlie,
+            charlie_group,
             group_id,
             page,
             store,
@@ -3229,6 +3555,9 @@ mod tests {
                 },
             )
             .unwrap();
+        assert!(policy_reconciliation_status(&store, group_id, 200)
+            .unwrap()
+            .is_none());
         assert_eq!(
             restarted.pending_outbound_commit(&store, group_id).unwrap(),
             None
@@ -3240,6 +3569,214 @@ mod tests {
         assert!(!restored.conversations[0]
             .has_verified_member_device(charlie.device_id())
             .unwrap());
+    }
+
+    #[test]
+    fn external_remove_without_policy_deadline_is_rejected_before_state_changes() {
+        let ProposalFixture {
+            group_id,
+            mut page,
+            store,
+            ..
+        } = external_remove_proposal_fixture();
+        page.proposals[0].reconciliation_deadline_unix = None;
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        assert!(matches!(
+            runtime.process_proposal_mailbox(&store, group_id, page),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::MetadataMismatch
+            ))
+        ));
+        assert!(runtime.is_ready());
+        assert_eq!(
+            crate::load_mls_client_state(&store).unwrap().conversations[0].epoch(),
+            1
+        );
+        assert!(policy_reconciliation_status(&store, group_id, 150)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn policy_reconciliation_record_is_bound_to_its_group_key() {
+        let ProposalFixture {
+            group_id,
+            page,
+            store,
+            ..
+        } = external_remove_proposal_fixture();
+        DurableMlsClient::load(&store)
+            .unwrap()
+            .process_proposal_mailbox(&store, group_id, page)
+            .unwrap();
+        let key = policy_reconciliation_key(group_id).unwrap();
+        let mut substituted: serde_json::Value =
+            serde_json::from_slice(&store.load(&key).unwrap()).unwrap();
+        substituted["group_id"] = serde_json::Value::String(GroupId::new().to_string());
+        store
+            .store(key, serde_json::to_vec(&substituted).unwrap())
+            .unwrap();
+        assert_eq!(
+            policy_reconciliation_status(&store, group_id, 150),
+            Err(KeyStoreError::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn policy_reconciliation_deadline_is_restart_safe_and_blocks_sends() {
+        let ProposalFixture {
+            alice,
+            charlie,
+            group_id,
+            page,
+            store,
+            ..
+        } = external_remove_proposal_fixture();
+        let proposal_id = ProposalId::try_from(page.proposals[0].proposal_id.clone()).unwrap();
+        let mut runtime = DurableMlsClient::load(&store).unwrap();
+        let batch = runtime
+            .process_proposal_mailbox(&store, group_id, page)
+            .unwrap();
+        let acknowledgment = batch.acknowledgment.unwrap();
+        assert_eq!(
+            policy_reconciliation_status(&store, group_id, 149).unwrap(),
+            Some(PolicyReconciliationStatus {
+                group_id,
+                proposal_id,
+                proposal_epoch: 1,
+                target_user_id: charlie.user_id(),
+                target_device_id: charlie.device_id(),
+                leaf_index: 2,
+                deadline_unix: 150,
+                timing: PolicyReconciliationTiming::Pending {
+                    remaining_seconds: 1,
+                },
+            })
+        );
+        assert!(matches!(
+            policy_reconciliation_status(&store, group_id, 150)
+                .unwrap()
+                .unwrap()
+                .timing,
+            PolicyReconciliationTiming::Overdue { overdue_seconds: 0 }
+        ));
+        assert!(matches!(
+            policy_reconciliation_status(&store, group_id, 175)
+                .unwrap()
+                .unwrap()
+                .timing,
+            PolicyReconciliationTiming::Overdue {
+                overdue_seconds: 25
+            }
+        ));
+
+        confirm_proposal_acknowledgment(&store, group_id, &acknowledgment).unwrap();
+        let event = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: None,
+            event: EncryptedChatEvent::Message {
+                message_id: EncryptedMessageId::new(),
+                body: ChatMessageBody::try_from(String::from("must remain blocked")).unwrap(),
+                reply: None,
+            },
+        };
+        let mut restarted = DurableMlsClient::load(&store).unwrap();
+        assert_eq!(
+            restarted.prepare_outbound_message(&store, group_id, &event),
+            Err(DurableMailboxError::PendingOutboundCommit)
+        );
+        assert_eq!(restarted.mailbox_routes().unwrap()[0].group_id, group_id);
+        assert_eq!(
+            restarted
+                .pending_outbound_commit(&store, group_id)
+                .unwrap()
+                .unwrap()
+                .committer_device_id,
+            alice.device_id().to_string()
+        );
+    }
+
+    #[test]
+    fn removal_target_clears_overdue_state_only_after_authenticated_peer_commit() {
+        let ProposalFixture {
+            alice,
+            bob,
+            charlie,
+            charlie_group,
+            group_id,
+            page,
+            store,
+            ..
+        } = external_remove_proposal_fixture();
+        let charlie_store = InMemoryKeyStore::new();
+        persist_mls_client_state(&charlie_store, &charlie, &[&charlie_group]).unwrap();
+        let mut charlie_runtime = DurableMlsClient::load(&charlie_store).unwrap();
+        let target_batch = charlie_runtime
+            .process_proposal_mailbox(&charlie_store, group_id, page.clone())
+            .unwrap();
+        assert!(target_batch.awaiting_peer_commit);
+        assert!(target_batch.outbound_commit.is_none());
+        let target_ack = target_batch.acknowledgment.unwrap();
+        confirm_proposal_acknowledgment(&charlie_store, group_id, &target_ack).unwrap();
+        assert!(matches!(
+            policy_reconciliation_status(&charlie_store, group_id, 151)
+                .unwrap()
+                .unwrap()
+                .timing,
+            PolicyReconciliationTiming::Overdue { overdue_seconds: 1 }
+        ));
+
+        let mut alice_runtime = DurableMlsClient::load(&store).unwrap();
+        let request = alice_runtime
+            .process_proposal_mailbox(&store, group_id, page)
+            .unwrap()
+            .outbound_commit
+            .unwrap();
+        let commit_page = E2eeCommitMailboxResponse {
+            commits: vec![E2eeCommitMailboxEntry {
+                epoch: request.epoch,
+                prior_epoch: request.prior_epoch,
+                committer_device_id: request.committer_device_id.clone(),
+                commit_blob: request.commit_blob.clone(),
+                welcome_blob: None,
+                membership_change: request.membership_change.clone(),
+                created_at_unix: 151,
+                expires_at_unix: 251,
+            }],
+            next_after_epoch: Some(request.epoch),
+        };
+        let participants = [
+            PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public()),
+            PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public()),
+        ];
+        let committed = charlie_runtime
+            .process_group_commit_mailbox(&charlie_store, group_id, &participants, commit_page)
+            .unwrap();
+        assert_eq!(committed.processed_epochs, vec![request.epoch]);
+        assert!(policy_reconciliation_status(&charlie_store, group_id, 200)
+            .unwrap()
+            .is_none());
+        let commit_ack = committed.acknowledgment.unwrap();
+        confirm_commit_acknowledgment(&charlie_store, group_id, &commit_ack).unwrap();
+        assert!(!charlie_store
+            .exists(&policy_reconciliation_key(group_id).unwrap())
+            .unwrap());
+
+        let event = VersionedApplicationEvent {
+            event_id: ApplicationEventId::new(),
+            retention_secs: None,
+            event: EncryptedChatEvent::Message {
+                message_id: EncryptedMessageId::new(),
+                body: ChatMessageBody::try_from(String::from("evicted device")).unwrap(),
+                reply: None,
+            },
+        };
+        assert_eq!(
+            charlie_runtime.prepare_outbound_message(&charlie_store, group_id, &event),
+            Err(DurableMailboxError::Conversation(
+                ConversationError::NotActive
+            ))
+        );
     }
 
     #[test]
@@ -3310,6 +3847,7 @@ mod tests {
             group_id,
             page,
             store,
+            ..
         } = external_remove_proposal_fixture();
         let mut runtime = DurableMlsClient::load(&store).unwrap();
         let rejected = runtime

@@ -77,15 +77,17 @@ acceptance-gated checkpoint. ADR
 ratification is complete, while threat-model ratification remains open.
 The Phase 3 native core now supports bounded, explicitly root-pinned group-DM
 creation, participant Add, and all-device cryptographic eviction; server-side
-group membership orchestration is still pending. Delivery Service message,
-commit, and proposal fanout now shares one fail-closed bound of 2–100 capable
-users and at most 200 active device leaves, and relays member-authored opaque
-proposals through per-device transient mailboxes. Stable external-sender key custody uses an operator-provisioned raw
+group membership orchestration is implemented for bounded groups. Delivery
+Service message, commit, and proposal fanout now shares one fail-closed bound
+of 2–100 capable users and at most 200 active device leaves, and relays
+member-authored opaque proposals through per-device transient mailboxes.
+Stable external-sender key custody uses an operator-provisioned raw
 Ed25519 seed opened without symlink following and checked after open for exact
 length, private permissions, current ownership, and a single hard link. The
 authenticated endpoint exposes only its public identity, and the crypto API
 can sign only bounded Remove proposals. Policy-triggered proposal generation
-and group membership orchestration remain pending.
+and bounded encrypted-channel membership orchestration are now implemented;
+large-group performance validation remains pending.
 The packaged client now has a validated, capability-oriented native command
 host, but the final Tauri adapter is supply-chain blocked: Tauri 2.11.5 does not
 pass the repository's advisory/license gates. Production launcher/backend and
@@ -301,6 +303,13 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   acceptance-gated member commit. The target stores the authenticated proposal
   without attempting to commit its own removal, allowing it to authenticate
   the winning referenced-proposal commit and become cryptographically inactive.
+- The native coordinator rejects an external Remove without a bounded
+  reconciliation deadline. After MLS authentication, it atomically persists
+  the deadline with the exact root-certified target leaf and retry outboxes.
+  Pending and overdue status survive restart and keep application sends
+  blocked. The status clears only when the local commit is accepted or the
+  matching peer Remove commit authenticates and is durably checkpointed;
+  server routing hints alone cannot mark an eviction complete.
 - Group-DM message-adjacent semantics use a strict, versioned application
   envelope inside the MLS `PrivateMessage`. Message creation/replies, edits,
   delete-for-everyone, reactions, and pins are therefore opaque to the Delivery

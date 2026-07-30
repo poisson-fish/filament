@@ -283,7 +283,10 @@ pub enum ExternalProposalAction {
     },
     /// This device is the removal target and retained the authenticated
     /// proposal so it can authenticate the winning peer commit by reference.
-    AwaitingPeerCommit,
+    AwaitingPeerCommit {
+        /// MLS-authenticated routing row for this device's removed leaf.
+        removed_leaf: MlsLeafRouting,
+    },
 }
 
 /// Membership notification derived only after an MLS commit authenticates.
@@ -1427,7 +1430,7 @@ impl MlsConversation {
             .store_pending_proposal(device.provider().storage(), *queued)
             .map_err(|_| ConversationError::CryptoError)?;
         if target.device_id == self.own_device_id {
-            return Ok(ExternalProposalAction::AwaitingPeerCommit);
+            return Ok(ExternalProposalAction::AwaitingPeerCommit { removed_leaf });
         }
         let (commit, welcome, group_info) = self
             .group
@@ -3343,7 +3346,8 @@ mod tests {
             charlie_group
                 .process_external_remove_proposal(&charlie, &valid_remove)
                 .unwrap(),
-            ExternalProposalAction::AwaitingPeerCommit
+            ExternalProposalAction::AwaitingPeerCommit { removed_leaf }
+                if removed_leaf.device_id == charlie.device_id().to_string()
         ));
         assert!(charlie_group.group.has_pending_proposals());
         assert_eq!(

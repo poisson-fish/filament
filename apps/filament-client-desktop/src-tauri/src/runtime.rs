@@ -1370,6 +1370,7 @@ fn map_durable_mailbox_error(error: DurableMailboxError) -> DesktopCommandBacken
         DurableMailboxError::KeyStore(error) => map_keystore_error(&error),
         DurableMailboxError::PendingAcknowledgment
         | DurableMailboxError::PendingOutboundCommit
+        | DurableMailboxError::PendingPolicyReconciliation
         | DurableMailboxError::PendingOutboundMessage
         | DurableMailboxError::PendingConversationProvision
         | DurableMailboxError::ConversationAlreadyExists
