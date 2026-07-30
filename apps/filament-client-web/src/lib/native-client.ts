@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { AuthSession } from "../domain/auth";
 
 const MAX_NATIVE_DEVICES = 100;
+const MAX_POLICY_RECONCILIATIONS = 1_024;
 const MAX_UNIX_TIMESTAMP = 253_402_300_799;
 const CANONICAL_ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const SAFETY_NUMBER = /^[0-9a-f]{32}$/;
@@ -31,12 +32,19 @@ export interface NativeEncryptionSettingsDevice {
   verification: "verified" | "unverified";
 }
 
+export interface NativePolicyReconciliation {
+  groupId: string;
+  deadlineUnix: number;
+  state: "pending" | "overdue";
+}
+
 export interface NativeEncryptionSettings {
   ready: true;
   safetyNumber: string;
   rotationSequence: number;
   devices: NativeEncryptionSettingsDevice[];
   backupEnrolled: boolean;
+  policyReconciliations: NativePolicyReconciliation[];
 }
 
 type InvokeCommand = (
@@ -119,6 +127,23 @@ function parseEncryptionDevice(value: unknown): NativeEncryptionSettingsDevice {
   };
 }
 
+function parsePolicyReconciliation(value: unknown): NativePolicyReconciliation {
+  if (
+    !isRecord(value)
+    || !hasExactKeys(value, ["group_id", "deadline_unix", "state"])
+    || !isCanonicalUlid(value.group_id)
+    || !isSafeUnixTimestamp(value.deadline_unix)
+    || (value.state !== "pending" && value.state !== "overdue")
+  ) {
+    throw new NativeClientError("invalid_response");
+  }
+  return {
+    groupId: value.group_id,
+    deadlineUnix: value.deadline_unix,
+    state: value.state,
+  };
+}
+
 function parseEncryptionSettings(value: unknown): NativeEncryptionSettings {
   if (
     !isRecord(value)
@@ -128,6 +153,7 @@ function parseEncryptionSettings(value: unknown): NativeEncryptionSettings {
       "rotation_sequence",
       "devices",
       "backup_enrolled",
+      "policy_reconciliations",
     ])
     || value.ready !== true
     || typeof value.safety_number !== "string"
@@ -139,14 +165,21 @@ function parseEncryptionSettings(value: unknown): NativeEncryptionSettings {
     || value.devices.length < 1
     || value.devices.length > MAX_NATIVE_DEVICES
     || typeof value.backup_enrolled !== "boolean"
+    || !Array.isArray(value.policy_reconciliations)
+    || value.policy_reconciliations.length > MAX_POLICY_RECONCILIATIONS
   ) {
     throw new NativeClientError("invalid_response");
   }
   const devices = value.devices.map(parseEncryptionDevice);
+  const policyReconciliations = value.policy_reconciliations.map(parsePolicyReconciliation);
   const deviceIds = new Set(devices.map((device) => device.deviceId));
+  const reconciliationGroupIds = new Set(
+    policyReconciliations.map((reconciliation) => reconciliation.groupId),
+  );
   if (
     deviceIds.size !== devices.length
     || devices.filter((device) => device.isCurrentDevice).length !== 1
+    || reconciliationGroupIds.size !== policyReconciliations.length
   ) {
     throw new NativeClientError("invalid_response");
   }
@@ -156,6 +189,7 @@ function parseEncryptionSettings(value: unknown): NativeEncryptionSettings {
     rotationSequence: value.rotation_sequence,
     devices,
     backupEnrolled: value.backup_enrolled,
+    policyReconciliations,
   };
 }
 

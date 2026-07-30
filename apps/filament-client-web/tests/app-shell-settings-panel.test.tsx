@@ -233,6 +233,11 @@ describe("app shell settings panel", () => {
               verification: "verified",
             }],
             backupEnrolled: false,
+            policyReconciliations: [{
+              groupId: "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+              deadlineUnix: 1_700_000_100,
+              state: "overdue",
+            }],
           },
           rotationConfirmation: "ROTATE",
           onRotationConfirmationInput,
@@ -243,6 +248,8 @@ describe("app shell settings panel", () => {
 
     expect(screen.getByText("0123456789abcdef0123456789abcdef")).toBeInTheDocument();
     expect(screen.getByText("01ARZ3NDEKTSV4RRFFQ69G5FAW")).toBeInTheDocument();
+    expect(screen.getByText("Removal overdue · 2023-11-14T22:15:00.000Z")).toBeInTheDocument();
+    expect(screen.getByText(/will not send encrypted messages/)).toBeInTheDocument();
     const rotate = screen.getByRole("button", { name: "Rotate identity and revoke other devices" });
     expect(rotate).toBeDisabled();
     await fireEvent.input(screen.getByLabelText("Identity rotation confirmation"), {
@@ -261,6 +268,7 @@ describe("app shell settings panel", () => {
             rotationSequence: 2,
             devices: [],
             backupEnrolled: false,
+            policyReconciliations: [],
           },
           rotationConfirmation: ROTATE_IDENTITY_CONFIRMATION,
           onRotateIdentity,

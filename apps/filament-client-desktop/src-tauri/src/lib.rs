@@ -59,6 +59,8 @@ pub enum SecurityError {
     InvalidIdentityRotationResponse,
     #[error("identity rotation preparation failed")]
     IdentityRotationUnavailable,
+    #[error("encryption settings snapshot is invalid")]
+    InvalidEncryptionSettingsSnapshot,
 }
 
 #[derive(PartialEq, Eq)]
@@ -299,6 +301,44 @@ impl EncryptionSettingsDevice {
     }
 }
 
+/// Public, identity-redacted policy-removal status for one MLS group.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptionPolicyReconciliation {
+    group_id: String,
+    deadline_unix: i64,
+    state: EncryptionPolicyReconciliationState,
+}
+
+/// Closed warning state computed by the native MLS coordinator.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EncryptionPolicyReconciliationState {
+    Pending,
+    Overdue,
+}
+
+impl EncryptionPolicyReconciliation {
+    /// Build public warning metadata from authenticated native MLS state.
+    ///
+    /// # Errors
+    /// Rejects negative or out-of-range reconciliation deadlines.
+    pub fn new(
+        group_id: filament_core::GroupId,
+        deadline_unix: i64,
+        state: EncryptionPolicyReconciliationState,
+    ) -> Result<Self, SecurityError> {
+        if !(0..=253_402_300_799).contains(&deadline_unix) {
+            return Err(SecurityError::InvalidEncryptionSettingsSnapshot);
+        }
+        Ok(Self {
+            group_id: group_id.to_string(),
+            deadline_unix,
+            state,
+        })
+    }
+}
+
 /// Redacted encryption-settings presentation model.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -308,22 +348,33 @@ pub struct EncryptionSettingsSnapshot {
     pub rotation_sequence: u64,
     pub devices: Vec<EncryptionSettingsDevice>,
     pub backup_enrolled: bool,
+    pub policy_reconciliations: Vec<EncryptionPolicyReconciliation>,
 }
 
 impl EncryptionSettingsSnapshot {
     /// Construct a public-only settings snapshot with bounded device metadata.
     ///
     /// # Errors
-    /// Returns [`SecurityError::InvalidIdentityRotationResponse`] when more
-    /// than 100 devices are supplied.
+    /// Returns [`SecurityError::InvalidEncryptionSettingsSnapshot`] when more
+    /// than 100 devices or 1,024 policy reconciliations are supplied, or when
+    /// reconciliation groups are duplicated.
     pub fn new(
         root_public_key: &[u8; 32],
         rotation_sequence: u64,
         devices: Vec<EncryptionSettingsDevice>,
         backup_enrolled: bool,
+        policy_reconciliations: Vec<EncryptionPolicyReconciliation>,
     ) -> Result<Self, SecurityError> {
-        if devices.len() > 100 {
-            return Err(SecurityError::InvalidIdentityRotationResponse);
+        if devices.len() > 100 || policy_reconciliations.len() > 1_024 {
+            return Err(SecurityError::InvalidEncryptionSettingsSnapshot);
+        }
+        let unique_group_count = policy_reconciliations
+            .iter()
+            .map(|reconciliation| reconciliation.group_id.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        if unique_group_count != policy_reconciliations.len() {
+            return Err(SecurityError::InvalidEncryptionSettingsSnapshot);
         }
         Ok(Self {
             ready: true,
@@ -331,6 +382,7 @@ impl EncryptionSettingsSnapshot {
             rotation_sequence,
             devices,
             backup_enrolled,
+            policy_reconciliations,
         })
     }
 }
@@ -1028,13 +1080,52 @@ mod tests {
             )
             .unwrap()],
             false,
+            vec![EncryptionPolicyReconciliation::new(
+                filament_core::GroupId::try_from(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAX"))
+                    .unwrap(),
+                1_700_000_100,
+                EncryptionPolicyReconciliationState::Overdue,
+            )
+            .unwrap()],
         )
         .unwrap();
         let serialized = serde_json::to_string(&snapshot).unwrap();
         assert!(serialized.contains(&safety_number(&root.public_key_bytes())));
+        assert!(serialized.contains("\"state\":\"overdue\""));
         for forbidden in ["root_key", "signature", "secret", "private", "path"] {
             assert!(!serialized.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn encryption_settings_reconciliations_are_bounded_canonical_and_unique() {
+        let root = RootIdentityKey::from_secret_bytes(&[0x62; 32]);
+        let group_id =
+            filament_core::GroupId::try_from(String::from("01ARZ3NDEKTSV4RRFFQ69G5FAY")).unwrap();
+        let reconciliation = EncryptionPolicyReconciliation::new(
+            group_id,
+            1_700_000_100,
+            EncryptionPolicyReconciliationState::Pending,
+        )
+        .unwrap();
+        assert_eq!(
+            EncryptionSettingsSnapshot::new(
+                &root.public_key_bytes(),
+                0,
+                Vec::new(),
+                false,
+                vec![reconciliation.clone(), reconciliation],
+            ),
+            Err(SecurityError::InvalidEncryptionSettingsSnapshot)
+        );
+        assert_eq!(
+            EncryptionPolicyReconciliation::new(
+                group_id,
+                -1,
+                EncryptionPolicyReconciliationState::Overdue,
+            ),
+            Err(SecurityError::InvalidEncryptionSettingsSnapshot)
+        );
     }
 
     #[test]

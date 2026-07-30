@@ -42,6 +42,13 @@ function commandFixture(command: string): unknown {
         },
       ],
       backup_enrolled: false,
+      policy_reconciliations: [
+        {
+          group_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          deadline_unix: 1_700_000_100,
+          state: "overdue",
+        },
+      ],
     };
   }
   if (command === "rotate_root_identity") {
@@ -83,6 +90,13 @@ describe("packaged native client bridge", () => {
         },
       ],
       backupEnrolled: false,
+      policyReconciliations: [
+        {
+          groupId: "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          deadlineUnix: 1_700_000_100,
+          state: "overdue",
+        },
+      ],
     });
     await bridge.rotateRootIdentity(NATIVE_ROTATE_IDENTITY_CONFIRMATION);
     await bridge.clearSession();
@@ -133,6 +147,29 @@ describe("packaged native client bridge", () => {
       () => true,
     );
     await expect(noCurrentBridge.readEncryptionSettings()).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+
+    const reconciliation = (base.policy_reconciliations as unknown[])[0] as Record<string, unknown>;
+    const duplicateReconciliationBridge = new NativeClientBridge(
+      vi.fn(async () => ({
+        ...base,
+        policy_reconciliations: [reconciliation, { ...reconciliation }],
+      })),
+      () => true,
+    );
+    await expect(duplicateReconciliationBridge.readEncryptionSettings()).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+
+    const invalidReconciliationBridge = new NativeClientBridge(
+      vi.fn(async () => ({
+        ...base,
+        policy_reconciliations: [{ ...reconciliation, state: "complete" }],
+      })),
+      () => true,
+    );
+    await expect(invalidReconciliationBridge.readEncryptionSettings()).rejects.toMatchObject({
       code: "invalid_response",
     });
   });

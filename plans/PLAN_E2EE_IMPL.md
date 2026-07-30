@@ -7,7 +7,7 @@
 
 ---
 
-## Implementation Status — 2026-07-28
+## Implementation Status — 2026-07-29
 
 The repository is currently implementing **Phase 6 guild encrypted channels**.
 Simulator/device-only Phase 5.5 evidence is deferred per maintainer direction.
@@ -514,11 +514,18 @@ table scan or sort. The native durable-mailbox coordinator now requires every
 Delivery Service external Remove to carry its bounded reconciliation deadline,
 then atomically persists that deadline with the MLS-authenticated target leaf,
 checkpoint, acknowledgment, and acceptance-gated commit. A restart-safe typed
-status distinguishes pending from overdue for the future native warning
-surface. Both states keep sends blocked. The status clears only after the local
-commit is accepted or an exact peer Remove commit authenticates and becomes
-durable; targeted devices become cryptographically inactive. Missing
-deadlines, record substitution, and premature completion fail closed.
+status distinguishes pending from overdue. The existing audited settings
+command now exposes a bounded, identity-redacted warning surface derived only
+from authenticated SQLCipher state. Both states keep sends blocked. The status
+clears only after the local commit is accepted or an exact peer Remove commit
+authenticates and becomes durable; targeted devices become cryptographically
+inactive. Missing
+deadlines, record substitution, duplicate or malformed warnings, and premature
+completion fail closed. Target identities and proposal details remain
+native-only, and no IPC command was added. A removal target's later native
+passes skip duplicate proposal reads but continue draining the commit mailbox,
+so the authenticated peer eviction cannot deadlock behind the pending-policy
+guard.
 Large-group performance work remains unavailable.
 
 ---
@@ -1557,11 +1564,18 @@ half-provisioned encrypted channel:
 - The native durable-mailbox coordinator binds the advertised reconciliation
   deadline to the MLS-authenticated external Remove target and persists it
   atomically with the checkpoint and retry outboxes. Pending and overdue are
-  typed restart-safe states for the future packaged-client warning surface;
+  typed restart-safe states;
   both block sends, and completion requires either exact server acceptance of
   the locally staged commit or durable authentication of the matching peer
   Remove commit. The targeted-device regression proves post-removal sends fail
   with an inactive MLS state.
+- The existing audited settings command now carries a strict, bounded,
+  identity-redacted warning for each authenticated policy reconciliation. The
+  bundled UI distinguishes pending from overdue deadlines and explains that
+  encrypted sends remain blocked. It receives only the canonical group ID,
+  deadline, and closed state; target identities, proposal details, and all key
+  material remain native-only. Removal targets skip duplicate proposal reads
+  while pending but continue draining authenticated commits until eviction.
 
 This increment intentionally does not claim the 5,000-leaf target or
 large-group readiness.

@@ -303,6 +303,9 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   acceptance-gated member commit. The target stores the authenticated proposal
   without attempting to commit its own removal, allowing it to authenticate
   the winning referenced-proposal commit and become cryptographically inactive.
+  Later native passes skip additional proposals for that group while the
+  authenticated removal is pending, but continue draining commits so this
+  transition cannot deadlock behind the duplicate-proposal guard.
 - The native coordinator rejects an external Remove without a bounded
   reconciliation deadline. After MLS authentication, it atomically persists
   the deadline with the exact root-certified target leaf and retry outboxes.
@@ -310,6 +313,12 @@ split is maintained in `plans/PLAN_E2EE_IMPL.md`.
   blocked. The status clears only when the local commit is accepted or the
   matching peer Remove commit authenticates and is durably checkpointed;
   server routing hints alone cannot mark an eviction complete.
+- The existing audited settings command exposes an identity-redacted warning
+  for each affected group: canonical group ID, authenticated deadline, and the
+  native coordinator's closed `pending | overdue` state. The packaged UI
+  explains that sends remain blocked until membership is certain. Target user,
+  target device, proposal bytes, and key material never cross IPC; duplicate,
+  malformed, or oversized warning sets fail closed.
 - Group-DM message-adjacent semantics use a strict, versioned application
   envelope inside the MLS `PrivateMessage`. Message creation/replies, edits,
   delete-for-everyone, reactions, and pins are therefore opaque to the Delivery

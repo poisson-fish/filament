@@ -26,11 +26,12 @@ use filament_e2ee::{
     pending_attachment_acknowledgment, pending_attachment_downloads, pending_attachment_upload,
     pending_commit_acknowledgment, pending_message_acknowledgment, pending_proposal_acknowledgment,
     persist_downloaded_attachment, persist_initial_device_bootstrap,
-    persist_root_identity_rotation_sequence, prepare_pending_root_identity_rotation,
-    purge_expired_attachment_upload, purge_expired_attachments, purge_expired_messages,
-    ConversationAudience, DurableAttachmentError, DurableMailboxError, DurableMlsClient,
-    KeyStoreError, LocalKeyStore, LocalStoreId, MailboxConversationRoute, MlsDevice,
-    RootIdentityKey, StoreKey, DEFAULT_BATCH_SIZE,
+    persist_root_identity_rotation_sequence, policy_reconciliation_status,
+    prepare_pending_root_identity_rotation, purge_expired_attachment_upload,
+    purge_expired_attachments, purge_expired_messages, ConversationAudience,
+    DurableAttachmentError, DurableMailboxError, DurableMlsClient, KeyStoreError, LocalKeyStore,
+    LocalStoreId, MailboxConversationRoute, MlsDevice, PolicyReconciliationTiming, RootIdentityKey,
+    StoreKey, DEFAULT_BATCH_SIZE,
 };
 use filament_protocol::{
     RotateRootIdentityResponse, MAX_E2EE_COMMIT_MAILBOX_PAGE_SIZE, MAX_E2EE_MAILBOX_PAGE_SIZE,
@@ -57,7 +58,8 @@ use crate::{
     },
     validate_runtime_navigation, DesktopCommandBackend, DesktopCommandBackendError,
     DesktopCommandError, DesktopCommandHost, DesktopE2eeStore, E2eeStoreStatus,
-    EncryptionDeviceVerification, EncryptionSettingsDevice, EncryptionSettingsSnapshot,
+    EncryptionDeviceVerification, EncryptionPolicyReconciliation,
+    EncryptionPolicyReconciliationState, EncryptionSettingsDevice, EncryptionSettingsSnapshot,
     RotateIdentityCommandRequest, SessionMetadata, StoreSessionRequest, UnixExpiry,
     ValidatedStoreSessionRequest,
 };
@@ -407,8 +409,40 @@ impl ProductionDesktopBackend {
         {
             return Err(DesktopCommandBackendError::Rejected);
         }
-        EncryptionSettingsSnapshot::new(&root_public, rotation_sequence, devices, false)
-            .map_err(|_| DesktopCommandBackendError::Rejected)
+        let now_unix = (self.clock)()?;
+        let routes = active
+            .mailbox
+            .mailbox_routes()
+            .map_err(|_| DesktopCommandBackendError::Rejected)?;
+        let mut policy_reconciliations = Vec::new();
+        for route in routes {
+            let Some(status) =
+                policy_reconciliation_status(active.store.as_ref(), route.group_id, now_unix)
+                    .map_err(|_| DesktopCommandBackendError::Rejected)?
+            else {
+                continue;
+            };
+            let state = match status.timing {
+                PolicyReconciliationTiming::Pending { .. } => {
+                    EncryptionPolicyReconciliationState::Pending
+                }
+                PolicyReconciliationTiming::Overdue { .. } => {
+                    EncryptionPolicyReconciliationState::Overdue
+                }
+            };
+            policy_reconciliations.push(
+                EncryptionPolicyReconciliation::new(status.group_id, status.deadline_unix, state)
+                    .map_err(|_| DesktopCommandBackendError::Rejected)?,
+            );
+        }
+        EncryptionSettingsSnapshot::new(
+            &root_public,
+            rotation_sequence,
+            devices,
+            false,
+            policy_reconciliations,
+        )
+        .map_err(|_| DesktopCommandBackendError::Rejected)
     }
 
     fn verify_active_device(
@@ -902,6 +936,15 @@ impl ProductionDesktopBackend {
         self.flush_commit_acknowledgment(session, active, group_id)?;
         self.flush_outbound_commit(session, active, group_id)?;
         self.flush_proposal_acknowledgment(session, active, group_id)?;
+        if policy_reconciliation_status(active.store.as_ref(), group_id, (self.clock)()?)
+            .map_err(|error| map_keystore_error(&error))?
+            .is_some()
+        {
+            // The removal target must retain the authenticated proposal until
+            // the peer commit arrives. Do not re-enter proposal processing,
+            // but let the caller continue into the commit mailbox.
+            return Ok(());
+        }
         for _ in 0..MAX_MAILBOX_PAGES_PER_GROUP {
             let page = self
                 .api
@@ -4013,6 +4056,137 @@ mod tests {
             .is_none());
         let restored = load_mls_client_state(local_store.as_ref()).unwrap();
         assert_eq!(restored.conversations[0].epoch(), 2);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn production_settings_surface_authenticated_overdue_removal_without_target_identity() {
+        let alice_root = RootIdentityKey::generate();
+        let bob_root = RootIdentityKey::generate();
+        let charlie_root = RootIdentityKey::generate();
+        let alice = MlsDevice::generate(UserId::new(), DeviceId::new(), &alice_root).unwrap();
+        let bob = MlsDevice::generate(UserId::new(), DeviceId::new(), &bob_root).unwrap();
+        let charlie = MlsDevice::generate(UserId::new(), DeviceId::new(), &charlie_root).unwrap();
+        let alice_pin =
+            filament_e2ee::PinnedUserIdentity::new(alice.user_id(), *alice.root_key_public());
+        let bob_pin = filament_e2ee::PinnedUserIdentity::new(bob.user_id(), *bob.root_key_public());
+        let charlie_pin =
+            filament_e2ee::PinnedUserIdentity::new(charlie.user_id(), *charlie.root_key_public());
+        let bob_package = generate_key_package_batch(&bob, 1).unwrap().remove(0).blob;
+        let charlie_package = generate_key_package_batch(&charlie, 1)
+            .unwrap()
+            .remove(0)
+            .blob;
+        let delivery =
+            DeliveryServiceSigner::from_seed([0x53; DELIVERY_SERVICE_SEED_BYTES]).unwrap();
+        let group_id = filament_core::GroupId::new();
+        let (mut alice_group, initial) =
+            filament_e2ee::MlsConversation::create_group_with_delivery_service(
+                group_id,
+                &alice,
+                &[(bob_pin, bob_package), (charlie_pin, charlie_package)],
+                delivery.identity(),
+            )
+            .unwrap();
+        alice_group.accept_pending_commit(&alice).unwrap();
+        let charlie_group =
+            filament_e2ee::MlsConversation::join_group_from_welcome_with_delivery_service(
+                group_id,
+                &charlie,
+                &[alice_pin, bob_pin],
+                initial.welcome_blob.as_deref().unwrap(),
+                delivery.identity(),
+            )
+            .unwrap();
+        let proposal = delivery
+            .sign_remove(group_id, charlie_group.epoch(), 2)
+            .unwrap();
+        let proposal_id = filament_core::ProposalId::new().to_string();
+        let (peer_commit, removed_leaf) = match alice_group
+            .process_external_remove_proposal(&alice, &proposal)
+            .unwrap()
+        {
+            filament_e2ee::ExternalProposalAction::Commit {
+                commit,
+                removed_leaf,
+            } => (commit, removed_leaf),
+            filament_e2ee::ExternalProposalAction::AwaitingPeerCommit { .. } => {
+                panic!("non-target member must stage the peer removal commit");
+            }
+        };
+
+        let api = Arc::new(MockEnrollmentApi::with_device(&charlie));
+        api.proposal_mailboxes.lock().unwrap().insert(
+            group_id,
+            E2eeProposalMailboxResponse {
+                proposals: vec![E2eeProposalMailboxEntry {
+                    proposal_id: proposal_id.clone(),
+                    epoch: proposal.epoch,
+                    proposer_device_id: None,
+                    external_sender_index: Some(0),
+                    proposal_blob: proposal.proposal_blob,
+                    created_at_unix: 10,
+                    expires_at_unix: 1_000,
+                    reconciliation_deadline_unix: Some(90),
+                }],
+                next_after_proposal_id: Some(proposal_id.clone()),
+            },
+        );
+        let (backend, _session_store, registry, local_store) = backend_fixture(api.clone());
+        backend.store_session(valid_session()).unwrap();
+        registry
+            .bind(charlie.user_id(), charlie.device_id())
+            .unwrap();
+        filament_e2ee::persist_root_identity(
+            local_store.as_ref(),
+            StoreKey::root_identity(),
+            &charlie_root,
+        )
+        .unwrap();
+        filament_e2ee::persist_mls_client_state(local_store.as_ref(), &charlie, &[&charlie_group])
+            .unwrap();
+
+        assert_eq!(backend.initialize_e2ee_store(), Ok(store_status()));
+        let settings = backend.read_encryption_settings().unwrap();
+        assert_eq!(
+            settings.policy_reconciliations,
+            vec![EncryptionPolicyReconciliation::new(
+                group_id,
+                90,
+                EncryptionPolicyReconciliationState::Overdue,
+            )
+            .unwrap()]
+        );
+        let serialized = serde_json::to_string(&settings.policy_reconciliations).unwrap();
+        assert!(!serialized.contains(&charlie.user_id().to_string()));
+        assert!(!serialized.contains(&charlie.device_id().to_string()));
+        assert!(!serialized.contains(&proposal_id));
+
+        api.commit_mailboxes.lock().unwrap().insert(
+            group_id,
+            E2eeCommitMailboxResponse {
+                commits: vec![E2eeCommitMailboxEntry {
+                    epoch: peer_commit.epoch,
+                    prior_epoch: peer_commit.prior_epoch,
+                    committer_device_id: peer_commit.committer_device_id.to_string(),
+                    commit_blob: peer_commit.commit_blob,
+                    welcome_blob: None,
+                    membership_change: Some(filament_protocol::MlsMembershipChange::Remove {
+                        leaves: vec![removed_leaf],
+                    }),
+                    created_at_unix: 100,
+                    expires_at_unix: 1_000,
+                }],
+                next_after_epoch: Some(peer_commit.epoch),
+            },
+        );
+        let reconciled = backend.read_encryption_settings().unwrap();
+        assert!(reconciled.policy_reconciliations.is_empty());
+        assert!(
+            policy_reconciliation_status(local_store.as_ref(), group_id, 100)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

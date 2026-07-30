@@ -17,17 +17,31 @@ export interface EncryptionSettingsDeviceView {
   verification: "verified" | "unverified";
 }
 
+export interface EncryptionPolicyReconciliationView {
+  groupId: string;
+  deadlineUnix: number;
+  state: "pending" | "overdue";
+}
+
 export interface EncryptionSettingsView {
   ready: boolean;
   safetyNumber: string;
   rotationSequence: number;
   devices: EncryptionSettingsDeviceView[];
   backupEnrolled: boolean;
+  policyReconciliations: EncryptionPolicyReconciliationView[];
 }
 
 function formatDeviceAddedAt(unixSeconds: number): string {
   if (!Number.isSafeInteger(unixSeconds) || unixSeconds < 0 || unixSeconds > 253_402_300_799) {
     return "Unknown date";
+  }
+  return new Date(unixSeconds * 1000).toISOString();
+}
+
+function formatReconciliationDeadline(unixSeconds: number): string {
+  if (!Number.isSafeInteger(unixSeconds) || unixSeconds < 0 || unixSeconds > 253_402_300_799) {
+    return "Unknown deadline";
   }
   return new Date(unixSeconds * 1000).toISOString();
 }
@@ -454,6 +468,34 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   </For>
                 </ul>
               </section>
+
+              <Show when={(props.encryptionSettings?.policyReconciliations.length ?? 0) > 0}>
+                <section class="grid gap-[0.5rem] rounded-[0.72rem] border border-danger/60 bg-danger/10 p-[0.78rem]" aria-label="Encrypted channel safety warnings">
+                  <p class={sectionLabelClassName}>ENCRYPTED CHANNEL SAFETY</p>
+                  <p class="m-0 text-ink-0">
+                    Sending is blocked in the groups below until the authenticated removal is committed.
+                  </p>
+                  <ul class="m-0 grid list-none gap-[0.45rem] p-0">
+                    <For each={props.encryptionSettings?.policyReconciliations ?? []}>
+                      {(reconciliation) => (
+                        <li class="grid gap-[0.2rem] rounded-[0.55rem] border border-danger/50 bg-bg-3 p-[0.62rem]">
+                          <p class="m-0 break-all font-code text-[0.8rem] text-ink-0">
+                            {reconciliation.groupId}
+                          </p>
+                          <p class="m-0 text-[0.76rem] text-ink-1">
+                            {reconciliation.state === "overdue" ? "Removal overdue" : "Removal pending"}
+                            {" · "}
+                            {formatReconciliationDeadline(reconciliation.deadlineUnix)}
+                          </p>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                  <p class="muted m-0">
+                    Filament will not send encrypted messages while membership is uncertain.
+                  </p>
+                </section>
+              </Show>
 
               <section class="grid gap-[0.45rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.78rem]" aria-label="Encrypted backup">
                 <p class={sectionLabelClassName}>BACKUP</p>

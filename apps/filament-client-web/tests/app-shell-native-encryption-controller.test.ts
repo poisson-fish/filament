@@ -26,6 +26,7 @@ const SETTINGS: NativeEncryptionSettings = {
     },
   ],
   backupEnrolled: false,
+  policyReconciliations: [],
 };
 
 async function settle(): Promise<void> {

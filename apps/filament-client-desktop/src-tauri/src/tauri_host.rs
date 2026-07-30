@@ -285,6 +285,7 @@ mod tests {
                 )
                 .unwrap()],
                 false,
+                Vec::new(),
             )
             .map_err(|_| DesktopCommandBackendError::Unavailable)
         }

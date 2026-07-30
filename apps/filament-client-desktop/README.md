@@ -115,6 +115,12 @@ no filesystem, shell, updater, opener, clipboard, or general network plugin.
   cap at 30 seconds; token expiry, session replacement, and logout interrupt
   the old connection. No listener input can select an identity, destination,
   path, or key.
+- The existing `read_encryption_settings` command returns a bounded,
+  identity-redacted list of MLS policy reconciliations computed from
+  authenticated SQLCipher state. The bundled settings panel surfaces pending
+  and overdue removal deadlines and states clearly that encrypted sends remain
+  blocked. No new command is added, and target user/device or proposal details
+  never cross IPC.
 - Native attachment preparation now encrypts and chunks one exact-bucket
   upload per group into SQLCipher before submission. Response loss retries the
   identical opaque bytes. After upload acceptance, the host authenticates the
