@@ -348,6 +348,12 @@ e2ee_membership_reconciliation_pending`. A permission change never falls back
 to plaintext, and direct database mutations without the exact pending
 reconciliations are rejected.
 
+The server samples the oldest 1,000 incomplete reconciliations every 30 seconds
+and exports pending/overdue gauges through `GET /metrics`. The scan reports
+saturation rather than performing unbounded work. Operators should alert on
+any overdue sample or a saturated scan; encrypted sends remain blocked after
+the deadline until the exact authenticated Remove commit completes.
+
 Under `require_moderator_membership`, the visible system moderator roster is a
 database-enforced channel invariant. Permission changes cannot make a
 moderator ineligible for an encrypted channel, and an MLS commit cannot remove

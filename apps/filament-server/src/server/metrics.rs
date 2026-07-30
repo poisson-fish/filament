@@ -1,6 +1,9 @@
 use std::{collections::HashMap, fmt::Write as _};
 
-use super::core::{MetricsState, METRICS_STATE};
+use super::{
+    core::{MetricsState, METRICS_STATE},
+    e2ee_reconciliation::ReconciliationObservation,
+};
 
 pub(crate) const GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND: &str = "oversized_outbound";
 pub(crate) const GATEWAY_DROP_REASON_SERIALIZE_ERROR: &str = "serialize_error";
@@ -43,6 +46,10 @@ pub(crate) fn render_metrics() -> String {
         .voice_sync_repairs
         .lock()
         .map_or_else(|_| HashMap::new(), |guard| guard.clone());
+    let e2ee_membership_reconciliations = metrics_state()
+        .e2ee_membership_reconciliations
+        .lock()
+        .map_or_else(|_| ReconciliationObservation::default(), |guard| *guard);
 
     let mut output = String::new();
     output
@@ -161,6 +168,40 @@ pub(crate) fn render_metrics() -> String {
         );
     }
 
+    output.push_str(
+        "# HELP filament_e2ee_membership_reconciliations_sampled Oldest-first bounded sample of incomplete MLS policy evictions by state\n",
+    );
+    output.push_str("# TYPE filament_e2ee_membership_reconciliations_sampled gauge\n");
+    let _ = writeln!(
+        output,
+        "filament_e2ee_membership_reconciliations_sampled{{state=\"pending\"}} {}",
+        e2ee_membership_reconciliations.pending_sampled
+    );
+    let _ = writeln!(
+        output,
+        "filament_e2ee_membership_reconciliations_sampled{{state=\"overdue\"}} {}",
+        e2ee_membership_reconciliations.overdue_sampled
+    );
+    output.push_str(
+        "# HELP filament_e2ee_membership_reconciliation_oldest_overdue_seconds Age past deadline of the oldest sampled incomplete MLS policy eviction\n",
+    );
+    output
+        .push_str("# TYPE filament_e2ee_membership_reconciliation_oldest_overdue_seconds gauge\n");
+    let _ = writeln!(
+        output,
+        "filament_e2ee_membership_reconciliation_oldest_overdue_seconds {}",
+        e2ee_membership_reconciliations.oldest_overdue_seconds
+    );
+    output.push_str(
+        "# HELP filament_e2ee_membership_reconciliation_scan_saturated Whether more incomplete policy evictions exist than the bounded monitor sample can inspect\n",
+    );
+    output.push_str("# TYPE filament_e2ee_membership_reconciliation_scan_saturated gauge\n");
+    let _ = writeln!(
+        output,
+        "filament_e2ee_membership_reconciliation_scan_saturated {}",
+        u8::from(e2ee_membership_reconciliations.scan_saturated)
+    );
+
     output
 }
 
@@ -240,15 +281,25 @@ pub(crate) fn record_voice_sync_repair(reason: &'static str) {
     }
 }
 
+pub(crate) fn record_e2ee_membership_reconciliation_observation(
+    observation: ReconciliationObservation,
+) {
+    if let Ok(mut current) = metrics_state().e2ee_membership_reconciliations.lock() {
+        *current = observation;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
 
     use super::{
-        metrics_state, record_gateway_event_oversized_outbound,
-        record_gateway_event_serialize_error, GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND,
+        metrics_state, record_e2ee_membership_reconciliation_observation,
+        record_gateway_event_oversized_outbound, record_gateway_event_serialize_error,
+        render_metrics, GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND,
         GATEWAY_DROP_REASON_SERIALIZE_ERROR,
     };
+    use crate::server::e2ee_reconciliation::ReconciliationObservation;
 
     #[test]
     fn records_serialize_error_with_canonical_reason_label() {
@@ -282,5 +333,25 @@ mod tests {
             String::from(GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND),
         );
         assert_eq!(dropped.get(&key).copied(), Some(1));
+    }
+
+    #[test]
+    fn renders_bounded_reconciliation_monitor_gauges() {
+        record_e2ee_membership_reconciliation_observation(ReconciliationObservation {
+            pending_sampled: 7,
+            overdue_sampled: 2,
+            oldest_overdue_seconds: 45,
+            scan_saturated: true,
+        });
+
+        let rendered = render_metrics();
+        assert!(rendered
+            .contains("filament_e2ee_membership_reconciliations_sampled{state=\"pending\"} 7"));
+        assert!(rendered
+            .contains("filament_e2ee_membership_reconciliations_sampled{state=\"overdue\"} 2"));
+        assert!(
+            rendered.contains("filament_e2ee_membership_reconciliation_oldest_overdue_seconds 45")
+        );
+        assert!(rendered.contains("filament_e2ee_membership_reconciliation_scan_saturated 1"));
     }
 }

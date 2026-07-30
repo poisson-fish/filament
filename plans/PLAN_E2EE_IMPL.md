@@ -505,6 +505,12 @@ set of initial role/member permission overwrites in the same transaction and
 require the MLS roster to equal the exact effective posting audience.
 Unauthorized injections, authorized omissions, invalid targets, capability
 gaps, and moderator exclusions fail closed without partial channel state.
+The server now samples the oldest 1,000 incomplete policy evictions every 30
+seconds through a deadline-first v32 partial index and exports pending,
+overdue-age, and scan-saturation gauges. Overdue state emits a change-sensitive
+structured warning while encrypted sends remain blocked until the exact
+authenticated Remove commit completes. Monitoring never performs an unbounded
+table scan or sort.
 Large-group performance work remains unavailable.
 
 ---
@@ -1534,6 +1540,12 @@ half-provisioned encrypted channel:
   and visibly present in every encrypted channel. `disabled` remains forbidden
   while immutable encrypted channels exist, and direct SQL bypasses fail with
   the same typed reconciliation boundary.
+- Migration v32 gives a bounded 30-second background monitor a deadline-first
+  partial index. The monitor samples the oldest 1,000 incomplete policy
+  evictions, exports pending/overdue/oldest-age/saturation gauges, and emits
+  change-sensitive structured warnings after a deadline. It never unblocks
+  encrypted sends or treats the deadline as permission to bypass the
+  authenticated member-authored Remove commit.
 
 This increment intentionally does not claim the 5,000-leaf target or
 large-group readiness.

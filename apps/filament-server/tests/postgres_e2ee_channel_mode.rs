@@ -184,6 +184,17 @@ async fn encrypted_channel_mode_is_immutable_and_blocks_plaintext_storage() {
     let pool = sqlx::PgPool::connect(&database_url)
         .await
         .expect("test pool should connect");
+    let reconciliation_index: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes
+         WHERE schemaname = current_schema()
+           AND indexname = 'idx_e2ee_membership_reconciliations_deadline_pending'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("bounded reconciliation monitor index should exist");
+    assert!(reconciliation_index.contains("(deadline_unix, reconciliation_id)"));
+    assert!(reconciliation_index.contains("completed_epoch IS NULL"));
+
     let mode_change = sqlx::query("UPDATE channels SET channel_type = 1 WHERE channel_id = $1")
         .bind(plaintext_channel_id)
         .execute(&pool)

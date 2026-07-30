@@ -120,6 +120,8 @@ pub(crate) struct MetricsState {
     pub(crate) gateway_events_unknown_received: Mutex<HashMap<(String, String), u64>>,
     pub(crate) gateway_events_parse_rejected: Mutex<HashMap<(String, String), u64>>,
     pub(crate) voice_sync_repairs: Mutex<HashMap<String, u64>>,
+    pub(crate) e2ee_membership_reconciliations:
+        Mutex<crate::server::e2ee_reconciliation::ReconciliationObservation>,
 }
 
 #[derive(Clone, Debug)]

@@ -439,6 +439,9 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
     tokio::spawn(crate::server::e2ee_mailbox::start_e2ee_mailbox_gc(
         app_state.clone(),
     ));
+    tokio::spawn(
+        crate::server::e2ee_reconciliation::start_e2ee_reconciliation_monitor(app_state.clone()),
+    );
 
     let governor_config = Arc::new(
         GovernorConfigBuilder::default()

@@ -244,6 +244,16 @@ Key security counters:
 - `filament_rate_limit_hits_total{surface=...,reason=...}`
 - `filament_ws_disconnects_total{reason=...}`
 
+E2EE reconciliation gauges:
+- `filament_e2ee_membership_reconciliations_sampled{state="overdue"} > 0`
+  means at least one policy eviction exceeded its deadline; encrypted sends
+  remain fail closed until a member commits the authenticated MLS Remove.
+- `filament_e2ee_membership_reconciliation_scan_saturated == 1` means more
+  than 1,000 incomplete evictions exist and the bounded oldest-first sample is
+  saturated.
+- `filament_e2ee_membership_reconciliation_oldest_overdue_seconds` reports the
+  age past deadline of the oldest sampled eviction.
+
 Templates:
 - alert rules: `infra/observability/prometheus-alerts.yml`
 - dashboard: `infra/observability/grafana-filament-security-dashboard.json`
@@ -252,6 +262,7 @@ Alerting minimums:
 - auth failure spike
 - rate-limit spike
 - websocket disconnect spike
+- overdue or saturated E2EE membership reconciliation
 
 ### Gateway staging telemetry verification
 

@@ -6,6 +6,7 @@ pub mod directory_contract;
 pub(crate) mod domain;
 pub(crate) mod e2ee_delivery_service;
 pub(crate) mod e2ee_mailbox;
+pub(crate) mod e2ee_reconciliation;
 pub(crate) mod errors;
 pub(crate) mod gateway_events;
 pub(crate) mod handlers;

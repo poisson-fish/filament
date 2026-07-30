@@ -23,6 +23,7 @@ pub(crate) mod v29_e2ee_channel_moderators;
 pub(crate) mod v2_attachment_schema;
 pub(crate) mod v30_e2ee_channel_audiences;
 pub(crate) mod v31_e2ee_channel_policy_transitions;
+pub(crate) mod v32_e2ee_reconciliation_monitor;
 pub(crate) mod v3_social_graph_schema;
 pub(crate) mod v4_moderation_audit_schema;
 pub(crate) mod v5_identity_schema;

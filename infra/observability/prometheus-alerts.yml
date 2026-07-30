@@ -28,3 +28,21 @@ groups:
         annotations:
           summary: "Filament websocket disconnects are elevated"
           description: "More than 40 websocket disconnects in 5 minutes. Inspect disconnect reasons and gateway health."
+
+      - alert: FilamentE2eeMembershipReconciliationOverdue
+        expr: filament_e2ee_membership_reconciliations_sampled{state="overdue"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Filament E2EE membership eviction is overdue"
+          description: "At least one policy-triggered MLS Remove exceeded its deadline. Encrypted sends remain blocked until an authenticated member commits the eviction."
+
+      - alert: FilamentE2eeMembershipReconciliationScanSaturated
+        expr: filament_e2ee_membership_reconciliation_scan_saturated == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Filament E2EE membership reconciliation monitor is saturated"
+          description: "More than 1,000 incomplete policy-triggered MLS removals exist. Investigate client availability and reconciliation throughput."
