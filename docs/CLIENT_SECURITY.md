@@ -13,13 +13,226 @@ Server-provided data is always treated as untrusted input.
   - `store_session`
   - `clear_session`
   - `read_session_metadata`
+  - `initialize_e2ee_store`
+  - `read_e2ee_store_status`
+  - `read_encryption_settings`
+  - `rotate_root_identity`
+- The native command host exposes exactly that audited manifest through a
+  capability-oriented backend. The webview may submit only a freshly
+  authenticated, bounded token pair to `store_session`; user/device identity,
+  credential identifiers, filesystem paths, network destinations, and MLS
+  state cannot be supplied as command arguments.
+- The bundled UI uses the pinned `@tauri-apps/api` core invoke adapter. Login
+  and refresh establish native session custody before adopting the session;
+  logout invokes native deletion independently of best-effort server logout.
+  Every native response is decoded with exact fields, identifiers, counts, and
+  timestamp bounds before public settings enter UI state.
+- Session tokens and native command state use redacted `Debug` output. IPC
+  failures are closed, non-sensitive codes rather than backend error strings.
+- Native REST uses one compile-time HTTPS authority, disables redirects, caps
+  requests and ordinary responses at 256 KiB, marks bearer headers sensitive,
+  and strictly parses hostile server responses. Mailbox responses have a
+  separate 2 MiB encoded-body cap around the protocol's 256 KiB aggregate
+  opaque-blob limit. The webview cannot select a server origin.
+- First-device enrollment is permitted only when the authenticated account's
+  certified-device directory is empty. Existing-device accounts require QR
+  pairing; they never auto-generate a replacement identity root.
+- Root identity, complete MLS provider state, and the exact pending
+  KeyPackage upload are atomically persisted in SQLCipher. A network-uncertain
+  upload remains in the native outbox for an exact idempotent retry.
+- The packaged host derives mailbox group IDs and participant root pins only
+  from the validated native MLS checkpoint. Commit processing precedes message
+  processing; a prior durable per-group acknowledgment is retried before any
+  later page. Processing is bounded to eight rotating groups and four pages
+  per mailbox per synchronization call. Rejected commits/messages stop the
+  affected group, and no mailbox capability is exposed through IPC.
 - Signed updates are required.
 - Crash logs must redact all access/refresh token material.
+
+The exact Tauri 2.11.5 advisory/license exceptions are temporary,
+owner-approved, and recorded in ADR 0002. They must not be generalized to new
+versions or expanded without review; patchable advisories remain denied.
 
 Configuration sources:
 - `apps/filament-client-desktop/tauri.conf.json`
 - `apps/filament-client-desktop/security-policy.json`
 - `apps/filament-client-desktop/src-tauri/src/lib.rs`
+
+## E2EE Device Pairing Boundary
+
+- Pairing is implemented in the native Rust E2EE core. Root identity material
+  must never cross into JavaScript or a broad IPC surface.
+- A new device displays a single-use QR offer containing an ephemeral X25519
+  receiver key and a high-entropy pairing secret. The offer expires after at
+  most five minutes and is capped at 2 KiB.
+- The QR payload is sensitive physical-channel data. It must not be logged,
+  included in telemetry or crash reports, or relayed through the Filament
+  server.
+- An existing certified device signs the pairing context with its MLS Ed25519
+  device key. The root secret is encrypted with the approved OpenMLS provider's
+  X25519/HKDF-SHA-256/ChaCha20-Poly1305 HPKE suite, and the response is
+  authenticated under the QR secret to prevent sender substitution.
+- Returning transfer payloads are capped at 4 KiB, parsed with unknown-field
+  rejection, and accepted only once by the in-memory receiver state. Pairing
+  restores identity only; history synchronization is a separate protocol.
+
+## E2EE History Sync Boundary
+
+- After pairing and device certification, the new device creates a separate
+  five-minute X25519 HPKE receiving offer signed by its device key. The source
+  verifies that certificate against its own account root before exporting any
+  history; self-sync, cross-account, expired, forged, and substituted offers
+  fail closed.
+- One existing root-certified device freezes a bounded snapshot of the local
+  authenticated history keys. It encrypts at most 64 records and 512 KiB of
+  plaintext per ordered page with the approved OpenMLS provider's
+  X25519/HKDF-SHA-256/ChaCha20-Poly1305 HPKE suite and signs the full page
+  transcript with its device key. Encoded pages are capped at 1 MiB.
+- The receiver authenticates the source certificate and signature before HPKE
+  decryption. Pages are accepted only in sequence from one source device;
+  replay, skipping, sender substitution, malformed records, and post-terminal
+  data fail closed.
+- Imported records are written through an atomic compare-and-insert SQLCipher
+  transaction. Exact records are idempotent; any conflicting local value rolls
+  back the entire page, and receiver sequence state advances only after the
+  transaction succeeds.
+- Offers and ciphertext pages may use an untrusted direct transport, but no
+  history plaintext or decryption key is sent to or stored by the Filament
+  server. The webview receives neither the HPKE receiver secret nor decrypted
+  transfer pages.
+
+## E2EE Portable Backup Boundary
+
+- Backup is opt-in and performed by the native Rust core. The passphrase and
+  decrypted backup payload must not enter logs, telemetry, crash reports, or a
+  JavaScript heap. If the passphrase is lost, neither the operator nor Filament
+  can recover the backup.
+- A fresh random 128-bit salt feeds Argon2id with 64 MiB of memory, three
+  passes, and one lane. The derived 256-bit key encrypts the versioned backup
+  with a fresh ChaCha20-Poly1305 nonce through the approved OpenMLS provider.
+  Header version, exact KDF parameters, salt, nonce, and ciphertext length are
+  authenticated; parameter downgrade and trailing data fail before restore.
+- The portable payload contains only the account root identity and a bounded
+  snapshot of canonical authenticated local history. It never contains a
+  device signing identity, MLS provider checkpoint/ratchet, pending mailbox
+  acknowledgment, SQLCipher database key, or platform-keystore secret. A
+  restored installation enrolls as a fresh device for future epochs.
+- The blob is capped at 64 MiB, the passphrase at 1,024 UTF-8 bytes, and the
+  snapshot at 4,095 records. Restore binds the decrypted account ID to the
+  authenticated native session and validates every record before one atomic,
+  conflict-safe SQLCipher transaction. Exact repeats are idempotent; a root or
+  history conflict rolls back the complete restore.
+
+## E2EE Local Storage Boundary
+
+- E2EE state is stored by the native Rust core in a device-scoped SQLCipher
+  database. The bundled SQLCipher build uses a 32-byte random database key held
+  by Keychain, Windows Credential Manager, or Secret Service.
+- The webview may request initialization and read a fixed readiness response.
+  It cannot supply a filesystem path, user/device identity, database key, or
+  record key, and no IPC response contains key material.
+- Database paths are derived from native validated `UserId`/`DeviceId` values
+  beneath the Tauri-provided application-data directory. Relative paths,
+  symlinks, hard-linked database files, and non-regular files fail closed.
+- On Unix, the E2EE directory is mode `0700` and the database is mode `0600`.
+  SQLCipher plaintext headers are disabled, temporary tables remain in memory,
+  secure deletion is enabled, and the rollback journal stays inside the
+  private directory.
+- Each record remains capped at 4 MiB, each device store at 4,096 records, and
+  the encrypted database at 64 MiB. History synchronization retains these
+  conservative bounds and refuses snapshots beyond 4,096 history records.
+- Root-identity rotation is a destructive native recovery boundary. Before
+  network submission, SQLCipher durably stores one bounded candidate containing
+  the replacement root, certified signer/provider checkpoint, public
+  dual-signed request, and fresh KeyPackage upload outbox. Exact server retries
+  return the original confirmation, so response loss or restart cannot strand
+  the account or generate a second replacement. Confirmed adoption atomically
+  replaces the root and fresh device checkpoint, records the authenticated
+  monotonic sequence, and resets MLS groups for authenticated external-commit
+  recovery. No replacement secret or server origin crosses IPC.
+- Local E2EE search is a native-only, ephemeral derivative of authenticated
+  SQLCipher history. Tantivy runs against an in-memory index that is rebuilt on
+  demand and never persisted as plaintext. Rebuild excludes expired content,
+  materializes authenticated same-author edits/deletes, and skips non-chat
+  application events. Literal queries are limited to 256 UTF-8 bytes and 16
+  analyzed terms; results are capped at 50 and expose only safe Markdown UI
+  tokens. No E2EE query or hit is sent to the Filament server.
+- Media key scheduling is native-only. The MLS exporter secret is held in an
+  opaque, zeroizing Rust value and is never part of an IPC request or response.
+  Only group/epoch metadata may be surfaced to UI code. With the optional
+  `livekit-media` feature, an in-crate bridge installs the key into LiveKit's
+  native libwebrtc frame-cryptor provider with no raw-key getter. Rotation is
+  group-bound and accepts exactly the next authenticated MLS epoch. The bridge
+  owns a bounded set of native RTP sender/receiver cryptors, enables each one
+  before publish/render is permitted, and advances every binding to the newly
+  installed key index after authenticated rotation. It exposes neither the
+  provider/cryptors nor a disable-encryption switch. The native room wrapper
+  accepts only a bounded JWT-shaped access token and a validated `wss` URL
+  (`ws` is loopback-only), then verifies the authenticated room and participant
+  bindings after connection. It enables LiveKit GCM before room creation,
+  disables automatic remote subscriptions, and continuously drains the SDK
+  event stream; plaintext publications, failed cryptor states, missing native
+  bindings, or the 256-track cap close the room. A local track remains disabled
+  until its SDK-owned cryptor is enabled at the accepted MLS epoch. Remote
+  subscriptions are explicit, serialized through a bounded native command
+  queue, and limited to ten seconds. Participant identity, track SID, GCM mode,
+  enabled receiver cryptor, and current MLS key index must all match before a
+  bounded decoded audio/video stream is released to native rendering code.
+  Unsolicited subscriptions close the room, dropping a stream unsubscribes it,
+  and any later room rejection ends frame delivery. Remote rooms are capped at
+  200 participants and 256 tracks. Explicit close and drop both signal native
+  shutdown. An opt-in native integration test uses the pinned LiveKit 1.8.3
+  container and three clients to verify GCM publication/subscription,
+  endpoint-only decoded audio, join-epoch rotation, and rejection of a client
+  left on the pre-removal media epoch. This bridge is not exposed as an IPC
+  command and does not yet enable calls; platform verification remains
+  required.
+- The desktop security policy selects `native_livekit_gcm` on Windows, macOS,
+  and Linux. Webview media, webview key material, and plaintext fallback are
+  forbidden. If the native encrypted-media backend is unavailable, calls stay
+  disabled. The platform probe under `spikes/e2ee-webview-check/` is diagnostic
+  only and cannot authorize another media path.
+- The bounded diagnostic WebView2 host has exercised real sender and receiver
+  encoded transforms on runtime `150.0.4078.83`. Its pinned record is
+  compatibility evidence only; minimum-runtime and final packaged-client runs,
+  remain release gates.
+- The dependency-free, loopback-only WKWebView diagnostic host has exercised
+  both encoded-transform directions on WebKit `21624.1.16.11.4` under macOS
+  26.4.1. Its bounded record is also compatibility evidence only;
+  oldest-supported-macOS and final packaged-client runs remain release gates.
+- The network-disabled Ubuntu 24.04 diagnostic host recorded WebKitGTK `2.52.3`
+  with GStreamer `1.24.2` as unsupported: `RTCPeerConnection` and the encoded
+  transform APIs were absent. The locked native LiveKit/libwebrtc bridge was
+  then compiled on Linux and its RTP binding and authenticated epoch-rotation
+  test passed. Linux therefore remains on the native Rust path, while other
+  supported-distribution baselines and the final packaged client remain
+  release gates.
+- The full desktop binary is also blocked on native crypto-library linkage:
+  SQLCipher's vendored OpenSSL and LiveKit/libwebrtc's bundled BoringSSL export
+  colliding symbols when `sqlcipher-store` and `livekit-media` are linked
+  together. Both isolated feature paths pass, but no linker workaround or
+  weaker storage backend is approved. Resolve this packaging boundary before
+  enabling the media feature in the desktop target.
+- On macOS, the workspace final-link configuration retains Objective-C
+  categories from LiveKit's static libwebrtc archive. Without the standard
+  `-ObjC` category-retention flag, the native SDK compiles but aborts while
+  initializing codecs because required category methods are absent. This flag
+  does not alter or bypass the separate OpenSSL/BoringSSL collision blocker.
+- The key-isolation audit and negative-test inventory are recorded in
+  `docs/E2EE_KEY_ISOLATION_AUDIT.md`.
+
+The real-SFU media test is intentionally ignored by ordinary unit runs. Run it
+against the repository's local stack with:
+
+```bash
+docker compose -f infra/docker-compose.yml up -d livekit
+FILAMENT_TEST_LIVEKIT_URL=ws://127.0.0.1:7880 \
+FILAMENT_TEST_LIVEKIT_API_KEY=devkey \
+FILAMENT_TEST_LIVEKIT_API_SECRET=filament-local-livekit-secret-change-me \
+cargo test -p filament-e2ee --features livekit-media \
+  real_sfu_keeps_three_party_media_endpoint_only_across_join_and_leave_rekeys \
+  -- --ignored
+```
 
 ## Token Storage Strategy by OS
 
@@ -48,6 +261,7 @@ No plaintext token persistence in logs, local files, or crash reports is permitt
 These controls are enforced by tests in:
 - `apps/filament-client-desktop/src-tauri/tests/hardening_config.rs`
 - `apps/filament-client-desktop/src-tauri/src/lib.rs`
+- `crates/filament-e2ee/src/sqlcipher_store.rs`
 - `apps/filament-client-web/tests/domain-auth.test.ts`
 - `apps/filament-client-web/tests/session-storage.test.ts`
 - `apps/filament-client-web/tests/routes-login.test.tsx`

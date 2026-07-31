@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Exact native capabilities for the locally bundled Filament UI.",
+  "windows": ["main"],
+  "permissions": [
+    "allow-store-session",
+    "allow-clear-session",
+    "allow-read-session-metadata",
+    "allow-initialize-e2ee-store",
+    "allow-read-e2ee-store-status",
+    "allow-read-encryption-settings",
+    "allow-rotate-root-identity"
+  ]
+}

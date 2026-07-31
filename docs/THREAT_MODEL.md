@@ -1,6 +1,8 @@
 # Filament Threat Model
 
-Core platform contract established in Phase 0; E2EE contract established by `PLAN_E2EE.md` (v2) and binding for its implementation phases.
+Core platform contract established in Phase 0; E2EE contract established by `PLAN_E2EE.md` (v2.1) and binding for its implementation phases.
+
+> **E2EE Section Ratification (Phase 0):** The E2EE threats, security goals, mitigations, residual risks, and non-goals below have been verified against `PLAN_E2EE.md` v2.1 and ratified as the binding threat model for all E2EE implementation phases. See [ADR 0001](adr/0001-e2ee-mls-openmls.md) for the protocol-stack decision that underpins these mitigations.
 
 ## Trust Boundaries
 - Internet clients to Filament server.
@@ -102,7 +104,11 @@ E2EE abuse cases (`PLAN_E2EE.md`):
   - mitigation contract: root-key pinning, key-change warnings (blocking for previously verified contacts), safety-number/QR verification; key transparency (Phase 8) converts silent equivocation into detectable, one-time lying.
 - KeyPackage and commit resource abuse:
   - attacker floods KeyPackage claims/uploads or spams commits to exhaust pools and thrash epochs.
-  - mitigation contract: bounded pool sizes, last-resort package semantics, per-user/per-device/per-route rate limits, claim audit logging, single-writer-per-epoch ordering with deterministic `409 epoch_conflict`, and commit-storm backpressure.
+  - mitigation contract: bounded pool sizes; one ordered, single-use fallback;
+    per-user/per-device/per-route rate limits; claim audit logging;
+    single-writer-per-epoch ordering with deterministic `409 epoch_conflict`;
+    and commit-storm backpressure. Reusable last-resort behavior remains
+    disabled until an MLS extension implementing it is separately reviewed.
 
 ## E2EE Security Goals
 - Server cannot decrypt content for `mls_v1` conversations.
@@ -112,6 +118,10 @@ E2EE abuse cases (`PLAN_E2EE.md`):
 - Encryption-state integrity: trust indicators derive from local verification only, never from server-supplied fields.
 - Delivery integrity: withheld or dropped messages are detectable.
 - Retention minimization: server holds E2EE ciphertext transiently (mailbox model), shrinking the harvest surface.
+- Authenticated disappearing timers additionally shorten both opaque mailbox
+  retention and encrypted local history. A malicious server can ignore its own
+  deletion deadline, but cannot make an endpoint disclose locally expired
+  plaintext or extend the authenticated client timer.
 
 ## Mandatory Mitigations (Phase 0 baseline)
 - Global request body cap and request timeout.

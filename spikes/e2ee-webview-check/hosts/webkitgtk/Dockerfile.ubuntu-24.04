@@ -1,0 +1,33 @@
+FROM ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        dbus-x11 \
+        gstreamer1.0-libav \
+        gstreamer1.0-nice \
+        gstreamer1.0-plugins-bad \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        libgstreamer1.0-dev \
+        libwebkitgtk-6.0-dev \
+        pkg-config \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /probe
+
+COPY hosts/webkitgtk/Makefile hosts/webkitgtk/main.c ./hosts/webkitgtk/
+COPY probe.css probe.html probe.js rtp-transform-worker.js ./
+
+RUN make -C hosts/webkitgtk
+
+ENV GSK_RENDERER=cairo
+ENV GST_AUDIO_SINK=fakesink
+ENV WEBKIT_DISABLE_DMABUF_RENDERER=1
+ENV FILAMENT_PROBE_OUTPUT_FD=3
+
+ENTRYPOINT ["sh", "-c", "exec 3>&1; exec dbus-run-session -- xvfb-run -a -s '-screen 0 1280x720x24' ./hosts/webkitgtk/filament-webkitgtk-probe . >/dev/null"]

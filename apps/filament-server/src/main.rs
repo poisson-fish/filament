@@ -11,6 +11,8 @@ use filament_server::{
 };
 use tokio::net::TcpListener;
 
+type E2eeRuntimeLimits = (u32, u32, u32, u32, u32, usize, Duration, Duration, Duration);
+
 fn parse_usize_env_or_default(var_name: &str, default: usize) -> anyhow::Result<usize> {
     std::env::var(var_name).map_or_else(
         |_| Ok(default),
@@ -110,6 +112,56 @@ fn parse_directory_runtime_limits_from_env(
     ))
 }
 
+fn parse_e2ee_runtime_limits_from_env(defaults: &AppConfig) -> anyhow::Result<E2eeRuntimeLimits> {
+    let device_publish_per_minute = parse_u32_env_or_default(
+        "FILAMENT_E2EE_DEVICE_PUBLISH_PER_MINUTE",
+        defaults.e2ee_device_publish_per_minute,
+    )?;
+    let keypackage_claim_per_minute = parse_u32_env_or_default(
+        "FILAMENT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE",
+        defaults.e2ee_keypackage_claim_per_minute,
+    )?;
+    let commit_per_minute = parse_u32_env_or_default(
+        "FILAMENT_E2EE_COMMIT_PER_MINUTE",
+        defaults.e2ee_commit_per_minute,
+    )?;
+    let message_per_minute = parse_u32_env_or_default(
+        "FILAMENT_E2EE_MESSAGE_PER_MINUTE",
+        defaults.e2ee_message_per_minute,
+    )?;
+    let attachment_per_minute = parse_u32_env_or_default(
+        "FILAMENT_E2EE_ATTACHMENT_PER_MINUTE",
+        defaults.e2ee_attachment_per_minute,
+    )?;
+    let max_keypackage_pool_size = parse_usize_env_or_default(
+        "FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE",
+        defaults.e2ee_max_keypackage_pool_size,
+    )?;
+    let mailbox_ttl_secs = parse_u64_env_or_default(
+        "FILAMENT_E2EE_MAILBOX_TTL_SECS",
+        defaults.e2ee_mailbox_ttl.as_secs(),
+    )?;
+    let mailbox_gc_interval_secs = parse_u64_env_or_default(
+        "FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS",
+        defaults.e2ee_mailbox_gc_interval.as_secs(),
+    )?;
+    let membership_reconciliation_window_secs = parse_u64_env_or_default(
+        "FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS",
+        defaults.e2ee_membership_reconciliation_window.as_secs(),
+    )?;
+    Ok((
+        device_publish_per_minute,
+        keypackage_claim_per_minute,
+        commit_per_minute,
+        message_per_minute,
+        attachment_per_minute,
+        max_keypackage_pool_size,
+        Duration::from_secs(mailbox_ttl_secs),
+        Duration::from_secs(mailbox_gc_interval_secs),
+        Duration::from_secs(membership_reconciliation_window_secs),
+    ))
+}
+
 fn parse_trusted_proxy_cidrs_from_env(defaults: &AppConfig) -> anyhow::Result<Vec<IpNetwork>> {
     std::env::var("FILAMENT_TRUSTED_PROXY_CIDRS").map_or_else(
         |_| Ok(defaults.trusted_proxy_cidrs.clone()),
@@ -195,6 +247,17 @@ async fn main() -> anyhow::Result<()> {
         guild_ip_ban_max_entries,
     ) = parse_directory_runtime_limits_from_env(&defaults)?;
     let trusted_proxy_cidrs = parse_trusted_proxy_cidrs_from_env(&defaults)?;
+    let (
+        e2ee_device_publish_per_minute,
+        e2ee_keypackage_claim_per_minute,
+        e2ee_commit_per_minute,
+        e2ee_message_per_minute,
+        e2ee_attachment_per_minute,
+        e2ee_max_keypackage_pool_size,
+        e2ee_mailbox_ttl,
+        e2ee_mailbox_gc_interval,
+        e2ee_membership_reconciliation_window,
+    ) = parse_e2ee_runtime_limits_from_env(&defaults)?;
     let server_owner_user_id = parse_server_owner_user_id_from_env(&defaults)?;
     let captcha_hcaptcha_site_key = parse_optional_nonempty_env("FILAMENT_HCAPTCHA_SITE_KEY");
     let captcha_hcaptcha_secret = parse_optional_nonempty_env("FILAMENT_HCAPTCHA_SECRET");
@@ -216,6 +279,15 @@ async fn main() -> anyhow::Result<()> {
         directory_join_requests_per_minute_per_user,
         audit_list_limit_max,
         guild_ip_ban_max_entries,
+        e2ee_device_publish_per_minute,
+        e2ee_keypackage_claim_per_minute,
+        e2ee_commit_per_minute,
+        e2ee_message_per_minute,
+        e2ee_attachment_per_minute,
+        e2ee_max_keypackage_pool_size,
+        e2ee_mailbox_ttl,
+        e2ee_mailbox_gc_interval,
+        e2ee_membership_reconciliation_window,
         trusted_proxy_cidrs,
         server_owner_user_id,
         captcha_hcaptcha_site_key,
@@ -223,6 +295,8 @@ async fn main() -> anyhow::Result<()> {
         captcha_verify_url: std::env::var("FILAMENT_HCAPTCHA_VERIFY_URL")
             .unwrap_or_else(|_| String::from("https://api.hcaptcha.com/siteverify")),
         database_url: Some(database_url),
+        e2ee_delivery_service_key_file: std::env::var_os("FILAMENT_E2EE_DELIVERY_SERVICE_KEY_FILE")
+            .map(PathBuf::from),
         ..AppConfig::default()
     };
     let app = build_router_with_db_bootstrap(&app_config).await?;
@@ -244,10 +318,11 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_directory_runtime_limits_from_env, parse_optional_nonempty_env,
-        parse_rate_limit_requests_per_minute_from_env, parse_rate_runtime_limits_from_env,
-        parse_server_owner_user_id_from_env, parse_trusted_proxy_cidrs_from_env,
-        parse_u32_env_or_default, parse_u64_env_or_default, parse_usize_env_or_default,
+        parse_directory_runtime_limits_from_env, parse_e2ee_runtime_limits_from_env,
+        parse_optional_nonempty_env, parse_rate_limit_requests_per_minute_from_env,
+        parse_rate_runtime_limits_from_env, parse_server_owner_user_id_from_env,
+        parse_trusted_proxy_cidrs_from_env, parse_u32_env_or_default, parse_u64_env_or_default,
+        parse_usize_env_or_default,
     };
     use filament_core::UserId;
     use filament_server::{directory_contract::IpNetwork, AppConfig};
@@ -388,6 +463,56 @@ mod tests {
         std::env::set_var("FILAMENT_AUDIT_LIST_LIMIT_MAX", "bogus");
         let result = parse_directory_runtime_limits_from_env(&AppConfig::default());
         std::env::remove_var("FILAMENT_AUDIT_LIST_LIMIT_MAX");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn e2ee_runtime_limits_env_overrides_are_parsed() {
+        let _guard = lock_env();
+        std::env::set_var("FILAMENT_E2EE_DEVICE_PUBLISH_PER_MINUTE", "11");
+        std::env::set_var("FILAMENT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE", "37");
+        std::env::set_var("FILAMENT_E2EE_COMMIT_PER_MINUTE", "17");
+        std::env::set_var("FILAMENT_E2EE_MESSAGE_PER_MINUTE", "91");
+        std::env::set_var("FILAMENT_E2EE_ATTACHMENT_PER_MINUTE", "13");
+        std::env::set_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE", "64");
+        std::env::set_var("FILAMENT_E2EE_MAILBOX_TTL_SECS", "86400");
+        std::env::set_var("FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS", "15");
+        std::env::set_var("FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS", "120");
+
+        let parsed = parse_e2ee_runtime_limits_from_env(&AppConfig::default())
+            .expect("E2EE runtime limits should parse");
+
+        std::env::remove_var("FILAMENT_E2EE_DEVICE_PUBLISH_PER_MINUTE");
+        std::env::remove_var("FILAMENT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE");
+        std::env::remove_var("FILAMENT_E2EE_COMMIT_PER_MINUTE");
+        std::env::remove_var("FILAMENT_E2EE_MESSAGE_PER_MINUTE");
+        std::env::remove_var("FILAMENT_E2EE_ATTACHMENT_PER_MINUTE");
+        std::env::remove_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE");
+        std::env::remove_var("FILAMENT_E2EE_MAILBOX_TTL_SECS");
+        std::env::remove_var("FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS");
+        std::env::remove_var("FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS");
+        assert_eq!(
+            parsed,
+            (
+                11,
+                37,
+                17,
+                91,
+                13,
+                64,
+                Duration::from_secs(86400),
+                Duration::from_secs(15),
+                Duration::from_secs(120),
+            )
+        );
+    }
+
+    #[test]
+    fn e2ee_runtime_limits_env_reject_invalid_values() {
+        let _guard = lock_env();
+        std::env::set_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE", "invalid");
+        let result = parse_e2ee_runtime_limits_from_env(&AppConfig::default());
+        std::env::remove_var("FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE");
         assert!(result.is_err());
     }
 

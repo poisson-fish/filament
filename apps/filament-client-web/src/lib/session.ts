@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import {
   type AccessToken,
   type AuthSession,
@@ -8,11 +9,28 @@ import {
 const SESSION_STORAGE_KEY = "filament.auth.session.v1";
 
 function canUseStorage(): boolean {
-  return typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
+  return (
+    !isTauri() &&
+    typeof window !== "undefined" &&
+    typeof window.sessionStorage !== "undefined"
+  );
+}
+
+function clearStoredSession(): void {
+  if (
+    typeof window === "undefined" ||
+    typeof window.sessionStorage === "undefined"
+  ) {
+    return;
+  }
+  window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
 }
 
 export function loadSession(): AuthSession | null {
   if (!canUseStorage()) {
+    // Packaged clients keep the active JavaScript session in memory only.
+    // Remove a record left by an older build before returning to login.
+    clearStoredSession();
     return null;
   }
 
@@ -43,6 +61,7 @@ export function loadSession(): AuthSession | null {
 
 export function saveSession(session: AuthSession): void {
   if (!canUseStorage()) {
+    clearStoredSession();
     return;
   }
 
@@ -50,10 +69,7 @@ export function saveSession(session: AuthSession): void {
 }
 
 export function clearSession(): void {
-  if (!canUseStorage()) {
-    return;
-  }
-  window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  clearStoredSession();
 }
 
 export function isSessionExpired(session: AuthSession): boolean {

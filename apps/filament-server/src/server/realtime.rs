@@ -476,6 +476,7 @@ async fn create_message_internal_prepared(
     markdown_tokens: Vec<filament_core::MarkdownToken>,
     attachment_ids: Vec<String>,
 ) -> Result<MessageResponse, AuthFailure> {
+    crate::server::domain::require_plaintext_channel(state, guild_id, channel_id).await?;
     let (_, permissions) =
         channel_permission_snapshot(state, auth.user_id, guild_id, channel_id).await?;
     if !permissions.contains(Permission::CreateMessage) {

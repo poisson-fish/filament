@@ -198,6 +198,7 @@ pub(crate) struct CreateGuildRequest {
 pub(crate) struct UpdateGuildRequest {
     pub(crate) name: Option<String>,
     pub(crate) visibility: Option<GuildVisibility>,
+    pub(crate) encrypted_channel_policy: Option<filament_core::EncryptedChannelPolicy>,
 }
 
 #[derive(Debug, Serialize)]
@@ -205,6 +206,7 @@ pub(crate) struct GuildResponse {
     pub(crate) guild_id: String,
     pub(crate) name: String,
     pub(crate) visibility: GuildVisibility,
+    pub(crate) encrypted_channel_policy: filament_core::EncryptedChannelPolicy,
 }
 
 #[derive(Debug, Serialize)]
@@ -217,6 +219,8 @@ pub(crate) struct GuildListResponse {
 pub(crate) struct CreateChannelRequest {
     pub(crate) name: String,
     pub(crate) kind: Option<ChannelKind>,
+    #[serde(default)]
+    pub(crate) channel_type: filament_core::ChannelType,
 }
 
 #[derive(Debug, Serialize)]
@@ -224,6 +228,7 @@ pub(crate) struct ChannelResponse {
     pub(crate) channel_id: String,
     pub(crate) name: String,
     pub(crate) kind: ChannelKind,
+    pub(crate) channel_type: filament_core::ChannelType,
 }
 
 #[derive(Debug, Serialize)]
@@ -270,6 +275,8 @@ pub(crate) struct CreateGuildRoleRequest {
 pub(crate) struct UpdateGuildRoleRequest {
     pub(crate) name: Option<String>,
     pub(crate) permissions: Option<Vec<Permission>>,
+    // Outer `None` means unchanged; inner `None` explicitly clears the color.
+    #[allow(clippy::option_option)]
     pub(crate) color_hex: Option<Option<String>>,
 }
 

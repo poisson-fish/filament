@@ -9,7 +9,9 @@ use std::net::SocketAddr;
 use crate::server::{
     auth::{authenticate, extract_client_ip},
     core::{AppState, SearchOperation, DEFAULT_SEARCH_RESULT_LIMIT, MAX_SEARCH_RECONCILE_DOCS},
-    domain::{enforce_guild_ip_ban_for_request, guild_permission_snapshot},
+    domain::{
+        enforce_guild_ip_ban_for_request, guild_permission_snapshot, require_plaintext_channel,
+    },
     errors::AuthFailure,
     realtime::{
         collect_all_indexed_messages, enqueue_search_operation, ensure_search_bootstrapped,
@@ -44,6 +46,9 @@ pub(crate) async fn search_messages(
     let (_, permissions) = guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
     if !permissions.contains(Permission::CreateMessage) {
         return Err(AuthFailure::Forbidden);
+    }
+    if let Some(channel_id) = query.channel_id.as_deref() {
+        require_plaintext_channel(&state, &path.guild_id, channel_id).await?;
     }
 
     validate_search_query(&state, &query)?;

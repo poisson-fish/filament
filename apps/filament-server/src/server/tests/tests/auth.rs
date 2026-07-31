@@ -1,5 +1,49 @@
 use super::*;
 
+#[cfg(unix)]
+#[tokio::test]
+async fn delivery_service_identity_requires_auth_and_returns_only_stable_public_key() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = std::env::temp_dir().join(format!("filament-e2ee-ds-handler-{}", ulid::Ulid::new()));
+    std::fs::write(&path, [0x66; filament_e2ee::DELIVERY_SERVICE_SEED_BYTES]).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let app = build_router(&AppConfig {
+        e2ee_delivery_service_key_file: Some(path.clone()),
+        ..AppConfig::default()
+    })
+    .unwrap();
+
+    let unauthenticated = Request::builder()
+        .method("GET")
+        .uri("/e2ee/delivery-service/identity")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(unauthenticated).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let auth = register_and_login_as(&app, "delivery_service_user", "203.0.113.210").await;
+    let (status, body) = authed_json_request(
+        &app,
+        "GET",
+        String::from("/e2ee/delivery-service/identity"),
+        &auth.access_token,
+        "203.0.113.210",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = body.unwrap();
+    assert_eq!(body["protocol_version"], 1);
+    assert_eq!(body["external_sender_index"], 0);
+    assert_eq!(body["signature_key"].as_array().unwrap().len(), 32);
+    assert!(body.get("private_key").is_none());
+
+    std::fs::remove_file(path).unwrap();
+}
+
 #[tokio::test]
 async fn auth_flow_register_login_me_refresh_logout_and_replay_detection() {
     let app = build_router(&AppConfig {

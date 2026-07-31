@@ -6,6 +6,7 @@ import {
   type ChannelPermissionSnapshot,
   type ChannelRecord,
   type DirectoryJoinResult,
+  type EncryptedChannelPolicy,
   type GuildId,
   type GuildName,
   type GuildRecord,
@@ -37,7 +38,11 @@ export interface WorkspaceClient {
   updateGuild(
     session: AuthSession,
     guildId: GuildId,
-    input: { name: GuildName; visibility?: GuildVisibility },
+    input: {
+      name?: GuildName;
+      visibility?: GuildVisibility;
+      encryptedChannelPolicy?: EncryptedChannelPolicy;
+    },
   ): Promise<GuildRecord>;
   fetchPublicGuildDirectory(
     session: AuthSession,

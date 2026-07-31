@@ -216,6 +216,24 @@ async fn next_event_of_type(
         .unwrap_or_else(|| panic!("timed out waiting for event type {event_type}"))
 }
 
+async fn wait_for_gateway_disconnect(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while let Some(message) = socket.next().await {
+            match message {
+                Ok(message) if message.is_close() => break,
+                Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    })
+    .await
+    .expect("gateway should disconnect after rejecting invalid ingress");
+}
+
 async fn maybe_next_event_of_type(
     socket: &mut tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -583,7 +601,7 @@ async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() 
         .send(Message::Text(String::from("not-json").into()))
         .await
         .expect("invalid envelope should send");
-    let _ = tokio::time::timeout(Duration::from_secs(1), malformed_socket.next()).await;
+    wait_for_gateway_disconnect(&mut malformed_socket).await;
 
     let mut unknown_request = ws_url
         .as_str()
@@ -609,7 +627,7 @@ async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() 
         ))
         .await
         .expect("unknown event should send");
-    let _ = tokio::time::timeout(Duration::from_secs(1), unknown_socket.next()).await;
+    wait_for_gateway_disconnect(&mut unknown_socket).await;
 
     let mut invalid_subscribe_request = ws_url
         .as_str()
@@ -638,7 +656,7 @@ async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() 
         ))
         .await
         .expect("invalid subscribe payload should send");
-    let _ = tokio::time::timeout(Duration::from_secs(1), invalid_subscribe_socket.next()).await;
+    wait_for_gateway_disconnect(&mut invalid_subscribe_socket).await;
 
     let mut invalid_message_create_request = ws_url
         .as_str()
@@ -668,8 +686,7 @@ async fn gateway_ingress_rejections_and_unknown_events_are_counted_in_metrics() 
         ))
         .await
         .expect("invalid message_create payload should send");
-    let _ =
-        tokio::time::timeout(Duration::from_secs(1), invalid_message_create_socket.next()).await;
+    wait_for_gateway_disconnect(&mut invalid_message_create_socket).await;
 
     let metrics = metrics_text(&app).await;
     assert!(metrics.contains("filament_gateway_events_unknown_received_total"));
@@ -754,7 +771,7 @@ async fn gateway_staging_telemetry_verification_counters_increase_with_controlle
         .send(Message::Text(String::from("not-json").into()))
         .await
         .expect("invalid envelope should send");
-    let _ = tokio::time::timeout(Duration::from_secs(1), malformed_socket.next()).await;
+    wait_for_gateway_disconnect(&mut malformed_socket).await;
 
     let mut unknown_request = ws_url
         .as_str()
@@ -780,7 +797,7 @@ async fn gateway_staging_telemetry_verification_counters_increase_with_controlle
         ))
         .await
         .expect("unknown event should send");
-    let _ = tokio::time::timeout(Duration::from_secs(1), unknown_socket.next()).await;
+    wait_for_gateway_disconnect(&mut unknown_socket).await;
 
     let mut invalid_subscribe_request = ws_url
         .as_str()
@@ -809,7 +826,7 @@ async fn gateway_staging_telemetry_verification_counters_increase_with_controlle
         ))
         .await
         .expect("invalid subscribe payload should send");
-    let _ = tokio::time::timeout(Duration::from_secs(1), invalid_subscribe_socket.next()).await;
+    wait_for_gateway_disconnect(&mut invalid_subscribe_socket).await;
 
     let mut invalid_message_create_request = ws_url
         .as_str()
@@ -839,8 +856,7 @@ async fn gateway_staging_telemetry_verification_counters_increase_with_controlle
         ))
         .await
         .expect("invalid message_create payload should send");
-    let _ =
-        tokio::time::timeout(Duration::from_secs(1), invalid_message_create_socket.next()).await;
+    wait_for_gateway_disconnect(&mut invalid_message_create_socket).await;
 
     let mut oversized_request = ws_url
         .as_str()

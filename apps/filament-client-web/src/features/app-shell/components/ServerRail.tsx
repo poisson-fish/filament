@@ -30,7 +30,13 @@ export function ServerRail(props: ServerRailProps) {
                   : "hover:bg-bg-3"
                 }`}
               onClick={() =>
-                props.onSelectWorkspace(workspace.guildId, workspace.channels[0]?.channelId ?? null)}
+                props.onSelectWorkspace(
+                  workspace.guildId,
+                  workspace.channels.find(
+                    (channel) => (channel.channelType ?? "plaintext") === "plaintext",
+                  )
+                    ?.channelId ?? null,
+                )}
             >
               {workspace.guildName.slice(0, 1).toUpperCase()}
             </button>

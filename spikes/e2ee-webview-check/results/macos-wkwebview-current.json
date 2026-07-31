@@ -1,0 +1,28 @@
+{
+  "host_schema_version" : 1,
+  "host_sdk_version" : "system-webkit",
+  "host_version" : "wkwebview-diagnostic-v1",
+  "os_version" : "Version 26.4.1 (Build 25E253)",
+  "probe" : {
+    "features" : {
+      "peer_connection" : true,
+      "receiver_transform" : true,
+      "script_transform" : true,
+      "secure_context" : true,
+      "sender_transform" : true,
+      "worker" : true
+    },
+    "observed_directions" : [
+      "receiver",
+      "sender"
+    ],
+    "outcome" : "supported",
+    "schema_version" : 1,
+    "started_at" : "2026-07-22T23:15:15.728Z",
+    "user_agent" : "Mozilla\/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit\/605.1.15 (KHTML, like Gecko)"
+  },
+  "runtime" : "wkwebview",
+  "runtime_version" : "21624.1.16.11.4",
+  "shipping_media_path" : "native_livekit_gcm",
+  "target" : "macos"
+}

@@ -47,10 +47,39 @@ Set these variables for `filament-server` (via `infra/.env`):
 - `FILAMENT_DATABASE_URL`: required in runtime; points to Postgres
 - `FILAMENT_ATTACHMENT_ROOT`: required attachment object storage root
 - `FILAMENT_LIVEKIT_API_KEY`: required LiveKit API key for token minting
-- `FILAMENT_LIVEKIT_API_SECRET`: required paired LiveKit secret
+- `FILAMENT_LIVEKIT_API_SECRET`: required paired LiveKit secret (at least 32
+  characters, as required by the pinned LiveKit server)
 - `FILAMENT_LIVEKIT_URL`: required signaling URL exposed to clients (`ws://` or `wss://`), and it must be reachable from end-user browsers
 - `FILAMENT_BIND_ADDR`: bind socket for server process (default `0.0.0.0:3000`)
 - `FILAMENT_MAX_CREATED_GUILDS_PER_USER`: max guilds an authenticated user may create (default `5`, must be >= `1`)
+- `FILAMENT_E2EE_DEVICE_PUBLISH_PER_MINUTE`: device-certificate publication
+  cap per user and client IP (default `10`, must be >= `1`)
+- `FILAMENT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE`: KeyPackage claim cap per
+  requester user, target device, and client IP (default `30`, must be >= `1`)
+- `FILAMENT_E2EE_COMMIT_PER_MINUTE`: opaque MLS commit, provisioning, and
+  member-authored proposal cap per client IP, authenticated user, sender
+  device, and group (default `30`, must be >= `1`)
+- `FILAMENT_E2EE_MESSAGE_PER_MINUTE`: opaque MLS message cap per client IP,
+  authenticated user, sender device, and group (default `120`, must be >= `1`)
+- `FILAMENT_E2EE_ATTACHMENT_PER_MINUTE`: opaque encrypted attachment upload,
+  download, and acknowledgment cap per client IP, authenticated user, device,
+  and group (default `20`, must be >= `1`)
+- `FILAMENT_E2EE_MAX_KEYPACKAGE_POOL_SIZE`: maximum unclaimed KeyPackages per
+  device (default `100`, valid range `1..=100`)
+- `FILAMENT_E2EE_MAILBOX_TTL_SECS`: expiry deadline applied to opaque MLS
+  mailbox records (default `2592000`, valid range `1..=7776000`)
+- `FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS`: bounded hard-deletion sweep interval
+  (default `60`, valid range `1..=3600`)
+- `FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS`: maximum time allowed
+  for members to commit a policy-triggered cryptographic eviction (default
+  `300`, valid range `1..=3600`); application sends fail closed while pending
+- `FILAMENT_E2EE_DELIVERY_SERVICE_KEY_FILE`: optional absolute path to the
+  stable raw 32-byte Ed25519 seed used only for MLS external Remove proposals.
+  On Unix it must be a current-user-owned, single-link regular file with mode
+  `0400` or `0600`; symlinks, hardlinks, wrong owners, broader permissions, and
+  wrong lengths fail server startup. Without it, external-sender identity
+  discovery fails closed and groups requiring that capability must not be
+  provisioned.
 - `FILAMENT_HCAPTCHA_SITE_KEY`: optional hCaptcha site key (must be set with secret)
 - `FILAMENT_HCAPTCHA_SECRET`: optional hCaptcha server secret (must be set with site key)
 - `FILAMENT_HCAPTCHA_VERIFY_URL`: optional captcha verify endpoint (default `https://api.hcaptcha.com/siteverify`; localhost `http://` allowed for tests)
@@ -60,6 +89,20 @@ Default compose values:
 - `FILAMENT_LIVEKIT_URL=ws://localhost:7880`
 - `FILAMENT_BIND_ADDR=0.0.0.0:3000`
 - `FILAMENT_MAX_CREATED_GUILDS_PER_USER=5`
+- `FILAMENT_E2EE_COMMIT_PER_MINUTE=30`
+- `FILAMENT_E2EE_MESSAGE_PER_MINUTE=120`
+- `FILAMENT_E2EE_ATTACHMENT_PER_MINUTE=20`
+- `FILAMENT_E2EE_MAILBOX_TTL_SECS=2592000`
+- `FILAMENT_E2EE_MAILBOX_GC_INTERVAL_SECS=60`
+- `FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS=300`
+
+Provision the Delivery Service seed once with a CSPRNG, mount it read-only as a
+container secret, and back it up under the same controls as other service
+identity keys. Never place it in `infra/.env`, source control, logs, or command
+arguments. Write 32 random bytes directly to the mounted secret file and set
+mode `0400` before server startup. Do not rotate this key while active MLS
+groups still pin it; rotation requires an authenticated group-context
+transition in every affected group and is not yet implemented.
 
 ### LiveKit signaling URL reachability
 
@@ -201,6 +244,16 @@ Key security counters:
 - `filament_rate_limit_hits_total{surface=...,reason=...}`
 - `filament_ws_disconnects_total{reason=...}`
 
+E2EE reconciliation gauges:
+- `filament_e2ee_membership_reconciliations_sampled{state="overdue"} > 0`
+  means at least one policy eviction exceeded its deadline; encrypted sends
+  remain fail closed until a member commits the authenticated MLS Remove.
+- `filament_e2ee_membership_reconciliation_scan_saturated == 1` means more
+  than 1,000 incomplete evictions exist and the bounded oldest-first sample is
+  saturated.
+- `filament_e2ee_membership_reconciliation_oldest_overdue_seconds` reports the
+  age past deadline of the oldest sampled eviction.
+
 Templates:
 - alert rules: `infra/observability/prometheus-alerts.yml`
 - dashboard: `infra/observability/grafana-filament-security-dashboard.json`
@@ -209,6 +262,7 @@ Alerting minimums:
 - auth failure spike
 - rate-limit spike
 - websocket disconnect spike
+- overdue or saturated E2EE membership reconciliation
 
 ### Gateway staging telemetry verification
 

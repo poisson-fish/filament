@@ -101,6 +101,60 @@
       ],
       "title": "WebSocket Disconnects / sec",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "filament_e2ee_membership_reconciliations_sampled",
+          "legendFormat": "{{state}}"
+        }
+      ],
+      "title": "E2EE Membership Reconciliations (bounded sample)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "filament_e2ee_membership_reconciliation_oldest_overdue_seconds",
+          "legendFormat": "oldest overdue"
+        }
+      ],
+      "title": "E2EE Oldest Membership Eviction Overdue",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

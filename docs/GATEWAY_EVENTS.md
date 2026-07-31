@@ -107,7 +107,9 @@ All events use the versioned envelope:
 - Visibility: authorized guild members
 - Minimum payload:
   - `guild_id`
-  - `channel` (`channel_id`, `name`, `kind`)
+  - `channel` (`channel_id`, `name`, `kind`, `channel_type`)
+- `channel_type` is `plaintext` or `encrypted`; current servers always emit it.
+  Pre-Phase-6 servers omitted it and could only create plaintext channels.
 - Optional:
   - `actor_user_id`
 
@@ -233,7 +235,10 @@ All events use the versioned envelope:
 - Visibility: authorized guild members
 - Minimum payload:
   - `guild_id`
-  - `updated_fields` (`name`, `visibility`, and future safe workspace settings)
+  - `updated_fields` (one or more of `name`, `visibility`, or
+    `encrypted_channel_policy`)
+  - `encrypted_channel_policy`, when present, is exactly `disabled`,
+    `require_moderator_membership`, or `unrestricted`
   - `updated_at_unix`
 - Optional:
   - `actor_user_id`
@@ -449,6 +454,53 @@ All events use the versioned envelope:
   - `removed_at_unix`
 - Optional:
   - `actor_user_id`
+
+### E2EE / MLS Events
+
+These events relay MLS protocol messages through the Delivery Service. The server
+stores and forwards opaque blobs — it never parses MLS interiors or holds private keys.
+Commit, Welcome, message, and member-authored proposal notifications are active
+for pre-provisioned `mls_v1` conversations.
+
+#### `mls_message`
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `message_id`, `epoch`, `suite_id`,
+  `sender_device_id`, `created_at_unix`
+
+#### `mls_commit`
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `epoch`, `prior_epoch`,
+  `committer_device_id`, `created_at_unix`
+
+#### `mls_welcome`
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `epoch`, `suite_id`, `created_at_unix`
+
+#### `mls_proposal`
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `proposal_id`, `epoch`,
+  either `proposer_device_id`, or `external_sender_index` plus
+  `reconciliation_deadline_unix`, and `created_at_unix`
+- This notification contains routing metadata only. Packaged clients fetch the
+  opaque proposal from the per-device mailbox and authenticate its MLS sender
+  before changing local proposal state.
+
+#### `mls_membership_change`
+- Scope: channel
+- Payload: `group_id`, `conversation_id`, `epoch`, `committer_device_id`,
+  `membership_change`, `created_at_unix`
+- This is a routing-only UI hint. Clients display membership changes only after
+  the matching MLS commit authenticates and yields the same leaf delta.
+
+#### `device_list_update`
+- Scope: user
+- Payload: `user_id`, `device_count`, `created_at_unix`
+- Notifies connected devices that the device list for a user has changed.
+
+#### `keypackage_low`
+- Scope: user
+- Payload: `device_id`, `remaining_count`, `water_mark`, `created_at_unix`
+- Notifies a device that its KeyPackage pool is running low.
 
 ## Rollout Checklist
 - Deploy server event additions before client features that require them.

@@ -9,7 +9,7 @@ interface GatewayManifestEntry {
   event_type: string;
   schema_version: number;
   scope: "connection" | "channel" | "guild" | "user";
-  lifecycle: "active" | "deprecated";
+  lifecycle: "active" | "planned" | "deprecated";
   migration?: string;
 }
 
@@ -29,7 +29,10 @@ function loadProtocolGatewayManifest(): GatewayManifest {
 describe("gateway protocol manifest parity", () => {
   it("matches client supported event registry", () => {
     const manifest = loadProtocolGatewayManifest();
-    const manifestEvents = manifest.events.map((entry) => entry.event_type).sort();
+    const manifestEvents = manifest.events
+      .filter((entry) => entry.lifecycle === "active")
+      .map((entry) => entry.event_type)
+      .sort();
 
     expect(manifestEvents).toEqual(CLIENT_SUPPORTED_GATEWAY_EVENT_TYPES);
   });

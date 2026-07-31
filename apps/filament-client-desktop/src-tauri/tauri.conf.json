@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Filament",
+  "version": "0.1.0",
+  "identifier": "com.filament.desktop",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../filament-client-web run dev",
+    "beforeBuildCommand": "npm --prefix ../filament-client-web run build",
+    "frontendDist": "../../filament-client-web/dist",
+    "devUrl": "https://app.filament.local"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Filament",
+        "url": "index.html",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "devtools": false,
+        "dragDropEnabled": false,
+        "useHttpsScheme": true
+      }
+    ],
+    "security": {
+      "freezePrototype": true,
+      "dangerousDisableAssetCspModification": false,
+      "capabilities": ["main"],
+      "csp": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.filament.local; font-src 'self'; form-action 'none'; media-src 'self' blob:;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": false,
+    "android": {
+      "minSdkVersion": 33
+    },
+    "iOS": {
+      "minimumSystemVersion": "17.0"
+    },
+    "resources": {
+      "../../../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
+    }
+  }
+}

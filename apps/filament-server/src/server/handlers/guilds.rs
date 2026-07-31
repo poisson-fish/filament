@@ -11,7 +11,8 @@ use axum::{
 };
 use filament_core::{
     can_assign_role_legacy, can_moderate_member_legacy, has_permission_legacy, ChannelKind,
-    ChannelName, ChannelPermissionOverwrite, GuildName, Permission, Role, UserId,
+    ChannelName, ChannelPermissionOverwrite, ChannelType, EncryptedChannelPolicy, GuildName,
+    Permission, Role, UserId,
 };
 use sqlx::Row;
 use ulid::Ulid;
@@ -22,9 +23,10 @@ use crate::server::{
     },
     core::{AppState, ChannelRecord, GuildRecord, GuildVisibility},
     db::{
-        channel_kind_from_i16, channel_kind_to_i16, permission_set_from_list,
-        permission_set_to_i64, role_to_i16, seed_hierarchical_permissions_for_new_guild,
-        visibility_from_i16, visibility_to_i16,
+        channel_kind_from_i16, channel_kind_to_i16, channel_type_from_i16, channel_type_to_i16,
+        encrypted_channel_policy_from_i16, encrypted_channel_policy_to_i16,
+        permission_set_from_list, permission_set_to_i64, role_to_i16,
+        seed_hierarchical_permissions_for_new_guild, visibility_from_i16, visibility_to_i16,
     },
     directory_contract::{
         validate_workspace_role_name, AuditListQuery, AuditListQueryDto, DirectoryContractError,
@@ -38,6 +40,10 @@ use crate::server::{
     },
     errors::AuthFailure,
     gateway_events,
+    handlers::e2ee::{
+        emit_policy_proposals, queue_encrypted_channel_authorization_removals,
+        queue_encrypted_channel_member_removals, PendingPolicyProposal,
+    },
     metrics::record_gateway_event_dropped,
     permissions::{
         DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, MAX_GUILD_ROLES, MAX_MEMBER_ROLE_ASSIGNMENTS,
@@ -58,6 +64,19 @@ use crate::server::{
         UpdateGuildRoleRequest, UpdateMemberRoleRequest,
     },
 };
+
+fn map_guild_transaction_error(error: &sqlx::Error) -> AuthFailure {
+    let constraint = error
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::constraint);
+    match constraint {
+        Some(
+            "e2ee_moderator_membership_required"
+            | "encrypted_channel_policy_requires_reconciliation",
+        ) => AuthFailure::E2eeMembershipReconciliationPending,
+        _ => AuthFailure::Internal,
+    }
+}
 
 pub(crate) async fn create_guild(
     State(state): State<AppState>,
@@ -117,12 +136,15 @@ pub(crate) async fn create_guild(
         seed_hierarchical_permissions_for_new_guild(&mut tx, &guild_id, &creator_user_id)
             .await
             .map_err(|_| AuthFailure::Internal)?;
-        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+        tx.commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
 
         return Ok(Json(GuildResponse {
             guild_id,
             name: name.as_str().to_owned(),
             visibility,
+            encrypted_channel_policy: EncryptedChannelPolicy::Disabled,
         }));
     }
 
@@ -149,6 +171,7 @@ pub(crate) async fn create_guild(
         GuildRecord {
             name: name.as_str().to_owned(),
             visibility,
+            encrypted_channel_policy: EncryptedChannelPolicy::Disabled,
             created_by_user_id: auth.user_id,
             default_join_role_id: None,
             members,
@@ -161,6 +184,7 @@ pub(crate) async fn create_guild(
         guild_id,
         name: name.as_str().to_owned(),
         visibility,
+        encrypted_channel_policy: EncryptedChannelPolicy::Disabled,
     }))
 }
 
@@ -174,7 +198,7 @@ pub(crate) async fn list_guilds(
 
     if let Some(pool) = &state.db_pool {
         let rows = sqlx::query(
-            "SELECT g.guild_id, g.name, g.visibility
+            "SELECT g.guild_id, g.name, g.visibility, g.encrypted_channel_policy
              FROM guild_members gm
              JOIN guilds g ON g.guild_id = gm.guild_id
              LEFT JOIN guild_bans gb ON gb.guild_id = gm.guild_id AND gb.user_id = gm.user_id
@@ -195,10 +219,16 @@ pub(crate) async fn list_guilds(
                 .try_get("visibility")
                 .map_err(|_| AuthFailure::Internal)?;
             let visibility = visibility_from_i16(visibility_raw).ok_or(AuthFailure::Internal)?;
+            let policy_raw: i16 = row
+                .try_get("encrypted_channel_policy")
+                .map_err(|_| AuthFailure::Internal)?;
+            let encrypted_channel_policy =
+                encrypted_channel_policy_from_i16(policy_raw).ok_or(AuthFailure::Internal)?;
             guilds.push(GuildResponse {
                 guild_id: row.try_get("guild_id").map_err(|_| AuthFailure::Internal)?,
                 name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
                 visibility,
+                encrypted_channel_policy,
             });
         }
         return Ok(Json(GuildListResponse { guilds }));
@@ -218,6 +248,7 @@ pub(crate) async fn list_guilds(
                 guild_id: guild_id.clone(),
                 name: guild.name.clone(),
                 visibility: guild.visibility,
+                encrypted_channel_policy: guild.encrypted_channel_policy,
             })
         })
         .collect::<Vec<_>>();
@@ -226,6 +257,7 @@ pub(crate) async fn list_guilds(
     Ok(Json(GuildListResponse { guilds: response }))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn update_guild(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -244,20 +276,28 @@ pub(crate) async fn update_guild(
         .transpose()
         .map_err(|_| AuthFailure::InvalidRequest)?;
     let visibility = payload.visibility;
-    if name.is_none() && visibility.is_none() {
+    let encrypted_channel_policy = payload.encrypted_channel_policy;
+    if name.is_none() && visibility.is_none() && encrypted_channel_policy.is_none() {
         return Err(AuthFailure::InvalidRequest);
     }
 
     let mut changed_name: Option<String> = None;
     let mut changed_visibility: Option<GuildVisibility> = None;
+    let mut changed_encrypted_channel_policy: Option<EncryptedChannelPolicy> = None;
     let updated_at_unix = now_unix();
     let response = if let Some(pool) = &state.db_pool {
-        let current = sqlx::query("SELECT name, visibility FROM guilds WHERE guild_id = $1")
-            .bind(&path.guild_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|_| AuthFailure::Internal)?
-            .ok_or(AuthFailure::NotFound)?;
+        let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+        let current = sqlx::query(
+            "SELECT name, visibility, encrypted_channel_policy
+             FROM guilds
+             WHERE guild_id = $1
+             FOR UPDATE",
+        )
+        .bind(&path.guild_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .ok_or(AuthFailure::NotFound)?;
 
         let current_name: String = current.try_get("name").map_err(|_| AuthFailure::Internal)?;
         let current_visibility_raw: i16 = current
@@ -265,35 +305,49 @@ pub(crate) async fn update_guild(
             .map_err(|_| AuthFailure::Internal)?;
         let current_visibility =
             visibility_from_i16(current_visibility_raw).ok_or(AuthFailure::Internal)?;
+        let current_policy_raw: i16 = current
+            .try_get("encrypted_channel_policy")
+            .map_err(|_| AuthFailure::Internal)?;
+        let current_policy =
+            encrypted_channel_policy_from_i16(current_policy_raw).ok_or(AuthFailure::Internal)?;
 
         let next_name = name.clone().unwrap_or(current_name.clone());
         let next_visibility = visibility.unwrap_or(current_visibility);
+        let next_policy = encrypted_channel_policy.unwrap_or(current_policy);
         if next_name != current_name {
             changed_name = Some(next_name.clone());
         }
         if next_visibility != current_visibility {
             changed_visibility = Some(next_visibility);
         }
+        if next_policy != current_policy {
+            changed_encrypted_channel_policy = Some(next_policy);
+        }
 
         let update = sqlx::query(
             "UPDATE guilds
-             SET name = $2, visibility = $3
+             SET name = $2, visibility = $3, encrypted_channel_policy = $4
              WHERE guild_id = $1",
         )
         .bind(&path.guild_id)
         .bind(&next_name)
         .bind(visibility_to_i16(next_visibility))
-        .execute(pool)
+        .bind(encrypted_channel_policy_to_i16(next_policy))
+        .execute(&mut *tx)
         .await
-        .map_err(|_| AuthFailure::Internal)?;
+        .map_err(|error| map_guild_transaction_error(&error))?;
         if update.rows_affected() == 0 {
             return Err(AuthFailure::NotFound);
         }
+        tx.commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
 
         GuildResponse {
             guild_id: path.guild_id.clone(),
             name: next_name,
             visibility: next_visibility,
+            encrypted_channel_policy: next_policy,
         }
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
@@ -301,6 +355,16 @@ pub(crate) async fn update_guild(
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
 
+        if encrypted_channel_policy.is_some_and(|next_policy| {
+            next_policy != guild.encrypted_channel_policy
+                && next_policy != EncryptedChannelPolicy::Unrestricted
+                && guild
+                    .channels
+                    .values()
+                    .any(|channel| channel.channel_type.is_encrypted())
+        }) {
+            return Err(AuthFailure::E2eeMembershipReconciliationPending);
+        }
         if let Some(next_name) = name {
             if next_name != guild.name {
                 changed_name = Some(next_name.clone());
@@ -313,19 +377,30 @@ pub(crate) async fn update_guild(
                 guild.visibility = next_visibility;
             }
         }
+        if let Some(next_policy) = encrypted_channel_policy {
+            if next_policy != guild.encrypted_channel_policy {
+                changed_encrypted_channel_policy = Some(next_policy);
+                guild.encrypted_channel_policy = next_policy;
+            }
+        }
 
         GuildResponse {
             guild_id: path.guild_id.clone(),
             name: guild.name.clone(),
             visibility: guild.visibility,
+            encrypted_channel_policy: guild.encrypted_channel_policy,
         }
     };
 
-    if changed_name.is_some() || changed_visibility.is_some() {
+    if changed_name.is_some()
+        || changed_visibility.is_some()
+        || changed_encrypted_channel_policy.is_some()
+    {
         let event = match gateway_events::try_workspace_update(
             &path.guild_id,
             changed_name.as_deref(),
             changed_visibility,
+            changed_encrypted_channel_policy,
             updated_at_unix,
             Some(auth.user_id),
         ) {
@@ -932,6 +1007,56 @@ async fn sync_legacy_role_from_assignments_db(
     Ok(legacy)
 }
 
+async fn sync_legacy_role_from_assignments_tx(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    guild_id: &str,
+    user_id: UserId,
+) -> Result<Role, AuthFailure> {
+    let rows = sqlx::query(
+        "SELECT gr.system_key
+         FROM guild_role_members grm
+         JOIN guild_roles gr ON gr.role_id = grm.role_id
+         WHERE grm.guild_id = $1 AND grm.user_id = $2",
+    )
+    .bind(guild_id)
+    .bind(user_id.to_string())
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    let mut has_workspace_owner = false;
+    let mut has_moderator = false;
+    for row in rows {
+        let system_key = row
+            .try_get::<Option<String>, _>("system_key")
+            .ok()
+            .flatten();
+        if system_key.as_deref() == Some(SYSTEM_ROLE_WORKSPACE_OWNER) {
+            has_workspace_owner = true;
+        } else if system_key.as_deref() == Some(DEFAULT_ROLE_MODERATOR) {
+            has_moderator = true;
+        }
+    }
+    let legacy = if has_workspace_owner {
+        Role::Owner
+    } else if has_moderator {
+        Role::Moderator
+    } else {
+        Role::Member
+    };
+    sqlx::query(
+        "UPDATE guild_members
+         SET role = $3
+         WHERE guild_id = $1 AND user_id = $2",
+    )
+    .bind(guild_id)
+    .bind(user_id.to_string())
+    .bind(role_to_i16(legacy))
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| AuthFailure::Internal)?;
+    Ok(legacy)
+}
+
 async fn sync_legacy_role_from_assignments_in_memory(
     state: &AppState,
     guild_id: &str,
@@ -1457,7 +1582,7 @@ pub(crate) async fn update_guild_default_join_role(
         let guild = guilds
             .get_mut(&path.guild_id)
             .ok_or(AuthFailure::NotFound)?;
-        guild.default_join_role_id = next_role_id.clone();
+        guild.default_join_role_id.clone_from(&next_role_id);
     }
 
     write_audit_log(
@@ -1473,6 +1598,7 @@ pub(crate) async fn update_guild_default_join_role(
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn create_guild_role(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1663,7 +1789,9 @@ pub(crate) async fn update_guild_role(
         None => current.color_hex.clone(),
     };
 
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
+        let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
         sqlx::query(
             "UPDATE guild_roles
              SET name = $3, permissions_allow_mask = $4, color_hex = $5
@@ -1674,9 +1802,20 @@ pub(crate) async fn update_guild_role(
         .bind(&next_name)
         .bind(permission_set_to_i64(next_permissions)?)
         .bind(next_color_hex.clone())
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|_| AuthFailure::Internal)?;
+        pending_policy_proposals = queue_encrypted_channel_authorization_removals(
+            &state,
+            &mut transaction,
+            &path.guild_id,
+            now_unix(),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut role_maps = state.membership_store.guild_roles().write().await;
         let role = role_maps
@@ -1685,8 +1824,9 @@ pub(crate) async fn update_guild_role(
             .ok_or(AuthFailure::NotFound)?;
         role.name.clone_from(&next_name);
         role.permissions_allow = next_permissions;
-        role.color_hex = next_color_hex.clone();
+        role.color_hex.clone_from(&next_color_hex);
     }
+    emit_policy_proposals(&state, pending_policy_proposals).await;
 
     if payload.permissions.is_some() {
         write_audit_log(
@@ -1775,6 +1915,7 @@ pub(crate) async fn update_guild_role(
     Ok(Json(response))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn delete_guild_role(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1806,19 +1947,32 @@ pub(crate) async fn delete_guild_role(
         return Err(AuthFailure::Forbidden);
     }
 
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
+        let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
         let result = sqlx::query(
             "DELETE FROM guild_roles
              WHERE guild_id = $1 AND role_id = $2",
         )
         .bind(&path.guild_id)
         .bind(&role_id)
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|_| AuthFailure::Internal)?;
         if result.rows_affected() == 0 {
             return Err(AuthFailure::NotFound);
         }
+        pending_policy_proposals = queue_encrypted_channel_authorization_removals(
+            &state,
+            &mut transaction,
+            &path.guild_id,
+            now_unix(),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut role_maps = state.membership_store.guild_roles().write().await;
         let roles = role_maps
@@ -1839,6 +1993,7 @@ pub(crate) async fn delete_guild_role(
             }
         }
     }
+    emit_policy_proposals(&state, pending_policy_proposals).await;
 
     write_audit_log(
         &state,
@@ -1933,7 +2088,9 @@ pub(crate) async fn reorder_guild_roles(
             .await
             .map_err(|_| AuthFailure::Internal)?;
         }
-        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+        tx.commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut role_maps = state.membership_store.guild_roles().write().await;
         let roles = role_maps
@@ -2064,6 +2221,7 @@ pub(crate) async fn assign_guild_role(
         return Err(AuthFailure::Forbidden);
     }
 
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
         let target_exists =
             sqlx::query("SELECT 1 FROM guild_members WHERE guild_id = $1 AND user_id = $2")
@@ -2091,6 +2249,7 @@ pub(crate) async fn assign_guild_role(
         {
             return Err(AuthFailure::QuotaExceeded);
         }
+        let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
         sqlx::query(
             "INSERT INTO guild_role_members (guild_id, role_id, user_id, assigned_at_unix)
              VALUES ($1, $2, $3, $4)
@@ -2100,10 +2259,23 @@ pub(crate) async fn assign_guild_role(
         .bind(&role_id)
         .bind(target_user_id.to_string())
         .bind(now_unix())
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|_| AuthFailure::Internal)?;
-        let _ = sync_legacy_role_from_assignments_db(pool, &path.guild_id, target_user_id).await?;
+        let _ =
+            sync_legacy_role_from_assignments_tx(&mut transaction, &path.guild_id, target_user_id)
+                .await?;
+        pending_policy_proposals = queue_encrypted_channel_authorization_removals(
+            &state,
+            &mut transaction,
+            &path.guild_id,
+            now_unix(),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
@@ -2131,6 +2303,7 @@ pub(crate) async fn assign_guild_role(
         let _ = sync_legacy_role_from_assignments_in_memory(&state, &path.guild_id, target_user_id)
             .await?;
     }
+    emit_policy_proposals(&state, pending_policy_proposals).await;
 
     write_audit_log(
         &state,
@@ -2176,6 +2349,7 @@ pub(crate) async fn assign_guild_role(
     Ok(Json(ModerationResponse { accepted: true }))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn unassign_guild_role(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2215,6 +2389,7 @@ pub(crate) async fn unassign_guild_role(
         return Err(AuthFailure::Forbidden);
     }
 
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
         if is_workspace_owner_role(&role) {
             let owner_count = workspace_owner_count_db(pool, &path.guild_id).await?;
@@ -2222,6 +2397,7 @@ pub(crate) async fn unassign_guild_role(
                 return Err(AuthFailure::Forbidden);
             }
         }
+        let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
         sqlx::query(
             "DELETE FROM guild_role_members
              WHERE guild_id = $1 AND role_id = $2 AND user_id = $3",
@@ -2229,10 +2405,23 @@ pub(crate) async fn unassign_guild_role(
         .bind(&path.guild_id)
         .bind(&role_id)
         .bind(target_user_id.to_string())
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|_| AuthFailure::Internal)?;
-        let _ = sync_legacy_role_from_assignments_db(pool, &path.guild_id, target_user_id).await?;
+        let _ =
+            sync_legacy_role_from_assignments_tx(&mut transaction, &path.guild_id, target_user_id)
+                .await?;
+        pending_policy_proposals = queue_encrypted_channel_authorization_removals(
+            &state,
+            &mut transaction,
+            &path.guild_id,
+            now_unix(),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         if is_workspace_owner_role(&role)
             && workspace_owner_count_in_memory(&state, &path.guild_id).await? <= 1
@@ -2254,6 +2443,7 @@ pub(crate) async fn unassign_guild_role(
         let _ = sync_legacy_role_from_assignments_in_memory(&state, &path.guild_id, target_user_id)
             .await?;
     }
+    emit_policy_proposals(&state, pending_policy_proposals).await;
 
     write_audit_log(
         &state,
@@ -2645,7 +2835,9 @@ pub(crate) async fn upsert_guild_ip_bans_by_user(
                 .map_err(|_| AuthFailure::Internal)?;
                 created_ids.push(ban_id);
             }
-            tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+            tx.commit()
+                .await
+                .map_err(|error| map_guild_transaction_error(&error))?;
             created_ids
         }
     } else {
@@ -3079,7 +3271,6 @@ async fn resolve_directory_join_outcome_db(
     if outcome != DirectoryJoinOutcome::Accepted {
         return Ok(outcome);
     }
-
     let insert = sqlx::query(
         "INSERT INTO guild_members (guild_id, user_id, role)
          VALUES ($1, $2, $3)
@@ -3265,7 +3456,7 @@ pub(crate) async fn list_guild_channels(
 
     let channel_candidates = if let Some(pool) = &state.db_pool {
         let rows = sqlx::query(
-            "SELECT channel_id, name, kind
+            "SELECT channel_id, name, kind, channel_type
              FROM channels
              WHERE guild_id = $1
              ORDER BY created_at_unix ASC
@@ -3280,12 +3471,18 @@ pub(crate) async fn list_guild_channels(
         for row in rows {
             let kind_raw: i16 = row.try_get("kind").map_err(|_| AuthFailure::Internal)?;
             let kind = channel_kind_from_i16(kind_raw).ok_or(AuthFailure::Internal)?;
+            let channel_type_raw: i16 = row
+                .try_get("channel_type")
+                .map_err(|_| AuthFailure::Internal)?;
+            let channel_type =
+                channel_type_from_i16(channel_type_raw).ok_or(AuthFailure::Internal)?;
             entries.push(ChannelResponse {
                 channel_id: row
                     .try_get("channel_id")
                     .map_err(|_| AuthFailure::Internal)?,
                 name: row.try_get("name").map_err(|_| AuthFailure::Internal)?,
                 kind,
+                channel_type,
             });
         }
         entries
@@ -3299,6 +3496,7 @@ pub(crate) async fn list_guild_channels(
                 channel_id: channel_id.clone(),
                 name: channel.name.clone(),
                 kind: channel.kind,
+                channel_type: channel.channel_type,
             })
             .collect::<Vec<_>>();
         entries.sort_by(|left, right| left.channel_id.cmp(&right.channel_id));
@@ -3321,6 +3519,32 @@ pub(crate) async fn list_guild_channels(
     }
 
     Ok(Json(ChannelListResponse { channels }))
+}
+
+async fn encrypted_channel_policy_for_guild(
+    state: &AppState,
+    guild_id: &str,
+) -> Result<EncryptedChannelPolicy, AuthFailure> {
+    if let Some(pool) = &state.db_pool {
+        let raw = sqlx::query_scalar::<_, i16>(
+            "SELECT encrypted_channel_policy FROM guilds WHERE guild_id = $1",
+        )
+        .bind(guild_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .ok_or(AuthFailure::NotFound)?;
+        return encrypted_channel_policy_from_i16(raw).ok_or(AuthFailure::Internal);
+    }
+
+    state
+        .membership_store
+        .guilds()
+        .read()
+        .await
+        .get(guild_id)
+        .map(|guild| guild.encrypted_channel_policy)
+        .ok_or(AuthFailure::NotFound)
 }
 
 pub(crate) async fn create_channel(
@@ -3346,21 +3570,35 @@ pub(crate) async fn create_channel(
     .await?;
     let name = ChannelName::try_from(payload.name).map_err(|_| AuthFailure::InvalidRequest)?;
     let kind = payload.kind.unwrap_or(ChannelKind::Text);
+    let channel_type = payload.channel_type;
     let (_, actor_permissions) =
         guild_permission_snapshot(&state, auth.user_id, &path.guild_id).await?;
     if !actor_permissions.contains(Permission::ManageChannelOverrides) {
         return Err(AuthFailure::Forbidden);
     }
+    if channel_type == ChannelType::Encrypted {
+        let policy = encrypted_channel_policy_for_guild(&state, &path.guild_id).await?;
+        if !policy.allows_encrypted_channels() {
+            return Err(AuthFailure::E2eeChannelPolicyDisabled);
+        }
+        // Encrypted-channel creation must atomically bind the channel,
+        // authorized audience, initial MLS commit, Welcome recipients, and
+        // GroupInfo. The ordinary CRUD route cannot safely create that state.
+        return Err(AuthFailure::E2eeChannelProvisioningRequired);
+    }
 
     let channel_id = Ulid::new().to_string();
     if let Some(pool) = &state.db_pool {
         sqlx::query(
-            "INSERT INTO channels (channel_id, guild_id, name, kind, created_at_unix) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO channels
+                (channel_id, guild_id, name, kind, channel_type, created_at_unix)
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(&channel_id)
         .bind(&path.guild_id)
         .bind(name.as_str())
         .bind(channel_kind_to_i16(kind))
+        .bind(channel_type_to_i16(channel_type))
         .bind(now_unix())
         .execute(pool)
         .await
@@ -3382,6 +3620,7 @@ pub(crate) async fn create_channel(
             ChannelRecord {
                 name: name.as_str().to_owned(),
                 kind,
+                channel_type,
                 messages: Vec::new(),
                 role_overrides: HashMap::new(),
             },
@@ -3392,6 +3631,7 @@ pub(crate) async fn create_channel(
         channel_id,
         name: name.as_str().to_owned(),
         kind,
+        channel_type,
     };
     match gateway_events::try_channel_create(&path.guild_id, &response) {
         Ok(event) => {
@@ -3440,7 +3680,6 @@ pub(crate) async fn add_member(
         if banned.is_some() {
             return Err(AuthFailure::Forbidden);
         }
-
         let insert = sqlx::query(
             "INSERT INTO guild_members (guild_id, user_id, role)
              VALUES ($1, $2, $3)
@@ -3530,13 +3769,15 @@ pub(crate) async fn update_member_role(
         return Err(AuthFailure::Forbidden);
     }
 
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
+        let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
         let result =
             sqlx::query("UPDATE guild_members SET role = $3 WHERE guild_id = $1 AND user_id = $2")
                 .bind(&path.guild_id)
                 .bind(target_user_id.to_string())
                 .bind(role_to_i16(payload.role))
-                .execute(pool)
+                .execute(&mut *transaction)
                 .await
                 .map_err(|_| AuthFailure::Internal)?;
         if result.rows_affected() == 0 {
@@ -3549,7 +3790,7 @@ pub(crate) async fn update_member_role(
              WHERE guild_id = $1",
         )
         .bind(&path.guild_id)
-        .fetch_all(pool)
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|_| AuthFailure::Internal)?;
         let mut workspace_owner_role_id = None;
@@ -3586,7 +3827,7 @@ pub(crate) async fn update_member_role(
             .bind(&path.guild_id)
             .bind(target_user_id.to_string())
             .bind(workspace_owner_role_id)
-            .execute(pool)
+            .execute(&mut *transaction)
             .await
             .map_err(|_| AuthFailure::Internal)?;
         }
@@ -3598,7 +3839,7 @@ pub(crate) async fn update_member_role(
             .bind(&path.guild_id)
             .bind(target_user_id.to_string())
             .bind(&moderator_role_id)
-            .execute(pool)
+            .execute(&mut *transaction)
             .await
             .map_err(|_| AuthFailure::Internal)?;
             if payload.role == Role::Moderator {
@@ -3611,7 +3852,7 @@ pub(crate) async fn update_member_role(
                 .bind(moderator_role_id)
                 .bind(target_user_id.to_string())
                 .bind(now_unix())
-                .execute(pool)
+                .execute(&mut *transaction)
                 .await
                 .map_err(|_| AuthFailure::Internal)?;
             }
@@ -3623,7 +3864,7 @@ pub(crate) async fn update_member_role(
                 .bind(&path.guild_id)
                 .bind(target_user_id.to_string())
                 .bind(&member_role_id)
-                .execute(pool)
+                .execute(&mut *transaction)
                 .await
                 .map_err(|_| AuthFailure::Internal)?;
                 if payload.role == Role::Member {
@@ -3636,12 +3877,23 @@ pub(crate) async fn update_member_role(
                 .bind(member_role_id)
                 .bind(target_user_id.to_string())
                 .bind(now_unix())
-                .execute(pool)
+                .execute(&mut *transaction)
                 .await
                 .map_err(|_| AuthFailure::Internal)?;
                 }
             }
         }
+        pending_policy_proposals = queue_encrypted_channel_authorization_removals(
+            &state,
+            &mut transaction,
+            &path.guild_id,
+            now_unix(),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
@@ -3697,6 +3949,7 @@ pub(crate) async fn update_member_role(
             }
         }
     }
+    emit_policy_proposals(&state, pending_policy_proposals).await;
 
     let updated_at_unix = now_unix();
     let event = match gateway_events::try_workspace_member_update(
@@ -3772,7 +4025,9 @@ pub(crate) async fn set_channel_role_override(
         return Err(AuthFailure::InvalidRequest);
     }
 
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
+        let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
         let result = sqlx::query(
             "INSERT INTO channel_role_overrides (guild_id, channel_id, role, allow_mask, deny_mask)
              VALUES ($1, $2, $3, $4, $5)
@@ -3784,7 +4039,7 @@ pub(crate) async fn set_channel_role_override(
         .bind(role_to_i16(path.role))
         .bind(permission_set_to_i64(allow)?)
         .bind(permission_set_to_i64(deny)?)
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| {
             if matches!(e, sqlx::Error::Database(_)) {
@@ -3796,6 +4051,17 @@ pub(crate) async fn set_channel_role_override(
         if result.rows_affected() == 0 {
             return Err(AuthFailure::NotFound);
         }
+        pending_policy_proposals = queue_encrypted_channel_authorization_removals(
+            &state,
+            &mut transaction,
+            &path.guild_id,
+            now_unix(),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
@@ -3809,6 +4075,7 @@ pub(crate) async fn set_channel_role_override(
             .role_overrides
             .insert(path.role, ChannelPermissionOverwrite { allow, deny });
     }
+    emit_policy_proposals(&state, pending_policy_proposals).await;
 
     write_audit_log(
         &state,
@@ -3888,10 +4155,11 @@ async fn apply_channel_permission_override(
     path: &ChannelPermissionOverridePath,
     allow: filament_core::PermissionSet,
     deny: filament_core::PermissionSet,
-) -> Result<(), AuthFailure> {
+) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
     let target_kind_i16 = path.target_kind.to_i16();
 
     if let Some(pool) = &state.db_pool {
+        let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
         let result = sqlx::query(
             "INSERT INTO channel_permission_overrides (guild_id, channel_id, target_kind, target_id, allow_mask, deny_mask)
              VALUES ($1, $2, $3, $4, $5, $6)
@@ -3904,7 +4172,7 @@ async fn apply_channel_permission_override(
         .bind(&path.target_id)
         .bind(permission_set_to_i64(allow)?)
         .bind(permission_set_to_i64(deny)?)
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| {
             if matches!(e, sqlx::Error::Database(_)) {
@@ -3916,33 +4184,44 @@ async fn apply_channel_permission_override(
         if result.rows_affected() == 0 {
             return Err(AuthFailure::NotFound);
         }
+        let pending = queue_encrypted_channel_authorization_removals(
+            state,
+            &mut transaction,
+            &path.guild_id,
+            now_unix(),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
+        return Ok(pending);
+    }
+    let mut overrides_map = state
+        .membership_store
+        .guild_channel_permission_overrides()
+        .write()
+        .await;
+    let guild_overrides = overrides_map
+        .get_mut(&path.guild_id)
+        .ok_or(AuthFailure::NotFound)?;
+    let channel_override = guild_overrides.entry(path.channel_id.clone()).or_default();
+
+    let permissions = filament_core::ChannelPermissionOverwrite { allow, deny };
+
+    if path.target_kind == crate::server::types::PermissionOverrideTargetKind::Role {
+        channel_override
+            .role_overrides
+            .insert(path.target_id.clone(), permissions);
     } else {
-        let mut overrides_map = state
-            .membership_store
-            .guild_channel_permission_overrides()
-            .write()
-            .await;
-        let guild_overrides = overrides_map
-            .get_mut(&path.guild_id)
-            .ok_or(AuthFailure::NotFound)?;
-        let channel_override = guild_overrides.entry(path.channel_id.clone()).or_default();
-
-        let permissions = filament_core::ChannelPermissionOverwrite { allow, deny };
-
-        if path.target_kind == crate::server::types::PermissionOverrideTargetKind::Role {
-            channel_override
-                .role_overrides
-                .insert(path.target_id.clone(), permissions);
-        } else {
-            let parsed_user_id = filament_core::UserId::try_from(path.target_id.clone())
-                .map_err(|_| AuthFailure::InvalidRequest)?;
-            channel_override
-                .member_overrides
-                .insert(parsed_user_id, permissions);
-        }
+        let parsed_user_id = filament_core::UserId::try_from(path.target_id.clone())
+            .map_err(|_| AuthFailure::InvalidRequest)?;
+        channel_override
+            .member_overrides
+            .insert(parsed_user_id, permissions);
     }
 
-    Ok(())
+    Ok(Vec::new())
 }
 
 pub(crate) async fn set_channel_permission_override(
@@ -3977,7 +4256,9 @@ pub(crate) async fn set_channel_permission_override(
     .await?;
 
     let (allow, deny) = parse_channel_permission_override_masks(&payload)?;
-    apply_channel_permission_override(&state, &path, allow, deny).await?;
+    let pending_policy_proposals =
+        apply_channel_permission_override(&state, &path, allow, deny).await?;
+    emit_policy_proposals(&state, pending_policy_proposals).await;
 
     write_audit_log(
         &state,
@@ -4064,6 +4345,44 @@ async fn remove_member_from_voice_channels(
     }
 }
 
+async fn remove_guild_member_db(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    guild_id: &str,
+    target_user_id: UserId,
+    removed_at_unix: i64,
+) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
+    let mut transaction = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+    let pending = queue_encrypted_channel_member_removals(
+        state,
+        &mut transaction,
+        guild_id,
+        target_user_id,
+        removed_at_unix,
+    )
+    .await?;
+    let deleted = sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
+        .bind(guild_id)
+        .bind(target_user_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    if deleted.rows_affected() == 0 {
+        return Err(AuthFailure::NotFound);
+    }
+    sqlx::query("DELETE FROM guild_role_members WHERE guild_id = $1 AND user_id = $2")
+        .bind(guild_id)
+        .bind(target_user_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| AuthFailure::Internal)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| map_guild_transaction_error(&error))?;
+    Ok(pending)
+}
+
 pub(crate) async fn kick_member(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -4080,25 +4399,17 @@ pub(crate) async fn kick_member(
         return Err(AuthFailure::Forbidden);
     }
 
+    let removed_at_unix = now_unix();
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
-        let deleted = sqlx::query("DELETE FROM guild_members WHERE guild_id = $1 AND user_id = $2")
-            .bind(&path.guild_id)
-            .bind(target_user_id.to_string())
-            .execute(pool)
-            .await
-            .map_err(|_| AuthFailure::Internal)?;
-        if deleted.rows_affected() == 0 {
-            return Err(AuthFailure::NotFound);
-        }
-        sqlx::query(
-            "DELETE FROM guild_role_members
-             WHERE guild_id = $1 AND user_id = $2",
+        pending_policy_proposals = remove_guild_member_db(
+            &state,
+            pool,
+            &path.guild_id,
+            target_user_id,
+            removed_at_unix,
         )
-        .bind(&path.guild_id)
-        .bind(target_user_id.to_string())
-        .execute(pool)
-        .await
-        .map_err(|_| AuthFailure::Internal)?;
+        .await?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds
@@ -4118,7 +4429,7 @@ pub(crate) async fn kick_member(
         }
     }
 
-    let removed_at_unix = now_unix();
+    emit_policy_proposals(&state, pending_policy_proposals).await;
     let event = match gateway_events::try_workspace_member_remove(
         &path.guild_id,
         target_user_id,
@@ -4166,9 +4477,18 @@ async fn persist_member_ban(
     target_user_id: UserId,
     banned_by_user_id: UserId,
     banned_at_unix: i64,
-) -> Result<(), AuthFailure> {
+) -> Result<Vec<PendingPolicyProposal>, AuthFailure> {
+    let mut pending_policy_proposals = Vec::new();
     if let Some(pool) = &state.db_pool {
         let mut tx = pool.begin().await.map_err(|_| AuthFailure::Internal)?;
+        pending_policy_proposals = queue_encrypted_channel_member_removals(
+            state,
+            &mut tx,
+            guild_id,
+            target_user_id,
+            banned_at_unix,
+        )
+        .await?;
         sqlx::query(
             "INSERT INTO guild_bans (guild_id, user_id, banned_by_user_id, created_at_unix)
              VALUES ($1, $2, $3, $4)
@@ -4196,7 +4516,9 @@ async fn persist_member_ban(
         .execute(&mut *tx)
         .await
         .map_err(|_| AuthFailure::Internal)?;
-        tx.commit().await.map_err(|_| AuthFailure::Internal)?;
+        tx.commit()
+            .await
+            .map_err(|error| map_guild_transaction_error(&error))?;
     } else {
         let mut guilds = state.membership_store.guilds().write().await;
         let guild = guilds.get_mut(guild_id).ok_or(AuthFailure::NotFound)?;
@@ -4213,7 +4535,7 @@ async fn persist_member_ban(
         }
     }
 
-    Ok(())
+    Ok(pending_policy_proposals)
 }
 
 pub(crate) async fn ban_member(
@@ -4234,7 +4556,7 @@ pub(crate) async fn ban_member(
     }
 
     let banned_at_unix = now_unix();
-    persist_member_ban(
+    let pending_policy_proposals = persist_member_ban(
         &state,
         &path.guild_id,
         target_user_id,
@@ -4242,6 +4564,7 @@ pub(crate) async fn ban_member(
         banned_at_unix,
     )
     .await?;
+    emit_policy_proposals(&state, pending_policy_proposals).await;
     let ban_event = match gateway_events::try_workspace_member_ban(
         &path.guild_id,
         target_user_id,
@@ -4522,6 +4845,7 @@ mod tests {
             GuildRecord {
                 name: String::from("default-role-test"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: user_id,
                 default_join_role_id: Some(role_id.clone()),
                 members: HashMap::from([(user_id, Role::Member)]),

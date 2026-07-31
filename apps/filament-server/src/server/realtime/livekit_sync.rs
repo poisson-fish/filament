@@ -205,6 +205,7 @@ mod tests {
         let mut guild = GuildRecord {
             name: String::from("livekit-reeval-test"),
             visibility: GuildVisibility::Private,
+            encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
             created_by_user_id: user_id,
             default_join_role_id: None,
             members: HashMap::new(),
@@ -217,6 +218,7 @@ mod tests {
             ChannelRecord {
                 name: String::from("voice"),
                 kind: ChannelKind::Voice,
+                channel_type: filament_core::ChannelType::Plaintext,
                 messages: Vec::new(),
                 role_overrides,
             },

@@ -313,6 +313,10 @@ export function applyWorkspaceUpdate(
     ...workspace,
     guildName: payload.updatedFields.name ?? workspace.guildName,
     visibility: payload.updatedFields.visibility ?? workspace.visibility,
+    encryptedChannelPolicy:
+      payload.updatedFields.encryptedChannelPolicy ??
+      workspace.encryptedChannelPolicy ??
+      "disabled",
   }));
 }
 

@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/filament-core",
+  "crates/filament-e2ee",
   "crates/filament-protocol",
   "apps/filament-server",
   "apps/filament-client-desktop/src-tauri",
@@ -18,3 +19,13 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+# OpenMLS merged the hpke-rs/libcrux security updates after its 0.8.1 release.
+# Keep the complete crate family on one exact, signed upstream revision until
+# the next crates.io release contains the same fix.
+[patch.crates-io]
+openmls = { git = "https://github.com/openmls/openmls", rev = "0e99bc8814d136f0bc7bc9ce86dd288eb32273ed" }
+openmls_basic_credential = { git = "https://github.com/openmls/openmls", rev = "0e99bc8814d136f0bc7bc9ce86dd288eb32273ed" }
+openmls_memory_storage = { git = "https://github.com/openmls/openmls", rev = "0e99bc8814d136f0bc7bc9ce86dd288eb32273ed" }
+openmls_rust_crypto = { git = "https://github.com/openmls/openmls", rev = "0e99bc8814d136f0bc7bc9ce86dd288eb32273ed" }
+openmls_traits = { git = "https://github.com/openmls/openmls", rev = "0e99bc8814d136f0bc7bc9ce86dd288eb32273ed" }

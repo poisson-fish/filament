@@ -19,6 +19,7 @@ describe("decodeWorkspaceChannelGatewayEvent", () => {
         channel_id: DEFAULT_CHANNEL_ID,
         name: "general",
         kind: "text",
+        channel_type: "encrypted",
       },
     });
 
@@ -30,6 +31,7 @@ describe("decodeWorkspaceChannelGatewayEvent", () => {
           channelId: DEFAULT_CHANNEL_ID,
           name: "general",
           kind: "text",
+          channelType: "encrypted",
         },
       },
     });

@@ -11,8 +11,19 @@
     "allowed_commands": [
       "store_session",
       "clear_session",
-      "read_session_metadata"
+      "read_session_metadata",
+      "initialize_e2ee_store",
+      "read_e2ee_store_status",
+      "read_encryption_settings",
+      "rotate_root_identity"
     ]
+  },
+  "e2ee_media": {
+    "backend": "native_livekit_gcm",
+    "allow_webview_media": false,
+    "allow_webview_key_material": false,
+    "allow_plaintext_fallback": false,
+    "unavailable_behavior": "disable_calls"
   },
   "updates": {
     "signed_only": true

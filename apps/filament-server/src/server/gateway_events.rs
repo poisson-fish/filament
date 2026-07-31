@@ -1,4 +1,5 @@
 mod connection;
+mod e2ee;
 mod envelope;
 mod friend;
 mod message_channel;
@@ -10,6 +11,13 @@ mod workspace;
 pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
     connection::READY_EVENT,
     connection::SUBSCRIBED_EVENT,
+    e2ee::DEVICE_LIST_UPDATE_EVENT,
+    e2ee::KEYPACKAGE_LOW_EVENT,
+    e2ee::MLS_COMMIT_EVENT,
+    e2ee::MLS_MEMBERSHIP_CHANGE_EVENT,
+    e2ee::MLS_MESSAGE_EVENT,
+    e2ee::MLS_PROPOSAL_EVENT,
+    e2ee::MLS_WELCOME_EVENT,
     message_channel::MESSAGE_CREATE_EVENT,
     message_channel::MESSAGE_UPDATE_EVENT,
     message_channel::MESSAGE_DELETE_EVENT,
@@ -47,6 +55,12 @@ pub(crate) const EMITTED_EVENT_TYPES: &[&str] = &[
 ];
 
 pub(crate) use connection::{try_ready, try_subscribed, READY_EVENT, SUBSCRIBED_EVENT};
+pub(crate) use e2ee::{
+    try_device_list_update, try_keypackage_low, try_mls_commit, try_mls_membership_change,
+    try_mls_message, try_mls_proposal, try_mls_welcome, DEVICE_LIST_UPDATE_EVENT,
+    KEYPACKAGE_LOW_EVENT, MLS_COMMIT_EVENT, MLS_MEMBERSHIP_CHANGE_EVENT, MLS_MESSAGE_EVENT,
+    MLS_PROPOSAL_EVENT, MLS_WELCOME_EVENT,
+};
 pub(crate) use envelope::GatewayEvent;
 #[cfg(test)]
 pub(crate) use friend::friend_request_delete;
@@ -101,7 +115,7 @@ pub(crate) use workspace::{
 };
 #[cfg(test)]
 mod tests {
-    use filament_core::{ChannelKind, MarkdownToken, Permission, Role, UserId};
+    use filament_core::{ChannelKind, ChannelType, MarkdownToken, Permission, Role, UserId};
     use serde_json::Value;
 
     use super::*;
@@ -154,6 +168,7 @@ mod tests {
             channel_id: String::from("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
             name: String::from("general"),
             kind: ChannelKind::Text,
+            channel_type: ChannelType::Plaintext,
         };
 
         let ready_event = try_ready(user_id).expect("ready event should serialize");
@@ -333,6 +348,7 @@ mod tests {
                 "g",
                 Some("Guild Prime"),
                 Some(crate::server::core::GuildVisibility::Public),
+                Some(filament_core::EncryptedChannelPolicy::Unrestricted),
                 13,
                 Some(user_id),
             )
@@ -345,6 +361,10 @@ mod tests {
         assert_eq!(
             workspace_update_payload["updated_fields"]["visibility"],
             Value::from("public")
+        );
+        assert_eq!(
+            workspace_update_payload["updated_fields"]["encrypted_channel_policy"],
+            Value::from("unrestricted")
         );
 
         let workspace_member_add_payload = parse_event(

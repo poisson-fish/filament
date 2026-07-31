@@ -56,6 +56,7 @@ describe("decodeWorkspaceGatewayEvent", () => {
         updatedFields: {
           name: "Filament Workspace",
           visibility: undefined,
+          encryptedChannelPolicy: undefined,
         },
         updatedAtUnix: 1710000001,
       },

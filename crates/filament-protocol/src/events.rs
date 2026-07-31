@@ -20,6 +20,7 @@ pub enum GatewayEventScope {
 pub enum GatewayEventLifecycle {
     #[default]
     Active,
+    Planned,
     Deprecated,
 }
 
@@ -116,7 +117,9 @@ fn validate_gateway_event_manifest(
         }
 
         match entry.lifecycle {
-            GatewayEventLifecycle::Active if entry.migration.is_some() => {
+            GatewayEventLifecycle::Active | GatewayEventLifecycle::Planned
+                if entry.migration.is_some() =>
+            {
                 return Err(GatewayEventManifestError::UnexpectedActiveMigration {
                     event_type: entry.event_type.clone(),
                 });
@@ -131,7 +134,9 @@ fn validate_gateway_event_manifest(
                     event_type: entry.event_type.clone(),
                 });
             }
-            GatewayEventLifecycle::Active | GatewayEventLifecycle::Deprecated => {}
+            GatewayEventLifecycle::Active
+            | GatewayEventLifecycle::Planned
+            | GatewayEventLifecycle::Deprecated => {}
         }
     }
 

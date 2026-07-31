@@ -1,0 +1,23 @@
+{
+  "name": "filament-client-packaged",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "test:package-policy": "node --test tests/package-artifacts.test.mjs tests/desktop-package-smoke.test.mjs tests/mobile-package-smoke.test.mjs",
+    "verify:package": "node tools/verify-package.mjs",
+    "smoke:desktop": "node tools/smoke-desktop-package.mjs",
+    "smoke:mobile": "node tools/smoke-mobile-package.mjs",
+    "android:init": "tauri android init",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build",
+    "ios:init": "tauri ios init",
+    "ios:dev": "tauri ios dev",
+    "ios:build": "tauri ios build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}

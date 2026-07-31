@@ -6,6 +6,10 @@ describe("session storage", () => {
     window.sessionStorage.clear();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("roundtrips a valid session", () => {
     const session = {
       accessToken: accessTokenFromInput("A".repeat(64)),
@@ -51,5 +55,28 @@ describe("session storage", () => {
     saveSession(session);
     clearSession();
     expect(loadSession()).toBeNull();
+  });
+
+  it("keeps packaged-client sessions out of webview storage", () => {
+    const session = {
+      accessToken: accessTokenFromInput("A".repeat(64)),
+      refreshToken: refreshTokenFromInput("B".repeat(64)),
+      expiresAtUnix: Math.floor(Date.now() / 1000) + 900,
+    };
+    window.sessionStorage.setItem(
+      "filament.auth.session.v1",
+      JSON.stringify(session),
+    );
+    vi.stubGlobal("isTauri", true);
+
+    expect(loadSession()).toBeNull();
+    expect(
+      window.sessionStorage.getItem("filament.auth.session.v1"),
+    ).toBeNull();
+
+    saveSession(session);
+    expect(
+      window.sessionStorage.getItem("filament.auth.session.v1"),
+    ).toBeNull();
   });
 });

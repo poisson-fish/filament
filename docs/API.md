@@ -44,6 +44,9 @@ Common codes:
 - `rate_limited` -> `429`
 - `payload_too_large` -> `413`
 - `quota_exceeded` -> `409`
+- `e2ee_capability_required` -> `409`
+- `e2ee_conversation_conflict` -> `409`
+- `epoch_conflict` -> `409`
 - `internal_error` -> `500`
 
 Global middleware can also return non-handler errors such as `408 Request Timeout` and baseline `429` rate limit responses.
@@ -228,19 +231,28 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Request: `{ "name": "...", "visibility"?: "private"|"public" }` (`visibility` defaults to `private`)
   - `name`: 1..64 visible chars/spaces
   - Enforces per-user creator cap configured by server (`FILAMENT_MAX_CREATED_GUILDS_PER_USER`)
-  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }`
+  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public", "encrypted_channel_policy": "disabled"|"require_moderator_membership"|"unrestricted" }`
+  - `encrypted_channel_policy` always starts as `disabled`
   - When limit is reached: `403 {"error":"guild_creation_limit_reached"}`
 - `GET /guilds`
   - Auth required
   - Returns only guilds where requester is an active member (banned guilds are excluded)
   - Response `200`:
-    - `{ "guilds": [{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }] }`
+    - `{ "guilds": [{ "guild_id": "...", "name": "...", "visibility": "private"|"public", "encrypted_channel_policy": "disabled"|"require_moderator_membership"|"unrestricted" }] }`
 - `PATCH /guilds/{guild_id}`
   - Auth required
   - Requires effective `manage_roles` permission in the workspace
-  - Request: `{ "name"?: "...", "visibility"?: "private"|"public" }`
+  - Request: `{ "name"?: "...", "visibility"?: "private"|"public", "encrypted_channel_policy"?: "disabled"|"require_moderator_membership"|"unrestricted" }`
   - At least one field is required
-  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public" }`
+  - Policy changes require effective `manage_roles`
+  - With existing encrypted channels,
+    `require_moderator_membership -> unrestricted` is permitted because it
+    does not alter the MLS audience. Tightening to
+    `require_moderator_membership` succeeds only after every moderator is an
+    authorized MLS member of every encrypted channel. `disabled` remains
+    forbidden while an immutable encrypted channel exists. Unsafe transitions
+    return `409 e2ee_membership_reconciliation_pending`
+  - Response `200`: `{ "guild_id": "...", "name": "...", "visibility": "private"|"public", "encrypted_channel_policy": "disabled"|"require_moderator_membership"|"unrestricted" }`
 - `GET /guilds/public?q=<query>&limit=<n>`
   - Auth required
   - Returns only guilds marked `public`
@@ -250,14 +262,43 @@ This section locks response semantics and limits for upcoming directory-join/aud
     - `{ "guilds": [{ "guild_id": "...", "name": "...", "visibility": "public" }] }`
 - `POST /guilds/{guild_id}/channels`
   - Auth required; role must be `owner` or `moderator`
-  - Request: `{ "name": "...", "kind"?: "text"|"voice" }` (`kind` defaults to `text`)
+  - Request: `{ "name": "...", "kind"?: "text"|"voice", "channel_type"?: "plaintext"|"encrypted" }`
+  - `kind` defaults to `text`; `channel_type` defaults to `plaintext`
   - `name`: 1..64 visible chars/spaces
-  - Response `200`: `{ "channel_id": "...", "name": "...", "kind": "text"|"voice" }`
+  - Ordinary CRUD rejects `channel_type = encrypted` with
+    `409 encrypted_channel_policy_disabled` while workspace policy is
+    `disabled`; enabled policies then fail with
+    `409 e2ee_channel_provisioning_required` because encrypted creation must
+    use the atomic MLS provisioning route
+  - Response `200`: `{ "channel_id": "...", "name": "...", "kind": "text"|"voice", "channel_type": "plaintext"|"encrypted" }`
+- `POST /guilds/{guild_id}/e2ee/channels`
+  - Auth required; requires effective `manage_channel_overrides` permission and
+    an enabled encrypted-channel workspace policy
+  - Request: `{ "channel_id", "channel_name", "conversation_id", "group_id", "suite_id", "committer_device_id", "invitees": [{ "user_id", "welcome_device_id", "leaf_index" }], "permission_overrides"?: [{ "target_kind": "role"|"member", "target_id", "allow": [Permission...], "deny": [Permission...] }], "commit_blob", "welcome_blob", "group_info_blob" }`
+  - At most 164 unique, disjoint role/member permission overwrites may be
+    supplied. They are installed atomically before the audience is evaluated;
+    nonexistent targets and overlapping allow/deny entries are rejected.
+  - The committer plus 1–99 invitees must equal the exact 2–100-user audience
+    with effective `create_message` permission after those overwrites. Leaf
+    indices are contiguous from one. Omitted authorized users and injected
+    unauthorized users are rejected independently by the handler and database.
+  - Every routed device must be active, owned, and root-certified. A capability
+    gap returns `409 e2ee_capability_required`; no channel, overwrite, or
+    partial MLS state is created. Under `require_moderator_membership`, every
+    current moderator must remain in the visible authorized audience.
+  - Channel metadata, initial permission overwrites, `mls_v1` conversation
+    membership, group, epoch-1 commit, shared Welcome recipients, leaf routing,
+    GroupInfo, and the immutable channel/group binding commit in one
+    transaction while membership and role authorization are locked.
+  - Response: `{ "channel_id", "channel_name", "kind": "text", "channel_type": "encrypted", "conversation_id", "group_id", "crypto": "mls_v1", "epoch": 1, "suite_id", "provisioned_at_unix" }`
+  - Exact retries are idempotent. Identifier, audience, leaf-map, metadata,
+    permission-overwrite, or opaque bootstrap conflicts fail with
+    `409 e2ee_conversation_conflict`.
 - `GET /guilds/{guild_id}/channels`
   - Auth required; requester must be a guild member
   - Returns channels in that guild where requester has effective `create_message` permission
   - Response `200`:
-    - `{ "channels": [{ "channel_id": "...", "name": "...", "kind": "text"|"voice" }] }`
+    - `{ "channels": [{ "channel_id": "...", "name": "...", "kind": "text"|"voice", "channel_type": "plaintext"|"encrypted" }] }`
 - `GET /guilds/{guild_id}/channels/{channel_id}/permissions/self`
   - Auth required
   - Least-visibility gate: requires effective `create_message` permission in the channel
@@ -289,12 +330,44 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Response `204 No Content`
 - `POST /guilds/{guild_id}/roles/{role_id}/members/{user_id}`
   - Auth required; requires `manage_roles`
+  - Under `require_moderator_membership`, assigning the system moderator role
+    requires that user to already have an MLS leaf in every encrypted channel.
+    Promote only after the authenticated channel Add completes; otherwise the
+    request returns `409 e2ee_membership_reconciliation_pending`.
   - Response `200`: `{ "accepted": true }`
 - `DELETE /guilds/{guild_id}/roles/{role_id}/members/{user_id}`
   - Auth required; requires `manage_roles`
   - Response `200`: `{ "accepted": true }`
 
+For an encrypted channel, any role definition, assignment, legacy member-role,
+or channel permission override that removes effective `create_message`
+authorization atomically queues signed MLS Remove proposals for the affected
+leaves, capped at 1,000 leaves per mutation. Larger changes fail closed. Until
+a member-authored commit applies them, encrypted sends return `409
+e2ee_membership_reconciliation_pending`. A permission change never falls back
+to plaintext, and direct database mutations without the exact pending
+reconciliations are rejected.
+
+The server samples the oldest 1,000 incomplete reconciliations every 30 seconds
+and exports pending/overdue gauges through `GET /metrics`. The scan reports
+saturation rather than performing unbounded work. Operators should alert on
+any overdue sample or a saturated scan; encrypted sends remain blocked after
+the deadline until the exact authenticated Remove commit completes.
+
+Under `require_moderator_membership`, the visible system moderator roster is a
+database-enforced channel invariant. Permission changes cannot make a
+moderator ineligible for an encrypted channel, and an MLS commit cannot remove
+that moderator's final leaf while the role remains assigned. These operations
+return `409 e2ee_membership_reconciliation_pending`; kicking, banning, or
+unassigning the moderator role removes the policy requirement through the
+normal authenticated structural path.
+
 ### Messages
+
+All ordinary message, reaction, attachment, channel-scoped search, and
+unencrypted LiveKit-token routes reject encrypted channels with
+`409 encrypted_channel_requires_e2ee`; there is no plaintext fallback.
+
 - `POST /guilds/{guild_id}/channels/{channel_id}/messages`
   - Auth required, `create_message` permission
   - Request: `{ "content": "...", "attachment_ids": ["<attachment_id>", ...] }`
@@ -393,6 +466,13 @@ This section locks response semantics and limits for upcoming directory-join/aud
 - `POST /guilds/{guild_id}/members/{user_id}`
   - Add member as `member`
   - Requires `manage_roles`
+  - A workspace join does not grant membership in any encrypted channel.
+    Ciphertext routing remains unchanged until an existing encrypted-channel
+    member submits an accepted MLS Add commit with a recipient-bound Welcome
+    for the new member's active certified device.
+  - A joined user without an encrypted-channel leaf receives `404 not_found`
+    from group transport routes; there is no plaintext or metadata fallback.
+    Existing-member retries remain idempotent.
   - Response `200`: `{ "accepted": true }`
 - `PATCH /guilds/{guild_id}/members/{user_id}`
   - Request: `{ "role": "owner|moderator|member" }`
@@ -400,9 +480,14 @@ This section locks response semantics and limits for upcoming directory-join/aud
   - Response `200`: `{ "accepted": true }`
 - `POST /guilds/{guild_id}/members/{user_id}/kick`
   - Requires moderation privileges (`ban_member` + hierarchy)
+  - For every encrypted-channel leaf owned by the member, the membership
+    deletion and a signed Delivery Service Remove proposal commit atomically.
+    Encrypted sends remain blocked until a member-authored commit applies every
+    required removal.
   - Response `200`: `{ "accepted": true }`
 - `POST /guilds/{guild_id}/members/{user_id}/ban`
   - Requires moderation privileges (`ban_member` + hierarchy)
+  - Uses the same atomic encrypted-channel Remove reconciliation as kick
   - Response `200`: `{ "accepted": true }`
 
 ### Channel Role Overrides
@@ -523,6 +608,360 @@ The server tracks disconnect categories including:
 - `socket_error`
 - `client_close`
 - `connection_closed`
+
+## E2EE Endpoints
+
+These endpoints provide the Delivery Service for MLS-based end-to-end encryption.
+The server stores and relays opaque blobs — it never parses MLS interiors or
+holds client or content-decryption keys. Its distinct external-sender signing
+key can authorize only MLS Remove proposals. See
+`docs/adr/0001-e2ee-mls-openmls.md` for the protocol decision.
+
+### `GET /e2ee/delivery-service/identity`
+Returns the authenticated public configuration clients pin before creating or
+joining an MLS group with server-initiated removal support.
+- Response: `{ "protocol_version": 1, "external_sender_index": 0, "signature_key": [32 bytes] }`
+- Authentication is required. If the operator has not configured the stable
+  signing key, the endpoint fails closed with
+  `409 { "error": "e2ee_capability_required" }`.
+- Clients treat any change from their pinned key as a blocking identity change;
+  they never silently replace the Group Context external sender.
+- The response contains public material only. The server signing surface emits
+  only bounded external Remove proposals; it exposes no arbitrary signing or
+  external Add operation.
+
+### `PUT /e2ee/devices/{device_id}`
+Publishes a device certificate for the authenticated user.
+- Request body: `{ "device_signature_pubkey": [32 bytes], "root_key_signature": [64 bytes], "root_key_pub": [32 bytes] }`
+- Response: `{ "device_id": "...", "published": true }`
+- The path device ID and authenticated user ID are covered by the root-key
+  signature. The server verifies the signature and pins the first root public
+  key published for an account. Clients must independently verify certificates
+  against their pinned root key; the directory remains an untrusted hint.
+- Rate limit: 10 publishes/minute by both authenticated user and client IP by
+  default (configurable, fail-fast if zero).
+
+### `GET /e2ee/users/{user_id}/devices`
+Lists certified devices for a user.
+- Response: `{ "user_id": "...", "devices": [{ "device_id": "...", "device_signature_pubkey": [32 bytes], "root_key_signature": [64 bytes], "root_key_pub": [32 bytes], "created_at_unix": 0 }] }`
+- Only active devices are returned; results are capped at 100.
+
+### `GET /e2ee/users/{user_id}/identity`
+Returns the current public root identity and its append-only continuity chain.
+- Response fields include `protocol_version`, `current_root_key_pub`,
+  `rotation_sequence`, and up to 100 ordered dual-signed rotation entries.
+- Clients verify every transition from their locally pinned root. Missing,
+  duplicated, reordered, disconnected, or invalidly signed entries fail closed.
+
+### `POST /e2ee/identity/rotate`
+Destructively rotates the authenticated user's root identity using protocol v1.
+- The transition is bound to the user and next sequence and must be signed by
+  both the previously pinned root and the replacement root.
+- The replacement root also certifies fresh signing material for one retained
+  active device. Every other device is irreversibly tombstoned and all
+  unclaimed KeyPackages for the user are destroyed in the same transaction.
+- A stale sequence, conflicting replay, malformed proof, unowned device, or
+  unsupported protocol version is rejected. An exact retry of the immediately
+  committed transition returns the original confirmation and mutation counts,
+  allowing a native client to reconcile a lost response without generating a
+  second root. The bounded public proof and mutation counts are audit logged;
+  no private key material reaches the server.
+
+### `DELETE /e2ee/devices/{device_id}`
+Irreversibly removes a device owned by the authenticated user.
+- Response: `{ "device_id": "...", "tombstoned_at_unix": 0, "deleted_keypackage_count": 0 }`
+- The certificate tombstone, deletion of all unclaimed KeyPackages, and public
+  audit record are committed in one transaction. A tombstoned device ID cannot
+  be republished; a newly paired device must use a fresh ID.
+- Claimed packages cannot be recalled. Conversation-level cryptographic
+  eviction begins with MLS group support in Phase 2.
+
+### `POST /e2ee/keypackages`
+Uploads a batch of KeyPackages for a device.
+- Request body: `{ "device_id": "...", "key_packages": [{ "key_package_blob": [bytes], "is_last_resort": false }] }`
+- Response: `{ "stored_count": 10 }`
+- Requests contain 1–100 packages; each opaque blob is 1–4096 bytes. The
+  authenticated user must own the active device, the unclaimed pool is capped
+  at 100 by default, duplicates are ignored, and at most one unclaimed fallback
+  may exist.
+
+### `POST /e2ee/keypackages/claim`
+Claims a KeyPackage for a target user/device.
+- Request body: `{ "target_user_id": "...", "target_device_id": "..." | null }`
+- Response: `{ "device_id": "...", "key_package_blob": [bytes], "is_last_resort": false }`
+- Claims are atomic (`FOR UPDATE SKIP LOCKED`), audit-logged, and limited by
+  requester user, target device, and client IP (30/minute by default).
+- Ordinary packages are preferred. Every package is single-use, including the
+  ordered fallback. Reuse remains disabled until an MLS last-resort extension
+  is implemented and separately reviewed.
+- A `keypackage_low` user-scoped gateway event is emitted after a successful
+  claim leaves the target device below the replenishment water mark.
+
+### `POST /e2ee/conversations`
+Atomically provisions a new two-user MLS v1 conversation and its initial Add
+commit.
+- Request: `{ "conversation_id", "peer_user_id", "group_id", "suite_id", "committer_device_id", "welcome_device_id", "commit_blob", "welcome_blob", "group_info_blob" }`
+- Response: `{ "conversation_id", "group_id", "crypto": "mls_v1", "epoch": 1, "suite_id", "provisioned_at_unix" }`
+- Conversation, group, epoch-1 commit, Welcome, and GroupInfo rows commit in one
+  transaction. MLS interiors remain opaque and use the existing `64 KiB` caps.
+- Both distinct users must have at least one active certified MLS device, and
+  the committer device must be active and owned by the caller. The Welcome
+  device must be an active device owned by the peer. Capability gaps
+  return `409 { "error": "e2ee_capability_required" }`; no plaintext fallback
+  is created.
+- Canonical user-pair uniqueness prevents duplicate encrypted DMs. An exact
+  retry is idempotent; conflicting identifiers or bootstrap material return
+  `409 { "error": "e2ee_conversation_conflict" }`.
+- Provisioning uses the commit transport rate limit independently by client IP,
+  caller, committer device, and group.
+
+### `POST /e2ee/conversations/{conversation_id}/upgrade`
+Explicitly upgrades an existing two-user plaintext conversation to MLS v1.
+- Request: `{ "group_id", "suite_id", "committer_device_id", "welcome_device_id", "commit_blob", "welcome_blob", "group_info_blob" }`
+- Response matches `POST /e2ee/conversations`.
+- Only an existing member may upgrade, the membership must contain exactly two
+  capable users, and all bootstrap rows commit atomically.
+- The transition is one-way. A database trigger rejects every later attempt to
+  change `mls_v1` back to plaintext; a downgrade requires a separate plaintext
+  conversation and never changes the encrypted conversation's pinned mode.
+- Exact retries are idempotent. A different group or bootstrap payload fails
+  closed with `e2ee_conversation_conflict`.
+
+### `POST /e2ee/group-conversations`
+Atomically provisions a new 3–100-user MLS group DM.
+- Request: `{ "conversation_id", "group_id", "suite_id", "committer_device_id", "invitees": [{ "user_id", "welcome_device_id", "leaf_index" }], "commit_blob", "welcome_blob", "group_info_blob" }`
+- Invitees contain 2–99 distinct users and devices. Leaf indices must be the
+  contiguous range `1..N`; the creator's active committer device is leaf zero.
+- The shared MLS Welcome is stored once but returned only to the exact invitee
+  devices listed in the request. Conversation membership, leaf routing,
+  epoch-1 commit, Welcome recipients, and GroupInfo commit atomically.
+- Exact retries are idempotent. Identifier, leaf-map, or opaque bootstrap
+  conflicts fail with `e2ee_conversation_conflict`.
+- Provisioning requires the operator-configured Delivery Service identity;
+  clients fetch and pin it at external-sender index zero in the MLS Group Context.
+
+Workspace encrypted channels reuse this opaque MLS bootstrap through
+`POST /guilds/{guild_id}/e2ee/channels`; see "Guilds and Channels" above for
+the stricter atomic audience and authorization rules.
+
+### `GET /e2ee/groups/{group_id}/info`
+Returns the latest opaque `GroupInfo` for an authenticated member of an
+`mls_v1` conversation.
+- Response: `{ "group_id": "...", "epoch": 1, "suite_id": 3, "group_info_blob": [bytes] }`
+- Missing GroupInfo, non-membership, plaintext conversation mode, and unknown
+  groups return `404` without revealing which authorization check failed.
+- The server treats GroupInfo as opaque and applies the `64 KiB` hard cap.
+- Native recovery treats every response field as an untrusted routing hint.
+  The signed GroupInfo must match the pinned group, epoch, baseline suite,
+  ratchet tree, and two-user root identities before an external commit is
+  created. Recovery is prepared against an isolated clone of the complete MLS
+  checkpoint, so rejection cannot overwrite the live provider state.
+
+### `POST /e2ee/groups/{group_id}/commits`
+Atomically orders one opaque MLS commit for an authenticated conversation member.
+- Request: `{ "epoch": 1, "prior_epoch": 0, "committer_device_id": "...", "commit_blob": [bytes], "welcome_blob"?: [bytes], "welcome_device_id"?: "...", "group_info_blob"?: [bytes], "membership_change"?: { "kind": "add", "leaf": {...} } | { "kind": "remove", "leaves": [...] } }`
+- Response `200`: `{ "accepted": true, "epoch": 1 }`
+- The committer device must be active and owned by the authenticated user.
+- For a workspace encrypted channel, an Add requires both the committer and
+  target user to retain effective `create_message` authorization. The target
+  must already be a structural workspace member, and the exact added device
+  must be active, certified, owned by that user, and bound to the Welcome.
+  Structural workspace membership alone never creates an MLS leaf.
+- Under `require_moderator_membership`, a Remove cannot evict the final leaf of
+  a user who still holds the system moderator role. The role must first be
+  removed, or the user must leave the workspace through the normal
+  reconciliation path.
+- Commits must advance exactly one epoch. A row lock makes the first valid
+  commit for an epoch the sole winner; competitors receive
+  `409 { "error": "epoch_conflict" }` and must rebase client-side.
+- An exact retry of the accepted request returns the same successful epoch
+  without repeating membership, reconciliation, delivery, or notification
+  side effects. Every request field, including opaque Commit, Welcome, and
+  GroupInfo blobs, the target device, and routing delta, is covered by a fixed
+  SHA-256 receipt; any altered retry
+  remains an epoch conflict. The receipt survives transient commit-mailbox
+  deletion, expires at the same bounded TTL, and permits a native durable
+  commit outbox to reconcile a lost response safely.
+- Rebase fetches and authenticates the accepted commit before clearing the
+  rejected local commit. The native core advances through the normal pinned
+  membership checks and restages a still-safe self-update, one-device Add, or
+  Remove at the next epoch. A winning commit that already satisfied or
+  invalidated the intent produces no retry; a rebased Add emits a new Welcome
+  and the rejected Welcome must never be delivered.
+- Commit, Welcome, and GroupInfo blobs are never parsed and are each capped at
+  `64 KiB`. The default per-IP/user/device/group rate is 30 commits/minute.
+- `welcome_blob` and `welcome_device_id` must be supplied together. An Add must
+  bind them to the exact new active certified leaf. Remove deltas must exactly
+  match current routing leaves, retain at least two users, and cannot carry a
+  Welcome. Clients treat the delta as untrusted until MLS authentication.
+- For a workspace encrypted-channel group, Add commits are accepted only when
+  both the authenticated committer and target user currently have effective
+  `create_message` authorization for the bound channel. The target must remain
+  a workspace member and the Welcome device must be that user's exact active,
+  root-certified device. This permits acceptance-gated re-Add after a completed
+  permission-loss eviction and later permission restoration; unauthorized
+  targets receive `403 forbidden`. Database triggers independently enforce the
+  same authorization and device-ownership boundary. Adding a new workspace
+  member remains unavailable until structural membership and every encrypted
+  channel Add can commit atomically.
+- A recovery external commit is accepted by peers only when OpenMLS
+  authenticates a `NewMemberCommit` whose update-path credential chains to one
+  of the two pinned roots and matches the routed committer device. Its proposal
+  shape is exactly one `ExternalInit` plus only the automatic same-device
+  replacement `Remove`, when required. The candidate replaces local state only
+  after an exact accepted-epoch response and an atomic encrypted checkpoint.
+
+### `GET /e2ee/groups/{group_id}/commits`
+Returns opaque commits pending for one owned active device.
+- Query: `?device_id=<device ULID>&after_epoch=<epoch>&limit=<1..50>`
+- Response: `{ "commits": [{ "epoch", "prior_epoch", "committer_device_id", "commit_blob", "welcome_blob"?, "membership_change"?, "created_at_unix", "expires_at_unix" }], "next_after_epoch": 2 | null }`
+- Active participant devices are snapshotted in the commit transaction; the
+  committer is immediately marked delivered. A Welcome is returned only to
+  its exact target device and is omitted from every other device's response.
+- Commit fanout accepts 2–100 capable conversation members and no more than
+  200 active device leaves. Every member must have at least one active device;
+  otherwise the transaction fails closed with `e2ee_capability_required`.
+- Pages are capped at 50 records and `256 KiB` aggregate commit/Welcome bytes.
+  New devices do not gain access to earlier commits through this endpoint.
+- Native clients preflight the whole page, join only through a device-bound
+  Welcome, and otherwise authenticate and merge commits in strict epoch order.
+  Processing stops at the first rejected epoch; no later epoch is acknowledged.
+
+### `POST /e2ee/groups/{group_id}/commits/ack`
+Acknowledges successfully processed commits for one owned active device.
+- Request: `{ "device_id": "...", "epochs": [1, 2] }`
+- Response: `{ "acknowledged_count": 2, "deleted_count": 2 }`
+- Batches contain 1–100 unique positive epochs. Entries outside the device's
+  snapshotted group mailbox are ignored without exposing other groups.
+- Clients send this request only after the corresponding joined/advanced MLS
+  state is durably persisted. Already-durable replay epochs may be
+  acknowledged without consuming the commit again.
+- Once every snapshotted device acknowledges, the commit, its optional Welcome,
+  and all delivery rows are hard-deleted atomically. TTL GC remains an
+  independent upper bound.
+
+### `POST /e2ee/groups/{group_id}/proposals`
+Stores one member-authored opaque MLS proposal at the group's current epoch.
+- Request: `{ "epoch": 1, "proposer_device_id": "...", "proposal_blob": [bytes] }`
+- Response: `{ "proposal_id": "...", "created_at_unix": 0 }`
+- The proposer device must be active, owned by the authenticated conversation
+  member, and rate-limited independently by IP, user, device, and group.
+- The server validates only the current epoch and the `64 KiB` blob bound. It
+  never parses or trusts the proposal kind. Packaged clients authenticate the
+  MLS sender and enforce Add/Remove/Update policy before proposal storage.
+- Active participant devices are snapshotted atomically; the proposing device
+  is immediately marked delivered. A routing-only `mls_proposal` event prompts
+  clients to read their mailbox.
+
+### `GET /e2ee/groups/{group_id}/proposals`
+Returns opaque proposals pending for one owned active device.
+- Query: `?device_id=<device ULID>&after_proposal_id=<proposal ULID>&limit=<1..50>`
+- Response: `{ "proposals": [{ "proposal_id", "epoch", "proposer_device_id"?, "external_sender_index"?, "reconciliation_deadline_unix"?, "proposal_blob", "created_at_unix", "expires_at_unix" }], "next_after_proposal_id": "..." | null }`
+- Pages are capped at 50 records and `256 KiB` aggregate proposal bytes. New
+  devices do not gain access to proposals created before their delivery
+  snapshot. All routing fields remain untrusted until MLS authentication.
+- Tombstoning a routed device atomically queues a Delivery Service-signed
+  external Remove at sender index zero. Until a member commits a matching
+  eviction, application messages and unrelated commits fail with
+  `e2ee_membership_reconciliation_pending`. The deadline is bounded by
+  `FILAMENT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS` (default five minutes,
+  maximum one hour). Without an external-sender key, tombstoning a routed
+  device fails closed before changing device state.
+
+### `POST /e2ee/groups/{group_id}/proposals/ack`
+Acknowledges authenticated, durably stored proposals for one owned device.
+- Request: `{ "device_id": "...", "proposal_ids": ["..."] }`
+- Response: `{ "acknowledged_count": 1, "deleted_count": 1 }`
+- Batches contain 1–100 unique canonical proposal ULIDs. A proposal and all
+  delivery rows are hard-deleted after every snapshotted device acknowledges,
+  or independently when the configured mailbox TTL expires.
+
+### `POST /e2ee/groups/{group_id}/messages`
+Stores one opaque MLS `PrivateMessage` in the bounded delivery mailbox.
+- Request: `{ "epoch": 1, "suite_id": 3, "sender_device_id": "...", "message_blob": [bytes] }`
+- Response: `{ "message_id": "...", "created_at_unix": 0 }`
+- The sender device must be active and owned by the authenticated conversation
+  member. Epoch and suite routing hints must equal the provisioned group state.
+- The authenticated application envelope is padded before MLS encryption, then
+  the opaque serialized MLS frame is zero-filled to exactly `512 B`, `1 KiB`,
+  `4 KiB`, or `16 KiB`; all other transport sizes fail closed. Clients reject
+  nonzero transport fill and never release padding bytes as content.
+- Rows are always tagged `mls_v1`, contain no plaintext/content-derived fields,
+  and receive a configurable mailbox-expiry deadline (30 days by default,
+  90-day hard maximum). Active participant devices are snapshotted in the same
+  transaction; the sending device is immediately marked delivered. Fanout is
+  bounded to 2–100 capable conversation members and 200 active device leaves.
+  A missing active device for any member or an audience outside those bounds
+  fails closed with `409 { "error": "e2ee_capability_required" }`. The default
+  per-IP/user/device/group rate is 120 messages/minute.
+
+### `GET /e2ee/groups/{group_id}/mailbox`
+Returns opaque messages pending for one owned active device.
+- Query: `?device_id=<device ULID>&after_message_id=<message ULID>&limit=<1..50>`
+- Response: `{ "messages": [{ "message_id", "crypto": "mls_v1", "epoch", "suite_id", "sender_device_id", "message_blob", "created_at_unix", "expires_at_unix" }], "next_after_message_id": "..." | null }`
+- Only send-time delivery rows for the requested device and group are visible.
+  New devices do not gain access to earlier ciphertext through this endpoint.
+- Pages are capped at 50 records and `256 KiB` aggregate ciphertext bytes.
+  Routing fields remain untrusted hints. Native clients validate the canonical
+  cursor and IDs before touching MLS state, isolate malformed entries, and
+  acknowledge only records that pass MLS authentication, decryption, and local
+  metadata checks. Authenticated plaintext and updated MLS state must be
+  durably persisted before the returned acknowledgment is sent. The native
+  client commits history, MLS state, and the pending acknowledgment in one
+  encrypted-store transaction; after a restart it resubmits that durable
+  outbox before reading another page for the group.
+
+### `POST /e2ee/groups/{group_id}/messages/ack`
+Acknowledges successfully decrypted messages for one owned active device.
+- Request: `{ "device_id": "...", "message_ids": ["..."] }`
+- Response: `{ "acknowledged_count": 1, "deleted_count": 1 }`
+- Batches contain 1–100 unique canonical message ULIDs. IDs outside the
+  device's snapshotted group mailbox are ignored without exposing other groups.
+- When every snapshotted device has acknowledged a message, its ciphertext and
+  delivery rows are hard-deleted atomically. Independently, a bounded
+  background worker hard-deletes messages, commits, proposals, and attachments
+  at their TTL deadline.
+
+### `PUT /e2ee/groups/{group_id}/attachments/{attachment_id}`
+Stores one client-encrypted attachment or thumbnail as an opaque mailbox blob.
+- Query: `?device_id=<uploader device ULID>`
+- Body: raw `application/octet-stream` ciphertext; private descriptor metadata
+  remains inside the authenticated MLS application event.
+- Response: `{ "attachment_id": "...", "ciphertext_bytes": 65536, "expires_at_unix": 0 }`
+- The object ID and uploader must be canonical active group leaves. Ciphertext
+  must be exactly `64 KiB`, `256 KiB`, `1 MiB`, `4 MiB`, `16 MiB`, or `32 MiB`;
+  the route has an independent `32 MiB` body cap.
+- Uploads snapshot the bounded active MLS leaf set and mark the uploader
+  delivered. Exact retries are idempotent; reuse of an object ID with different
+  group, owner, uploader, or bytes returns
+  `409 { "error": "e2ee_attachment_conflict" }`.
+- Opaque bytes count against the same per-user attachment quota as plaintext
+  uploads. The server stores no filename, MIME, content hash, thumbnail kind,
+  or content key. Uploads are rate-limited per IP, user, device, and group
+  (`20`/minute by default).
+
+### `GET /e2ee/groups/{group_id}/attachments/{attachment_id}`
+Returns one opaque blob to a snapshotted active group device.
+- Query: `?device_id=<recipient device ULID>`
+- Response: raw exact-bucket ciphertext with `Content-Type:
+  application/octet-stream`, `X-Content-Type-Options: nosniff`, and
+  `Cache-Control: private, no-store`.
+- Current conversation membership, leaf ownership, the send-time delivery row,
+  and the mailbox expiry must all match. New or removed devices cannot use this
+  endpoint to expand the original delivery audience.
+- Download does not acknowledge delivery. The native client first verifies
+  AEAD, authenticated padding, hash, and client-sniffed MIME against the private
+  MLS descriptor.
+
+### `POST /e2ee/groups/{group_id}/attachments/ack`
+Acknowledges successfully downloaded and verified encrypted attachments.
+- Request: `{ "device_id": "...", "attachment_ids": ["..."] }`
+- Response: `{ "acknowledged_count": 1, "deleted_count": 1 }`
+- Batches contain 1–100 unique canonical attachment ULIDs. IDs outside the
+  device's snapshotted group mailbox are ignored without exposing other groups.
+- Once every snapshotted device acknowledges, the ciphertext and delivery rows
+  are hard-deleted atomically and quota is reclaimed. Bounded TTL GC is an
+  independent upper bound.
 
 ## Notes
 - Search index is derived/cache; source of truth is persisted message storage.

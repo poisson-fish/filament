@@ -15,6 +15,7 @@ import {
   type GuildRecord,
   type GuildVisibility,
   type DirectoryJoinResult,
+  type EncryptedChannelPolicy,
   type ModerationResult,
   type PermissionName,
   type PublicGuildDirectory,
@@ -58,7 +59,11 @@ export interface WorkspaceApi {
   updateGuild(
     session: AuthSession,
     guildId: GuildId,
-    input: { name: GuildName; visibility?: GuildVisibility },
+    input: {
+      name?: GuildName;
+      visibility?: GuildVisibility;
+      encryptedChannelPolicy?: EncryptedChannelPolicy;
+    },
   ): Promise<GuildRecord>;
   fetchPublicGuildDirectory(
     session: AuthSession,
@@ -204,7 +209,11 @@ export function createWorkspaceApi(input: WorkspaceApiDependencies): WorkspaceAp
         method: "PATCH",
         path: `/guilds/${guildId}`,
         accessToken: session.accessToken,
-        body: { name: guildInput.name, visibility: guildInput.visibility },
+        body: {
+          name: guildInput.name,
+          visibility: guildInput.visibility,
+          encrypted_channel_policy: guildInput.encryptedChannelPolicy,
+        },
       });
       return guildFromResponse(dto);
     },

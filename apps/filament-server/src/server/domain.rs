@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use filament_core::{ChannelPermissionOverwrite, Permission, PermissionSet, Role, UserId};
+use filament_core::{
+    ChannelPermissionOverwrite, ChannelType, Permission, PermissionSet, Role, UserId,
+};
 use sqlx::{PgPool, Row};
 use ulid::Ulid;
 
@@ -27,7 +29,7 @@ pub(crate) use reactions::{
 use super::{
     auth::now_unix,
     core::{AppState, AttachmentRecord, ChannelPermissionOverrideRecord},
-    db::role_from_i16,
+    db::{channel_type_from_i16, role_from_i16},
     errors::AuthFailure,
     permissions::{all_permissions, default_everyone_permissions},
     types::{AttachmentPath, AttachmentResponse, ReactionResponse},
@@ -39,10 +41,47 @@ pub(crate) async fn user_can_write_channel(
     guild_id: &str,
     channel_id: &str,
 ) -> bool {
+    if require_plaintext_channel(state, guild_id, channel_id)
+        .await
+        .is_err()
+    {
+        return false;
+    }
     channel_permission_snapshot(state, user_id, guild_id, channel_id)
         .await
         .ok()
         .is_some_and(|(_, permissions)| permissions.contains(Permission::CreateMessage))
+}
+
+/// Reject use of ordinary plaintext message/attachment paths for encrypted channels.
+pub(crate) async fn require_plaintext_channel(
+    state: &AppState,
+    guild_id: &str,
+    channel_id: &str,
+) -> Result<(), AuthFailure> {
+    let channel_type = if let Some(pool) = &state.db_pool {
+        let raw = sqlx::query_scalar::<_, i16>(
+            "SELECT channel_type FROM channels WHERE guild_id = $1 AND channel_id = $2",
+        )
+        .bind(guild_id)
+        .bind(channel_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AuthFailure::Internal)?
+        .ok_or(AuthFailure::NotFound)?;
+        channel_type_from_i16(raw).ok_or(AuthFailure::Internal)?
+    } else {
+        let guilds = state.membership_store.guilds().read().await;
+        guilds
+            .get(guild_id)
+            .and_then(|guild| guild.channels.get(channel_id))
+            .map(|channel| channel.channel_type)
+            .ok_or(AuthFailure::NotFound)?
+    };
+    if channel_type == ChannelType::Encrypted {
+        return Err(AuthFailure::E2eeEncryptedChannelRequired);
+    }
+    Ok(())
 }
 
 pub(crate) async fn check_channel_permission(
@@ -722,13 +761,16 @@ pub(crate) async fn write_audit_log(
 
 #[cfg(test)]
 mod tests {
-    use super::{channel_permission_snapshot, guild_permission_snapshot};
+    use super::{
+        channel_permission_snapshot, guild_permission_snapshot, require_plaintext_channel,
+    };
     use crate::server::{
         auth::now_unix,
         core::{
             AppConfig, AppState, ChannelPermissionOverrideRecord, ChannelRecord, GuildRecord,
             GuildVisibility, WorkspaceRoleRecord,
         },
+        errors::AuthFailure,
         permissions::{
             all_permissions, DEFAULT_ROLE_MEMBER, DEFAULT_ROLE_MODERATOR, SYSTEM_ROLE_EVERYONE,
             SYSTEM_ROLE_WORKSPACE_OWNER,
@@ -825,9 +867,41 @@ mod tests {
         ChannelRecord {
             name: String::from("general"),
             kind: ChannelKind::try_from(String::from("text")).expect("text kind should be valid"),
+            channel_type: filament_core::ChannelType::Plaintext,
             messages: Vec::new(),
             role_overrides: HashMap::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn encrypted_channel_rejects_plaintext_paths_with_typed_error() {
+        let state = AppState::new(&AppConfig::default()).expect("state initializes");
+        let guild_id = String::from("01ARZ3NDEKTSV4RRFFQ69G6E01");
+        let channel_id = String::from("01ARZ3NDEKTSV4RRFFQ69G6E02");
+        let mut channel = empty_channel_record();
+        channel.channel_type = filament_core::ChannelType::Encrypted;
+        state.membership_store.guilds().write().await.insert(
+            guild_id.clone(),
+            GuildRecord {
+                name: String::from("encrypted"),
+                visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
+                created_by_user_id: UserId::new(),
+                default_join_role_id: None,
+                members: HashMap::new(),
+                banned_members: HashSet::new(),
+                channels: HashMap::from([(channel_id.clone(), channel)]),
+            },
+        );
+
+        assert!(matches!(
+            require_plaintext_channel(&state, &guild_id, &channel_id).await,
+            Err(AuthFailure::E2eeEncryptedChannelRequired)
+        ));
+        assert!(matches!(
+            require_plaintext_channel(&state, &guild_id, "missing").await,
+            Err(AuthFailure::NotFound)
+        ));
     }
 
     #[tokio::test]
@@ -846,6 +920,7 @@ mod tests {
             GuildRecord {
                 name: String::from("phase7"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: guild_creator,
                 default_join_role_id: None,
                 members: HashMap::new(),
@@ -875,6 +950,7 @@ mod tests {
             GuildRecord {
                 name: String::from("matrix"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: guild_creator,
                 default_join_role_id: None,
                 members: HashMap::from([(actor_user_id, Role::Member)]),
@@ -970,6 +1046,7 @@ mod tests {
             GuildRecord {
                 name: String::from("owner-bypass"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: guild_creator,
                 default_join_role_id: None,
                 members: HashMap::from([(owner_user_id, Role::Owner)]),

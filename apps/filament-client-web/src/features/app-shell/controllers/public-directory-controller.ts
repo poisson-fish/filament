@@ -155,6 +155,7 @@ export function createPublicDirectoryController(
             guildId: guild.guildId,
             guildName: guild.name,
             visibility: guild.visibility,
+            encryptedChannelPolicy: guild.encryptedChannelPolicy ?? "disabled",
             channels: await deps.fetchGuildChannels(session, guild.guildId),
           };
         } catch (error) {

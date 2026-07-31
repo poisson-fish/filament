@@ -4,6 +4,10 @@ export type GuildId = string & { readonly __brand: "guild_id" };
 export type ChannelId = string & { readonly __brand: "channel_id" };
 export type MessageId = string & { readonly __brand: "message_id" };
 export type UserId = string & { readonly __brand: "user_id" };
+export type DeviceId = string & { readonly __brand: "device_id" };
+export type GroupId = string & { readonly __brand: "group_id" };
+export type ConversationId = string & { readonly __brand: "conversation_id" };
+export type ProposalId = string & { readonly __brand: "proposal_id" };
 export type AttachmentId = string & { readonly __brand: "attachment_id" };
 export type FriendRequestId = string & { readonly __brand: "friend_request_id" };
 export type GuildIpBanId = string & { readonly __brand: "guild_ip_ban_id" };
@@ -23,7 +27,12 @@ export type LivekitUrl = string & { readonly __brand: "livekit_url" };
 export type LivekitRoom = string & { readonly __brand: "livekit_room" };
 export type LivekitIdentity = string & { readonly __brand: "livekit_identity" };
 export type GuildVisibility = "private" | "public";
+export type EncryptedChannelPolicy =
+  | "disabled"
+  | "require_moderator_membership"
+  | "unrestricted";
 export type ChannelKindName = "text" | "voice";
+export type ChannelTypeName = "plaintext" | "encrypted";
 export type RoleName = "owner" | "moderator" | "member";
 export type PermissionName =
   | "manage_roles"
@@ -92,6 +101,10 @@ function idFromInput<
   | ChannelId
   | MessageId
   | UserId
+  | DeviceId
+  | GroupId
+  | ConversationId
+  | ProposalId
   | AttachmentId
   | FriendRequestId
   | GuildIpBanId
@@ -342,8 +355,24 @@ export function messageIdFromInput(input: string): MessageId {
   return idFromInput<MessageId>(input, "Message ID");
 }
 
+export function proposalIdFromInput(input: string): ProposalId {
+  return idFromInput<ProposalId>(input, "Proposal ID");
+}
+
 export function userIdFromInput(input: string): UserId {
   return idFromInput<UserId>(input, "User ID");
+}
+
+export function deviceIdFromInput(input: string): DeviceId {
+  return idFromInput<DeviceId>(input, "Device ID");
+}
+
+export function groupIdFromInput(input: string): GroupId {
+  return idFromInput<GroupId>(input, "Group ID");
+}
+
+export function conversationIdFromInput(input: string): ConversationId {
+  return idFromInput<ConversationId>(input, "Conversation ID");
 }
 
 export function attachmentIdFromInput(input: string): AttachmentId {
@@ -454,6 +483,13 @@ export function channelKindFromInput(input: string): ChannelKindName {
   return input;
 }
 
+export function channelTypeFromInput(input: string): ChannelTypeName {
+  if (input !== "plaintext" && input !== "encrypted") {
+    throw new DomainValidationError("Channel type must be plaintext or encrypted.");
+  }
+  return input;
+}
+
 export function messageContentFromInput(input: string): MessageContent {
   if (input.length > 2000) {
     throw new DomainValidationError("Message content must be 0-2000 characters.");
@@ -507,6 +543,17 @@ export function roleFromInput(input: string): RoleName {
 export function guildVisibilityFromInput(input: string): GuildVisibility {
   if (input !== "private" && input !== "public") {
     throw new DomainValidationError("Guild visibility must be private or public.");
+  }
+  return input;
+}
+
+export function encryptedChannelPolicyFromInput(input: string): EncryptedChannelPolicy {
+  if (
+    input !== "disabled" &&
+    input !== "require_moderator_membership" &&
+    input !== "unrestricted"
+  ) {
+    throw new DomainValidationError("Invalid encrypted channel policy.");
   }
   return input;
 }
@@ -574,12 +621,16 @@ export interface GuildRecord {
   guildId: GuildId;
   name: GuildName;
   visibility: GuildVisibility;
+  /** Omitted only by pre-Phase-6 servers, which permitted no encrypted channels. */
+  encryptedChannelPolicy?: EncryptedChannelPolicy;
 }
 
 export interface ChannelRecord {
   channelId: ChannelId;
   name: ChannelName;
   kind: ChannelKindName;
+  /** Omitted only by pre-Phase-6 cached records, which were necessarily plaintext. */
+  channelType?: ChannelTypeName;
 }
 
 export interface ChannelPermissionSnapshot {
@@ -705,20 +756,35 @@ export function markdownTokensFromResponse(dto: unknown): MarkdownToken[] {
 
 export function guildFromResponse(dto: unknown): GuildRecord {
   const data = requireObject(dto, "guild");
-  return {
+  const guild: GuildRecord = {
     guildId: guildIdFromInput(requireString(data.guild_id, "guild_id")),
     name: guildNameFromInput(requireString(data.name, "name")),
     visibility: guildVisibilityFromInput(requireString(data.visibility, "visibility", 16)),
   };
+  if (typeof data.encrypted_channel_policy !== "undefined") {
+    guild.encryptedChannelPolicy = encryptedChannelPolicyFromInput(
+      requireString(data.encrypted_channel_policy, "encrypted_channel_policy", 32),
+    );
+  }
+  return guild;
 }
 
 export function channelFromResponse(dto: unknown): ChannelRecord {
   const data = requireObject(dto, "channel");
-  return {
+  const rawChannelType = data.channel_type;
+  const channel: ChannelRecord = {
     channelId: channelIdFromInput(requireString(data.channel_id, "channel_id")),
     name: channelNameFromInput(requireString(data.name, "name")),
     kind: channelKindFromInput(requireString(data.kind, "kind", 16)),
   };
+  // Compatibility with pre-Phase-6 servers is plaintext-only. Every current
+  // server response includes this field, and unknown values fail closed.
+  if (typeof rawChannelType !== "undefined") {
+    channel.channelType = channelTypeFromInput(
+      requireString(rawChannelType, "channel_type", 16),
+    );
+  }
+  return channel;
 }
 
 export interface PublicGuildDirectory {
@@ -1356,6 +1422,8 @@ export interface WorkspaceRecord {
   guildId: GuildId;
   guildName: GuildName;
   visibility: GuildVisibility;
+  /** Absent cached values are equivalent to the fail-closed disabled policy. */
+  encryptedChannelPolicy?: EncryptedChannelPolicy;
   channels: ChannelRecord[];
 }
 
@@ -1372,9 +1440,16 @@ export function workspaceFromStorage(dto: unknown): WorkspaceRecord {
       typeof data.visibility === "string"
         ? guildVisibilityFromInput(requireString(data.visibility, "visibility", 16))
         : "private",
+    encryptedChannelPolicy:
+      typeof data.encryptedChannelPolicy === "string"
+        ? encryptedChannelPolicyFromInput(
+            requireString(data.encryptedChannelPolicy, "encryptedChannelPolicy", 32),
+          )
+        : "disabled",
     channels: channelsDto.map((channel) => {
       const channelObj = requireObject(channel, "channel cache");
       const kindValue = channelObj.kind;
+      const channelTypeValue = channelObj.channelType;
       return {
         channelId: channelIdFromInput(requireString(channelObj.channelId, "channelId")),
         name: channelNameFromInput(requireString(channelObj.name, "name")),
@@ -1382,6 +1457,10 @@ export function workspaceFromStorage(dto: unknown): WorkspaceRecord {
           typeof kindValue === "string"
             ? channelKindFromInput(requireString(kindValue, "kind", 16))
             : "text",
+        channelType:
+          typeof channelTypeValue === "string"
+            ? channelTypeFromInput(requireString(channelTypeValue, "channelType", 16))
+            : "plaintext",
       };
     }),
   };

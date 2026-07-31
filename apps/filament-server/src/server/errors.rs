@@ -22,6 +22,14 @@ pub(crate) enum AuthFailure {
     RateLimited,
     PayloadTooLarge,
     QuotaExceeded,
+    E2eeCapabilityRequired,
+    E2eeChannelPolicyDisabled,
+    E2eeChannelProvisioningRequired,
+    E2eeEncryptedChannelRequired,
+    E2eeConversationConflict,
+    E2eeAttachmentConflict,
+    EpochConflict,
+    E2eeMembershipReconciliationPending,
     Internal,
 }
 
@@ -49,6 +57,14 @@ impl IntoResponse for AuthFailure {
             | Self::NotFound
             | Self::PayloadTooLarge
             | Self::QuotaExceeded
+            | Self::E2eeCapabilityRequired
+            | Self::E2eeChannelPolicyDisabled
+            | Self::E2eeChannelProvisioningRequired
+            | Self::E2eeEncryptedChannelRequired
+            | Self::E2eeConversationConflict
+            | Self::E2eeAttachmentConflict
+            | Self::EpochConflict
+            | Self::E2eeMembershipReconciliationPending
             | Self::Internal => {}
         }
 
@@ -130,6 +146,62 @@ impl IntoResponse for AuthFailure {
                 StatusCode::CONFLICT,
                 Json(AuthError {
                     error: "quota_exceeded",
+                }),
+            )
+                .into_response(),
+            Self::E2eeCapabilityRequired => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "e2ee_capability_required",
+                }),
+            )
+                .into_response(),
+            Self::E2eeChannelPolicyDisabled => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "encrypted_channel_policy_disabled",
+                }),
+            )
+                .into_response(),
+            Self::E2eeChannelProvisioningRequired => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "e2ee_channel_provisioning_required",
+                }),
+            )
+                .into_response(),
+            Self::E2eeEncryptedChannelRequired => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "encrypted_channel_requires_e2ee",
+                }),
+            )
+                .into_response(),
+            Self::E2eeConversationConflict => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "e2ee_conversation_conflict",
+                }),
+            )
+                .into_response(),
+            Self::E2eeAttachmentConflict => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "e2ee_attachment_conflict",
+                }),
+            )
+                .into_response(),
+            Self::EpochConflict => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "epoch_conflict",
+                }),
+            )
+                .into_response(),
+            Self::E2eeMembershipReconciliationPending => (
+                StatusCode::CONFLICT,
+                Json(AuthError {
+                    error: "e2ee_membership_reconciliation_pending",
                 }),
             )
                 .into_response(),

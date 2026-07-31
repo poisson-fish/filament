@@ -615,14 +615,16 @@ Every phase has:
 - Secure token storage, background voice policies
 
 ### Status
-- NOT STARTED
+- SECURE PACKAGED-CHAT FOUNDATION PLANNED IN E2EE PHASE 5.5
+- PUSH, VOICE, VIDEO, AND BROADER MOBILE PRODUCT WORK NOT STARTED
 
 ### Notes
 - Mobile WebRTC uses native stacks; LiveKit SDKs may help.
 - Keep protocol compatibility identical across clients.
 
 ### TODOs
-- Decide mobile framework strategy.
+- Complete the Phase 5.5 security/maintenance comparison and framework decision
+  before implementing the Android/iOS adapters.
 - Add threat model for push + notification metadata.
 
 ### Security Outlook

@@ -312,22 +312,20 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_oversized_outbound_payload_before_enqueue() {
-        if let Ok(mut counters) = metrics_state().gateway_events_dropped.lock() {
-            counters.clear();
-        }
-
         let connection_id = Uuid::new_v4();
         let (sender, mut receiver) = mpsc::channel::<String>(1);
         let mut listeners = HashMap::from([(connection_id, sender)]);
         let mut slow_connections = Vec::new();
         let payload = "payload";
+        let event_type = "message_create_oversized_unit_test";
+        let scope = "channel_oversized_unit_test";
 
         let delivered = dispatch_gateway_payload(
             &mut listeners,
             payload,
             payload.len() - 1,
-            "message_create",
-            "channel",
+            event_type,
+            scope,
             &mut slow_connections,
         );
 
@@ -341,8 +339,8 @@ mod tests {
             .lock()
             .expect("gateway dropped metrics mutex should not be poisoned");
         let key = (
-            String::from("channel"),
-            String::from("message_create"),
+            String::from(scope),
+            String::from(event_type),
             String::from(GATEWAY_DROP_REASON_OVERSIZED_OUTBOUND),
         );
         assert_eq!(dropped.get(&key).copied(), Some(1));
@@ -350,10 +348,6 @@ mod tests {
 
     #[tokio::test]
     async fn records_closed_and_full_queue_drop_reasons() {
-        if let Ok(mut counters) = metrics_state().gateway_events_dropped.lock() {
-            counters.clear();
-        }
-
         let full_id = Uuid::new_v4();
         let closed_id = Uuid::new_v4();
         let event_type = "message_create_reason_test";

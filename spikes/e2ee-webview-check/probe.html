@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; worker-src 'self'; style-src 'self'"
+    >
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Filament WebRTC encoded-transform probe</title>
+    <link rel="stylesheet" href="probe.css">
+  </head>
+  <body>
+    <main>
+      <h1>Filament WebRTC encoded-transform probe</h1>
+      <p>
+        Run inside the packaged desktop webview. The probe creates an entirely
+        local audio peer connection and verifies that encoded frames reach
+        transforms on both the sender and receiver.
+      </p>
+      <button id="run" type="button">Run probe</button>
+      <pre id="result" aria-live="polite">Not run</pre>
+    </main>
+    <script src="probe.js"></script>
+  </body>
+</html>

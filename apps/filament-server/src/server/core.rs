@@ -11,6 +11,7 @@ use argon2::password_hash::rand_core::{OsRng, RngCore};
 use filament_core::{
     ChannelKind, ChannelPermissionOverwrite, MarkdownToken, PermissionSet, Role, UserId, Username,
 };
+use filament_e2ee::DeliveryServiceSigner;
 use object_store::local::LocalFileSystem;
 use pasetors::{keys::SymmetricKey, version4::V4};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,7 @@ use super::{
         IpNetwork, DEFAULT_AUDIT_LIST_LIMIT_MAX, DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_IP,
         DEFAULT_DIRECTORY_JOIN_REQUESTS_PER_MINUTE_PER_USER, DEFAULT_GUILD_IP_BAN_MAX_ENTRIES,
     },
+    e2ee_delivery_service::load_delivery_service_signer,
     errors::AuthFailure,
     realtime::init_search_service,
 };
@@ -92,6 +94,20 @@ pub(crate) const MAX_TRACKED_VOICE_CHANNELS: usize = 1024;
 pub(crate) const MAX_TRACKED_VOICE_PARTICIPANTS_PER_CHANNEL: usize = 512;
 pub(crate) const METRICS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
+// E2EE constants
+pub const DEFAULT_E2EE_DEVICE_PUBLISH_PER_MINUTE: u32 = 10;
+pub const DEFAULT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE: u32 = 30;
+pub const DEFAULT_E2EE_COMMIT_PER_MINUTE: u32 = 30;
+pub const DEFAULT_E2EE_MESSAGE_PER_MINUTE: u32 = 120;
+pub const DEFAULT_E2EE_ATTACHMENT_PER_MINUTE: u32 = 20;
+pub const DEFAULT_E2EE_MAX_KEYPACKAGE_POOL_SIZE: usize = 100;
+pub const DEFAULT_E2EE_MAILBOX_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+pub const DEFAULT_E2EE_MAILBOX_GC_INTERVAL_SECS: u64 = 60;
+pub const MAX_E2EE_MAILBOX_TTL_SECS: u64 = 90 * 24 * 60 * 60;
+pub const MAX_E2EE_MAILBOX_GC_INTERVAL_SECS: u64 = 60 * 60;
+pub const DEFAULT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS: u64 = 5 * 60;
+pub const MAX_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS: u64 = 60 * 60;
+
 pub(crate) static METRICS_STATE: OnceLock<MetricsState> = OnceLock::new();
 
 #[derive(Default)]
@@ -104,6 +120,8 @@ pub(crate) struct MetricsState {
     pub(crate) gateway_events_unknown_received: Mutex<HashMap<(String, String), u64>>,
     pub(crate) gateway_events_parse_rejected: Mutex<HashMap<(String, String), u64>>,
     pub(crate) voice_sync_repairs: Mutex<HashMap<String, u64>>,
+    pub(crate) e2ee_membership_reconciliations:
+        Mutex<crate::server::e2ee_reconciliation::ReconciliationObservation>,
 }
 
 #[derive(Clone, Debug)]
@@ -143,6 +161,16 @@ pub struct AppConfig {
     pub server_owner_user_id: Option<UserId>,
     pub attachment_root: PathBuf,
     pub database_url: Option<String>,
+    pub e2ee_delivery_service_key_file: Option<PathBuf>,
+    pub e2ee_device_publish_per_minute: u32,
+    pub e2ee_keypackage_claim_per_minute: u32,
+    pub e2ee_commit_per_minute: u32,
+    pub e2ee_message_per_minute: u32,
+    pub e2ee_attachment_per_minute: u32,
+    pub e2ee_max_keypackage_pool_size: usize,
+    pub e2ee_mailbox_ttl: Duration,
+    pub e2ee_mailbox_gc_interval: Duration,
+    pub e2ee_membership_reconciliation_window: Duration,
 }
 
 impl Default for AppConfig {
@@ -185,6 +213,18 @@ impl Default for AppConfig {
             server_owner_user_id: None,
             attachment_root: PathBuf::from("./data/attachments"),
             database_url: None,
+            e2ee_delivery_service_key_file: None,
+            e2ee_device_publish_per_minute: DEFAULT_E2EE_DEVICE_PUBLISH_PER_MINUTE,
+            e2ee_keypackage_claim_per_minute: DEFAULT_E2EE_KEYPACKAGE_CLAIM_PER_MINUTE,
+            e2ee_commit_per_minute: DEFAULT_E2EE_COMMIT_PER_MINUTE,
+            e2ee_message_per_minute: DEFAULT_E2EE_MESSAGE_PER_MINUTE,
+            e2ee_attachment_per_minute: DEFAULT_E2EE_ATTACHMENT_PER_MINUTE,
+            e2ee_max_keypackage_pool_size: DEFAULT_E2EE_MAX_KEYPACKAGE_POOL_SIZE,
+            e2ee_mailbox_ttl: Duration::from_secs(DEFAULT_E2EE_MAILBOX_TTL_SECS),
+            e2ee_mailbox_gc_interval: Duration::from_secs(DEFAULT_E2EE_MAILBOX_GC_INTERVAL_SECS),
+            e2ee_membership_reconciliation_window: Duration::from_secs(
+                DEFAULT_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS,
+            ),
         }
     }
 }
@@ -211,6 +251,15 @@ pub(crate) struct RuntimeSecurityConfig {
     pub(crate) media_publish_requests_per_minute: u32,
     pub(crate) media_subscribe_token_cap_per_channel: usize,
     pub(crate) max_created_guilds_per_user: usize,
+    pub(crate) e2ee_device_publish_per_minute: u32,
+    pub(crate) e2ee_keypackage_claim_per_minute: u32,
+    pub(crate) e2ee_commit_per_minute: u32,
+    pub(crate) e2ee_message_per_minute: u32,
+    pub(crate) e2ee_attachment_per_minute: u32,
+    pub(crate) e2ee_max_keypackage_pool_size: usize,
+    pub(crate) e2ee_mailbox_ttl: Duration,
+    pub(crate) e2ee_mailbox_gc_interval: Duration,
+    pub(crate) e2ee_membership_reconciliation_window: Duration,
     pub(crate) trusted_proxy_cidrs: Arc<Vec<IpNetwork>>,
     pub(crate) server_owner_user_id: Option<UserId>,
     pub(crate) livekit_token_ttl: Duration,
@@ -299,6 +348,7 @@ pub struct AppState {
     pub(crate) user_ip_observation_writes: Arc<RwLock<HashMap<String, i64>>>,
     pub(crate) media_token_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_publish_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
+    pub(crate) e2ee_rate_limit_hits: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) media_subscribe_leases: Arc<RwLock<HashMap<String, Vec<i64>>>>,
     pub(crate) rate_limit_last_sweep_unix: Arc<AtomicI64>,
     pub(crate) auth_session_last_sweep_unix: Arc<AtomicI64>,
@@ -317,6 +367,7 @@ pub struct AppState {
     pub(crate) livekit: Option<Arc<LiveKitConfig>>,
     pub(crate) livekit_room: Option<Arc<livekit_api::services::room::RoomClient>>,
     pub(crate) http_client: Arc<reqwest::Client>,
+    pub(crate) e2ee_delivery_service: Option<Arc<DeliveryServiceSigner>>,
 }
 
 impl AppState {
@@ -348,6 +399,11 @@ impl AppState {
         let http_client = reqwest::Client::builder()
             .build()
             .map_err(|e| anyhow!("http client init failed: {e}"))?;
+        let e2ee_delivery_service = config
+            .e2ee_delivery_service_key_file
+            .as_deref()
+            .map(load_delivery_service_signer)
+            .transpose()?;
         let guilds = Arc::new(RwLock::new(HashMap::new()));
         let guild_roles = Arc::new(RwLock::new(HashMap::new()));
         let guild_role_assignments = Arc::new(RwLock::new(HashMap::new()));
@@ -389,6 +445,7 @@ impl AppState {
             user_ip_observation_writes: Arc::new(RwLock::new(HashMap::new())),
             media_token_hits: Arc::new(RwLock::new(HashMap::new())),
             media_publish_hits: Arc::new(RwLock::new(HashMap::new())),
+            e2ee_rate_limit_hits: Arc::new(RwLock::new(HashMap::new())),
             media_subscribe_leases: Arc::new(RwLock::new(HashMap::new())),
             rate_limit_last_sweep_unix: Arc::new(AtomicI64::new(0)),
             auth_session_last_sweep_unix: Arc::new(AtomicI64::new(0)),
@@ -426,6 +483,15 @@ impl AppState {
                 media_publish_requests_per_minute: config.media_publish_requests_per_minute,
                 media_subscribe_token_cap_per_channel: config.media_subscribe_token_cap_per_channel,
                 max_created_guilds_per_user: config.max_created_guilds_per_user,
+                e2ee_device_publish_per_minute: config.e2ee_device_publish_per_minute,
+                e2ee_keypackage_claim_per_minute: config.e2ee_keypackage_claim_per_minute,
+                e2ee_commit_per_minute: config.e2ee_commit_per_minute,
+                e2ee_message_per_minute: config.e2ee_message_per_minute,
+                e2ee_attachment_per_minute: config.e2ee_attachment_per_minute,
+                e2ee_max_keypackage_pool_size: config.e2ee_max_keypackage_pool_size,
+                e2ee_mailbox_ttl: config.e2ee_mailbox_ttl,
+                e2ee_mailbox_gc_interval: config.e2ee_mailbox_gc_interval,
+                e2ee_membership_reconciliation_window: config.e2ee_membership_reconciliation_window,
                 trusted_proxy_cidrs: Arc::new(config.trusted_proxy_cidrs.clone()),
                 server_owner_user_id: config.server_owner_user_id,
                 livekit_token_ttl: config.livekit_token_ttl,
@@ -440,6 +506,7 @@ impl AppState {
                 ))
             }),
             http_client: Arc::new(http_client),
+            e2ee_delivery_service,
         })
     }
 }
@@ -727,6 +794,7 @@ pub(crate) enum GuildVisibility {
 pub(crate) struct GuildRecord {
     pub(crate) name: String,
     pub(crate) visibility: GuildVisibility,
+    pub(crate) encrypted_channel_policy: filament_core::EncryptedChannelPolicy,
     pub(crate) created_by_user_id: UserId,
     pub(crate) default_join_role_id: Option<String>,
     pub(crate) members: HashMap<UserId, Role>,
@@ -738,6 +806,7 @@ pub(crate) struct GuildRecord {
 pub(crate) struct ChannelRecord {
     pub(crate) name: String,
     pub(crate) kind: ChannelKind,
+    pub(crate) channel_type: filament_core::ChannelType,
     pub(crate) messages: Vec<MessageRecord>,
     pub(crate) role_overrides: HashMap<Role, ChannelPermissionOverwrite>,
 }
@@ -1078,6 +1147,7 @@ mod tests {
             GuildRecord {
                 name: String::from("guild"),
                 visibility: GuildVisibility::Private,
+                encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
                 created_by_user_id: UserId::new(),
                 default_join_role_id: None,
                 members: HashMap::new(),

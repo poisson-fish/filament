@@ -5,7 +5,46 @@ import type {
   VoiceDevicePreferences,
 } from "../../../../lib/voice-device-settings";
 import { PROFILE_ABOUT_MAX_CHARS, type ProfileRecord } from "../../../../domain/chat";
+import { NATIVE_ROTATE_IDENTITY_CONFIRMATION } from "../../../../lib/native-client";
 import { SafeMarkdown } from "../SafeMarkdown";
+
+export const ROTATE_IDENTITY_CONFIRMATION = NATIVE_ROTATE_IDENTITY_CONFIRMATION;
+
+export interface EncryptionSettingsDeviceView {
+  deviceId: string;
+  addedAtUnix: number;
+  isCurrentDevice: boolean;
+  verification: "verified" | "unverified";
+}
+
+export interface EncryptionPolicyReconciliationView {
+  groupId: string;
+  deadlineUnix: number;
+  state: "pending" | "overdue";
+}
+
+export interface EncryptionSettingsView {
+  ready: boolean;
+  safetyNumber: string;
+  rotationSequence: number;
+  devices: EncryptionSettingsDeviceView[];
+  backupEnrolled: boolean;
+  policyReconciliations: EncryptionPolicyReconciliationView[];
+}
+
+function formatDeviceAddedAt(unixSeconds: number): string {
+  if (!Number.isSafeInteger(unixSeconds) || unixSeconds < 0 || unixSeconds > 253_402_300_799) {
+    return "Unknown date";
+  }
+  return new Date(unixSeconds * 1000).toISOString();
+}
+
+function formatReconciliationDeadline(unixSeconds: number): string {
+  if (!Number.isSafeInteger(unixSeconds) || unixSeconds < 0 || unixSeconds > 253_402_300_799) {
+    return "Unknown deadline";
+  }
+  return new Date(unixSeconds * 1000).toISOString();
+}
 
 export interface SettingsPanelProps {
   settingsCategories: SettingsCategoryItem[];
@@ -30,6 +69,11 @@ export interface SettingsPanelProps {
   isUploadingProfileBanner: boolean;
   profileStatus: string;
   profileError: string;
+  encryptionSettings?: EncryptionSettingsView | null;
+  rotationConfirmation?: string;
+  isRotatingIdentity?: boolean;
+  identityRotationStatus?: string;
+  identityRotationError?: string;
   onOpenSettingsCategory: (category: SettingsCategory) => void;
   onOpenVoiceSettingsSubmenu: (submenu: VoiceSettingsSubmenu) => void;
   onSetVoiceDevicePreference: (
@@ -44,6 +88,8 @@ export interface SettingsPanelProps {
   onSaveProfile: () => Promise<void> | void;
   onUploadProfileAvatar: () => Promise<void> | void;
   onUploadProfileBanner: () => Promise<void> | void;
+  onRotationConfirmationInput?: (value: string) => void;
+  onRotateIdentity?: () => Promise<void> | void;
 }
 
 export function SettingsPanel(props: SettingsPanelProps) {
@@ -58,6 +104,11 @@ export function SettingsPanel(props: SettingsPanelProps) {
   const formButtonClass =
     "bg-bg-3 border border-line-soft rounded-[0.62rem] text-ink-1 px-[0.72rem] py-[0.46rem] font-medium hover:bg-bg-4 active:bg-bg-2 disabled:opacity-50 disabled:pointer-events-none transition-colors";
   const profileAboutRemainingChars = () => PROFILE_ABOUT_MAX_CHARS - props.profileDraftAbout.length;
+  const rotationConfirmation = () => props.rotationConfirmation ?? "";
+  const canRotateIdentity = () =>
+    props.encryptionSettings?.ready === true &&
+    rotationConfirmation() === ROTATE_IDENTITY_CONFIRMATION &&
+    props.isRotatingIdentity !== true;
 
   return (
     <section
@@ -374,6 +425,112 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   />
                 </section>
               )}
+            </Show>
+          </Match>
+          <Match when={props.activeSettingsCategory === "encryption"}>
+            <p class={sectionLabelClassName}>END-TO-END ENCRYPTION</p>
+            <Show
+              when={props.encryptionSettings?.ready === true}
+              fallback={
+                <section class="grid gap-[0.45rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.78rem]">
+                  <p class="m-0 font-[700] text-ink-0">Native encryption unavailable</p>
+                  <p class="muted m-0">
+                    Encryption keys are device-bound and available only through the signed native client.
+                    No plaintext fallback or browser key access is provided.
+                  </p>
+                  <Show when={props.identityRotationError}>
+                    <p class="status error">{props.identityRotationError}</p>
+                  </Show>
+                </section>
+              }
+            >
+              <section class="grid gap-[0.5rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.78rem]" aria-label="Safety number">
+                <p class={sectionLabelClassName}>SAFETY NUMBER</p>
+                <code class="break-all rounded-[0.5rem] bg-bg-3 p-[0.62rem] font-code text-[0.88rem] text-ink-0">
+                  {props.encryptionSettings?.safetyNumber}
+                </code>
+                <p class="muted m-0">Rotation sequence {props.encryptionSettings?.rotationSequence ?? 0}. Compare this fingerprint out of band before marking a contact verified.</p>
+              </section>
+
+              <section class="grid gap-[0.5rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.78rem]" aria-label="Encrypted devices">
+                <p class={sectionLabelClassName}>DEVICES</p>
+                <ul class="m-0 grid list-none gap-[0.45rem] p-0">
+                  <For each={props.encryptionSettings?.devices ?? []}>
+                    {(device) => (
+                      <li class="grid gap-[0.2rem] rounded-[0.55rem] border border-line-soft bg-bg-3 p-[0.62rem] sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <div class="min-w-0">
+                          <p class="m-0 break-all font-code text-[0.8rem] text-ink-0">{device.deviceId}</p>
+                          <p class="muted m-0 text-[0.75rem]">Added {formatDeviceAddedAt(device.addedAtUnix)}</p>
+                        </div>
+                        <p class="m-0 text-[0.76rem] text-ink-1">{device.isCurrentDevice ? "This device" : "Paired device"} · {device.verification}</p>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </section>
+
+              <Show when={(props.encryptionSettings?.policyReconciliations.length ?? 0) > 0}>
+                <section class="grid gap-[0.5rem] rounded-[0.72rem] border border-danger/60 bg-danger/10 p-[0.78rem]" aria-label="Encrypted channel safety warnings">
+                  <p class={sectionLabelClassName}>ENCRYPTED CHANNEL SAFETY</p>
+                  <p class="m-0 text-ink-0">
+                    Sending is blocked in the groups below until the authenticated removal is committed.
+                  </p>
+                  <ul class="m-0 grid list-none gap-[0.45rem] p-0">
+                    <For each={props.encryptionSettings?.policyReconciliations ?? []}>
+                      {(reconciliation) => (
+                        <li class="grid gap-[0.2rem] rounded-[0.55rem] border border-danger/50 bg-bg-3 p-[0.62rem]">
+                          <p class="m-0 break-all font-code text-[0.8rem] text-ink-0">
+                            {reconciliation.groupId}
+                          </p>
+                          <p class="m-0 text-[0.76rem] text-ink-1">
+                            {reconciliation.state === "overdue" ? "Removal overdue" : "Removal pending"}
+                            {" · "}
+                            {formatReconciliationDeadline(reconciliation.deadlineUnix)}
+                          </p>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                  <p class="muted m-0">
+                    Filament will not send encrypted messages while membership is uncertain.
+                  </p>
+                </section>
+              </Show>
+
+              <section class="grid gap-[0.45rem] rounded-[0.72rem] border border-line-soft bg-bg-1 p-[0.78rem]" aria-label="Encrypted backup">
+                <p class={sectionLabelClassName}>BACKUP</p>
+                <p class="m-0 text-ink-1">{props.encryptionSettings?.backupEnrolled ? "Passphrase backup enrolled" : "No passphrase backup enrolled"}</p>
+                <button type="button" class={formButtonClass} disabled title="Encrypted history backup ships in Phase 4">Backup controls coming with encrypted history</button>
+              </section>
+
+              <section class="grid gap-[0.5rem] rounded-[0.72rem] border border-danger/60 bg-danger/10 p-[0.78rem]" aria-label="Rotate identity">
+                <p class={sectionLabelClassName}>DANGER ZONE</p>
+                <p class="m-0 text-ink-0">Rotating your root identity revokes every other device, destroys all unclaimed KeyPackages, and changes your safety number.</p>
+                <label class={formLabelClass}>
+                  Type <code class="font-code">{ROTATE_IDENTITY_CONFIRMATION}</code> to continue
+                  <input
+                    class={formInputClass}
+                    aria-label="Identity rotation confirmation"
+                    value={rotationConfirmation()}
+                    maxlength={ROTATE_IDENTITY_CONFIRMATION.length}
+                    autocomplete="off"
+                    spellcheck={false}
+                    onInput={(event) => props.onRotationConfirmationInput?.(event.currentTarget.value)}
+                  />
+                </label>
+                <div>
+                  <button
+                    type="button"
+                    class="rounded-[0.62rem] border border-danger bg-danger/20 px-[0.72rem] py-[0.46rem] font-medium text-ink-0 disabled:pointer-events-none disabled:opacity-50"
+                    disabled={!canRotateIdentity()}
+                    onClick={() => void props.onRotateIdentity?.()}
+                  >
+                    {props.isRotatingIdentity ? "Rotating identity..." : "Rotate identity and revoke other devices"}
+                  </button>
+                </div>
+                <Show when={props.identityRotationStatus}><p class="status ok">{props.identityRotationStatus}</p></Show>
+                <Show when={props.identityRotationError}><p class="status error">{props.identityRotationError}</p></Show>
+              </section>
             </Show>
           </Match>
         </Switch>

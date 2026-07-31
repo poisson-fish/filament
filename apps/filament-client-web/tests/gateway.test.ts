@@ -1171,6 +1171,7 @@ describe("gateway payload parsing", () => {
       updatedFields: {
         name: "Ops Live",
         visibility: "public",
+        encryptedChannelPolicy: undefined,
       },
       updatedAtUnix: 4,
     });

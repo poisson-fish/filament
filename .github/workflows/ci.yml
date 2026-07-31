@@ -32,7 +32,7 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'apps/filament-server/**'
-              - 'apps/filament-client-desktop/src-tauri/**'
+              - 'apps/filament-client-desktop/**'
               - 'crates/**'
               - '.github/workflows/ci.yml'
               - '.github/workflows/security.yml'
@@ -74,6 +74,11 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Rust format check
         run: cargo fmt --all --check
@@ -156,3 +161,622 @@ jobs:
 
       - name: Build web client
         run: npm run build
+
+  packaged-client-linux:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev lsof xvfb
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "x86_64"
+
+      - name: Build unsigned local Linux packages
+        working-directory: apps/filament-client-desktop
+        run: npm run build -- --debug --bundles deb,appimage --ci --no-sign
+
+      - name: Verify package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform linux
+          --architecture x86_64
+          --bundle-root target/debug/bundle
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/linux-x86_64/manifest.json
+          --checksums target/package-evidence/linux-x86_64/SHA256SUMS
+
+      - name: Install and launch Debian package offline
+        shell: bash
+        run: |
+          mapfile -t DEB_FILES < <(find "$GITHUB_WORKSPACE/target/debug/bundle/deb" -maxdepth 1 -type f -name '*.deb' -print)
+          test "${#DEB_FILES[@]}" -eq 1
+          sudo apt-get install -y "${DEB_FILES[0]}"
+          INSTALLED_EXECUTABLE="$(command -v filament)"
+          test -x "$INSTALLED_EXECUTABLE"
+          xvfb-run -a npm --prefix apps/filament-client-desktop run smoke:desktop -- \
+            --platform linux \
+            --executable "$INSTALLED_EXECUTABLE" \
+            --evidence "$GITHUB_WORKSPACE/target/package-evidence/linux-x86_64/deb-launch.json"
+
+      - name: Launch AppImage offline
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          mapfile -t APPIMAGE_FILES < <(find "$GITHUB_WORKSPACE/target/debug/bundle/appimage" -maxdepth 1 -type f -name '*.AppImage' -print)
+          test "${#APPIMAGE_FILES[@]}" -eq 1
+          chmod u+x "${APPIMAGE_FILES[0]}"
+          xvfb-run -a npm --prefix apps/filament-client-desktop run smoke:desktop -- \
+            --platform linux \
+            --executable "${APPIMAGE_FILES[0]}" \
+            --evidence "$GITHUB_WORKSPACE/target/package-evidence/linux-x86_64/appimage-launch.json"
+
+      - name: Upload verified Linux smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-linux-x86_64-smoke
+          path: |
+            target/debug/bundle/deb/*.deb
+            target/debug/bundle/appimage/*.AppImage
+            target/package-evidence/linux-x86_64/manifest.json
+            target/package-evidence/linux-x86_64/SHA256SUMS
+            target/package-evidence/linux-x86_64/deb-launch.json
+            target/package-evidence/linux-x86_64/appimage-launch.json
+          if-no-files-found: error
+          retention-days: 7
+
+  packaged-client-macos:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: aarch64
+            runner_architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+            runner_architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.runner_architecture }}"
+
+      - name: Build unsigned local macOS app
+        working-directory: apps/filament-client-desktop
+        run: npm run build -- --debug --bundles app --ci --no-sign
+
+      - name: Create noninteractive macOS disk image
+        run: |
+          mkdir -p target/debug/bundle/dmg
+          hdiutil create \
+            -volname Filament \
+            -srcfolder target/debug/bundle/macos/Filament.app \
+            -ov \
+            -format UDZO \
+            target/debug/bundle/dmg/Filament_${{ matrix.architecture }}.dmg
+
+      - name: Verify package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform macos
+          --architecture ${{ matrix.architecture }}
+          --bundle-root target/debug/bundle
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/macos-${{ matrix.architecture }}/manifest.json
+          --checksums target/package-evidence/macos-${{ matrix.architecture }}/SHA256SUMS
+
+      - name: Mount packaged disk image
+        run: |
+          mkdir -p "$RUNNER_TEMP/filament-dmg"
+          hdiutil attach \
+            -nobrowse \
+            -readonly \
+            -mountpoint "$RUNNER_TEMP/filament-dmg" \
+            target/debug/bundle/dmg/Filament_${{ matrix.architecture }}.dmg
+
+      - name: Launch packaged macOS app offline
+        run: >-
+          npm --prefix apps/filament-client-desktop run smoke:desktop --
+          --platform macos
+          --executable "$RUNNER_TEMP/filament-dmg/Filament.app/Contents/MacOS/filament"
+          --evidence "$GITHUB_WORKSPACE/target/package-evidence/macos-${{ matrix.architecture }}/dmg-launch.json"
+
+      - name: Unmount packaged disk image
+        if: always()
+        run: hdiutil detach "$RUNNER_TEMP/filament-dmg" || true
+
+      - name: Upload verified macOS smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-macos-${{ matrix.architecture }}-smoke
+          path: |
+            target/debug/bundle/macos/*.app
+            target/debug/bundle/dmg/*.dmg
+            target/package-evidence/macos-${{ matrix.architecture }}/manifest.json
+            target/package-evidence/macos-${{ matrix.architecture }}/SHA256SUMS
+            target/package-evidence/macos-${{ matrix.architecture }}/dmg-launch.json
+          if-no-files-found: error
+          retention-days: 7
+
+  packaged-client-windows:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
+
+      - name: Verify runner architecture
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
+            throw "packaged Windows build requires x86_64"
+          }
+
+      - name: Build unsigned local Windows package
+        working-directory: apps/filament-client-desktop
+        run: npm run build -- --debug --bundles msi --ci --no-sign
+
+      - name: Verify package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform windows
+          --architecture x86_64
+          --bundle-root target/debug/bundle
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/windows-x86_64/manifest.json
+          --checksums target/package-evidence/windows-x86_64/SHA256SUMS
+
+      - name: Install Windows package
+        shell: pwsh
+        run: |
+          $msiFiles = @(Get-ChildItem "$env:GITHUB_WORKSPACE\target\debug\bundle\msi\*.msi")
+          if ($msiFiles.Count -ne 1) {
+            throw "expected exactly one MSI package"
+          }
+          $installer = Start-Process msiexec.exe `
+            -ArgumentList "/i `"$($msiFiles[0].FullName)`" /qn /norestart" `
+            -Wait `
+            -PassThru
+          if ($installer.ExitCode -ne 0) {
+            throw "MSI installation failed"
+          }
+          $registryPaths = @(
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          $registryCandidates = @(
+            Get-ItemProperty -Path $registryPaths -ErrorAction SilentlyContinue |
+              Where-Object { $_.DisplayName -eq "Filament" -and $_.InstallLocation } |
+              ForEach-Object { Join-Path $_.InstallLocation "filament.exe" }
+          )
+          $candidates = @($registryCandidates) + @(
+            "$env:LOCALAPPDATA\Filament\filament.exe",
+            "$env:LOCALAPPDATA\Programs\Filament\filament.exe",
+            "$env:ProgramFiles\Filament\filament.exe",
+            "${env:ProgramFiles(x86)}\Filament\filament.exe"
+          )
+          $candidates = @(
+            $candidates |
+              Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+              Sort-Object -Unique
+          )
+          if ($candidates.Count -ne 1) {
+            throw "expected exactly one installed Filament executable"
+          }
+          "FILAMENT_INSTALLED_EXECUTABLE=$($candidates[0])" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FILAMENT_INSTALLER_PATH=$($msiFiles[0].FullName)" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Launch installed Windows app offline
+        run: >-
+          npm --prefix apps/filament-client-desktop run smoke:desktop --
+          --platform windows
+          --executable "$env:FILAMENT_INSTALLED_EXECUTABLE"
+          --evidence "$env:GITHUB_WORKSPACE\target\package-evidence\windows-x86_64\msi-launch.json"
+
+      - name: Uninstall Windows package
+        if: always() && env.FILAMENT_INSTALLER_PATH != ''
+        shell: pwsh
+        run: |
+          $uninstaller = Start-Process msiexec.exe `
+            -ArgumentList "/x `"$env:FILAMENT_INSTALLER_PATH`" /qn /norestart" `
+            -Wait `
+            -PassThru
+          if ($uninstaller.ExitCode -ne 0) {
+            throw "MSI uninstall failed"
+          }
+
+      - name: Upload verified Windows smoke artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-windows-x86_64-smoke
+          path: |
+            target/debug/bundle/msi/*.msi
+            target/package-evidence/windows-x86_64/manifest.json
+            target/package-evidence/windows-x86_64/SHA256SUMS
+            target/package-evidence/windows-x86_64/msi-launch.json
+          if-no-files-found: error
+          retention-days: 7
+
+  packaged-client-android:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ANDROID_API_LEVEL: "36"
+      ANDROID_BUILD_TOOLS_VERSION: "36.0.0"
+      ANDROID_NDK_VERSION: "27.2.12479018"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Install exact Android SDK and NDK
+        shell: bash
+        run: |
+          SDK_MANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDK_MANAGER"
+          printf 'y\n%.0s' {1..20} | "$SDK_MANAGER" --licenses >/dev/null
+          "$SDK_MANAGER" \
+            "platforms;android-$ANDROID_API_LEVEL" \
+            "build-tools;$ANDROID_BUILD_TOOLS_VERSION" \
+            "platform-tools" \
+            "emulator" \
+            "system-images;android-$ANDROID_API_LEVEL;google_apis;x86_64" \
+            "ndk;$ANDROID_NDK_VERSION"
+          test -d "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
+
+      - name: Generate pinned Android project
+        working-directory: apps/filament-client-desktop
+        run: npm run android:init -- --ci --skip-targets-install
+
+      - name: Verify generated Android platform contract
+        working-directory: apps/filament-client-desktop
+        run: |
+          GRADLE_FILE="src-tauri/gen/android/app/build.gradle.kts"
+          rg --fixed-strings 'compileSdk = 36' "$GRADLE_FILE"
+          rg --fixed-strings 'minSdk = 33' "$GRADLE_FILE"
+          rg --fixed-strings 'targetSdk = 36' "$GRADLE_FILE"
+          rg --fixed-strings 'manifestPlaceholders["usesCleartextTraffic"] = "false"' "$GRADLE_FILE"
+
+      - name: Build local Android arm64 packages
+        working-directory: apps/filament-client-desktop
+        env:
+          FILAMENT_NATIVE_API_ORIGIN: https://127.0.0.1:9
+        run: npm run android:build -- --target aarch64 --apk --aab --ci
+
+      - name: Stage and verify Android arm64 artifacts
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          APK_FILES=(apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*.apk)
+          AAB_FILES=(apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*.aab)
+          test "${#APK_FILES[@]}" -eq 1
+          test "${#AAB_FILES[@]}" -eq 1
+          APK_ENTRIES="$(unzip -Z1 "${APK_FILES[0]}")"
+          AAB_ENTRIES="$(unzip -Z1 "${AAB_FILES[0]}")"
+          printf '%s\n' "$APK_ENTRIES" | rg '^lib/arm64-v8a/[^/]+\.so$'
+          printf '%s\n' "$AAB_ENTRIES" | rg '^base/lib/arm64-v8a/[^/]+\.so$'
+          if printf '%s\n' "$APK_ENTRIES" | rg '^lib/' | rg -v '^lib/arm64-v8a/' >/dev/null; then
+            echo "APK contains a non-arm64 native library" >&2
+            exit 1
+          fi
+          if printf '%s\n' "$AAB_ENTRIES" | rg '^base/lib/' | rg -v '^base/lib/arm64-v8a/' >/dev/null; then
+            echo "AAB contains a non-arm64 native library" >&2
+            exit 1
+          fi
+          STAGE_ROOT="target/package-artifacts/android-aarch64"
+          mkdir -p "$STAGE_ROOT/apk" "$STAGE_ROOT/aab"
+          cp "${APK_FILES[0]}" "$STAGE_ROOT/apk/$(basename "${APK_FILES[0]}")"
+          cp "${AAB_FILES[0]}" "$STAGE_ROOT/aab/$(basename "${AAB_FILES[0]}")"
+
+      - name: Verify Android package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform android
+          --architecture aarch64
+          --bundle-root target/package-artifacts/android-aarch64
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/android-aarch64/manifest.json
+          --checksums target/package-evidence/android-aarch64/SHA256SUMS
+
+      - name: Start pinned Android API 36 simulator
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod 0666 /dev/kvm
+          AVD_MANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          printf 'no\n' | "$AVD_MANAGER" create avd \
+            --force \
+            --name filament-api36-smoke \
+            --package "system-images;android-$ANDROID_API_LEVEL;google_apis;x86_64"
+          nohup "$ANDROID_HOME/emulator/emulator" \
+            -avd filament-api36-smoke \
+            -port 5554 \
+            -no-window \
+            -no-audio \
+            -no-boot-anim \
+            -no-snapshot \
+            -wipe-data \
+            -gpu swiftshader_indirect \
+            >"$RUNNER_TEMP/filament-android-emulator.log" 2>&1 &
+          adb -s emulator-5554 wait-for-device
+          timeout 300 bash -c \
+            'until test "$(adb -s emulator-5554 shell getprop sys.boot_completed | tr -d "\r")" = "1"; do sleep 2; done'
+
+      - name: Build Android simulator smoke package
+        working-directory: apps/filament-client-desktop
+        env:
+          FILAMENT_NATIVE_API_ORIGIN: https://127.0.0.1:9
+        run: npm run android:build -- --target x86_64 --apk --debug --ci
+
+      - name: Install and launch Android package offline
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          APK_FILES=(apps/filament-client-desktop/src-tauri/gen/android/app/build/outputs/**/*debug*.apk)
+          test "${#APK_FILES[@]}" -eq 1
+          npm --prefix apps/filament-client-desktop run smoke:mobile -- \
+            --platform android \
+            --package "${APK_FILES[0]}" \
+            --device emulator-5554 \
+            --evidence "$GITHUB_WORKSPACE/target/package-evidence/android-aarch64/simulator-launch.json"
+          adb -s emulator-5554 emu kill
+
+      - name: Upload verified Android package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-android-aarch64-smoke
+          path: |
+            target/package-artifacts/android-aarch64/**/*.apk
+            target/package-artifacts/android-aarch64/**/*.aab
+            target/package-evidence/android-aarch64/manifest.json
+            target/package-evidence/android-aarch64/SHA256SUMS
+            target/package-evidence/android-aarch64/simulator-launch.json
+          if-no-files-found: error
+          retention-days: 7
+
+  packaged-client-ios:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          targets: aarch64-apple-ios-sim
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/filament-client-web/package-lock.json
+            apps/filament-client-desktop/package-lock.json
+
+      - name: Verify full Xcode and iOS SDKs
+        run: |
+          test "$(uname -m)" = "arm64"
+          test -d /Applications/Xcode.app
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-path
+
+      - name: Install locked application dependencies
+        run: |
+          npm --prefix apps/filament-client-web ci
+          npm --prefix apps/filament-client-desktop ci
+
+      - name: Verify package policy tests
+        run: npm --prefix apps/filament-client-desktop run test:package-policy
+
+      - name: Generate pinned iOS project
+        working-directory: apps/filament-client-desktop
+        run: npm run ios:init -- --ci --skip-targets-install
+
+      - name: Verify generated iOS platform contract
+        working-directory: apps/filament-client-desktop
+        run: |
+          PROJECT_FILE="$(find src-tauri/gen/apple -path '*.xcodeproj/project.pbxproj' -type f -print)"
+          test -n "$PROJECT_FILE"
+          test "$(printf '%s\n' "$PROJECT_FILE" | wc -l | tr -d ' ')" = "1"
+          rg --fixed-strings 'IPHONEOS_DEPLOYMENT_TARGET = 17.0' "$PROJECT_FILE"
+          rg --fixed-strings 'PRODUCT_BUNDLE_IDENTIFIER = com.filament.desktop' "$PROJECT_FILE"
+
+      - name: Build unsigned local iOS simulator app
+        working-directory: apps/filament-client-desktop
+        env:
+          FILAMENT_NATIVE_API_ORIGIN: https://127.0.0.1:9
+        run: npm run ios:build -- --target aarch64-sim --debug --ci --no-sign
+
+      - name: Verify iOS simulator architecture and metadata
+        shell: bash
+        run: |
+          APP_ROOT="apps/filament-client-desktop/src-tauri/gen/apple/build"
+          APP_COUNT="$(find "$APP_ROOT" -type d -name '*.app' -prune | wc -l | tr -d ' ')"
+          test "$APP_COUNT" = "1"
+          APP_PATH="$(find "$APP_ROOT" -type d -name '*.app' -prune -print)"
+          PLIST_PATH="$APP_PATH/Info.plist"
+          test -f "$PLIST_PATH"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST_PATH")" = "com.filament.desktop"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST_PATH")" = "17.0"
+          EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST_PATH")"
+          test -x "$APP_PATH/$EXECUTABLE_NAME"
+          test "$(lipo -archs "$APP_PATH/$EXECUTABLE_NAME")" = "arm64"
+
+      - name: Verify iOS package contents and checksums
+        run: >-
+          npm --prefix apps/filament-client-desktop run verify:package --
+          --platform ios
+          --architecture aarch64_simulator
+          --bundle-root apps/filament-client-desktop/src-tauri/gen/apple/build
+          --web-dist apps/filament-client-web/dist
+          --manifest target/package-evidence/ios-aarch64-simulator/manifest.json
+          --checksums target/package-evidence/ios-aarch64-simulator/SHA256SUMS
+
+      - name: Install and launch iOS package offline
+        shell: bash
+        run: |
+          APP_ROOT="apps/filament-client-desktop/src-tauri/gen/apple/build"
+          APP_PATH="$(find "$APP_ROOT" -type d -name '*.app' -prune -print)"
+          test -n "$APP_PATH"
+          test "$(printf '%s\n' "$APP_PATH" | wc -l | tr -d ' ')" = "1"
+          IOS_SMOKE_DEVICE="$(
+            xcrun simctl list devices available --json |
+              jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.isAvailable)][0].udid'
+          )"
+          test -n "$IOS_SMOKE_DEVICE"
+          xcrun simctl boot "$IOS_SMOKE_DEVICE" || true
+          npm --prefix apps/filament-client-desktop run smoke:mobile -- \
+            --platform ios \
+            --package "$APP_PATH" \
+            --device "$IOS_SMOKE_DEVICE" \
+            --evidence "$GITHUB_WORKSPACE/target/package-evidence/ios-aarch64-simulator/simulator-launch.json"
+          xcrun simctl shutdown "$IOS_SMOKE_DEVICE"
+
+      - name: Upload verified iOS simulator artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: filament-ios-aarch64-simulator-smoke
+          path: |
+            apps/filament-client-desktop/src-tauri/gen/apple/build/**/*.app
+            target/package-evidence/ios-aarch64-simulator/manifest.json
+            target/package-evidence/ios-aarch64-simulator/SHA256SUMS
+            target/package-evidence/ios-aarch64-simulator/simulator-launch.json
+          if-no-files-found: error
+          retention-days: 7

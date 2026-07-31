@@ -151,19 +151,18 @@ async fn with_realtime_dispatch_timeout<T, F>(
 where
     F: Future<Output = T>,
 {
-    match timeout(REALTIME_DISPATCH_TIMEOUT, operation).await {
-        Ok(value) => Some(value),
-        Err(_) => {
-            record_gateway_event_dropped(scope, event_type, "dispatch_timeout");
-            tracing::warn!(
-                event = "gateway.dispatch.timeout",
-                scope,
-                event_type,
-                timeout_ms = REALTIME_DISPATCH_TIMEOUT.as_millis(),
-                "dropping realtime dispatch after timeout to protect request path",
-            );
-            None
-        }
+    if let Ok(value) = timeout(REALTIME_DISPATCH_TIMEOUT, operation).await {
+        Some(value)
+    } else {
+        record_gateway_event_dropped(scope, event_type, "dispatch_timeout");
+        tracing::warn!(
+            event = "gateway.dispatch.timeout",
+            scope,
+            event_type,
+            timeout_ms = REALTIME_DISPATCH_TIMEOUT.as_millis(),
+            "dropping realtime dispatch after timeout to protect request path",
+        );
+        None
     }
 }
 
@@ -650,7 +649,9 @@ mod tests {
     async fn realtime_dispatch_timeout_returns_none_for_slow_operation() {
         let result = with_realtime_dispatch_timeout("channel", "message.create", async {
             tokio::time::sleep(Duration::from_millis(
-                REALTIME_DISPATCH_TIMEOUT.as_millis() as u64 + 25,
+                u64::try_from(REALTIME_DISPATCH_TIMEOUT.as_millis())
+                    .unwrap()
+                    .saturating_add(25),
             ))
             .await;
             1_usize

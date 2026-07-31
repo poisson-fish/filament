@@ -1,4 +1,9 @@
 import {
+  dispatchE2eeGatewayEvent,
+  E2EE_GATEWAY_DISPATCH_EVENT_TYPES,
+  type E2eeGatewayDispatchHandlers,
+} from "./gateway-e2ee-dispatch";
+import {
   dispatchFriendGatewayEvent,
   FRIEND_GATEWAY_DISPATCH_EVENT_TYPES,
   type FriendGatewayDispatchHandlers,
@@ -30,6 +35,7 @@ import {
 } from "./gateway-workspace-dispatch";
 
 export type GatewayDomainDispatchHandlers =
+  & E2eeGatewayDispatchHandlers
   & MessageGatewayDispatchHandlers
   & WorkspaceGatewayDispatchHandlers
   & ProfileGatewayDispatchHandlers
@@ -49,6 +55,10 @@ interface DomainDispatchRegistration {
 }
 
 const GATEWAY_DOMAIN_DISPATCH_REGISTRATIONS: readonly DomainDispatchRegistration[] = [
+  {
+    dispatch: dispatchE2eeGatewayEvent,
+    eventTypes: E2EE_GATEWAY_DISPATCH_EVENT_TYPES,
+  },
   {
     dispatch: dispatchMessageGatewayEvent,
     eventTypes: MESSAGE_GATEWAY_DISPATCH_EVENT_TYPES,

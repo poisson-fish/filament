@@ -1,0 +1,26 @@
+{
+  "host_schema_version": 1,
+  "target": "linux",
+  "runtime": "webkitgtk",
+  "os_version": "Ubuntu 24.04.4 LTS",
+  "runtime_version": "2.52.3",
+  "host_version": "webkitgtk-diagnostic-v1",
+  "host_sdk_version": "2.52.3",
+  "gstreamer_version": "GStreamer 1.24.2",
+  "shipping_media_path": "native_livekit_gcm",
+  "probe": {
+    "schema_version": 1,
+    "started_at": "2026-07-22T23:48:58.676Z",
+    "user_agent": "Mozilla/5.0 (X11; Ubuntu; Linux aarch64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+    "outcome": "unsupported",
+    "features": {
+      "secure_context": true,
+      "worker": true,
+      "peer_connection": false,
+      "script_transform": false,
+      "sender_transform": false,
+      "receiver_transform": false
+    },
+    "observed_directions": []
+  }
+}

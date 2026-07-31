@@ -376,6 +376,7 @@ mod tests {
         GuildRecord {
             name: String::from("guild"),
             visibility: GuildVisibility::Private,
+            encrypted_channel_policy: filament_core::EncryptedChannelPolicy::Disabled,
             created_by_user_id: author,
             default_join_role_id: None,
             members: HashMap::from([(author, Role::Owner)]),
@@ -386,6 +387,7 @@ mod tests {
                     ChannelRecord {
                         name: String::from("general"),
                         kind: ChannelKind::Text,
+                        channel_type: filament_core::ChannelType::Plaintext,
                         messages: vec![MessageRecord {
                             id: String::from("m1"),
                             author_id: author,
@@ -403,6 +405,7 @@ mod tests {
                     ChannelRecord {
                         name: String::from("random"),
                         kind: ChannelKind::Text,
+                        channel_type: filament_core::ChannelType::Plaintext,
                         messages: vec![MessageRecord {
                             id: String::from("m2"),
                             author_id: author,

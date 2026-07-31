@@ -1,6 +1,11 @@
 import {
+  type DeviceListUpdatePayload,
+  type KeyPackageLowPayload,
+} from "./gateway-e2ee-events";
+import {
   type ChannelId,
   type ChannelRecord,
+  type EncryptedChannelPolicy,
   type GuildId,
   type GuildName,
   type GuildVisibility,
@@ -100,6 +105,7 @@ export interface WorkspaceUpdatePayload {
   updatedFields: {
     name?: GuildName;
     visibility?: GuildVisibility;
+    encryptedChannelPolicy?: EncryptedChannelPolicy;
   };
   updatedAtUnix: number;
 }
@@ -304,6 +310,8 @@ export interface GatewayHandlers {
   onMessageUpdate?: (payload: MessageUpdatePayload) => void;
   onMessageDelete?: (payload: MessageDeletePayload) => void;
   onMessageReaction?: (payload: MessageReactionPayload) => void;
+  onDeviceListUpdate?: (payload: DeviceListUpdatePayload) => void;
+  onKeyPackageLow?: (payload: KeyPackageLowPayload) => void;
   onChannelCreate?: (payload: ChannelCreatePayload) => void;
   onWorkspaceUpdate?: (payload: WorkspaceUpdatePayload) => void;
   onWorkspaceMemberAdd?: (payload: WorkspaceMemberAddPayload) => void;

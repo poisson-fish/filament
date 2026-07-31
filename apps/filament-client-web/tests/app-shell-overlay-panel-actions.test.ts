@@ -53,9 +53,9 @@ describe("app shell overlay panel actions", () => {
   });
 
   it("resets voice submenu when opening voice settings category", () => {
-    const [activeSettingsCategory, setActiveSettingsCategory] = createSignal<"voice" | "profile">(
-      "profile",
-    );
+    const [activeSettingsCategory, setActiveSettingsCategory] = createSignal<
+      "voice" | "profile" | "encryption"
+    >("profile");
     const [activeVoiceSettingsSubmenu, setActiveVoiceSettingsSubmenu] = createSignal<
       "audio-devices"
     >("audio-devices");

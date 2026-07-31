@@ -1,5 +1,12 @@
 #![forbid(unsafe_code)]
 
+pub mod e2ee;
+
+pub use e2ee::{
+    CiphersuiteId, ConversationCrypto, ConversationId, DeviceCertificate, DeviceId, EpochTag,
+    GroupId, ProposalId, MAX_DEVICE_SIGNATURE_PUBKEY_BYTES, MAX_ROOT_KEY_SIGNATURE_BYTES,
+};
+
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
@@ -16,6 +23,10 @@ pub enum DomainError {
     InvalidName,
     #[error("channel kind is invalid")]
     InvalidChannelKind,
+    #[error("channel type is invalid")]
+    InvalidChannelType,
+    #[error("encrypted channel policy is invalid")]
+    InvalidEncryptedChannelPolicy,
     #[error("username is invalid")]
     InvalidUsername,
     #[error("user id is invalid")]
@@ -26,6 +37,20 @@ pub enum DomainError {
     InvalidLiveKitIdentity,
     #[error("profile about is invalid")]
     InvalidProfileAbout,
+    #[error("device id is invalid")]
+    InvalidDeviceId,
+    #[error("group id is invalid")]
+    InvalidGroupId,
+    #[error("proposal id is invalid")]
+    InvalidProposalId,
+    #[error("ciphersuite id is invalid")]
+    InvalidCiphersuiteId,
+    #[error("conversation crypto mode is invalid")]
+    InvalidConversationCrypto,
+    #[error("conversation id is invalid")]
+    InvalidConversationId,
+    #[error("device certificate is invalid")]
+    InvalidDeviceCertificate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +228,94 @@ impl TryFrom<String> for ChannelKind {
             "text" => Ok(Self::Text),
             "voice" => Ok(Self::Voice),
             _ => Err(DomainError::InvalidChannelKind),
+        }
+    }
+}
+
+/// The immutable confidentiality mode for a guild channel.
+///
+/// This is intentionally separate from [`ChannelKind`]: text/voice describes
+/// presentation, while this type controls which transport and storage paths
+/// are permitted. A channel never mixes plaintext and MLS messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelType {
+    #[default]
+    Plaintext,
+    Encrypted,
+}
+
+impl ChannelType {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Plaintext => "plaintext",
+            Self::Encrypted => "encrypted",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_encrypted(self) -> bool {
+        matches!(self, Self::Encrypted)
+    }
+}
+
+impl TryFrom<String> for ChannelType {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "plaintext" => Ok(Self::Plaintext),
+            "encrypted" => Ok(Self::Encrypted),
+            _ => Err(DomainError::InvalidChannelType),
+        }
+    }
+}
+
+/// Workspace policy controlling whether encrypted guild channels may be
+/// provisioned and whether visible moderator membership is required.
+///
+/// The default is deliberately fail-closed: existing workspaces remain
+/// plaintext-only until an authorized operator explicitly enables a policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EncryptedChannelPolicy {
+    #[default]
+    Disabled,
+    RequireModeratorMembership,
+    Unrestricted,
+}
+
+impl EncryptedChannelPolicy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::RequireModeratorMembership => "require_moderator_membership",
+            Self::Unrestricted => "unrestricted",
+        }
+    }
+
+    #[must_use]
+    pub const fn allows_encrypted_channels(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    #[must_use]
+    pub const fn requires_moderator_membership(self) -> bool {
+        matches!(self, Self::RequireModeratorMembership)
+    }
+}
+
+impl TryFrom<String> for EncryptedChannelPolicy {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "disabled" => Ok(Self::Disabled),
+            "require_moderator_membership" => Ok(Self::RequireModeratorMembership),
+            "unrestricted" => Ok(Self::Unrestricted),
+            _ => Err(DomainError::InvalidEncryptedChannelPolicy),
         }
     }
 }
@@ -872,9 +985,9 @@ mod tests {
     use super::{
         apply_channel_overwrite_legacy, base_permissions_legacy, can_assign_role_legacy,
         can_moderate_member_legacy, has_permission_legacy, project_name, role_rank,
-        tokenize_markdown, ChannelKind, ChannelName, ChannelPermissionOverwrite, DomainError,
-        GuildName, LiveKitIdentity, LiveKitRoomName, MarkdownToken, Permission, PermissionSet,
-        ProfileAbout, Role, UserId, Username,
+        tokenize_markdown, ChannelKind, ChannelName, ChannelPermissionOverwrite, ChannelType,
+        DomainError, EncryptedChannelPolicy, GuildName, LiveKitIdentity, LiveKitRoomName,
+        MarkdownToken, Permission, PermissionSet, ProfileAbout, Role, UserId, Username,
     };
 
     #[test]
@@ -922,6 +1035,47 @@ mod tests {
             ChannelKind::try_from(String::from("video")).unwrap_err(),
             DomainError::InvalidChannelKind
         );
+    }
+
+    #[test]
+    fn channel_type_is_strict_and_defaults_to_plaintext() {
+        assert_eq!(ChannelType::default(), ChannelType::Plaintext);
+        assert!(!ChannelType::Plaintext.is_encrypted());
+        assert!(ChannelType::Encrypted.is_encrypted());
+        assert_eq!(ChannelType::Encrypted.as_str(), "encrypted");
+        assert_eq!(
+            ChannelType::try_from(String::from("encrypted")).unwrap(),
+            ChannelType::Encrypted
+        );
+        assert_eq!(
+            ChannelType::try_from(String::from("mls_v1")).unwrap_err(),
+            DomainError::InvalidChannelType
+        );
+        assert!(serde_json::from_str::<ChannelType>("\"ENCRYPTED\"").is_err());
+    }
+
+    #[test]
+    fn encrypted_channel_policy_is_strict_and_defaults_disabled() {
+        assert_eq!(
+            EncryptedChannelPolicy::default(),
+            EncryptedChannelPolicy::Disabled
+        );
+        assert!(!EncryptedChannelPolicy::Disabled.allows_encrypted_channels());
+        assert!(EncryptedChannelPolicy::Unrestricted.allows_encrypted_channels());
+        assert!(EncryptedChannelPolicy::RequireModeratorMembership.requires_moderator_membership());
+        assert_eq!(
+            EncryptedChannelPolicy::RequireModeratorMembership.as_str(),
+            "require_moderator_membership"
+        );
+        assert_eq!(
+            EncryptedChannelPolicy::try_from(String::from("unrestricted")).unwrap(),
+            EncryptedChannelPolicy::Unrestricted
+        );
+        assert_eq!(
+            EncryptedChannelPolicy::try_from(String::from("enabled")).unwrap_err(),
+            DomainError::InvalidEncryptedChannelPolicy
+        );
+        assert!(serde_json::from_str::<EncryptedChannelPolicy>("\"require_moderator\"").is_err());
     }
 
     #[test]

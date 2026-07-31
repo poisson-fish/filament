@@ -35,6 +35,7 @@ async fn history_pagination_returns_persisted_messages() {
         .await
         .unwrap();
     let channel: Value = serde_json::from_slice(&channel_body).unwrap();
+    assert_eq!(channel["channel_type"], "plaintext");
     let channel_id = channel["channel_id"].as_str().unwrap().to_owned();
 
     for content in ["one", "two", "three"] {
@@ -85,6 +86,86 @@ async fn history_pagination_returns_persisted_messages() {
         .unwrap();
     let page_two_json: Value = serde_json::from_slice(&page_two_body).unwrap();
     assert_eq!(page_two_json["messages"][0]["content"], "one");
+}
+
+#[tokio::test]
+async fn encrypted_channel_creation_requires_enabled_policy_and_atomic_provisioning() {
+    let app = build_router(&AppConfig::default()).unwrap();
+    let owner_auth = register_and_login_as(&app, "encrypted_owner", "203.0.113.31").await;
+    let guild_id = create_guild_for_test(&app, &owner_auth, "203.0.113.31").await;
+    let disabled_request = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{guild_id}/channels"))
+        .header(
+            "authorization",
+            format!("Bearer {}", owner_auth.access_token),
+        )
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "name": "sealed",
+                "kind": "text",
+                "channel_type": "encrypted"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    let response = app.clone().oneshot(disabled_request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"], "encrypted_channel_policy_disabled");
+
+    let enable_policy = Request::builder()
+        .method("PATCH")
+        .uri(format!("/guilds/{guild_id}"))
+        .header(
+            "authorization",
+            format!("Bearer {}", owner_auth.access_token),
+        )
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"encrypted_channel_policy": "require_moderator_membership"}).to_string(),
+        ))
+        .unwrap();
+    let response = app.clone().oneshot(enable_policy).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        body["encrypted_channel_policy"],
+        "require_moderator_membership"
+    );
+
+    let provisioning_request = Request::builder()
+        .method("POST")
+        .uri(format!("/guilds/{guild_id}/channels"))
+        .header(
+            "authorization",
+            format!("Bearer {}", owner_auth.access_token),
+        )
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "name": "sealed",
+                "kind": "text",
+                "channel_type": "encrypted"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app.oneshot(provisioning_request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"], "e2ee_channel_provisioning_required");
 }
 
 #[tokio::test]

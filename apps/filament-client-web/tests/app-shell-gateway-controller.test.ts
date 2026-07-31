@@ -251,6 +251,7 @@ describe("app shell gateway controller", () => {
         updatedFields: {
           name: guildNameFromInput("Ops Prime"),
           visibility: "public",
+          encryptedChannelPolicy: "require_moderator_membership",
         },
         updatedAtUnix: 1,
       }),
@@ -259,6 +260,7 @@ describe("app shell gateway controller", () => {
         guildId: GUILD_ID,
         guildName: "Ops Prime",
         visibility: "public",
+        encryptedChannelPolicy: "require_moderator_membership",
         channels: [],
       },
     ]);

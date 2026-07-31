@@ -73,8 +73,14 @@ export function resolveWorkspaceSelection(
 
   const selectedChannel =
     (selectedChannelId &&
-      selectedWorkspace.channels.find((channel) => channel.channelId === selectedChannelId)) ??
-    selectedWorkspace.channels[0] ??
+      selectedWorkspace.channels.find(
+        (channel) =>
+          channel.channelId === selectedChannelId &&
+          (channel.channelType ?? "plaintext") === "plaintext",
+      )) ??
+    selectedWorkspace.channels.find(
+      (channel) => (channel.channelType ?? "plaintext") === "plaintext",
+    ) ??
     null;
 
   return {
@@ -137,6 +143,7 @@ export function createWorkspaceBootstrapController(
                 guildId: guild.guildId,
                 guildName: guild.name,
                 visibility: guild.visibility,
+                encryptedChannelPolicy: guild.encryptedChannelPolicy ?? "disabled",
                 channels: await fetchGuildChannels(session, guild.guildId),
               };
             } catch (error) {

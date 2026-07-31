@@ -2,9 +2,35 @@
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 ignore = [
-  # Tantivy currently pulls `instant` transitively via `measure_time`.
-  # No safe upgrade exists in RustSec at this time.
-  "RUSTSEC-2024-0384",
+  # Build-time-only transitive dependency of libcrux/hax. This is an
+  # unmaintained notice, not a vulnerability; no replacement is currently
+  # available in the fixed hpke-rs 0.7 provider chain.
+  "RUSTSEC-2026-0173",
+  # Tauri 2.11.5's required Linux WebKitGTK/GTK3 runtime remains on the
+  # unmaintained gtk-rs 0.18 line. The maintainer accepted this exact,
+  # temporary packaging risk on 2026-07-22; re-review with every Tauri release.
+  "RUSTSEC-2024-0411",
+  "RUSTSEC-2024-0412",
+  "RUSTSEC-2024-0413",
+  "RUSTSEC-2024-0414",
+  "RUSTSEC-2024-0415",
+  "RUSTSEC-2024-0416",
+  "RUSTSEC-2024-0417",
+  "RUSTSEC-2024-0418",
+  "RUSTSEC-2024-0419",
+  "RUSTSEC-2024-0420",
+  # The same pinned GTK3 graph selects glib 0.18.5. No fixed glib release is
+  # compatible with gtk-rs 0.18; Filament does not call VariantStrIter.
+  "RUSTSEC-2024-0429",
+  # Unmaintained build/runtime helpers in the exact Tauri 2.11.5 graph. These
+  # are not vulnerability advisories and have no compatible replacement.
+  "RUSTSEC-2024-0370",
+  "RUSTSEC-2024-0436",
+  "RUSTSEC-2025-0075",
+  "RUSTSEC-2025-0080",
+  "RUSTSEC-2025-0081",
+  "RUSTSEC-2025-0098",
+  "RUSTSEC-2025-0100",
 ]
 yanked = "deny"
 
@@ -21,7 +47,22 @@ allow = [
   "Zlib",
 ]
 confidence-threshold = 0.9
-exceptions = []
+exceptions = [
+  # Approved weak-copyleft dependencies used by OpenMLS. Distribution must
+  # include THIRD_PARTY_NOTICES.txt and make these exact sources available.
+  { allow = ["MPL-2.0"], crate = "hpke-rs:0.7.0" },
+  { allow = ["MPL-2.0"], crate = "hpke-rs-crypto:0.7.0" },
+  { allow = ["MPL-2.0"], crate = "hpke-rs-rust-crypto:0.7.0" },
+  # Exact Tauri 2.11.5 transitives accepted by the maintainer on 2026-07-22.
+  # Do not generalize these exceptions or carry them to new versions without
+  # re-running the complete advisory/license/source review.
+  { allow = ["MPL-2.0"], crate = "cssparser:0.36.0" },
+  { allow = ["MPL-2.0"], crate = "cssparser-macros:0.6.1" },
+  { allow = ["MPL-2.0"], crate = "dtoa-short:0.3.5" },
+  { allow = ["MPL-2.0"], crate = "option-ext:0.2.0" },
+  { allow = ["MPL-2.0"], crate = "selectors:0.36.1" },
+  { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "target-lexicon:0.12.16" },
+]
 
 [bans]
 multiple-versions = "warn"
@@ -32,4 +73,4 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = ["https://github.com/openmls/openmls"]

@@ -111,6 +111,7 @@ fn reaction_map_from_counts_with_metadata(
     Ok(by_message)
 }
 
+#[cfg(test)]
 pub(crate) fn reaction_map_from_counts(
     counts: Vec<(String, String, i64)>,
 ) -> Result<HashMap<String, Vec<ReactionResponse>>, AuthFailure> {
@@ -148,12 +149,13 @@ fn reaction_users_map_from_db_rows(
         users.push(user_id);
     }
     for users in by_message_emoji.values_mut() {
-        users.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
+        users.sort_by_key(ToString::to_string);
         users.truncate(MAX_REACTOR_USER_IDS_PER_REACTION);
     }
     Ok(by_message_emoji)
 }
 
+#[cfg(test)]
 pub(crate) fn reaction_map_from_db_rows(
     rows: Vec<ReactionCountDbRow>,
 ) -> Result<HashMap<String, Vec<ReactionResponse>>, AuthFailure> {
@@ -168,6 +170,7 @@ pub(crate) fn reaction_map_from_db_rows(
     reaction_map_from_counts(counts)
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn reaction_map_for_messages_db(
     pool: &PgPool,
     guild_id: &str,

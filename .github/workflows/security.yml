@@ -32,9 +32,10 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'apps/filament-server/**'
-              - 'apps/filament-client-desktop/src-tauri/**'
+              - 'apps/filament-client-desktop/**'
               - 'crates/**'
               - 'cargo-deny.toml'
+              - 'supply-chain/**'
               - '.github/workflows/security.yml'
               - '.github/workflows/ci.yml'
               - '.github/workflows/codeql.yml'
@@ -70,11 +71,19 @@ jobs:
         with:
           tool: cargo-deny
 
+      - name: Install cargo-vet
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-vet@0.10.2
+
       - name: RustSec advisory audit
         run: cargo audit
 
       - name: License/source/bans policy
-        run: cargo deny check --config cargo-deny.toml
+        run: cargo deny --config cargo-deny.toml check
+
+      - name: Reviewed dependency intake policy
+        run: cargo vet --locked
 
   web-audit:
     needs: changes

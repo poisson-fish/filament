@@ -9,7 +9,7 @@ use axum::{
     extract::ConnectInfo,
     extract::DefaultBodyLimit,
     http::{header::AUTHORIZATION, request::Request, HeaderName, StatusCode},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 
@@ -30,10 +30,23 @@ use tower_http::{
 
 use super::{
     auth::resolve_client_ip,
-    core::{AppConfig, AppState, MAX_LIVEKIT_TOKEN_TTL_SECS},
+    core::{
+        AppConfig, AppState, MAX_E2EE_MAILBOX_GC_INTERVAL_SECS, MAX_E2EE_MAILBOX_TTL_SECS,
+        MAX_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS, MAX_LIVEKIT_TOKEN_TTL_SECS,
+    },
     db::ensure_db_schema,
     handlers::{
         auth::{login, logout, lookup_users, me, refresh, register},
+        e2ee::{
+            ack_group_attachments, ack_group_commits, ack_group_messages, ack_group_proposals,
+            claim_keypackage, create_mls_conversation, create_mls_encrypted_channel,
+            create_mls_group_conversation, get_delivery_service_identity, get_group_attachment,
+            get_group_commit_mailbox, get_group_info, get_group_mailbox,
+            get_group_proposal_mailbox, get_root_identity, list_user_devices, post_group_commit,
+            post_group_message, post_group_proposal, publish_device_certificate,
+            put_group_attachment, remove_device, rotate_root_identity, upgrade_mls_conversation,
+            upload_keypackages,
+        },
         friends::{
             accept_friend_request, create_friend_request, delete_friend_request,
             list_friend_requests, list_friends, remove_friend,
@@ -177,6 +190,30 @@ pub(crate) const ROUTE_MANIFEST: &[(&str, &str)] = &[
     ),
     ("POST", "/users/me/profile/avatar"),
     ("POST", "/users/me/profile/banner"),
+    ("PUT", "/e2ee/devices/{device_id}"),
+    ("DELETE", "/e2ee/devices/{device_id}"),
+    ("GET", "/e2ee/users/{user_id}/devices"),
+    ("POST", "/e2ee/keypackages"),
+    ("POST", "/e2ee/keypackages/claim"),
+    ("GET", "/e2ee/users/{user_id}/identity"),
+    ("POST", "/e2ee/identity/rotate"),
+    ("GET", "/e2ee/delivery-service/identity"),
+    ("POST", "/e2ee/conversations"),
+    ("POST", "/guilds/{guild_id}/e2ee/channels"),
+    ("POST", "/e2ee/conversations/{conversation_id}/upgrade"),
+    ("GET", "/e2ee/groups/{group_id}/info"),
+    ("GET", "/e2ee/groups/{group_id}/mailbox"),
+    ("POST", "/e2ee/groups/{group_id}/commits"),
+    ("GET", "/e2ee/groups/{group_id}/commits"),
+    ("POST", "/e2ee/groups/{group_id}/commits/ack"),
+    ("POST", "/e2ee/groups/{group_id}/messages"),
+    ("POST", "/e2ee/groups/{group_id}/messages/ack"),
+    ("PUT", "/e2ee/groups/{group_id}/attachments/{attachment_id}"),
+    ("GET", "/e2ee/groups/{group_id}/attachments/{attachment_id}"),
+    ("POST", "/e2ee/groups/{group_id}/attachments/ack"),
+    ("GET", "/e2ee/groups/{group_id}/proposals"),
+    ("POST", "/e2ee/groups/{group_id}/proposals"),
+    ("POST", "/e2ee/groups/{group_id}/proposals/ack"),
 ];
 
 #[derive(Clone)]
@@ -265,6 +302,7 @@ pub async fn build_router_with_db_bootstrap(config: &AppConfig) -> anyhow::Resul
 }
 
 fn validate_router_config(config: &AppConfig) -> anyhow::Result<()> {
+    validate_e2ee_config(config)?;
     if config.rate_limit_requests_per_minute == 0 {
         return Err(anyhow!(
             "global rate limit must be at least 1 request per minute"
@@ -346,11 +384,64 @@ fn validate_router_config(config: &AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn validate_e2ee_config(config: &AppConfig) -> anyhow::Result<()> {
+    for (value, name) in [
+        (config.e2ee_device_publish_per_minute, "device publish"),
+        (config.e2ee_keypackage_claim_per_minute, "KeyPackage claim"),
+        (config.e2ee_commit_per_minute, "commit"),
+        (config.e2ee_message_per_minute, "message"),
+        (config.e2ee_attachment_per_minute, "attachment"),
+    ] {
+        if value == 0 {
+            return Err(anyhow!(
+                "E2EE {name} rate limit must be at least 1 request per minute"
+            ));
+        }
+    }
+    if config.e2ee_max_keypackage_pool_size == 0
+        || config.e2ee_max_keypackage_pool_size > filament_protocol::MAX_KEYPACKAGE_POOL_SIZE
+    {
+        return Err(anyhow!(
+            "E2EE KeyPackage pool size must be between 1 and {}",
+            filament_protocol::MAX_KEYPACKAGE_POOL_SIZE
+        ));
+    }
+    if config.e2ee_mailbox_ttl.is_zero()
+        || config.e2ee_mailbox_ttl.as_secs() > MAX_E2EE_MAILBOX_TTL_SECS
+    {
+        return Err(anyhow!(
+            "E2EE mailbox TTL must be between 1 and {MAX_E2EE_MAILBOX_TTL_SECS} seconds"
+        ));
+    }
+    if config.e2ee_mailbox_gc_interval.is_zero()
+        || config.e2ee_mailbox_gc_interval.as_secs() > MAX_E2EE_MAILBOX_GC_INTERVAL_SECS
+    {
+        return Err(anyhow!(
+            "E2EE mailbox GC interval must be between 1 and {MAX_E2EE_MAILBOX_GC_INTERVAL_SECS} seconds"
+        ));
+    }
+    if config.e2ee_membership_reconciliation_window.is_zero()
+        || config.e2ee_membership_reconciliation_window.as_secs()
+            > MAX_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS
+    {
+        return Err(anyhow!(
+            "E2EE membership reconciliation window must be between 1 and {MAX_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS} seconds"
+        ));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::Result<Router> {
     tokio::spawn(crate::server::realtime::livekit_sync::start_livekit_sync(
         app_state.clone(),
     ));
+    tokio::spawn(crate::server::e2ee_mailbox::start_e2ee_mailbox_gc(
+        app_state.clone(),
+    ));
+    tokio::spawn(
+        crate::server::e2ee_reconciliation::start_e2ee_reconciliation_monitor(app_state.clone()),
+    );
 
     let governor_config = Arc::new(
         GovernorConfigBuilder::default()
@@ -494,6 +585,69 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
         .route("/guilds/{guild_id}/members/{user_id}/ban", post(ban_member))
         .route("/gateway/ws", get(gateway_ws));
 
+    let routes = routes
+        .route(
+            "/e2ee/devices/{device_id}",
+            put(publish_device_certificate).delete(remove_device),
+        )
+        .route("/e2ee/users/{user_id}/devices", get(list_user_devices))
+        .route("/e2ee/users/{user_id}/identity", get(get_root_identity))
+        .route("/e2ee/identity/rotate", post(rotate_root_identity))
+        .route(
+            "/e2ee/delivery-service/identity",
+            get(get_delivery_service_identity),
+        )
+        .route("/e2ee/keypackages", post(upload_keypackages))
+        .route("/e2ee/keypackages/claim", post(claim_keypackage))
+        .route("/e2ee/conversations", post(create_mls_conversation))
+        .route(
+            "/guilds/{guild_id}/e2ee/channels",
+            post(create_mls_encrypted_channel),
+        )
+        .route(
+            "/e2ee/group-conversations",
+            post(create_mls_group_conversation),
+        )
+        .route(
+            "/e2ee/conversations/{conversation_id}/upgrade",
+            post(upgrade_mls_conversation),
+        )
+        .route("/e2ee/groups/{group_id}/info", get(get_group_info))
+        .route("/e2ee/groups/{group_id}/mailbox", get(get_group_mailbox))
+        .route(
+            "/e2ee/groups/{group_id}/commits",
+            get(get_group_commit_mailbox).post(post_group_commit),
+        )
+        .route(
+            "/e2ee/groups/{group_id}/commits/ack",
+            post(ack_group_commits),
+        )
+        .route("/e2ee/groups/{group_id}/messages", post(post_group_message))
+        .route(
+            "/e2ee/groups/{group_id}/messages/ack",
+            post(ack_group_messages),
+        )
+        .route(
+            "/e2ee/groups/{group_id}/attachments/{attachment_id}",
+            get(get_group_attachment)
+                .put(put_group_attachment)
+                .layer(DefaultBodyLimit::max(
+                    filament_protocol::MAX_E2EE_ATTACHMENT_BYTES,
+                )),
+        )
+        .route(
+            "/e2ee/groups/{group_id}/attachments/ack",
+            post(ack_group_attachments),
+        )
+        .route(
+            "/e2ee/groups/{group_id}/proposals",
+            get(get_group_proposal_mailbox).post(post_group_proposal),
+        )
+        .route(
+            "/e2ee/groups/{group_id}/proposals/ack",
+            post(ack_group_proposals),
+        );
+
     let upload_route = Router::new()
         .route(
             "/guilds/{guild_id}/channels/{channel_id}/attachments",
@@ -522,7 +676,7 @@ fn build_router_with_state(config: &AppConfig, app_state: AppState) -> anyhow::R
 
 #[cfg(test)]
 mod tests {
-    use super::build_router_with_db_bootstrap;
+    use super::{build_router_with_db_bootstrap, validate_router_config};
     use crate::server::core::AppConfig;
 
     #[tokio::test]
@@ -537,5 +691,72 @@ mod tests {
             result.is_err(),
             "schema bootstrap failure should fail router startup"
         );
+    }
+
+    #[test]
+    fn e2ee_security_limits_must_be_nonzero_and_protocol_bounded() {
+        let zero_publish = AppConfig {
+            e2ee_device_publish_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_publish).is_err());
+
+        let zero_claim = AppConfig {
+            e2ee_keypackage_claim_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_claim).is_err());
+
+        let zero_commit = AppConfig {
+            e2ee_commit_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_commit).is_err());
+
+        let zero_message = AppConfig {
+            e2ee_message_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_message).is_err());
+
+        let zero_attachment = AppConfig {
+            e2ee_attachment_per_minute: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_attachment).is_err());
+
+        let oversized_pool = AppConfig {
+            e2ee_max_keypackage_pool_size: filament_protocol::MAX_KEYPACKAGE_POOL_SIZE + 1,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&oversized_pool).is_err());
+
+        let oversized_ttl = AppConfig {
+            e2ee_mailbox_ttl: std::time::Duration::from_secs(
+                crate::server::core::MAX_E2EE_MAILBOX_TTL_SECS + 1,
+            ),
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&oversized_ttl).is_err());
+
+        let zero_gc_interval = AppConfig {
+            e2ee_mailbox_gc_interval: std::time::Duration::ZERO,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_gc_interval).is_err());
+
+        let zero_reconciliation_window = AppConfig {
+            e2ee_membership_reconciliation_window: std::time::Duration::ZERO,
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&zero_reconciliation_window).is_err());
+
+        let oversized_reconciliation_window = AppConfig {
+            e2ee_membership_reconciliation_window: std::time::Duration::from_secs(
+                crate::server::core::MAX_E2EE_MEMBERSHIP_RECONCILIATION_WINDOW_SECS + 1,
+            ),
+            ..AppConfig::default()
+        };
+        assert!(validate_router_config(&oversized_reconciliation_window).is_err());
     }
 }
